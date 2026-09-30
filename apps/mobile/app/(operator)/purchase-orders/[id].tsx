@@ -12,6 +12,10 @@ import {
 } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
+import { poLineSubtotal } from "../../../lib/po-line-subtotal";
+import { poDisplayTotal } from "../../../lib/po-list-logic";
+import { linePack, unitsLabel } from "@routeflow/pricing";
 
 function statusPill(status: POStatus): {
   variant: "brand" | "green" | "orange" | "red" | "gray";
@@ -22,7 +26,7 @@ function statusPill(status: POStatus): {
       return { variant: "gray", label: "Draft" };
     case "SENT":
       return { variant: "orange", label: "Sent" };
-    case "PARTIALLY_RECEIVED":
+    case "PARTIAL":
       return { variant: "brand", label: "Partially Received" };
     case "RECEIVED":
       return { variant: "green", label: "Received" };
@@ -60,7 +64,10 @@ export default function PurchaseOrderDetailScreen() {
   }
 
   const s = statusPill(po.status);
-  const canReceive = po.status === "SENT" || po.status === "PARTIALLY_RECEIVED";
+  // Wave E / imp-10b, L-072: this used to compare against "PARTIALLY_RECEIVED",
+  // a value the server has never returned (schema value is "PARTIAL") — so once
+  // a PO went partial, the Receive action silently vanished from this screen.
+  const canReceive = po.status === "SENT" || po.status === "PARTIAL";
   const canSend = po.status === "DRAFT";
   const canClose = po.status === "RECEIVED";
 
@@ -94,11 +101,9 @@ export default function PurchaseOrderDetailScreen() {
   const totalReceived = po.items.reduce((sum, it) => sum + Number(it.qtyReceived), 0);
   const receivedRatio = totalOrdered > 0 ? totalReceived / totalOrdered : 0;
 
-  const computedTotal = po.items.reduce(
-    (sum, it) => sum + Number(it.qtyOrdered) * Number(it.unitCost),
-    0,
-  );
-  const displayTotal = Number(po.totalAmount) || computedTotal;
+  // B698: the stored total, else the sum of the STORED line totals — never qtyOrdered x unitCost.
+  // Same helper the LIST row uses, so the two screens can never disagree on one order's total.
+  const displayTotal = poDisplayTotal(po);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -118,14 +123,7 @@ export default function PurchaseOrderDetailScreen() {
             </View>
             <Text style={styles.supplierName}>{po.supplier?.name ?? "Supplier"}</Text>
             {po.expectedDate ? (
-              <Text style={styles.meta}>
-                Expected{" "}
-                {new Date(po.expectedDate).toLocaleDateString(undefined, {
-                  year: "numeric",
-                  month: "short",
-                  day: "numeric",
-                })}
-              </Text>
+              <Text style={styles.meta}>Expected {fmtCalendarDate(po.expectedDate, "short")}</Text>
             ) : null}
             {po.notes ? <Text style={styles.notes}>{po.notes}</Text> : null}
           </View>
@@ -208,8 +206,23 @@ export default function PurchaseOrderDetailScreen() {
 
 function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
   const productName = item.product?.name ?? `Product ${item.productId}`;
-  const subtotal = Number(item.qtyOrdered) * Number(item.unitCost);
+  // B698: the stored exact line total; the multiply is only the fallback for a row without one.
+  const subtotal = poLineSubtotal(item);
   const remaining = Number(item.qtyOrdered) - Number(item.qtyReceived);
+  // LANE-U step 8 (#2066 review round): the PO detail response includes product.unitsPerBox/unit
+  // on every item (the LIST endpoint does not, so this label is detail-screen only) — a boxed
+  // line shows its boxes+pieces split, mirroring web's PurchaseOrdersTab. The SPLIT is at the
+  // line's own stored `packSize`, never the live product's `unitsPerBox` directly (B699/B722's
+  // `linePack`, the same stored-wins rule B707/#1171 already enforces for invoice/order lines):
+  // reading the live product alone shows no split once a boxed product is edited to non-boxed,
+  // and re-denominates an already-received line's split the moment the product is repacked.
+  const upb = linePack(item, Number(item.product?.unitsPerBox ?? 0));
+  const isBoxed = upb > 1;
+  // Non-boxed: the bare number, exactly like web's PurchaseOrdersTab (isBoxed ? unitsLabel(...) :
+  // ordered) — never append the live product's `unit` here. A legacy line on a product later
+  // un-boxed can still carry a stale box noun ("case") on the live product; appending it to a
+  // bare piece count ("1,240 case") reads as 1,240 CASES, not 1,240 pieces (#2066 review round).
+  const qtyLabel = (qty: number | string) => (isBoxed ? unitsLabel(qty, upb) : qty);
 
   return (
     <View
@@ -226,8 +239,8 @@ function ItemRow({ item, isFirst }: { item: POItem; isFirst: boolean }) {
           {productName}
         </Text>
         <Text style={styles.itemSub}>
-          Ordered: {item.qtyOrdered} · Received: {item.qtyReceived}
-          {remaining > 0 ? ` · Remaining: ${remaining}` : ""}
+          Ordered: {qtyLabel(item.qtyOrdered)} · Received: {qtyLabel(item.qtyReceived)}
+          {remaining > 0 ? ` · Remaining: ${qtyLabel(remaining)}` : ""}
         </Text>
         <Text style={styles.itemSub}>{fmtCurrency(item.unitCost)} / unit</Text>
       </View>

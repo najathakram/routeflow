@@ -1,0 +1,137 @@
+{
+  "mode": "feature",
+  "scale": "major",
+  "planPath": ".claude/pipeline/2026-09-11-plane-harness/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-11-plane-harness/test-plan.md",
+  "discoveryPath": ".claude/pipeline/2026-09-11-plane-harness/discovery.md",
+  "specPath": ".claude/pipeline/2026-09-11-plane-harness/spec.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "context": "Plane harness (DECIDE-27): client, sync adopt/denylist/budget/close, intake, triage, apply, Gate5 cap",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "files": [
+        "scripts/campaign/plane-sync.self-test.mjs",
+        "scripts/campaign/plane-fake-server.mjs"
+      ],
+      "brief": "T1,T2,T3,T4,T5,T6,T11,T15"
+    },
+    {
+      "id": "TP2",
+      "files": ["scripts/campaign/plane-intake.self-test.mjs"],
+      "brief": "T7,T15",
+      "dependsOn": ["TP1"]
+    },
+    {
+      "id": "TP3",
+      "files": ["scripts/campaign/plane-triage.self-test.mjs"],
+      "brief": "T8,T15",
+      "dependsOn": ["TP1"]
+    },
+    {
+      "id": "TP4",
+      "files": ["scripts/campaign/plane-apply.self-test.mjs"],
+      "brief": "T9,T10,T15",
+      "dependsOn": ["TP1"]
+    },
+    { "id": "TP5", "files": [".claude/hooks/stop.gate5.spec.mjs"], "brief": "T12" },
+    { "id": "TP6", "files": ["scripts/campaign/plane-docs.self-test.mjs"], "brief": "T13,T14" }
+  ],
+  "redGate": {
+    "commands": [
+      "node scripts/campaign/plane-sync.self-test.mjs",
+      "node scripts/campaign/plane-intake.self-test.mjs",
+      "node scripts/campaign/plane-triage.self-test.mjs",
+      "node scripts/campaign/plane-apply.self-test.mjs",
+      "node scripts/campaign/plane-docs.self-test.mjs",
+      "node .claude/hooks/stop.gate5.spec.mjs"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "files": ["scripts/campaign/plane-client.mjs", "scripts/campaign/plane-denylist.json"],
+      "brief": "client+denylist",
+      "satisfies": ["R2", "R3", "R9"],
+      "provenBy": ["T3", "T4", "T10", "T11"],
+      "effort": "high"
+    },
+    {
+      "id": "WP2",
+      "files": ["scripts/campaign/plane-sync.mjs"],
+      "brief": "sync core; L3",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R1", "R4", "R5", "R12", "R13"],
+      "provenBy": ["T1", "T2", "T5", "T6", "T15"],
+      "effort": "high"
+    },
+    {
+      "id": "WP3",
+      "files": ["scripts/campaign/plane-intake.mjs"],
+      "brief": "L1,2,3,14",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R6", "R13"],
+      "provenBy": ["T7", "T15"],
+      "effort": "medium"
+    },
+    {
+      "id": "WP4",
+      "files": ["scripts/campaign/plane-triage.mjs"],
+      "brief": "12-GET budget",
+      "dependsOn": ["WP1", "WP2"],
+      "satisfies": ["R7", "R13"],
+      "provenBy": ["T8", "T15"],
+      "effort": "medium"
+    },
+    {
+      "id": "WP5",
+      "files": ["scripts/campaign/plane-apply.mjs"],
+      "brief": "L14",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R8", "R13"],
+      "provenBy": ["T9", "T10", "T15"],
+      "effort": "medium"
+    },
+    {
+      "id": "WP6",
+      "files": [
+        ".claude/skills/plane/SKILL.md",
+        ".claude/settings.json",
+        "package.json",
+        ".gitignore",
+        ".claude/hooks/stop.mjs",
+        ".claude/skills/rebuild/SKILL.md",
+        ".claude/skills/bug-registry/SKILL.md",
+        ".claude/code-map/INDEX.md",
+        ".claude/code-map/_meta.json"
+      ],
+      "brief": "L12",
+      "dependsOn": ["WP2", "WP3", "WP4", "WP5"],
+      "satisfies": ["R10", "R11", "R12"],
+      "provenBy": ["T12", "T13", "T14"],
+      "effort": "medium"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "node -e \"const b='scripts/campaign/';for(const f of[b+'plane-client.mjs',b+'plane-sync.mjs',b+'plane-intake.mjs',b+'plane-triage.mjs',b+'plane-apply.mjs',b+'plane-fake-server.mjs'])if(require('fs').existsSync(f))require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+      "npx prettier --check scripts/campaign .claude/hooks package.json .claude/settings.json"
+    ],
+    "final": [
+      "node scripts/campaign/plane-sync.self-test.mjs",
+      "node -e \"const b='scripts/campaign/plane-',x=require('fs'),c=require('child_process');for(const n of['intake','triage','apply','docs']){const f=b+n+'.self-test.mjs';x.existsSync(f)?c.execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created: '+f)}\"",
+      "node .claude/hooks/stop.gate5.spec.mjs",
+      "node scripts/campaign/bugs.mjs self-test",
+      "node .claude/hooks/stop.gates.spec.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      { "file": "scripts/campaign/plane-sync.mjs", "behavior": "adopt not create", "test": "T1" },
+      { "file": "scripts/campaign/plane-client.mjs", "behavior": "skip", "test": "T3" },
+      { "file": "scripts/campaign/plane-client.mjs", "behavior": "defer", "test": "T4" },
+      { "file": "scripts/campaign/plane-apply.mjs", "behavior": "validate-first", "test": "T9" }
+    ]
+  }
+}

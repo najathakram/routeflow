@@ -9,7 +9,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -38,7 +38,11 @@ import {
 import { useApplyAdvancePayment, useCustomerAdvancePayments } from "../../../../lib/api/customers";
 import { useGetPaymentImageUrl } from "../../../../lib/api/payments";
 import { deriveInvoiceVariant } from "../../../../lib/invoice-pdf-variant";
+import { fmtCalendarDate } from "../../../../lib/format-date";
+import { isInternalEmail } from "../../../../lib/internal-email";
 import {
+  canRecordPayment,
+  canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
   isPaymentEditable,
@@ -47,9 +51,17 @@ import {
 import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-notes-logic";
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
-import { confirm, chooseAction } from "../../../../lib/confirm";
-import { formatQtySplit } from "../../../../lib/pricing";
-import { sharePdf } from "../../../../lib/share-pdf";
+import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
+import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
+import { printPdf } from "../../../../lib/print-pdf";
+import {
+  nextPdfSharePhase,
+  smtpFallbackNotice,
+  type PdfSharePhase,
+} from "../../../../lib/invoice-send-logic";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 
 // admin.ts's AdminInvoice.payments doesn't declare the image fields even
@@ -59,10 +71,22 @@ import { ShipmentSection, ShipmentEditModal } from "../../../../components/Shipm
 // locally rather than touching admin.ts's canonical type (out of scope here).
 type PaymentImageFields = { imageKey?: string | null };
 
+// Same situation for MSRP: the server snapshots `msrp` onto every InvoiceItem
+// (display-only, per PIECE) and findOne's `items` include returns it already,
+// but admin.ts's AdminInvoice.items doesn't declare it yet. Widen locally
+// rather than touching admin.ts (out of scope for this change).
+type ItemMsrpField = { msrp?: number | null };
+
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
   return `$${(Number.isFinite(v) ? v : 0).toFixed(2)}`;
 }
+
+// admin.ts's AdminInvoice doesn't declare `paymentTermsLabel` yet even though
+// the server now persists it on every Invoice and GET /invoices/:id returns
+// it already. Widen locally rather than touching admin.ts's canonical type
+// (out of scope for this change — same pattern used elsewhere for msrp).
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
 
 function statusPill(status: string) {
   switch (status) {
@@ -118,6 +142,8 @@ export default function InvoiceDetailScreen() {
   const unapplyCredit = useUnapplyCreditNote();
   const deleteMut = useDeleteInvoice();
   const pdfMut = useInvoicePdf();
+  const printPdfMut = useInvoicePdf();
+  const [printing, setPrinting] = useState(false);
   const updateMut = useUpdateInvoice();
   const shipmentMut = useUpdateInvoiceShipment();
   const getImageUrlMut = useGetPaymentImageUrl();
@@ -134,6 +160,18 @@ export default function InvoiceDetailScreen() {
   const [advanceSheetOpen, setAdvanceSheetOpen] = useState(false);
   // Draft/Final PDF stage — null means follow the smart default (deriveInvoiceVariant).
   const [pdfVariantOverride, setPdfVariantOverride] = useState<InvoicePdfVariant | null>(null);
+  // The Share tile's prepare → (maybe) tap-again → share dance against
+  // ACTIVATION_BUDGET_MS — see share-pdf.ts. The ref holds the prepared
+  // sharePdf() args so a "PDF ready — tap to share" retap shares
+  // synchronously instead of re-fetching the signed url. The variant is
+  // stored WITH them: a prepared call belongs to the PDF stage it was
+  // fetched for, so a retap after a stage flip must re-fetch rather than
+  // share the other stage's file.
+  const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
+  const pdfShareRef = useRef<{
+    variant: InvoicePdfVariant;
+    opts: Parameters<typeof sharePdf>[0];
+  } | null>(null);
 
   if (isLoading || !invoice) {
     return (
@@ -148,21 +186,27 @@ export default function InvoiceDetailScreen() {
 
   const s = statusPill(invoice.status);
   const balance = invoice.balanceDue ?? invoice.total;
-  const isPaid = invoice.status === "PAID";
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
   const isVoid = invoice.status === "VOID";
-  const canSend = invoice.status === "DRAFT";
-  const canRecord = !isPaid && !isVoid;
+  // B4: mirrors web's allow-list exactly. The server only rejects VOID, so a
+  // bare "not paid, not void" gate used to offer this on DRAFT/WRITTEN_OFF —
+  // the POST succeeds, but recomputeStatus treats DRAFT as terminal, so a
+  // fully-paid invoice stays DRAFT and drops out of AR/aging.
+  const canRecord = canRecordPayment(invoice.status);
   // Wave 2 action gating — pure mirrors of the server guards (invoices-logic).
   const flags = invoiceActionFlags({
     status: invoice.status,
     paymentCount: invoice.payments?.length ?? 0,
     isOrderLinked: invoice.orderId != null,
   });
+  // Computed BEFORE canSend: a pending mirror is locked server-side, so Send has
+  // to know about it or it offers a guaranteed 400.
   const pendingMirror = isPendingOrderMirror({
     orderId: invoice.orderId,
     deliveryBatchId: invoice.deliveryBatchId,
     orderStatus: invoice.order?.status,
   });
+  const canSend = canSendInvoiceNow(invoice.status, pendingMirror);
   // Draft/Final PDF stage (mirrors web): smart default per stage, operator-overridable
   // via the toggle. Governs BOTH Share and Send.
   const defaultPdfVariant = deriveInvoiceVariant(invoice);
@@ -170,7 +214,14 @@ export default function InvoiceDetailScreen() {
 
   const handleSend = () => {
     if (!id) return;
-    const customerEmail = invoice.customer?.email;
+    // B6: the tile stays visually tappable for one frame around a mutation
+    // settling; without this guard a fast double-tap fires two send emails.
+    if (sendMut.isPending) return;
+    // Import sentinels (`…@imported.local` / `…@placeholder.local`) aren't real
+    // inboxes — route to the same no-email sheet (Mark as Sent / Share PDF) instead
+    // of a send that can only fail. Mirrors web invoice-detail handleSend.
+    const rawEmail = invoice.customer?.email;
+    const customerEmail = rawEmail && !isInternalEmail(rawEmail) ? rawEmail : undefined;
     if (!customerEmail) {
       chooseAction(
         "No email on file",
@@ -205,11 +256,50 @@ export default function InvoiceDetailScreen() {
     sendMut.mutate(
       { id, email: customerEmail, variant: pdfVariant },
       {
-        onSuccess: () => {
-          showToast(`${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`);
+        onSuccess: (res) => {
+          const label = `${pdfVariant === "draft" ? "Draft" : "Final"} invoice sent`;
+          const notice = "warning" in res ? smtpFallbackNotice(res) : null;
+          // The send succeeded (Resend rescued the tenant's failing SMTP), so this
+          // is a disclosure, not an error — but it can't ride a toast: showToast is
+          // nowrap/2.2s and a no-op on iOS, and a dead tenant mailbox has to be
+          // read. Plain successes keep the toast.
+          if (notice) alertInfo(label, notice);
+          else showToast(label);
           refetch();
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          const code = e?.response?.data?.code;
+          const msg = e?.response?.data?.message ?? e?.message ?? "Try again.";
+          if (code === "EMAIL_SEND_FAILED") {
+            // Invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
+            // mail transport can't leave it stuck. Mirrors the web recovery modal.
+            chooseAction(
+              "Email failed — invoice not sent",
+              `${msg} You can mark it as sent and share the PDF another way.`,
+              [
+                {
+                  label: "Mark as Sent",
+                  style: "default",
+                  onPress: () =>
+                    sendMut.mutate(
+                      { id },
+                      {
+                        onSuccess: () => {
+                          showToast("Invoice marked as sent");
+                          refetch();
+                        },
+                        onError: (err: any) =>
+                          showToast(err?.response?.data?.message ?? err?.message ?? "Try again."),
+                      },
+                    ),
+                },
+                { label: "Cancel", style: "cancel" },
+              ],
+            );
+            return;
+          }
+          showToast(msg);
+        },
       },
     );
   };
@@ -291,30 +381,107 @@ export default function InvoiceDetailScreen() {
     );
   };
 
+  /**
+   * Share the invoice PDF, respecting `navigator.share()`'s transient
+   * activation window (see share-pdf.ts). THE TRAP: never `await` a fetch
+   * between the tap and calling `sharePdf` — that includes the presigned-url
+   * mutation below, so instead of awaiting it first, this measures how much
+   * of ACTIVATION_BUDGET_MS the mutation spent and hands `sharePdf` only
+   * what's left. A second tap (the ref already holds a prepared call from a
+   * first tap that ran out of budget) skips the mutation and re-tries
+   * `sharePdf` with a fresh full budget — this tap's own activation — but
+   * ONLY when it's for the same PDF stage; after a Draft/Final flip the
+   * cached call is for the wrong stage, so that tap prepares afresh.
+   */
   const handlePdf = (variant: InvoicePdfVariant) => {
     if (!id) return;
+
+    const cached = pdfShareRef.current;
+    if (cached && cached.variant === variant) {
+      pdfShareRef.current = null;
+      setPdfSharePhase("preparing");
+      sharePdf({ ...cached.opts, budgetMs: ACTIVATION_BUDGET_MS })
+        .then((outcome) => {
+          if (outcome === "ready-await-tap") pdfShareRef.current = cached;
+          setPdfSharePhase(nextPdfSharePhase(outcome));
+        })
+        .catch((e: any) => {
+          setPdfSharePhase("idle");
+          showToast(e?.message ?? "Couldn't share the PDF.");
+        });
+      return;
+    }
+
+    const filename = `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`;
+    const dialogTitle = `${variant === "draft" ? "Draft" : "Final"} invoice ${
+      invoice.invoiceNumber ?? ""
+    }`.trim();
+    const startedAt = Date.now();
+    setPdfSharePhase("preparing");
     pdfMut.mutate(
       { id, variant },
       {
         onSuccess: async (data) => {
           if (!data?.url) {
+            setPdfSharePhase("idle");
             showToast("PDF is still generating, try again in a moment.");
             return;
           }
-          // Share the PDF directly to the OS/browser share sheet — no download.
+          const remaining = ACTIVATION_BUDGET_MS - (Date.now() - startedAt);
+          // retapHandled: this screen flips its own control to "PDF ready —
+          // tap to share", so share-pdf.ts must not also raise a dialog.
+          const opts = {
+            url: data.url,
+            filename,
+            dialogTitle,
+            budgetMs: remaining,
+            retapHandled: true,
+          };
           try {
-            await sharePdf({
-              url: data.url,
-              filename: `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`,
-              dialogTitle: `${variant === "draft" ? "Draft" : "Final"} invoice ${
-                invoice.invoiceNumber ?? ""
-              }`.trim(),
-            });
+            const outcome = await sharePdf(opts);
+            if (outcome === "ready-await-tap") pdfShareRef.current = { variant, opts };
+            setPdfSharePhase(nextPdfSharePhase(outcome));
           } catch (e: any) {
+            setPdfSharePhase("idle");
             showToast(e?.message ?? "Couldn't share the PDF.");
           }
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => {
+          setPdfSharePhase("idle");
+          showToast(e?.response?.data?.message ?? e?.message ?? "Try again.");
+        },
+      },
+    );
+  };
+
+  // Print tile — own mutation + own `printing` state so a tap here never
+  // races the Share tile's `pdfSharePhase`/`pdfMut` (mirrors handlePdf above,
+  // minus the retap-dance: printPdf itself owns web vs native routing).
+  const handlePrint = (variant: InvoicePdfVariant) => {
+    if (!id) return;
+    const filename = `${invoice.invoiceNumber || "invoice"}-${variant}.pdf`;
+    setPrinting(true);
+    printPdfMut.mutate(
+      { id, variant },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            setPrinting(false);
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          try {
+            await printPdf({ url: data.url, filename });
+          } finally {
+            setPrinting(false);
+          }
+        },
+        onError: () => {
+          // R6.3 (pack.md 45-46): any fetch/download failure on the print path
+          // shows this exact toast, matching classifyPrintError's download-stage text.
+          setPrinting(false);
+          showToast("Couldn't print the PDF.");
+        },
       },
     );
   };
@@ -335,16 +502,28 @@ export default function InvoiceDetailScreen() {
 
   const handleReminder = () => {
     if (!id) return;
-    const email = invoice.customer?.email;
+    // B6: same double-tap guard as handleSend — a fast second tap while the
+    // reminder mutation is in flight would fire a second reminder email.
+    if (reminderMut.isPending) return;
+    const rawReminderEmail = invoice.customer?.email;
+    const email =
+      rawReminderEmail && !isInternalEmail(rawReminderEmail) ? rawReminderEmail : undefined;
     if (!email) {
       // Same pre-check as web: don't burn the round-trip on a guaranteed 400.
+      // Import sentinels count as "no email" — they aren't real inboxes.
       showToast("No email on file — add one to this customer first.");
       return;
     }
     reminderMut.mutate(
       { id, email },
       {
-        onSuccess: (res) => showToast(`Reminder emailed to ${res.sentTo}`),
+        onSuccess: (res) => {
+          // Same disclosure as the send path — otherwise whether the operator
+          // hears about their broken mailbox depends on which button they pressed.
+          const notice = smtpFallbackNotice(res);
+          if (notice) alertInfo("Reminder sent", notice);
+          else showToast(`Reminder emailed to ${res.sentTo}`);
+        },
         onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
       },
     );
@@ -453,6 +632,19 @@ export default function InvoiceDetailScreen() {
             <Text style={styles.balanceSub}>
               of {fmtCurrency(invoice.total)} · paid {fmtCurrency(invoice.paidAmount ?? 0)}
             </Text>
+            {/* B421: confirmed but non-cash — reduces the balance but is never
+                counted in "paid" above. Neutral styling, own line so a
+                narrow screen never wraps this mid-figure. */}
+            {Number(invoice.creditApplied ?? 0) > 0 ? (
+              <Text style={styles.balanceSub}>
+                Credits applied {fmtCurrency(invoice.creditApplied ?? 0)}
+              </Text>
+            ) : null}
+            {Number(invoice.advanceApplied ?? 0) > 0 ? (
+              <Text style={styles.balanceSub}>
+                Advance applied {fmtCurrency(invoice.advanceApplied ?? 0)}
+              </Text>
+            ) : null}
             <Pressable
               style={styles.dueRow}
               onPress={() => {
@@ -462,12 +654,13 @@ export default function InvoiceDetailScreen() {
               hitSlop={4}
             >
               <Text style={styles.due}>
-                {invoice.dueDate
-                  ? `Due ${new Date(invoice.dueDate).toLocaleDateString()}`
-                  : "Set due date"}
+                {invoice.dueDate ? `Due ${fmtCalendarDate(invoice.dueDate)}` : "Set due date"}
               </Text>
               <Ionicons name="pencil-outline" size={12} color={ios.label3} />
             </Pressable>
+            {paymentTermsLabel ? (
+              <Text style={styles.headerMeta}>Terms: {paymentTermsLabel}</Text>
+            ) : null}
           </View>
 
           {siblingInvoices.length > 0 ? (
@@ -509,10 +702,29 @@ export default function InvoiceDetailScreen() {
               <SegmentedControl
                 items={["Draft", "Final"]}
                 value={pdfVariant === "draft" ? "Draft" : "Final"}
-                onChange={(v) => setPdfVariantOverride(v === "Draft" ? "draft" : "final")}
+                onChange={(v) => {
+                  const next: InvoicePdfVariant = v === "Draft" ? "draft" : "final";
+                  setPdfVariantOverride(next);
+                  // "PDF ready — tap to share" belongs to the stage that was
+                  // prepared; once the stage changes the next tap prepares
+                  // afresh, so the tile must stop claiming otherwise.
+                  if (next !== pdfVariant) setPdfSharePhase("idle");
+                }}
               />
             </View>
           </View>
+
+          {/* Says why Send and Edit are absent, rather than leaving the operator
+              hunting for buttons the server would have rejected anyway. */}
+          {pendingMirror ? (
+            <View style={styles.mirrorHint}>
+              <Ionicons name="information-circle-outline" size={16} color={ios.label2} />
+              <Text style={styles.mirrorHintText}>
+                This invoice mirrors its order — it unlocks for editing and sending once the order
+                is delivered.
+              </Text>
+            </View>
+          ) : null}
 
           {/* Action grid */}
           <View style={styles.actionsGrid}>
@@ -527,6 +739,8 @@ export default function InvoiceDetailScreen() {
               <ActionTile
                 icon="paper-plane-outline"
                 label={sendMut.isPending ? "Sending…" : "Send"}
+                // B6: was tappable while pending — a fast double-tap fired two send emails.
+                disabled={sendMut.isPending}
                 onPress={handleSend}
               />
             ) : null}
@@ -537,19 +751,44 @@ export default function InvoiceDetailScreen() {
                 onPress={() => router.push(`/(operator)/invoices/${id}/edit`)}
               />
             ) : null}
+            {/* A pending mirror is driven by its order, so send/edit both live
+                there. Offer the way through instead of two missing tiles. */}
+            {pendingMirror && invoice.orderId ? (
+              <ActionTile
+                icon="cube-outline"
+                label="Open order"
+                onPress={() => router.push(`/(operator)/orders/${invoice.orderId}` as any)}
+              />
+            ) : null}
             <ActionTile
               icon="share-outline"
               label={
-                pdfMut.isPending
-                  ? "Loading…"
-                  : `Share ${pdfVariant === "draft" ? "draft" : "final"}`
+                pdfSharePhase === "preparing"
+                  ? "Preparing PDF…"
+                  : pdfSharePhase === "ready"
+                    ? "PDF ready — tap to share"
+                    : `Share ${pdfVariant === "draft" ? "draft" : "final"}`
               }
+              // A second tap while the presigned-url mutation is in flight
+              // would fire a concurrent one; "ready" stays tappable — that
+              // tap IS the share.
+              disabled={pdfSharePhase === "preparing"}
               onPress={() => handlePdf(pdfVariant)}
+            />
+            <ActionTile
+              icon="print-outline"
+              label={
+                printing ? "Preparing PDF…" : `Print ${pdfVariant === "draft" ? "draft" : "final"}`
+              }
+              disabled={printing}
+              onPress={() => handlePrint(pdfVariant)}
             />
             {flags.canSendReminder ? (
               <ActionTile
                 icon="alarm-outline"
                 label={reminderMut.isPending ? "Sending…" : "Send reminder"}
+                // B6: was tappable while pending — a fast double-tap fired two reminder emails.
+                disabled={reminderMut.isPending}
                 onPress={handleReminder}
               />
             ) : null}
@@ -600,49 +839,71 @@ export default function InvoiceDetailScreen() {
           {invoice.items && invoice.items.length > 0 ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Items</Text>
-              {invoice.items.map((it, i) => (
-                <View
-                  key={it.id}
-                  style={[
-                    styles.itemRow,
-                    i > 0 && {
-                      borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: ios.separator,
-                    },
-                  ]}
-                >
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <Text style={styles.itemName} numberOfLines={1}>
-                      {it.description}
-                    </Text>
-                    <Text style={styles.itemSub}>
-                      {it.boxes != null || it.pieces != null
-                        ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                          // would read as pieces × box-price (visually wrong).
-                          `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
-                        : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
-                    </Text>
-                    {Number(it.discount ?? 0) > 0 ? (
-                      // The shown subtotal is already post-discount; this line
-                      // explains why it's less than qty × price.
-                      <Text style={styles.itemSub}>−{fmtCurrency(it.discount ?? 0)} discount</Text>
-                    ) : null}
-                    {it.notes?.trim() ? (
-                      <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
-                        {it.notes}
+              {invoice.items.map((it, i) => {
+                const itemMsrp = (it as typeof it & ItemMsrpField).msrp;
+                return (
+                  <View
+                    key={it.id}
+                    style={[
+                      styles.itemRow,
+                      i > 0 && {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: ios.separator,
+                      },
+                    ]}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.itemName} numberOfLines={1}>
+                        {it.description}
                       </Text>
-                    ) : null}
-                    {it.priceType === "MANUAL" &&
-                    it.originalPrice != null &&
-                    Number(it.unitPrice) > Number(it.originalPrice) ? (
-                      <Text style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}>
-                        Upsell
+                      <Text style={styles.itemSub}>
+                        {usesUnitDisplay(it)
+                          ? // Boxed line: unitPrice is the BOX price — "qty × price"
+                            // would read as pieces × box-price (visually wrong). B653:
+                            // both the qty noun and the price-per-unit noun read the
+                            // line's own unitLabel ("Case"), not a hardcoded "box".
+                            // #1275: a factor-1 unit line (no split) also routes here —
+                            // usesUnitDisplay catches it via unitLabel alone.
+                            `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
+                          : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
-                    ) : null}
+                      {/* Suggested retail price snapshot — per PIECE, display-only. */}
+                      {itemMsrp != null ? (
+                        <Text style={styles.itemMsrp}>MSRP {fmtCurrency(itemMsrp)}/pc</Text>
+                      ) : null}
+                      {/* BUY_N_GET_M: name the free units, or the reduced line
+                          subtotal reads as a pricing error (web parity). */}
+                      {freeUnitsLabel(it.promoFreeUnits) ? (
+                        <Text style={styles.itemFreeLabel}>
+                          {freeUnitsLabel(it.promoFreeUnits)}
+                        </Text>
+                      ) : null}
+                      {Number(it.discount ?? 0) > 0 ? (
+                        // The shown subtotal is already post-discount; this line
+                        // explains why it's less than qty × price.
+                        <Text style={styles.itemSub}>
+                          −{fmtCurrency(it.discount ?? 0)} discount
+                        </Text>
+                      ) : null}
+                      {it.notes?.trim() ? (
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={4}>
+                          {it.notes}
+                        </Text>
+                      ) : null}
+                      {it.priceType === "MANUAL" &&
+                      it.originalPrice != null &&
+                      Number(it.unitPrice) > Number(it.originalPrice) ? (
+                        <Text
+                          style={{ color: ios.system.greenInk, fontSize: 12, fontWeight: "600" }}
+                        >
+                          Upsell
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
                   </View>
-                  <Text style={styles.itemTotal}>{fmtCurrency(it.subtotal)}</Text>
-                </View>
-              ))}
+                );
+              })}
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Subtotal</Text>
                 <Text style={styles.totalValue}>{fmtCurrency(invoice.subtotal)}</Text>
@@ -672,8 +933,16 @@ export default function InvoiceDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment — editable on any non-void invoice. */}
-          {!isVoid ? (
+          {/* Carrier shipment — editable on any non-void invoice, but only shown
+              for carrier-shipped rows. The invoice payload doesn't carry the
+              order's fulfillPath (admin.ts's AdminInvoice.order is status/
+              orderNumber only — not widened here), so an order-linked invoice
+              shows the section only once tracking exists — it's recorded on the
+              ORDER, which mirrors carrier/tracking down to its invoices. A
+              standalone invoice has no order to record it on, so it always keeps
+              the section (mirrors web's invoice detail gate). */}
+          {!isVoid &&
+          (!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) ? (
             <ShipmentSection shipment={invoice} onEdit={() => setShipmentModal(true)} />
           ) : null}
 
@@ -695,7 +964,23 @@ export default function InvoiceDetailScreen() {
                     ]}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.payMethod}>{p.method}</Text>
+                      <View style={styles.payMethodRow}>
+                        <Text style={styles.payMethod}>{p.method}</Text>
+                        {/* F03/R2 (REG-B11) — mirrors web's DraftPaymentBadge. A DRAFT
+                            payment is excluded from every CONFIRMED_PAYMENT sum on the
+                            server, so balanceDue/paidAmount above ignore this row. Without
+                            the badge the screen contradicts itself: a listed +$200 next to
+                            an unmoved balance. Web carries the explanation in a tooltip;
+                            there's no hover on a phone, so it's a meta line here. */}
+                        {p.status === "DRAFT" ? (
+                          <Pill variant="yellow" small>
+                            Draft — unconfirmed
+                          </Pill>
+                        ) : null}
+                      </View>
+                      {p.status === "DRAFT" ? (
+                        <Text style={styles.payMeta}>Not counted toward the balance due</Text>
+                      ) : null}
                       <Text style={styles.payMeta}>
                         {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
                       </Text>
@@ -856,8 +1141,8 @@ export default function InvoiceDetailScreen() {
 /**
  * Invoice-side "Apply advance" — lists the customer's advance-payment wallet
  * rows with remaining balance and applies the tapped one (server caps at
- * min(wallet balance, invoice balance); reference AP-<id-8>). Mobile is the
- * FIRST client for this action — web's hook is dead code with no UI.
+ * min(wallet balance, invoice balance); reference AP-<id-8>). Web's invoice
+ * detail page (B13) mirrors this same flow via ApplyAdvanceModal.
  */
 function ApplyAdvanceSheet({
   customerId,
@@ -1052,7 +1337,7 @@ function ApplyCreditSheet({
                       </Text>
                       {cn.expiresAt ? (
                         <Text style={styles.creditMeta}>
-                          Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                          Expires {fmtCalendarDate(cn.expiresAt)}
                         </Text>
                       ) : null}
                     </View>
@@ -1074,15 +1359,21 @@ function ActionTile({
   label,
   onPress,
   tone = "default",
+  disabled = false,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   onPress: () => void;
   tone?: "default" | "danger";
+  disabled?: boolean;
 }) {
   const isDanger = tone === "danger";
   return (
-    <Pressable style={[styles.tile, isDanger && styles.tileDanger]} onPress={onPress}>
+    <Pressable
+      style={[styles.tile, isDanger && styles.tileDanger, disabled && { opacity: 0.5 }]}
+      disabled={disabled}
+      onPress={onPress}
+    >
       <Ionicons name={icon} size={22} color={isDanger ? ios.system.red : ios.brand} />
       <Text style={[styles.tileLabel, isDanger && { color: ios.system.red }]}>{label}</Text>
     </Pressable>
@@ -1166,6 +1457,23 @@ const styles = StyleSheet.create({
     color: ios.label2,
     letterSpacing: 0.8,
   },
+  mirrorHint: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    backgroundColor: ios.fill3,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  mirrorHintText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    lineHeight: 18,
+  },
   tile: {
     flexBasis: "47%",
     flexGrow: 1,
@@ -1185,6 +1493,13 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, gap: 10 },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemMsrp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
@@ -1214,6 +1529,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   payRow: { flexDirection: "row", alignItems: "center", paddingVertical: 10, gap: 10 },
+  payMethodRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 },
   payMethod: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   payMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   payAmount: {

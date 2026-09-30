@@ -9,6 +9,7 @@ import {
   recurringScheduleFields,
 } from "../lib/recurring-invoices-logic";
 import type { RecurringFrequency } from "../lib/api/recurring-invoices";
+import * as logic from "../lib/recurring-invoices-logic";
 
 describe("recurringPillFor", () => {
   it.each([
@@ -58,5 +59,61 @@ describe("freqLabel", () => {
     ["MONTHLY", undefined, undefined, "Monthly — day 1"], // default day-of-month
   ] as const)("%s/%s/%s → %s", (f, dow, dom, out) => {
     expect(freqLabel(f as RecurringFrequency, dow, dom)).toBe(out);
+  });
+});
+
+describe("REG-B106 lastRunOutcome", () => {
+  // T22 (R17): not exported yet — `fn` is undefined, so each expect fails on
+  // its own concrete expected value rather than on an unresolved import.
+  const fn = (logic as any).lastRunOutcome;
+
+  it("T22a — no last run, or a run with no recorded status → null", () => {
+    expect(fn ? fn({ lastRunAt: null }) : undefined).toEqual(null);
+    expect(fn ? fn({ lastRunAt: "2026-07-01T00:00:00Z", lastRunStatus: null }) : undefined).toEqual(
+      null,
+    );
+  });
+
+  it("T22b — FAILED run → red pill with the error detail", () => {
+    expect(
+      fn
+        ? fn({
+            lastRunAt: "2026-07-01T00:00:00Z",
+            lastRunStatus: "FAILED",
+            lastError: "Customer not found",
+          })
+        : undefined,
+    ).toEqual({ variant: "red", label: "Last run failed", detail: "Customer not found" });
+  });
+
+  it("T22c — SUCCESS run → green pill", () => {
+    expect(
+      fn
+        ? fn({
+            lastRunAt: "2026-07-01T00:00:00Z",
+            lastRunStatus: "SUCCESS",
+          })
+        : undefined,
+    ).toEqual({ variant: "green", label: "Last run succeeded" });
+  });
+});
+
+// B646 / SA-135: a boxed product's template qty counts BOXES at the per-box price. The mobile form
+// carries the same hint as the web form (the web label is covered by a Playwright capture).
+describe("RECURRING_QTY_BOXES_HINT (B646)", () => {
+  it("says Qty counts boxes and the price is per box", () => {
+    expect(logic.RECURRING_QTY_BOXES_HINT).toMatch(/Qty counts boxes/);
+    expect(logic.RECURRING_QTY_BOXES_HINT).toMatch(/per box/);
+  });
+  it("is rendered by the new-template screen", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const fs = require("fs") as typeof import("fs");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const path = require("path") as typeof import("path");
+    const src = fs.readFileSync(
+      path.join(__dirname, "..", "app", "(operator)", "recurring-invoices", "new.tsx"),
+      "utf8",
+    );
+    expect(src).toMatch(/\{RECURRING_QTY_BOXES_HINT\}/);
   });
 });

@@ -16,6 +16,7 @@ import { StorageModule } from "../storage/storage.module";
 import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { StockAlertsModule } from "../stock-alerts/stock-alerts.module";
 import { SystemConfigModule } from "../system-config/system-config.module";
+import { GatewaysModule } from "../gateways/gateways.module";
 
 import { BuyerAuthController } from "./buyer-auth.controller";
 import { BuyerController } from "./buyer.controller";
@@ -39,6 +40,8 @@ import { BuyerJwtStrategy } from "./strategies/buyer-jwt.strategy";
 import { BuyerJwtAuthGuard } from "./guards/buyer-jwt-auth.guard";
 import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
+import { PaymentRequestsModule } from "../payment-requests/payment-requests.module";
+import { BuyerPaymentsController } from "../payment-requests/buyer-payments.controller";
 
 @Module({
   imports: [
@@ -55,6 +58,8 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     AuthorizationsModule,
     StockAlertsModule,
     SystemConfigModule,
+    GatewaysModule,
+    PaymentRequestsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -73,6 +78,8 @@ import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
     CustomerLinksAdminController,
     BuyerMergeController,
     BuyerAdminMergeController,
+    // Rides this module's guards/interceptor; its service lives in PaymentRequestsModule.
+    BuyerPaymentsController,
   ],
   providers: [
     Reflector,

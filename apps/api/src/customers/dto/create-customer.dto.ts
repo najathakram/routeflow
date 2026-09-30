@@ -2,9 +2,12 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsIn,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -15,6 +18,12 @@ import { Type } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { CreateAddressDto } from "./create-address.dto";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
+import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
+
+// Canonical list plus "" to allow explicitly leaving this customer on the
+// tenant default at create time.
+const VALID_CUSTOMER_TERMS = [...VALID_TERMS, ""];
 
 export class CreateCustomerDto {
   // BUG-B1-5: bound free-text fields server-side. The audit POSTed a
@@ -44,7 +53,35 @@ export class CreateCustomerDto {
   @IsOptional() @IsString() @MaxLength(80) lastName?: string;
   @IsOptional() @IsString() @MaxLength(40) taxId?: string;
   @IsOptional() @IsBoolean() isTaxExempt?: boolean;
-  @IsOptional() @Min(0) @Max(1_000_000_000) creditLimit?: number;
+  // SA-423: scale is part of the Decimal(10,2) bound — refuse a third decimal, never round it.
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(MAX_DECIMAL_10_2)
+  creditLimit?: number;
   @IsOptional() @IsString() @MaxLength(3) currency?: string;
   @IsOptional() @IsInt() @Min(1) @Max(5) pricingTier?: number;
+  /**
+   * Per-customer default payment terms ("this customer is always Net 60") — wins
+   * over the tenant SystemConfig default in resolveDefaultTerms(). "" (or
+   * omitted) leaves the customer on the tenant default.
+   */
+  @IsOptional()
+  @IsString()
+  @IsIn(VALID_CUSTOMER_TERMS, {
+    message: "defaultPaymentTerms must be one of: " + VALID_CUSTOMER_TERMS.join(", "),
+  })
+  defaultPaymentTerms?: string;
+  /**
+   * Per-customer default deposit percent ("50% upfront, remainder on terms").
+   * Auto-applied (depositDueDate = issueDate) to invoices generated from
+   * orders that don't already carry an explicit depositPercent. Omitted
+   * leaves the customer without a deposit default.
+   */
+  @IsOptional() @IsNumber() @Min(0) @Max(100) defaultDepositPercent?: number;
+  /**
+   * Sales agents & commissions: opens the customer's first attribution window
+   * (AgentAssignment, effectiveFrom = now) inside the create tx.
+   */
+  @IsOptional() @IsUUID() salesAgentId?: string;
 }

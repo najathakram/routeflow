@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist, createJSONStorage, type StateStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -20,7 +20,43 @@ interface MileageState {
   getEntry: (runId: string) => MileageEntry | null;
   getMiles: (runId: string) => number | null;
   clearEntry: (runId: string) => void;
+  // D1/D3 (cause-ruling.md §3): sign-out (lib/session-teardown.ts) resets this
+  // user-scoped store so the next user on this device never sees prior data.
+  reset: () => void;
 }
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+
+/**
+ * Same AsyncStorage, same key — every call wrapped so a storage failure
+ * degrades to a no-op instead of an unhandled rejection. This store is now
+ * written to on every sign-out (`reset()`, via lib/session-teardown.ts), and a
+ * persistence hiccup there must not take the sign-out down with it — the same
+ * reason store/podStore.ts wraps its own writes.
+ */
+const safeAsyncStorage: StateStorage = {
+  getItem: async (name) => {
+    try {
+      return await AsyncStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  },
+  setItem: async (name, value) => {
+    try {
+      await AsyncStorage.setItem(name, value);
+    } catch {
+      // best-effort — a persistence failure must never crash the app
+    }
+  },
+  removeItem: async (name) => {
+    try {
+      await AsyncStorage.removeItem(name);
+    } catch {
+      // best-effort
+    }
+  },
+};
 
 // ─── Store ────────────────────────────────────────────────────────────────────
 
@@ -67,10 +103,12 @@ export const useMileageStore = create<MileageState>()(
           const { [runId]: _, ...entries } = state.entries;
           return { entries };
         }),
+
+      reset: () => set({ entries: {} }),
     }),
     {
       name: "routeflow-mileage",
-      storage: createJSONStorage(() => AsyncStorage),
+      storage: createJSONStorage(() => safeAsyncStorage),
     },
   ),
 );

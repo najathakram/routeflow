@@ -1,0 +1,324 @@
+{
+  "scale": "major",
+  "ui": true,
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14",
+  "context": "F14 v2 authz/tenancy matrix (B52 Critical cross-tenant supplier-statement read; B132/B133/B168 orphaned DRIVER grants; B165 impersonatedBy dropped by both JWT strategies; B138 logout under impersonation revokes the tenant admin; B155 refresh rotation destroys session identity) \u2014 api + web, no migration; T2 (B138/B155) proven post-deploy by e2e specs 31/32, NEVER run Playwright locally (clobbers .campaign/runs/web-e2e.json); UI review of the header/sessions card must use the browser pane against next dev, not `playwright test`.",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/pipeline/2026-09-02-F14-authz-matrix/spec.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/pipeline/2026-09-02-F14-authz-matrix/test-plan.md",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/pipeline/2026-09-02-F14-authz-matrix/build-plan.md",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "B52 uploads: supplier-statements owner gate + JWT-path default-deny (T1-T6) + xss stub collateral",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads-tenant-scope.security.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads-xss.security.spec.ts"
+      ],
+      "brief": "Extend the supertest harness in uploads-tenant-scope.security.spec.ts per build-plan.md \u00a71 TP1: add `supplierStatementScan.findUnique` to prismaMock (scans ss1\u2192t1, ssNull\u2192null), fixtures supplier-statements/{ss1,missing,ssNull}/1.txt, legacy-prefix/x/file.txt, flat.txt. REG-B52 tests: t2\u2192403 with findUnique called {where:{id:'ss1'},select:{tenantId:true}}; t1\u2192200 AND findUnique called; missing/ssNull\u2192403; unmapped prefix + flat key \u2192403 before fs.existsSync (jest.spyOn(fs,'existsSync') not called; positive control on the 200 path), unwritten unmapped key \u2192403 not 404, signed (x-test-signed) \u2192200. Pins (no REG token, titled 'pin (B52): \u2026'): SUPER_ADMIN reads both; it.each over the literal 11-prefix table all 200 as t1. Collateral: in uploads-xss.security.spec.ts replace BOTH `.useValue({ canActivate: () => true })` guard stubs with a stub that sets `req.signedUrlAuthorized = true` (exact code in the plan) so its flat-key header tests survive the default-deny."
+    },
+    {
+      "id": "TP2",
+      "title": "B132/B133/B168 DRIVER grants: roles-metadata specs, service gate inversion, ownership wrapper (T7-T13)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.controller.roles.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.service.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.controller.roles.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.service.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/inventory/inventory.controller.roles.spec.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a71 TP2. T7: REG-B132 reflection test \u2014 upsertCustomerPrice roles non-empty, no DRIVER, sorted-equal to deleteCustomerPrice. T8 in customers.service.spec.ts describe('upsertCustomerPrice'): INVERT the existing test at ~:1222 ('a DRIVER may still null the tier\u2026' \u2014 it asserts the bug) to REG-B132 rejects ForbiddenException /^Only operators/ with findUnique/upsert/delete never called; add REG-B132 driver-with-msrp refused before assertMsrpAllowed spy and any read; REG-B132 undefined user refused; pin (B132) OPERATOR + TENANT_ADMIN still upsert. T9/T10 NEW order-templates.controller.roles.spec.ts: REG-B133 create/update/remove/addItem/removeItem/generateOrder declared + no DRIVER; REG-B133 matrix {OPERATOR,CUSTOMER} for five, [OPERATOR] for addItem; pin findAll/findOne undefined roles; REG-B133 `new OrderTemplatesController(svc as any)` then `(ctrl as any).addItem('t1', dto, user)` calls svc.addItemForUser(t1,dto,user), not svc.addItem. T11 in the F2-003 ownership describe: REG-B133 non-owner CUSTOMER and no-customer-row CUSTOMER via `(service as any).addItemForUser` reject ForbiddenException with orderTemplateItem.create not called; pin owner + operator succeed (operator skips customer.findFirst). T12/T13 NEW inventory.controller.roles.spec.ts using reflector.getAllAndOverride(ROLES_KEY,[proto[h],InventoryController]): REG-B168 seven writes toEqual([OPERATOR]); pin (B168) four reads contain DRIVER+OPERATOR. Use `as any` casts so unfixed code fails on assertions, not ts-jest diagnostics."
+    },
+    {
+      "id": "TP3",
+      "title": "B165/B138-API impersonation identity: strategies, audit interceptor+service, guard, logout (T14-T18)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/strategies/jwt.strategy.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.interceptor.security.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.service.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/guards/impersonation.guard.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.controller.cookie.spec.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a71 TP3. T14 NEW jwt.strategy.spec.ts: `new JwtStrategy({ get: () => ({ secret: 's' }) } as any)` \u2014 REG-B165 REG-B138 validate({...,impersonatedBy:'sa1'}).impersonatedBy === 'sa1'; pin absent \u2192 undefined and no isAdmin; same pair for BuyerJwtStrategy ({sub,email,type:'BUYER'}). T15 append to audit.interceptor.security.spec.ts (reuse makeCtx/nextHandler; flush with `await new Promise(r => setImmediate(r))`): REG-B165 req.user {sub:'ta1',tenantId:'t1',impersonatedBy:'sa1'} on POST \u2192 log called with objectContaining({userId:'ta1',tenantId:'t1',impersonatedBy:'sa1'}); REG-B165 plain user \u2192 impersonatedBy: null. T16 NEW audit.service.spec.ts with createMockPrisma (has auditLog): REG-B165 create data contains impersonatedBy 'sa1'; REG-B165 absent \u2192 data.impersonatedBy === null; pin create rejects \u2192 log resolves. T17 NEW impersonation.guard.spec.ts (token `h.${base64url(JSON)}.s`, jest.spyOn(Logger.prototype,'log')): REG-B165 POST with bearer claim and req.user UNDEFINED \u2192 returns true and log line contains 'POST /api/v1/orders' (query stripped), admin=sa1, acting-as=ta1, tenant=t1; pins: GET no log; no header / 'Bearer not.a.jwt' / no claim \u2192 true, no log, no throw; req.user with claim and no header still logs. T18 append to auth.controller.cookie.spec.ts (makeController/makeRes): REG-B138 logout({id:'ta1',impersonatedBy:'sa1'},res) \u2192 clearCookie('rf_refresh', objectContaining({path:'/api/v1/auth'})), authService.logout NOT called, result {message:'Impersonation session ended'}; pin logout({id:'u1'}) \u2192 authService.logout('u1') once."
+    },
+    {
+      "id": "TP4",
+      "title": "B155-API refresh rotates in place (T19)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.spec.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a71 TP4. Append describe('refresh \u2014 in-place rotation (B155)') to auth.service.spec.ts: prime jwtService.verify\u2192{sub:'user-1',type:'staff'}, refreshToken.findUnique\u2192{id:'rt-1',userId:'user-1',tokenHash:'h-old',expiresAt:future,createdAt:T0,...}, user.findUnique\u2192{...MOCK_USER,tenantId:'tenant-1'}, tenant.findUnique\u2192{slug}. REG-B155 happy path with updateMany.mockResolvedValue({count:1}) EXPLICITLY set: updateMany called once, where toEqual {id:'rt-1',tokenHash:'h-old'}, data.tokenHash === sha256('mock-token') computed in the test via node:crypto, data.expiresAt/lastUsedAt Dates, Object.keys(data) contains none of id/createdAt/userId/tenantId, data.userAgent/ipAddress/deviceName undefined, deleteMany NOT called, upsert NOT called. Pins (no REG token): count 0 \u2192 upsert (storeRefreshToken create) called once with where {tokenHash: newHash} and refresh resolves; SUSPENDED user \u2192 rejects UnauthorizedException, deleteMany({where:{tokenHash}}) called, updateMany not called. Do not edit the existing refresh tests (they fall through to the count-0 fallback and stay green)."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api test -- src/uploads/uploads-tenant-scope.security.spec.ts src/customers/customers.controller.roles.spec.ts src/customers/customers.service.spec.ts src/order-templates/order-templates.controller.roles.spec.ts src/order-templates/order-templates.service.spec.ts src/inventory/inventory.controller.roles.spec.ts src/auth/strategies/jwt.strategy.spec.ts src/audit/audit.interceptor.security.spec.ts src/audit/audit.service.spec.ts src/auth/guards/impersonation.guard.spec.ts src/auth/auth.controller.cookie.spec.ts src/auth/auth.service.spec.ts -t \"REG-B(52|132|133|138|155|165|168)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "B52: supplier-statements owner lookup + JWT-path default-deny before fs (uploads.controller.ts)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads.controller.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP1. (1) Add OWNER_LOOKUPS entry `\"supplier-statements\": (id) => this.prisma.supplierStatementScan.findUnique({ where: { id }, select: { tenantId: true } })` after `payments`. (2) Inside `if (!reqAny.signedUrlAuthorized)`, immediately after the `if (ownerLookup && caller?.role !== \"SUPER_ADMIN\") {\u2026}` block, add `if (!tenantMatch && !ownerLookup && caller?.role !== \"SUPER_ADMIN\") { throw new ForbiddenException(\"Cross-tenant file access denied\"); }` with the B52 comment \u2014 this MUST precede `path.join`/`fs.existsSync`. (3) Rewrite the header comment (line ~54) and the prefix list comment (~162-165) to name eight owner-lookup prefixes incl. supplier-statements and state that everything else is denied. Signed-URL path and SUPER_ADMIN stay exempt. No other file.",
+      "satisfies": ["R1", "R2"],
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP2",
+      "title": "B165: propagate impersonatedBy (staff + buyer strategies), stamp AuditLog, make ImpersonationGuard read the bearer claim",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/strategies/jwt.strategy.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/buyer/strategies/buyer-jwt.strategy.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/guards/impersonation.guard.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.interceptor.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.service.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP2. jwt.strategy.ts validate(): add `impersonatedBy: payload.impersonatedBy ?? undefined,` to the returned literal (after tenantSlug; isAdmin stays un-propagated). buyer-jwt.strategy.ts: return `{ sub, email, type: \"BUYER\" as const, impersonatedBy: payload.impersonatedBy ?? undefined }`. audit.service.ts: `impersonatedBy?: string | null` on CreateAuditLogDto and `impersonatedBy: dto.impersonatedBy ?? null` in auditLog.create data (try/catch unchanged; column exists since F01). audit.interceptor.ts: pass `impersonatedBy: user?.impersonatedBy ?? null`. impersonation.guard.ts: replace with the plan's full file \u2014 `readClaims(request)` prefers request.user.impersonatedBy, else decodes the bearer payload segment (base64url, JSON.parse, try/catch \u2192 null, no signature check) exactly like tenant/tenant-status.guard.ts; logs `Impersonation write: <METHOD> <path-without-query> (admin=\u2026, acting-as=\u2026, tenant=\u2026)` on non-GET/HEAD/OPTIONS; ALWAYS returns true. Do not edit app.module.ts or tenant-status.guard.ts.",
+      "satisfies": ["R8", "R9", "R10"],
+      "provenBy": ["T14", "T15", "T16", "T17"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP3",
+      "title": "B138 API half: logout under impersonation clears the cookie and revokes nothing (auth.controller.ts)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.controller.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP3. Replace the `logout` handler: `@CurrentUser() user: { id: string; impersonatedBy?: string }`; keep `this.clearRefreshCookie(res)`; `if (user.impersonatedBy) return { message: \"Impersonation session ended\" };` else `return this.authService.logout(user.id);` with the B138 comment (an impersonation token's sub IS the tenant's TENANT_ADMIN; an impersonation has no refresh token). Logically after WP2 (the claim reaches req.user via JwtStrategy) but no shared file. Nothing else in the file changes.",
+      "satisfies": ["R11"],
+      "provenBy": ["T18"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP4",
+      "title": "B155 API half: refresh() rotates the RefreshToken row in place with a count-0 create fallback (auth.service.ts)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP4, refresh() only. Delete the `deleteMany({ where: { tokenHash } })` rotation line. In the inactive-user branch add `await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });` BEFORE the 401 (token consumption preserved). Replace the tail (effectiveDeviceInfo + storeRefreshToken) with: `const { count } = await this.prisma.refreshToken.updateMany({ where: { id: stored.id, tokenHash }, data: { tokenHash: this.hashToken(refreshToken), expiresAt: new Date(this.jwtService.decode(refreshToken).exp * 1000), lastUsedAt: now, userAgent: deviceInfo?.userAgent, ipAddress: deviceInfo?.ipAddress, deviceName: deviceInfo?.deviceName } })`; `if (count === 0)` \u2192 today's effectiveDeviceInfo fallback + `await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo)`. Never write id/createdAt/userId/tenantId. login/mintSessionForUser/logout/revokeSession/storeRefreshToken untouched.",
+      "satisfies": ["R13"],
+      "provenBy": ["T19"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP5",
+      "title": "B168: inventory writes inherit the class-level OPERATOR gate (inventory.controller.ts)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/inventory/inventory.controller.ts"
+      ],
+      "brief": "Delete the handler-level `@Roles(UserRole.OPERATOR, UserRole.DRIVER)` on exactly recordPurchase (POST movements/purchase), recordAdjustment (POST movements/adjustment), createPO (POST purchase-orders) and receivePO (POST purchase-orders/:id/receive) so they inherit the class `@Roles(UserRole.OPERATOR)` like sendPO/closePO. Do NOT touch getStockOverview/listMovements/listPOs/getPO (reads keep DRIVER \u2014 pinned by T13). Add the one-line B168 comment above recordPurchase per build-plan.md \u00a72 WP5.",
+      "satisfies": ["R7"],
+      "provenBy": ["T12", "T13"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP6",
+      "title": "B132: POST /customers/:id/prices OPERATOR-only at the route; service refuses non-operators before any read",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.controller.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.service.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP6. Controller: on upsertCustomerPrice change `@Roles(UserRole.OPERATOR, UserRole.DRIVER)` \u2192 `@Roles(UserRole.OPERATOR)`; GET :id/prices keeps DRIVER. Service upsertCustomerPrice: make `user: JwtPayload` required; hoist the operatorLevel computation (OPERATOR | TENANT_ADMIN | SUPER_ADMIN) to the FIRST statement, throwing `new ForbiddenException(\"Only operators can change a price override\")` BEFORE the empty-DTO 400, before assertMsrpAllowed() and before customerPrice.findUnique; delete the now-redundant inner role block in the clear-both branch (keep the delete call).",
+      "satisfies": ["R3", "R4"],
+      "provenBy": ["T7", "T8"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP7",
+      "title": "B133: order-template mutations exclude DRIVER; addItem goes through a new addItemForUser ownership wrapper (LAND LAST \u2014 F13 collision)",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.controller.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.service.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP7. Controller: drop UserRole.DRIVER from create, update and removeItem (\u2192 {OPERATOR, CUSTOMER}); replace addItem with `@Roles(UserRole.OPERATOR)` + `@CurrentUser() user: JwtPayload` third param calling `this.service.addItemForUser(templateId, dto, user)`. Service: beside removeItemForUser/generateOrderForUser add `async addItemForUser(templateId, dto: AddTemplateItemDto, user: JwtPayload) { await this.findOneForUser(templateId, user); return this.addItem(templateId, dto); }` with the B133 comment. findAll/findOne stay unguarded (recorded residual). Do not touch createOrderFromTemplate (:309-372) or updateForUser \u2014 F13 edits them; whichever lands second rebases.",
+      "satisfies": ["R5", "R6"],
+      "provenBy": ["T9", "T10", "T11"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP8",
+      "title": "B138 web half: shared exitImpersonation(); header offers Exit impersonation / Return to admin, never Sign out, while impersonation state exists",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/lib/impersonation.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/app/(dashboard)/layout.tsx",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/lib/i18n/messages.ts"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP8. lib/impersonation.ts: import clearTenantCookie from ./tenant-cookie and export `exitImpersonation()` = clearTenantCookie(); clearImpersonation(); window.location.href = \"/admin/tenants\" (no /auth/logout POST; hard load). messages.ts: add `menu.exitImpersonation` ('Exit impersonation' / 'Salir de la suplantaci\u00f3n') and `menu.returnToAdmin` ('Return to admin' / 'Volver al panel de administraci\u00f3n') to en AND es. layout.tsx Header: subscribe like ImpersonationBanner (useState<ImpersonationState|null>, getImpersonation + subscribeImpersonation effect, re-read on pathname); replace the sign-out DropdownMenu.Item with `imp ? <Item onSelect={() => exitImpersonation()}>{t(imp.expired ? \"menu.returnToAdmin\" : \"menu.exitImpersonation\")}</Item> : <Item onSelect={() => void logout()}>{t(\"menu.signOut\")}</Item>` (same className, LogOut icon). ImpersonationBanner: delete the local exit() body and use onClick={exitImpersonation}; drop the now-unused clearTenantCookie/clearImpersonation imports. Do NOT edit api-client.ts or lib/auth.ts.",
+      "satisfies": ["R12"],
+      "provenBy": ["T21"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP9",
+      "title": "B155 web half: SessionsCard rows carry data-session-id; failed revoke reloads; revoke-all reports honestly",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/app/(dashboard)/settings/page.tsx"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP9, SessionsCard only (~:1614-1665). `<li key={session.id} data-session-id={session.id} \u2026>`. handleRevoke catch: keep the 'Failed to revoke session' toast then `await loadSessions()`. handleRevokeAll: `Promise.allSettled` over the deletes; if zero rejections \u2192 setSessions([]) + 'All sessions revoked' success toast; else toast { title: 'Some sessions could not be revoked', variant: 'error' } and `await loadSessions()`; setRevokingAll(false) after. No layout change.",
+      "satisfies": ["R14"],
+      "provenBy": ["T22", "T23"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP10",
+      "title": "E2E specs 31-impersonation-signout + 32-active-sessions, playwright project entries, tenantAdmin credentials, e2e-seed TENANT_ADMIN",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/e2e/31-impersonation-signout.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/e2e/32-active-sessions.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/e2e/helpers/constants.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web/playwright.config.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/scripts/e2e-seed.js"
+      ],
+      "brief": "Exact code in build-plan.md \u00a72 WP10. NEVER run Playwright locally (not even --list); typecheck via `npm --prefix \u2026/apps/web run check-types`. constants.ts: `tenantAdmin: { username: 'e2e_admin', password: 'TenantAdmin1!' }`. e2e-seed.js: idempotent ACTIVE TENANT_ADMIN `e2e_admin` (email e2e_admin@e2e-routeflow.test, forcePasswordChange false) in BOTH the existing-tenant and fresh-tenant branches; header comment updated; assertTestTenant stays first. playwright.config.ts: append projects `impersonation-signout` (testMatch /31-impersonation-signout\\.spec\\.ts/) and `active-sessions` (/32-active-sessions\\.spec\\.ts/), both `use: { ...devices['Desktop Chrome'] }`, NO storageState, no dependencies, with the plan's comments. Spec 31 (title contains REG-B138): skip on !HAS_SUPER_ADMIN_CREDS / tenant-admin login non-200 ('e2e tenant has no TENANT_ADMIN \u2014 run e2e-seed.js') / tenant not found BY SLUG via `platform-admin/tenants?search=`; login tenant admin via page.request, count sessions; loginAsSuperAdmin; impersonate through the /admin/tenants UI (search + Impersonate) with API+localStorage fallback; assert menuitem 'Sign out' count 0, click 'Exit impersonation' \u2192 /admin/tenants, zero /auth/logout requests, sessions count unchanged via the impersonation token; finally DELETE the created session. Spec 32 (titles contain REG-B155): setTenantCookie + fresh loginAsOperator; capture newest session id + createdAt; POST /auth/refresh with the BODY refresh token from localStorage rf:op:refreshToken; row id and createdAt survive; /settings `[data-session-id=sid]` visible \u2192 Revoke \u2192 DELETE 200 + 'Session revoked' + row gone \u2192 second refresh with the rotated token \u2192 401; second test: page.route DELETE \u2192 403, expect 'Failed to revoke session' and one extra GET /auth/sessions (routeHits === 1).",
+      "satisfies": ["R15", "R16"],
+      "provenBy": ["T21", "T22", "T23"],
+      "dependsOn": []
+    },
+    {
+      "id": "WP11",
+      "title": "Close-out: code map (api.md/web.md/CHANGELOG/_meta), lesson L-044 + _meta, campaign status F14.jsonl",
+      "files": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/code-map/api.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/code-map/web.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/code-map/CHANGELOG.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/code-map/_meta.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/lessons/LESSONS.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/lessons/_meta.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/.claude/campaign/status/F14.jsonl"
+      ],
+      "brief": "Per build-plan.md \u00a72 WP11. Surgical code-map bullets for every touched file (api.md: B52 uploads deny, jwt/buyer strategies, impersonation.guard, audit interceptor/service, auth.controller logout, auth.service refresh in-place, the three DRIVER-grant removals + addItemForUser; web.md: exitImpersonation single exit, header sign-out slot rule, SessionsCard data-session-id/honest revoke-all, e2e 31/32 + project entries, e2e-seed tenant admin); one dated CHANGELOG bullet; _meta.json mappedSha=branch HEAD, generatedAt, REPLACE notes. Lesson: run `node scripts/validate-lessons.mjs` first (read `binding:`), append L-044 (pre-allocated by SEQUENCE \u00a74 \u2014 do NOT take nextId 42; L-042/043 are reserved) under `## security` in the register's Symptom/Root cause/Lesson/Guard format using the plan's draft ('Green is a claim, not evidence \u2014 invert the test that asserts the old behaviour; prove a side-effect-only guard's input exists where it runs'), \u2264 ~1 KB, no client identifiers; bump lessons _meta.json activeCount, nextId \u2192 50 with a reserved-gap note, updatedAt. F14.jsonl: B52/B132/B133/B165/B168 \u2192 state fixed with proof spec files; B138/B155 \u2192 proven-pending-deploy with proof 31-impersonation-signout / 32-active-sessions (a skip is never a discharge, L-041). Runs last: it documents the final shape of every other package.",
+      "satisfies": ["R17"],
+      "provenBy": ["T25"],
+      "dependsOn": ["WP1", "WP2", "WP3", "WP4", "WP5", "WP6", "WP7", "WP8", "WP9", "WP10"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api test -- src/uploads/uploads-tenant-scope.security.spec.ts src/uploads/uploads-xss.security.spec.ts src/uploads/uploads-signed-url.security.spec.ts src/customers/customers.controller.roles.spec.ts src/customers/customers.service.spec.ts src/order-templates/order-templates.controller.roles.spec.ts src/order-templates/order-templates.service.spec.ts src/inventory/inventory.controller.roles.spec.ts src/auth/strategies/jwt.strategy.spec.ts src/audit/audit.interceptor.security.spec.ts src/audit/audit.service.spec.ts src/auth/guards/impersonation.guard.spec.ts src/auth/auth.controller.cookie.spec.ts src/auth/auth.service.spec.ts src/tenant/tenant-status.guard.spec.ts",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web run check-types"
+    ],
+    "final": [
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api run lint",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api test",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web run check-types",
+      "npm --prefix C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/web run lint",
+      "node C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads.controller.ts",
+        "behavior": "delete the \"supplier-statements\" OWNER_LOOKUPS entry (default-deny left in place) \u2014 the owning tenant is now 403'd and the lookup never runs",
+        "test": "REG-B52 the owning tenant reads its supplier-statement scan (200) through the owner lookup"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads.controller.ts",
+        "behavior": "delete the default-deny `if (!tenantMatch && !ownerLookup && caller?.role !== \"SUPER_ADMIN\")` block \u2014 unmapped/flat keys stream again (200) and unwritten ones 404",
+        "test": "REG-B52 unmapped prefixes and flat keys are denied on the JWT path BEFORE the filesystem check; signed URLs stay exempt"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads.controller.ts",
+        "behavior": "move the default-deny block to after fs.existsSync \u2014 key existence leaks as 403-vs-404 and existsSync runs before the deny",
+        "test": "REG-B52 unmapped prefixes and flat keys are denied on the JWT path BEFORE the filesystem check; signed URLs stay exempt"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/uploads/uploads.controller.ts",
+        "behavior": "in the owner branch change `if (!owner || \u2026)` to `if (owner && \u2026)` \u2014 a missing/NULL-tenant scan row is served",
+        "test": "REG-B52 a missing or NULL-tenant scan row fails closed (403, never 404)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/strategies/jwt.strategy.ts",
+        "behavior": "remove the `impersonatedBy: payload.impersonatedBy ?? undefined` line \u2014 the claim is dropped before any guard/interceptor/logout can read it",
+        "test": "REG-B165 REG-B138 the staff strategy passes impersonatedBy through to req.user"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/buyer/strategies/buyer-jwt.strategy.ts",
+        "behavior": "revert validate() to the 3-field literal {sub,email,type} \u2014 buyer impersonation claim dropped",
+        "test": "REG-B165 the buyer strategy passes impersonatedBy through"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/guards/impersonation.guard.ts",
+        "behavior": "make readClaims() return only request.user (no bearer decode) \u2014 with req.user undefined (production APP_GUARD ordering) the impersonated write is never logged",
+        "test": "REG-B165 a POST with impersonatedBy in the bearer token logs admin/acting-as/tenant while req.user is undefined (APP_GUARD ordering)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.interceptor.ts",
+        "behavior": "omit impersonatedBy from the auditService.log({...}) call \u2014 audit rows lose who really wrote",
+        "test": "REG-B165 forwards req.user.impersonatedBy into the audit row (who really wrote)"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/audit/audit.service.ts",
+        "behavior": "drop impersonatedBy from auditLog.create data \u2014 the DTO field is accepted but never persisted",
+        "test": "REG-B165 writes impersonatedBy into the AuditLog row"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.controller.ts",
+        "behavior": "remove the `if (user.impersonatedBy)` branch in logout \u2014 a super-admin signing out revokes every session of the tenant's TENANT_ADMIN",
+        "test": "REG-B138 an impersonated caller's logout clears the cookie and revokes NOTHING"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.ts",
+        "behavior": "restore the old rotation (deleteMany by tokenHash + unconditional storeRefreshToken upsert) \u2014 updateMany is never called and the session row id changes every refresh",
+        "test": "REG-B155 rotates the stored row IN PLACE (same id, compare-and-swap on the old hash) and never deletes or upserts"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.ts",
+        "behavior": "add `createdAt: new Date()` to updateMany.data \u2014 'Signed in' becomes the rotation time again",
+        "test": "REG-B155 rotates the stored row IN PLACE (same id, compare-and-swap on the old hash) and never deletes or upserts"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.ts",
+        "behavior": "drop the `count === 0` storeRefreshToken fallback \u2014 the loser of a concurrent rotation is 401'd (race tolerance lost)",
+        "test": "pin (B155): losing the concurrent-rotation race (count 0) falls back to creating a fresh row \u2014 both refreshes succeed"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/auth/auth.service.ts",
+        "behavior": "delete the inactive-branch deleteMany \u2014 a suspended user's presented token survives in listSessions",
+        "test": "pin (B155): an inactive user's presented token is still consumed before the 401"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.controller.ts",
+        "behavior": "restore UserRole.DRIVER on @Roles of upsertCustomerPrice",
+        "test": "REG-B132 upsertCustomerPrice declares the same roles as deleteCustomerPrice and admits no DRIVER"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.service.ts",
+        "behavior": "delete the hoisted role gate at the top of upsertCustomerPrice \u2014 a DRIVER payload reaches customerPrice.upsert",
+        "test": "REG-B132 a DRIVER cannot null the tier even on a row that keeps its MSRP \u2014 refused before any read"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/customers/customers.service.ts",
+        "behavior": "move the role gate below customerPrice.findUnique \u2014 the driver still gets 403 but learns whether an override exists",
+        "test": "REG-B132 a DRIVER posting a tier is refused before the MSRP entitlement or any DB read"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.controller.ts",
+        "behavior": "restore UserRole.DRIVER on create (or update/addItem/removeItem)",
+        "test": "REG-B133 every mutation declares roles and none admits DRIVER"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.controller.ts",
+        "behavior": "make addItem call this.service.addItem(templateId, dto) directly, bypassing the ownership wrapper",
+        "test": "REG-B133 addItem delegates to the ownership wrapper addItemForUser, never to addItem"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/order-templates/order-templates.service.ts",
+        "behavior": "make addItemForUser skip findOneForUser \u2014 a non-owning CUSTOMER's item is created",
+        "test": "REG-B133 a CUSTOMER who does not own the template cannot add items to it"
+      },
+      {
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F14/apps/api/src/inventory/inventory.controller.ts",
+        "behavior": "restore @Roles(UserRole.OPERATOR, UserRole.DRIVER) on recordAdjustment (any of the four writes)",
+        "test": "REG-B168 every inventory write resolves to exactly [OPERATOR] \u2014 no DRIVER"
+      }
+    ]
+  }
+}

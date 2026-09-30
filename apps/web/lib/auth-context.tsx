@@ -10,6 +10,8 @@ import {
   onCrossTabTokenChange,
   clearOpPresenceCookie,
 } from "./auth";
+import { subscribeImpersonation } from "./impersonation";
+import { MARKETING_PAGE_PATHS } from "./marketing-routes";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,22 +51,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Impersonation set/clear swaps the active token without a route change —
+  // re-read the decoded identity so the header chip and role gates follow the
+  // acting session. Only a NON-NULL read is applied: a null read (the stored
+  // access token has simply aged out while the refresh token is still good)
+  // must never tear down an established session — that would bounce an idle
+  // tab to /login. Cross-tab sign-out is onCrossTabTokenChange's job below.
+  // Do NOT fall back to refreshTokens() here either — a null read during the
+  // transition must not re-pin the old session.
+  React.useEffect(() => {
+    return subscribeImpersonation(() => {
+      const next = getStoredUser();
+      if (next) setUser(next);
+    });
+  }, []);
+
   React.useEffect(() => {
     return onCrossTabTokenChange(() => {
       // Don't punt the user to /login if they're on a public marketing route —
       // they may not even know they were ever signed in. Marketing pages are
       // public and should keep rendering regardless of token state.
-      const MARKETING_ROUTES = new Set([
-        "/",
-        "/retailers",
-        "/wholesalers",
-        "/distributors",
-        "/buyer",
-        "/product",
-        "/pricing",
-        "/company",
-        "/contact",
-      ]);
+      const MARKETING_ROUTES = new Set<string>([...MARKETING_PAGE_PATHS, "/buyer"]);
       if (typeof window !== "undefined" && MARKETING_ROUTES.has(window.location.pathname)) {
         return;
       }
@@ -90,6 +97,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
+}
+
+/** The auth context, or null outside an AuthProvider — for a UI gate that must fail CLOSED (show
+ *  nothing role-gated) rather than throw where no provider is mounted. */
+export function useOptionalAuth(): AuthContextValue | null {
+  return React.useContext(AuthContext);
 }
 
 export function useAuth(): AuthContextValue {

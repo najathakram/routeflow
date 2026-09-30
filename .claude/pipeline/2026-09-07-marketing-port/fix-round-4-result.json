@@ -1,0 +1,279 @@
+{
+  "execs": [
+    {
+      "executor": "W4a",
+      "status": "done",
+      "filesTouched": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.gitignore",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/middleware.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/middleware.marketing.test.ts"
+      ],
+      "diffSummary": "H1 — root .gitignore (1 hunk, +1 line, inserted directly after `test-output.txt`, now line 46):\n\n@@ -43,6 +43,7 @@ tsconfig.tsbuildinfo\n  coverage/\n  .nyc_output/\n  test-output.txt\n+apps/web/test-output/\n \n # ─── Playwright ─────────────────────────────\n\nH2 — apps/web/middleware.ts (2 round-4 hunks; the rest of this file's diff vs HEAD is rounds 1–3 port work, untouched by me):\n\n(a) docblock of MOBILE_APP_COOKIE, +6 lines appended before the closing `*/` (now lines 60–65):\n+ *\n+ * 30-day ROLLING marker: every proxied document load re-stamps it, so a real\n+ * mobile-app user never loses it, while a first-time visitor who taps \"Sign in\"\n+ * on the marketing site and then abandons the app stops being proxied at \"/\"\n+ * after 30 days instead of a year. `?desktop=1` and the `prefer-desktop`\n+ * cookie still win immediately, at any age.\n\n(b) the constant (line 68):\n-const MOBILE_APP_COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 1 year\n+const MOBILE_APP_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days, re-stamped on every proxied document\n\nNo behavioural code changed: the `if ((request.headers.get(\"accept\") ?? \"\").includes(\"text/html\"))` stamp block, the httpOnly/sameSite/path/secure attributes, the `/login` stamping (i.e. `/login` deliberately absent from MARKETING_AUTH_PATH_SET), and the `?desktop=1` / `prefer-desktop` precedence are all untouched — only the max-age value moved.\n\nH2 — apps/web/app/(marketing)/middleware.marketing.test.ts (1 hunk, in the \"stamps rf-mobile-app on a proxied document request (R-MKT T11)\" row, now lines 216–219):\n-    expect(cookie).toMatch(/Max-Age=31536000/i);\n+    // 30-day rolling marker (H2): re-stamped on every proxied document load,\n+    // so an abandoned first-visit sign-in attempt expires instead of pinning\n+    // the browser to the app for a year.\n+    expect(cookie).toMatch(/Max-Age=2592000/i);\n\n`grep -rn \"31536000\\|MOBILE_APP_COOKIE_MAX_AGE\\|1 year\" apps/web --include=*.ts --include=*.tsx` afterwards returns only middleware.ts:68 (the new 30-day constant) and middleware.ts:139 (its use) — no other spec, e2e or doc pinned the 1-year value.",
+      "gateOutputs": "1) prettier (every file I touched that prettier owns):\n$ cd .../apps/web && npx prettier --write middleware.ts \"app/(marketing)/middleware.marketing.test.ts\"\nmiddleware.ts 295ms (unchanged)\napp/(marketing)/middleware.marketing.test.ts 93ms (unchanged)\n(both already conformant after the edit; .gitignore is not a prettier target)\n\n2) tsc:\n$ cd .../apps/web && npx tsc --noEmit -p tsconfig.json  → TSC_EXIT=1\ncomponents/TenantLogo.tsx(5,26): error TS2305: Module '\"./brand\"' has no exported member 'BrandTone'.\ntest-output/r3/r3.spec.ts(244,23): error TS7006: Parameter 'msg' implicitly has an 'any' type.\ntest-output/r3/r3.spec.ts(247,29): error TS7006: Parameter 'req' implicitly has an 'any' type.\ntest-output/r3/r3.spec.ts(250,24): error TS7006: Parameter 'res' implicitly has an 'any' type.\nZERO errors in any of my three files (`grep -c middleware` on the output = 0). The TenantLogo error is W4b's file mid-flight (H3 in progress, `BrandTone` not yet exported from components/brand); the three test-output/r3 errors are the round-3 driver's untracked scratch Playwright spec.\n\n3) jest:\n$ cd .../apps/web && npx jest middleware --runInBand  → exit 0\nTest Suites: 1 passed, 1 total\nTests:       49 passed, 49 total\nTime:        3.892 s\n(incl. \"stamps rf-mobile-app on a proxied document request (R-MKT T11)\" green against Max-Age=2592000, and the four other marker rows + \"still rewrites /login for a mobile UA\")\n\n4) check-ignore:\n$ git -C .../rf-watchdog check-ignore -v apps/web/test-output  → CHECK_IGNORE_EXIT=0\n.gitignore:46:apps/web/test-output/\tapps/web/test-output\n\n5) confirmation it left git status:\n$ git -C .../rf-watchdog status --porcelain | grep -i \"test-output\"  → no match (grep exit 1)",
+      "notes": "Gate hazard for the regate/final gate, NOT caused by my diff and outside my file allow-list: `apps/web/tsconfig.json` still includes `apps/web/test-output/`, so the round-3 driver's scratch spec `apps/web/test-output/r3/r3.spec.ts` keeps `npx tsc --noEmit -p tsconfig.json` red with 3 implicit-any errors even now that the directory is git-ignored (H1 removes it from `git status`, not from the TS program). The regate's tsc step cannot go green until either that scratch file is deleted or `test-output` is added to tsconfig's `exclude` — a one-line change in a file no round-4 executor owns. Recommend the lead assign it (deleting the r3 scratch artifacts is the cheaper option since the UI ruling re-drives on port 3007 and writes fresh `r4-*` artifacts).\n\nSecond: `components/TenantLogo.tsx(5,26)` TS2305 is W4b's H3 work in flight (importing `BrandTone` before `components/brand` exports it) — expect it gone when W4b finishes; it is not a W4a regression.\n\nScope note: I did not add a new test row asserting Set-Cookie presence on `/login`, because ruling H2 scopes the test change to \"the test rows that assert the cookie attributes\". `/login` stamping is still proven indirectly (it is deliberately absent from `MARKETING_AUTH_PATHS`, pinned by the existing \"does not exempt /login\" and \"still rewrites /login for a mobile UA\" rows) and directly by the UI ruling's iPhone-UA request matrix.\n\nI ran no git write commands: no commit, no checkout/stash/reset/clean, no other worktree, no Docker interaction. All git use was read-only via `git -C C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog`."
+    },
+    {
+      "executor": "W4b",
+      "status": "done",
+      "filesTouched": [
+        "apps/web/components/TenantLogo.tsx",
+        "apps/web/app/(dashboard)/layout.tsx",
+        "apps/web/app/globals.css",
+        "apps/web/app/(marketing)/marketing.css"
+      ],
+      "diffSummary": "H3: TenantLogo.tsx now takes a `tone?: BrandTone` prop (default \"dark\") and, when no `branding.logoUrl` is set, renders `<BrandMark tone={tone} className={...} />` instead of a plain `<img src={BRAND_MARK_SRC}>` — the fallback mark can now invert to white ink. Imports `BrandMark`/`BrandTone` from `./brand/BrandMark` directly (not the `./brand` index, which is out of scope and does not re-export the `BrandTone` type — importing it from the index caused TS2305). The tenant's own uploaded logo path is untouched (still a plain `<img src={branding.logoUrl}>`). Both sidebar call sites in `app/(dashboard)/layout.tsx` (the `lg+` static rail ~line 1309 and the mobile drawer ~line 1358, both on `bg-navy`) now pass `tone=\"light\"`.\n\nH4: `apps/web/app/globals.css` gains a standalone `.brand-mark--light { filter: brightness(0) invert(1); }` rule after the existing `@layer utilities` block (kept alongside Tailwind's `brightness-0 invert` utilities, per the ruling's \"belt and braces\"). `apps/web/app/(marketing)/marketing.css`'s single `.rf-marketing .brand-mark` rule (was line 9699) is split: `object-fit`/`flex-shrink` stay on the bare `.rf-marketing .brand-mark` selector, and `mix-blend-mode: multiply` moves onto `.rf-marketing .brand-mark:not(.brand-mark--light)` so a light-toned mark rendered inside the marketing cascade is no longer erased. (Checked the other 3 `mix-blend-mode: multiply` hits in marketing.css at 3661/5179/7063 — `.retailer-art > img` and `.stock-cutout`, unrelated to `.brand-mark`, left alone.)\n\nH5: `.rf-marketing .connection-nodes > div` (was `#8298b5` on white, 2.96:1) → `#5c6b82` (5.41:1). `.rf-marketing .connection-diagram > p` (was `#8b9eb8` on white, 2.73:1) → `#6b7687` (4.60:1). Same blue-gray hue family as the ruling's example, relative darker/lighter hierarchy between the two rules preserved. A third, unrelated `#8b9eb8` hit in marketing.css (line 5034, `.cta-block/.cta-retailer > div > span`) was left untouched — not named in ruling H5's scope.",
+      "gateOutputs": "`cd apps/web && npx tsc --noEmit -p tsconfig.json` — clean on all 4 touched files (only pre-existing, out-of-scope errors remain in `test-output/r3/r3.spec.ts`, unrelated to this ruling set / H1's territory).\n\n`cd apps/web && npx jest components/brand --runInBand` — PASS, 17/17 (BrandMark.test.tsx; includes B2 tone=\"light\" assertions this change relies on).\n\n`cd apps/web && npx prettier --write` then `--check` on all 4 touched files — \"All matched files use Prettier code style!\"\n\nWCAG contrast computations (sRGB relative-luminance formula, background #ffffff):\n- `#8298b5` on white: L=0.30484 → contrast 2.96:1 (fails AA 4.5:1) → replaced with `#5c6b82`: L=0.14417 → contrast 5.41:1 (passes).\n- `#8b9eb8` on white: L=0.33424 → contrast 2.73:1 (fails AA 4.5:1) → replaced with `#6b7687`: L=0.17841 → contrast 4.60:1 (passes).",
+      "notes": "Design fit exactly — no deviation from H3/H4/H5. Only necessary adjustment: imported BrandTone/BrandMark from `./brand/BrandMark` instead of the `./brand` index barrel, since the index only re-exports the value (BrandMark/Brand/BrandSignature/BRAND_MARK_SRC), not the BrandTone type, and editing the index.ts was outside this executor's file scope. git status confirms only the 4 assigned files are modified; nothing else in the worktree touched."
+    }
+  ],
+  "regate": {
+    "allPass": false,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": false,
+        "summary": "TypeScript type check failed with 3 implicit any type errors in test-output/r3/r3.spec.ts",
+        "failures": [
+          "test-output/r3/r3.spec.ts(244,23): error TS7006: Parameter 'msg' implicitly has an 'any' type.",
+          "test-output/r3/r3.spec.ts(247,29): error TS7006: Parameter 'req' implicitly has an 'any' type.",
+          "test-output/r3/r3.spec.ts(250,24): error TS7006: Parameter 'res' implicitly has an 'any' type."
+        ]
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": false,
+        "summary": "Jest test suite failed: 337 passed, 1 failed (app/(marketing)/marketing-port.static.test.ts - globals.css SHA256 mismatch)",
+        "failures": [
+          "FAIL app/(marketing)/marketing-port.static.test.ts - pinned global styles MKT-PIN T7",
+          "Expected globals.css SHA256: 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe",
+          "Received globals.css SHA256: e38149e66dca862c15cea22ee27614a8c08128c058a15481d163ad35cba986d5"
+        ]
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint per-workspace check passed: 0 errors, 47 informational warnings (pre-existing on master)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && git -C . status --porcelain | grep -v '^ M|^M |^D |^A |^R '",
+        "pass": false,
+        "summary": "Untracked files check failed: 60+ untracked files found including pipeline directory and marketing-port files",
+        "failures": [
+          "Untracked: .claude/pipeline/2026-09-07-marketing-port/",
+          "Untracked: apps/web/app/(marketing)/ - 16 new component files",
+          "Untracked: apps/web/public/marketing/ - marketing assets",
+          "Untracked: apps/web/fonts/ - font files",
+          "test-output/ not properly gitignored (contradicts H1 ruling expectation)"
+        ]
+      }
+    ]
+  },
+  "drive": {
+    "branchBuildProven": true,
+    "serverStopped": true,
+    "serverPid": "41768 (Windows PID of the actual `next-server` process listening on :3007; the shell's own $! of 253460 was the bash subshell wrapper, not the listener — netstat -ano confirmed 41768 owned the LISTENING socket, and taskkill //PID 41768 //F succeeded; post-kill netstat shows no LISTENING entry on :3007, only stale TIME_WAIT sockets)",
+    "notes": "Setup: started `npx next dev -p 3007` from apps/web, logged to test-output/r4/dev-server.log. Server answered 200 on first curl to http://localhost:3007/ after ~9s (\"Ready in 8.8s\"). Branch-build proof: curl'd GET / body contains `<header class=\"site-header\"` plus literal substrings Platform/Distributors/Retailers/Pricing/Company — confirmed this is the marketing branch build, not the Docker container. dev-server.log shows only benign Next.js noise (turbopack config key warning, a lockfile-patch TypeError that Next tolerates, an ESM/CJS warning for tailwind.config.ts, a util._extend deprecation) — no request-path errors.\n\nPlaywright: wrote apps/web/test-output/r4/playwright.r4.config.ts (own testDir, baseURL http://localhost:3007, no storageState, Desktop Chrome project) and apps/web/test-output/r4/r4.spec.ts covering the five flows, ran with `npx playwright test -c test-output/r4/playwright.r4.config.ts --reporter=list` from apps/web — all 5 tests passed (43.1s), full console log at apps/web/test-output/r4/run-output.log. Pixel-sampling for the two contrast checks used apps/web/test-output/r4/sample-pixels.mjs (pngjs) reading the saved screenshots directly — see raw sample output in the flows below.\n\nScreenshots saved under apps/web/test-output/artifacts/: r4-login-1440x900.png, r4-wholesalers-1440x900.png, r4-wholesalers-375x812.png, r4-home-375x812.png, r4-product-375x812.png, r4-retailers-375x812.png, r4-dashboard-unauth.png.\n\nFlow 5 caveat: /dashboard is auth-gated by client-side logic (not a server redirect) — the driver did not authenticate (no credentials used, per instructions), so page.url() stayed at /dashboard after networkidle; screenshot r4-dashboard-unauth.png shows whatever unauthenticated state that route renders (not the sidebar). TenantLogo's tone=\"light\" fallback on the dashboard sidebar (the H3 fix target) was therefore NOT independently reachable/verifiable without auth. As a substitute the driver checked /login (reachable without auth) and found one `.brand-mark--light` element with class=\"brand-mark brand-mark--light brightness-0 invert\" — confirming the CSS class exists and is applied somewhere in the branch build, but this is the BrandMark on the login panel, not TenantLogo's fallback in the dashboard sidebar layout. This distinction is reported honestly as unverified per the ruling's \"else mark unverified honestly\" clause.",
+    "flows": [
+      {
+        "flow": "1: /login desktop 1440x900 — brand mark contrast",
+        "viewport": "1440x900",
+        "status": "captured, pixel-sampled",
+        "facts": [
+          "Playwright: 1 element matched selector '.brand-mark, [class*=brand-mark]'; boundingBox = {x:184, y:264.703125, width:48, height:48}",
+          "Screenshot saved: apps/web/test-output/artifacts/r4-login-1440x900.png",
+          "Pixel sampling (pngjs, 3 sample points inside the mark's bounding box vs 3 points on the panel background just outside it):",
+          "  mark-ink samples (RGB): [255,255,255], [132,151,156], [10,49,58]",
+          "  panel-bg samples (RGB): [11,47,57], [11,45,57], [12,36,55] — a dark navy panel",
+          "  Highest-contrast mark sample [255,255,255] (pure white, the mark's actual ink) vs bg samples: 14.19:1, 14.50:1, 15.87:1",
+          "  Mid sample [132,151,156] (anti-aliased edge pixel) vs bg samples: 4.65:1, 4.75:1, 5.21:1 — still passes WCAG AA (≥4.5:1) for normal text; comfortably passes as large-scale graphic contrast (≥3:1)",
+          "  Low sample [10,49,58] essentially matches the background itself (contrast ~1.0-1.14:1) — this was a sample point that landed in a background gap inside the mark's bounding box, not on the glyph stroke, so it is not a contrast failure of the mark itself",
+          "  Net finding: the brand mark's actual ink (white) renders at ≥14:1 against the dark panel background — well above WCAG AA"
+        ]
+      },
+      {
+        "flow": "2: /wholesalers hero note contrast",
+        "viewport": "1440x900 and 375x812",
+        "status": "captured, pixel-sampled",
+        "facts": [
+          "Playwright located text 'Book a distributor demo' (heading, count=1 at both viewports)",
+          "1440x900: boundingBox = {x:80, y:733.734375, width:251.15625, height:52.796875}; screenshot r4-wholesalers-1440x900.png",
+          "375x812: boundingBox = {x:18, y:534.9375, width:248.875, height:52.5}; screenshot r4-wholesalers-375x812.png",
+          "Pixel sampling at 1440x900: text-region samples (RGB) [16,38,77] x2, [20,42,80]; bg samples (RGB) [254,254,254], [255,255,255] x2 (white/near-white background)",
+          "  Contrast ratios: 14.10:1 to 14.93:1 across all text/bg sample pairs — comfortably passes WCAG AA (≥4.5:1) and AAA (≥7:1)",
+          "Pixel sampling at 375x812: text-region samples (RGB) [16,38,77] x3 (identical, dark navy blue); bg samples [254,254,254], [255,255,255] x2",
+          "  Contrast ratios: 14.80:1 to 14.93:1 across all pairs — same result as desktop, passes AA and AAA"
+        ]
+      },
+      {
+        "flow": "3: iPhone-13 UA request matrix",
+        "viewport": "iPhone UA (Playwright APIRequestContext, viewport 390x844)",
+        "status": "completed",
+        "facts": [
+          "GET /brand/routeflow-mark-192.png: status=200, content-type=image/png, x-middleware-rewrite=(absent)",
+          "GET /signup: status=200, x-middleware-rewrite=(absent); body contains signup-like heading text (regex /sign\\s*up|create.*account|get started/i)=true; body length=17742; body is the Next.js signup page shell (DOCTYPE html, preloads /brand/routeflow-mark-192.png, layout.css)",
+          "GET / WITH cookie rf-mobile-app=1: status=200, x-middleware-rewrite=https://routeflowmobile-production.up.railway.app/ (present — proxied); body kind=other/app-shell (does NOT contain '<header class=\"site-header\"'), body length=1417 (small — consistent with an Expo/mobile-web app shell, not the marketing HTML)",
+          "GET / WITHOUT cookie: status=200, x-middleware-rewrite=(absent); body kind=marketing-site (DOES contain '<header class=\"site-header\"'), body length=129908",
+          "GET /login: status=200, x-middleware-rewrite=https://routeflowmobile-production.up.railway.app/login (present — proxied, confirming /login is NOT in the marketing-carve-out MARKETING_AUTH_PATH_SET, matching middleware.ts's comment '`/login` is NOT a member on purpose'); Set-Cookie header(s) captured via APIResponse.headersArray() = [] (empty array — no Set-Cookie observed on this response)",
+          "Note on the empty Set-Cookie: middleware.ts sets the rf-mobile-app cookie only 'if (request.headers.get(\"accept\") ?? \"\").includes(\"text/html\")' on the rewritten response. Playwright's APIRequestContext sends its own default Accept header (not necessarily text/html), which may explain why no Set-Cookie was captured here — this is reported as an observed fact (empty array), with the caveat that the request's exact Accept header was not independently verified/logged in this run"
+        ]
+      },
+      {
+        "flow": "4: mobile pages structure",
+        "viewport": "375x812",
+        "status": "completed, all green",
+        "facts": [
+          "/: header present=true (count=1); h1 count=1; h1 exact text=\"Turn scattered orders into organized deliveries.\" (word spaces intact); console errors=[]; failed same-origin requests=[]",
+          "/product: header present=true (count=1); h1 count=1; h1 exact text=\"Orders. Deliveries. Accounts. Finally, connected.\" (word spaces intact); console errors=[]; failed same-origin requests=[]",
+          "/retailers: header present=true (count=1); h1 count=1; h1 exact text=\"Restock your shelves. Skip the back and forth.\" (word spaces intact); console errors=[]; failed same-origin requests=[]",
+          "Screenshots: r4-home-375x812.png, r4-product-375x812.png, r4-retailers-375x812.png (fullPage)"
+        ]
+      },
+      {
+        "flow": "5: TenantLogo light fallback on dashboard sidebar",
+        "viewport": "375x812/1280x720 (default)",
+        "status": "unverified — auth-gated, honestly reported",
+        "facts": [
+          "Navigated to /dashboard unauthenticated: page.url() after networkidle = http://localhost:3007/dashboard (stayed on the same URL — no server-side redirect observed; the route appears to be client-side auth-gated). Screenshot: r4-dashboard-unauth.png",
+          "This driver did not authenticate (no credentials entered, per the driver's scope) — the sidebar with the two tone=\"light\" TenantLogo call sites (app/(dashboard)/layout.tsx ~:1309, :1358) was NOT reached, so the light-fallback rendering on the actual navy sidebar is UNVERIFIED by this run",
+          "Substitute check performed: on /login (reachable without auth), found 1 element matching '[class*=brand-mark]' with class=\"brand-mark brand-mark--light brightness-0 invert\" — this confirms the brand-mark--light CSS class exists and is wired to an element in this build, but it is the BrandMark component on the login page's dark panel, not TenantLogo's dashboard-sidebar fallback specifically — reported as a distinct, weaker fact, not a substitute verification of H3"
+        ]
+      }
+    ]
+  },
+  "judge": {
+    "verdicts": [
+      {
+        "flow": "branchBuildProven (precondition)",
+        "verdict": "pass",
+        "evidence": "Driver claim independently corroborated. `cat apps/web/test-output/r4/dev-server.log` shows a `next dev -p 3007` from the worktree (paths `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-watchdog\\...`), \"Ready in 8.8s\", and per-route compiles for /, /login, /wholesalers, /signup, /product, /retailers, /dashboard — no Docker container could produce that log. Visually confirmed on my own read of `apps/web/test-output/artifacts/r4-wholesalers-1440x900.png`: the ported marketing chrome (pill header with `routeflow.` mark + Platform / Distributors / Retailers / Pricing / Company nav, Sign in dropdown, \"Book a demo\") — this is the branch build, not master's dashboard-only web. All r4-*.png are dated Sep 7 07:49, after the r3 set (07:16-07:17)."
+      },
+      {
+        "flow": "1: /login desktop 1440x900 — brand mark ≥ 3:1 on the dark panel",
+        "verdict": "pass",
+        "evidence": "I re-measured the pixels myself rather than trusting the driver's 3 sample points: wrote `apps/web/test-output/r4/judge-sample.mjs` (pngjs; scans EVERY pixel of the 48x48 mark bbox at x184,y264.7, takes the modal colour of a 12px ring outside the box as background, takes the median of the brightest 3% as ink) and ran `node test-output/r4/judge-sample.mjs` from apps/web. Output: `modal background = rgb(10,49,58)` · `ink median = rgb(255,255,255)` · `CONTRAST ink vs bg = 13.88:1` · 1035/2304 box pixels (44.9%) at >= 3:1, 1011 (43.9%) at >= 4.5:1 (the remainder is panel showing through the glyph's negative space, as expected for a 48px mark). Visual confirmation: I cropped the region 3x (`judge-crop-login-mark.png`) and read it — a solid WHITE arrow/R mark plus white `routeflow.` wordmark on the dark teal-navy gradient panel; nothing is washed out or invisible. Bar is 3:1; measured 13.88:1. The driver's low sample [10,49,58] was a background pixel inside the bbox, not a mark failure — my full-box scan confirms that reading."
+      },
+      {
+        "flow": "2: /wholesalers hero note ≥ 4.5:1 at 1440x900 and 375x812",
+        "verdict": "pass",
+        "evidence": "PASSES, but NOT on the driver's evidence — the driver measured the wrong element and I had to re-measure. `getByText(\"Book a distributor demo\")` resolves to the navy CTA PILL, so the driver's \"text vs bg\" numbers (rgb(16,38,77) vs white, 14.9:1) are the button fill against the page, not the `.hero-note`. I proved this by cropping that bbox 3x (`judge-crop-heronote-1440.png`): it is the filled pill with white label, and the grey note sits BELOW it. The ruled element (fix-round-3.md C1: `.hero-note` under the CTA, target `#6b7687`) is the line \"Orders, routes, and customer accounts in one workspace.\" I wrote `apps/web/test-output/r4/judge-note.mjs` (row-by-row scan for ink under the CTA) and ran it: 1440x900 rows y=810..818 carry the note, darkest/core ink `rgb(107,118,135)` = #6b7687, `contrast-vs-white = 4.60:1`; 375x812 rows y=610..618, identical core ink `rgb(107,118,135)`, `4.60:1`. Crops `judge-note-1440.png` / `judge-note-375.png` read cleanly as that sentence at both viewports, word spaces intact. 4.60 >= 4.50 at both viewports, so C1's fix is live in the branch build. Margin is thin (0.10) — a future darkening of that token would be safer, but the bar is met."
+      },
+      {
+        "flow": "3a: iPhone-UA request matrix — /brand and /signup served by Next; / proxied only with the marker",
+        "verdict": "pass",
+        "evidence": "From `apps/web/test-output/r4/run-output.log` (Playwright APIRequestContext with an iPhone 16.5 UA, verified in `r4.spec.ts` lines 66-145): `GET /brand/routeflow-mark-192.png` -> status 200, content-type image/png, x-middleware-rewrite (absent) = served by Next. `GET /signup` -> 200, x-middleware-rewrite (absent), body 17742 chars beginning `<!DOCTYPE html><html lang=\"en\">...` with the Next layout.css/app preloads = the Next signup page, not a proxy. `GET /` WITH `cookie: rf-mobile-app=1` -> 200, `x-middleware-rewrite= https://routeflowmobile-production.up.railway.app/`, body 1417 chars and NOT containing `<header class=\"site-header\"` = proxied app shell. `GET /` WITHOUT the cookie -> 200, rewrite absent, body 129908 chars containing `<header class=\"site-header\"` = the marketing site. That is exactly the bar: `/` is proxied only when the marker is present, and the marketing site is what an unmarked phone gets."
+      },
+      {
+        "flow": "3b: /login proxied AND its Set-Cookie carries Max-Age=2592000",
+        "verdict": "unverified",
+        "evidence": "The proxy half PASSES: `GET /login` (iPhone UA) -> 200 with `x-middleware-rewrite= https://routeflowmobile-production.up.railway.app/login`. The cookie half is NOT verified at runtime: `FACT iphone /login: Set-Cookie header(s) = []` — the driver observed NO Set-Cookie at all, so it observed no Max-Age either. Root cause is the driver's instrumentation, not (apparently) the code: `grep -n \"text/html\" apps/web/middleware.ts` shows line 134 `if ((request.headers.get(\"accept\") ?? \"\").includes(\"text/html\"))` gates the stamp, and Playwright's APIRequestContext sends `Accept: */*`, so the branch was never entered. Corroboration only, NOT verification: `middleware.ts:68` `const MOBILE_APP_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days` (= 2592000) used at `:139 maxAge: MOBILE_APP_COOKIE_MAX_AGE`, and `apps/web/app/(marketing)/middleware.marketing.test.ts:219` asserts `expect(cookie).toMatch(/Max-Age=2592000/i)`. Source + unit test are not a served response, and this bar (H2, the whole point of round 4's narrowing) is about the served response — so: unverified, never pass."
+      },
+      {
+        "flow": "4: three mobile pages at 375x812 — one h1, intact word spaces, no console errors",
+        "verdict": "pass",
+        "evidence": "DOM facts from run-output.log: `/` header count 1, h1 count 1, text \"Turn scattered orders into organized deliveries.\", console errors [], failed same-origin requests []; `/product` header 1, h1 1, \"Orders. Deliveries. Accounts. Finally, connected.\", errors [], failed []; `/retailers` header 1, h1 1, \"Restock your shelves. Skip the back and forth.\", errors [], failed []. The spec's listeners are correct (console 'error' type only, plus a >=400 same-origin response trap, both cleared per route before each goto). I did not take the text on trust — I cropped the top viewport of each fullPage shot at 2x (`judge-crop3.mjs`) and read all three: `judge-home-top.png`, `judge-product-top.png`, `judge-retailers-top.png` each render the pill header (mark + hamburger) and exactly one hero h1 with visibly correct inter-word spacing and no glyph collapse — the r3 word-space defect is gone. One cosmetic non-bar observation on /product: the eyebrow bullet dot sits flush left, detached from the wrapped eyebrow text \"CONNECTED OPERATIONS. AI INVOICE SCANNING.\" (see judge-product-top.png) — worth a row, not a gate failure."
+      },
+      {
+        "flow": "5: TenantLogo light fallback (H3) on the dashboard sidebar",
+        "verdict": "unverified",
+        "evidence": "The driver could not drive it, and the design of record explicitly allows this (\"else mark unverified honestly\"), so it is unverified and NOT a blocker. Evidence: `FACT dashboard (unauth) redirected to = http://localhost:3007/dashboard` — no server redirect, the route is client-side gated; I read `r4-dashboard-unauth.png` (1280x720) and it is a blank white page with a single teal spinner — the navy sidebar with the two `tone=\"light\"` TenantLogo call sites never rendered. The substitute check is real but weaker, exactly as the driver said: on /login, 1 element matches `.brand-mark--light` with `class=\"brand-mark brand-mark--light brightness-0 invert\"`, and my 3x crop of that mark shows it rendering pure white (rgb(255,255,255)) on the dark panel — so the light treatment works where it is applied. That is BrandMark on the login panel, not TenantLogo's no-logo fallback inside the dashboard sidebar; and because the element carries BOTH `brand-mark--light` and the Tailwind `brightness-0 invert` pair, the screenshot cannot attribute the white ink to H4's new CSS rule specifically. H3's actual call sites remain unproven by pixels."
+      }
+    ],
+    "blockers": [
+      "Flow 3b — the H2 bar `/login`'s Set-Cookie carries `Max-Age=2592000` was never observed at runtime (`Set-Cookie header(s) = []`), because Playwright's APIRequestContext sends `Accept: */*` and `middleware.ts:134` only stamps the marker when Accept includes `text/html`. This is the one bar round 4 exists to prove and it is unverified. Cheap re-drive (server must be restarted; ~1 min): from apps/web start `npx next dev -p 3007`, then `curl -sS -D - -o NUL -H 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1' -H 'Accept: text/html' http://localhost:3007/login` and read the `set-cookie:` line — it must contain `rf-mobile-app=1` and `Max-Age=2592000`. Alternatively re-run the same request inside the spec with `headers: { accept: \"text/html\" }` on `ctx.request.get`. Until that header is seen, the H2 narrowing is proven only by source + `middleware.marketing.test.ts:219`, not by a served response."
+    ],
+    "reasoning": "branchBuildProven is TRUE and I confirmed it independently (dev-server.log paths + compiles under the worktree; the r4-wholesalers desktop shot shows the ported marketing header nav), so no flow is void for wrong-build reasons — the round-3 blocker is discharged. I then judged every bar from the pixels rather than from the driver's summary, and re-derived both contrast numbers with my own full-region samplers (apps/web/test-output/r4/judge-sample.mjs, judge-note.mjs, judge-crop2/3.mjs — all under the now-ignored test-output/, confirmed by `git check-ignore -v apps/web/test-output` -> .gitignore:46, `git status --porcelain | grep -c test-output` -> 0, so H1 also holds and my scratch files do not dirty the tree). Four bars pass. Flow 1: 13.88:1 against a 3:1 bar, white mark on the dark teal panel, visually confirmed at 3x. Flow 2 passes but the driver's evidence for it was OFF-TARGET — `getByText(\\\"Book a distributor demo\\\")` matched the navy CTA pill, so the driver measured button-fill vs page (14.9:1) and never touched the `.hero-note` the C1 ruling is about; I found the note one row-block below the pill and measured its core ink at rgb(107,118,135) = #6b7687 = 4.60:1 vs white at BOTH 1440 and 375, which clears the 4.5:1 bar with a 0.10 margin. Flow 3a passes cleanly: /brand and /signup come from Next with no rewrite, / is rewritten only when rf-mobile-app=1 is present and returns the 129908-char marketing HTML when it is not. Flow 4 passes on both DOM facts and my own reading of the three cropped hero viewports — one h1 each, word spaces intact, zero console errors, zero failed same-origin requests. Two flows are unverified and I refuse to round either up. Flow 3b: /login IS proxied, but no Set-Cookie was emitted for the request the driver made, so the Max-Age=2592000 half of a conjunctive bar has zero runtime evidence; source and the unit test corroborate but do not substitute for a served header, and this is precisely the H2 change round 4 was convened to prove — hence the single blocker, with the exact one-line curl to close it. Flow 5: /dashboard rendered as a bare spinner unauthenticated, the sidebar never mounted, so H3's two tone=\"light\" call sites are unproven by pixels; the ruling pre-authorised marking this unverified, so it is not a blocker — but note the /login substitute cannot even attribute the white ink to H4's new CSS rule, since that element also carries the Tailwind brightness-0/invert pair. Net: land-blocking work is one ~1-minute re-drive of a single request; everything else the UI gate was asked to prove is proven."
+  },
+  "review": {
+    "recommendation": "one-more-round",
+    "verdicts": [
+      {
+        "item": "H1 — apps/web/test-output/ ignored",
+        "verdict": "fixed",
+        "evidence": "`git diff -- .gitignore` = one hunk, `+apps/web/test-output/` after `test-output.txt`. `git -C <worktree> check-ignore -v apps/web/test-output` → `.gitignore:46:apps/web/test-output/\tapps/web/test-output`, exit 0. `git status --porcelain | grep -i 'test-output'` → no match (grep exit 1). Refuting W4a's framing: the 21 MB is out of git, but it is NOT out of the TypeScript program — see hazard N1; the regate's 4th item ('60+ untracked files') is a mis-applied check (the port is uncommitted, so every new port file is legitimately untracked; the ruling's actual criterion — test-output gone from the list — is met)."
+      },
+      {
+        "item": "H2 — 30-day rolling rf-mobile-app marker",
+        "verdict": "fixed",
+        "evidence": "middleware.ts:68 `const MOBILE_APP_COOKIE_MAX_AGE = 60 * 60 * 24 * 30;` used at :139; docblock lines 60-65 say '30-day ROLLING marker'; middleware.marketing.test.ts:219 asserts /Max-Age=2592000/i. `grep -rn 31536000` over apps/web (excluding node_modules/.next/test-output) → no output, so nothing still pins the 1-year value. I did NOT take the executor's or the unit suite's word: I wrote, ran and deleted my own probe `app/(marketing)/zz-reviewer-probe.test.ts` against the real `middleware()` export — 7/7 PASS, and it closes the UI judge's blocker (flow 3b) at the code level with the Accept header the driver omitted. P1 /login + Accept: text/html → rewrite `https://routeflowmobile-production.up.railway.app/login` AND set-cookie printed verbatim: `rf-mobile-app=1; Path=/; Expires=Wed, 07 Oct 2026 12:59:42 GMT; Max-Age=2592000; HttpOnly; SameSite=lax`. P2 `/_expo/static/js/web/x.js` (Accept */*) → rewritten, marker null. P3 `/` + marker cookie → rewritten to `${MOBILE_WEB_URL}/` and RE-STAMPED with Max-Age=2592000 (the 'rolling' claim holds). P4 `/` with no marker → no rewrite, no marker (marketing home). P5 `/?desktop=1` with the marker, and `/login` with `prefer-desktop=1` + the marker → no rewrite, no marker (opt-out wins at any age). P6 `/brand/routeflow-mark-192.png` and `/signup` → no rewrite, no marker (served by Next). P7 the emitted Max-Age is exactly 60*60*24*30. Probe file deleted afterwards: `git status --porcelain | grep zz-reviewer` → no match. Residual, honest: this exercises the middleware function, not a served Next response; the only unexercised layer is Next's own dev plumbing, which the judge already proved for the rewrite half."
+      },
+      {
+        "item": "H3 — TenantLogo tone prop + two sidebar call sites",
+        "verdict": "fixed",
+        "evidence": "components/TenantLogo.tsx: `tone?: BrandTone` (default `\"dark\"` at :39) is forwarded ONLY to the no-logo fallback (`<BrandMark tone={tone} …>` at :55); the tenant-uploaded path (:49-53) is still a plain `<img src={branding.logoUrl} alt={imgAlt}>` with no tone, no brand-mark class — so the hunted 'tone leaks into the tenant logo' hazard does NOT exist. `app/(dashboard)/layout.tsx` +`tone=\"light\"` at :1313 (lg+ rail) and :1363 (mobile drawer), both on the bg-navy sidebar; the third caller (`app/(dashboard)/invoices/[id]/page.tsx:2318`, white/print surface) correctly keeps the default dark. Import is from `./brand/BrandMark` (the index barrel re-exports only values, not the `BrandTone` type) — W4a's transient TS2305 is GONE: `npx tsc --noEmit -p tsconfig.json` now reports zero errors in any round-4 file. `npx jest components/brand --runInBand` → 17/17 pass. Not pixel-proven (dashboard is client-gated; the UI ruling pre-authorised 'unverified'), and the /login substitute cannot attribute the white ink to H4's CSS because that element also carries `brightness-0 invert`."
+      },
+      {
+        "item": "H4 — .brand-mark--light in globals.css + scoped multiply",
+        "verdict": "regressed",
+        "evidence": "Implemented exactly as ruled — globals.css:217 `.brand-mark--light { filter: brightness(0) invert(1); }`, and marketing.css:9705 `.rf-marketing .brand-mark:not(.brand-mark--light) { mix-blend-mode: multiply }` with object-fit/flex-shrink left on the bare selector at :9701 — BUT it turns the suite RED. `npx jest --silent` (apps/web) = Test Suites 1 failed/41 passed, Tests 1 failed/337 passed: `pinned global styles — MKT-PIN T7 › app/globals.css is byte-identical to the branch baseline` expected 09d7d3dc…, received e38149e6…. This is unambiguously round-4's doing: `git show HEAD:apps/web/app/globals.css | sha256sum` = 09d7d3dc… and `git show 5ddec78e:apps/web/app/globals.css | sha256sum` = 09d7d3dc… (identical), and `git diff --stat 5ddec78e -- apps/web/app/globals.css` = 1 file, 10 insertions — i.e. the ONLY delta from the pinned baseline is H4's block. The design of record and the port's own containment test contradict each other: T7 exists to prove the port does not touch globals.css. W4b's gate (`jest components/brand`) could not see this. Separately, the multiply scoping is inert today: `grep -rn 'tone=\"light\"'` hits only login, dashboard×2, platform-admin, buyer login, buyer portal — no `app/(marketing)` surface renders a light mark — so it is defensive only, and no marketing mark on a light ground is broken by it (multiply against a near-white ground is a near-identity anyway)."
+      },
+      {
+        "item": "H5 — connection-nodes / connection-diagram contrast ≥ 4.5:1",
+        "verdict": "not-fixed",
+        "evidence": "Half fixed. Both edits landed (marketing.css:5110 `#5c6b82`, :5115 `#6b7687`) and they DO win the cascade — a brace-depth scan of marketing.css shows :1378/:1403 and :5107/:5112 are all top-level with equal specificity, so the later pair wins. But the WCAG computation used the wrong ground: the ruling and W4b both measured against white, while `.rf-marketing .connection-diagram` is repainted OPAQUE `#eeedf2` by a LATER unqualified rule at marketing.css:8636-8639 (also top-level, so it overrides the `#edf3fb8c` at :5091). I measured the shipped pixels rather than reasoning alone — pngjs scan of `apps/web/test-output/artifacts/r4-product-375x812.png` (the only page that renders the diagram: `app/(marketing)/product/page.tsx:93,100`): a contiguous `238,237,242` band at y 7291-7450; `#5c6b82` ink pixels at y 7366-7369 with modal surround `238,237,242`; `#6b7687` ink pixels at y 7320-7416 with modal surround `238,237,242` (107 of 125 neighbour samples). Contrast against that real ground: #5c6b82 → 4.65:1 (PASSES); #6b7687 → 3.95:1 (FAILS the 4.5:1 bar the ruling set). For reference the same colours on white are 5.41 and 4.60, and the originals were 2.95 / 2.73. So `.rf-marketing .connection-diagram > p` is still sub-AA where it actually renders; it needs a tone with relative luminance ≤ 0.150 on #eeedf2 (e.g. #5c6b82 itself, already proven at 4.65:1), or the ground re-ruled."
+      }
+    ],
+    "newHazards": [
+      {
+        "severity": "high",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/tsconfig.json",
+        "line": 24,
+        "summary": "H1 ignored apps/web/test-output/ in git but not in the TS program: tsconfig `include` is `**/*.ts`, `exclude` only `node_modules`, so the pipeline's scratch spec keeps `npx tsc --noEmit -p tsconfig.json` at exit 2 (3× TS7006 in test-output/r3/r3.spec.ts) — the gate cannot go green. The judge's own r4 scratch (test-output/r4/judge-*.mjs) now lives there too, so this recurs every round. Durable fix: add \"test-output\" to `exclude` (one line, owned by nobody in round 4); deleting the r3 scratch only defers it."
+      },
+      {
+        "severity": "high",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/globals.css",
+        "line": 217,
+        "summary": "Ruling H4 as written cannot be satisfied without breaking the port's own containment pin: marketing-port.static.test.ts:309/356 (MKT-PIN T7) asserts globals.css is byte-identical to branch base 5ddec78e, and globals.css at HEAD still matches that hash exactly. Needs a lead re-ruling — either re-pin GLOBALS_CSS_SHA256 with the reason recorded next to it (T7's stated purpose is 'the port must not touch globals.css', so a silent re-pin weakens the guard), or move `.brand-mark--light` out of globals.css (marketing.css is scoped to .rf-marketing and cannot cover the login/buyer/platform-admin shells, so a small unscoped brand.css imported by the root layout is the likelier home), or drop the belt-and-braces rule since BrandMark already emits `brightness-0 invert`."
+      },
+      {
+        "severity": "medium",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css",
+        "line": 5115,
+        "summary": "H5's contrast maths assumed a white ground for elements that sit on `.rf-marketing .connection-diagram`'s opaque #eeedf2 (set later, unqualified, at :8637). Measured on the shipped r4-product screenshot, `.connection-diagram > p` #6b7687 = 3.95:1 — still below AA. Any future contrast ruling on this stylesheet must name the EFFECTIVE ground (a 10k-line concatenation where a later unqualified rule silently repaints the container), not the page background."
+      },
+      {
+        "severity": "low",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/components/TenantLogo.tsx",
+        "line": 55,
+        "summary": "The H3 swap replaced the fallback `<img alt={imgAlt}>` with `<BrandMark>`, which renders `alt=\"\" aria-hidden=\"true\"` — so the no-logo fallback lost its accessible name, and the component's `alt` prop is now silently ignored on that branch (still honoured on the tenant-logo branch). Net a11y is acceptable today because all three call sites pass `showName` (the business name renders as adjacent text, and the mark is genuinely decorative), but the dead `alt`/`fallback` props are a trap for the next caller: `fallback?: \"seller\" | \"buyer\"` is still declared in the interface while the implementation no longer reads it, so a future `fallback=\"buyer\"` would be silently dropped."
+      },
+      {
+        "severity": "low",
+        "file": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/globals.css",
+        "line": 217,
+        "summary": "`.brand-mark--light` is unlayered plain CSS at line 217, after `@tailwind utilities` (line 3), so on a tie of specificity it WINS over Tailwind's filter utilities on the same element. Harmless today (identical effect to the `brightness-0 invert` pair BrandMark also emits), but it means any future filter utility on a light mark — `drop-shadow-*`, `grayscale`, `blur-*` — would be silently discarded, and the two mechanisms can drift apart unnoticed. If the rule survives the H4 re-ruling, prefer one mechanism (the class) over belt-and-braces, or scope it inside `@layer utilities`."
+      }
+    ],
+    "reasoning": "Refute-first, everything re-derived rather than taken from the executor summaries. Two of the five rulings do not land as claimed, and both are cheap to close.\n\nH1 and H2 hold. H2 I re-probed with my own throwaway spec (written, run at 7/7 PASS, deleted — `git status` clean of it), which also discharges the UI judge's single blocker: the judge saw `Set-Cookie: []` only because Playwright's APIRequestContext sends `Accept: */*` and middleware.ts:134 gates the stamp on `text/html`; with the header supplied, `/login` is proxied AND emits `rf-mobile-app=1; Path=/; …; Max-Age=2592000; HttpOnly; SameSite=lax`. Every other contract point the lead asked me to re-probe passes: no marker on a non-HTML rewrite, `/` proxied and re-stamped with the marker, `/` marketing without it, `?desktop=1` and `prefer-desktop` winning at any age, `/brand` and `/signup` served by Next. H3 holds and the specific hazard I was told to hunt — a tone leaking into the tenant-uploaded logo path — does not exist: the `logoUrl` branch is an untouched plain `<img>`.\n\nH4 is implemented exactly as designed and still turns the suite red: `npx jest --silent` is 337/338 with the one failure being MKT-PIN T7, the pin that exists to prove the port never touches globals.css. HEAD's globals.css hashes identical to the pinned baseline, so this is round 4's own doing and not inherited. That is a design-vs-test collision the ruling did not reconcile, so it needs a lead decision (re-pin with a recorded reason, relocate the rule, or drop it), not an executor improvisation.\n\nH5 is the finding I would have missed by reading the diff. The two colours land and win the cascade, and both numbers are right — against white. But the element they colour sits on `.connection-diagram`, which a LATER unqualified rule at marketing.css:8637 repaints opaque #eeedf2. I measured the shipped r4 product screenshot rather than arguing from the cascade: the `#6b7687` ink pixels are surrounded by `238,237,242`, giving 3.95:1 — still sub-AA. The nodes' `#5c6b82` survives at 4.65:1. Half the ruling therefore did not achieve what it was for.\n\nGates: tsc is still exit 2, but purely from a scratch spec under the now-git-ignored test-output — H1 removed it from git without removing it from the TS program, and the judge's own r4 scratch now lives there too, so this recurs every round until `test-output` is in tsconfig's `exclude`. Lint is green (0 errors) and the regate's untracked-files item is a mis-applied check against an uncommitted port. Prettier is clean on all six files (`--check` → \"All matched files use Prettier code style!\").\n\nNet: three concrete blockers — the T7 pin, the tsc exclude, and the `.connection-diagram > p` tone — none of which is more than a few lines, but the first needs a lead ruling because the design of record and the port's own guard disagree. One more round."
+  },
+  "finalGate": {
+    "allPass": false,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": false,
+        "summary": "Web Jest test suite FAILED. 1 test failed (pinned SHA baseline), 337 passed. The failure is app/(marketing)/marketing-port.static.test.ts:356, which detects that app/globals.css SHA256 no longer matches the baseline because H4 modified the file.",
+        "failures": [
+          "FAIL app/(marketing)/marketing-port.static.test.ts (11.384 s) — pinned global styles (MKT-PIN T7)",
+          "Test: app/globals.css is byte-identical to the branch baseline (MKT-PIN T7)",
+          "Expected SHA: 09d7d3dc6fbeb42734933ef366a0586668d147f8e85bb17b8b37a94994e18dbe",
+          "Received SHA: e38149e66dca862c15cea22ee27614a8c08128c058a15481d163ad35cba986d5",
+          "Root cause: H4 ruling modified apps/web/app/globals.css to add .brand-mark--light styling, which changed the file hash. The pinned test baseline was not updated."
+        ]
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts --runInBand",
+        "pass": true,
+        "summary": "API ci-freshness-guard-script spec PASSED. 12 tests passed, 1 test suite passed. No flake on single run. Time: 4.204 s.",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register validation PASSED. 39/40 entries, 39.7/40.0 KB. Pre-existing cap warning about size constraint disagreement (not a regression).",
+        "failures": []
+      }
+    ]
+  }
+}

@@ -19,8 +19,6 @@ export function creditNotePillFor(status: CreditNoteStatus): {
   label: string;
 } {
   switch (status) {
-    case "DRAFT":
-      return { variant: "gray", label: "Draft" };
     case "ISSUED":
       return { variant: "brand", label: "Issued" };
     case "APPLIED":
@@ -33,7 +31,6 @@ export function creditNotePillFor(status: CreditNoteStatus): {
 }
 
 export interface CreditNoteActionFlags {
-  canIssue: boolean;
   canApply: boolean;
   canVoid: boolean;
 }
@@ -41,18 +38,16 @@ export interface CreditNoteActionFlags {
 /**
  * Which detail-screen actions are available for a status. Gated to the SERVER
  * contract to avoid guaranteed error toasts (the estimates precedent):
- *  - Issue → DRAFT only (cosmetic — server issue() is a no-op, DRAFT never
- *            occurs in practice, but mirrors the web DRAFT branch).
  *  - Apply → ISSUED only (matches the web Apply button gating).
- *  - Void  → DRAFT | ISSUED (server also rejects a partially-applied note, which
+ *  - Void  → ISSUED only (server also rejects a partially-applied note, which
  *            the client can't see — that rare case error-toasts, same as web).
- * APPLIED and VOID are terminal read-only.
+ * APPLIED and VOID are terminal read-only. (No Issue action — B18: create
+ * always writes ISSUED and the server issue() endpoint is gone.)
  */
 export function creditNoteActionFlags(status: CreditNoteStatus): CreditNoteActionFlags {
   return {
-    canIssue: status === "DRAFT",
     canApply: status === "ISSUED",
-    canVoid: status === "DRAFT" || status === "ISSUED",
+    canVoid: status === "ISSUED",
   };
 }
 

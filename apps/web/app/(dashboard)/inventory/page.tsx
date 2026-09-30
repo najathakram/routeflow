@@ -3,27 +3,18 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import {
-  Plus,
-  Eye,
-  Send,
-  PackageCheck,
-  X,
-  ChevronDown,
-  ChevronUp,
-  Info,
-  Sparkles,
-  Search,
-  SlidersHorizontal,
-  DollarSign,
-  RefreshCcw,
-} from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
-import { resolveProductByCode } from "@/lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { formatMoney } from "@/lib/format";
+import { unitsLabel } from "@/lib/stock-label";
 import {
   useStockOverview,
   useSuppliers,
@@ -32,29 +23,28 @@ import {
   useCreateSupplier,
   useUpdateSupplier,
   usePurchaseOrders,
-  usePurchaseOrder,
-  useCreatePurchaseOrder,
-  useSendPurchaseOrder,
-  useReceivePurchaseOrder,
-  useClosePurchaseOrder,
   useForecasting,
   useUpdateReorderSettings,
   useInventoryValuation,
-  useSetCostBasis,
   useBulkSetCostBasis,
   useRecomputeCosts,
   type RecomputeCostsResult,
 } from "@/lib/api/inventory";
-import { useProducts } from "@/lib/api/products";
+import { useProducts, type CostingMethod } from "@/lib/api/products";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useVendorBills } from "@/lib/api/vendor-bills";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ScanInvoiceModal } from "@/components/ScanInvoiceModal";
 import { StockCountTab } from "@/components/inventory/StockCountTab";
+import { SetCostModal } from "@/components/SetCostModal";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
+import { PurchaseOrdersTab } from "./_components/PurchaseOrdersTab";
+import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
+import type { Supplier } from "./_components/purchase-orders-shared";
 
 const DECIMAL_UNITS = ["kg", "g", "liter", "litre", "l", "oz", "lb", "pound", "ml"];
 function isDecimalUnit(unit: string) {
@@ -75,38 +65,20 @@ interface StockItem {
   isActive: boolean;
   unitsPerBox?: number | null;
   trackedCategoryId?: string | null;
+  /** Additive: `getStockOverview` already selects this, just not previously
+   *  typed here — needed so a row's "Assign to variants" split (PR-D) can
+   *  hide the cost-override field for STANDARD-costed generics. */
+  costingMethod?: CostingMethod;
 }
 
-interface Supplier {
-  id: string;
-  name: string;
-  contactName?: string;
-  phone?: string;
-  email?: string;
-  isActive: boolean;
-}
-
-type POStatus = "DRAFT" | "SENT" | "PARTIAL" | "RECEIVED" | "CLOSED";
-
-interface POItem {
-  id: string;
-  productId: string;
-  productName: string;
-  qty: number;
-  unitCost: number;
-  receivedQty?: number;
-}
-
-interface PurchaseOrder {
-  id: string;
-  poNumber: string;
-  supplier: Supplier;
-  status: POStatus;
-  items: POItem[];
-  total: number;
-  expectedDate: string;
-  notes?: string;
-  createdAt: string;
+/** Parent/variant lookup built off the full product catalog (PR-D) — the
+ *  stock-overview row itself carries neither `parentProductId` nor a variant
+ *  count, so the "Assign to variants" row action is gated off a side
+ *  `useProducts({ includeVariants: true })` fetch instead of widening
+ *  `/inventory/overview`. */
+interface VariantInfo {
+  parentProductId: string | null;
+  hasVariants: boolean;
 }
 
 interface ForecastItem {
@@ -121,21 +93,6 @@ interface ForecastItem {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function poStatusBadge(status: POStatus) {
-  const map: Record<
-    POStatus,
-    { variant: "neutral" | "info" | "warning" | "success"; label: string }
-  > = {
-    DRAFT: { variant: "neutral", label: "Draft" },
-    SENT: { variant: "info", label: "Sent" },
-    PARTIAL: { variant: "warning", label: "Partial" },
-    RECEIVED: { variant: "success", label: "Received" },
-    CLOSED: { variant: "neutral", label: "Closed" },
-  };
-  const cfg = map[status] ?? { variant: "neutral", label: status };
-  return <Badge variant={cfg.variant} label={cfg.label} />;
-}
 
 function daysRemainingBadge(days: number | null) {
   if (days === null) return <span className="text-navy/70 text-xs">N/A</span>;
@@ -158,7 +115,14 @@ function QuickRestockModal({
   onClose,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
+  products: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    currentStock: number;
+    unitsPerBox?: number | null;
+  }[];
   onClose: () => void;
 }) {
   const restock = useRecordPurchase();
@@ -166,6 +130,8 @@ function QuickRestockModal({
     productId: "",
     supplierId: "",
     quantity: "",
+    boxes: "",
+    pieces: "",
     unitCost: "",
     reference: "",
     notes: "",
@@ -175,6 +141,11 @@ function QuickRestockModal({
 
   const selectedProduct = products.find((p) => p.id === form.productId);
   const decimalQty = selectedProduct ? isDecimalUnit(selectedProduct.unit) : true;
+  // Boxed products (unitsPerBox > 1) collect boxes + loose pieces instead of a
+  // single ambiguous quantity — the root cause of the stock-corruption bug was
+  // an operator typing a box count into a field the server read as pieces.
+  const unitsPerBox = Number(selectedProduct?.unitsPerBox ?? 0);
+  const isBoxed = unitsPerBox > 1;
 
   // Scan-to-pick: USB wedge (listens on the picker's search input) or webcam.
   const pickerInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -185,7 +156,16 @@ function QuickRestockModal({
     setScanLoading(true);
     try {
       const result = await resolveProductByCode(code);
-      if (!result.notFound) {
+      if (result.archived) {
+        // F30 / R5: restocking a retired product would post stock movements
+        // against something the tenant has taken out of service. Name it
+        // instead of selecting it — and never call it "not found".
+        scanToast({
+          title: archivedMessage(result.product),
+          description: "Reactivate it on the Products page, then restock it.",
+          variant: "error",
+        });
+      } else if (!result.notFound) {
         setForm((f) => ({ ...f, productId: result.product.id }));
         qtyInputRef.current?.focus();
       } else {
@@ -242,23 +222,41 @@ function QuickRestockModal({
       scanToast({ title: "Pick a product first", variant: "error" });
       return;
     }
+
+    const base = {
+      productId: form.productId,
+      supplierId: form.supplierId || undefined,
+      unitCost: Number(form.unitCost),
+      reference: form.reference || undefined,
+      notes: form.notes || undefined,
+      effectiveDate: form.backdate && form.effectiveDate ? form.effectiveDate : undefined,
+    };
+
+    if (isBoxed) {
+      const boxes = Math.max(0, Math.trunc(Number(form.boxes) || 0));
+      const pieces = Math.max(0, Math.trunc(Number(form.pieces) || 0));
+      const totalPieces = normalizeBoxesPieces({ boxes, pieces, unitsPerBox }).qty;
+      if (totalPieces <= 0) {
+        alert("Enter at least one box or piece to receive");
+        return;
+      }
+      // `boxes`/`pieces` — never `quantity` — for a boxed receive; the API
+      // resolves the received piece total from the split and ignores a bare
+      // `quantity` when either is present (InventoryService.recordPurchase).
+      restock.mutate({ ...base, boxes, pieces }, { onSuccess: onClose });
+      return;
+    }
+
     const qty = Number(form.quantity);
     if (!decimalQty && !Number.isInteger(qty)) {
       alert(`Quantity must be a whole number for unit "${selectedProduct?.unit}"`);
       return;
     }
-    restock.mutate(
-      {
-        productId: form.productId,
-        supplierId: form.supplierId || undefined,
-        quantity: qty,
-        unitCost: Number(form.unitCost),
-        reference: form.reference || undefined,
-        notes: form.notes || undefined,
-        effectiveDate: form.backdate && form.effectiveDate ? form.effectiveDate : undefined,
-      },
-      { onSuccess: onClose },
-    );
+    if (!(qty > 0)) {
+      alert("Quantity must be greater than zero");
+      return;
+    }
+    restock.mutate({ ...base, quantity: qty }, { onSuccess: onClose });
   };
 
   return (
@@ -268,8 +266,14 @@ function QuickRestockModal({
           <h2 className="text-base font-semibold text-navy">Quick Restock</h2>
           <p className="mt-0.5 text-xs text-navy/70">
             For supplier invoices, use{" "}
-            <a href="/purchases" className="text-brand-500 hover:underline">
-              Purchases &rarr; Vendor Bills
+            {/* Left as a plain <a>: `no-html-link-for-pages` only became app-router-aware in
+                @next/eslint-plugin-next 15, so this pre-existing link is newly flagged by the
+                Next 15 upgrade. Switching it to <Link /> changes it to a client-side
+                navigation — a behavior change that belongs to its own diff, not this
+                upgrade. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+            <a href="/vendor-bills" className="text-brand-500 hover:underline">
+              Bills &amp; Purchasing
             </a>
           </p>
         </div>
@@ -304,43 +308,113 @@ function QuickRestockModal({
             {scanLoading && <p className="mt-1 text-xs text-navy/70">Looking up product…</p>}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
-                Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
-                {!decimalQty && <span className="ml-2 text-navy/70">(whole numbers only)</span>}
+                Current stock:{" "}
+                {unitsLabel(
+                  Number(selectedProduct.currentStock),
+                  unitsPerBox,
+                  selectedProduct.unit,
+                )}
+                {!decimalQty && !isBoxed && (
+                  <span className="ml-2 text-navy/70">(whole numbers only)</span>
+                )}
               </p>
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-navy">
-                Quantity ({selectedProduct?.unit ?? "units"}) *
-              </label>
-              <input
-                required
-                ref={qtyInputRef}
-                type="number"
-                min={decimalQty ? 0.001 : 1}
-                step={decimalQty ? 0.001 : 1}
-                inputMode={decimalQty ? "decimal" : "numeric"}
-                value={form.quantity}
-                onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                placeholder={decimalQty ? "0.000" : "0"}
-              />
+          {isBoxed ? (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-navy">Boxes *</label>
+                <input
+                  required={!form.pieces}
+                  ref={qtyInputRef}
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={form.boxes}
+                  onChange={(e) => setForm((f) => ({ ...f, boxes: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">+ Pieces</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={unitsPerBox - 1}
+                  step={1}
+                  value={form.pieces}
+                  onChange={(e) => setForm((f) => ({ ...f, pieces: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">Cost per Box ($) *</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  step={0.0001}
+                  value={form.unitCost}
+                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
+              <p className="col-span-3 -mt-1 text-[11px] text-navy/50">
+                1 box = {unitsPerBox} {selectedProduct?.unit ?? "units"}
+                {(Number(form.boxes) > 0 || Number(form.pieces) > 0) && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <span className="font-medium text-navy/70">
+                      {
+                        normalizeBoxesPieces({
+                          boxes: Number(form.boxes) || 0,
+                          pieces: Number(form.pieces) || 0,
+                          unitsPerBox,
+                        }).qty
+                      }{" "}
+                      pcs total
+                    </span>
+                  </>
+                )}
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
-              <input
-                required
-                type="number"
-                min={0}
-                step={0.0001}
-                value={form.unitCost}
-                onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs text-navy">
+                  Quantity ({selectedProduct?.unit ?? "units"}) *
+                </label>
+                <input
+                  required
+                  ref={qtyInputRef}
+                  type="number"
+                  min={decimalQty ? 0.001 : 1}
+                  step={decimalQty ? 0.001 : 1}
+                  inputMode={decimalQty ? "decimal" : "numeric"}
+                  value={form.quantity}
+                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  placeholder={decimalQty ? "0.000" : "0"}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-navy">Unit Cost ($) *</label>
+                <input
+                  required
+                  type="number"
+                  min={0}
+                  step={0.0001}
+                  value={form.unitCost}
+                  onChange={(e) => setForm((f) => ({ ...f, unitCost: e.target.value }))}
+                  className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Reference combobox */}
           <div ref={refContainerRef} className="relative">
@@ -442,6 +516,10 @@ function StockTable({
   setAdjustPreselectId,
   setShowAdjustModal,
   onSetCost,
+  variantInfoById,
+  onAssignToVariants,
+  scrollToId,
+  onScrolled,
 }: {
   stockItems: StockItem[];
   stockSearch: string;
@@ -453,6 +531,19 @@ function StockTable({
   setAdjustPreselectId: (id: string | undefined) => void;
   setShowAdjustModal: (v: boolean) => void;
   onSetCost: (item: StockItem) => void;
+  /** Parent/variant lookup (PR-D) — keyed by product id; a row's "Assign to
+   *  variants" action only renders when the entry exists, has no
+   *  `parentProductId`, and `hasVariants`. */
+  variantInfoById: Map<string, VariantInfo>;
+  onAssignToVariants: (item: StockItem) => void;
+  /** Product id to scroll to + briefly highlight (set when a search suggestion
+   *  is picked). Left unset while it's not found — e.g. a filter still hides
+   *  the row on this render — so the effect retries once `sorted` changes
+   *  (the caller clears any filter that would hide it). */
+  scrollToId?: string | null;
+  /** Called once the target row has actually been found and scrolled to, so
+   *  the caller can clear `scrollToId`. */
+  onScrolled?: () => void;
 }) {
   // 1) Filter by search first so sort only operates on visible rows.
   const filtered = React.useMemo(() => {
@@ -483,6 +574,28 @@ function StockTable({
       totalValue: (a, b) => Number(a.totalValue ?? 0) - Number(b.totalValue ?? 0),
     },
   });
+
+  // 3) Scroll-to + brief highlight support for a picked search suggestion.
+  // `scrollToId` may not resolve to a visible row on the render it's set on
+  // (a filter can still be clearing) — the effect just no-ops and retries the
+  // next time `sorted` changes, rather than giving up.
+  const rowRefs = React.useRef<Map<string, HTMLTableRowElement>>(new Map());
+  const [flashId, setFlashId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!scrollToId) return;
+    const el = rowRefs.current.get(scrollToId);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setFlashId(scrollToId);
+    onScrolled?.();
+  }, [scrollToId, sorted, onScrolled]);
+
+  React.useEffect(() => {
+    if (!flashId) return;
+    const handle = setTimeout(() => setFlashId(null), 1600);
+    return () => clearTimeout(handle);
+  }, [flashId]);
 
   if (filtered.length === 0) {
     const q = stockSearch.trim();
@@ -577,9 +690,14 @@ function StockTable({
           {sorted.map((item) => (
             <tr
               key={item.id}
+              ref={(el) => {
+                if (el) rowRefs.current.set(item.id, el);
+                else rowRefs.current.delete(item.id);
+              }}
               className={cn(
                 "group transition-colors hover:bg-surface-raised/50",
                 item.currentStock <= 0 && "bg-danger-bg/30",
+                flashId === item.id && "bg-brand-50 hover:bg-brand-50",
               )}
             >
               <td className="px-4 py-3 font-medium text-navy">
@@ -608,10 +726,11 @@ function StockTable({
                         : "text-navy",
                   )}
                 >
-                  {Number(item.currentStock) % 1 === 0
-                    ? Number(item.currentStock).toFixed(0)
-                    : Number(item.currentStock).toFixed(2)}{" "}
-                  {item.unit}
+                  {/* currentStock is stored in PIECES system-wide, so for a BOXED product
+                      it must never be rendered next to `item.unit` (a box/case noun) —
+                      `unitsLabel` shows the piece count plus a parenthetical box
+                      breakdown, and keeps the product's own unit noun when unboxed. */}
+                  {unitsLabel(Number(item.currentStock), item.unitsPerBox, item.unit)}
                 </span>
               </td>
               <td className="px-4 py-3 text-navy/70">
@@ -619,7 +738,7 @@ function StockTable({
               </td>
               <td className="px-4 py-3 text-navy/70">
                 {item.averageCost != null ? (
-                  `$${Number(item.averageCost).toFixed(2)}`
+                  formatMoney(item.averageCost)
                 ) : (
                   <button
                     type="button"
@@ -632,7 +751,7 @@ function StockTable({
                 )}
               </td>
               <td className="px-4 py-3 text-navy/70">
-                {item.totalValue != null ? `$${Number(item.totalValue).toFixed(2)}` : "—"}
+                {item.totalValue != null ? formatMoney(item.totalValue) : "—"}
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-3">
@@ -653,11 +772,30 @@ function StockTable({
                   >
                     Adjust
                   </button>
+                  {(() => {
+                    const info = variantInfoById.get(item.id);
+                    if (!info || info.parentProductId || !info.hasVariants) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => onAssignToVariants(item)}
+                        className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                      >
+                        Assign to variants
+                      </button>
+                    );
+                  })()}
                   <Link
                     href={`/inventory/movements?product=${item.id}`}
                     className="text-xs text-brand-500 hover:underline"
                   >
                     Movements
+                  </Link>
+                  <Link
+                    href={`/products/${item.id}`}
+                    className="text-xs text-brand-500 hover:underline"
+                  >
+                    Open product
                   </Link>
                 </div>
               </td>
@@ -676,7 +814,14 @@ function AdjustStockModal({
   defaultProductId,
   onClose,
 }: {
-  products: { id: string; name: string; sku?: string; unit: string; currentStock: number }[];
+  products: {
+    id: string;
+    name: string;
+    sku?: string;
+    unit: string;
+    currentStock: number;
+    unitsPerBox?: number | null;
+  }[];
   /** Pre-select a product when opened from an inline "Adjust" row action */
   defaultProductId?: string;
   onClose: () => void;
@@ -805,14 +950,25 @@ function AdjustStockModal({
             )}
             {selectedProduct && (
               <p className="mt-1 text-xs text-navy/70">
-                Current stock: {selectedProduct.currentStock} {selectedProduct.unit}
+                {/* Stock is stored in PIECES — a boxed product must never be labelled
+                    with `product.unit` (the SELLING unit noun), or the operator adjusts
+                    in cases; `unitsLabel` keeps that noun only for unboxed products. */}
+                Current stock:{" "}
+                {unitsLabel(
+                  selectedProduct.currentStock,
+                  selectedProduct.unitsPerBox,
+                  selectedProduct.unit,
+                )}
                 {form.quantity !== "" && !isNaN(qty) && (
                   <>
                     {" "}
                     →{" "}
                     <strong>
-                      {Number((selectedProduct.currentStock + qty).toFixed(2))}{" "}
-                      {selectedProduct.unit}
+                      {unitsLabel(
+                        Number((selectedProduct.currentStock + qty).toFixed(2)),
+                        selectedProduct.unitsPerBox,
+                        selectedProduct.unit,
+                      )}
                     </strong>
                   </>
                 )}
@@ -966,453 +1122,6 @@ function CreateSupplierModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ─── Create PO Modal ──────────────────────────────────────────────────────────
-
-interface POLineItem {
-  productId: string;
-  qty: string;
-  unitCost: string;
-}
-
-function CreatePOModal({
-  suppliers,
-  products,
-  onClose,
-  defaultSupplierId,
-}: {
-  suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
-  onClose: () => void;
-  defaultSupplierId?: string;
-}) {
-  const createPO = useCreatePurchaseOrder();
-  const { toast } = useToast();
-  const [supplierId, setSupplierId] = React.useState(defaultSupplierId ?? "");
-  const [expectedDate, setExpectedDate] = React.useState("");
-  const [notes, setNotes] = React.useState("");
-  const [lines, setLines] = React.useState<POLineItem[]>([
-    { productId: "", qty: "", unitCost: "" },
-  ]);
-
-  const addLine = () => setLines((l) => [...l, { productId: "", qty: "", unitCost: "" }]);
-  const removeLine = (i: number) => setLines((l) => l.filter((_, idx) => idx !== i));
-  const updateLine = (i: number, field: keyof POLineItem, val: string) =>
-    setLines((l) => l.map((line, idx) => (idx === i ? { ...line, [field]: val } : line)));
-
-  const total = lines.reduce((sum, l) => {
-    const q = parseFloat(l.qty) || 0;
-    const c = parseFloat(l.unitCost) || 0;
-    return sum + q * c;
-  }, 0);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const items = lines
-      .filter((l) => l.productId && l.qty && l.unitCost)
-      .map((l) => ({
-        productId: l.productId,
-        qty: Number(l.qty),
-        unitCost: Number(l.unitCost),
-      }));
-
-    if (items.length === 0) {
-      toast({
-        title: "Validation",
-        description: "Add at least one line item.",
-        variant: "warning",
-      });
-      return;
-    }
-
-    createPO.mutate(
-      {
-        supplierId: supplierId || undefined,
-        expectedDate: expectedDate || undefined,
-        items,
-        notes: notes || undefined,
-      },
-      {
-        onSuccess: () => {
-          toast({ title: "Purchase order created.", variant: "success" });
-          onClose();
-        },
-        onError: () => toast({ title: "Failed to create purchase order.", variant: "error" }),
-      },
-    );
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Create Purchase Order</h2>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <form
-          onSubmit={handleSubmit}
-          className="space-y-5 overflow-y-auto px-6 py-5"
-          style={{ maxHeight: "80vh" }}
-        >
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-xs text-navy">Supplier</label>
-              <select
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              >
-                <option value="">No supplier</option>
-                {suppliers
-                  .filter((s) => s.isActive)
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-navy">Expected Date</label>
-              <input
-                type="date"
-                value={expectedDate}
-                onChange={(e) => setExpectedDate(e.target.value)}
-                className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-              />
-            </div>
-          </div>
-
-          {/* Line items */}
-          <div>
-            <div className="mb-2 flex items-center justify-between">
-              <label className="text-sm font-semibold text-navy">Line Items</label>
-              <button
-                type="button"
-                onClick={addLine}
-                className="flex items-center gap-1 rounded px-2 py-1 text-xs text-brand-600 hover:bg-brand-50"
-              >
-                <Plus className="h-3 w-3" /> Add Row
-              </button>
-            </div>
-
-            <div className="rounded-lg border border-surface-border overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-surface-raised text-xs text-navy/70">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-medium">Product</th>
-                    <th className="px-3 py-2 text-left font-medium w-24">Qty</th>
-                    <th className="px-3 py-2 text-left font-medium w-28">Unit Cost ($)</th>
-                    <th className="px-3 py-2 text-right font-medium w-24">Subtotal</th>
-                    <th className="w-8" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-surface-border">
-                  {lines.map((line, i) => {
-                    const subtotal = (parseFloat(line.qty) || 0) * (parseFloat(line.unitCost) || 0);
-                    return (
-                      <tr key={i}>
-                        <td className="px-3 py-2">
-                          <select
-                            value={line.productId}
-                            onChange={(e) => updateLine(i, "productId", e.target.value)}
-                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          >
-                            <option value="">Select…</option>
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                                {p.sku ? ` (${p.sku})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0.001}
-                            step={0.001}
-                            placeholder="0"
-                            value={line.qty}
-                            onChange={(e) => updateLine(i, "qty", e.target.value)}
-                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.0001}
-                            placeholder="0.00"
-                            value={line.unitCost}
-                            onChange={(e) => updateLine(i, "unitCost", e.target.value)}
-                            className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-right text-navy/70">
-                          {subtotal > 0 ? `$${subtotal.toFixed(2)}` : "—"}
-                        </td>
-                        <td className="px-2 py-2">
-                          <button
-                            type="button"
-                            onClick={() => removeLine(i)}
-                            disabled={lines.length === 1}
-                            className="rounded p-1 text-navy/30 hover:bg-red-50 hover:text-red-500 disabled:opacity-30"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot className="border-t border-surface-border bg-surface-raised/50">
-                  <tr>
-                    <td
-                      colSpan={3}
-                      className="px-3 py-2 text-right text-xs font-medium text-navy/70"
-                    >
-                      Total
-                    </td>
-                    <td className="px-3 py-2 text-right text-sm font-semibold text-navy">
-                      ${total.toFixed(2)}
-                    </td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs text-navy">Notes</label>
-            <textarea
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="secondary" onClick={onClose} type="button">
-              Cancel
-            </Button>
-            <Button type="submit" loading={createPO.isPending}>
-              Create PO
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ─── Receive PO Modal ─────────────────────────────────────────────────────────
-
-function ReceivePOModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
-  const receivePO = useReceivePurchaseOrder();
-  const { toast } = useToast();
-  const [receivedQtys, setReceivedQtys] = React.useState<Record<string, string>>(
-    Object.fromEntries(po.items.map((item) => [item.id, String(item.qty)])),
-  );
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const items = po.items.map((item) => ({
-      id: item.id,
-      receivedQty: Number(receivedQtys[item.id] ?? 0),
-    }));
-    receivePO.mutate(
-      { id: po.id, items },
-      {
-        onSuccess: () => {
-          toast({ title: "Purchase order received.", variant: "success" });
-          onClose();
-        },
-        onError: () => toast({ title: "Failed to receive purchase order.", variant: "error" }),
-      },
-    );
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-lg rounded-xl bg-white shadow-xl">
-        <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
-          <h2 className="text-base font-semibold text-navy">Receive — {po.poNumber}</h2>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          <p className="text-xs text-navy/70">
-            Enter the quantity actually received for each item.
-          </p>
-          <div className="rounded-lg border border-surface-border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-surface-raised text-xs text-navy/70">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-center font-medium w-24">Ordered</th>
-                  <th className="px-3 py-2 text-center font-medium w-28">Received Qty</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {po.items.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
-                    <td className="px-3 py-2 text-center text-navy">{item.qty}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.001}
-                        value={receivedQtys[item.id] ?? ""}
-                        onChange={(e) =>
-                          setReceivedQtys((prev) => ({ ...prev, [item.id]: e.target.value }))
-                        }
-                        className="w-full rounded border border-surface-border px-2 py-1.5 text-sm text-navy text-center focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="secondary" onClick={onClose} type="button">
-              Cancel
-            </Button>
-            <Button type="submit" loading={receivePO.isPending}>
-              Confirm Receipt
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ─── PO Detail Row ────────────────────────────────────────────────────────────
-
-function PODetailRow({
-  poId,
-  onReceive,
-}: {
-  poId: string;
-  onReceive: (po: PurchaseOrder) => void;
-}) {
-  const { data: po, isLoading } = usePurchaseOrder(poId);
-  const sendPO = useSendPurchaseOrder();
-  const closePO = useClosePurchaseOrder();
-  const { toast } = useToast();
-
-  if (isLoading) {
-    return (
-      <tr>
-        <td colSpan={8} className="px-6 py-4 text-center text-xs text-navy/70">
-          Loading details…
-        </td>
-      </tr>
-    );
-  }
-
-  if (!po) return null;
-
-  return (
-    <tr>
-      <td colSpan={8} className="px-6 py-4 bg-surface-raised/40">
-        <div className="space-y-3">
-          {/* Line items */}
-          <div className="rounded-lg border border-surface-border overflow-hidden bg-white">
-            <table className="w-full text-xs">
-              <thead className="bg-surface-raised text-navy/70">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-right font-medium">Qty</th>
-                  <th className="px-3 py-2 text-right font-medium">Unit Cost</th>
-                  <th className="px-3 py-2 text-right font-medium">Received</th>
-                  <th className="px-3 py-2 text-right font-medium">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {(po.items ?? []).map((item: POItem) => (
-                  <tr key={item.id}>
-                    <td className="px-3 py-2 font-medium text-navy">{item.productName}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">{item.qty}</td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      ${Number(item.unitCost).toFixed(2)}
-                    </td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      {item.receivedQty ?? <span className="text-navy/30">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-navy/70">
-                      ${(item.qty * item.unitCost).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Notes */}
-          {po.notes && (
-            <p className="text-xs text-navy/70">
-              <span className="font-medium">Notes:</span> {po.notes}
-            </p>
-          )}
-
-          {/* Actions */}
-          <div className="flex gap-2">
-            {po.status === "DRAFT" && (
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={sendPO.isPending}
-                onClick={() =>
-                  sendPO.mutate(po.id, {
-                    onSuccess: () => toast({ title: "PO sent.", variant: "success" }),
-                    onError: () => toast({ title: "Failed to send PO.", variant: "error" }),
-                  })
-                }
-              >
-                <Send className="h-3 w-3 mr-1" /> Send
-              </Button>
-            )}
-            {(po.status === "SENT" || po.status === "PARTIAL") && (
-              <Button size="sm" variant="secondary" onClick={() => onReceive(po as PurchaseOrder)}>
-                <PackageCheck className="h-3 w-3 mr-1" /> Receive
-              </Button>
-            )}
-            {(po.status === "SENT" || po.status === "PARTIAL" || po.status === "RECEIVED") && (
-              <Button
-                size="sm"
-                variant="secondary"
-                loading={closePO.isPending}
-                onClick={() =>
-                  closePO.mutate(po.id, {
-                    onSuccess: () => toast({ title: "PO closed.", variant: "success" }),
-                    onError: () => toast({ title: "Failed to close PO.", variant: "error" }),
-                  })
-                }
-              >
-                Close
-              </Button>
-            )}
-          </div>
-        </div>
-      </td>
-    </tr>
-  );
-}
-
 // ─── Reorder Settings Modal ───────────────────────────────────────────────────
 
 function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: () => void }) {
@@ -1491,231 +1200,6 @@ function ReorderSettingsModal({ item, onClose }: { item: ForecastItem; onClose: 
   );
 }
 
-// ─── Purchase Orders Tab ──────────────────────────────────────────────────────
-
-function PurchaseOrdersTab({
-  suppliers,
-  products,
-}: {
-  suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
-}) {
-  const [statusFilter, setStatusFilter] = React.useState("");
-  const [supplierFilter, setSupplierFilter] = React.useState("");
-  const [dateFrom, setDateFrom] = React.useState("");
-  const [dateTo, setDateTo] = React.useState("");
-  const [showCreateModal, setShowCreateModal] = React.useState(false);
-  const [expandedId, setExpandedId] = React.useState<string | null>(null);
-  const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
-
-  const { data: poData, isLoading } = usePurchaseOrders({
-    status: statusFilter || undefined,
-    supplierId: supplierFilter || undefined,
-    from: dateFrom || undefined,
-    to: dateTo || undefined,
-    page: 1,
-    limit: 20,
-  });
-
-  const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
-
-  const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
-
-  return (
-    <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-navy">Purchase Orders</h2>
-        <Button
-          size="sm"
-          leftIcon={<Plus className="h-4 w-4" />}
-          onClick={() => setShowCreateModal(true)}
-        >
-          Create PO
-        </Button>
-      </div>
-
-      {/* Filters */}
-      <div className="mb-4 flex flex-wrap gap-3">
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        >
-          <option value="">All Statuses</option>
-          {(["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"] as POStatus[]).map((s) => (
-            <option key={s} value={s}>
-              {s.charAt(0) + s.slice(1).toLowerCase()}
-            </option>
-          ))}
-        </select>
-
-        <select
-          value={supplierFilter}
-          onChange={(e) => setSupplierFilter(e.target.value)}
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        >
-          <option value="">All Suppliers</option>
-          {suppliers.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          placeholder="From"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          placeholder="To"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        {(statusFilter || supplierFilter || dateFrom || dateTo) && (
-          <button
-            onClick={() => {
-              setStatusFilter("");
-              setSupplierFilter("");
-              setDateFrom("");
-              setDateTo("");
-            }}
-            className="rounded px-2 py-1.5 text-xs text-navy/70 hover:text-navy hover:bg-surface-raised"
-          >
-            Clear filters
-          </button>
-        )}
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-2">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-lg bg-surface-raised" />
-          ))}
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-surface-border">
-          <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
-              <tr>
-                {[
-                  "PO #",
-                  "Supplier",
-                  "Status",
-                  "Items",
-                  "Total",
-                  "Expected Date",
-                  "Actions",
-                  "",
-                ].map((h) => (
-                  <th key={h} className="px-4 py-3 text-left font-medium">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {orders.map((po) => (
-                <React.Fragment key={po.id}>
-                  <tr className="transition-colors hover:bg-surface-raised/40">
-                    <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
-                      {po.poNumber}
-                    </td>
-                    <td className="px-4 py-3 text-navy/70">{po.supplier?.name ?? "—"}</td>
-                    <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
-                    <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      ${Number(po.total ?? 0).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3 text-navy/70">
-                      {po.expectedDate ? new Date(po.expectedDate).toLocaleDateString() : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => toggleExpand(po.id)}
-                          title="View details"
-                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        {po.status === "DRAFT" && <SendPOButton poId={po.id} />}
-                        {(po.status === "SENT" || po.status === "PARTIAL") && (
-                          <button
-                            onClick={() => setReceivePO(po)}
-                            title="Receive"
-                            className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                          >
-                            <PackageCheck className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-2 py-3">
-                      <button
-                        onClick={() => toggleExpand(po.id)}
-                        className="rounded p-1 text-navy/30 hover:text-navy"
-                      >
-                        {expandedId === po.id ? (
-                          <ChevronUp className="h-4 w-4" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4" />
-                        )}
-                      </button>
-                    </td>
-                  </tr>
-                  {expandedId === po.id && <PODetailRow poId={po.id} onReceive={setReceivePO} />}
-                </React.Fragment>
-              ))}
-              {orders.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-navy/70">
-                    No purchase orders found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {showCreateModal && (
-        <CreatePOModal
-          suppliers={suppliers}
-          products={products}
-          onClose={() => setShowCreateModal(false)}
-        />
-      )}
-      {receivePO && <ReceivePOModal po={receivePO} onClose={() => setReceivePO(null)} />}
-    </>
-  );
-}
-
-// Small inline component to avoid hooks-in-callback issues
-function SendPOButton({ poId }: { poId: string }) {
-  const sendPO = useSendPurchaseOrder();
-  const { toast } = useToast();
-  return (
-    <button
-      onClick={() =>
-        sendPO.mutate(poId, {
-          onSuccess: () => toast({ title: "PO sent.", variant: "success" }),
-          onError: () => toast({ title: "Failed to send PO.", variant: "error" }),
-        })
-      }
-      title="Send"
-      disabled={sendPO.isPending}
-      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
-    >
-      <Send className="h-4 w-4" />
-    </button>
-  );
-}
-
 // ─── Inline editable cell ─────────────────────────────────────────────────────
 
 function InlineNumberEdit({
@@ -1783,7 +1267,7 @@ function ForecastingTab({
   products,
 }: {
   suppliers: Supplier[];
-  products: { id: string; name: string; sku?: string }[];
+  products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
 }) {
   const { data: forecastData, isLoading } = useForecasting();
   const updateSettings = useUpdateReorderSettings();
@@ -1923,100 +1407,6 @@ function ForecastingTab({
 
 // ─── Set Cost Basis Modal ─────────────────────────────────────────────────────
 
-function SetCostModal({ item, onClose }: { item: StockItem; onClose: () => void }) {
-  const setCostBasis = useSetCostBasis();
-  const { toast } = useToast();
-  const [unitCost, setUnitCost] = React.useState(
-    item.averageCost != null ? String(item.averageCost) : "",
-  );
-  const [notes, setNotes] = React.useState("");
-  const [applyToLots, setApplyToLots] = React.useState(false);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCostBasis.mutate(
-      {
-        productId: item.id,
-        unitCost: Number(unitCost),
-        notes: notes || undefined,
-        applyToLots: applyToLots || undefined,
-      },
-      {
-        onSuccess: () => {
-          toast({
-            title: "Cost basis set",
-            description: `${item.name} now carries a unit cost of $${Number(unitCost).toFixed(4)}.`,
-            variant: "success",
-          });
-          onClose();
-        },
-        onError: () =>
-          toast({
-            title: "Failed to set cost",
-            description: "Please try again.",
-            variant: "error",
-          }),
-      },
-    );
-  };
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title={`Set cost basis — ${item.name}`}
-      description="Manually sets the average cost. Recorded as an audited COST_BASIS movement; future purchases keep updating the average from here."
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="mb-1 block text-xs text-navy">Unit cost ($) *</label>
-          <input
-            required
-            autoFocus
-            type="number"
-            min={0}
-            step={0.0001}
-            value={unitCost}
-            onChange={(e) => setUnitCost(e.target.value)}
-            className="w-full rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-            placeholder="0.0000"
-          />
-          <p className="mt-1 text-xs text-navy/70">
-            Current: {item.averageCost != null ? `$${Number(item.averageCost).toFixed(4)}` : "none"}{" "}
-            · Stock: {item.currentStock} {item.unit}
-          </p>
-        </div>
-        <div>
-          <label className="mb-1 block text-xs text-navy">Notes</label>
-          <textarea
-            rows={2}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            placeholder="e.g. opening cost basis from supplier price list"
-            className="w-full resize-none rounded border border-surface-border px-3 py-2 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-sm text-navy/70">
-          <input
-            type="checkbox"
-            checked={applyToLots}
-            onChange={(e) => setApplyToLots(e.target.checked)}
-          />
-          Also rewrite open stock lots (FIFO/LIFO products)
-        </label>
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="secondary" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" loading={setCostBasis.isPending}>
-            Set Cost
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 // ─── Bulk Set Costs Modal (products with no cost basis) ───────────────────────
 
 function BulkSetCostModal({
@@ -2109,6 +1499,13 @@ function BulkSetCostModal({
 }
 
 // ─── Recompute Costs Modal (dry-run preview → apply) ──────────────────────────
+//
+// B562 (interim mitigation, owner-approved): every button that opened this modal
+// was removed below — recompute-costs is blind to raw order decrements and can
+// silently rewrite a tenant's whole inventory valuation while destroying the
+// `stockAfter` evidence needed to detect it (see the comment on
+// InventoryController.recomputeCosts). The component and its state are left in
+// place, unreachable from the UI, until B562's root cause is fixed.
 
 function RecomputeModal({ onClose }: { onClose: () => void }) {
   const recompute = useRecomputeCosts();
@@ -2240,10 +1637,35 @@ export default function InventoryPage() {
     setTitle("Inventory");
   }, [setTitle]);
 
+  // Deep-linkable to the Stock Count tab — `?tab=count` (and `?amend=<id>`,
+  // which implies it) land on "count" instead of the default "stock". Read
+  // once on mount; StockCountTab strips `amend` from the URL itself once it's
+  // consumed the deep link, so this never needs to react to later changes.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = React.useState(() =>
+    searchParams.get("tab") === "count" || searchParams.get("amend") ? "count" : "stock",
+  );
+
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
   const { data: productsData } = useProducts({ isActive: true, limit: 0 });
   const products = productsData?.data ?? [];
+  // Parent/variant lookup for the Stock tab's "Assign to variants" row action
+  // (PR-D) — a separate fetch (not the active-only `products` above, and not
+  // `/inventory/overview`, which selects neither field) since it needs every
+  // product's `parentProductId` plus `includeVariants` to know which rows are
+  // splittable generics.
+  const { data: variantProductsData } = useProducts({ includeVariants: true, limit: 0 });
+  const variantInfoById = React.useMemo(() => {
+    const map = new Map<string, VariantInfo>();
+    for (const p of variantProductsData?.data ?? []) {
+      map.set(p.id, {
+        parentProductId: p.parentProductId ?? null,
+        hasVariants: (p.variants?.length ?? 0) > 0,
+      });
+    }
+    return map;
+  }, [variantProductsData]);
 
   const [showRestockModal, setShowPurchaseModal] = React.useState(false);
   const [showAdjustModal, setShowAdjustModal] = React.useState(false);
@@ -2252,15 +1674,23 @@ export default function InventoryPage() {
   // opens with no pre-selection.
   const [adjustPreselectId, setAdjustPreselectId] = React.useState<string | undefined>();
   const [showScanModal, setShowScanModal] = React.useState(false);
-  const [stockSearch, setStockSearch] = React.useState("");
+  // Filtering is client-side, so the raw value drives the table; only the URL
+  // mirror is debounced.
+  const [stockSearch, setStockSearch] = useUrlSearch();
   // Typeahead state for the Stock-tab search box
   const [stockSuggestOpen, setStockSuggestOpen] = React.useState(false);
   const [stockSuggestHighlight, setStockSuggestHighlight] = React.useState(0);
   const stockSearchContainerRef = React.useRef<HTMLDivElement>(null);
+  // Product id to scroll to + briefly highlight in the (already-filtered)
+  // StockTable when a search suggestion is picked, instead of force-opening
+  // Adjust Stock — the table already offers Set cost / Adjust / Movements.
+  const [scrollToProductId, setScrollToProductId] = React.useState<string | null>(null);
   const [showSupplierModal, setShowSupplierModal] = React.useState(false);
   const [showAddProductModal, setShowAddProductModal] = React.useState(false);
   // Cost-basis tooling
   const [costTarget, setCostTarget] = React.useState<StockItem | null>(null);
+  // Variant-split modal target (PR-D) — the Stock row's "Assign to variants" action
+  const [variantSplitTarget, setVariantSplitTarget] = React.useState<StockItem | null>(null);
   const [showBulkCostModal, setShowBulkCostModal] = React.useState(false);
   const [showRecomputeModal, setShowRecomputeModal] = React.useState(false);
   const [missingCostOnly, setMissingCostOnly] = React.useState(false);
@@ -2326,6 +1756,32 @@ export default function InventoryPage() {
     return [...skuExact, ...skuPrefix, ...nameMatch, ...other].slice(0, 8);
   }, [stockSearch, stockItems]);
 
+  // Picking a suggestion scrolls to and highlights its row in the table
+  // instead of opening a modal. Clear only the filter(s) that would actually
+  // hide the picked row — missingCostOnly / the regulated-section tab — so
+  // the row is guaranteed visible without discarding an unrelated filter.
+  const pickSuggestion = React.useCallback(
+    (id: string) => {
+      const target = (stockItems as StockItem[]).find((i) => i.id === id);
+      if (target) {
+        if (missingCostOnly && target.averageCost != null) setMissingCostOnly(false);
+        const hiddenBySection =
+          sectionFilter === "any"
+            ? target.trackedCategoryId == null
+            : sectionFilter === "none"
+              ? target.trackedCategoryId != null
+              : sectionFilter
+                ? target.trackedCategoryId !== sectionFilter
+                : false;
+        if (hiddenBySection) setUrlFilter("section", "");
+      }
+      setStockSuggestOpen(false);
+      setScrollToProductId(id);
+    },
+    [stockItems, missingCostOnly, sectionFilter, setUrlFilter],
+  );
+  const clearScrollTarget = React.useCallback(() => setScrollToProductId(null), []);
+
   const tabs = [
     { value: "stock", label: "Stock" },
     { value: "count", label: "Stock Count" },
@@ -2373,7 +1829,7 @@ export default function InventoryPage() {
             )}
           </div>
           <p className="mt-1.5 font-mono text-2xl font-semibold tabular-nums tracking-[-0.01em] text-navy">
-            ${totalInventoryValue.toFixed(2)}
+            {formatMoney(totalInventoryValue)}
           </p>
           {missingCostCount > 0 ? (
             <button
@@ -2418,7 +1874,7 @@ export default function InventoryPage() {
           {outOfStockCount > (stockItems as StockItem[]).length * 0.5 ? (
             <p className="text-xs text-navy/70">Stock may need updating after import</p>
           ) : (
-            <p className="text-xs text-navy/70">0 or fewer on hand</p>
+            <p className="text-xs text-navy/70">none on hand (or negative)</p>
           )}
         </div>
       </div>
@@ -2435,7 +1891,7 @@ export default function InventoryPage() {
         </div>
       )}
 
-      <Tabs.Root defaultValue="stock">
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
         <Tabs.List className="flex gap-1 border-b border-surface-border">
           {tabs.map((tab) => (
             <Tabs.Trigger
@@ -2497,9 +1953,7 @@ export default function InventoryPage() {
                     const pick = stockSuggestions[stockSuggestHighlight];
                     if (pick) {
                       e.preventDefault();
-                      setAdjustPreselectId(pick.id);
-                      setShowAdjustModal(true);
-                      setStockSuggestOpen(false);
+                      pickSuggestion(pick.id);
                     }
                   } else if (e.key === "Escape") {
                     setStockSuggestOpen(false);
@@ -2551,38 +2005,85 @@ export default function InventoryPage() {
                             role="option"
                             aria-selected={idx === stockSuggestHighlight}
                             onMouseEnter={() => setStockSuggestHighlight(idx)}
-                            onMouseDown={(e) => {
-                              // mousedown so it fires before the input loses focus / closes the menu
-                              e.preventDefault();
-                              setAdjustPreselectId(s.id);
-                              setShowAdjustModal(true);
-                              setStockSuggestOpen(false);
-                            }}
                             className={cn(
-                              "flex cursor-pointer items-center gap-3 px-3 py-2 text-sm transition-colors",
+                              "flex flex-col gap-1.5 px-3 py-2 text-sm transition-colors",
                               idx === stockSuggestHighlight
                                 ? "bg-brand-50"
                                 : "hover:bg-surface-raised",
                             )}
                           >
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate font-medium text-navy" title={s.name}>
-                                {s.name}
-                              </p>
-                              <p className="truncate text-[11px] text-navy/70">
-                                {s.sku ? (
-                                  <span className="font-mono">{s.sku}</span>
-                                ) : (
-                                  <span className="italic">no SKU</span>
+                            {/* Primary pick: scrolls to + highlights the row in the
+                                table below, instead of force-opening a modal. */}
+                            <button
+                              type="button"
+                              onMouseDown={(e) => {
+                                // mousedown so it fires before the input loses focus / closes the menu
+                                e.preventDefault();
+                                pickSuggestion(s.id);
+                              }}
+                              className="flex w-full cursor-pointer items-center gap-3 text-left"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate font-medium text-navy" title={s.name}>
+                                  {s.name}
+                                </p>
+                                <p className="truncate text-[11px] text-navy/70">
+                                  {s.sku ? (
+                                    <span className="font-mono">{s.sku}</span>
+                                  ) : (
+                                    <span className="italic">no SKU</span>
+                                  )}
+                                  {s.category ? <span> · {s.category}</span> : null}
+                                </p>
+                              </div>
+                              <p
+                                className={cn(
+                                  "shrink-0 text-xs font-medium tabular-nums",
+                                  stockColor,
                                 )}
-                                {s.category ? <span> · {s.category}</span> : null}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p className={cn("text-xs font-medium tabular-nums", stockColor)}>
+                              >
                                 {stockLabel} {s.unit}
                               </p>
-                              <p className="text-[10px] text-brand-600">Adjust →</p>
+                            </button>
+                            {/* Same action set as the table row, plus the product link. */}
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-0.5 text-[11px] font-medium">
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setCostTarget(s);
+                                  setStockSuggestOpen(false);
+                                }}
+                                className="text-brand-600 hover:underline"
+                              >
+                                Set cost
+                              </button>
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  setAdjustPreselectId(s.id);
+                                  setShowAdjustModal(true);
+                                  setStockSuggestOpen(false);
+                                }}
+                                className="text-brand-600 hover:underline"
+                              >
+                                Adjust
+                              </button>
+                              <Link
+                                href={`/inventory/movements?product=${s.id}`}
+                                className="text-brand-500 hover:underline"
+                                onClick={() => setStockSuggestOpen(false)}
+                              >
+                                Movements
+                              </Link>
+                              <Link
+                                href={`/products/${s.id}`}
+                                className="text-brand-500 hover:underline"
+                                onClick={() => setStockSuggestOpen(false)}
+                              >
+                                Open product
+                              </Link>
                             </div>
                           </li>
                         );
@@ -2607,30 +2108,25 @@ export default function InventoryPage() {
               })()}
             </p>
             <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<DollarSign className="h-4 w-4" />}
-                onClick={() =>
-                  missingCostCount > 0 ? setShowBulkCostModal(true) : setShowRecomputeModal(true)
-                }
-                title={
-                  missingCostCount > 0
-                    ? `Set a cost basis for the ${missingCostCount} product(s) without one`
-                    : "Rebuild average costs from purchase history"
-                }
-              >
-                {missingCostCount > 0 ? `Set Costs (${missingCostCount})` : "Costs"}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setShowRecomputeModal(true)}
-                title="Replay purchase history to rebuild average costs (dry-run preview first)"
-              >
-                Recompute
-              </Button>
+              {/* B562 (interim mitigation): the dedicated "Recompute" button and the
+                  "Costs" button's recompute fallback (used when there were no missing
+                  costs) were removed here. recompute-costs is blind to raw order
+                  decrements and can silently rewrite a tenant's whole inventory
+                  valuation — see the controller comment on
+                  InventoryController.recomputeCosts. Only the "Set Costs" path (for
+                  products genuinely missing a cost basis) remains reachable. Do not
+                  re-add either entry point until B562's root cause is fixed. */}
+              {missingCostCount > 0 && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<DollarSign className="h-4 w-4" />}
+                  onClick={() => setShowBulkCostModal(true)}
+                  title={`Set a cost basis for the ${missingCostCount} product(s) without one`}
+                >
+                  {`Set Costs (${missingCostCount})`}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="secondary"
@@ -2685,6 +2181,10 @@ export default function InventoryPage() {
                 setAdjustPreselectId={setAdjustPreselectId}
                 setShowAdjustModal={setShowAdjustModal}
                 onSetCost={setCostTarget}
+                variantInfoById={variantInfoById}
+                onAssignToVariants={setVariantSplitTarget}
+                scrollToId={scrollToProductId}
+                onScrolled={clearScrollTarget}
               />
             )}
           </div>
@@ -2758,7 +2258,12 @@ export default function InventoryPage() {
         <Tabs.Content value="purchase-orders" className="pt-4">
           <PurchaseOrdersTab
             suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({ id: p.id, name: p.name, sku: p.sku }))}
+            products={products.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              unitsPerBox: p.unitsPerBox ?? null,
+            }))}
           />
         </Tabs.Content>
 
@@ -2766,7 +2271,12 @@ export default function InventoryPage() {
         <Tabs.Content value="forecasting" className="pt-4">
           <ForecastingTab
             suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({ id: p.id, name: p.name, sku: p.sku }))}
+            products={products.map((p: any) => ({
+              id: p.id,
+              name: p.name,
+              sku: p.sku,
+              unitsPerBox: p.unitsPerBox ?? null,
+            }))}
           />
         </Tabs.Content>
       </Tabs.Root>
@@ -2780,6 +2290,7 @@ export default function InventoryPage() {
             sku: p.sku,
             unit: p.unit,
             currentStock: Number(p.currentStock ?? 0),
+            unitsPerBox: p.unitsPerBox ?? null,
           }))}
           onClose={() => setShowPurchaseModal(false)}
         />
@@ -2792,6 +2303,7 @@ export default function InventoryPage() {
             sku: p.sku,
             unit: p.unit,
             currentStock: Number(p.currentStock ?? 0),
+            unitsPerBox: p.unitsPerBox ?? null,
           }))}
           defaultProductId={adjustPreselectId}
           onClose={() => {
@@ -2812,6 +2324,23 @@ export default function InventoryPage() {
         onCreated={() => setShowScanModal(false)}
       />
       {costTarget && <SetCostModal item={costTarget} onClose={() => setCostTarget(null)} />}
+      {/* Variant-split modal (PR-D) — same component as the product detail
+          page and the vendor-bill line badge. Pool defaults to the parent's
+          full `currentStock`. */}
+      {variantSplitTarget && (
+        <VariantSplitModal
+          parent={{
+            id: variantSplitTarget.id,
+            name: variantSplitTarget.name,
+            currentStock: variantSplitTarget.currentStock,
+            averageCost: variantSplitTarget.averageCost,
+            unitsPerBox: variantSplitTarget.unitsPerBox ?? null,
+            costingMethod: variantSplitTarget.costingMethod,
+          }}
+          onClose={() => setVariantSplitTarget(null)}
+          onSuccess={() => setVariantSplitTarget(null)}
+        />
+      )}
       {showBulkCostModal && (
         <BulkSetCostModal
           products={valuation?.missingCostProducts ?? []}

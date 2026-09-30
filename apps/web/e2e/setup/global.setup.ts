@@ -3,27 +3,52 @@
  *
  * Playwright globalSetup — runs once before all tests.
  *
- * Seeds the E2E test tenant (`e2e-routeflow`) by calling the seed script
- * from apps/api/scripts/e2e-seed.js. Pass DATABASE_URL as an env var to
- * target Railway; defaults to the local dev DB.
+ * Seeds the E2E test tenant (`e2e-routeflow`) by calling the seed script from
+ * apps/api/scripts/e2e-seed.js against the database named by DATABASE_URL
+ * (E2E_SEED_DATABASE_URL wins when both are set — that's the name the CI
+ * secret uses so it can't be confused with a service's own DATABASE_URL).
  *
- * This makes the test suite self-contained: running `npx playwright test`
- * always has a clean, ready-to-go test tenant.
+ * Behavior matrix (deliberately loud — a silently-skipped seed rotted the CI
+ * suite for a week in 2026-08 while "Continuing despite seed error..."
+ * scrolled past unread):
+ *   • SKIP_E2E_SEED=true      → skip, explicitly.
+ *   • a DB URL is configured  → seed; ANY failure aborts the whole run.
+ *   • no DB URL + CI          → skip with a notice — CI targets the deployed
+ *     app, whose standing `e2e-routeflow` tenant is assumed pre-seeded (see
+ *     the E2E_SEED_DATABASE_URL secret note in .github/workflows/ci.yml).
+ *   • no DB URL + local       → seed the local-dev fallback DB; failure
+ *     aborts (start docker `npm run db:up`, or set SKIP_E2E_SEED=true when
+ *     pointing at a remote deployment you can't reach the DB of).
  */
 
 import { execSync } from "child_process";
 import path from "path";
 
 export default async function globalSetup(): Promise<void> {
-  // Skip seeding if explicitly disabled (e.g. you've pre-seeded manually)
   if (process.env.SKIP_E2E_SEED === "true") {
     console.log("[global setup] SKIP_E2E_SEED=true — skipping seed step.");
     return;
   }
 
-  const seedScript = path.resolve(__dirname, "../../../../apps/api/scripts/e2e-seed.js");
+  // Empty string counts as unset: `DATABASE_URL: ${{ secrets.X }}` in a
+  // workflow yields "" when the secret does not exist.
+  const configuredDbUrl =
+    [process.env.E2E_SEED_DATABASE_URL, process.env.DATABASE_URL].find(
+      (v) => v && v.trim() !== "",
+    ) ?? null;
 
+  if (!configuredDbUrl && process.env.CI === "true") {
+    console.log(
+      "[global setup] No E2E_SEED_DATABASE_URL/DATABASE_URL in CI — skipping the seed.\n" +
+        "  The suite runs against the deployed app's standing `e2e-routeflow` tenant.\n" +
+        "  Add the E2E_SEED_DATABASE_URL repo secret to (re-)seed it on every run.",
+    );
+    return;
+  }
+
+  const seedScript = path.resolve(__dirname, "../../../../apps/api/scripts/e2e-seed.js");
   const env = { ...process.env };
+  if (configuredDbUrl) env.DATABASE_URL = configuredDbUrl;
 
   console.log("[global setup] Running E2E seed...");
   try {
@@ -39,11 +64,14 @@ export default async function globalSetup(): Promise<void> {
       .forEach((line) => console.log(`  ${line}`));
   } catch (err: unknown) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
-    console.error("[global setup] E2E seed failed:");
+    console.error("[global setup] E2E seed FAILED:");
     if (e.stdout) console.error(e.stdout);
     if (e.stderr) console.error(e.stderr);
-    // Don't abort the whole test run — the tenant might already exist
-    // or this might be a local env without DB access.
-    console.warn("[global setup] Continuing despite seed error...");
+    // Fail the run — fixture-dependent specs would fail anyway, just less
+    // legibly. Pre-seeded environments should say so via SKIP_E2E_SEED=true.
+    throw new Error(
+      "E2E seed failed (see output above). Fix the DB connection, or set " +
+        "SKIP_E2E_SEED=true if the target tenant is already seeded.",
+    );
   }
 }

@@ -14,10 +14,14 @@ import type { PlanGateBody } from "@/lib/plan-gate";
 export function LockedPage({
   gate,
   title,
+  secondary,
   children,
 }: {
   gate: PlanGateBody;
   title?: string;
+  /** Optional plain line rendered under the CTA (e.g. lite-L2's "Want it? Contact us to
+   *  upgrade." — no link target invented; the existing "See plans" CTA is the only action). */
+  secondary?: string;
   children?: React.ReactNode;
 }) {
   const u = gate.upgrade;
@@ -44,6 +48,7 @@ export function LockedPage({
               <Sparkles className="mr-1 h-4 w-4" /> {cta}
             </Button>
           </a>
+          {secondary && <p className="mt-2 text-sm text-slate-500">{secondary}</p>}
         </Card>
       </div>
     </div>

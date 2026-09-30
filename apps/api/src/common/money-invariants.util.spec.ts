@@ -1,0 +1,55 @@
+import { BadRequestException } from "@nestjs/common";
+import {
+  assertMoneyInvariantsOrThrow,
+  assertNoNegativeLineSubtotal,
+} from "./money-invariants.util";
+
+describe("assertMoneyInvariantsOrThrow (B451 gap 4)", () => {
+  it("does not throw for a valid breakdown", () => {
+    expect(() =>
+      assertMoneyInvariantsOrThrow({ subtotal: 100, discount: 10, total: 90 }),
+    ).not.toThrow();
+  });
+
+  it("maps a money-invariant violation to a 400 BadRequestException with a stable code — never a 500", () => {
+    let caught: unknown;
+    try {
+      assertMoneyInvariantsOrThrow({ subtotal: 4.99, discount: 500, total: -495.01 });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(BadRequestException);
+    const response = (caught as BadRequestException).getResponse() as Record<string, unknown>;
+    expect(response.code).toBe("MONEY_INVARIANT");
+    expect(typeof response.message).toBe("string");
+    expect((caught as BadRequestException).getStatus()).toBe(400);
+  });
+});
+
+describe("assertNoNegativeLineSubtotal (B659 review finding 5 — extracted out of InvoicesService.create())", () => {
+  it("does not throw when every line's subtotal is >= 0", () => {
+    expect(() =>
+      assertNoNegativeLineSubtotal([
+        { description: "A", subtotal: 0 },
+        { description: "B", subtotal: 5 },
+      ]),
+    ).not.toThrow();
+  });
+
+  it("throws a 400 naming the offending line when a line's subtotal is negative", () => {
+    expect(() => assertNoNegativeLineSubtotal([{ description: "Widget", subtotal: -5 }])).toThrow(
+      BadRequestException,
+    );
+    expect(() => assertNoNegativeLineSubtotal([{ description: "Widget", subtotal: -5 }])).toThrow(
+      'Line item "Widget" has a negative subtotal (-5). Discount cannot exceed line total.',
+    );
+  });
+
+  it("coerces a Decimal-shaped (string/number) subtotal before comparing", () => {
+    expect(() =>
+      assertNoNegativeLineSubtotal([
+        { description: "Widget", subtotal: "-1.50" as unknown as number },
+      ]),
+    ).toThrow(BadRequestException);
+  });
+});

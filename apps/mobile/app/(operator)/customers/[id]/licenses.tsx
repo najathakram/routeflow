@@ -41,6 +41,7 @@ import { FormSheet, FormField, FormSection, FormTextInput } from "../../../../co
 import { OptionPickerSheet } from "../../../../components/OptionPickerSheet";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
+import { buildExpiresAtIso } from "./licenses.logic";
 
 /** Capture (mode=create) or renew (category fixed) a license. */
 function LicenseSheet({
@@ -81,7 +82,7 @@ function LicenseSheet({
     }
     const payload = {
       licenseNumber: licenseNumber.trim(),
-      expiresAt: new Date(`${expiresAt.trim()}T23:59:59`).toISOString(),
+      expiresAt: buildExpiresAtIso(expiresAt),
     };
     const opts = {
       onSuccess: () => {

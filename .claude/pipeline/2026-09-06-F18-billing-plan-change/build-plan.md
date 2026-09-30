@@ -1,0 +1,39 @@
+# Build plan — F18 (B58 · B73 · B107) — bug-pipeline, mode bugfix, scale major
+
+Base master `597c72dc`; worktree `C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog`; branch `fix/F18-billing-plan-change`.
+Design of record: `cause-ruling.md` §2 (bindings) over `.claude/pipeline/2026-09-02-wave-a-completion/F18.md` (§Fix per bug).
+Tests of record: `bug-test-plan.md`. One PR (D6). Every commit carries the trailer `Bookkeeping-Follow-Up: pending`.
+
+## Packages (order = plan order; P1–P3 conflict-free, P4 after P3, P5 after P4)
+
+| id  | title                          | files                                                                                                                                      | effort               | brief                                                                                                                                                                                                                                                                                                                                   |
+| --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P1  | B107 add-on ↔ Stripe refusal   | `apps/api/src/billing/addon.service.ts`                                                                                                    | high (money+tenancy) | F18.md §B107 Fix + ruling §2: `isStripeResourceMissing`, refuse in `disableAddon` (non-missing errors) and `enableAddon` (create failure; `!sub?.stripeSubId` → Conflict); free-grant path unchanged; rewrite the method docblocks. Make T7–T9 green and keep T11–T12 green.                                                            |
+| P2  | B73 lock at the runSync seam   | `apps/api/src/sales-agents/commission-engine.service.ts`                                                                                   | high (money)         | F18.md §B73 Fix + ruling §9: `FOR UPDATE` on `CommissionAccrual` keyed on `invoiceId` ONLY (raw SQL; tenantId is nullable) at the top of `runSync` AFTER the flag-OFF early return, BEFORE the invoice read; docblock states the lock is what makes "append exactly one" true. Make T5 green; T6 pin stays green.                       |
+| P3  | B58 API half                   | `apps/api/src/billing/subscription-mutation.service.ts`, `apps/api/src/billing/settings-billing.controller.ts`                             | high (money)         | ruling §2 + §9 B58 API: guard in `subscribe()` keyed on planRank inequality; `change: null` when no tenant context; (priorSub select `{planKey,cycle}`), new `planChangePreview` (server `planRank`, reuse the prorated-diff helper), `quote()` returns `{...quote, change}`. Make T1–T3 green; T10 pin (re-scoped cycle-switch) green. |
+| P4  | B58 web half                   | `apps/web/lib/api/billing.ts`, `apps/web/app/(dashboard)/choose-plan/page.tsx`, `apps/web/app/(dashboard)/_components/gates/PlanGates.tsx` | medium               | ruling §2 + §9 B58 web (shared `dispatchPlanChange`, PlanGates second entrance): `QuoteResult.change: PlanChange`; `commit()` dispatch on `change.action`; Summary/labels/toasts per action; NOOP disabled; no other page changes; keep all existing hooks. Targeted edits only.                                                        |
+| P5  | B58 T2 spec 33 + project entry | `apps/web/e2e/33-change-plan-routing.spec.ts`, `apps/web/playwright.config.ts`                                                             | medium               | T4 exactly: two tests (UPGRADE, DOWNGRADE), interception-only, no e2e-tenant mutation; project `change-plan-routing` (operator storageState, `dependencies:['setup']`), appended after the F09 `credit-note-wallet` entry. Do not run Playwright locally.                                                                               |
+
+Non-goals (record, never build here): the two B58 residuals (ACTIVE cycle switch uncredited; no self-service Stripe push), B107's twin seams (`subscription-mutation.service.ts` `disableAddon`, billing-cron `applyScheduledCancellations`), a plan-change preview endpoint, a seat picker for downgrades, any migration.
+
+## Test packages (authored BEFORE implementation)
+
+| id     | files                                                                                                                                                                                                                                       | tests                               | effort | brief                                                                                                                                                                    |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| TP-API | `apps/api/src/billing/subscription-mutation.service.spec.ts`, `apps/api/src/billing/settings-billing.controller.spec.ts` (new), `apps/api/src/sales-agents/commission-engine.service.spec.ts`, `apps/api/src/billing/addon.service.spec.ts` | T1 T2 T3 T5 T6 T7 T8 T9 T10 T11 T12 | high   | `bug-test-plan.md` exactly incl. the Harness notes (`$executeRaw` on `buildFakeDb`, `stripe?` on `make()`, `sub.cycle`, the re-scoped ~:130 fixture); implement nothing. |
+| TP-E2E | `apps/web/e2e/33-change-plan-routing.spec.ts`, `apps/web/playwright.config.ts`                                                                                                                                                              | T4                                  | medium | T4 exactly; project entry mandatory; not part of the local red gate.                                                                                                     |
+
+## Gates
+
+- Red gate (behavioral): `cd apps/api && npx jest src/billing/subscription-mutation.service.spec.ts src/billing/settings-billing.controller.spec.ts src/sales-agents/commission-engine.service.spec.ts src/billing/addon.service.spec.ts --runInBand -t "REG-B(58|73|107)"` → must fail today on the exact values in the plan.
+- perRound: `cd apps/api && npx tsc -p tsconfig.build.json --noEmit` · `cd apps/api && npx jest src/billing src/sales-agents --runInBand` · `cd apps/web && npx tsc --noEmit -p tsconfig.json`
+- final: `cd apps/api && npx jest --silent` · `cd apps/web && npx jest --silent` · `node scripts/validate-lessons.mjs` · `node scripts/campaign/bugs.mjs self-test`
+- Mutation probes (revert-fix): `subscription-mutation.service.ts` → REG-B58; `commission-engine.service.ts` → REG-B73; `addon.service.ts` → REG-B107.
+
+## Risks carried (from F18.md + corrections)
+
+Register at 40/40 and 40.0/40.0 KB (lesson lands in the Option-B follow-up, archiving two); `playwright.config.ts` is an append-only collision surface (F09 = spec 28 already on master); B58's T2 proof is interception-only (server decision proven by jest); B107 is a deliberate behaviour change for platform admins (error text must say what to do); B73 adds one round-trip per sync.
+
+## Pipeline args
+
+See `pipeline-args.json` (kept under 4 KB; the run record truncates longer args).

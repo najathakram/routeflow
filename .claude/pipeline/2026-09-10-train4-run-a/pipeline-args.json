@@ -1,0 +1,110 @@
+{
+  "mode": "bugfix",
+  "planPath": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "scale": "major",
+  "context": "Train 4 Run A: B134/B135 move approveChangeRequestAtStop's invoice un-send and window re-checks inside the merge tx; B214 deleteInvoice+deleteOrder refuse (409) while a sourced credit note has unspent balance. S4/S5 by Opus 5 (Fable 429).",
+  "radiusFiles": [
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/credit-notes/sourced-credit-guard.ts",
+    "apps/api/src/credit-notes/credit-notes.service.ts",
+    "apps/api/prisma/schema/finance.prisma",
+    "apps/api/src/orders/orders.service.spec.ts",
+    "apps/api/src/invoices/invoice-delete-credit.db.spec.ts",
+    "apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts",
+    "apps/api/src/orders/orders-promo-bogo.spec.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "tx\\.invoice\\.delete\\(|invoice\\.delete\\(\\{",
+      "note": "B214 doors; see build-plan Sibling sweep (forceConsolidateCustomer ~1434 unconfirmed)"
+    },
+    {
+      "regex": "data: \\{ invoiceId: null \\}",
+      "note": "credit-note unlink; only deleteInvoice expected"
+    },
+    {
+      "regex": "order\\.lineItems\\.find\\(",
+      "note": "B135 stale-snapshot shape; see build-plan Sibling sweep"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "Unit REG + pins",
+      "files": ["apps/api/src/orders/orders.service.spec.ts"],
+      "brief": "build-plan.md TP1 (T1-T8, P1-P4)"
+    },
+    {
+      "id": "TP2",
+      "title": "DB-lane REG + pins",
+      "files": ["apps/api/src/invoices/invoice-delete-credit.db.spec.ts"],
+      "brief": "build-plan.md TP2 (T9-T10, P5-P7)"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/orders/orders.service.spec.ts -t \"REG-B134|REG-B135|REG-B214\" --reporters=default",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit -t REG-B214\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "Shared sourced-credit guard",
+      "files": ["apps/api/src/credit-notes/sourced-credit-guard.ts"],
+      "brief": "build-plan.md WP1 exact code",
+      "effort": "high",
+      "provenBy": ["T8", "T9", "T10"]
+    },
+    {
+      "id": "WP2",
+      "title": "deleteInvoice refuses",
+      "files": ["apps/api/src/invoices/invoices.service.ts"],
+      "brief": "build-plan.md WP2 exact code",
+      "dependsOn": ["WP1"],
+      "effort": "high",
+      "provenBy": ["T9", "T10"]
+    },
+    {
+      "id": "WP3",
+      "title": "Approve-at-stop tx boundary + deleteOrder refuses",
+      "files": ["apps/api/src/orders/orders.service.ts"],
+      "brief": "build-plan.md WP3 exact code (Edits 0-4)",
+      "dependsOn": ["WP1"],
+      "effort": "high",
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": ["npm run check-types -w apps/api", "npm run lint -w apps/api"],
+    "final": [
+      "cd apps/api && npx jest src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger --reporters=default",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\""
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "revertFix": true,
+        "behavior": "un-send + window re-checks run inside the merge tx",
+        "test": "REG-B134 (T1)"
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "revertFix": true,
+        "behavior": "deleteInvoice refuses on an unspent sourced note",
+        "test": "REG-B214 (T9)"
+      },
+      {
+        "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+        "behavior": "open = non-VOID, unexpired, remaining > 0.001",
+        "test": "REG-B214 (T8)"
+      }
+    ]
+  }
+}

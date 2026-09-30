@@ -17,11 +17,34 @@ interface Props {
   onClose: () => void;
   /** Keep the camera open after a scan so the operator can scan the next item. */
   continuous?: boolean;
+  /**
+   * Ignore incoming codes while a sheet (picker / create) is stacked over the
+   * scanner. The camera stays MOUNTED — tearing it down and re-opening it is
+   * what made a hand-off cost the operator an extra trip back to scan mode.
+   */
+  paused?: boolean;
+  /**
+   * Pause the underlying camera decode loop without unmounting it — a sheet
+   * (e.g. a price edit) stacked over the scanner passes `false` here instead
+   * of tearing the camera down. Defaults `true`.
+   */
+  active?: boolean;
 }
 
 /** Full-screen scanning overlay: permission UI, viewfinder chrome and feedback
  *  pill around a {@link ScanCamera}. */
-export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props) {
+export function BarcodeScanner({
+  onScanned,
+  onClose,
+  continuous = false,
+  paused = false,
+  active = true,
+}: Props) {
+  // Swallow codes while paused rather than unmounting the camera.
+  const guardedScan = React.useCallback(
+    (code: string) => (paused ? undefined : onScanned(code)),
+    [paused, onScanned],
+  );
   const { granted, request } = useScanCameraPermission();
   const [feedback, setFeedback] = React.useState<ScanFeedback | null>(null);
   const feedbackTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -68,9 +91,10 @@ export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props
     <View style={StyleSheet.absoluteFill}>
       <ScanCamera
         style={StyleSheet.absoluteFill}
-        onScanned={onScanned}
+        onScanned={guardedScan}
         onOutcome={handleOutcome}
         continuous={continuous}
+        active={active && !paused}
       />
 
       {/* Dark surround */}
@@ -87,6 +111,16 @@ export function BarcodeScanner({ onScanned, onClose, continuous = false }: Props
               <Text style={styles.feedbackText} numberOfLines={2}>
                 {feedback.text}
               </Text>
+              {feedback.action ? (
+                <TouchableOpacity
+                  onPress={() => feedback.action?.onPress()}
+                  style={styles.feedbackActionBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={feedback.action.label}
+                >
+                  <Text style={styles.feedbackActionText}>{feedback.action.label}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -162,6 +196,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     flexShrink: 1,
+  },
+  feedbackActionBtn: {
+    minHeight: 44,
+    justifyContent: "center",
+    paddingHorizontal: 14,
+    marginRight: -6,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.22)",
+  },
+  feedbackActionText: {
+    color: "#fff",
+    fontSize: 13,
+    fontWeight: "700",
   },
   doneButton: {
     marginTop: 16,

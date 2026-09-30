@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { SelectablePaymentMethod } from "../payment-methods";
+import { shouldRetryCustomerPrices } from "../query-retry-policy";
+import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface CustomerSummary {
   id: string;
@@ -36,8 +40,17 @@ export interface CustomerDetail {
   pricingTier?: number;
   currency?: string;
   notes?: string;
+  /**
+   * The customer's DEFAULT fulfillment mode — new orders seed their own
+   * `fulfillPath` from it (`NewOrderScreen`, web `CreateOrderModal`); it never
+   * constrains an existing order. Optional because the API has returned it
+   * since launch (`Customer.fulfillPath @default(ROUTE)`) but older cached
+   * payloads may predate this client reading it.
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
   addresses: Array<{
     id: string;
+    label?: string;
     line1: string;
     line2?: string;
     city: string;
@@ -45,6 +58,8 @@ export interface CustomerDetail {
     zip: string;
     country?: string;
     isDefault?: boolean;
+    /** Free string server-side, but the update route only accepts these three. */
+    addressType?: string;
     lat?: number | null;
     lng?: number | null;
     notes?: string;
@@ -59,6 +74,15 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount: number;
+  /** Operator statement only: the exposure the hard credit limit is checked
+   *  against (issued open-invoice balances, drafts backed by an open/delivered
+   *  order, and the unbilled value of open orders). */
+  creditExposure?: number;
+  /** Operator statement only: unissued DRAFT invoice balances with no open or
+   *  delivered order behind them — shown beside, never inside, `creditExposure`. */
+  pendingExposure?: number;
+  /** True when the transactions ledger below is a capped partial view of the full history. */
+  transactionsTruncated: boolean;
   transactions: Array<{
     id: string;
     type: string;
@@ -127,8 +151,8 @@ export interface CreateAdvancePaymentDto {
   /** Cents-rounded CLIENT-side — the server stores it verbatim (no roundMoney,
    *  and no class-validator on these routes at all — validate before sending). */
   amount: number;
-  /** Hand-enterable methods only (web offers CASH/CHECK/ACH/OTHER). */
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  /** Hand-enterable methods only — see lib/payment-methods.ts (web offers the same list). */
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
 }
@@ -186,7 +210,10 @@ export interface CustomerPrice {
   id: string;
   customerId: string;
   productId: string;
-  pricingTier: number;
+  /** Null = msrp-only override row; price at the customer's default tier. */
+  pricingTier: number | null;
+  /** Per-customer MSRP override (display-only, per PIECE). Mobile never edits it. */
+  msrp?: number | string | null;
   notes?: string;
   product?: {
     id: string;
@@ -207,6 +234,7 @@ export function useCustomerPrices(id: string) {
     queryFn: () => apiClient.get(`/customers/${id}/prices`).then((r) => r.data),
     enabled: !!id,
     staleTime: 2 * 60_000,
+    retry: shouldRetryCustomerPrices,
   });
 }
 
@@ -215,7 +243,10 @@ export function useUpsertCustomerPrice() {
   return useMutation<
     CustomerPrice,
     Error,
-    { customerId: string; productId: string; pricingTier: number; notes?: string }
+    // pricingTier null = "no tier override" — only valid on a row that keeps its
+    // MSRP override (the server deletes a row cleared of both fields, and holds
+    // that delete to OPERATOR level).
+    { customerId: string; productId: string; pricingTier: number | null; notes?: string }
   >({
     mutationFn: ({ customerId, ...body }) =>
       apiClient.post(`/customers/${customerId}/prices`, body).then((r) => r.data),
@@ -241,6 +272,29 @@ export function useCustomer(id: string) {
     queryKey: ["customers", id],
     queryFn: () => apiClient.get(`/customers/${id}`).then((r) => r.data),
     enabled: !!id,
+    staleTime: 2 * 60_000,
+  });
+}
+
+export interface CustomerCurrentAgent {
+  assignment: {
+    id: string;
+    effectiveFrom: string;
+    agent: { id: string; name: string; status: string; deletedAt: string | null };
+  } | null;
+  customerRatePct: number | null;
+}
+
+/** Read-only mirror of web's agent box. MUST stay `enabled`-gated: the route is
+ *  plan-flag gated and 403s for tenants without the sales_agents addon. */
+export function useCustomerCurrentAgent(customerId: string, enabled: boolean) {
+  return useQuery<CustomerCurrentAgent>({
+    queryKey: ["sales-agents", "current-assignment", customerId],
+    queryFn: () =>
+      apiClient
+        .get("/sales-agents/assignments/current", { params: { customerId } })
+        .then((r) => r.data),
+    enabled: !!customerId && enabled,
     staleTime: 2 * 60_000,
   });
 }
@@ -277,6 +331,8 @@ export interface AccountSummary {
   outstandingAmount: number;
   overdueAmount: number;
   availableCredit: number;
+  /** True when the transactions ledger below is a capped partial view of the full history. */
+  transactionsTruncated: boolean;
   transactions: AccountTransaction[];
 }
 
@@ -292,6 +348,8 @@ export function useMyAccountSummary() {
 
 export interface CreateCustomerDto {
   businessName: string;
+  /** Create-only, and REQUIRED there — the API mints the linked User from it. */
+  username?: string;
   contactName?: string;
   email?: string;
   phone?: string;
@@ -304,11 +362,23 @@ export interface CreateCustomerDto {
   deliveryWindowEnd?: string;
   isTaxExempt?: boolean;
   taxId?: string;
+  /** Default fulfillment mode for this customer's new orders (server default ROUTE). */
+  fulfillPath?: "ROUTE" | "SHIP";
+  /** Create-only: the customer's first address, bundled with the create. */
+  addresses?: Array<{
+    label: string;
+    line1: string;
+    city: string;
+    state: string;
+    zip: string;
+    isDefault?: boolean;
+  }>;
 }
 
 export function useCreateCustomer() {
   const qc = useQueryClient();
-  return useMutation<{ id: string }, Error, CreateCustomerDto>({
+  // POST /customers returns { customer, user, tempPassword } — not a bare customer.
+  return useMutation<{ customer: { id: string } }, Error, CreateCustomerDto>({
     mutationFn: (dto) => apiClient.post("/customers", dto).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
@@ -340,17 +410,21 @@ export function useDeleteCustomer() {
   });
 }
 
+/** Mirrors Create/UpdateAddressDto EXACTLY. The API's global ValidationPipe runs
+ *  `forbidNonWhitelisted`, so any extra key (country, notes, lat, lng…) is a 400,
+ *  not a silent strip — coordinates in particular are server-owned (it geocodes on
+ *  add and clears + re-geocodes on update). Do not widen without the DTO. */
 export interface CustomerAddressDto {
+  /** Required by CreateAddressDto server-side (empty string is a valid value). */
+  label: string;
   line1: string;
   line2?: string;
   city: string;
   state: string;
   zip: string;
-  country?: string;
-  lat?: number;
-  lng?: number;
   isDefault?: boolean;
-  notes?: string;
+  /** Update route validates against ["BILLING","SHIPPING","DELIVERY"]. */
+  addressType?: string;
 }
 
 export function useAddCustomerAddress() {
@@ -379,18 +453,21 @@ export function useUpdateCustomerAddress() {
   });
 }
 
-// ─── Documents ────────────────────────────────────────────────────────────────
-
-export interface CustomerDocument {
-  id: string;
-  docType: string;
-  originalName: string;
-  mimeType: string;
-  sizeBytes: number;
-  createdAt: string;
-  /** Freshly presigned on every list call — safe to open directly, no auth header needed. */
-  url: string;
+/** DELETE :id/addresses/:addrId — 409 (ConflictException) when a RouteStop or
+ *  RouteRunStop still references the address; server promotes the oldest
+ *  remaining address to default when the deleted row was the default. */
+export function useDeleteCustomerAddress() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { customerId: string; addressId: string }>({
+    mutationFn: ({ customerId, addressId }) =>
+      apiClient.delete(`/customers/${customerId}/addresses/${addressId}`).then(() => undefined),
+    onSuccess: (_, { customerId }) => {
+      qc.invalidateQueries({ queryKey: ["customers", customerId] });
+    },
+  });
 }
+
+// ─── Documents ────────────────────────────────────────────────────────────────
 
 /** Same vocabulary as web's Documents tab. `docType` is a free string server-side. */
 export const CUSTOMER_DOC_TYPES = [
@@ -512,14 +589,6 @@ export function useDeleteContactPerson(customerId: string) {
 }
 
 // ─── Comments ────────────────────────────────────────────────────────────────
-
-/** NOTE: the server does NOT include the author relation — there is no name to
- *  render (web falls back to "User" too). Distinct from `Customer.notes`. */
-export interface CustomerComment {
-  id: string;
-  content: string;
-  createdAt: string;
-}
 
 const commentsKey = (customerId: string) => ["customers", customerId, "comments"] as const;
 

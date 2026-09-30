@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -16,6 +17,13 @@ import {
 } from "@/lib/api/bookkeeping";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+} from "@/lib/payment-methods";
+import { fmtCalendarDate } from "@/lib/formatting";
+import { BrandMark } from "@/components/brand";
 
 // ─── Payment status badge ─────────────────────────────────────────────────────
 
@@ -30,7 +38,8 @@ function PaymentStatusBadge({ status }: { status: PaymentStatus }) {
 // ─── Record payment schema ────────────────────────────────────────────────────
 
 const paymentSchema = z.object({
-  method: z.enum(["CASH", "CHECK", "ACH", "OTHER"]),
+  // z.enum needs [string, ...string[]]; spread the readonly tuple through a cast.
+  method: z.enum([...SELECTABLE_PAYMENT_METHODS] as [string, ...string[]]),
   amount: z.coerce.number().positive("Enter an amount greater than 0"),
   reference: z.string().optional(),
 });
@@ -91,12 +100,10 @@ function RecordPaymentModal({
       <form id="payment-form" onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
         <Select
           label="Payment Method"
-          options={[
-            { value: "CASH", label: "Cash" },
-            { value: "CHECK", label: "Check" },
-            { value: "ACH", label: "ACH / Bank Transfer" },
-            { value: "OTHER", label: "Other" },
-          ]}
+          options={SELECTABLE_PAYMENT_METHODS.map((m) => ({
+            value: m,
+            label: PAYMENT_METHOD_LABELS[m],
+          }))}
           register={register("method")}
           error={errors.method?.message}
         />
@@ -122,16 +129,18 @@ function RecordPaymentModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function TransactionDetailPage({ params }: { params: { transactionId: string } }) {
+export default function TransactionDetailPage() {
+  const params = useParams();
+  const transactionId = params.transactionId as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
-  const { data: txn, isLoading, isError } = useTransaction(params.transactionId);
+  const { data: txn, isLoading, isError } = useTransaction(transactionId);
   const recordPayment = useRecordPayment();
   const downloadInvoice = useDownloadInvoice();
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
 
   const handleDownloadPdf = () => {
-    downloadInvoice.mutate(params.transactionId, {
+    downloadInvoice.mutate(transactionId, {
       onSuccess: async (result) => {
         if (!result) {
           toast({
@@ -149,7 +158,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = blobUrl;
-          a.download = `invoice-${params.transactionId}.pdf`;
+          a.download = `invoice-${transactionId}.pdf`;
           a.rel = "noopener noreferrer";
           document.body.appendChild(a);
           a.click();
@@ -265,7 +274,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
             <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <img src="/logo.svg" alt="RouteFlow" className="h-8 w-8 object-contain" />
+                  <BrandMark size={32} />
                   <span className="text-lg font-bold text-navy">RouteFlow</span>
                 </div>
                 <p className="mt-1 text-xs text-navy/70">Austin, TX · routeflow.io</p>
@@ -306,11 +315,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                 {txn.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due:</span>{" "}
-                    {new Date(txn.dueDate).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })}
+                    {fmtCalendarDate(txn.dueDate)}
                   </p>
                 )}
               </div>
@@ -367,7 +372,7 @@ export default function TransactionDetailPage({ params }: { params: { transactio
                         </span>
                       </div>
                       <p className="mt-0.5 text-xs text-navy/70">
-                        {pmt.method}
+                        {paymentMethodLabel(pmt.method)}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                     </div>

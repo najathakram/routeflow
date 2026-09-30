@@ -12,11 +12,13 @@ import {
 } from "../../../lib/api/recurring-invoices";
 import {
   freqLabel,
+  lastRunOutcome,
   recurringActionFlags,
   recurringPillFor,
 } from "../../../lib/recurring-invoices-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -47,12 +49,24 @@ export default function RecurringInvoiceDetailScreen() {
 
   const s = recurringPillFor(template.isActive);
   const flags = recurringActionFlags(template.isActive);
+  const outcome = lastRunOutcome(template);
+  // lastRunAt is a real timestamp (has a meaningful time-of-day) — kept in the
+  // viewer's local time, unlike nextRunAt below which is a UTC-midnight
+  // calendar date routed through the shared fmtCalendarDate helper.
   const fmtDate = (d?: string) => (d ? new Date(d).toLocaleDateString() : "—");
 
   const handleRunNow = () => {
     if (!id) return;
     runMut.mutate(id, {
       onSuccess: (inv) => {
+        // The server claims the cycle atomically, so a losing racer (a second
+        // tap, or the cron) gets an empty body back — never announce/navigate
+        // to an invoice that this call did not create.
+        if (!inv?.id) {
+          showToast("This cycle was already generated");
+          refetch();
+          return;
+        }
         showToast("Invoice generated");
         // run returns the created INVOICE (keyed `id`), not the template.
         router.push(`/(operator)/invoices/${inv.id}`);
@@ -108,10 +122,18 @@ export default function RecurringInvoiceDetailScreen() {
               {freqLabel(template.frequency, template.dayOfWeek, template.dayOfMonth)}
             </Text>
             <Text style={styles.dates}>
-              Next run {fmtDate(template.nextRunAt)}
+              Next run {fmtCalendarDate(template.nextRunAt)}
               {template.lastRunAt ? ` · Last run ${fmtDate(template.lastRunAt)}` : ""}
               {template.autoSend ? " · Auto-send" : ""}
             </Text>
+            {outcome ? (
+              <View style={{ marginTop: 6, gap: 4 }}>
+                <Pill variant={outcome.variant} dot>
+                  {outcome.label}
+                </Pill>
+                {outcome.detail ? <Text style={styles.dates}>{outcome.detail}</Text> : null}
+              </View>
+            ) : null}
           </View>
 
           {/* Actions — Generate now (always), Pause (active) / Resume (paused) */}

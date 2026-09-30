@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,6 +24,8 @@ import { EmailService } from "../email/email.service";
 import { UpdateRouteSettingsDto } from "./dto/update-route-settings.dto";
 import { UpdateInvoiceSettingsDto } from "./dto/update-invoice-settings.dto";
 import { RemittanceConfigDto } from "./dto/remittance-config.dto";
+import { PricingTierLabelsDto } from "./dto/pricing-tier-labels.dto";
+import { ClearFinancialDataDto } from "./dto/clear-financial-data.dto";
 
 // RF-213: serve under both /settings and /tenant/settings so the frontend
 // calling the latter doesn't get a 404 while the operator app uses /settings.
@@ -115,6 +119,16 @@ export class SettingsController {
 
   @Patch()
   async updateSettings(@Body() dto: Record<string, unknown>) {
+    // taxRate is stored as a PERCENT (0-100); a direct API call can otherwise
+    // bypass the web form's min(0).max(100) and store an out-of-range value
+    // that later gets divided by 100 into a fraction (see common/tax-rate.ts).
+    if (dto.taxRate !== undefined) {
+      const n = Number(dto.taxRate);
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        throw new BadRequestException("Tax rate must be between 0 and 100 (percent)");
+      }
+    }
+
     // businessName and email are NOT editable by tenant admin (set by super admin).
     // taxRate and logoUrl stay in SystemConfig (no dedicated TenantConfig column for them yet).
     const allowed = ["taxRate", "logoUrl"];
@@ -346,29 +360,85 @@ export class SettingsController {
   // ─── Clear Financial Data ────────────────────────────────────────────────────
 
   @Delete("financial-data")
-  async clearFinancialData() {
+  @Roles(UserRole.TENANT_ADMIN)
+  @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+  async clearFinancialData(@Body() dto: ClearFinancialDataDto) {
+    const tenantId = this.prisma.getTenantId();
+
+    // R2 — nothing below this line is tenant-scoped by the client: the wipe runs on
+    // the raw `$transaction` (see the block comment further down), and even
+    // `tenantTransaction`/`forTenant` would be no help — both fall through to the
+    // UNSCOPED client when there is no tenant (prisma.service.ts
+    // `if (!tenantId) return fn(rawTx)`). A destructive bulk wipe has no legitimate
+    // all-tenant mode, so this refusal is the guard, not a formality.
+    if (!tenantId) {
+      throw new ForbiddenException(
+        "Clearing financial data requires a tenant context; it cannot be run across tenants.",
+      );
+    }
+
+    // R4 — typed confirmation: the caller must echo their own tenantId.
+    if (dto?.confirmTenantId !== tenantId) {
+      throw new BadRequestException(
+        "confirmTenantId must match the calling tenant to confirm this irreversible action.",
+      );
+    }
+
+    // R1 — scope every delete. ⚠️ CHILDREN ARE MATCHED THROUGH THEIR PARENT, NOT BY
+    // THEIR OWN tenantId: `tenantId` is `String?` on ALL of these models and
+    // nested-created child rows (invoice lines, bill payments written via their
+    // parent) carry tenantId = NULL, because they bypass the tenant extension's
+    // data.tenantId injection. A `where: { tenantId }` on a child would be SAFE but
+    // INCOMPLETE — and here incompleteness is FATAL, not cosmetic:
+    // `InvoicePayment.invoiceId` and `BillPayment.vendorBillId` are ON DELETE
+    // RESTRICT, so one surviving NULL-tenant payment aborts its parent's delete
+    // (P2003) and rolls the entire wipe back.
+    //
+    // ⚠️ Hence `$transaction`, NOT `tenantTransaction`: the latter hands the callback
+    // `_wrapTxWithTenant` (prisma.service.ts), whose SCOPED_METHODS include
+    // `deleteMany` and which rewrites EVERY call as
+    // `where: { ...args.where, tenantId }`. That injection silently re-scopes the
+    // parent filters below back to the child's own tenantId, i.e. exactly the
+    // NULL-tenant rows this shape exists to reach. The null-tenant refusal above is
+    // what makes running unproxied safe, and every filter here is explicit; the
+    // set_config call mirrors what tenantTransaction does so the RLS session
+    // variable is not lost along with the proxy.
+    //
+    // Children are filtered by a RELATION filter on the parent's tenantId rather
+    // than by a materialised id list: same scoping, but no unbounded `IN (...)` and
+    // no 32767-bind-parameter ceiling on tenants with the most data to clear.
+    //
+    // ⚠️ KNOWN LIMITATION (pre-existing, deliberately out of scope): `CommissionAccrual`
+    // also references Invoice ON DELETE RESTRICT and is NOT cleared here — clearing it
+    // would cascade into commission statements/payouts, which this endpoint does not
+    // own. A tenant holding commission accruals still fails this wipe on that FK.
     await this.prisma.$transaction(async (tx) => {
-      // Payments on invoices
-      await tx.invoicePayment.deleteMany({});
-      // Invoice line items
-      await tx.invoiceItem.deleteMany({});
-      // Invoices
-      await tx.invoice.deleteMany({});
-      // Credit notes
-      await tx.creditNote.deleteMany({});
-      // Vendor bill payments
-      await tx.billPayment.deleteMany({});
-      // Vendor bill items
-      await tx.vendorBillItem.deleteMany({});
-      // Vendor bills
-      await tx.vendorBill.deleteMany({});
-      // Purchase order items
-      await tx.purchaseOrderItem.deleteMany({});
-      // Purchase orders
-      await tx.purchaseOrder.deleteMany({});
-      // Generic payments (transaction-linked)
-      await tx.payment.deleteMany({});
+      await tx.$executeRaw`SELECT set_config('app.current_tenant_id', ${tenantId}, true)`;
+
+      await tx.invoicePayment.deleteMany({ where: { invoice: { tenantId } } });
+      await tx.invoiceItem.deleteMany({ where: { invoice: { tenantId } } });
+      await tx.invoice.deleteMany({ where: { tenantId } });
+
+      // OrderCreditNote.creditNoteId is ON DELETE RESTRICT, so these join rows must
+      // go before the credit notes they point at or the delete below aborts.
+      await tx.orderCreditNote.deleteMany({ where: { creditNote: { tenantId } } });
+      await tx.creditNote.deleteMany({ where: { tenantId } });
+
+      await tx.billPayment.deleteMany({ where: { vendorBill: { tenantId } } });
+      await tx.vendorBillItem.deleteMany({ where: { vendorBill: { tenantId } } });
+      await tx.vendorBill.deleteMany({ where: { tenantId } });
+
+      // NOTE: PurchaseOrderItem's relation to PurchaseOrder is named `po` (FK `poId`).
+      await tx.purchaseOrderItem.deleteMany({ where: { po: { tenantId } } });
+      await tx.purchaseOrder.deleteMany({ where: { tenantId } });
+
+      // Payment's parent is Transaction, which this endpoint does not touch, so
+      // payments are never orphaned by the deletes above; tenantId scoping is right
+      // here. NULL-tenant payments are consequently not cleared — a pre-existing
+      // limitation of untagged legacy rows, not one introduced by this change.
+      await tx.payment.deleteMany({ where: { tenantId } });
     });
+
     return { success: true, message: "All financial data cleared successfully" };
   }
 
@@ -435,8 +505,28 @@ export class SettingsController {
   @Get("invoice")
   async getInvoiceSettings() {
     const defaultTerms = await this.svc.get("invoice.defaultTerms");
+    const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
+    const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
+    const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
+    // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await this.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
     return {
       defaultTerms: defaultTerms ?? "Net 30",
+      hideOriginalPrice: hideOriginalPriceRaw === "true",
+      // WP-D1: absent/unset -> null (no tenant deposit default) rather than 0, so the
+      // web settings form can tell "never configured" apart from "explicitly 0".
+      depositDefaultPercent:
+        depositDefaultPercentRaw != null && depositDefaultPercentRaw !== ""
+          ? Number(depositDefaultPercentRaw)
+          : null,
+      depositCollectAtOrder: depositCollectAtOrderRaw === "true",
+      creditAutoApplyOnSend: cfg?.creditAutoApplyOnSend ?? false,
     };
   }
 
@@ -445,6 +535,26 @@ export class SettingsController {
   async updateInvoiceSettings(@Body() dto: UpdateInvoiceSettingsDto) {
     if (dto.defaultTerms !== undefined) {
       await this.svc.set("invoice.defaultTerms", dto.defaultTerms);
+    }
+    if (dto.hideOriginalPrice !== undefined) {
+      await this.svc.set("invoice.hideOriginalPrice", String(dto.hideOriginalPrice));
+    }
+    if (dto.depositDefaultPercent !== undefined) {
+      await this.svc.set(
+        "invoice.depositDefaultPercent",
+        dto.depositDefaultPercent == null ? "" : String(dto.depositDefaultPercent),
+      );
+    }
+    if (dto.depositCollectAtOrder !== undefined) {
+      await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
+    }
+    const tenantId = this.prisma.getTenantId();
+    if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
+      await this.prisma.tenantConfig.upsert({
+        where: { tenantId },
+        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+      });
     }
     return this.getInvoiceSettings();
   }
@@ -487,5 +597,22 @@ export class SettingsController {
   async updateRemittanceConfig(@Body() dto: RemittanceConfigDto) {
     await this.svc.setRemittanceConfig(dto);
     return this.svc.getRemittanceConfig();
+  }
+
+  // ─── Pricing tier labels (rung-2 config) ───────────────────────────────────
+  // Read: any operator/driver (drivers see priced lines too). Write: admin
+  // only — mirrors margin/remittance's read/write split.
+
+  @Get("pricing-tier-labels")
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getPricingTierLabels() {
+    return this.svc.getPricingTierLabels();
+  }
+
+  @Patch("pricing-tier-labels")
+  @Roles(UserRole.TENANT_ADMIN)
+  async updatePricingTierLabels(@Body() dto: PricingTierLabelsDto) {
+    await this.svc.setPricingTierLabels(dto);
+    return this.svc.getPricingTierLabels();
   }
 }

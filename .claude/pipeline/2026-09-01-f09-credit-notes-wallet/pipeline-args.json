@@ -1,0 +1,186 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-01-f09-credit-notes-wallet/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-01-f09-credit-notes-wallet/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-06T00:30:00Z",
+  "mode": "bugfix",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09",
+  "context": "F09 wallet integrity; ruling in cause-ruling.md",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx)$' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/api/src/credit-notes/credit-notes.service.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/invoices/invoice-status-sets.ts",
+    "apps/web/lib/api/credit-notes.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "pattern": "status: \\{ not: \"VOID\" \\}",
+      "note": "single-status exclusion; use the shared set"
+    },
+    { "pattern": "\"DRAFT\" \\| \"ISSUED\"", "note": "hand-typed enum union (L-072)" }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "title": "gate + pins",
+      "files": [
+        "apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts",
+        "apps/api/src/credit-notes/credit-notes.wallet-integrity.pins.spec.ts"
+      ],
+      "tests": [
+        "T1",
+        "T2",
+        "T3",
+        "T3b",
+        "T4",
+        "T5",
+        "T6",
+        "T7",
+        "T7b",
+        "T8",
+        "T9",
+        "T10",
+        "T11",
+        "T12"
+      ],
+      "effort": "high",
+      "brief": "bug-test-plan.md exactly; implement nothing."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/credit-notes/credit-notes.wallet-integrity.spec.ts --runInBand"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "status sets",
+      "files": [
+        "apps/api/src/invoices/invoice-status-sets.ts",
+        "apps/api/src/invoices/invoices.service.ts",
+        "apps/api/src/credit-notes/credit-notes.service.ts"
+      ],
+      "satisfies": ["R3a"],
+      "provenBy": ["T3", "T4"],
+      "effort": "medium",
+      "brief": "build-plan §1"
+    },
+    {
+      "id": "P2",
+      "title": "primitives",
+      "files": [
+        "apps/api/src/credit-notes/credit-notes.service.ts",
+        "apps/api/src/credit-notes/credit-notes.controller.ts"
+      ],
+      "dependsOn": ["P1"],
+      "satisfies": ["R1", "R2", "R3", "R4", "R7", "R9"],
+      "provenBy": ["T1", "T2", "T5", "T6", "T7", "T12"],
+      "effort": "high",
+      "brief": "build-plan §2 §3 §5 §6-api"
+    },
+    {
+      "id": "P3",
+      "title": "void caps credit",
+      "files": ["apps/api/src/invoices/invoices.service.ts"],
+      "dependsOn": ["P2"],
+      "satisfies": ["R5", "R6"],
+      "provenBy": ["T9", "T10", "T11"],
+      "effort": "high",
+      "brief": "build-plan §4"
+    },
+    {
+      "id": "P5",
+      "title": "web",
+      "files": [
+        "apps/web/lib/api/credit-notes.ts",
+        "apps/web/lib/api/customers.ts",
+        "apps/web/app/(dashboard)/credit-notes/page.tsx",
+        "apps/web/app/(dashboard)/credit-notes/[id]/page.tsx"
+      ],
+      "satisfies": ["R7", "R8", "R10", "R12"],
+      "provenBy": ["T13", "T14"],
+      "effort": "medium",
+      "brief": "build-plan §6 web; no R11"
+    },
+    {
+      "id": "P6",
+      "title": "mobile",
+      "files": [
+        "apps/mobile/lib/api/credit-notes.ts",
+        "apps/mobile/lib/credit-notes-logic.ts",
+        "apps/mobile/__tests__/credit-notes-helpers.test.ts",
+        "apps/mobile/app/(operator)/credit-notes/[id].tsx",
+        "apps/mobile/app/(operator)/credit-notes/index.tsx",
+        "apps/mobile/app/(operator)/credit-notes/new.tsx"
+      ],
+      "satisfies": ["R7", "R8"],
+      "provenBy": [],
+      "effort": "medium",
+      "brief": "build-plan §6 mobile"
+    },
+    {
+      "id": "P7",
+      "title": "e2e spec 28",
+      "files": ["apps/web/e2e/28-credit-note-wallet.spec.ts", "apps/web/playwright.config.ts"],
+      "dependsOn": ["P5"],
+      "satisfies": ["R7", "R10"],
+      "provenBy": ["T13", "T14"],
+      "effort": "medium",
+      "brief": "bug-test-plan T13/T14; list-only"
+    },
+    {
+      "id": "P8",
+      "title": "ledger+map+lesson",
+      "files": [
+        ".claude/campaign/status/F09.jsonl",
+        ".claude/code-map/api.md",
+        ".claude/code-map/web.md",
+        ".claude/code-map/mobile.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/ARCHIVE.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "dependsOn": ["P3", "P5", "P6", "P7"],
+      "satisfies": [],
+      "provenBy": [],
+      "effort": "low",
+      "brief": "build-plan P8 row (records via sync)"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/credit-notes src/invoices src/returns --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest credit-notes-helpers"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/credit-notes/credit-notes.service.ts",
+        "revertFix": true,
+        "behavior": "apply/create guards",
+        "test": "REG-B67"
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "revertFix": true,
+        "behavior": "void caps credit",
+        "test": "REG-B66"
+      }
+    ]
+  }
+}

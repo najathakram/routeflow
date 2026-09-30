@@ -13,6 +13,22 @@ import { AuthorizationsModule } from "../authorizations/authorizations.module";
 import { PromotionsModule } from "../promotions/promotions.module";
 import { MessagingModule } from "../messaging/messaging.module";
 import { CreditNotesModule } from "../credit-notes/credit-notes.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
+// OrdersService flag-gates assertWithinCreditLimit's exposure check on
+// flag.credit_limits (WP3). EntitlementsModule depends only on the global
+// PrismaService, so importing it here pulls in no Stripe/cron/controllers.
+import { EntitlementsModule } from "../billing/entitlements.module";
+// B65 (REG-B65): deleteOrder's per-invoice teardown needs RegulatedLedgerService
+// to reverse ledger entries, exactly like the two sibling teardown paths
+// (InvoicesService.voidInvoiceInTx, InvoicesService.deleteInvoice) already do.
+// RegulatedModule imports Storage/Audit/Billing only — no cycle with OrdersModule.
+import { RegulatedModule } from "../regulated/regulated.module";
+// Lane R: OrdersService is the first consumer of the selling-restrictions choke point. The module
+// imports only ProductLabelsModule (+ the global PrismaService) — no cycle with OrdersModule.
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
+// #2094: OrdersService takes a return inside an order create/edit via InlineReturnsService. The
+// returns module imports nothing from orders, so there is no cycle.
+import { ReturnsModule } from "../returns/returns.module";
 
 @Module({
   imports: [
@@ -27,6 +43,11 @@ import { CreditNotesModule } from "../credit-notes/credit-notes.module";
     PromotionsModule,
     MessagingModule,
     CreditNotesModule,
+    CommissionsModule,
+    EntitlementsModule,
+    RegulatedModule,
+    SellingRestrictionsModule,
+    ReturnsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService],

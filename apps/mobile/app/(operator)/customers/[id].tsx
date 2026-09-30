@@ -18,15 +18,24 @@ import { NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui/mobile/ios
 import {
   useCreateAdvancePayment,
   useCustomer,
+  useCustomerCurrentAgent,
   useCustomerStatement,
   useDeleteCustomer,
 } from "../../../lib/api/customers";
+import { SALES_AGENTS_ADDON, useHasAddon } from "../../../lib/api/tobacco";
+import { useTierLabels } from "../../../lib/api/tier-labels";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { openInMaps } from "../../../components/openInMaps";
 import { isInternalEmail } from "../../../lib/internal-email";
-import { roundMoney } from "../../../lib/pricing";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../lib/payment-methods";
+import { roundMoney } from "@routeflow/pricing";
+import { tierLabel } from "../../../lib/tier-label";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { useRecordReturn } from "../../../hooks/useRecordReturn";
 
 function fmt(n: number | string | null | undefined): string {
   const v = n == null ? 0 : typeof n === "string" ? Number(n) : n;
@@ -46,8 +55,19 @@ export default function CustomerDetailScreen() {
   }, [isCreateAlias, router]);
 
   const { data: customer, isLoading } = useCustomer(isCreateAlias ? "" : (id ?? ""));
+  // #2420: before the early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: isCreateAlias ? null : id,
+    customerName: customer?.businessName,
+  });
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const { data: currentAgent } = useCustomerCurrentAgent(
+    isCreateAlias ? "" : (id ?? ""),
+    hasSalesAgents,
+  );
   const { data: statement } = useCustomerStatement(isCreateAlias ? "" : (id ?? ""));
   const deleteMut = useDeleteCustomer();
+  const { data: tierLabels } = useTierLabels();
   const [advanceOpen, setAdvanceOpen] = useState(false);
 
   if (isLoading || !customer) {
@@ -251,15 +271,33 @@ export default function CustomerDetailScreen() {
               label="Pricing tier"
               value={
                 <Pill variant={tier === 1 ? "gray" : "brand"} dot={false}>
-                  {`Tier ${tier}`}
+                  {tierLabel(tierLabels, tier)}
                 </Pill>
               }
             />
+            {hasSalesAgents && currentAgent?.assignment ? (
+              <Row
+                label="Sales agent"
+                value={<Text style={styles.rowValue}>{currentAgent.assignment.agent.name}</Text>}
+              />
+            ) : null}
             <Pressable
               style={styles.linkRow}
               onPress={() => router.push(`/(operator)/customers/${id}/catalog`)}
             >
               <Text style={styles.linkText}>View custom prices</Text>
+              <Ionicons name="chevron-forward" size={14} color={ios.brand} />
+            </Pressable>
+            <Pressable
+              style={styles.linkRow}
+              onPress={() =>
+                router.push({
+                  pathname: "/(operator)/payments/record",
+                  params: { customerId: id, customerName: customer.businessName },
+                } as any)
+              }
+            >
+              <Text style={styles.linkText}>Record payment</Text>
               <Ionicons name="chevron-forward" size={14} color={ios.brand} />
             </Pressable>
             <Pressable style={styles.linkRow} onPress={() => setAdvanceOpen(true)}>
@@ -311,6 +349,23 @@ export default function CustomerDetailScreen() {
           {/* Quick actions */}
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Actions</Text>
+            {/* #2420: Record return — web's customer-detail RecordReturnAction twin (no order). */}
+            {recordReturn ? (
+              <Pressable
+                style={styles.actionListRow}
+                onPress={recordReturn}
+                accessibilityRole="button"
+              >
+                <Ionicons name="return-down-back-outline" size={16} color={ios.brand} />
+                <Text style={styles.actionListText}>Record return</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={ios.label3}
+                  style={{ marginLeft: "auto" }}
+                />
+              </Pressable>
+            ) : null}
             <Pressable
               style={styles.actionListRow}
               onPress={() => router.push(`/(operator)/orders?customerId=${id}`)}
@@ -439,7 +494,7 @@ function RecordAdvanceModal({
   onClose: () => void;
 }) {
   const mut = useCreateAdvancePayment();
-  const [method, setMethod] = useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<number | null>(null);
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -477,19 +532,19 @@ function RecordAdvanceModal({
             A pre-payment from {customerName} that can be applied to future invoices.
           </Text>
           <View style={styles.advChips}>
-            {(["CASH", "CHECK", "ACH", "OTHER"] as const).map((m) => (
+            {SELECTABLE_METHOD_OPTIONS.map((m) => (
               <Pressable
-                key={m}
-                style={[styles.advChip, method === m ? styles.advChipOn : styles.advChipOff]}
-                onPress={() => setMethod(m)}
+                key={m.id}
+                style={[styles.advChip, method === m.id ? styles.advChipOn : styles.advChipOff]}
+                onPress={() => setMethod(m.id)}
               >
                 <Text
                   style={[
                     styles.advChipText,
-                    method === m ? styles.advChipTextOn : styles.advChipTextOff,
+                    method === m.id ? styles.advChipTextOn : styles.advChipTextOff,
                   ]}
                 >
-                  {m === "ACH" ? "ACH" : m.charAt(0) + m.slice(1).toLowerCase()}
+                  {m.label}
                 </Text>
               </Pressable>
             ))}

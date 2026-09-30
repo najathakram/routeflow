@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -12,6 +13,7 @@ import {
   SkipForward,
   Loader2,
   Clock,
+  Ban,
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -22,6 +24,7 @@ import {
   useMarkReturnInTransit,
   useMarkReturnReceived,
   useProcessRefund,
+  useCancelReturn,
   type Return,
   type ReturnStatus,
   type ReturnReason,
@@ -80,6 +83,17 @@ function fmtMoney(n: number | null | undefined): string {
   return n == null ? "—" : `$${Number(n).toFixed(2)}`;
 }
 
+// `refundEstimateReason` is a machine token on the wire (the api keeps it that way so the
+// field stays parseable); the copy layer lives here. Unknown tokens fall back to a generic
+// line rather than leaking SCREAMING_SNAKE at the operator.
+const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
+  NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
+};
+
+function refundEstimateReasonText(reason: string): string {
+  return REFUND_ESTIMATE_REASON_LABELS[reason] ?? "No refundable amount";
+}
+
 // ─── Resolve Return Modal ─────────────────────────────────────────────────────
 
 function ResolveReturnModal({
@@ -88,12 +102,14 @@ function ResolveReturnModal({
   onConfirm,
   isPending,
   refundEstimate,
+  refundEstimateReason,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: (method: RefundMethod) => void;
   isPending: boolean;
   refundEstimate?: number | null;
+  refundEstimateReason?: string | null;
 }) {
   const [method, setMethod] = React.useState<RefundMethod>("CREDIT_NOTE");
 
@@ -102,6 +118,11 @@ function ResolveReturnModal({
   }, [isOpen]);
 
   const amountLabel = fmtMoney(refundEstimate);
+  // The server reports 0 WITH a reason when the basis is not creditable (nothing
+  // billed / no headroom left). Showing it here is the difference between a genuine
+  // $0 and a store-credit attempt that can only ever be refused.
+  const estimateReasonLabel =
+    refundEstimateReason && !refundEstimate ? refundEstimateReasonText(refundEstimateReason) : null;
 
   return (
     <Modal
@@ -121,6 +142,7 @@ function ResolveReturnModal({
       }
     >
       <div className="space-y-3">
+        {estimateReasonLabel && <p className="text-xs text-navy/70">{estimateReasonLabel}</p>}
         <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-surface-border p-3 hover:bg-surface-raised">
           <input
             type="radio"
@@ -291,20 +313,24 @@ function StatusTimeline({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ReturnDetailPage({ params }: { params: { id: string } }) {
+export default function ReturnDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: ret, isLoading, isError } = useReturn(params.id);
+  const { data: ret, isLoading, isError } = useReturn(id);
   const approveReturn = useApproveReturn();
   const rejectReturn = useRejectReturn();
   const markInTransit = useMarkReturnInTransit();
   const markReceived = useMarkReturnReceived();
   const processRefund = useProcessRefund();
+  const cancelReturn = useCancelReturn();
 
   const [isRefundOpen, setIsRefundOpen] = React.useState(false);
   const [isApproveOpen, setIsApproveOpen] = React.useState(false);
   const [isRejectOpen, setIsRejectOpen] = React.useState(false);
+  const [isCancelOpen, setIsCancelOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (ret) setTitle(ret.returnNumber);
@@ -330,6 +356,12 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
   }
 
   const status = ret.status;
+  // #2406: an INLINE return (captured inside an order write) takes none of the standard-path
+  // actions — the server refuses them all (INLINE_RETURN_USE_INLINE_ENDPOINTS).
+  const isInline = ret.kind === "INLINE";
+  const canCancel =
+    !isInline &&
+    (["PENDING", "APPROVED", "IN_TRANSIT", "RECEIVED"] as ReturnStatus[]).includes(status);
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
@@ -423,6 +455,22 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
     );
   };
 
+  const handleCancel = () => {
+    cancelReturn.mutate(ret.id, {
+      onSuccess: () => {
+        setIsCancelOpen(false);
+        toast({ title: "Return cancelled", variant: "info" });
+      },
+      onError: () => {
+        toast({
+          title: "Failed to cancel return",
+          description: "Please try again.",
+          variant: "error",
+        });
+      },
+    });
+  };
+
   const handleResolveReturn = (method: RefundMethod) => {
     processRefund.mutate(
       { id: ret.id, method },
@@ -438,10 +486,17 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             variant: "success",
           });
         },
-        onError: () => {
+        // The refund path can refuse permanently (nothing billed is refundable, no
+        // headroom left on the order's invoices, or a named invoice is out of room).
+        // Retrying never clears those, so the server's message — which names the
+        // invoice and points at the EXTERNAL_REFUND exit — must reach the operator;
+        // "Please try again." is only the fallback for an error with no message.
+        onError: (err: unknown) => {
+          const message = (err as { response?: { data?: { message?: string } } })?.response?.data
+            ?.message;
           toast({
             title: "Failed to resolve return",
-            description: "Please try again.",
+            description: message ?? "Please try again.",
             variant: "error",
           });
         },
@@ -469,7 +524,9 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
 
         {/* Actions based on status */}
         <div className="flex flex-wrap items-center gap-2">
-          {status === "PENDING" && (
+          {/* #2406: an INLINE return has its own capture/approve flow (PR-1c/1d) — never
+              the STANDARD approve/reject actions, even if it were ever PENDING. */}
+          {status === "PENDING" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -490,7 +547,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             </>
           )}
 
-          {status === "APPROVED" && (
+          {status === "APPROVED" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -512,7 +569,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             </>
           )}
 
-          {status === "IN_TRANSIT" && (
+          {status === "IN_TRANSIT" && !isInline && (
             <>
               <Button
                 size="sm"
@@ -534,7 +591,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             </>
           )}
 
-          {status === "RECEIVED" && (
+          {status === "RECEIVED" && !isInline && (
             <Button
               size="sm"
               leftIcon={<RefreshCw className="h-4 w-4" />}
@@ -544,7 +601,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             </Button>
           )}
 
-          {(status === "REFUNDED" || status === "PROCESSED") && (
+          {status === "REFUNDED" && (
             <span className="text-sm italic text-navy/70">Return fully processed.</span>
           )}
 
@@ -555,6 +612,17 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
           {status === "CANCELLED" && (
             <span className="text-sm italic text-navy/70">This return was cancelled.</span>
           )}
+
+          {canCancel && (
+            <Button
+              size="sm"
+              variant="danger"
+              leftIcon={<Ban className="h-4 w-4" />}
+              onClick={() => setIsCancelOpen(true)}
+            >
+              Cancel Return
+            </Button>
+          )}
         </div>
       </div>
 
@@ -563,7 +631,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         <div className="space-y-5 lg:col-span-2">
           {/* Detail card */}
           <Card>
-            <div className="mb-6 grid grid-cols-2 gap-6">
+            <div className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
               <div>
                 <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                   Customer
@@ -614,8 +682,8 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
             )}
 
             {/* Items table */}
-            <div className="-mx-6 overflow-hidden border-t border-surface-border">
-              <table className="w-full text-sm">
+            <div className="-mx-6 overflow-x-auto border-t border-surface-border">
+              <table className="w-full min-w-[520px] text-sm">
                 <thead className="border-b border-surface-border bg-surface-raised">
                   <tr>
                     <th className="px-6 py-2.5 text-left text-xs font-medium text-navy/70">
@@ -733,6 +801,7 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         onConfirm={handleResolveReturn}
         isPending={processRefund.isPending}
         refundEstimate={ret.refundEstimate}
+        refundEstimateReason={ret.refundEstimateReason}
       />
 
       <ConfirmActionModal
@@ -755,6 +824,17 @@ export default function ReturnDetailPage({ params }: { params: { id: string } })
         confirmLabel="Reject Return"
         variant="danger"
         isPending={rejectReturn.isPending}
+      />
+
+      <ConfirmActionModal
+        isOpen={isCancelOpen}
+        onClose={() => setIsCancelOpen(false)}
+        onConfirm={handleCancel}
+        title="Cancel Return?"
+        description={`Return ${ret.returnNumber} will be marked as cancelled. This action cannot be undone.`}
+        confirmLabel="Cancel Return"
+        variant="danger"
+        isPending={cancelReturn.isPending}
       />
     </div>
   );

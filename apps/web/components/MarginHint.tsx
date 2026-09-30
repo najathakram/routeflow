@@ -8,7 +8,7 @@ import {
   priceForMarginFloor,
   classifyMargin,
   costPerSellingUnit,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import { useCostHistory } from "@/lib/api/cost-history";
 
 /** Short label for a StockMovement type shown in the cost-history popover. */

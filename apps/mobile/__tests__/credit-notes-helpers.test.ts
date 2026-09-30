@@ -1,8 +1,9 @@
 /**
  * P10-PAR-2 pure-logic guards for the mobile credit-notes parity screen. Locks
- * the status→pill mapping and the action gating (Issue=DRAFT cosmetic,
- * Apply=ISSUED, Void=DRAFT|ISSUED — matching the server contract so no action
- * shown will be rejected by the API).
+ * the status→pill mapping and the action gating (Apply=ISSUED, Void=ISSUED —
+ * matching the server contract so no action shown will be rejected by the
+ * API). No Issue action or DRAFT status — B18 removed the no-op issue()
+ * endpoint; create always writes ISSUED.
  */
 import {
   creditNoteActionFlags,
@@ -14,7 +15,6 @@ import type { CreditNoteStatus } from "../lib/api/credit-notes";
 
 describe("creditNotePillFor", () => {
   const cases: [CreditNoteStatus, string, string][] = [
-    ["DRAFT", "gray", "Draft"],
     ["ISSUED", "brand", "Issued"],
     ["APPLIED", "green", "Applied"],
     ["VOID", "red", "Void"],
@@ -25,17 +25,8 @@ describe("creditNotePillFor", () => {
 });
 
 describe("creditNoteActionFlags", () => {
-  it("DRAFT → issue (+void), never apply", () => {
-    expect(creditNoteActionFlags("DRAFT")).toEqual({
-      canIssue: true,
-      canApply: false,
-      canVoid: true,
-    });
-  });
-
-  it("ISSUED → apply (+void), never issue", () => {
+  it("ISSUED → apply + void", () => {
     expect(creditNoteActionFlags("ISSUED")).toEqual({
-      canIssue: false,
       canApply: true,
       canVoid: true,
     });
@@ -43,7 +34,6 @@ describe("creditNoteActionFlags", () => {
 
   it.each(["APPLIED", "VOID"] as CreditNoteStatus[])("%s → no actions (terminal)", (status) => {
     expect(creditNoteActionFlags(status)).toEqual({
-      canIssue: false,
       canApply: false,
       canVoid: false,
     });
@@ -84,7 +74,7 @@ describe("isCreditOpenForApply", () => {
 
   it("drained or non-ISSUED notes are out", () => {
     expect(isCreditOpenForApply({ ...open, amountUsed: 50 }, now)).toBe(false);
-    for (const status of ["DRAFT", "APPLIED", "VOID"] as CreditNoteStatus[]) {
+    for (const status of ["APPLIED", "VOID"] as CreditNoteStatus[]) {
       expect(isCreditOpenForApply({ ...open, status }, now)).toBe(false);
     }
   });

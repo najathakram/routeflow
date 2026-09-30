@@ -1,11 +1,14 @@
 import { defineConfig, devices } from "@playwright/test";
 import path from "path";
+import { requireBaseUrl } from "./lib/e2e-setup-guard";
 
 /**
  * Playwright configuration for full Chrome UI coverage against Railway.
  *
  * Required env vars (create .env.playwright or export before running):
- *   PLAYWRIGHT_BASE_URL   — e.g. https://app.routeflow.io or Railway URL
+ *   PLAYWRIGHT_BASE_URL   — REQUIRED, no default (unset/empty aborts the run). Local: http://localhost:3001.
+ *                           A non-local target is human-only: it needs GITHUB_ACTIONS=true (CI) or a
+ *                           human's explicit E2E_ALLOW_REMOTE_AUTH=1 — an agent must never set either.
  *   PLAYWRIGHT_TENANT_SLUG — tenant slug for operator / customer tests
  *
  * Run commands:
@@ -21,8 +24,10 @@ import path from "path";
  *   without re-hitting the login endpoint on every beforeEach.
  */
 
-const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
+// No default: an unset PLAYWRIGHT_BASE_URL used to resolve to PRODUCTION, so a forgotten inline
+// variable pointed every login at the live site. requireBaseUrl() throws instead — see
+// lib/e2e-setup-guard.ts (the setup project additionally vets locality + tenant).
+const BASE_URL = requireBaseUrl();
 
 // Path to the pre-authenticated storage state files created by the setup project
 const AUTH_DIR = path.join(__dirname, "e2e/setup/.auth");
@@ -38,7 +43,14 @@ export default defineConfig({
   timeout: 60_000, // 60 s per test (Railway cold-start latency)
   expect: { timeout: 15_000 }, // 15 s per assertion
 
-  reporter: [["list"], ["html", { outputFolder: "playwright-report", open: "never" }]],
+  reporter: [
+    ["list"],
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+    // Machine-readable results for scripts/campaign-check.mjs (the bug-register
+    // campaign's gate reads passed/skipped per REG-B### title). Path is relative
+    // to this config file; .campaign/runs/ at the repo root is gitignored.
+    ["json", { outputFile: "../../.campaign/runs/web-e2e.json" }],
+  ],
 
   use: {
     baseURL: BASE_URL,
@@ -169,6 +181,717 @@ export default defineConfig({
     {
       name: "product-demand",
       testMatch: /11-product-demand\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Search survives Back ───────────────────────────────────────────────────
+    // Back-navigation restoration of a list search — the one behavior no other spec
+    // covers (nothing else in the suite calls goBack). Read-only: it types in search
+    // boxes and navigates, and mutates nothing. Self-skips on builds predating the
+    // URL-backed search.
+    {
+      name: "search-back-nav",
+      testMatch: /12-search-back-nav\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Boxed order entry (WP2-13) ─────────────────────────────────────────────
+    // Cases/pieces proration read live off the order builder UI. Read-only: it
+    // never places the order — it Escapes out, which auto-parks a draft the
+    // spec's own afterEach deletes. Uses operator auth state.
+    {
+      name: "boxed-order-entry",
+      testMatch: /13-boxed-order-entry\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Pack-size prompt (WP2-14) ──────────────────────────────────────────────
+    // Product-create modal's parser refusal contract (HIGH pre-fills,
+    // AMBIGUOUS refuses empty, PIECE_UNIT renders nothing). Read-only: never
+    // saves — the modal is always closed by hand, "Create Product" never clicked.
+    {
+      name: "pack-size-prompt",
+      testMatch: /14-pack-size-prompt\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Stock-count UI (WP3-15) ────────────────────────────────────────────────
+    // Inventory → Stock Count tab session lifecycle. Discard-only: never
+    // commits a session, so zero stock impact by construction.
+    {
+      name: "stock-count-ui",
+      testMatch: /15-stock-count-ui\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Variant-split UI (WP3-16) ──────────────────────────────────────────────
+    // "Assign to variants" modal on a parent product. Cancel-only: never
+    // applies the split.
+    {
+      name: "variant-split-ui",
+      testMatch: /16-variant-split-ui\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Buyer shop density + product detail (WP3-17) ───────────────────────────
+    // No pre-auth needed — self-contained register→invite→accept dance, same as
+    // the "buyer" project. A spec without its own project entry never runs.
+    {
+      name: "buyer-shop",
+      testMatch: /17-buyer-shop-density-detail\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Sales-agents entitlement gate (PR-D 18) ────────────────────────────────
+    // Reads the tenant's live addon flag and asserts the nav entry / locked card
+    // match it. Read-only: GETs and renders only — nothing is created or approved.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "sales-agents-gate",
+      testMatch: /18-sales-agents-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Compliance-pack entitlement gate (tobacco consolidation, 19) ──────────
+    // Reads the tenant's live addon flag and asserts the /tobacco redirect and
+    // the hub's locked/unlocked state match it. Read-only: GETs and renders only.
+    {
+      name: "compliance-pack-gate",
+      testMatch: /19-compliance-pack-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── Ad-hoc trip builder entitlement gate (WP12, spec 20) ────────────────────────
+    // Reads the tenant's live order_delivery addon flag and asserts the orders
+    // bulkbar action / trip-builder deep-link match it. Read-only: GETs and
+    // renders only — Build/Create trip/Send are never clicked.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "trip-builder-gate",
+      testMatch: /20-trip-builder-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Destructive-write guards (F02b, spec 21) ───────────────────────────────
+    // REG-B24 / REG-B130 / REG-B154: products + customers bulk-delete confirm
+    // dialogs, the guarded-product skip report, the customer soft-delete branch,
+    // and the products selection reset. Mutating but self-contained: it creates
+    // its own `E2E B2x …` throwaway product/customer fixtures on the approved
+    // seed tenant and never destroys a discovered record — the guarded product
+    // it selects is the one bulkDelete must SKIP.
+    // Uses operator auth state; the spec reads its token out of that session.
+    {
+      name: "destructive-guards",
+      testMatch: /21-destructive-guards\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Payment-status truth (F03, spec 22) ────────────────────────────────────
+    // REG-B11: a DRAFT (unconfirmed) InvoicePayment must be VISIBLE on the
+    // invoice payment-history row with a "Draft - unconfirmed" badge, while
+    // being excluded from every money SUM (balanceDue, dashboards, documents).
+    // The server half is T1-proven in apps/api; this spec is the T2 leg and
+    // proves the badge against the DEPLOYED build.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "payment-truth",
+      testMatch: /22-payment-truth\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Run-settlement visibility (F05, spec 23) ───────────────────────────────
+    // REG-B167: a COMPLETED run's detail page must surface its settlementNote,
+    // the SIGNED settlementVariance, and the legacy run.notes a pre-F05 mobile
+    // build wrote its settlement text to — cash discrepancies currently close
+    // invisibly. The server half (settlement endpoint, cash truth, the
+    // close-unsettled backstops) is T1-proven in apps/api; this spec is the T2
+    // leg and proves the read surface against the DEPLOYED build.
+    // Mutating but self-contained: it creates its own stopless `E2E B167 …`
+    // route + run, settles and closes THAT run, and touches nothing it did not
+    // create. No at-door collection, so no driver_payments addon is needed.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "run-settlement",
+      testMatch: /23-run-settlement-note\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Migration hub connector gate (F17, spec 25) ────────────────────────────
+    // REG-B08: Start migration must be disabled and relabelled "Connector coming
+    // soon" for sources with connected: false (Zoho Books, QuickBooks), and stay
+    // enabled for CSV. Read-only: Start is never clicked, so no job is created.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 22-payment-truth's precedent.
+    {
+      name: "migration-hub-gate",
+      testMatch: /25-migration-hub\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Payments-import duplicate reporting (F17, spec 26) ─────────────────────
+    // REG-B99 web leg: /settings/import must surface importPayments' new
+    // `duplicates` count in the success toast summary and the Customer Payments
+    // card's result badge (the server half is jest-proven in apps/api).
+    // Fully mocked: POST /import/payments is intercepted, so no CSV is ever
+    // uploaded and nothing on the tenant is written.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS - see 22-payment-truth's precedent.
+    {
+      name: "import-duplicates",
+      testMatch: /26-import-duplicates\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Order-edit pricing readiness gate (F06, spec 24) ───────────────────────
+    // REG-B62: the order-edit page's add-product and substitute controls must
+    // stay disabled (with a "Loading customer pricing…" hint) until the
+    // customer detail + customer-price queries settle, so a line can never be
+    // added or substituted at a transient list price before the customer's
+    // contracted tier loads. Makes the race deterministic via `page.route`
+    // holding GET /customers/:id rather than racing real network timing.
+    // Mutating but self-contained: creates its own throwaway `E2E B62 …`
+    // customer + two products + a DRAFT order on the approved seed tenant and
+    // deletes nothing (same tolerance 21-destructive-guards/22-payment-truth's
+    // own throwaway fixtures take). NOT part of F06's red gate — this spec
+    // proves a client-side query race with no web unit runner behind it
+    // (campaign decision D1), so it runs only against the DEPLOYED site and is
+    // expected red until F06 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "order-edit-pricing",
+      testMatch: /24-order-edit-pricing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── units_v1 deploy gate: order → edit → invoice lane (#2233, spec 53) ────
+    // SA-390: a Case line survives create (server truth in base pieces, SA-388),
+    // order-detail display ("3 Cases"), a price-only edit through the web UI
+    // (qty/boxes unchanged), and invoice-from-order (the invoice shows the unit
+    // too). Self-provisions via the API against the standing units_v1 fixture
+    // (`e2e-seed.js`'s `ensureUnitsFixture`, #2195) and the shared
+    // "E2E Fixture Deli Three" customer; a missing fixture is a hard failure,
+    // never a skip. Mutating but self-contained: leaves one PENDING order + one
+    // invoice on e2e-routeflow (same no-cleanup tolerance 21/22/24's own
+    // throwaway fixtures take — neither resource has an API delete).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "units-order-lane",
+      testMatch: /53-units-order-lane\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
+    // Same posture as order-edit-pricing above — a client-side requirement
+    // with no web unit runner behind it, so this runs only against a live app
+    // instance (deploy-triggered or `local:e2e`), self-provisions its own
+    // customer/product/order fixtures, and deletes nothing.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "special-tier-reason-required",
+      testMatch: /48-special-tier-reason-required\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Cancelled-order "editing closed" banner (F07, spec 27) ────────────────
+    // REG-B10: the operator order-detail page must explain WHY the edit window
+    // is closed on a CANCELLED order ("Order cancelled — editing closed")
+    // instead of silently dropping the Edit Items button. The server already
+    // emits editWindow.closedReason "STATUS"; only the page's render condition
+    // is wrong, so this has no jest half — it is R17's ONLY proof.
+    // Mutating but self-contained: it creates its own throwaway `E2E B10 …`
+    // customer + product + PENDING order on the approved seed tenant and
+    // API-deletes the order in a `finally`, pass or fail. NOT part of F07's red
+    // gate — it runs only against the DEPLOYED site and is expected red until
+    // F07 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "cancelled-edit-banner",
+      testMatch: /27-cancelled-edit-banner\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── Recurring-template edit + standing-order item edit (F13, spec 30) ──────
+    // REG-B92: /invoices/recurring/[id]/edit exists and persists a schedule/notes
+    // change; every list card links to it. REG-B09: the Edit Standing Order modal
+    // persists item adds and qty changes through PATCH `items`. REG-B106 web leg:
+    // after Run Now the card shows the recorded "Succeeded" outcome (the API write
+    // is jest-proven in apps/api). Mutating but self-contained: throwaway
+    // `E2E B09 …` / `E2E B92 …` fixtures on the approved seed tenant; the recurring
+    // template is created with nextRunAt in 2099 and deactivated in a `finally` so a
+    // leaked row can never fire the midnight cron, and the Run Now invoice is voided
+    // there too. NOT part of F13's red gate; runs only against the DEPLOYED site and
+    // is expected red until F13 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's header.
+    {
+      name: "recurring-standing",
+      testMatch: /30-recurring-standing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // Un-quarantined 2026-09-03 (L-050, #598/#607): only spec 32 (active-sessions) needed a
+    // dedicated seeded user — it logs in fresh as e2e_sessions_op and only ever revokes ITS OWN
+    // sessions, so it must never consume the shared admin/e2e_admin every storageState:
+    // operator.json project also loads. Spec 31 (impersonation-signout) mutates only its own
+    // fresh session and stayed on the shared e2e_admin (as on master). e2e_sessions_op is seeded
+    // by apps/api/scripts/e2e-seed.js. B138/B155 were never discharged during the quarantine
+    // (L-041: a skip is not a discharge).
+    // ── Impersonation sign-out (F14, spec 31) ──────────────────────────────────
+    // REG-B138: while impersonating, the avatar menu offers "Exit impersonation"
+    // and never "Sign out"; exiting POSTs no /auth/logout and the impersonated
+    // TENANT_ADMIN's session count is unchanged (server-side, read through a token
+    // the UI never touches). No storageState — the spec manages the super-admin
+    // and tenant-admin sessions itself. Skips (NOT a discharge — L-041) until
+    // PLAYWRIGHT_SA_* are set and e2e-seed.js has seeded `e2e_admin` on the target.
+    // Targets e2e-routeflow BY SLUG, never `tenants?limit=1`.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "impersonation-signout",
+      testMatch: /31-impersonation-signout\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Active Sessions identity (F14, spec 32) ────────────────────────────────
+    // REG-B155: a session row captured BEFORE a refresh-token rotation is still
+    // listed (same id, same createdAt) and can be revoked; the revoke bites (the
+    // rotated token then 401s); a failed revoke re-syncs the list, and a sign-out-all
+    // whose revokes all fail reports the failure instead of faking success. NO storageState
+    // on purpose — the spec revokes its OWN fresh login (e2e_sessions_op) and must never
+    // consume the shared operator.json refresh token.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "active-sessions",
+      testMatch: /32-active-sessions\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Calendar-date correctness (F25, spec 34) ───────────────────────────────
+    // REG-B59 / REG-B91: a stored UTC-midnight calendar date (a run's
+    // scheduledDate, a customer license's expiresAt) rendered and round-tripped
+    // a day early for any viewer west of UTC. `timezoneId` pins the browser to
+    // America/Los_Angeles so the regression is actually observable — under the
+    // suite's default (unset) timezone the bug never disagrees with the stored
+    // day and this project would pass a broken build. Deploy-only proof, not
+    // part of the jest red gate (T1/T2 are proven directly there); this project
+    // resolving via `npx playwright test --list` is what discharges the pre-merge
+    // check, the deploy-signal e2e run discharges B59/B91 themselves.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "calendar-dates",
+      testMatch: /34-calendar-dates\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+        timezoneId: "America/Los_Angeles",
+      },
+    },
+
+    // ── Web print surfaces (WP4, spec 38) ──────────────────────────────────────
+    // R6.6/R6.10: the invoices-list row Print button must not trigger the
+    // row's own navigate-to-detail click handler, and `@media print` must
+    // hide the dashboard chrome. Fully mocked — no writes to any tenant.
+    // Cloned from "calendar-dates" (name + spec + operator storageState reused).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "line-note-print",
+      testMatch: /38-line-note-print\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Credit-note wallet UI (F09, spec 28) ───────────────────────────────────
+    // REG-B19 / REG-B18: invoice number over raw UUID on the credit-notes list
+    // and detail pages, and no "Issue Credit Note" affordance. Fully mocked —
+    // no writes to any tenant. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "credit-note-wallet",
+      testMatch: /28-credit-note-wallet\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Apply advance to invoice (F09, spec 38) ────────────────────────────────
+    // REG-B13: web's invoice detail page can now apply a customer's
+    // advance-payment wallet balance (previously mobile-only — the web hook
+    // had zero callers). Mutating but self-contained: a throwaway `E2E B13 …`
+    // customer + invoice on the approved seed tenant, same residue tolerance
+    // 21/22/24/27/28/29 already take. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "apply-advance",
+      testMatch: /38-apply-advance\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Returns lifecycle (F08, spec 29) ───────────────────────────────────────
+    // REG-B166: the returns list search box must actually filter (return #,
+    // order #, or customer). REG-B75: the list's Value column and the "Total
+    // Return Value" KPI must read the billed refund estimate, not $0.00.
+    // REG-B21 + REG-B82: a PENDING return can be cancelled from the detail
+    // page, and a cancelled return releases its quota so a second return
+    // against the same order succeeds. Mutating but self-contained: throwaway
+    // `E2E B08 …` product/customer/order/return fixtures on the approved seed
+    // tenant, same residue tolerance 21/22/24/27/28 already take (a DELIVERED
+    // order with an invoice and returns against it isn't staff-deletable
+    // anyway). NOT part of F08's red gate — it runs only against the DEPLOYED
+    // site (no local Playwright — test-plan.md) and is expected red until F08
+    // ships. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "returns-lifecycle",
+      testMatch: /29-returns-lifecycle\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Choose-plan routing (F18, spec 33) ─────────────────────────────────────
+    // REG-B58: the /choose-plan chooser must route an in-place plan change
+    // through POST /billing/subscription (upgrade) or
+    // /billing/subscription/downgrade (downgrade) per the quote's `change`
+    // classification, never through the fresh-subscribe endpoint. Fully
+    // mocked — no writes to any tenant. Uses operator auth state.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "change-plan-routing",
+      testMatch: /33-change-plan-routing\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Route delivery-window dispatch warning (F12, spec 35) ──────────────
+    // REG-B161 web leg (T2/T4): the template page's Optimize toast must name
+    // the stop(s) that miss their delivery window, and the Dispatch modal
+    // must warn about them and gate "Dispatch" behind an explicit
+    // acknowledge. Mutating but self-contained: creates its own throwaway
+    // `E2E B161 …` route + two customers (one with an always-infeasible
+    // delivery window) on the approved seed tenant and cleans up nothing,
+    // the same tolerance 21/22/23/24's own throwaway fixtures already take.
+    // NOT part of F12's local red gate (apps/api's jest lane proves T1-T3) —
+    // runs only against the DEPLOYED site and is expected red until F12
+    // ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "route-windows",
+      testMatch: /35-route-windows\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── List caps / silent truncation (F16, spec 37) ───────────────────────────
+    // REG-B12 / REG-B80 / REG-B144 / REG-B110: the invoices KPI bar, the
+    // payment receipt page, orders search, and the customer statement tiles
+    // must all stop silently truncating past a hardcoded fetch-everything
+    // limit. Mutating but self-contained: throwaway `E2E B144 …` / `E2E B80
+    // …` / `E2E B110 …` customer/invoice/order fixtures on the approved seed
+    // tenant, left behind like 21/22/24/27/28's own throwaway fixtures. NOT
+    // part of F16's local red gate (apps/api's jest lane proves T1-T6) — runs
+    // only against the DEPLOYED site and is expected red until F16 ships.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "list-caps",
+      testMatch: /37-list-caps\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Marketing site port (spec 36) ──────────────────────────────────────────
+    // Signed-out throughout — no storageState, no "setup" dependency. Proves T1
+    // (per-route chrome/copy), T2 (mobile sheet/sign-in/contact-form/tabs/FAQ),
+    // T3 (internal link crawl), T12 (mobile UA still reaches the marketing site).
+    // Desktop Chrome by default; T2's mobile assertions opt into
+    // devices["iPhone 13"] inside the spec via test.use() on that describe block.
+    // NOT part of the local red gate (test-plan.md "Harness notes") — this
+    // project resolving/running is the post-deploy proof, same convention as
+    // 08-create-order-escape's precedent for "without this entry the spec never
+    // runs".
+    {
+      name: "marketing",
+      testMatch: /36-marketing-site\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // Auth interface redesign (spec 46) — same convention as "marketing":
+    // NOT part of the local red gate (test-plan.md "Harness notes") — this
+    // project resolving/running is the post-deploy proof.
+    {
+      name: "auth-redesign",
+      testMatch: /46-auth-redesign\.spec\.ts/,
+      dependencies: [],
+      use: { ...devices["Desktop Chrome"] },
+    },
+
+    // ── Lite-plan nav/route gating (lite-L2, spec 47) ──────────────────────────
+    // R2.2/R2.5/R2.6/R2.8/R3b.8/R4.3/R4.5/R7.7: the sidebar/route gate for a LITE-plan
+    // tenant, Settings → Billing's "Complete payment", and choose-plan/marketing never
+    // rendering a "Lite" card. Self-skips (test.skip, not a discharge — L-041) when
+    // PLAYWRIGHT_LITE_TENANT_SLUG is unset — it needs a dedicated LITE-plan tenant the
+    // shared operator.json fixture is not on. NOT in the local Playwright allow-list
+    // (apps/web/e2e/LOCAL-LANE.md) — post-deploy only, same convention as
+    // sales-agents-gate/compliance-pack-gate/trip-builder-gate above.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "lite-plan-gate",
+      testMatch: /47-lite-plan-gate\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+    // ── Lite locked-route UX (B449, spec 48) ───────────────────────────────────
+    // R1-4 of the fix-round: a locked route never mounts the gated page, exactly one
+    // plan-gate notice per navigation naming THIS tenant's plan, no stray notice on the
+    // LITE dashboard. Fixture is `qa-lite`, a standing LITE-plan tenant every
+    // global.setup.ts pass seeds (apps/api/scripts/e2e-seed.js's seedQaLiteTenant) — unlike
+    // "lite-plan-gate" above, this project IS in the local allow-list (LOCAL-LANE.md) and
+    // does NOT self-skip: the fixture is guaranteed, so a failure here is real.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "lite-locked-route-ux",
+      testMatch: /48-lite-locked-route-ux\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // House-tenant / MRR reconciliation (spec 47, review round 2026-09-15) — mirrors
+    // "super-admin"'s auth shape exactly (same setup dependency, same storageState). NOT in
+    // LOCAL-LANE.md's allow-list, same as "super-admin": no SA creds are seeded locally, so
+    // this project's tests self-skip everywhere except where PLAYWRIGHT_SA_* is set (the
+    // post-deploy E2E run). Read-only against routeflow-hq — see the spec file's header.
+    {
+      name: "house-tenant-mrr",
+      testMatch: /47-house-tenant-mrr-verify\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+      },
+    },
+
+    // Feature grants PR-1 (2026-09-16) — every endpoint the spec touches is mocked, AND auth
+    // is faked client-side (SuperAdminGuard only decodes+checks the JWT payload locally, never
+    // a server round-trip — see the spec's fakeSuperAdminToken()), so this project needs no
+    // "setup" dependency and no storageState: it runs against a bare `npm run dev -w apps/web`
+    // with no live API/DB at all. Viewport is set per test.describe (1440/768/390) in the spec.
+    {
+      name: "feature-overrides",
+      testMatch: /48-feature-overrides\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+      },
+    },
+
+    // ── Deliveries/new mobile bottom sheet (owner UX request, spec 49) ────────
+    // Below `lg` (1024px) the fixed two-column desktop layout swaps for a
+    // map-canvas + draggable bottom-sheet layout. Read-only /
+    // assert-visibility-only, same convention as trip-builder-gate (spec 20):
+    // Build/Send are never clicked. Uses operator auth state; the spec reads
+    // its token out of that session, same pattern as spec 20. Viewport is set
+    // per test.describe (390/768/1440) in the spec.
+    // NOT added to LOCAL-LANE.md's allow-list here — that's the landing
+    // coordinator's call once this batch has run against the local stack.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's precedent.
+    {
+      name: "deliveries-mobile-sheet",
+      testMatch: /49-deliveries-new-responsive\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // Feature grants v2 PR-2 (2026-09-17) — the data-driven Feature Console. Same reasoning as
+    // "feature-overrides" above: every endpoint mocked, auth faked client-side, so no "setup"
+    // dependency and no storageState needed. Runs mocked now (brief B/C's real services aren't
+    // wired yet); becomes a real-backend regression pass once they land.
+    {
+      name: "feature-console",
+      testMatch: /49-feature-console\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+      },
+    },
+
+    // Vendor-bill web line entry allows negative cost (B469, spec 51) — mirrors
+    // "order-edit-pricing" (24)'s shape exactly (same setup dependency, same
+    // storageState). NOT in LOCAL-LANE.md's allow-list yet; UI proof (screenshots)
+    // is pending a compose-slot run. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // 08-create-order-escape's header for the precedent.
+    {
+      name: "vendor-bill-negative-cost",
+      testMatch: /51-vendor-bill-negative-cost\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // B743 PR B (spec 61): the PACK_SIZE_UNKNOWN dialog at 390/768/1440, with the 409 mocked by
+    // page.route (the server gate is dark). Operator storageState, like spec 51.
+    {
+      name: "vendor-bill-pack-size-unknown",
+      testMatch: /61-vendor-bill-pack-size-unknown\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // ── Connected mailbox card (F-10b, #2078) ─────────────────────────────────
+    // Settings → Email → MailboxCard: every card state at 1440/768/390, Connect Gmail/Outlook,
+    // the confirm / error / admin-consent / Google-cancel returns, and Disconnect three ways.
+    // The provider is ALWAYS stubbed (page.route; a `.invalid` consent origin; a guard that
+    // fails the test on any real Google/Microsoft OAuth, Gmail or Graph request), and nothing
+    // is written server-side: the only real call is the read-only GET /tenants/me/addons.
+    // NOT in the local:e2e gate (LOCAL-LANE.md) yet: it was authored on a host with no container
+    // runtime and has never run. F2 runs it once against a compose slot, and a follow-up adds it
+    // to the gate after its first green run. WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see
+    // 08-create-order-escape's header for the precedent.
+    {
+      name: "mailbox-connect",
+      testMatch: /mailbox-connect\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // Platform-admin mobile overflow (B559, spec 52) — proves no element on any
+    // platform-admin screen exceeds the 390/768/1440 viewport width, across every
+    // tab (tabs are React state, not distinct URLs, so a URL-only sweep never
+    // renders them). Mirrors "super-admin" (01)'s shape exactly (same setup
+    // dependency, same storageState). WITHOUT THIS ENTRY THE SPEC NEVER RUNS —
+    // see 08-create-order-escape's header for the precedent.
+    {
+      name: "platform-admin-mobile",
+      testMatch: /52-platform-admin-mobile-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "super-admin.json"),
+        // This spec walks ~14 screens per viewport in one test — a slower dev
+        // box needs more headroom than the config default or a real overflow
+        // failure gets masked by a navigation timeout instead.
+        navigationTimeout: 60_000,
+      },
+    },
+
+    // Create-order dialog mobile pan (#2080, P0): the dialog body's own
+    // scrollWidth/clientWidth stays 0 at 320/375/390/430 under a model of iOS
+    // WebKit's post-cascade date-input sizing (helpers/ios-date-input.ts), and
+    // the boxed line's cases/units content fits its grid track; and at
+    // 1440/768/390, on create AND a resumed draft with a long product name,
+    // typing a focused date never scrolls the document sideways, moves the
+    // dialog's left edge off screen, or pans the dialog body. Same
+    // setup/operator shape as "create-order-escape" (08). WITHOUT THIS ENTRY
+    // THE SPEC NEVER RUNS - see 08-create-order-escape's header.
+    {
+      name: "create-order-dialog-mobile-pan",
+      testMatch: /56-create-order-dialog-mobile-pan\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // #2080 follow-up: date inputs in narrow grid-cols-2/3 tracks (vendor-bills
+    // and estimates modals, invoices/new, invoices/[id]/edit) fit their cells
+    // at 320/375/390 under the same iOS model. Read-only (one API read).
+    {
+      name: "date-input-grid-overflow",
+      testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "pageheader-action-wrap",
+      testMatch: /57-pageheader-action-wrap\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

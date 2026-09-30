@@ -1,0 +1,64 @@
+{
+  "mode": "feature",
+  "scale": "small",
+  "planPath": ".claude/pipeline/2026-09-10-plane-sync/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-plane-sync/test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "context": "Plane BUGS mirror (DECIDE-27): scripts/campaign/plane-sync.mjs derives one Plane work item per registry row (external_id = B###), creates/patches only diffs, never deletes; Stop-hook Gate 5 runs it after any registry change and NEVER blocks; self-tests against a fake Plane server; no Plane uuids in tracked files. Plan by Fable 5.1.",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "plane-sync self-test (fake Plane server)",
+      "files": ["scripts/campaign/plane-sync.self-test.mjs"],
+      "brief": "test-plan.md T1-T11; build-plan.md TP1 harness (node:http fake server, temp registry via PLANE_SYNC_REGISTRY_DIR)",
+      "satisfies": ["R1", "R2", "R4", "R5", "R6"]
+    },
+    {
+      "id": "TP2",
+      "title": "stop.mjs Gate 5 spec",
+      "files": [".claude/hooks/stop.gate5.spec.mjs"],
+      "brief": "test-plan.md T12a/T12b; copy the repo-scaffold helper shape from .claude/hooks/stop.gates.spec.mjs, scrub GIT_* env",
+      "satisfies": ["R7"]
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "node scripts/campaign/plane-sync.self-test.mjs",
+      "node .claude/hooks/stop.gate5.spec.mjs"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "plane-sync.mjs",
+      "files": ["scripts/campaign/plane-sync.mjs"],
+      "brief": "build-plan.md WP1 exact shapes (STATE_BY_LEDGER, PRIORITY_BY_SEVERITY, deriveDesired/planDiff/registryDigest/runSync, REST endpoints, landmines 1-4)",
+      "satisfies": ["R1", "R2", "R3", "R4", "R5", "R6", "R8"],
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8", "T9", "T10", "T11"],
+      "effort": "high"
+    },
+    {
+      "id": "WP2",
+      "title": "Gate 5 + scripts + gitignore",
+      "files": [".claude/hooks/stop.mjs", "package.json", ".gitignore"],
+      "brief": "build-plan.md WP2 exact Gate 5 block; bugs:plane script; verify gains the self-test after bugs.mjs self-test; .gitignore .claude/campaign/.plane-sync-digest",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R7", "R8"],
+      "provenBy": ["T12"],
+      "effort": "medium"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "node -e \"for (const f of ['scripts/campaign/plane-sync.mjs','scripts/campaign/plane-sync.self-test.mjs','.claude/hooks/stop.gate5.spec.mjs']) if (require('fs').existsSync(f)) require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+      "npx prettier --check scripts/campaign/plane-sync.mjs scripts/campaign/plane-sync.self-test.mjs .claude/hooks/stop.mjs .claude/hooks/stop.gate5.spec.mjs package.json"
+    ],
+    "final": [
+      "node -e \"const f='scripts/campaign/plane-sync.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+      "node -e \"const f='.claude/hooks/stop.gate5.spec.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+      "node scripts/campaign/bugs.mjs self-test",
+      "node .claude/hooks/stop.gates.spec.mjs"
+    ]
+  }
+}

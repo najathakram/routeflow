@@ -1,12 +1,14 @@
 import { Test } from "@nestjs/testing";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { ConfigService } from "@nestjs/config";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -21,7 +23,17 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
   let authGuard: { checkAuthorized: jest.Mock };
   let notifications: { sendToCustomer: jest.Mock; sendToUser: jest.Mock };
-  let ordersService: { mergeAllPendingForCustomer: jest.Mock };
+  // REG-B48 widened createOrderFromTemplate's collaborator surface: it now prices every
+  // line through the shared buyer resolver, so this guard suite has to mock the same
+  // OrdersService methods the real module boundary exposes. `resolveBuyerLinePrice`
+  // delegates to the REAL implementation (it uses no `this`) so the license-guard
+  // assertions below still measure real money, not a stub's.
+  let ordersService: {
+    mergeAllPendingForCustomer: jest.Mock;
+    loadActivePromotions: jest.Mock;
+    getCustomerPriceHistory: jest.Mock;
+    resolveBuyerLinePrice: jest.Mock;
+  };
 
   const template = {
     id: "t1",
@@ -45,17 +57,36 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
       sendToCustomer: jest.fn().mockResolvedValue(1),
       sendToUser: jest.fn().mockResolvedValue(1),
     };
-    ordersService = { mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null) };
+    ordersService = {
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      loadActivePromotions: jest.fn().mockResolvedValue([]),
+      getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
+      resolveBuyerLinePrice: jest.fn((...args: any[]) =>
+        (OrdersService.prototype as any).resolveBuyerLinePrice(...args),
+      ),
+    };
 
     const mod = await Test.createTestingModule({
       providers: [
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
+        // settings.taxRate is stored as a PERCENT string — "10" is 10%.
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn().mockResolvedValue("10") },
+        },
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -113,6 +144,26 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
   });
 
+  it("B297 (SA-088): a standing order's regulated line stamps the rate-snapshot trio, alongside categoryTaxAmount", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-tob", taxType: "EXCISE_PER_UNIT", rate: 2, priceIncludesTax: false },
+    ]);
+
+    await service.generateOrder("t1");
+
+    const createdLines = prisma.order.create.mock.calls[0][0].data.lineItems.create;
+    const tob = createdLines.find((l: any) => l.productId === "p-tob");
+    const std = createdLines.find((l: any) => l.productId === "p-std");
+    expect(tob.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(tob.categoryTaxRate).toBe(2);
+    expect(tob.categoryPriceIncludesTax).toBe(false);
+    // The non-regulated line gets an all-null snapshot, never a stamped trio.
+    expect(std.categoryTaxType).toBeNull();
+    expect(std.categoryTaxRate).toBeNull();
+    expect(std.categoryPriceIncludesTax).toBeNull();
+  });
+
   it("creates nothing and throws when EVERY line is a license-gated category", async () => {
     prisma.orderTemplate.findUnique.mockResolvedValue({
       ...template,
@@ -125,6 +176,58 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     await expect(service.generateOrder("t1")).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.order.create).not.toHaveBeenCalled();
     expect(notifications.sendToCustomer).toHaveBeenCalled(); // still notified about the skip
+  });
+
+  // ─── PR-2 (imp-02): post-commit consolidation is deferred, never an error ───
+  //
+  // The invariant (orders/merge-contention.ts): the standing order has already
+  // COMMITTED by the time mergeAllPendingForCustomer runs. Letting its 409 out
+  // would report a placed order as a failure — on the 06:00 cron it lands in
+  // generateDailyOrders' per-template catch and is logged as an ERROR while the
+  // row exists; on the manual path it becomes the caller's response.
+
+  it("asks for the merge lock with lockMode 'try' — a post-commit consolidation never waits", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+
+    await service.generateOrder("t1");
+
+    // Third argument, not second: `{ buyerInitiated }` keeps its slot. On the 06:00 cron this
+    // runs once per template, so waiting 20s per contended customer would stretch the run
+    // without changing the outcome — the hourly sweep folds whatever is left.
+    expect(ordersService.mergeAllPendingForCustomer).toHaveBeenCalledWith(
+      "c1",
+      expect.any(Object),
+      { lockMode: "try" },
+    );
+  });
+
+  it("returns the created order when the post-commit consolidation hits merge-lock contention", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    ordersService.mergeAllPendingForCustomer.mockRejectedValue(
+      new ConflictException({
+        code: "MERGE_IN_PROGRESS",
+        message: "Another merge for this customer is in progress — retry.",
+      }),
+    );
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    const order = await service.generateOrder("t1");
+
+    // The row that WAS written comes back — unconsolidated, which the hourly
+    // sweep fixes. Before the fix this rejected with the 409.
+    expect(order).toMatchObject({ id: "o1" });
+    expect(prisma.order.create).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("c1");
+  });
+
+  it("still propagates a non-contention failure from the post-commit consolidation", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    ordersService.mergeAllPendingForCustomer.mockRejectedValue(new Error("boom"));
+    jest.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+
+    // The swallow is by CODE: a real merge fault must not be hidden behind a warning.
+    await expect(service.generateOrder("t1")).rejects.toThrow("boom");
   });
 });
 
@@ -157,11 +260,23 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
-        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(0.1) } },
+        // settings.taxRate is stored as a PERCENT string — "10" is 10%.
+        {
+          provide: SystemConfigService,
+          useValue: { get: jest.fn().mockResolvedValue("10") },
+        },
         { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
         {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         {
           provide: NotificationsService,
@@ -218,5 +333,211 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
     const result = await service.removeItemForUser("t1", "i1", asOperator);
     expect(result).toEqual({ success: true });
     expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+  });
+
+  // T11 (REG-B133): addItem() (unlike removeItemForUser/generateOrderForUser)
+  // took no user at all, so ANY authenticated customer could add items to
+  // ANY tenant's template. addItemForUser must apply the same ownership check
+  // as its siblings above. addItemForUser does not exist at 39632d27 — the
+  // bare call throws synchronously before a chained .catch() can attach, so
+  // the call is deferred inside a resolved-promise chain to keep the failure
+  // an assertion (toBeInstanceOf) instead of an unhandled exception.
+  //
+  // Each of the three tests below opens with an explicit existence assertion so
+  // the pre-fix red NAMES the missing wrapper instead of surfacing as an opaque
+  // "expected ForbiddenException, received TypeError". Once R6 lands the line is
+  // a no-op and the ownership assertions below it carry the proof.
+  it("REG-B133 a CUSTOMER who does not own the template cannot add items to it", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.customer.findFirst.mockResolvedValue({ id: "c-attacker" });
+    prisma.product.findUnique.mockResolvedValue({ id: "p1" });
+
+    const err = await Promise.resolve()
+      .then(() =>
+        (service as any).addItemForUser(
+          "t1",
+          { productId: "p1", qty: 1 },
+          asCustomer("u-attacker"),
+        ),
+      )
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(prisma.orderTemplateItem.create).not.toHaveBeenCalled();
+  });
+
+  it("REG-B133 a CUSTOMER JWT with no customer record cannot add items (cross-tenant token)", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.customer.findFirst.mockResolvedValue(null);
+
+    const err = await Promise.resolve()
+      .then(() =>
+        (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asCustomer("u-foreign")),
+      )
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ForbiddenException);
+    expect(prisma.orderTemplateItem.create).not.toHaveBeenCalled();
+  });
+
+  it("pin (B133): the owning customer and an operator add items; the operator path skips the ownership read", async () => {
+    expect(typeof (service as any).addItemForUser).toBe("function");
+    prisma.product.findUnique.mockResolvedValue({ id: "p1" });
+    prisma.orderTemplateItem.create.mockResolvedValue({ id: "i2" });
+
+    prisma.customer.findFirst.mockResolvedValue({ id: "c-owner" });
+    await (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asCustomer("u-owner"));
+    expect(prisma.orderTemplateItem.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ templateId: "t1", productId: "p1", qty: 1 }),
+      }),
+    );
+
+    prisma.customer.findFirst.mockClear();
+    await (service as any).addItemForUser("t1", { productId: "p1", qty: 1 }, asOperator);
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    expect(prisma.orderTemplateItem.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * B48 (R10) pin: a tier-1 customer with no CustomerPrice override, no active
+ * promotion and no remembered upsell price must land byte-identical to the
+ * pre-fix behaviour — list price, STANDARD, no strikethrough.
+ */
+describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let ordersService: {
+    mergeAllPendingForCustomer: jest.Mock;
+    loadActivePromotions: jest.Mock;
+    getCustomerPriceHistory: jest.Mock;
+    resolveBuyerLinePrice: jest.Mock;
+  };
+
+  const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    ordersService = {
+      mergeAllPendingForCustomer: jest.fn().mockResolvedValue(null),
+      loadActivePromotions: jest.fn().mockResolvedValue([]),
+      getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
+      resolveBuyerLinePrice: jest.fn((...args: any[]) => realResolver(...args)),
+    };
+
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        { provide: OrdersService, useValue: ordersService },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
+        },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+
+    prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    prisma.order.create.mockImplementation((a: any) => Promise.resolve({ id: "o1", ...a.data }));
+    prisma.orderTemplate.findUnique.mockResolvedValue({
+      id: "t1",
+      customerId: "c1",
+      name: "Weekly",
+      isActive: true,
+      items: [{ productId: "p1", qty: 2, notes: null }],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", pricePerUnit: 10, unitsPerBox: null, category: null, trackedCategoryId: null },
+    ]);
+  });
+
+  // Only the money half is a genuine pin: today's created line carries no `priceType`
+  // or `originalPrice` key at all, so asserting those here would be a post-fix
+  // expectation wearing a pin's clothes. They are proven instead by the tokened
+  // red test in order-templates.pricing-and-items.spec.ts (T16).
+  it("pin (T16): tier 1, no override/promo/history -> list price and subtotal unchanged", async () => {
+    await service.generateOrder("t1");
+    const line = prisma.order.create.mock.calls[0][0].data.lineItems.create[0];
+    expect(line).toMatchObject({ unitPrice: 10, subtotal: 20 });
+  });
+});
+
+/**
+ * B48 (R23) pin: a PATCH that names no `items` key must leave item
+ * replacement completely untouched — no deleteMany, no transaction.
+ */
+describe("OrderTemplatesService — update() with no items key (T27)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        { provide: OrdersService, useValue: { mergeAllPendingForCustomer: jest.fn() } },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
+        },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+
+    prisma.orderTemplate.findUnique.mockResolvedValue({
+      id: "t1",
+      customerId: "c1",
+      name: "Weekly",
+      isActive: true,
+      items: [],
+    });
+    prisma.orderTemplate.update.mockImplementation((a: any) =>
+      Promise.resolve({ id: "t1", ...a.data }),
+    );
+  });
+
+  it("pin (T27): a PATCH with no items key leaves item replacement untouched", async () => {
+    await service.update("t1", { name: "n" } as any);
+
+    expect(prisma.orderTemplateItem.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.orderTemplate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "t1" },
+        data: expect.objectContaining({ name: "n" }),
+      }),
+    );
   });
 });

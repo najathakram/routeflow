@@ -73,7 +73,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: exactly one notification per PENDING alert, each flipped to NOTIFIED", async () => {
-    prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
       { id: "a2", customerId: "c2", productId: "p1", status: "PENDING" },
@@ -84,7 +84,7 @@ describe("StockAlertService (P5-03)", () => {
     const res = await service.fireForProducts(["p1", "p1"]);
 
     expect(res).toEqual({ notified: 2 });
-    expect(prisma.product.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.product.findFirst).toHaveBeenCalledTimes(1);
     expect(notifications.sendToCustomer).toHaveBeenCalledTimes(2);
     expect(notifications.sendToCustomer).toHaveBeenCalledWith(
       "c1",
@@ -101,7 +101,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: a lost atomic claim (concurrent restock already took it) sends no push", async () => {
-    prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
     ]);
@@ -115,7 +115,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: second fire is a no-op (no PENDING rows remain)", async () => {
-    prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 12 });
     prisma.stockAlert.findMany.mockResolvedValue([]);
 
     const res = await service.fireForProducts(["p1"]);
@@ -126,7 +126,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: in-stock guard — no fire while on-hand <= 0", async () => {
-    prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 0 });
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 0 });
 
     const res = await service.fireForProducts(["p1"]);
 
@@ -136,7 +136,7 @@ describe("StockAlertService (P5-03)", () => {
   });
 
   it("fire: a push failure is swallowed and the entry is STILL cleared", async () => {
-    prisma.product.findUnique.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 3 });
+    prisma.product.findFirst.mockResolvedValue({ id: "p1", name: "Cola 24pk", currentStock: 3 });
     prisma.stockAlert.findMany.mockResolvedValue([
       { id: "a1", customerId: "c1", productId: "p1", status: "PENDING" },
     ]);

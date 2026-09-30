@@ -1,0 +1,1388 @@
+{
+  "plan": ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+  "mode": "bugfix",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "major",
+  "startedAt": "2026-09-11T07:41:34Z",
+  "estimatedCostUsd": 20.31,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": true,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": true,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 15,
+    "dropped": 0,
+    "votesCast": 15,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": 0,
+    "tieBreaks": 0,
+    "locationChecked": 16,
+    "locationInvalid": 0,
+    "preRefuted": 15,
+    "deferredToFixer": 1,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/orders/ src/buyer/buyer.merge-lock --reporters=default",
+      "node apps/api/scripts/split-prisma-schema.mjs --check",
+      "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+      "node scripts/local-env.mjs --db -- \"cd apps/api && npx prisma migrate deploy\"",
+      "npm run local:drift",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key --passWithNoTests\""
+    ],
+    "badCommands": [
+      "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql"
+    ],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": false,
+      "results": [
+        {
+          "command": "npm run check-types -w apps/api",
+          "pass": true,
+          "summary": "TypeScript type checking passed with no errors",
+          "executed": -1
+        },
+        {
+          "command": "npm run lint -w apps/api",
+          "pass": true,
+          "summary": "ESLint completed with 7477 problems (0 errors, 7477 warnings)",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest src/orders/ src/buyer/buyer.merge-lock --reporters=default",
+          "pass": true,
+          "summary": "Jest passed: 15 test suites, 431 tests passed",
+          "executed": 431
+        },
+        {
+          "command": "node apps/api/scripts/split-prisma-schema.mjs --check",
+          "pass": true,
+          "summary": "Prisma schema split check OK \u2014 structural invariants hold (207 blocks, 125 models, 80 enums)",
+          "executed": -1
+        },
+        {
+          "command": "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+          "pass": false,
+          "summary": "ENOENT: no such file or directory, open 'C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-runB\\apps\\api\\prisma\\migrations\\20260911000000_order_idempotency_key_table\\migration.sql'",
+          "executed": 0
+        },
+        {
+          "command": "node scripts/local-env.mjs --db -- \"cd apps/api && npx prisma migrate deploy\"",
+          "pass": true,
+          "summary": "Prisma migrate deploy passed: 23 migrations found, no pending migrations to apply",
+          "executed": -1
+        },
+        {
+          "command": "npm run local:drift",
+          "pass": true,
+          "summary": "Schema drift check passed: NO DRIFT \u2014 database matches the prisma/schema folder",
+          "executed": -1
+        },
+        {
+          "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key --passWithNoTests\"",
+          "pass": true,
+          "summary": "DB tests passed: No tests found (passWithNoTests flag allowed exit 0)",
+          "executed": 0
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+        ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md"
+      ],
+      "findings": []
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/merge-idempotency.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/testing/prisma-mock.ts",
+        "status": "unmodified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/prisma/schema/sales.prisma",
+        "status": "unmodified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/scripts/split-prisma-schema.mjs",
+        "status": "unmodified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/orders.service.ts",
+        "status": "unmodified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/orders.controller.ts",
+        "status": "unmodified",
+        "risk": "HIGH",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest src/orders/ src/buyer/buyer.merge-lock --reporters=default",
+      "node apps/api/scripts/split-prisma-schema.mjs --check",
+      "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+      "node scripts/local-env.mjs --db -- \"cd apps/api && npx prisma migrate deploy\"",
+      "npm run local:drift",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key --passWithNoTests\""
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+      ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 5,
+    "low": 6
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 2,
+    "judgment": 6
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 22,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 11,
+          "sonnet": 7,
+          "opus": 4
+        },
+        "waves": [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]],
+        "note": "Round 1 fixes everything but #0, in one wave (the service, its unit spec and the DB spec are all cross-dependent so they must co-land). Two blocker families in schema-folder.spec.ts: bump EXPECTED_MODEL_COUNT to 126 (#1, dups #3/#6/#10/#14) and retire case (h) \u2014 CLAUDE.md already rules the drift gate is the standing lossless guard, so the e39bf9db block-identity proof is deleted rather than re-pinned (#2, dups #4/#7/#11/#15); CLAUDE.md's stale \"re-derive it any time with --from-ref e39bf9db\" sentence is a close-out-commit edit, not a mid-session one. orders.service.ts (opus): hoist the tenant guard to the top of findOrderIdByIdempotencyKey mirroring create() (#8), add a tenant-scoped cross-customer key pre-check that 409s before revertLinkedInvoicesForOrderEdit and the fold, P2002 kept as the race backstop (#13, with PD1 flipped to expect the 409), warn logs at every guard throw (#12), and the column-only replay pinned as intentional with a comment + P5 (#5). Test hardening: T5 gets a distinct tx create fn (#16), T11 pins mergeRequestHash order-insensitivity (#18/#21 \u2014 the surviving mutation), T12-T15 pin the tenant guard and non-P2002 rethrow, DB-lane oracles run under tenantCtx.run plus a cross-tenant PD3 (#17), the dead typeof guard goes (#20), and 'OrderIdempotencyKey' is appended to both parked RLS arrays (#9, arms nothing). #0 is disputed: the \"broken\" gate command targets the migration this change creates, so baseline ENOENT is by construction. Lesson candidates for close-out: a new Prisma model must bump schema-folder.spec.ts pins (add the spec to WP radius for any schema change), and plan verify commands must include the full api Jest lane, not just the touched directories."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 4,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 1,
+          "opus": 1
+        },
+        "waves": [[0, 1, 2, 3]],
+        "note": "Round 2 closes the four residuals from round 1's fixes: the blocker (#0) is a one-line test-harness gap \u2014 the prototype-built OrdersService has no `logger`, so the round-1 `logger.warn` on the refusal paths turns PD1's expected ConflictException into a TypeError \u2014 fixed by giving the spec's svc a real Logger, with the DB lane run only if the shared compose DB already carries the OrderIdempotencyKey table (never migrating it from this run). #1 restores the real-Postgres rollback proof that round 1's pre-fold 409 short-circuited: D3 is retitled and now asserts the pre-fold ConflictException explicitly, and a new D4 skips the replay lookup to drive the in-tx P2002 branch against the real unique constraint, asserting the total and key row both rolled back (Opus, since it must read the branch's error class). #2 and #3 are text corrections \u2014 every place that still tells a reader to re-derive the retired schema-split proof with `--check --from-ref e39bf9db`, and the DB spec's header that still describes the deleted typeof guard. All four run in one wave; the three spec-file findings share the file and are serialized by the engine, with #1 told to add #0's logger itself if it lands first."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": [
+    "correctness",
+    "spec-compliance",
+    "test-quality",
+    "edge-cases-and-security",
+    "operability",
+    "scope-coverage"
+  ],
+  "radiusPack": {
+    "built": false,
+    "truncated": true,
+    "files": [
+      "apps/api/src/orders/orders.controller.ts",
+      "apps/api/src/orders/orders.service.ts",
+      "apps/api/src/orders/merge-idempotency.ts",
+      "apps/api/prisma/schema/sales.prisma",
+      "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+      "apps/api/scripts/split-prisma-schema.mjs",
+      "apps/api/src/testing/prisma-mock.ts",
+      "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+      "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+      "apps/api/src/orders/orders.scan-hardening.spec.ts",
+      "apps/api/src/common/db-locks.ts"
+    ],
+    "skipped": "truncated"
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [],
+    "skipped": null,
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": [
+          "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+          "apps/api/src/testing/prisma-mock.ts"
+        ],
+        "deviations": "None. Wrote exactly the two files TP1 scoped me to. All T1-T10 REG-B215 tests are present with titles matching the plan byte-for-byte, and pins P1-P4 are present."
+      },
+      {
+        "package": "TP2",
+        "status": "done",
+        "filesChanged": ["apps/api/src/orders/order-idempotency-key.db.spec.ts"],
+        "deviations": ""
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 1,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": true,
+        "properlyRed": true,
+        "tests": [
+          {
+            "test": "REG-B215 T1: a same-key retry onto an order that already carries a key folds once, not twice (apps/api/src/orders/orders.merge-idempotency.spec.ts:366)",
+            "outcome": "assertion-failure",
+            "note": "My own run: 'Expected number of calls: 1, Received number of calls: 2' at :371 \u2014 exactly the plan's stated wrong value. SUT is the real OrdersController.create; oracle is a call count on the test-authored statefulOrdersService double, so the post-fix contract (controller must pass {idempotency:{key,responseHash}} into updateOrderItems and read the table back) is encoded in the double rather than observed in persistence. Mitigated by D1/D2 on real Postgres. T1 (identical carts must replay) plus T3 (different cart must 409) together force the hash to be a deterministic function of the cart, so neither is vacuous."
+          },
+          {
+            "test": "REG-B215 T2: a retry after the fold committed but a later step threw folds once (orders.merge-idempotency.spec.ts:374)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: 1, Received: 2' at :379 \u2014 matches the plan. Same double-coupling caveat as T1; no sleeps or timers, the throw is injected deterministically via throwAfterFirstFold."
+          },
+          {
+            "test": "REG-B215 T3: the same key with a different cart is refused, never folded (orders.merge-idempotency.spec.ts:382)",
+            "outcome": "assertion-failure",
+            "note": "'Received promise resolved instead of rejected. Resolved to value: {\"id\": \"ord-active\", \"total\": 120}' at :386 \u2014 the plan predicted a resolve of {id:\"ord-active\", \u2026} after a second fold, and 120 is 96+12+12, i.e. the double fold itself. Own distinct oracle."
+          },
+          {
+            "test": "REG-B215 T4: updateOrderItems with an idempotency option writes exactly one key row (orders.merge-idempotency.spec.ts:413)",
+            "outcome": "assertion-failure",
+            "note": "toEqual at :425 \u2014 Expected [{tenantId:'test-tenant',key:'K1',orderId:'ord-1',responseHash:'h1'}], Received []. Matches the plan. Expected tenantId comes from the harness (createMockPrisma's getTenantId \u2192 'test-tenant', prisma-mock.ts:228), not from an implementation. RISK for later: toEqual on the full data object over-specifies \u2014 if the fix also writes a field (createdAt, customerId), T4 goes red for a non-defect reason. A toMatchObject or an explicit field pick would be more robust."
+          },
+          {
+            "test": "REG-B215 T5: the key row is written inside the fold's own transaction (orders.merge-idempotency.spec.ts:428)",
+            "outcome": "assertion-failure",
+            "note": "toEqual at :460 \u2014 Expected [1], Received []. Matches the plan. Distinct oracle (tx sequence number), not a repeat of T4's. RISK: the test replaces tenantTransaction wholesale, so the expected [1] assumes the fix does not nest an inner transaction around the key write."
+          },
+          {
+            "test": "REG-B215 T10: a key that is already taken aborts the fold with 409 (orders.merge-idempotency.spec.ts:463)",
+            "outcome": "assertion-failure",
+            "note": "'Received promise resolved instead of rejected. Resolved to value: {\u2026id:\"ord-1\",status:\"DRAFT\"\u2026}' at :472 \u2014 matches the plan. The P2002 rejection is configured on the mock, but the behavior asserted (translate P2002 into ConflictException instead of swallowing it) is the service's, not the mock's. NOTE: the runner output handed to me mis-attributed this failure text to T4 and T5 as well; my own run shows T4/T5 failing on their own toEqual assertions at :425 and :460."
+          },
+          {
+            "test": "REG-B215 T6: a consolidation sweep moves a loser's merge key onto the winner (orders.merge-idempotency.spec.ts:524)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: \"w1\", Received: undefined' at :533 \u2014 matches the plan. Received undefined proves the fake FK cascade actually fired (order.delete was called with l1), so the red is on the real mechanism, not a missing mock. RISK: the oracle is an array the test's own updateMany fake mutates; it would also pass if a future implementation stopped deleting the loser altogether."
+          },
+          {
+            "test": "REG-B215 T7: forceConsolidateCustomer moves a loser's merge key onto the winner (orders.merge-idempotency.spec.ts:536)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: \"w1\", Received: undefined' at :545 \u2014 matches the plan. Same oracle as T6 but a different entry point (forceConsolidateCustomer, with invoicesService.findOpenOrderDraft \u2192 null), so it is not a duplicate."
+          },
+          {
+            "test": "REG-B215 T8: the merge replay lookup reads the per-request key table (orders.merge-idempotency.spec.ts:552)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: \"ord-1\", Received: null' at :564 \u2014 matches the plan. order.findFirst is pinned to null so the only way to return 'ord-1' is the new table read."
+          },
+          {
+            "test": "REG-B215 T9: a key-table hit with a different request fingerprint is refused (orders.merge-idempotency.spec.ts:567)",
+            "outcome": "assertion-failure",
+            "note": "'Received promise resolved instead of rejected. Resolved to value: null' at :577 \u2014 matches the plan. Distinct from T8 (rejection vs value)."
+          },
+          {
+            "test": "REG-B215 D1: a second key on an already-keyed order is replayed by the merge lookup (apps/api/src/orders/order-idempotency-key.db.spec.ts:148)",
+            "outcome": "assertion-failure",
+            "note": "Real compose Postgres, my own run: 'Expected: \"d959f5f8-796c-43fc-b5d9-e482147f4156\", Received: null' at :152 \u2014 the plan's stated Expected \"<uuid>\", Received null. Red today with NO migration and NO table: mergeOnce guards recordMergeIdempotencyKey behind a typeof check, so the file compiles and folds against today's tree."
+          },
+          {
+            "test": "REG-B215 D2: a same-key retry never folds twice (order-idempotency-key.db.spec.ts:155)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: 110, Received: 120' at :160 \u2014 exactly the plan's value, and it is the money oracle (a real Order.total doubling in Postgres), not a mock interaction."
+          },
+          {
+            "test": "REG-B215 D3: a key held by another customer's order rolls the fold back through the real unique constraint (order-idempotency-key.db.spec.ts:163)",
+            "outcome": "assertion-failure",
+            "note": "'Expected: 100, Received: 110' at :169 \u2014 matches the plan. Own distinct value; proves the fold is not rolled back today."
+          },
+          {
+            "test": "B215 pin P1: a merge with no Idempotency-Key calls updateOrderItems with exactly three arguments (orders.merge-idempotency.spec.ts:395)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED PIN, not a red-gate member: bug-test-plan.md \u00a7Pins states colour GREEN today / GREEN after (L-060: a pin's expected colour is declared up front, and a RED pin escalates instead of shipping). It carries no REG token and the red-gate command filters on -t \"REG-B215\", which is why the supplied runner output shows it skipped. It is green trivially today (updateOrderItems takes 3 args) and earns its value after the fix, by proving the 4th argument is added ONLY when a key is present \u2014 which is what keeps orders.scan-hardening.spec.ts:720, orders.service.spec.ts:6645 and buyer.merge-lock.spec.ts:204 green. Not a structural blocker."
+          },
+          {
+            "test": "B215 pin P2: a key that sits only on the Order column (create()'s key) still replays a merge (orders.merge-idempotency.spec.ts:402)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED PIN (GREEN/GREEN). Freezes create()'s existing Order-column replay path so the fix cannot regress it. Not a red-gate member."
+          },
+          {
+            "test": "B215 pin P3: with no key-table row the lookup falls back to the Order column (orders.merge-idempotency.spec.ts:582)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED PIN (GREEN/GREEN). Ran and passed in my run (53 ms). Pins the column fallback that create()'s replay and consolidation R6 still depend on."
+          },
+          {
+            "test": "B215 pin P4: updateOrderItems without the option writes no key row (orders.merge-idempotency.spec.ts:479)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED PIN (GREEN/GREEN). Green trivially today (no implementation writes the row); its value is post-fix, proving the key write is opt-in. Not a red-gate member."
+          },
+          {
+            "test": "B215 pin PD1: a key recorded for one customer is never replayed for another (order-idempotency-key.db.spec.ts:172)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED DB PIN (GREEN/GREEN). Skipped in the supplied output only because of the -t \"REG-B215\" filter; I ran the file unfiltered and it passed (61 ms). Pins cross-customer isolation of the replay."
+          },
+          {
+            "test": "B215 pin PD2: the same key string in two tenants folds once in each (order-idempotency-key.db.spec.ts:180)",
+            "outcome": "passed",
+            "note": "PLAN-DESIGNATED DB PIN (GREEN/GREEN). Ran unfiltered and passed (83 ms), oracle [110,110]. Pins tenant scoping of the future unique constraint."
+          }
+        ],
+        "blockers": []
+      }
+    ],
+    "remediation": null
+  },
+  "implementation": [
+    {
+      "package": "WP1",
+      "status": "done",
+      "filesChanged": [
+        "apps/api/prisma/schema/sales.prisma",
+        "apps/api/scripts/split-prisma-schema.mjs",
+        "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "WP2",
+      "status": "done",
+      "filesChanged": ["apps/api/src/orders/orders.service.ts"],
+      "deviations": ""
+    },
+    {
+      "package": "WP3",
+      "status": "done",
+      "filesChanged": [
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-runB\\apps\\api\\src\\orders\\orders.controller.ts",
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-runB\\apps\\api\\src\\orders\\merge-idempotency.ts"
+      ],
+      "deviations": ""
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest src/orders/ src/buyer/buyer.merge-lock --reporters=default",
+        "pass": true,
+        "summary": "Test Suites: 16 passed, 16 total; Tests: 451 passed, 451 total",
+        "executed": 451
+      },
+      {
+        "command": "node apps/api/scripts/split-prisma-schema.mjs --check",
+        "pass": true,
+        "summary": "OK \u2014 structural invariants hold; 208 blocks (126 models, 80 enums, 2 datasource/generator)",
+        "executed": -1
+      },
+      {
+        "command": "node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+        "pass": true,
+        "summary": "Migration lint passed (exit code 0)",
+        "executed": 1
+      },
+      {
+        "command": "node scripts/local-env.mjs --db -- \"cd apps/api && npx prisma migrate deploy\"",
+        "pass": true,
+        "summary": "Migration 20260911000000_order_idempotency_key_table applied successfully; all migrations deployed",
+        "executed": 1
+      },
+      {
+        "command": "npm run local:drift",
+        "pass": true,
+        "summary": "NO DRIFT \u2014 database schema matches prisma/schema folder; 24 migrations found, all applied",
+        "executed": -1
+      },
+      {
+        "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- order-idempotency-key --passWithNoTests\"",
+        "pass": true,
+        "summary": "Test Suites: 1 passed, 1 total; Tests: 7 passed, 7 total (B215 order idempotency key tests)",
+        "executed": 7
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": true,
+    "targets": 3,
+    "probed": 3,
+    "skippedTargets": [],
+    "results": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted orders.service.ts to its committed HEAD content, removing the B215 fix (the `opts.idempotency` parameter on updateOrderItems, the `recordMergeIdempotencyKey` write inside the fold transaction, the key-table-first replay in findOrderIdByIdempotencyKey, and the loser-key reparenting in the two merge paths).",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\revertprobe-apiorders-orders.service.ts",
+        "preHash": "41423131d99a680858dca13fba4429ebf928886aeab48b51045a3e364b0b88ff",
+        "postHash": "41423131d99a680858dca13fba4429ebf928886aeab48b51045a3e364b0b88ff",
+        "fallback": "",
+        "evidence": "`cd apps/api && npx jest src/orders/orders.merge-idempotency.spec.ts -t \"REG-B215 T4: updateOrderItems with an idempotency option writes exactly one key row\"` => Tests: 1 failed, 13 skipped, 14 total. Assertion failure at orders/orders.merge-idempotency.spec.ts:425: `expect(received).toEqual(expected) // deep equality` \u2014 Expected `Array [ Object { \"key\": \"K1\", \"orderId\": \"ord-1\", \"responseHash\": \"h1\", \"tenantId\": \"test-tenant\" } ]`, Received `Array []` (no orderIdempotencyKey.create call). A behavioral assertion failure, not a compile/collection error. (An earlier, broader `-t \"REG-B215 T4\"` run also matched the shared describe block and failed T5 `Expected Array [1], Received Array []` and T10 `Received promise resolved instead of rejected`; the precise single-test run above is the reported evidence.) Restore verified: `cmp -s` backup vs file => IDENTICAL, postHash == preHash, temp backup deleted.",
+        "target": "REG-B215 T4"
+      },
+      {
+        "file": "apps/api/src/orders/orders.controller.ts",
+        "kind": "revert-fix",
+        "defect": "Reverted orders.controller.ts to its committed HEAD content, removing the merge branch's idempotency handling (passing the Idempotency-Key into the fold and replaying by request fingerprint).",
+        "caught": true,
+        "restored": true,
+        "backupPath": "/tmp/revertprobe-api-orders.controller.ts",
+        "preHash": "59c3f8887b5218b2c18b5acd77801cac342470ca794d26e7ed5699545395c21c",
+        "postHash": "59c3f8887b5218b2c18b5acd77801cac342470ca794d26e7ed5699545395c21c",
+        "fallback": "",
+        "evidence": "Baseline WITH the fix (same single test, `npx jest src/orders/orders.merge-idempotency.spec.ts -t \"REG-B215 T1:\"` from apps/api): PASS \u2014 \"\u221a REG-B215 T1: a same-key retry onto an order that already carries a key folds once, not twice (7 ms)\"; Tests: 13 skipped, 1 passed. After `git show HEAD:apps/api/src/orders/orders.controller.ts >` the file (hash became 998cfbdc278f5fd870fda5f92e1857ce2a1d254f9b903dfef7d90ec138edeb40), the SAME test FAILED on an assertion: \"\u25cf OrdersController.create \u2014 staff merge same-key retry (REG-B215 T1-T3) \u203a REG-B215 T1: a same-key retry onto an order that already carries a key folds once, not twice / expect(jest.fn()).toHaveBeenCalledTimes(expected) / Expected number of calls: 1 / Received number of calls: 2 / at orders/orders.merge-idempotency.spec.ts:371:34\" \u2014 i.e. the second same-key retry called updateOrderItems again instead of replaying. Test Suites: 1 failed; Tests: 1 failed, 13 skipped. Restore: copied the temp backup back, sha256 returned to 59c3f888\u2026 and `cmp -s` reported IDENTICAL, so the backup was deleted; `git status --short` shows the same five modified + five untracked paths as before the probe.",
+        "target": "REG-B215 T1"
+      },
+      {
+        "file": "apps/api/src/orders/merge-idempotency.ts",
+        "kind": "mutation",
+        "defect": "Dropped the `.sort()` in mergeRequestHash's item normalization (`(input.items ?? []).map(stable).sort()` -> `.map(stable)`), so two identical carts whose items arrive in a different order no longer hash equal.",
+        "caught": false,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-api-orders-merge-idempotency.ts",
+        "preHash": "eefc8e1ecdc2135609a0fd7b6d15c32b103deb13c6994379362cb39f3de72063",
+        "postHash": "eefc8e1ecdc2135609a0fd7b6d15c32b103deb13c6994379362cb39f3de72063",
+        "fallback": "",
+        "evidence": "REG-B215 T3 PASSED with the defect in place: `npx jest src/orders/orders.merge-idempotency.spec.ts -t \"REG-B215 T3\"` -> \"PASS src/orders/orders.merge-idempotency.spec.ts / \u221a REG-B215 T3: the same key with a different cart is refused, never folded (8 ms) ... Tests: 13 skipped, 1 passed, 14 total\". T3 is structurally blind to \"identical carts hash equal\": it sends two DIFFERENT carts (qty 5 then qty 7) under one key and asserts only that the second rejects with ConflictException. Any mutation that makes equal carts hash UNequal still leaves unequal carts hashing unequal, so the conflict still fires and T3 stays green. The named behavior is pinned by T1/T2 (same-key retry with an identical cart must fold once, i.e. must be replayed), not by T3. Restore verified: post-restore sha256 equals preHash and `cmp -s` against the temp backup reported IDENTICAL before the backup was deleted.",
+        "target": "REG-B215 T3"
+      }
+    ],
+    "allCaught": false,
+    "allRestored": true,
+    "restoredVerified": true,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "note": ""
+  },
+  "finalPass": {
+    "ran": true,
+    "completed": true,
+    "skipped": null,
+    "reader": "claude-opus-5",
+    "model": "claude-fable-5-1",
+    "effort": "high",
+    "fallback": false,
+    "files": [
+      "apps/api/src/orders/merge-idempotency.ts",
+      "apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql",
+      "apps/api/prisma/schema/sales.prisma",
+      "apps/api/src/orders/orders.service.ts",
+      "apps/api/src/orders/orders.controller.ts"
+    ],
+    "candidates": 11,
+    "gaps": [
+      "Every caller of findOrderIdByIdempotencyKey / recordIdempotencyKey other than updateOrderItems \u2014 the buyer createOrder path and the staff create() auto-merge / mergeAllPendingForCustomer / forceConsolidateCustomer entry points \u2014 read against the new third requestHash parameter, the table-before-column read order, and the two new throw cases (Forbidden / 409): does any of those callers now surface an unhandled throw or bypass the table on its own key?",
+      "The web (and mobile) client that sets the Idempotency-Key header for a staff merge: confirm the retry re-sends a body that hashes identically under mergeRequestHash (sorted items, but undefined-vs-missing optional fields, numeric normalisation, appliedCreditNotes ordering) \u2014 otherwise a legitimate retry is refused with 409 instead of replayed, which the reader's Order-column fallback finding hints at but no read has settled."
+    ],
+    "secondRead": true,
+    "decision": "All three candidates stand. #0 is a real major: the run correctly commits the key row inside the fold tx (the only atomic choice against the re-fold bug), but the replay-first read then returns an order whose post-commit invoice resync, credit sync/settle and revision append may never have run, so the fixer must make the replay branch re-run those idempotent post-fold steps rather than short-circuit. #1 is a real major created by this fix round itself: the deferred-rls migration was patched but the live apply-rls.js TENANT_TABLES was not, leaving OrderIdempotencyKey the one order-graph table with no RLS policy \u2014 add it there in the same diff. #2 is a real minor map-staleness defect on the two changed signatures and the new model, owed in this PR since the map is already edited here. Two coverage gaps remain worth one read each: the other callers of the changed idempotency helpers (buyer createOrder and the staff auto-merge/consolidate paths) against the new parameter and throws, and the client-side retry body's stability under mergeRequestHash. Not re-raised: the schema-folder.spec count/case-(h) blockers, the lint-migrations gate breakage, and the T3 mutation escape, all already in the fixed/open ledger.\nSecond read: The second read settled both named gaps: no other production caller of findOrderIdByIdempotencyKey/recordIdempotencyKey exists (buyer merge sends no key; web sends none), so no caller surfaces an unhandled throw, and the client-side hash question resolves to a real but minor asymmetry (credit notes unsorted) plus a genuine interaction defect with the mobile key lifecycle. Six of eight candidates are real: the tenant-wide heldByAnotherOrder guard evaluated before the customer-scoped column fallback wedges the only key-sending client across a customer switch (#0 major, #1 minor \u2014 fix together by consulting the column first and having mobile rotate the key on customer change), create() still bypasses the new table on its own key (#4 minor), appliedCreditNotes should be sorted like items (#2 minor), the cart-mismatch recovery is clunky but not broken (#3 minor, client follow-up), and the lessons register is at cap with no entry for this fix so Gate 3 will block the landing until an entry is archived and L-103 lands in the same PR (#7 major). The web-has-no-key and Date-collapse candidates are pre-existing or unreachable and are dropped. Coverage is sufficient; the run ends here with the fixer taking #0/#1, #4 and #7 before the PR is opened, and #2 as a one-line sort.",
+    "findings": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 4396,
+        "severity": "major",
+        "summary": "Committing the replay key inside the fold transaction makes a retry replay a merge whose post-fold invoice resync, credit-note sync/settle and revision append never ran, so the order's linked invoice and applied credits stay silently out of sync forever.",
+        "detail": "State path, all lines in apps/api/src/orders/orders.service.ts unless noted:\n\n1. `updateOrderItems` opens its fold transaction at :3338 and closes it at :4403. The new key write is the LAST statement inside it (:4396, `await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);`), so the key row and the absolute-totals fold commit together.\n2. Four further steps run AFTER that commit, outside it: `resyncOrderInvoicesForEdit(orderId)` (:4433) or `reconcileOrderDraftInvoice(orderId, { basis: \"order\" })` (:4436) \u2014 this is what brings the order's linked invoice to the new basis; a `Serializable` transaction (:4447) running `creditNotes.syncOrderCreditSelections(tx, orderId, customerId, dto.appliedCreditNotes)` (:4450) and `creditNotes.settleOrderCreditsInTx(tx, orderId)` (:4457); and `appendOrderRevision` (:4475).\n3. Concrete failure: operator merges a $20 cart into customer A's $100 order with `Idempotency-Key: K` and `appliedCreditNotes: [{creditNoteId: cn1, amount: 15}]`. The fold commits (order total 120) together with the key row. The `Serializable` credit transaction at :4447 then fails with a serialization error (P2034/40001 \u2014 the realistic failure mode for `isolationLevel: \"Serializable\"` under concurrency). `updateOrderItems` rejects, the lock callback throws, `mapLockError` rethrows it (apps/api/src/orders/orders.controller.ts:263) and the client gets a 500.\n4. The client retries with the same key and the same body. `findOrderIdByIdempotencyKey` now hits the committed key row, the hash matches, and it returns the orderId; the controller returns `{ replayed: true }` (orders.controller.ts:194), which also skips the post-commit sweep (`if (!merged.replayed)`, :265) and returns `findOne(merged.orderId, user)` (:288) \u2014 HTTP 200.\n5. Final state: order total 120; the linked invoice still at the pre-fold 100 basis because :4433/:4436 never re-ran; credit note cn1 never synced or settled; no OrderRevision row for the edit. The client saw 200 and stops retrying. Nothing heals it: I enumerated every `@LeaderCron` in apps/api/src and there is no order-to-invoice reconciler; `orders.cronSweepPendingOrders` (:1573) only consolidates when the customer has a second mergeable order, and in this scenario there is none.\n\nWhy no existing gate catches it: the build plan's window table row 2 (\"Fold committed, then a later step inside updateOrderItems throws ... Replay, no re-fold\") presents this exact window as strictly improved and the residual-risk list (items 1-6) does not mention the skipped reconciliation. Acceptance criterion 2 / test T2 assert only \"exactly one fold\"; no test asserts the invoice or credit state after a replay. Pre-fix the retry re-ran the reconcile (against a doubled 140 order) \u2014 the fix trades a loud wrong number for a silent, permanent order-vs-invoice money discrepancy, which is a residual the plan never accepted.",
+        "severity_note": "",
+        "fixComplexity": "judgment",
+        "fixHint": "Decide what a replay of a request whose post-fold steps failed should do. Options: (a) on a table-hit replay, re-run the idempotent tail (`reconcileOrderDraftInvoice(orderId, {basis:\"order\"})` plus the credit sync/settle) before returning, so the replay converges the derived money state; (b) record durable completion separately from the fold (e.g. a `completedAt`/`stage` column on OrderIdempotencyKey, set after the tail succeeds) and treat a key row whose tail never completed as \"resume the tail\", not \"replay\"; (c) at minimum, document it as an accepted residual and add a test pinning the resulting invoice state. Do not simply move the key write back outside the transaction \u2014 that reinstates B215.",
+        "phase": "Final pass",
+        "decision": "The evidence pins the key write as the last statement inside the fold tx (:4396) with invoice resync, credit-note sync/settle and revision append all running after commit (:4433-:4475); a process death between commit and those steps makes the same-key retry hit the replay-first read and return the order without ever bringing the linked invoice or credits to the folded basis. This is the exact retry scenario B215 exists to serve, and it touches money state, so the replay path must re-run the idempotent post-fold reconcile (or the run must document why it may not).",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/scripts/apply-rls.js",
+        "line": 31,
+        "severity": "major",
+        "summary": "The fix enrolled the new tenant-scoped table in the PARKED RLS migration's two arrays but not in apply-rls.js's TENANT_TABLES, which is the documented step that actually arms RLS in production, so OrderIdempotencyKey is the only table on the order graph left with no RLS policy and no FORCE ROW LEVEL SECURITY.",
+        "detail": "`git diff HEAD -- apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql` in this worktree shows both hardcoded arrays in the PARKED RLS migration were updated to include `'OrderIdempotencyKey'` (inserted after `'OrderItem'` at the two list sites). The live sibling was missed.\n\napps/api/scripts/apply-rls.js declares its own hardcoded `const TENANT_TABLES = [` at :13; `\"Order\"` is at :30 and `\"OrderItem\"` at :31, and `grep -n OrderIdempotencyKey apps/api/scripts/apply-rls.js` returns nothing \u2014 the new table is absent. For every name in that array the script runs (`applyRls`, :74-86): `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `ALTER TABLE ... FORCE ROW LEVEL SECURITY`, and `CREATE POLICY tenant_isolation ... USING (\"tenantId\"::text = current_setting('app.current_tenant_id', true) OR ...)`. A table not in the array gets none of that.\n\nThis script is the live production step, not a parked one: apps/api/docs/production-setup.md:107 is the literal command `node apps/api/scripts/apply-rls.js`, and its go-live checklist at :179 reads \"RLS applied to all 52 tenant-scoped tables (`apply-rls.js`)\".\n\nFailure scenario: the owner runs the documented production-setup step after this change ships. Every sibling on the order graph (Order, OrderItem, OrderRevision, Invoice, ...) comes out with `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy; `OrderIdempotencyKey` silently does not (it is not even reported as skipped \u2014 the loop never names it). Any future code path that reaches this table without going through `prisma.forTenant()` / `_wrapTxWithTenant` \u2014 a raw `$queryRaw` report, a repair script, a psql session \u2014 reads and writes it across tenants with no database-layer backstop, while the identical query against Order would be blocked. Nothing in the repo will flag the omission: `grep -rn TENANT_TABLES` across apps/api/src, apps/api/scripts and scripts/ finds no spec pinning that array against the schema, so `npm run verify` stays green. The checklist's \"52 tenant-scoped tables\" is also now off by one.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Add `\"OrderIdempotencyKey\",` to `TENANT_TABLES` in apps/api/scripts/apply-rls.js immediately after `\"OrderItem\",` (:31), matching where it was inserted in both arrays of apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql, and bump the \"52 tenant-scoped tables\" count in apps/api/docs/production-setup.md:179 to 53.",
+        "phase": "Final pass",
+        "decision": "The fix round enrolled the table in both arrays of the parked deferred-rls migration but the live sibling, apply-rls.js TENANT_TABLES (:13, Order at :30, OrderItem at :31), still lacks it and a grep for the name returns nothing; every other table on the order graph gets ENABLE/FORCE RLS plus the tenant_isolation policy from that script and this one will not. A tenant-scoped table left out of the production arming step is a tenant-isolation hole the change itself created and half-fixed.",
+        "unadjudicated": false
+      },
+      {
+        "file": ".claude/code-map/api.md",
+        "line": 1179,
+        "severity": "minor",
+        "summary": "This PR already edits the code map, but only for the schema-spec collateral \u2014 it leaves api.md asserting the old signatures of both changed exports and never names the 126th model it now claims exists.",
+        "detail": "`git status --short` shows `.claude/code-map/api.md` is modified by this change, and `git diff HEAD -- .claude/code-map/api.md` shows the edits are confined to the split-script / schema-folder-spec entries (case (h) retirement, \"126 model + 80 enum blocks\"). So the \"map updates are deferred to a Bookkeeping Option B follow-up\" defence does not apply here: the map IS being updated in the code PR, just incompletely, and the result is internally inconsistent.\n\nConcrete stale claims left behind:\n- :1179 states `findOrderIdByIdempotencyKey(key, customerId)` / `recordIdempotencyKey(orderId, key)` (both `forTenant()`-scoped ...). The first is now `findOrderIdByIdempotencyKey(idempotencyKey, customerId, requestHash?)` (apps/api/src/orders/orders.service.ts, third param added), it now reads a new `OrderIdempotencyKey` table BEFORE the Order column, and it now THROWS in two new cases (`ForbiddenException` when the session carries no tenant; `ConflictException` on a hash mismatch and on a key already held by another order in the tenant). An agent planning from this row would call it with two arguments and assume it cannot throw.\n- :2298 states `updateOrderItems(orderId, dto, user?)` (`:3069`). The signature now takes a 4th `opts?: { idempotency?: { key: string; responseHash: string } }` and the method actually starts at :3175, not :3069.\n- `grep -rn \"OrderIdempotencyKey|merge-idempotency|recordMergeIdempotencyKey\" .claude/code-map/` returns nothing, so the map now asserts a 126-model schema folder without naming the 126th model, and the new file apps/api/src/orders/merge-idempotency.ts (`mergeRequestHash`) and the new method `recordMergeIdempotencyKey` have no entry at all.\n\nFailure scenario: the next session follows CLAUDE.md's \"read INDEX -> area -> the specific file\" routine, reads :1179/:2298, and plans a change against a two-argument non-throwing lookup and a three-argument `updateOrderItems` \u2014 the exact re-derivation the map exists to prevent, on the money path this change just re-shaped.",
+        "fixComplexity": "mechanical",
+        "fixHint": "In the same api.md edit: update :1179 to `findOrderIdByIdempotencyKey(idempotencyKey, customerId, requestHash?)` noting the table-first read and the Forbidden/Conflict throws; update :2298 to `updateOrderItems(orderId, dto, user?, opts?)` and correct `:3069` to `:3175`; add a one-line entry for the `OrderIdempotencyKey` model (sales.prisma, `@@unique([tenantId, key])`, FK `onDelete: Cascade`), for `merge-idempotency.ts` (`mergeRequestHash`), and for `recordMergeIdempotencyKey` (writes through the fold tx's client, P2002 -> 409). Alternatively, revert the api.md edits entirely and carry the whole map update in the Option B follow-up the build plan specifies \u2014 but do not leave it half-updated.",
+        "phase": "Final pass",
+        "decision": "The diff already touches .claude/code-map/api.md for the schema-spec collateral, so the Option B deferral defence does not apply, yet :1179 still records the two-argument findOrderIdByIdempotencyKey / old recordIdempotencyKey signatures and omits the new table the same map now says exists. Same-PR map update is the standing rule; this one is incomplete, not absent.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1694,
+        "severity": "major",
+        "summary": "The new pre-fold `heldByAnotherOrder` refusal turns a staff merge that previously landed into a permanent 409 whenever the mobile client carries its cart-session key across a \"Change customer\" switch.",
+        "detail": "REACHABLE CLIENT PATH (read, not assumed): the ONLY client that sends `Idempotency-Key` on POST /orders is mobile (apps/web has none \u2014 see the separate web finding). `apps/mobile/lib/order-submit-key.ts` mints ONE key per cart session and resets it ONLY on a successful submit or an explicit cart clear; `apps/mobile/components/NewOrderScreen.tsx:1713` rotates it on mount ONLY when `initialDraft` is null. Once the operator has added a line, `useDraftAutosave` creates a server draft and lifts its id through `onDraftBound` into the parent's `boundDraftId` (NewOrderScreen.tsx:1625-1632, :301-302), so `loadedDraft` becomes non-null and `initialDraft` is non-null (NewOrderScreen.tsx:412-421) on every later mount. `onChangeCustomer` (NewOrderScreen.tsx:405-411) unmounts/remounts ProductPickView and deliberately KEEPS the cart and the bound draft \u2014 so the key survives a customer switch.\n\nFAILURE: (1) Operator builds a cart for customer A; Confirm -> active order exists -> prompt -> Merge -> POST with key K. The fold commits and `recordMergeIdempotencyKey` writes the row (tenant, K, ordA) INSIDE the fold tx. (2) The client never sees the 200 \u2014 the mobile api client aborts at 15s (cited in orders.controller.ts:165-167) or the request is offline-enqueued; `onError` fires, the key is deliberately NOT reset. (3) Operator taps \"Change customer\", picks B (cart lines carry over by design), taps Confirm -> B has an active order -> Merge -> POST key K, customerId B. (4) `findOrderIdByIdempotencyKey`: the keyed lookup at :1670 is scoped `order: { customerId: B }` and misses; the new `heldByAnotherOrder` read at :1694 (`where: { key }`, tenant-scoped only, customer-agnostic) HITS the row for ordA and throws `ConflictException(\"Idempotency-Key already used for a different order\")` at :1704. Customer B's merge never folds, and every retry from that screen repeats it \u2014 `resetOrderSubmitKey()` is unreachable without a successful submit or abandoning the cart.\n\nPRE-CHANGE BEHAVIOUR (the regression): the merge branch's only lookup was the customer-scoped Order column (`{ idempotencyKey, customerId: B }`), which missed, so the fold RAN and B's merge landed; the post-commit column stamp's P2002 was swallowed by `recordIdempotencyKey`'s `if (e?.code !== \"P2002\") throw e` (orders.service.ts:1745). So this is a new hard failure on a path that previously worked. Nothing in build-plan.md or bug-test-plan.md considers a cross-customer key carried by the same cart session; no T#/D# covers it (PD1 pins only that a key recorded for one customer is not REPLAYED for another \u2014 it does not pin that the other customer's own merge still lands).",
+        "severity_note": "",
+        "fixComplexity": "judgment",
+        "fixHint": "Decide what a key held by a different customer's order should do on the merge path. Options: return null (fall through to the fold, as before, and let the in-tx P2002 be the only refusal), or keep the 409 but have the mobile client rotate the key on a 409 whose message is the cross-order one, or scope the refusal so it cannot fire for a key the same cart session owns. Whatever is chosen, add a test at the T#/D# level for \"same key, different customer, no prior replay\".",
+        "phase": "Final pass",
+        "decision": "The only client that sends Idempotency-Key keeps the cart-session key across a Change-customer switch and after a failed submit, so a timed-out-but-committed merge for A followed by a submit for B hits the new tenant-wide heldByAnotherOrder refusal with no recovery short of clearing the cart; the guard is correct server-side but the interaction with the one reachable client is a wedge the change introduced.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1694,
+        "severity": "minor",
+        "summary": "`heldByAnotherOrder` (tenant-wide, customer-agnostic) is evaluated BEFORE the customer-scoped Order-column fallback, so a legitimate replay of THIS customer's own key is refused with 409 instead of replayed.",
+        "detail": "Read order inside `findOrderIdByIdempotencyKey`: (a) :1670 key table scoped to `order: { customerId }`; (b) :1694 key table scoped to the TENANT ONLY \u2014 any order, any customer \u2014 and an unconditional 409 at :1704; (c) :1713 the Order column scoped `{ idempotencyKey, customerId }`. Step (b) short-circuits step (c), so a key that legitimately identifies THIS customer's own order via the column is never consulted once any other order in the tenant holds the same key in the table.\n\nCONCRETE STATE PATH (reachable from the carry-over described in the sibling finding, no client uuid collision needed): (1) Customer A merges with key K; the key row (K -> ordA) commits with the fold; the post-commit column stamp is `updateMany({ where: { id, idempotencyKey: null } })` (:1741) and silently drops K because ordA already carries a key from its own creation \u2014 this \"first key wins\" drop is B215's original root cause, so it is the NORMAL state, not an edge case. (2) The same cart session (key K retained after a failed-looking submit) is switched to customer B, who has NO active order, so `OrdersController.create` falls through to `OrdersService.create`; create()'s pre-check at :1852 reads only the column, finds nothing (K was dropped from ordA's column), and creates ordB WITH column `idempotencyKey = K`. (3) A retry for customer B (queue replay / operator retry) now enters the merge branch because B has an active order: (a) misses (no table row for B), (b) HITS the row for ordA and throws 409 \"Idempotency-Key already used for a different order\" \u2014 even though (c) would have found ordB by column for this exact customer and replayed it correctly. B's retry is refused forever instead of replaying B's own order.\n\nThe code comment at :1706-1712 explicitly reasons that a column-only hit \"is replay-eligible\" and is \"pinned by P5\", but P5/T P3 only exercise the column path with NO table row present \u2014 no test covers a column hit that is pre-empted by a foreign table row, so the ordering is unproven in either direction.",
+        "fixComplexity": "judgment",
+        "fixHint": "Move the customer-scoped Order-column read (:1713) ABOVE the tenant-wide `heldByAnotherOrder` read (:1694), so this customer's own replay wins before any cross-order refusal; keep the cross-order refusal as the last step before the fold. Add a test with a table row for customer A plus a column key for customer B and assert B replays.",
+        "phase": "Final pass",
+        "decision": "The read order is genuinely wrong: a tenant-wide refusal that short-circuits the customer-scoped column fallback refuses a replay that the column would have answered. It needs the same cross-customer key reuse precondition as #0, so it is a minor ordering defect to fix alongside it (consult the column before refusing).",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/merge-idempotency.ts",
+        "line": 34,
+        "severity": "minor",
+        "summary": "`appliedCreditNotes` is fingerprinted order-sensitively while `items` is sorted, so a retry that re-sends the SAME credit-note set in a different order is refused with a 409 cart mismatch.",
+        "detail": "VERIFIED BY PROBE against the real module this session (a throwaway spec under apps/api/src/orders, run with `npx jest --reporters=default`, then deleted): `ITEMS_ORDER_SAME= true`, `CREDITS_ORDER_SAME= false`. i.e. mergeRequestHash({customerId:'c1',items,appliedCreditNotes:[{creditNoteId:'cn-A'},{creditNoteId:'cn-B'}]}) !== the same call with [cn-B, cn-A]. Cause: line 28 sorts the per-item fingerprints (`(input.items ?? []).map(stable).sort()`) but line 34 passes `appliedCreditNotes` straight into `stable`, whose array branch \"keeps arrays in order at this level\" (comment at line 6-8). The doc comment at line 21-23 claims only \"Item order does not matter\" \u2014 the asymmetry is undocumented and reads as an oversight, because the server treats appliedCreditNotes as a SET: apps/mobile/lib/api/orders.ts:203-206 documents it as \"the FULL desired set (server diffs)\", and updateOrderItems applies a diff, so [A,B] and [B,A] are the SAME request server-side.\n\nCONCRETE FAILURE: the operator selects credits cn-A then cn-B (mobile `onToggle` at NewOrderScreen.tsx:2359 APPENDS on select and filters on deselect, so the array order is tap order); attempt 1 posts [A,B] with key K, the fold commits and stores responseHash = H([A,B]); the client times out (15s abort) and the key is retained by design. The operator re-taps cn-A off and on again (a natural \"did that credit apply?\" check) \u2014 the selection is now [B,A], the same set \u2014 and taps Confirm. `findOrderIdByIdempotencyKey` hits the key row at :1670, `keyed.responseHash !== requestHash` at :1675, and the retry is refused with 409 \"Idempotency-Key reused with a different cart\" although the request is semantically identical to the one that landed. The probe also shows `QTY_STRING_EQ_NUMBER= false` (a numeric string and a number fingerprint differently) \u2014 harmless today because both attempts traverse the same ValidationPipe, but it is the same class of brittleness.\n\nP5/T#s cover item order, undefined-vs-null credits and a changed qty (orders.merge-idempotency.spec.ts:397-427) \u2014 credit-note ORDER is not covered, so dropping or adding a sort there leaves every test green.",
+        "fixComplexity": "judgment",
+        "fixHint": "Canonicalise appliedCreditNotes the same way items are: `const credits = input.appliedCreditNotes == null ? null : (input.appliedCreditNotes as readonly unknown[]).map(stable).sort();` (keeping [] distinct from null/undefined \u2014 the probe confirms `UNDEF_EQ_EMPTY= false`, which is correct since [] means \"remove all\"). Add a unit test pinning credit-note order-insensitivity next to the existing item-order test.",
+        "phase": "Final pass",
+        "decision": "Probe-verified asymmetry: items are sorted, appliedCreditNotes are not, while the server treats the credit-note list as a set. A retry from unchanged client state re-sends the same order so the 409 is unlikely in practice, but the fingerprint contradicts its own doc comment and should sort both.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1681,
+        "severity": "minor",
+        "summary": "The cart-mismatch 409 tells the operator to \"submit the edited cart as a new order (new key)\", but the only client that sends keys cannot mint one without abandoning the cart, so an edited retry wedges the screen permanently.",
+        "detail": "The new refusal at :1675-1683 is intended (bug-test-plan T3 / acceptance criterion 4). The defect is that its prescribed remedy is unreachable in the one client that reaches this code. `apps/mobile/lib/order-submit-key.ts` documents and enforces that the key resets ONLY on (a) a successful submit or (b) an explicit cart clear; a failed submit must NOT reset it. `NewOrderScreen.tsx:1817` sends `getOrderSubmitKey()` on every attempt, and the reset call sites are exactly `onSuccess` (:1823) and the mount effect (:1713) which is gated on `!initialDraft` \u2014 and R5 deliberately does NOT rotate on a resumed parked draft, precisely so a timed-out-but-committed submit stays collapsible.\n\nFAILURE PATH: (1) merge with key K commits server-side; the client sees a timeout/offline error (mobile aborts at 15s, per orders.controller.ts:165-167) and keeps the key. (2) The operator, believing nothing landed, edits the cart (removes or re-enters a line) and taps Confirm. (3) The table row exists with H(cart1); requestHash is H(cart2); :1675 throws the 409. (4) The mobile `onError` handler has no branch for this body (it matches only `code === \"MERGE_CHOICE_REQUIRED\"` at :1848-1856 and the regulated-license error), so it falls to `alertInfo(\"Couldn't save order\", msg)` and shows the server text verbatim \u2014 including \"submit the edited cart as a new order (new key)\", which the operator has no control to perform. Every subsequent Confirm from this screen re-sends K and repeats the 409; because the autosaved draft is bound, re-entering via the parked draft keeps `initialDraft` non-null and therefore keeps K. The only escape is discarding the draft and rebuilding the cart from scratch.\n\nNothing in build-plan.md or bug-test-plan.md considers what the client does with the new 409, and no test asserts a client-visible recovery path.",
+        "fixComplexity": "judgment",
+        "fixHint": "Either give the 409 a machine-readable code (e.g. `{ code: \"IDEMPOTENCY_CART_MISMATCH\" }`, the same idiom as MERGE_CHOICE_REQUIRED) and have the mobile error handler call resetOrderSubmitKey() and offer \"resubmit as a new order\", or have the server treat a mismatched-cart retry on the merge path as a new request (new key minted server-side) rather than a refusal. Decide before shipping; leaving it as bare text is the wedge.",
+        "phase": "Final pass",
+        "decision": "The cart-mismatch 409 is the intended acceptance-criterion-4 refusal, and the client can recover by clearing the cart, so it is not a permanent wedge; the gap is that the mobile key lifecycle offers no graceful path (rotate on cart edit after a refusal). Client-side follow-up, not a server defect.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 1852,
+        "severity": "minor",
+        "summary": "`create()`'s own replay lookup still reads only the Order column, so the new \"authoritative\" key table is bypassed whenever a keyed retry falls through to the create path and can still mint a duplicate order.",
+        "detail": "The schema doc-comment (sales.prisma, OrderIdempotencyKey) and the migration header call the new table the store that the merge branch's replay depends on, and orders.service.ts:1685-1687 calls it \"the authoritative replay store for the merge branch\". But create() \u2014 the other consumer of the same client-chosen key \u2014 never reads it: its pre-check at :1852 is `order.findFirst({ where: { idempotencyKey } })` (column only), and so is its P2002 recovery at :2441. There is no production caller of `findOrderIdByIdempotencyKey` other than orders.controller.ts:188 (verified: `grep -rn \"findOrderIdByIdempotencyKey|recordIdempotencyKey\" apps --include=*.ts` returns only that call, the :230 column stamp, and the definitions), and the buyer merge path (buyer.controller.ts:617) sends no key at all.\n\nCONCRETE FAILURE: (1) Merge with key K lands on ordA; the key row commits with the fold; the column stamp at :1741 drops K because ordA already carries a key (the original B215 root cause, so the common case). (2) A retry of that same frozen body arrives after ordA has left the active set (consolidated away by a sweep, dispatched, or status-advanced), so `findActiveOrder` returns null and the controller never enters the merge branch (orders.controller.ts:111-113, and the explicit \"stale\" fall-through at :259-265). (3) `OrdersService.create` runs with the same key: its column-only pre-check finds nothing, so it creates a SECOND order for the same cart and stamps K on the new order's column. The table row that would have identified the retry is never read.\n\nThis outcome is the same before and after the change (pre-fix the key was nowhere at all), so it is a scope gap rather than a regression \u2014 but it contradicts the \"authoritative replay store\" framing the diff's own comments assert, and the fix had the table in hand at :1852.",
+        "fixComplexity": "judgment",
+        "fixHint": "Either have create()'s pre-check also consult OrderIdempotencyKey (customer-scoped, mirroring :1670) and replay/refuse from it, or soften the \"authoritative\" claims in sales.prisma / migration.sql / orders.service.ts:1685 to \"authoritative for the merge branch only\" and record the create fall-through as a known residual.",
+        "phase": "Final pass",
+        "decision": "create()'s pre-check and P2002 recovery read only the Order column, and the column stamp is silently dropped when the target order already carries a key, so a keyed retry that no longer takes the merge branch (pending order dispatched between attempts) misses the table row and mints a duplicate. The table is authoritative only on one of two consumers of the same key.",
+        "unadjudicated": false
+      },
+      {
+        "file": ".claude/lessons/LESSONS.md",
+        "line": 1,
+        "severity": "major",
+        "summary": "This fix branch carries no lessons entry and the register is already at BOTH caps, so the required entry cannot simply be appended and Gate 3 of the stop hook will block.",
+        "detail": "MEASURED THIS SESSION in the worktree: `git status --short` shows `.claude/code-map/api.md` modified (Gate 2 satisfied) but `.claude/lessons/*` untouched; `git rev-list --count master..HEAD` is 0, so everything is still working-tree and the branch is `fix/train4-order-idempotency-key`. CLAUDE.md's lessons routine states Gate 3 of `.claude/hooks/stop.mjs` blocks the turn on `fix/*` branches and on landed `fix:` commits unless the register changed in the same PR or HEAD carries a `Bookkeeping-Follow-Up: pending` trailer (the Option B exception is reserved for public-window deploys).\n\nThe non-obvious part: the register is at BOTH caps, so an append cannot succeed as-is. Measured from `.claude/lessons/_meta.json` and the file itself: `maxEntries: 40`, `maxBytes: 40960`; the file contains exactly 40 active `L-###` entries and is 40,889 bytes \u2014 71 bytes of headroom against the byte cap and zero against the entry cap, with `nextId: 104`. `scripts/validate-lessons.mjs` enforces both (DEFAULT_MAX_ENTRIES = 40 at :88, the meta override read at :122-123). A typical entry is several hundred bytes, so close-out will fail the validator (and the global routine notes closeout.mjs refuses to add a stub at cap) unless an entry is archived to ARCHIVE.md first. Note also that `.claude/lessons/LESSONS-DIGEST.md` is not tracked at all (`git ls-files .claude/lessons/` lists only ARCHIVE.md, LESSONS.md, _meta.json), so it must be regenerated, not edited.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Before writing the B215 entry: move the least-cited fully-guarded entry (or merge two overlapping ones) from LESSONS.md to ARCHIVE.md, then append L-104 (Symptom / Root cause / Lesson / Guard), bump _meta.json (nextId/updatedAt), regenerate the digest with `node scripts/validate-lessons.mjs --digest`, and land it in this PR.",
+        "phase": "Final pass",
+        "decision": "Measured: fix/* branch, lessons register untouched and at both caps (40 entries, 71 bytes headroom), so Gate 3 of the stop hook blocks the landing and a plain append cannot succeed. The close-out must archive one fully-guarded entry to ARCHIVE.md, add the B215 lesson, bump _meta.json and regenerate the digest in the same PR.",
+        "unadjudicated": false
+      }
+    ]
+  },
+  "confirmedFindings": [
+    {
+      "file": "(gate-command)",
+      "severity": "major",
+      "summary": "`node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql` already fails on the unmodified baseline tree \u2014 the command is broken, not the code",
+      "detail": "Baseline output: ENOENT: no such file or directory, open 'C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-runB\\apps\\api\\prisma\\migrations\\20260911000000_order_idempotency_key_table\\migration.sql'. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+      "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+      "phase": "Baseline",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 39,
+      "severity": "blocker",
+      "summary": "EXPECTED_MODEL_COUNT is still pinned at 125 after the change added a 126th model (OrderIdempotencyKey), so the API Jest lane \u2014 and therefore CI's `npm run verify` \u2014 goes red.",
+      "detail": "Ran `npx jest` in apps/api on this worktree: `Test Suites: 1 failed, 263 passed` / `Tests: 2 failed, 4429 passed`. One of the two failures is `schema folder (wave E / imp-10a, T1) > (d) the folder holds exactly 125 model blocks in total` at schema-folder.spec.ts:104 \u2014 `Expected: 125, Received: 126`. `node apps/api/scripts/split-prisma-schema.mjs --check` confirms the folder now holds `208 blocks \u2014 126 models, 80 enums` (sales went 39 -> 40 models) because WP1 added `model OrderIdempotencyKey` to apps/api/prisma/schema/sales.prisma. The spec's own header comment at lines 34-38 states the contract: \"a real future model/enum addition updates both the schema and this pin in the same PR.\" CI runs `npm run verify` (.github/workflows/ci.yml:283) which runs `turbo run test` -> this Jest lane, so the PR cannot go green as it stands. The plan's per-round/final verify commands only ran `src/orders/` and `src/buyer/buyer.merge-lock`, which is why this was not caught during the build.",
+      "fixHint": "Bump EXPECTED_MODEL_COUNT from 125 to 126 on line 39 (EXPECTED_ENUM_COUNT stays 80 \u2014 no enum was added). Note this is a code-adjacent test pin, not bookkeeping, so it belongs in the code PR, not the Option B follow-up.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 41,
+      "severity": "blocker",
+      "summary": "Case (h)'s block-identical proof against the pre-split ref e39bf9db can no longer pass now that a model has been added, and bumping EXPECTED_BLOCK_COUNT to 208 will not fix it \u2014 the fix needs a decision about retiring or re-anchoring that case.",
+      "detail": "The second failure in the full API Jest run is `(h) [local-only, skipped on shallow clones] --check --from-ref e39bf9db exits 0 and reports block-identical (207 blocks)` at schema-folder.spec.ts:189 \u2014 the assertion `expect(res.stdout).toContain(\"block-identical (207 blocks)\")` gets the structural-only report instead. I ran the underlying command directly: `node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db` now exits 1 and prints `FAIL   block count 208 in the folder vs 207 in git e39bf9db:apps/api/prisma/schema.prisma`. This is the first model added since the split (master's folder was 125 models / 207 blocks, which is why the case passed until now), so the folder will never again be block-identical to the retired single file. Changing the constant to 208 leaves the case failing, because the `--from-ref` mode re-derives identity against the ORIGINAL blob, not against the folder's own count. Blast radius: case (h) guards itself with `it.skip` when `git cat-file -e e39bf9db:apps/api/prisma/schema.prisma` fails, so CI's depth-1 checkout skips it \u2014 but on a full clone (this dev machine, and `.husky/pre-push`'s `npm run verify`) it fails and blocks the push.",
+      "fixHint": "Decide and implement one of: (a) retire case (h) \u2014 CLAUDE.md and the case's own comment already say the standing lossless guard going forward is the drift gate (`schema-drift.mjs` / `npm run local:drift`), not a block diff against a file that no longer exists; or (b) keep it as a historical proof by decoupling it from the live folder \u2014 pin the original's count as its own constant (207) and assert the folder-vs-original delta explicitly, so each future model addition updates one number rather than breaking identity. Either way EXPECTED_BLOCK_COUNT's dual use (live folder count vs original-ref proof) needs splitting. Owner/coordinator call, since it changes what a standing guard asserts.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 39,
+      "severity": "blocker",
+      "summary": "WP1 added a 126th Prisma model without bumping EXPECTED_MODEL_COUNT, so schema-folder.spec.ts case (d) fails and the whole api test suite goes red in CI and in the pre-push gate.",
+      "detail": "`apps/api/src/common/schema-folder.spec.ts:39` pins `EXPECTED_MODEL_COUNT = 125`; the assertion at line 104 counts `model X {` blocks across the seven schema files. Adding `model OrderIdempotencyKey` to `sales.prisma` makes that 126. Verified by running the full suite in the worktree: `cd apps/api && npx jest --reporters=default` \u2192 `Test Suites: 1 failed, 263 passed`, `Tests: 2 failed, 4429 passed`, with `schema-folder.spec.ts:104  Expected: 125  Received: 126`. `node apps/api/scripts/split-prisma-schema.mjs --check` independently prints `counts folder: 208 blocks \u2014 126 models, 80 enums`. This test has no skip guard, so it fails on every runner: CI's `verify` job runs `npm run verify` (ci.yml:283) and `.husky/pre-push` runs the same command, so the branch cannot pass CI or be pushed. The spec's own comment at lines 34-38 states the contract WP1 missed: \"a real future model/enum addition updates both the schema and this pin in the same PR.\" The build plan's WP1 file list (sales.prisma, split-prisma-schema.mjs, migration.sql) never names this file and WP1 reported no deviation, so no work package covers it.",
+      "fixHint": "Bump `EXPECTED_MODEL_COUNT` from 125 to 126 in apps/api/src/common/schema-folder.spec.ts:39 (enum count 80 is unchanged). Re-run `cd apps/api && npx jest src/common/schema-folder.spec.ts --reporters=default`.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 189,
+      "severity": "blocker",
+      "summary": "Case (h)'s block-identity proof against pre-split ref e39bf9db can never pass again once a model is added, and bumping EXPECTED_BLOCK_COUNT to 208 does not fix it.",
+      "detail": "`schema-folder.spec.ts:41` pins `EXPECTED_BLOCK_COUNT = 207` and case (h) (line 189) asserts `--check --from-ref e39bf9db` prints `block-identical (207 blocks)` and exits 0. I ran that command in the worktree: exit 1, stdout `FAIL   block count 208 in the folder vs 207 in git e39bf9db:apps/api/prisma/schema.prisma` plus three spurious `missing/extra in folder: }` lines. The full-suite run reproduced it as the second failure. This is not a stale literal: `--from-ref` re-derives the concatenation and proves the folder block-identical to the ORIGINAL single file at e39bf9db, which does not and cannot contain `OrderIdempotencyKey` \u2014 so no value of EXPECTED_BLOCK_COUNT makes (h) green after this PR. Blast radius: case (h) is `it.skip`ped only when `git cat-file -e e39bf9db:apps/api/prisma/schema.prisma` fails, i.e. on a depth-1 clone; CI's `verify` job uses `actions/checkout@v7` with no `fetch-depth`, so CI skips it, but any full clone (this dev machine) fails it \u2014 which means `.husky/pre-push`'s `npm run verify` is red and the push is blocked. Same-cause doc drift: CLAUDE.md (root and worktree) instructs \"re-derive it any time with node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db\", a command that is now permanently failing.",
+      "fixHint": "Decide and record what replaces the one-time proof rather than renumbering it. Both the spec's own comment (lines 170-176) and CLAUDE.md already name `schema-drift.mjs` / `npm run local:drift` as the standing lossless guard going forward, so the coherent options are to retire case (h) (or convert it to an explicit historical-record assertion that tolerates post-split additions) and update the CLAUDE.md line that tells readers to re-run it. Do not simply change 207 to 208 \u2014 verified not to work.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1674,
+      "severity": "minor",
+      "summary": "The Order-column fallback ignores requestHash and has no negative test, so acceptance criterion 4 (\"same key with a different cart is refused\") holds only on the table path.",
+      "detail": "findOrderIdByIdempotencyKey checks `requestHash` only inside the `if (keyed)` branch (line 1666). The column fallback at 1674-1678 returns `existing.id` with no fingerprint comparison. Scenario: create() stamps key K on an order (or an earlier merge wave stamped it and no table row exists \u2014 e.g. an order keyed before this migration deployed); a staff merge arrives with the SAME key K and a DIFFERENT cart. The table lookup misses, the column matches, and the controller returns that unrelated order via findOne with HTTP 200 \u2014 the operator's edited cart is silently discarded and no 409 is raised. The test set pins only the matching-cart column case (P2 at spec line 402, P3 at 582); no test exercises column-key + mismatched fingerprint, so neither the current behaviour nor a future change to it is guarded.",
+      "fixHint": "Decide whether the column path should also compare the fingerprint (it has no stored hash, so this likely means treating a column-only hit as replay-eligible only when no requestHash is supplied), then pin the chosen behaviour with a test.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 39,
+      "severity": "blocker",
+      "summary": "The new OrderIdempotencyKey model breaks the schema-folder model-count pin, turning the api Jest suite (and therefore `npm run verify` / CI's verify job) red.",
+      "detail": "`EXPECTED_MODEL_COUNT = 125` at line 39 is asserted by case (d) `expect(total).toBe(EXPECTED_MODEL_COUNT)` (line 104). Adding `model OrderIdempotencyKey` to sales.prisma makes the folder hold 126 models, so the test fails with `Expected: 125, Received: 126`. Verified this session: the full api suite is 2 failed / 4429 passed with both failures in this file, and counting `^model ` across `git show HEAD:apps/api/prisma/schema/*.prisma` gives exactly 125 \u2014 so the failure is introduced by this change, not pre-existing. CI's `verify` job runs `npm run verify` (.github/workflows/ci.yml ~line 283), which turbo-runs the apps/api jest project including this spec, so the PR cannot go green. The spec's own comment (lines 32-38) anticipates this: \"a real future model/enum addition updates both the schema and this pin in the same PR.\"",
+      "fixHint": "Bump EXPECTED_MODEL_COUNT to 126 in apps/api/src/common/schema-folder.spec.ts:39 (enum count 80 is unchanged and case (d)'s enum assertion still passes).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 189,
+      "severity": "major",
+      "summary": "Case (h)'s block-identical proof against the retired pre-split schema file can never pass again once a model is added, and bumping EXPECTED_BLOCK_COUNT does not fix it.",
+      "detail": "Case (h) asserts `stdout` contains `block-identical (207 blocks)` and `res.status === 0` for `split-prisma-schema.mjs --check --from-ref e39bf9db`. Run directly this session, that command now prints `FAIL block count 208 in the folder vs 207 in git e39bf9db:apps/api/prisma/schema.prisma` plus three block-diff FAIL lines and exits 1 \u2014 so the assertion cannot be satisfied by raising the constant to 208 either; the proof itself is void the moment the folder gains a model the pre-split file never had. The test skips on shallow clones (`git cat-file -e e39bf9db:...`), and CI uses `actions/checkout@v7` with no fetch-depth (depth 1), so this does not fail GitHub CI \u2014 but it does fail on a full clone, i.e. the `npm run verify` pre-push gate on this dev machine, and it will fail for every future schema addition. CLAUDE.md already states the standing lossless guard going forward is the drift gate, not a block diff against a file that no longer exists, and the spec's own comment above case (h) says the same.",
+      "fixHint": "Decide what (h) should assert now that the folder legitimately diverges from e39bf9db: either retire case (h) (recording that the one-time lossless proof was taken at split time and that the standing guard is schema-drift.mjs / local:drift, per CLAUDE.md), or re-anchor it to a ref/artifact that still represents the folder. Do not simply bump EXPECTED_BLOCK_COUNT to 208 \u2014 the command exits 1 regardless.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1726,
+      "severity": "minor",
+      "summary": "For a tenant-less staff caller the new tenant guard fires only after the whole fold has been computed inside the transaction, and the replay lookup that runs before it queries the new key table on the UNSCOPED client.",
+      "detail": "`recordMergeIdempotencyKey` throws `ForbiddenException(\"Idempotency-Key requires a tenant-scoped session\")` (line 1726) as the last statement of updateOrderItems' fold transaction. That condition is reachable: `RolesGuard`'s hierarchy lets TENANT_ADMIN satisfy `@Roles(OPERATOR)` on `POST /orders`, and `isStaff` in orders.controller.ts:106 is true for TENANT_ADMIN \u2014 while apps/api/prisma/deferred-rls/README.md records that production holds 3 TENANT_ADMIN users with a NULL tenantId (called out there as a data defect). For such a caller sending an Idempotency-Key (the mobile client always does), the merge branch now: (1) runs `findOrderIdByIdempotencyKey`, whose `this.prisma.forTenant()` returns the UNSCOPED client when getTenantId() is null (prisma.service.ts:298-299), so the new `orderIdempotencyKey.findFirst({ where: { key, order: { customerId } } })` searches every tenant's key rows and a hit is replayed through `findOne` \u2014 the same unscoped shape the pre-existing Order-column lookup had, now extended to the new table; and (2) computes the entire fold (stock settle, credit guard, line writes, order.update) before the guard rolls it all back as a 403. `create()` guards the identical condition BEFORE any work (orders.service.ts:1760, with a comment stating exactly this unscoped-lookup reason), so the merge path is inconsistent with it: a keyed merge that previously committed now 403s after doing all the work, and the unscoped read happens ahead of the guard rather than behind it.",
+      "fixHint": "Hoist the tenant check to the front of the merge path \u2014 refuse `idempotencyKey && !getTenantId()` in OrdersController.create's merge branch (or at the top of the branch's lock callback, before findOrderIdByIdempotencyKey), mirroring orders.service.ts:1760 \u2014 and keep the in-tx guard as the fail-closed backstop. That both avoids the wasted/rolled-back fold and stops the unscoped key-table read from running at all.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql",
+      "line": 26,
+      "severity": "minor",
+      "summary": "The new tenant-scoped OrderIdempotencyKey table is absent from both hardcoded table arrays in the parked RLS arming migration, and nothing in the repo will flag the omission.",
+      "detail": "The parked arming migration enumerates every tenant-scoped table twice as literal arrays \u2014 the ALTER/CREATE POLICY loop (line 26) and the verification block that RAISEs unless all three properties landed (line 114). `OrderIdempotencyKey` appears in neither, while its sibling `Order`/`OrderItem` do. Because the verification block re-checks only its own hardcoded list, the day the owner arms RLS this table silently ends up with `relrowsecurity = false` and no policy while every other tenant-scoped table is covered, and the migration still exits 0 \u2014 the gap is invisible rather than loud. Note this is a plan-sanctioned exclusion, not an oversight by the implementer: build-plan.md's scope fence lists \"appending the table to the parked RLS list (apps/api/prisma/deferred-rls/)\" as out of scope, so whether to close it here is the owner's call. Flagging it because the omission is durable and nothing else records it. App-level tenant scoping is in place today (`forTenant()` injects tenantId on findFirst, the tx proxy on create/updateMany), so there is no exploitable gap now \u2014 RLS is unarmed in production.",
+      "fixHint": "Either append 'OrderIdempotencyKey' to both arrays (lines ~26 and ~114) of the parked migration \u2014 it arms nothing, the file lives outside prisma/migrations/ \u2014 or record the omission where the arming checklist lives so the pre-flight catches it. Do not arm anything: owner rule D3 gates that.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 39,
+      "severity": "blocker",
+      "summary": "The new OrderIdempotencyKey model takes the schema folder from 125 to 126 models, but the EXPECTED_MODEL_COUNT literal in schema-folder.spec.ts was not bumped, so apps/api's Jest suite (and therefore CI's Verify step) is red.",
+      "detail": "Verified by running `npx jest src/common/schema-folder.spec.ts` in the worktree: case (d) fails with `Expected: 125 / Received: 126` at schema-folder.spec.ts:104. I counted model blocks at HEAD (git show HEAD:apps/api/prisma/schema/*.prisma) and got exactly 125, so the failure is introduced by this change, not pre-existing. The spec's own comment at line 36-38 states the rule: \"a real future model/enum addition updates both the schema and this pin in the same PR\". CI's `Verify (lockfile, bug-signature scan, types, lint, tests)` step (.github/workflows/ci.yml:282) runs `npm run verify` -> `turbo run check-types lint test ...`, which runs apps/api Jest, so the push lands red. The build plan's final verification commands only run `src/orders/` and `src/buyer/buyer.merge-lock`, so this failure is invisible to the run's own gate (and the plan never mentions the pin).",
+      "fixHint": "Change EXPECTED_MODEL_COUNT from 125 to 126 in apps/api/src/common/schema-folder.spec.ts (line 39).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 189,
+      "severity": "major",
+      "summary": "Adding a model permanently breaks case (h)'s block-identical proof against the pre-split original, so the documented pre-push gate `npm run verify` is red on any full clone and no count bump can fix it.",
+      "detail": "Same jest run: case (h) fails with `Expected substring: \"block-identical (207 blocks)\"` / received `counts folder: 208 blocks - 126 models, 80 enums, 2 datasource/generator`. Running the script directly, `node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db`, prints `FAIL block count 208 in the folder vs 207 in git e39bf9db:apps/api/prisma/schema.prisma` and `split-prisma-schema --check FAILED`. Bumping EXPECTED_BLOCK_COUNT to 208 cannot fix it: the comparison is folder-vs-original and the original blob has 207 blocks, so once a 208th block exists the folder can never be block-identical to it again. The case `it.skip`s on CI's shallow checkout (it probes `git cat-file -e e39bf9db:...`), so CI stays green here, but on this dev machine's full clone `npm run verify` \u2014 the documented pre-push gate in CLAUDE.md \u2014 goes red and stays red for every future model. The spec's own header for (h) already says the standing guard going forward is db-migrations.yml's schema-drift.mjs, \"that is what must stay green, not this case\", so the decision the change owes is whether to retire/rework (h), not to re-pin a number. Note `--check` with no original (case (g)) passed, so MODEL_DOMAIN registration is correct.",
+      "fixHint": "Decide with the owner whether to retire case (h) (its successor guard is already named in the spec header) or rework it to assert the original's 207 blocks are all still present rather than exact block identity; a pure EXPECTED_BLOCK_COUNT bump will not make it pass.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1734,
+      "severity": "minor",
+      "summary": "Both new 409 guard paths throw with no log line and no Sentry event, so the fold-aborting failure they introduce leaves nothing in the logs to diagnose at 2am.",
+      "detail": "recordMergeIdempotencyKey's P2002 branch (orders.service.ts:1734) throws `ConflictException(\"Idempotency-Key already used for a different order\")` from inside the fold transaction, and findOrderIdByIdempotencyKey's hash-mismatch branch (orders.service.ts:1667) throws `ConflictException(\"Idempotency-Key reused with a different cart ...\")`. Neither logs. I read apps/api/src/common/sentry-exception.filter.ts:14: `if (status >= 500)` \u2014 a 409 is never captured, and Nest's default filter does not log HttpExceptions, so there is no tenant/customer/order/key trace for either event. The comment this change rewrote (orders.controller.ts, the kept recordIdempotencyKey try/catch) still logs its far less consequential failure with full context (`idempotency record failed after merge commit tenant=... customer=... order=... key=...`). The build plan's Observability section asserts \"A 409 'Idempotency-Key reused with a different cart' or 'already used for a different order' on POST /orders means the new guard fired\" \u2014 true of the HTTP status only; nothing server-side records which tenant, customer, order or key, and the P2002 case also silently rolled a fold back.",
+      "fixHint": "Log a warn (tenant/customer/order/key, and which of the two guards fired) at the throw sites, mirroring the existing logger.error line on the column-stamp path, so the 409 is greppable.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 4352,
+      "severity": "minor",
+      "summary": "The new in-transaction key insert can abort the fold after revertLinkedInvoicesForOrderEdit has already committed outside it, leaving a linked invoice flipped SENT->DRAFT for an order edit that never landed.",
+      "detail": "orders.service.ts:3232 calls `await this.invoicesService.revertLinkedInvoicesForOrderEdit(orderId)` with no tx argument, so it runs on this.prisma.forTenant() and commits on its own connection, 62 lines before the fold transaction opens at 3294. invoices.service.ts:4338 shows what it writes: each linked SENT/VIEWED/OVERDUE non-delivery-batch invoice is updated to `status: DRAFT, sentAt: null, pdfUrl: null` plus a '[... reverted to Draft: source order edited]' note. The new key insert at orders.service.ts:4352 is the last statement of the fold transaction, so a P2002 (a key already held by another customer's order in the same tenant, the case D3 proves) throws, the fold rolls back, and the post-transaction reconcile/resync never runs \u2014 the order is byte-identical but its invoice is left reverted to DRAFT with sentAt/pdfUrl cleared, and the operator gets a 409. The build plan's window table presents this abort as clean ('the fold never lands'), which is true of the fold and not of the pre-transaction invoice revert. Reachability is narrow (needs a cross-customer key collision AND a SENT pending-mirror on the merge target), and the same partial-failure shape already exists for other in-transaction throws (credit/stock guards) \u2014 this change adds a new trigger for it rather than creating it.",
+      "fixHint": "Decide whether to move the cross-customer key check ahead of the fold (an unscoped-by-customer (tenantId,key) lookup inside the lock, 409 before any write) so the only in-transaction insert left is the one that cannot collide, or to accept and document that a 409'd merge can leave a reverted invoice.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 39,
+      "severity": "blocker",
+      "summary": "The new `OrderIdempotencyKey` model takes the schema folder from 125 to 126 models, but no work package updates the pinned `EXPECTED_MODEL_COUNT`, so `apps/api/src/common/schema-folder.spec.ts` case (d) is red in CI and in `npm run verify`.",
+      "detail": "Verified in this session. `grep -h \"^model \" apps/api/prisma/schema/*.prisma | wc -l` returns 126 (sales.prisma went 39 -> 40). `cd apps/api && npx jest src/common/schema-folder.spec.ts --reporters=default` fails: \"schema folder (wave E / imp-10a, T1) > (d) the folder holds exactly 125 model blocks in total \u2014 Expected: 125, Received: 126\" (2 failed, 15 passed). The spec's own comment says \"a real future model/enum addition updates both the schema and this pin in the same PR\", so this pin is the intended co-change for WP1 \u2014 but WP1's file list is only sales.prisma / split-prisma-schema.mjs / migration.sql, this spec is not in `radiusFiles`, and the plan's final verify runs only `npx jest src/orders/ src/buyer/buyer.merge-lock`, so the run's own gates cannot see it. The repo-wide `npm run verify` (turbo -> jest in apps/api, and this file is not in `testPathIgnorePatterns`) and CI therefore go red on push. Everything the plan did gate is green: `npx tsc -p apps/api/tsconfig.json --noEmit` clean, and `npx jest src/orders/ src/buyer/buyer.merge-lock` = 16 suites / 445 tests all passing.",
+      "fixHint": "Bump `EXPECTED_MODEL_COUNT` from 125 to 126 in apps/api/src/common/schema-folder.spec.ts (the enum pin at 80 is still correct \u2014 no enum was added).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/schema-folder.spec.ts",
+      "line": 41,
+      "severity": "major",
+      "summary": "Case (h)'s `--check --from-ref e39bf9db` block-identical proof can never pass again once a 126th model exists, so that assertion is permanently red on any full clone \u2014 no package addresses it and no number bump can.",
+      "detail": "Verified in this session. The same Jest run fails a second test: \"(h) ... `--check --from-ref e39bf9db` exits 0 and reports block-identical (207 blocks) \u2014 Expected substring: \\\"block-identical (207 blocks)\\\", Received: \\\"counts folder: 208 blocks \u2014 126 models, 80 enums, 2 datasource/generator\\\"\". Running the script directly (`node apps/api/scripts/split-prisma-schema.mjs --check --from-ref e39bf9db`) prints `FAIL block count 208 in the folder vs 207 in git e39bf9db:apps/api/prisma/schema.prisma` and `split-prisma-schema --check FAILED`. Bumping EXPECTED_BLOCK_COUNT to 208 does NOT fix it: the assertion demands the folder be block-IDENTICAL to the retired single file, which a newly added model makes false by construction. The spec self-skips on a depth-1 CI clone (it probes `git cat-file -e e39bf9db:...`), so CI stays green, but on this dev machine's full clone `npm run verify` \u2014 the house pre-push gate \u2014 is red, and it is red for every future model addition, not just this one. The spec's own comment already states the standing CI guard is `schema-drift.mjs`, not this case, and CLAUDE.md says the same, so a decision is needed rather than a number edit.",
+      "fixHint": "Decide with the owner: retire case (h) (its comment and CLAUDE.md both already say the drift gate is the standing lossless guard), or re-baseline it to compare only the blocks present at ORIGINAL_REF plus an explicit allow-list of models added since. Do not simply bump EXPECTED_BLOCK_COUNT to 208 \u2014 the script's failure is the block-set diff, not the count.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+      "line": 460,
+      "severity": "major",
+      "summary": "T5's oracle cannot distinguish the fold transaction's client from the root Prisma client, so acceptance criterion 3 (the key row is written THROUGH the fold tx) is asserted by no test.",
+      "detail": "In apps/api/src/testing/prisma-mock.ts, `forTenant: jest.fn().mockReturnValue(models)` and `tenantTransaction: jest.fn((fn) => fn({ ...models, $executeRaw, $queryRaw }))` \u2014 the spread copies property references, so `tx.orderIdempotencyKey.create`, `prisma.forTenant().orderIdempotencyKey.create` and `prisma.orderIdempotencyKey.create` are the SAME jest.fn. T5 only records `openTx` at call time, and T4 only inspects `prisma.orderIdempotencyKey.create.mock.calls`. Concrete surviving mutation: change orders.service.ts:4352 from `this.recordMergeIdempotencyKey(tx, ...)` to `this.recordMergeIdempotencyKey(this.prisma.forTenant(), ...)`. That is exactly the defect the plan's Risk table calls out (\"Edit 4 lands outside the fold tx\") \u2014 in production it writes on a different connection, so the key commits independently of the fold and the double-fold window returns \u2014 yet T4, T5 and T10 all stay green, and the whole unit lane stays green. D3 does not close it either: order-idempotency-key.db.spec.ts:115 passes a `tx` the TEST opened, so it proves only that recordMergeIdempotencyKey honours whatever client it is handed, never that updateOrderItems hands it its own. No test in the suite fails if the fold and the key stop being atomic.",
+      "fixHint": "Make the tx client distinguishable in T5: have the tenantTransaction override hand the callback a tx whose `orderIdempotencyKey.create` is a DISTINCT jest.fn from `prisma.orderIdempotencyKey.create` (e.g. `{ ...prisma, orderIdempotencyKey: { ...prisma.orderIdempotencyKey, create: txCreate } }`), then assert `txCreate` was called and the root `prisma.orderIdempotencyKey.create` was not. Alternatively add a DB-lane test that drives the real `updateOrderItems` and proves rollback of fold+key together.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review",
+      "verifyDeferred": true
+    },
+    {
+      "file": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+      "line": 152,
+      "severity": "minor",
+      "summary": "D1's and PD1's oracle calls run outside tenantCtx.run, so the replay lookup they assert on executes through the UNSCOPED Prisma client, not the tenant-scoped path production uses.",
+      "detail": "`mergeOnce` correctly wraps its work in `tenantCtx.run(f.tenantId, \u2026)` (line 110), but the assertions at line 152 (D1) and line 177 (PD1) call `svc.findOrderIdByIdempotencyKey(...)` directly, outside any `tenantCtx.run`. `PrismaService.forTenant()` (prisma.service.ts:296-299) returns the UNSCOPED `this` when `tenantCtx.getOrNull()` is null, so the new `orderIdempotencyKey.findFirst` in the code under test runs with `where: { key, order: { customerId } }` and no `tenantId` predicate. Both tests still pass for the right reason (D1's row exists; PD1's row belongs to another customer, and the `order: { customerId }` relation filter is what excludes it), so no assertion is wrong \u2014 but the test plan lists PD1 as the proof for acceptance criterion 5 and D1 as the proof that the table-first replay works, and neither exercises the tenant-scoped read that production takes. If the `forTenant()` scoping of the new delegate were broken, D1 and PD1 would both still be green. D2's second `mergeOnce` and PD2 do cover the scoped read, so the criterion is not wholly untested \u2014 the two named tests are just weaker evidence than the matrix implies.",
+      "fixHint": "Wrap the two oracle calls in `tenantCtx.run(a.tenantId, () => svc.findOrderIdByIdempotencyKey(...))` so they run the same scoped path as mergeOnce; while there, consider making PD1 (or a sibling pin) assert cross-TENANT isolation of the key table explicitly, since nothing currently does.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+      "line": 382,
+      "severity": "minor",
+      "summary": "Nothing covers mergeRequestHash's documented order-insensitivity, so dropping the `.sort()` in merge-idempotency.ts leaves every test green.",
+      "detail": "merge-idempotency.ts:28 (`(input.items ?? []).map(stable).sort()`) and its JSDoc claim \"Item order does not matter\". No test calls mergeRequestHash directly, and the only test that exercises differing carts is T3, which changes the QUANTITY (mergeDto(5) vs mergeDto(7)) \u2014 those hash differently with or without the sort. Concrete surviving mutation: delete `.sort()`. All 14 tests stay green (verified by inspection: T1/T2/P1/P2 send byte-identical dtos, T3 sends different quantities), but in production a legitimate retry whose queued payload re-serialises the same cart in a different item order now fingerprints differently and is answered with 409 \"Idempotency-Key reused with a different cart\" instead of being replayed.",
+      "fixHint": "Add a direct unit test on mergeRequestHash: two inputs with the same items in reversed order must hash equal, and a changed qty must hash differently.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+      "line": 463,
+      "severity": "minor",
+      "summary": "recordMergeIdempotencyKey's tenant guard and its non-P2002 rethrow are both untested \u2014 only the P2002 branch has a case (T10).",
+      "detail": "orders.service.ts:1724-1726 throws ForbiddenException when `this.prisma.getTenantId()` is falsy (the guard that stops an untenanted SUPER_ADMIN merge from writing a key row with no tenant scope), and orders.service.ts:1738 rethrows any non-P2002 error so the fold aborts rather than silently continuing. createMockPrisma's `getTenantId` always returns \"test-tenant\", so the guard branch is unreachable in the current harness and no test drives a non-P2002 rejection. Concrete surviving mutations: delete the `if (!tenantId) throw ...` block, or replace the final `throw e` with `return` \u2014 all 14 tests stay green, while in production the first case writes a cross-tenant-visible row under an unscoped session and the second swallows a Postgres error inside an open transaction (Landmine 1 of the plan: every subsequent statement then fails with \"current transaction is aborted\").",
+      "fixHint": "Add two cases to the T4 harness: `(prisma as any).getTenantId.mockReturnValue(null)` expecting ForbiddenException, and an `orderIdempotencyKey.create` rejection with no `code` expecting that same error to propagate (not a ConflictException).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+      "line": 114,
+      "severity": "minor",
+      "summary": "mergeOnce still guards the key write behind `typeof svc.recordMergeIdempotencyKey === \"function\"`, a branch whose false side nothing can execute now that the method exists.",
+      "detail": "The guard existed so the spec could run red against the pre-fix tree. Post-fix the false branch is dead, and it makes the DB lane fail soft rather than fast: if recordMergeIdempotencyKey is ever renamed or removed, mergeOnce silently stops writing key rows, so pins PD1 and PD2 (which only need \"folded once each\") stay GREEN and report the lane healthy while the feature under test is gone \u2014 only D1-D3 go red. A pin that can pass through a dead branch is not pinning what its title claims.",
+      "fixHint": "Drop the `typeof` guard and call `svc.recordMergeIdempotencyKey(tx, ...)` unconditionally, so a missing method fails every test in the lane immediately.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(mutation)",
+      "severity": "blocker",
+      "phase": "Mutation probe",
+      "target": "apps/api/src/orders/merge-idempotency.ts",
+      "summary": "Test \"REG-B215 T3\" did not fail when apps/api/src/orders/merge-idempotency.ts was deliberately broken \u2014 it does not actually cover this behavior",
+      "detail": "Protected behavior: identical carts hash equal. Injected defect: Dropped the `.sort()` in mergeRequestHash's item normalization (`(input.items ?? []).map(stable).sort()` -> `.map(stable)`), so two identical carts whose items arrive in a different order no longer hash equal.. Result: REG-B215 T3 PASSED with the defect in place: `npx jest src/orders/orders.merge-idempotency.spec.ts -t \"REG-B215 T3\"` -> \"PASS src/orders/orders.merge-idempotency.spec.ts / \u221a REG-B215 T3: the same key with a different cart is refused, never folded (8 ms) ... Tests: 13 skipped, 1 passed, 14 total\". T3 is structurally blind to \"identical carts hash equal\": it sends two DIFFERENT carts (qty 5 then qty 7) under one key and asserts only that the second rejects with ConflictException. Any mutation that makes equal carts hash UNequal still leaves unequal carts hashing unequal, so the conflict still fires and T3 stays green. The named behavior is pinned by T1/T2 (same-key retry with an identical cart must fold once, i.e. must be replayed), not by T3. Restore verified: post-restore sha256 equals preHash and `cmp -s` against the temp backup reported IDENTICAL before the backup was deleted.. The test is passing for a reason other than the behavior it claims to prove.",
+      "fixHint": "Strengthen or add the test so this exact defect turns it red; do not weaken the implementation to match a weak test.",
+      "fixComplexity": "judgment"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 0,
+    "Implement": 0,
+    "Gate & Review": 20,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 1,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 1,
+      "tokens": 32340,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest) + claude-sonnet-5 (harness check)",
+      "effort": "low / low harness check",
+      "estUsd": 0.16,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 42759,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.43,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 18760,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 0.47,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 0,
+      "tokens": 28157,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.28,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 8,
+      "rawFindings": 20,
+      "tokens": 231363,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses) + claude-sonnet-5 (radius pack)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium / low radius pack",
+      "estUsd": 5.78,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 0,
+      "tokens": 29948,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 0.75,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 11813,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0.3,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 17,
+      "rawFindings": 0,
+      "tokens": 198842,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 4.97,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 9,
+      "tokens": 143451,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read \u2192 candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 7.17,
+      "overlappedWith": null,
+      "note": "includes the final full gate (Haiku), which ran beside the final pass"
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 22,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 11,
+          "sonnet": 7,
+          "opus": 4
+        },
+        "waves": [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]],
+        "note": "Round 1 fixes everything but #0, in one wave (the service, its unit spec and the DB spec are all cross-dependent so they must co-land). Two blocker families in schema-folder.spec.ts: bump EXPECTED_MODEL_COUNT to 126 (#1, dups #3/#6/#10/#14) and retire case (h) \u2014 CLAUDE.md already rules the drift gate is the standing lossless guard, so the e39bf9db block-identity proof is deleted rather than re-pinned (#2, dups #4/#7/#11/#15); CLAUDE.md's stale \"re-derive it any time with --from-ref e39bf9db\" sentence is a close-out-commit edit, not a mid-session one. orders.service.ts (opus): hoist the tenant guard to the top of findOrderIdByIdempotencyKey mirroring create() (#8), add a tenant-scoped cross-customer key pre-check that 409s before revertLinkedInvoicesForOrderEdit and the fold, P2002 kept as the race backstop (#13, with PD1 flipped to expect the 409), warn logs at every guard throw (#12), and the column-only replay pinned as intentional with a comment + P5 (#5). Test hardening: T5 gets a distinct tx create fn (#16), T11 pins mergeRequestHash order-insensitivity (#18/#21 \u2014 the surviving mutation), T12-T15 pin the tenant guard and non-P2002 rethrow, DB-lane oracles run under tenantCtx.run plus a cross-tenant PD3 (#17), the dead typeof guard goes (#20), and 'OrderIdempotencyKey' is appended to both parked RLS arrays (#9, arms nothing). #0 is disputed: the \"broken\" gate command targets the migration this change creates, so baseline ENOENT is by construction. Lesson candidates for close-out: a new Prisma model must bump schema-folder.spec.ts pins (add the spec to WP radius for any schema change), and plan verify commands must include the full api Jest lane, not just the touched directories."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/common/schema-folder.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] EXPECTED_MODEL_COUNT is still pinned at 125 after the change added a 126th model (OrderIdempotencyKey), so the API Jest lane \u2014 and therefore CI's `npm run verify` \u2014 goes red.",
+            "[#2] WP1 added a 126th Prisma model without bumping EXPECTED_MODEL_COUNT, so schema-folder.spec.ts case (d) fails and the whole api test suite goes red in CI and in the pre-push gate. (duplicate of #0 \u2014 same edit)",
+            "[#4] The new OrderIdempotencyKey model breaks the schema-folder model-count pin, turning the api Jest suite (and therefore `npm run verify` / CI's verify job) red. (duplicate of #0 \u2014 same edit)",
+            "[#6] The new OrderIdempotencyKey model takes the schema folder from 125 to 126 models, but the EXPECTED_MODEL_COUNT literal in schema-folder.spec.ts was not bumped, so apps/api's Jest suite (and therefore CI's Verify step) is red. (duplicate of #0 \u2014 same edit)",
+            "[#8] The new `OrderIdempotencyKey` model takes the schema folder from 125 to 126 models, but no work package updates the pinned `EXPECTED_MODEL_COUNT`, so case (d) is red in CI and in `npm run verify`. (duplicate of #0 \u2014 same edit)",
+            "[#1] Case (h)'s block-identical proof against the pre-split ref e39bf9db can no longer pass now that a model has been added, and bumping EXPECTED_BLOCK_COUNT to 208 will not fix it \u2014 retired case (h) per Fable's design.",
+            "[#3] Case (h)'s block-identity proof against pre-split ref e39bf9db can never pass again once a model is added, and bumping EXPECTED_BLOCK_COUNT to 208 does not fix it. (duplicate of #1 \u2014 same edit)",
+            "[#5] Case (h)'s block-identical proof against the retired pre-split schema file can never pass again once a model is added, and bumping EXPECTED_BLOCK_COUNT does not fix it. (duplicate of #1 \u2014 same edit)",
+            "[#7] Adding a model permanently breaks case (h)'s block-identical proof against the pre-split original, so the documented pre-push gate `npm run verify` is red on any full clone and no count bump can fix it. (duplicate of #1 \u2014 same edit)",
+            "[#9] Case (h)'s `--check --from-ref e39bf9db` block-identical proof can never pass again once a 126th model exists, so that assertion is permanently red on any full clone. (duplicate of #1 \u2014 same edit)"
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/common/schema-folder.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/orders/orders.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] The Order-column fallback ignores requestHash and has no negative test \u2014 kept the behaviour (a column-only hit replays regardless of requestHash) per Fable's design and pinned it: added the rationale comment above the fallback in findOrderIdByIdempotencyKey (the column stores no fingerprint; its main producer is the create->retry path, so refusing that replay would re-open the double-write the fix exists to close) and added `B215 pin P5: a column-only key hit replays even when the request hash differs` to orders.merge-idempotency.spec.ts (orderIdempotencyKey.findFirst -> null, order.findFirst -> { id: 'ord-col' }, call with hash 'h-other', expect 'ord-col'). No production behaviour change. Existing P2 and P3 still pass.",
+            "[#1] Tenant guard fired only after the whole fold, and the replay lookup read the new key table on the UNSCOPED client \u2014 hoisted the guard to be the FIRST statement of findOrderIdByIdempotencyKey: `if (!this.prisma.getTenantId()) throw new ForbiddenException(\"Idempotency-Key requires a tenant-scoped session\")`, same message as create(). No key-table or Order-column read now runs on the unscoped client, and no fold work is done for a keyed tenant-less request (the controller calls this lookup first, inside the customer lock). The in-tx guard in recordMergeIdempotencyKey is untouched as the fail-closed backstop; the controller was not touched. Added `REG-B215 T12: a tenant-less session is refused before any replay lookup` asserting ForbiddenException and that neither orderIdempotencyKey.findFirst nor order.findFirst was called. Note: D1/PD1 in the DB lane had already been wrapped in tenantCtx.run by the concurrent #17 edit when I got there, so I did not edit them for this finding.",
+            "[#2] Both new 409 guard paths threw with no log line \u2014 added warn lines immediately before each guard throw in orders.service.ts, exception classes and messages unchanged, no Sentry call: (a) hash mismatch in findOrderIdByIdempotencyKey ('idempotency replay refused: cart mismatch tenant/customer/order/key'); (b) the P2002 branch of recordMergeIdempotencyKey ('idempotency key already held by another order: fold rolled back tenant/order/key'); (c) both tenant guards (the hoisted one and the in-tx backstop: 'idempotency key refused: no tenant scope key='). Used the service's existing `this.logger` (orders.service.ts:96). TWO DEVIATIONS, both deliberate: (1) the design said to spy Logger.prototype.warn in T3 and T10; T3 drives the controller against the `statefulOrdersService` FAKE, which throws ConflictException itself without logging and uses key 'idem-K3', so a spy there could never pass \u2014 I put the assertion in T9 instead, which is the real-service hash-mismatch test with key 'K1' (T10 got it as specified). (2) I also added one warn line at the NEW pre-fold cross-customer 409 site introduced by fix #3, which design #2 could not have listed; without it the most common case of that 409 would have had no log, defeating the point of this finding.",
+            "[#3] The in-transaction key insert could abort the fold after revertLinkedInvoicesForOrderEdit had already committed outside it \u2014 added a tenant-scoped, customer-unscoped `orderIdempotencyKey.findFirst({ where: { key }, select: { orderId: true } })` in findOrderIdByIdempotencyKey, after the customer-scoped lookup misses and BEFORE the Order-column fallback; a hit throws ConflictException(\"Idempotency-Key already used for a different order\") \u2014 the exact message the P2002 branch uses. Because the controller calls this lookup first inside the customer lock, the 409 now fires before revertLinkedInvoicesForOrderEdit (orders.service.ts:3232, outside the fold tx) and before the fold. The P2002 branch in recordMergeIdempotencyKey is unchanged as the race backstop. Added `REG-B215 T13: a key held by another customer is refused before any invoice revert or fold` (findFirst returns null when where.order is present, { orderId: 'ord-other' } otherwise; expects ConflictException and that order.findFirst was never reached). Updated PD1 in order-idempotency-key.db.spec.ts to `await expect(tenantCtx.run(a.tenantId, () => svc.findOrderIdByIdempotencyKey(...))).rejects.toBeInstanceOf(ConflictException)` (its intent \u2014 never replayed for another customer \u2014 still holds) and imported ConflictException there. I scanned orders.merge-idempotency.spec.ts for any pin asserting null on a same-tenant other-customer key hit: there is none. D3 still asserts total 100 (it now aborts at the pre-fold lookup rather than at P2002, so its `.catch(() => undefined)` and oracle are unaffected). Checked PD2/PD3 by hand: both stay green because the bare-key lookup rides forTenant() and so never sees another tenant's row."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/orders/orders.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/orders/orders.merge-idempotency.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/orders/order-idempotency-key.db.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql",
+          "route": "opus",
+          "fixed": [
+            "The new tenant-scoped OrderIdempotencyKey table is absent from both hardcoded table arrays in the parked RLS arming migration, and nothing in the repo will flag the omission."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql"
+          ]
+        },
+        {
+          "target": "apps/api/src/orders/orders.merge-idempotency.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "T5's oracle cannot distinguish the fold transaction's client from the root Prisma client, so acceptance criterion 3 (the key row is written THROUGH the fold tx) is asserted by no test.",
+            "Nothing covers mergeRequestHash's documented order-insensitivity, so dropping the `.sort()` in merge-idempotency.ts leaves every test green.",
+            "recordMergeIdempotencyKey's tenant guard and its non-P2002 rethrow are both untested \u2014 only the P2002 branch has a case (T10)."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": ["apps/api/src/orders/orders.merge-idempotency.spec.ts"]
+        },
+        {
+          "target": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "D1's and PD1's oracle calls run outside tenantCtx.run, so the replay lookup they assert on executes through the UNSCOPED Prisma client, not the tenant-scoped path production uses.",
+            "mergeOnce still guards the key write behind `typeof svc.recordMergeIdempotencyKey === \"function\"`, a branch whose false side nothing can execute now that the method exists."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": ["apps/api/src/orders/order-idempotency-key.db.spec.ts"]
+        },
+        {
+          "target": "(gate-command)",
+          "route": "mechanical",
+          "fixed": [],
+          "skipped": [
+            {
+              "summary": "`node scripts/lint-migrations.mjs --files apps/api/prisma/migrations/20260911000000_order_idempotency_key_table/migration.sql` already fails on the unmodified baseline tree \u2014 the command is broken, not the code",
+              "reason": "broken verification command \u2014 must be corrected in the build plan",
+              "index": 0
+            }
+          ],
+          "filesChanged": []
+        },
+        {
+          "target": "(mutation)",
+          "route": "opus",
+          "fixed": [
+            "Test \"REG-B215 T3\" did not fail when apps/api/src/orders/merge-idempotency.ts was deliberately broken \u2014 it does not actually cover this behavior: addressed by oracle T11 (\"REG-B215 T11: mergeRequestHash is item-order-insensitive and cart-sensitive\", apps/api/src/orders/orders.merge-idempotency.spec.ts lines 393-434), which was already on disk from the companion fix for finding #18. No NEW edit was required for this index, exactly as Fable's design said (\"No second edit for this index beyond #18's\"), and I verified rather than assumed: re-injecting the exact defect (dropping .sort() from mergeRequestHash's item normalization) turns T11 RED (Expected \"ede2c00d\u2026\" / Received \"5d8aeef5\u2026\"; Tests: 1 failed, 19 skipped), and the restored file leaves T11 and the whole suite green (20 passed, 20 total). T3 was NOT weakened and merge-idempotency.ts was NOT changed. Restoration: the file was already intact when I opened it (.sort() present); my own probe backup was copied back, cmp -s reported IDENTICAL, sha256 eefc8e1ecdc2135609a0fd7b6d15c32b103deb13c6994379362cb39f3de72063 matches pre-probe, and the backup was deleted. No git checkout/restore/stash/reset was used at any point."
+          ],
+          "skipped": [],
+          "filesChanged": []
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 4,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 2,
+          "sonnet": 1,
+          "opus": 1
+        },
+        "waves": [[0, 1, 2, 3]],
+        "note": "Round 2 closes the four residuals from round 1's fixes: the blocker (#0) is a one-line test-harness gap \u2014 the prototype-built OrdersService has no `logger`, so the round-1 `logger.warn` on the refusal paths turns PD1's expected ConflictException into a TypeError \u2014 fixed by giving the spec's svc a real Logger, with the DB lane run only if the shared compose DB already carries the OrderIdempotencyKey table (never migrating it from this run). #1 restores the real-Postgres rollback proof that round 1's pre-fold 409 short-circuited: D3 is retitled and now asserts the pre-fold ConflictException explicitly, and a new D4 skips the replay lookup to drive the in-tx P2002 branch against the real unique constraint, asserting the total and key row both rolled back (Opus, since it must read the branch's error class). #2 and #3 are text corrections \u2014 every place that still tells a reader to re-derive the retired schema-split proof with `--check --from-ref e39bf9db`, and the DB spec's header that still describes the deleted typeof guard. All four run in one wave; the three spec-file findings share the file and are serialized by the engine, with #1 told to add #0's logger itself if it lands first."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "The fix round added `this.logger.warn(...)` to the new refusal paths in findOrderIdByIdempotencyKey, but the DB lane builds OrdersService with `Object.create(prototype)` and never sets `logger`, so pin PD1 now rejects with a TypeError instead of ConflictException.",
+            "The new pre-fold bare-key 409 means D3 no longer reaches the in-transaction P2002 insert, so acceptance criteria 3 and 5 lose their real-Postgres rollback proof and D3's title now describes something it does not exercise.",
+            "The DB spec's header still documents the `typeof` guard that the fix round deleted, so the file describes a mechanism it no longer has."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/orders/order-idempotency-key.db.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/.claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/.claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md"
+          ]
+        },
+        {
+          "target": "CLAUDE.md",
+          "route": "opus",
+          "fixed": [
+            "Retiring schema-folder case (h) left the standing instruction to \"re-derive it any time with `--check --from-ref e39bf9db`\" in place across CLAUDE.md, the split script's own header, and a sibling spec's comment \u2014 a command this change makes permanently fail."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/CLAUDE.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/scripts/split-prisma-schema.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/apps/api/src/common/no-single-schema-path.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/docs/IMPROVEMENTS.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-runB/.claude/code-map/api.md"
+          ]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [
+    {
+      "file": "apps/api/src/orders/order-idempotency-key.db.spec.ts",
+      "line": 220,
+      "severity": "minor",
+      "summary": "PD1's explanatory comment still credits D3 with proving the in-tx P2002 backstop, but this fix round moved that proof to the new D4 and made D3 the pre-fold-refusal test.",
+      "detail": "Verified in the file this session: line 220 reads `// in-tx P2002 remains the backstop for a true race (proved by D3).` D3's own body (line 184-186) now says the opposite \u2014 `The replay lookup's heldByAnotherOrder branch refuses the key outright, so the fold transaction is never opened \u2026 D4 covers the true race the in-tx P2002 backstop exists for` \u2014 and D4 (line 191-210) is the test that actually reaches `recordMergeIdempotencyKey`'s P2002 branch (confirmed by execution: D4 passed and emitted the `fold rolled back` warn). A reader following PD1's comment to D3 finds a test that never opens a transaction, i.e. the same stale-cross-reference class the fix round was asked to clear from the header. No test asserts on this comment, so nothing goes red.",
+      "fixHint": "Change `(proved by D3)` to `(proved by D4)` at order-idempotency-key.db.spec.ts:220.",
+      "fixComplexity": "mechanical",
+      "severity_note": null
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md",
+      "line": 90,
+      "severity": "minor",
+      "summary": "The test plan's DB-lane harness contract (notes 2 and 5) and the PD1 pin row still describe the pre-fix spec, so the exact contract whose staleness produced the logger blocker is still recorded wrong.",
+      "detail": "Four mismatches against the spec as it now stands, all in a file the fixer edited this round. (1) Harness note 5, line 90-92: `The DB spec builds the service without Nest DI: Object.assign(Object.create(OrdersService.prototype), { prisma })` and `The three methods it calls \u2026 use only this.prisma. WP2 must keep them that way`. The spec now builds it with `{ prisma, logger: new Logger(OrdersService.name) }` (line 138-141) precisely because `findOrderIdByIdempotencyKey` and `recordMergeIdempotencyKey` call `this.logger.warn` (orders.service.ts:1663, 1699, 1762). This is the contract the blocker finding was written against; leaving it stale is an invitation for the next WP2 edit to add another instance-field dereference and reproduce the same TypeError. (2) Harness note 2, line 82: `The DB spec reads new-table rows only through the service, never through raw.orderIdempotencyKey` \u2014 D4 line 209 does exactly that (`raw.orderIdempotencyKey.count({ where: { orderId: a.orderId, key } })`); it typechecks now only because the model and generated delegate exist (I confirmed 29 `orderIdempotencyKey` hits in node_modules/.prisma/client/index.d.ts and a clean ts-jest compile). (3) PD1's pin row, line 63, states the oracle as `findOrderIdByIdempotencyKey(K, a.customerId, \"h\")` is `null`; the spec asserts `rejects.toBeInstanceOf(ConflictException)` (line 221-223) and passed on that basis. (4) PD3 exists in the spec (line 235) and in build-plan TP2's test list, but has no row in the Pins table (lines 60-66 list P1-P4, PD1, PD2 only), so its expected colour is nowhere stated (L-060).",
+      "fixHint": "Update bug-test-plan.md: note 5 to `Object.assign(Object.create(OrdersService.prototype), { prisma, logger: new Logger(OrdersService.name) })` with the rule stated as \"these methods use only this.prisma and this.logger \u2014 WP2 must not add another injected dependency without adding it here\"; note 2 to allow D4's `raw.orderIdempotencyKey.count` read (the model exists post-WP1); PD1's oracle to `rejects.toBeInstanceOf(ConflictException)`; and add a PD3 row (`a key recorded in one tenant is invisible to another tenant`, GREEN / GREEN, DB).",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-b/bug-test-plan.md",
+      "line": 48,
+      "severity": "minor",
+      "summary": "The D1-D4 \"Fails TODAY with\" values and the claim that the DB lane fails on the bug's own values are no longer reachable, because mergeOnce now calls recordMergeIdempotencyKey unconditionally \u2014 pre-fix every D test dies on a TypeError, and D4 was added after the red gate ran.",
+      "detail": "Two compounding facts, both verified against the current tree. (a) Finding #21's fix removed the `typeof svc.recordMergeIdempotencyKey === \"function\"` guard, so `mergeOnce` (spec line 114-124) calls it unconditionally inside the fold tx. On the pre-fix tree that method does not exist, so the very first `await mergeOnce(...)` in every D test rejects with `TypeError: svc.recordMergeIdempotencyKey is not a function` and the transaction rolls back \u2014 the order total stays 100. The plan's stated pre-fix values are therefore unreachable: D1 `Expected \"<uuid>\", Received null` (line 42), D2 `Expected 110, Received 120` (line 43), D3 `Expected 100, Received 110` (line 44), D4 `Expected 100, Received 110` (line 45), and the summary at lines 48-51 (`Before the fix it therefore runs today's real OrdersService methods against real Postgres, so D1-D4 fail on the bug's own values`). The spec's own rewritten header now says the opposite \u2014 line 20-22: `a missing method or a missing table fails every test in this lane loudly rather than soft`. (b) D4 did not exist when the lane's red gate ran (it was written in this fix round, and the plan's redGate command at line 100-104 predates it), so no evidence exists that D4 was ever red, on its own value or otherwise. I could not manufacture that evidence: the fix's code is already in the tree, and the lane passes 7/7 as-is. This is a proof-record accuracy defect, not a broken gate \u2014 but as written the plan asserts value-level red evidence for four REG tests that the current harness cannot produce.",
+      "fixHint": "Decide what the record should say and write it: state that the DB lane's value-level red evidence (D1-D3 on `Received null` / `120` / `110`) was captured while mergeOnce still guarded the recordMergeIdempotencyKey call, that removing the guard makes the lane fail structurally (TypeError) on the pre-fix tree by design, and that D4 was added post-red-gate as the atomicity proof requested in review \u2014 with its green evidence (ConflictException from the in-tx P2002 branch, total 100, count 0) cited instead of a fabricated pre-fix value. Do not leave a \"Fails TODAY with\" column asserting numbers the harness can no longer produce.",
+      "fixComplexity": "judgment"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-b/build-plan.md",
+      "line": 918,
+      "severity": "minor",
+      "summary": "The Risks table still names D3 as a watch for \"Edit 4 lands outside the fold tx\", but D3 no longer opens the fold transaction at all, leaving that risk watched by T5 (a mock) alone.",
+      "detail": "build-plan.md:918 reads `| Edit 4 lands outside the fold tx (after tenantTransaction resolves) | low | the double-fold returns via the post-commit window | T5 (createdInTx = [1]) and D3 |`. D3 now asserts the pre-fold 409 and, as its own comment states, never opens the fold tx (spec line 184-186; verified green on that basis), so it cannot detect Edit 4 being placed after the transaction resolves. D4 does not close the gap either: it calls `recordMergeIdempotencyKey` directly inside a `tenantTransaction` it opens itself, so it proves the rollback mechanism, not Edit 4's placement inside `updateOrderItems`. D2 would pass with the key write as a later second commit. The residual half of the earlier finding: the plan's own risk row overstates DB-lane coverage for this risk. Acceptance criterion 3 and 5 were correctly updated to cite D4 (lines 824-828) \u2014 only the Risks row was missed.",
+      "fixHint": "Correct the Watch cell at build-plan.md:918 to state the truth: T5 (`createdInTx === [1]`, unit mock) pins Edit 4's placement; D4 proves the in-tx rollback against real Postgres; no DB test pins the placement itself.",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 4396,
+      "severity": "major",
+      "summary": "Committing the replay key inside the fold transaction makes a retry replay a merge whose post-fold invoice resync, credit-note sync/settle and revision append never ran, so the order's linked invoice and applied credits stay silently out of sync forever.",
+      "detail": "State path, all lines in apps/api/src/orders/orders.service.ts unless noted:\n\n1. `updateOrderItems` opens its fold transaction at :3338 and closes it at :4403. The new key write is the LAST statement inside it (:4396, `await this.recordMergeIdempotencyKey(tx, orderId, opts.idempotency);`), so the key row and the absolute-totals fold commit together.\n2. Four further steps run AFTER that commit, outside it: `resyncOrderInvoicesForEdit(orderId)` (:4433) or `reconcileOrderDraftInvoice(orderId, { basis: \"order\" })` (:4436) \u2014 this is what brings the order's linked invoice to the new basis; a `Serializable` transaction (:4447) running `creditNotes.syncOrderCreditSelections(tx, orderId, customerId, dto.appliedCreditNotes)` (:4450) and `creditNotes.settleOrderCreditsInTx(tx, orderId)` (:4457); and `appendOrderRevision` (:4475).\n3. Concrete failure: operator merges a $20 cart into customer A's $100 order with `Idempotency-Key: K` and `appliedCreditNotes: [{creditNoteId: cn1, amount: 15}]`. The fold commits (order total 120) together with the key row. The `Serializable` credit transaction at :4447 then fails with a serialization error (P2034/40001 \u2014 the realistic failure mode for `isolationLevel: \"Serializable\"` under concurrency). `updateOrderItems` rejects, the lock callback throws, `mapLockError` rethrows it (apps/api/src/orders/orders.controller.ts:263) and the client gets a 500.\n4. The client retries with the same key and the same body. `findOrderIdByIdempotencyKey` now hits the committed key row, the hash matches, and it returns the orderId; the controller returns `{ replayed: true }` (orders.controller.ts:194), which also skips the post-commit sweep (`if (!merged.replayed)`, :265) and returns `findOne(merged.orderId, user)` (:288) \u2014 HTTP 200.\n5. Final state: order total 120; the linked invoice still at the pre-fold 100 basis because :4433/:4436 never re-ran; credit note cn1 never synced or settled; no OrderRevision row for the edit. The client saw 200 and stops retrying. Nothing heals it: I enumerated every `@LeaderCron` in apps/api/src and there is no order-to-invoice reconciler; `orders.cronSweepPendingOrders` (:1573) only consolidates when the customer has a second mergeable order, and in this scenario there is none.\n\nWhy no existing gate catches it: the build plan's window table row 2 (\"Fold committed, then a later step inside updateOrderItems throws ... Replay, no re-fold\") presents this exact window as strictly improved and the residual-risk list (items 1-6) does not mention the skipped reconciliation. Acceptance criterion 2 / test T2 assert only \"exactly one fold\"; no test asserts the invoice or credit state after a replay. Pre-fix the retry re-ran the reconcile (against a doubled 140 order) \u2014 the fix trades a loud wrong number for a silent, permanent order-vs-invoice money discrepancy, which is a residual the plan never accepted.",
+      "severity_note": "",
+      "fixComplexity": "judgment",
+      "fixHint": "Decide what a replay of a request whose post-fold steps failed should do. Options: (a) on a table-hit replay, re-run the idempotent tail (`reconcileOrderDraftInvoice(orderId, {basis:\"order\"})` plus the credit sync/settle) before returning, so the replay converges the derived money state; (b) record durable completion separately from the fold (e.g. a `completedAt`/`stage` column on OrderIdempotencyKey, set after the tail succeeds) and treat a key row whose tail never completed as \"resume the tail\", not \"replay\"; (c) at minimum, document it as an accepted residual and add a test pinning the resulting invoice state. Do not simply move the key write back outside the transaction \u2014 that reinstates B215.",
+      "phase": "Final pass",
+      "decision": "The evidence pins the key write as the last statement inside the fold tx (:4396) with invoice resync, credit-note sync/settle and revision append all running after commit (:4433-:4475); a process death between commit and those steps makes the same-key retry hit the replay-first read and return the order without ever bringing the linked invoice or credits to the folded basis. This is the exact retry scenario B215 exists to serve, and it touches money state, so the replay path must re-run the idempotent post-fold reconcile (or the run must document why it may not).",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/scripts/apply-rls.js",
+      "line": 31,
+      "severity": "major",
+      "summary": "The fix enrolled the new tenant-scoped table in the PARKED RLS migration's two arrays but not in apply-rls.js's TENANT_TABLES, which is the documented step that actually arms RLS in production, so OrderIdempotencyKey is the only table on the order graph left with no RLS policy and no FORCE ROW LEVEL SECURITY.",
+      "detail": "`git diff HEAD -- apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql` in this worktree shows both hardcoded arrays in the PARKED RLS migration were updated to include `'OrderIdempotencyKey'` (inserted after `'OrderItem'` at the two list sites). The live sibling was missed.\n\napps/api/scripts/apply-rls.js declares its own hardcoded `const TENANT_TABLES = [` at :13; `\"Order\"` is at :30 and `\"OrderItem\"` at :31, and `grep -n OrderIdempotencyKey apps/api/scripts/apply-rls.js` returns nothing \u2014 the new table is absent. For every name in that array the script runs (`applyRls`, :74-86): `ALTER TABLE ... ENABLE ROW LEVEL SECURITY`, `ALTER TABLE ... FORCE ROW LEVEL SECURITY`, and `CREATE POLICY tenant_isolation ... USING (\"tenantId\"::text = current_setting('app.current_tenant_id', true) OR ...)`. A table not in the array gets none of that.\n\nThis script is the live production step, not a parked one: apps/api/docs/production-setup.md:107 is the literal command `node apps/api/scripts/apply-rls.js`, and its go-live checklist at :179 reads \"RLS applied to all 52 tenant-scoped tables (`apply-rls.js`)\".\n\nFailure scenario: the owner runs the documented production-setup step after this change ships. Every sibling on the order graph (Order, OrderItem, OrderRevision, Invoice, ...) comes out with `FORCE ROW LEVEL SECURITY` and a `tenant_isolation` policy; `OrderIdempotencyKey` silently does not (it is not even reported as skipped \u2014 the loop never names it). Any future code path that reaches this table without going through `prisma.forTenant()` / `_wrapTxWithTenant` \u2014 a raw `$queryRaw` report, a repair script, a psql session \u2014 reads and writes it across tenants with no database-layer backstop, while the identical query against Order would be blocked. Nothing in the repo will flag the omission: `grep -rn TENANT_TABLES` across apps/api/src, apps/api/scripts and scripts/ finds no spec pinning that array against the schema, so `npm run verify` stays green. The checklist's \"52 tenant-scoped tables\" is also now off by one.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Add `\"OrderIdempotencyKey\",` to `TENANT_TABLES` in apps/api/scripts/apply-rls.js immediately after `\"OrderItem\",` (:31), matching where it was inserted in both arrays of apps/api/prisma/deferred-rls/20260909000000_rls/migration.sql, and bump the \"52 tenant-scoped tables\" count in apps/api/docs/production-setup.md:179 to 53.",
+      "phase": "Final pass",
+      "decision": "The fix round enrolled the table in both arrays of the parked deferred-rls migration but the live sibling, apply-rls.js TENANT_TABLES (:13, Order at :30, OrderItem at :31), still lacks it and a grep for the name returns nothing; every other table on the order graph gets ENABLE/FORCE RLS plus the tenant_isolation policy from that script and this one will not. A tenant-scoped table left out of the production arming step is a tenant-isolation hole the change itself created and half-fixed.",
+      "unadjudicated": false
+    },
+    {
+      "file": ".claude/code-map/api.md",
+      "line": 1179,
+      "severity": "minor",
+      "summary": "This PR already edits the code map, but only for the schema-spec collateral \u2014 it leaves api.md asserting the old signatures of both changed exports and never names the 126th model it now claims exists.",
+      "detail": "`git status --short` shows `.claude/code-map/api.md` is modified by this change, and `git diff HEAD -- .claude/code-map/api.md` shows the edits are confined to the split-script / schema-folder-spec entries (case (h) retirement, \"126 model + 80 enum blocks\"). So the \"map updates are deferred to a Bookkeeping Option B follow-up\" defence does not apply here: the map IS being updated in the code PR, just incompletely, and the result is internally inconsistent.\n\nConcrete stale claims left behind:\n- :1179 states `findOrderIdByIdempotencyKey(key, customerId)` / `recordIdempotencyKey(orderId, key)` (both `forTenant()`-scoped ...). The first is now `findOrderIdByIdempotencyKey(idempotencyKey, customerId, requestHash?)` (apps/api/src/orders/orders.service.ts, third param added), it now reads a new `OrderIdempotencyKey` table BEFORE the Order column, and it now THROWS in two new cases (`ForbiddenException` when the session carries no tenant; `ConflictException` on a hash mismatch and on a key already held by another order in the tenant). An agent planning from this row would call it with two arguments and assume it cannot throw.\n- :2298 states `updateOrderItems(orderId, dto, user?)` (`:3069`). The signature now takes a 4th `opts?: { idempotency?: { key: string; responseHash: string } }` and the method actually starts at :3175, not :3069.\n- `grep -rn \"OrderIdempotencyKey|merge-idempotency|recordMergeIdempotencyKey\" .claude/code-map/` returns nothing, so the map now asserts a 126-model schema folder without naming the 126th model, and the new file apps/api/src/orders/merge-idempotency.ts (`mergeRequestHash`) and the new method `recordMergeIdempotencyKey` have no entry at all.\n\nFailure scenario: the next session follows CLAUDE.md's \"read INDEX -> area -> the specific file\" routine, reads :1179/:2298, and plans a change against a two-argument non-throwing lookup and a three-argument `updateOrderItems` \u2014 the exact re-derivation the map exists to prevent, on the money path this change just re-shaped.",
+      "fixComplexity": "mechanical",
+      "fixHint": "In the same api.md edit: update :1179 to `findOrderIdByIdempotencyKey(idempotencyKey, customerId, requestHash?)` noting the table-first read and the Forbidden/Conflict throws; update :2298 to `updateOrderItems(orderId, dto, user?, opts?)` and correct `:3069` to `:3175`; add a one-line entry for the `OrderIdempotencyKey` model (sales.prisma, `@@unique([tenantId, key])`, FK `onDelete: Cascade`), for `merge-idempotency.ts` (`mergeRequestHash`), and for `recordMergeIdempotencyKey` (writes through the fold tx's client, P2002 -> 409). Alternatively, revert the api.md edits entirely and carry the whole map update in the Option B follow-up the build plan specifies \u2014 but do not leave it half-updated.",
+      "phase": "Final pass",
+      "decision": "The diff already touches .claude/code-map/api.md for the schema-spec collateral, so the Option B deferral defence does not apply, yet :1179 still records the two-argument findOrderIdByIdempotencyKey / old recordIdempotencyKey signatures and omits the new table the same map now says exists. Same-PR map update is the standing rule; this one is incomplete, not absent.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1694,
+      "severity": "major",
+      "summary": "The new pre-fold `heldByAnotherOrder` refusal turns a staff merge that previously landed into a permanent 409 whenever the mobile client carries its cart-session key across a \"Change customer\" switch.",
+      "detail": "REACHABLE CLIENT PATH (read, not assumed): the ONLY client that sends `Idempotency-Key` on POST /orders is mobile (apps/web has none \u2014 see the separate web finding). `apps/mobile/lib/order-submit-key.ts` mints ONE key per cart session and resets it ONLY on a successful submit or an explicit cart clear; `apps/mobile/components/NewOrderScreen.tsx:1713` rotates it on mount ONLY when `initialDraft` is null. Once the operator has added a line, `useDraftAutosave` creates a server draft and lifts its id through `onDraftBound` into the parent's `boundDraftId` (NewOrderScreen.tsx:1625-1632, :301-302), so `loadedDraft` becomes non-null and `initialDraft` is non-null (NewOrderScreen.tsx:412-421) on every later mount. `onChangeCustomer` (NewOrderScreen.tsx:405-411) unmounts/remounts ProductPickView and deliberately KEEPS the cart and the bound draft \u2014 so the key survives a customer switch.\n\nFAILURE: (1) Operator builds a cart for customer A; Confirm -> active order exists -> prompt -> Merge -> POST with key K. The fold commits and `recordMergeIdempotencyKey` writes the row (tenant, K, ordA) INSIDE the fold tx. (2) The client never sees the 200 \u2014 the mobile api client aborts at 15s (cited in orders.controller.ts:165-167) or the request is offline-enqueued; `onError` fires, the key is deliberately NOT reset. (3) Operator taps \"Change customer\", picks B (cart lines carry over by design), taps Confirm -> B has an active order -> Merge -> POST key K, customerId B. (4) `findOrderIdByIdempotencyKey`: the keyed lookup at :1670 is scoped `order: { customerId: B }` and misses; the new `heldByAnotherOrder` read at :1694 (`where: { key }`, tenant-scoped only, customer-agnostic) HITS the row for ordA and throws `ConflictException(\"Idempotency-Key already used for a different order\")` at :1704. Customer B's merge never folds, and every retry from that screen repeats it \u2014 `resetOrderSubmitKey()` is unreachable without a successful submit or abandoning the cart.\n\nPRE-CHANGE BEHAVIOUR (the regression): the merge branch's only lookup was the customer-scoped Order column (`{ idempotencyKey, customerId: B }`), which missed, so the fold RAN and B's merge landed; the post-commit column stamp's P2002 was swallowed by `recordIdempotencyKey`'s `if (e?.code !== \"P2002\") throw e` (orders.service.ts:1745). So this is a new hard failure on a path that previously worked. Nothing in build-plan.md or bug-test-plan.md considers a cross-customer key carried by the same cart session; no T#/D# covers it (PD1 pins only that a key recorded for one customer is not REPLAYED for another \u2014 it does not pin that the other customer's own merge still lands).",
+      "severity_note": "",
+      "fixComplexity": "judgment",
+      "fixHint": "Decide what a key held by a different customer's order should do on the merge path. Options: return null (fall through to the fold, as before, and let the in-tx P2002 be the only refusal), or keep the 409 but have the mobile client rotate the key on a 409 whose message is the cross-order one, or scope the refusal so it cannot fire for a key the same cart session owns. Whatever is chosen, add a test at the T#/D# level for \"same key, different customer, no prior replay\".",
+      "phase": "Final pass",
+      "decision": "The only client that sends Idempotency-Key keeps the cart-session key across a Change-customer switch and after a failed submit, so a timed-out-but-committed merge for A followed by a submit for B hits the new tenant-wide heldByAnotherOrder refusal with no recovery short of clearing the cart; the guard is correct server-side but the interaction with the one reachable client is a wedge the change introduced.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1694,
+      "severity": "minor",
+      "summary": "`heldByAnotherOrder` (tenant-wide, customer-agnostic) is evaluated BEFORE the customer-scoped Order-column fallback, so a legitimate replay of THIS customer's own key is refused with 409 instead of replayed.",
+      "detail": "Read order inside `findOrderIdByIdempotencyKey`: (a) :1670 key table scoped to `order: { customerId }`; (b) :1694 key table scoped to the TENANT ONLY \u2014 any order, any customer \u2014 and an unconditional 409 at :1704; (c) :1713 the Order column scoped `{ idempotencyKey, customerId }`. Step (b) short-circuits step (c), so a key that legitimately identifies THIS customer's own order via the column is never consulted once any other order in the tenant holds the same key in the table.\n\nCONCRETE STATE PATH (reachable from the carry-over described in the sibling finding, no client uuid collision needed): (1) Customer A merges with key K; the key row (K -> ordA) commits with the fold; the post-commit column stamp is `updateMany({ where: { id, idempotencyKey: null } })` (:1741) and silently drops K because ordA already carries a key from its own creation \u2014 this \"first key wins\" drop is B215's original root cause, so it is the NORMAL state, not an edge case. (2) The same cart session (key K retained after a failed-looking submit) is switched to customer B, who has NO active order, so `OrdersController.create` falls through to `OrdersService.create`; create()'s pre-check at :1852 reads only the column, finds nothing (K was dropped from ordA's column), and creates ordB WITH column `idempotencyKey = K`. (3) A retry for customer B (queue replay / operator retry) now enters the merge branch because B has an active order: (a) misses (no table row for B), (b) HITS the row for ordA and throws 409 \"Idempotency-Key already used for a different order\" \u2014 even though (c) would have found ordB by column for this exact customer and replayed it correctly. B's retry is refused forever instead of replaying B's own order.\n\nThe code comment at :1706-1712 explicitly reasons that a column-only hit \"is replay-eligible\" and is \"pinned by P5\", but P5/T P3 only exercise the column path with NO table row present \u2014 no test covers a column hit that is pre-empted by a foreign table row, so the ordering is unproven in either direction.",
+      "fixComplexity": "judgment",
+      "fixHint": "Move the customer-scoped Order-column read (:1713) ABOVE the tenant-wide `heldByAnotherOrder` read (:1694), so this customer's own replay wins before any cross-order refusal; keep the cross-order refusal as the last step before the fold. Add a test with a table row for customer A plus a column key for customer B and assert B replays.",
+      "phase": "Final pass",
+      "decision": "The read order is genuinely wrong: a tenant-wide refusal that short-circuits the customer-scoped column fallback refuses a replay that the column would have answered. It needs the same cross-customer key reuse precondition as #0, so it is a minor ordering defect to fix alongside it (consult the column before refusing).",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/merge-idempotency.ts",
+      "line": 34,
+      "severity": "minor",
+      "summary": "`appliedCreditNotes` is fingerprinted order-sensitively while `items` is sorted, so a retry that re-sends the SAME credit-note set in a different order is refused with a 409 cart mismatch.",
+      "detail": "VERIFIED BY PROBE against the real module this session (a throwaway spec under apps/api/src/orders, run with `npx jest --reporters=default`, then deleted): `ITEMS_ORDER_SAME= true`, `CREDITS_ORDER_SAME= false`. i.e. mergeRequestHash({customerId:'c1',items,appliedCreditNotes:[{creditNoteId:'cn-A'},{creditNoteId:'cn-B'}]}) !== the same call with [cn-B, cn-A]. Cause: line 28 sorts the per-item fingerprints (`(input.items ?? []).map(stable).sort()`) but line 34 passes `appliedCreditNotes` straight into `stable`, whose array branch \"keeps arrays in order at this level\" (comment at line 6-8). The doc comment at line 21-23 claims only \"Item order does not matter\" \u2014 the asymmetry is undocumented and reads as an oversight, because the server treats appliedCreditNotes as a SET: apps/mobile/lib/api/orders.ts:203-206 documents it as \"the FULL desired set (server diffs)\", and updateOrderItems applies a diff, so [A,B] and [B,A] are the SAME request server-side.\n\nCONCRETE FAILURE: the operator selects credits cn-A then cn-B (mobile `onToggle` at NewOrderScreen.tsx:2359 APPENDS on select and filters on deselect, so the array order is tap order); attempt 1 posts [A,B] with key K, the fold commits and stores responseHash = H([A,B]); the client times out (15s abort) and the key is retained by design. The operator re-taps cn-A off and on again (a natural \"did that credit apply?\" check) \u2014 the selection is now [B,A], the same set \u2014 and taps Confirm. `findOrderIdByIdempotencyKey` hits the key row at :1670, `keyed.responseHash !== requestHash` at :1675, and the retry is refused with 409 \"Idempotency-Key reused with a different cart\" although the request is semantically identical to the one that landed. The probe also shows `QTY_STRING_EQ_NUMBER= false` (a numeric string and a number fingerprint differently) \u2014 harmless today because both attempts traverse the same ValidationPipe, but it is the same class of brittleness.\n\nP5/T#s cover item order, undefined-vs-null credits and a changed qty (orders.merge-idempotency.spec.ts:397-427) \u2014 credit-note ORDER is not covered, so dropping or adding a sort there leaves every test green.",
+      "fixComplexity": "judgment",
+      "fixHint": "Canonicalise appliedCreditNotes the same way items are: `const credits = input.appliedCreditNotes == null ? null : (input.appliedCreditNotes as readonly unknown[]).map(stable).sort();` (keeping [] distinct from null/undefined \u2014 the probe confirms `UNDEF_EQ_EMPTY= false`, which is correct since [] means \"remove all\"). Add a unit test pinning credit-note order-insensitivity next to the existing item-order test.",
+      "phase": "Final pass",
+      "decision": "Probe-verified asymmetry: items are sorted, appliedCreditNotes are not, while the server treats the credit-note list as a set. A retry from unchanged client state re-sends the same order so the 409 is unlikely in practice, but the fingerprint contradicts its own doc comment and should sort both.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1681,
+      "severity": "minor",
+      "summary": "The cart-mismatch 409 tells the operator to \"submit the edited cart as a new order (new key)\", but the only client that sends keys cannot mint one without abandoning the cart, so an edited retry wedges the screen permanently.",
+      "detail": "The new refusal at :1675-1683 is intended (bug-test-plan T3 / acceptance criterion 4). The defect is that its prescribed remedy is unreachable in the one client that reaches this code. `apps/mobile/lib/order-submit-key.ts` documents and enforces that the key resets ONLY on (a) a successful submit or (b) an explicit cart clear; a failed submit must NOT reset it. `NewOrderScreen.tsx:1817` sends `getOrderSubmitKey()` on every attempt, and the reset call sites are exactly `onSuccess` (:1823) and the mount effect (:1713) which is gated on `!initialDraft` \u2014 and R5 deliberately does NOT rotate on a resumed parked draft, precisely so a timed-out-but-committed submit stays collapsible.\n\nFAILURE PATH: (1) merge with key K commits server-side; the client sees a timeout/offline error (mobile aborts at 15s, per orders.controller.ts:165-167) and keeps the key. (2) The operator, believing nothing landed, edits the cart (removes or re-enters a line) and taps Confirm. (3) The table row exists with H(cart1); requestHash is H(cart2); :1675 throws the 409. (4) The mobile `onError` handler has no branch for this body (it matches only `code === \"MERGE_CHOICE_REQUIRED\"` at :1848-1856 and the regulated-license error), so it falls to `alertInfo(\"Couldn't save order\", msg)` and shows the server text verbatim \u2014 including \"submit the edited cart as a new order (new key)\", which the operator has no control to perform. Every subsequent Confirm from this screen re-sends K and repeats the 409; because the autosaved draft is bound, re-entering via the parked draft keeps `initialDraft` non-null and therefore keeps K. The only escape is discarding the draft and rebuilding the cart from scratch.\n\nNothing in build-plan.md or bug-test-plan.md considers what the client does with the new 409, and no test asserts a client-visible recovery path.",
+      "fixComplexity": "judgment",
+      "fixHint": "Either give the 409 a machine-readable code (e.g. `{ code: \"IDEMPOTENCY_CART_MISMATCH\" }`, the same idiom as MERGE_CHOICE_REQUIRED) and have the mobile error handler call resetOrderSubmitKey() and offer \"resubmit as a new order\", or have the server treat a mismatched-cart retry on the merge path as a new request (new key minted server-side) rather than a refusal. Decide before shipping; leaving it as bare text is the wedge.",
+      "phase": "Final pass",
+      "decision": "The cart-mismatch 409 is the intended acceptance-criterion-4 refusal, and the client can recover by clearing the cart, so it is not a permanent wedge; the gap is that the mobile key lifecycle offers no graceful path (rotate on cart edit after a refusal). Client-side follow-up, not a server defect.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1852,
+      "severity": "minor",
+      "summary": "`create()`'s own replay lookup still reads only the Order column, so the new \"authoritative\" key table is bypassed whenever a keyed retry falls through to the create path and can still mint a duplicate order.",
+      "detail": "The schema doc-comment (sales.prisma, OrderIdempotencyKey) and the migration header call the new table the store that the merge branch's replay depends on, and orders.service.ts:1685-1687 calls it \"the authoritative replay store for the merge branch\". But create() \u2014 the other consumer of the same client-chosen key \u2014 never reads it: its pre-check at :1852 is `order.findFirst({ where: { idempotencyKey } })` (column only), and so is its P2002 recovery at :2441. There is no production caller of `findOrderIdByIdempotencyKey` other than orders.controller.ts:188 (verified: `grep -rn \"findOrderIdByIdempotencyKey|recordIdempotencyKey\" apps --include=*.ts` returns only that call, the :230 column stamp, and the definitions), and the buyer merge path (buyer.controller.ts:617) sends no key at all.\n\nCONCRETE FAILURE: (1) Merge with key K lands on ordA; the key row commits with the fold; the column stamp at :1741 drops K because ordA already carries a key (the original B215 root cause, so the common case). (2) A retry of that same frozen body arrives after ordA has left the active set (consolidated away by a sweep, dispatched, or status-advanced), so `findActiveOrder` returns null and the controller never enters the merge branch (orders.controller.ts:111-113, and the explicit \"stale\" fall-through at :259-265). (3) `OrdersService.create` runs with the same key: its column-only pre-check finds nothing, so it creates a SECOND order for the same cart and stamps K on the new order's column. The table row that would have identified the retry is never read.\n\nThis outcome is the same before and after the change (pre-fix the key was nowhere at all), so it is a scope gap rather than a regression \u2014 but it contradicts the \"authoritative replay store\" framing the diff's own comments assert, and the fix had the table in hand at :1852.",
+      "fixComplexity": "judgment",
+      "fixHint": "Either have create()'s pre-check also consult OrderIdempotencyKey (customer-scoped, mirroring :1670) and replay/refuse from it, or soften the \"authoritative\" claims in sales.prisma / migration.sql / orders.service.ts:1685 to \"authoritative for the merge branch only\" and record the create fall-through as a known residual.",
+      "phase": "Final pass",
+      "decision": "create()'s pre-check and P2002 recovery read only the Order column, and the column stamp is silently dropped when the target order already carries a key, so a keyed retry that no longer takes the merge branch (pending order dispatched between attempts) misses the table row and mints a duplicate. The table is authoritative only on one of two consumers of the same key.",
+      "unadjudicated": false
+    },
+    {
+      "file": ".claude/lessons/LESSONS.md",
+      "line": 1,
+      "severity": "major",
+      "summary": "This fix branch carries no lessons entry and the register is already at BOTH caps, so the required entry cannot simply be appended and Gate 3 of the stop hook will block.",
+      "detail": "MEASURED THIS SESSION in the worktree: `git status --short` shows `.claude/code-map/api.md` modified (Gate 2 satisfied) but `.claude/lessons/*` untouched; `git rev-list --count master..HEAD` is 0, so everything is still working-tree and the branch is `fix/train4-order-idempotency-key`. CLAUDE.md's lessons routine states Gate 3 of `.claude/hooks/stop.mjs` blocks the turn on `fix/*` branches and on landed `fix:` commits unless the register changed in the same PR or HEAD carries a `Bookkeeping-Follow-Up: pending` trailer (the Option B exception is reserved for public-window deploys).\n\nThe non-obvious part: the register is at BOTH caps, so an append cannot succeed as-is. Measured from `.claude/lessons/_meta.json` and the file itself: `maxEntries: 40`, `maxBytes: 40960`; the file contains exactly 40 active `L-###` entries and is 40,889 bytes \u2014 71 bytes of headroom against the byte cap and zero against the entry cap, with `nextId: 104`. `scripts/validate-lessons.mjs` enforces both (DEFAULT_MAX_ENTRIES = 40 at :88, the meta override read at :122-123). A typical entry is several hundred bytes, so close-out will fail the validator (and the global routine notes closeout.mjs refuses to add a stub at cap) unless an entry is archived to ARCHIVE.md first. Note also that `.claude/lessons/LESSONS-DIGEST.md` is not tracked at all (`git ls-files .claude/lessons/` lists only ARCHIVE.md, LESSONS.md, _meta.json), so it must be regenerated, not edited.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Before writing the B215 entry: move the least-cited fully-guarded entry (or merge two overlapping ones) from LESSONS.md to ARCHIVE.md, then append L-104 (Symptom / Root cause / Lesson / Guard), bump _meta.json (nextId/updatedAt), regenerate the digest with `node scripts/validate-lessons.mjs --digest`, and land it in this PR.",
+      "phase": "Final pass",
+      "decision": "Measured: fix/* branch, lessons register untouched and at both caps (40 entries, 71 bytes headroom), so Gate 3 of the stop hook blocks the landing and a plain append cannot succeed. The close-out must archive one fully-guarded entry to ARCHIVE.md, add the B215 lesson, bump _meta.json and regenerate the digest in the same PR.",
+      "unadjudicated": false
+    }
+  ],
+  "clean": false
+}

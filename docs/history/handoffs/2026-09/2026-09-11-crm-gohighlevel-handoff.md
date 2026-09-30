@@ -1,0 +1,10 @@
+# Handoff — 2026-09-11 · crm-gohighlevel-handoff
+
+- Task: GoHighLevel → RouteFlow lead handoff (client uses GHL for lead gen only). Polling on a Private Integration Token; won/staged leads become RouteFlow customers; write-back tag/fields/note to the GHL contact. Owner approved plan `C:\Users\nakram\.claude\plans\a-client-asked-us-lively-nautilus.md` (rev 3).
+- State: S1–S5 artifacts written; S5.5 grounding + transcriber patch (T50–T54) in flight; engine launch next.
+- Branch/tree: worktree `.claude/worktrees/rf-crm` = `feat/crm-gohighlevel-handoff` @ base `83af7853` (origin/master, train-4 Run B). npm ci done, husky hooks path `.husky/_`, prisma client generated. Other worktrees belong to the train-4 landing session (routeflow-d8) — never touch. Repo is PUBLIC for train-4 window 15; do not push/PR/merge without announcing to routeflow-d8 first.
+- Run: `.claude/pipeline/2026-09-11-crm-gohighlevel-handoff/` (discovery, spec R1–R33, ux-spec, ruling, test-plan T1–T54, build-plan WP1–WP5, pipeline-args.json, context-pack). Engine copy `local-assets/tooling/pipeline-2026-09-11-6f5f1cf8.js` (+ `-lf`). runId: see RESUME.md once launched.
+- Decisions: polling (3 min LeaderCron) not OAuth/webhooks; ledger idempotency on (tenant, provider, opportunityId); GHL owns identity fields, RouteFlow owns 3 TEXT custom fields + tag + notes; PUT /contacts never carries `tags`; dry-run default ON; `startFrom` cutoff; gate `crm_gohighlevel` dark; tests never import the new Prisma enums (ts-jest type-checks); migration generated with `prisma migrate diff --from-schema-datamodel` (no DB); R31 manual.
+- Known risk: pipeline-args.json is 5.5K chars (> 4.5K resume-truncation trap) — on resume, re-supply args from the file (append missing brace in `workflows/<runId>.json` if truncated).
+- Open owner questions: billable add-on?; default phone region (CA assumed); email admins on each handoff (default: bell + log only).
+- Next: grounding PASS → RESUME.md → Workflow launch → S8 closeout (`closeout.mjs <runDir>`), map + lessons in same PR, announce to routeflow-d8 before push.

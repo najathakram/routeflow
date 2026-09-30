@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Post,
+  Put,
   Delete,
   Param,
   Body,
@@ -10,6 +11,9 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  ConflictException,
+  NotFoundException,
+  ParseUUIDPipe,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -19,13 +23,31 @@ import { PlatformAdminService } from "./platform-admin.service";
 import { PlatformConfigService } from "./platform-config.service";
 import { BillingService } from "../billing/billing.service";
 import { AddonService } from "../billing/addon.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { UpdateTenantStatusDto } from "./dto/update-tenant-status.dto";
 import { UpdateTenantPlanDto } from "./dto/update-tenant-plan.dto";
 import { CreateTenantDto } from "./dto/create-tenant.dto";
+import { CreateTenantAdminDto } from "./dto/create-tenant-admin.dto";
 import { ExtendTrialDto } from "./dto/extend-trial.dto";
 import { ActivateSubscriptionDto } from "./dto/activate-subscription.dto";
 import { UpdateTenantConfigDto } from "./dto/update-tenant-config.dto";
+import { UpdateTenantPriceDto } from "./dto/update-tenant-price.dto";
+import { UpdatePlanPricesDto } from "./dto/update-plan-prices.dto";
+import { UpdateTenantClassDto } from "./dto/update-tenant-class.dto";
 import { EnableAddonDto, DisableAddonDto } from "../billing/dto/manage-addon.dto";
+import { CreateFeatureOverrideDto } from "./dto/manage-feature-override.dto";
+import { SetEntitlementsModeDto } from "./dto/set-entitlements-mode.dto";
+import { SetConfigSnapshotFlagDto } from "./dto/set-config-snapshot-flag.dto";
+import { ExplainFeatureDiffDto } from "./dto/explain-feature-diff.dto";
+import { FEATURE_REGISTRY } from "../billing/feature-registry";
+import { EntitlementsModeService } from "../billing/entitlements-mode.service";
+import { ConfigSnapshotFlagService } from "../billing/config-snapshot-flag.service";
+import { FeatureDiffService } from "../billing/feature-diff.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { FeaturePreviewService } from "../billing/feature-preview.service";
+import { TenantConfigSnapshotAdminService } from "../billing/tenant-config-snapshot-admin.service";
+import { toEffectiveFeature } from "../billing/feature-resolver.service";
+import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -39,6 +61,13 @@ export class PlatformAdminController {
     private readonly platformConfig: PlatformConfigService,
     private readonly billingService: BillingService,
     private readonly addonService: AddonService,
+    private readonly featureOverrides: FeatureOverrideService,
+    private readonly entitlementsMode: EntitlementsModeService,
+    private readonly configSnapshotFlag: ConfigSnapshotFlagService,
+    private readonly featureDiffs: FeatureDiffService,
+    private readonly authority: EntitlementAuthority,
+    private readonly featurePreview: FeaturePreviewService,
+    private readonly snapshotAdmin: TenantConfigSnapshotAdminService,
   ) {}
 
   @Get("stats")
@@ -131,6 +160,16 @@ export class PlatformAdminController {
     return this.svc.updatePlan(id, dto, admin.sub);
   }
 
+  @Patch("tenants/:id/class")
+  @ApiOperation({ summary: "Change a tenant's classification (production/demo/test/internal)" })
+  updateTenantClass(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantClassDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateTenantClass(id, dto, admin.sub);
+  }
+
   @Post("tenants/:id/impersonate")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -178,12 +217,20 @@ export class PlatformAdminController {
     return this.svc.getTenantAdmin(id);
   }
 
+  @Get("tenants/:id/entitlements")
+  @ApiOperation({
+    summary: "Resolved entitlements (flags/addons/caps/planKey) + live meter usage for a tenant",
+  })
+  getTenantEntitlements(@Param("id") id: string) {
+    return this.svc.getTenantEntitlements(id);
+  }
+
   @Post("tenants/:id/admin")
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: "Create a TENANT_ADMIN account for a tenant that has none" })
   createTenantAdmin(
     @Param("id") id: string,
-    @Body() dto: { username: string; email: string; password?: string },
+    @Body() dto: CreateTenantAdminDto,
     @CurrentUser() admin: JwtPayload,
   ) {
     return this.svc.createTenantAdmin(id, dto, admin.sub);
@@ -252,9 +299,12 @@ export class PlatformAdminController {
 
   @Post("tenants/:id/billing/checkout")
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Generate a Stripe Checkout link for a tenant to subscribe" })
-  createCheckout(@Param("id") id: string) {
-    return this.billingService.createCheckoutSession(id);
+  @ApiOperation({
+    summary: "Generate a Stripe Checkout link for a tenant to subscribe",
+    description: 'Optional JSON body: { interval?: "month" | "year" } — defaults to month.',
+  })
+  createCheckout(@Param("id") id: string, @Body("interval") interval?: "month" | "year") {
+    return this.billingService.createCheckoutSession(id, interval === "year" ? "year" : "month");
   }
 
   @Post("tenants/:id/billing/portal")
@@ -262,6 +312,39 @@ export class PlatformAdminController {
   @ApiOperation({ summary: "Generate a Stripe Billing Portal link for a tenant" })
   createPortal(@Param("id") id: string) {
     return this.billingService.createBillingPortalSession(id);
+  }
+
+  @Get("tenants/:id/billing/pricing")
+  @ApiOperation({
+    summary: "Resolved pricing for a tenant (catalog or custom override) + live subscription state",
+  })
+  getTenantPricing(@Param("id") id: string) {
+    return this.svc.getTenantPricing(id);
+  }
+
+  @Patch("tenants/:id/billing/price-override")
+  @ApiOperation({
+    summary: "Set or clear a tenant's custom price override; syncs any live Stripe subscription",
+  })
+  updateTenantPriceOverride(
+    @Param("id") id: string,
+    @Body() dto: UpdateTenantPriceDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updateTenantPriceOverride(id, dto, admin.sub);
+  }
+
+  @Patch("plans/:planKey/prices")
+  @ApiOperation({
+    summary:
+      "Edit the current catalog price for a plan key; fans out to matching live subscriptions",
+  })
+  updatePlanPrices(
+    @Param("planKey") planKey: string,
+    @Body() dto: UpdatePlanPricesDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    return this.svc.updatePlanPrices(planKey, dto, admin.sub);
   }
 
   // ─── Add-ons ──────────────────────────────────────────────────────────────
@@ -280,9 +363,16 @@ export class PlatformAdminController {
     @Body() dto: EnableAddonDto,
     @CurrentUser() admin: JwtPayload,
   ) {
-    const result = await this.addonService.enableAddon(id, dto.addonKey, dto.stripePriceId);
+    const result = await this.addonService.enableAddon(
+      id,
+      dto.addonKey,
+      dto.stripePriceId,
+      dto.acknowledgeUnmetRequires,
+    );
     await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.ADDON_ENABLED, {
       addonKey: dto.addonKey,
+      // B524: see the matching note on createFeatureOverride's audit payload.
+      acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
     });
     return result;
   }
@@ -300,6 +390,328 @@ export class PlatformAdminController {
       addonKey: dto.addonKey,
     });
     return result;
+  }
+
+  // ─── Feature overrides ────────────────────────────────────────────────────
+
+  @Get("features/registry")
+  @ApiOperation({ summary: "The full feature registry — FeatureRegistryRow[] (design contract)" })
+  listFeatureRegistry() {
+    return FEATURE_REGISTRY.map((f) => ({
+      key: f.key,
+      kind: f.kind,
+      area: f.area,
+      label: f.label,
+      description: f.description,
+      lifecycle: f.gate.state === "dark" ? "beta" : "ga",
+      internal: f.internal ?? false,
+      // Opus review of 8130b204, item 2: `via` lets the web warn before creating an override
+      // that has no wired consultation point. "none" is a verified-no-gate key by definition
+      // (catalog metadata only) -- an override there can never have any effect.
+      gate: { via: f.gate.via, state: f.gate.state },
+      billing: { skus: [...f.billing.skus] },
+      // B519: the console needs this to warn before enabling a key whose prerequisites
+      // aren't met — verbatim from the registry, never a client-side mirror.
+      ...(f.requires
+        ? {
+            requires: {
+              ...(f.requires.allOf ? { allOf: [...f.requires.allOf] } : {}),
+              ...(f.requires.anyOf ? { anyOf: [...f.requires.anyOf] } : {}),
+            },
+          }
+        : {}),
+      ...(f.config
+        ? {
+            config: {
+              fallbackMode: f.config.fallbackMode,
+              modes: Object.entries(f.config.modes).map(([key, m]) => ({
+                key,
+                label: m.label,
+                lifecycle: "ga" as const,
+                ...(m.requires?.allOf ? { requires: [...m.requires.allOf] } : {}),
+              })),
+            },
+          }
+        : {}),
+    }));
+  }
+
+  // ─── Feature grants v2 brief A (design 2026-09-17 §2): shadow/live switch + diff log ───────
+
+  @Get("entitlements/mode")
+  @ApiOperation({ summary: "The global shadow/live entitlements-resolver switch" })
+  async getEntitlementsMode() {
+    return { mode: await this.entitlementsMode.getMode() };
+  }
+
+  @Put("entitlements/mode")
+  @ApiOperation({
+    summary:
+      "Switch shadow/live. live refuses (409) while any diff row is unexplained, unless force+reason.",
+  })
+  async setEntitlementsMode(@Body() dto: SetEntitlementsModeDto, @CurrentUser() admin: JwtPayload) {
+    if (dto.mode === "live") {
+      const hasUnexplained = await this.featureDiffs.hasUnexplained();
+      if (hasUnexplained && !(dto.force && dto.reason)) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: "UNEXPLAINED_DIFFS",
+          message:
+            "Unexplained FeatureResolverDiff rows exist — explain them, or pass {force:true, reason} to override.",
+        });
+      }
+    }
+    await this.entitlementsMode.setMode(dto.mode);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.ENTITLEMENTS_MODE_CHANGED, {
+      mode: dto.mode,
+      force: dto.force ?? false,
+      reason: dto.reason ?? null,
+    });
+    return { mode: dto.mode };
+  }
+
+  // ─── Config snapshot flag (Lane B A2c) ────────────────────────────────────
+  // One of the four production flags an agent never flips — read-only for anyone but the owner,
+  // who calls PUT directly. GET never mutates. Every PUT is audited with the actor and reason,
+  // regardless of the resulting value.
+
+  @Get("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Whether automatic config snapshot/restore on plan changes is switched on (default OFF)",
+  })
+  async getConfigSnapshotFlag() {
+    return { enabled: await this.configSnapshotFlag.isEnabled() };
+  }
+
+  @Put("entitlements/config-snapshot")
+  @ApiOperation({
+    summary:
+      "Switch automatic config snapshot/restore on plan changes on/off — live, no redeploy, effective across replicas within ~5 s. Audited with the reason and the actor.",
+  })
+  async setConfigSnapshotFlag(
+    @Body() dto: SetConfigSnapshotFlagDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The cache can be up to ~5 s stale — force a real database read before recording the
+    // flip, so the audit row's `previous` is the flag's actual last-committed value, not a
+    // possibly-stale cached one from before another replica's write.
+    this.configSnapshotFlag.invalidate();
+    const previous = await this.configSnapshotFlag.isEnabled();
+    await this.configSnapshotFlag.setEnabled(dto.enabled);
+    await this.svc.recordAdminAction(
+      null,
+      admin.sub,
+      AdminAuditAction.CONFIG_SNAPSHOT_FLAG_CHANGED,
+      { previous, enabled: dto.enabled, reason: dto.reason },
+    );
+    return { enabled: dto.enabled };
+  }
+
+  @Get("features/diffs")
+  @ApiOperation({ summary: "Shadow-mode disagreements between the old path and the resolver" })
+  @ApiQuery({ name: "tenantId", required: false })
+  @ApiQuery({ name: "unexplainedOnly", required: false, type: Boolean })
+  listFeatureDiffs(
+    @Query("tenantId") tenantId?: string,
+    @Query("unexplainedOnly") unexplainedOnly?: string,
+  ) {
+    return this.featureDiffs.list({
+      tenantId: tenantId || undefined,
+      unexplainedOnly: unexplainedOnly === "true" || unexplainedOnly === "1",
+    });
+  }
+
+  @Post("features/diffs/:id/explain")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Record why a diff row is expected, unblocking the live switch" })
+  async explainFeatureDiff(
+    @Param("id") id: string,
+    @Body() dto: ExplainFeatureDiffDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.featureDiffs.explain(id, dto.explanation);
+    await this.svc.recordAdminAction(null, admin.sub, AdminAuditAction.FEATURE_DIFF_EXPLAINED, {
+      diffId: id,
+    });
+    return result;
+  }
+
+  @Get("tenants/:id/features/effective")
+  @ApiOperation({ summary: "Every registry key's resolved verdict for one tenant (explain trace)" })
+  async getTenantFeaturesEffective(@Param("id") id: string) {
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
+    if (!resolved) {
+      return { effective: [], computedAt: new Date().toISOString(), unavailable: true };
+    }
+    return {
+      effective: FEATURE_REGISTRY.map((f) => {
+        const entry = resolved.byKey.get(f.key)!;
+        // Opus review of 9923b87c, item 5: `serving` is the OLD PATH's verdict (what's
+        // actually applied while entitlements.mode is "shadow"), not the resolver's own
+        // value — those two only coincide by construction, and the whole point of the
+        // explain trace is to show where they diverge. `enforced` reflects the REAL mode:
+        // true only once "live" makes the resolver's verdict the one that's applied.
+        const serving = oldPathByKey.get(f.key) ?? entry.effective;
+        return toEffectiveFeature(
+          entry,
+          serving,
+          resolved.planKey,
+          resolved.catalogVersionId,
+          mode === "live",
+        );
+      }),
+      computedAt: resolved.computedAt,
+    };
+  }
+
+  @Get("tenants/:id/features/effective/:key")
+  @ApiOperation({ summary: "One registry key's resolved verdict for one tenant (explain trace)" })
+  async getTenantFeatureEffective(@Param("id") id: string, @Param("key") key: string) {
+    const [resolved, oldPathByKey, mode] = await Promise.all([
+      this.authority.resolveAll(id),
+      this.authority.computeOldPathAll(id),
+      this.entitlementsMode.getMode(),
+    ]);
+    if (!resolved) return { key, unavailable: true };
+    const entry = resolved.byKey.get(key);
+    if (!entry) throw new NotFoundException(`"${key}" is not a registered feature key.`);
+    const serving = oldPathByKey.get(key) ?? entry.effective;
+    return toEffectiveFeature(
+      entry,
+      serving,
+      resolved.planKey,
+      resolved.catalogVersionId,
+      mode === "live",
+    );
+  }
+
+  @Post("tenants/:id/features/preview")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Before/after per key for a hypothetical plan/override/mode change — writes nothing",
+  })
+  previewTenantFeatures(@Param("id") id: string, @Body() body: FeaturePreviewRequest) {
+    return this.featurePreview.preview(id, body ?? {});
+  }
+
+  @Get("tenants/:id/feature-overrides")
+  @ApiOperation({ summary: "List all feature overrides for a tenant (including revoked/expired)" })
+  listFeatureOverrides(@Param("id") id: string) {
+    return this.featureOverrides.list(id);
+  }
+
+  @Post("tenants/:id/feature-overrides")
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: "Grant or deny a tenant a specific feature key, overriding its plan/addon state",
+  })
+  async createFeatureOverride(
+    @Param("id") id: string,
+    @Body() dto: CreateFeatureOverrideDto,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // B524: enforces the registry key's `requires` (allOf/anyOf) for a GRANT — DENY is never
+    // checked (denying something has no prerequisite to satisfy). The actual check is
+    // `EntitlementAuthority.assertFeatureRequiresMet`, shared with `AddonService.enableAddon`'s
+    // identical guard — see that method's own doc for why it isn't inside
+    // `FeatureOverrideService.create` itself (a real DI cycle) and why calling it from here
+    // instead is safe only as long as this controller stays the ONE caller of `.create()` —
+    // `feature-override-single-caller.spec.ts` (billing/) is the static guard for that.
+    if (dto.effect === "GRANT") {
+      await this.authority.assertFeatureRequiresMet(
+        id,
+        dto.featureKey,
+        dto.acknowledgeUnmetRequires,
+      );
+    }
+    const result = await this.featureOverrides.create({
+      tenantId: id,
+      featureKey: dto.featureKey,
+      effect: dto.effect,
+      kind: dto.kind,
+      reason: dto.reason,
+      expiresAt: dto.expiresAt ? new Date(dto.expiresAt) : null,
+      createdById: admin.sub,
+    });
+    // B524 fix round (Opus review finding F1): `FeatureOverrideService.create` only
+    // invalidates its OWN 30s override cache (`allActive()`), never the resolver's separate
+    // 30s cache layered on top — so a GRANT here that unblocks a `requires` check on a
+    // SUBSEQUENT call (e.g. enabling `driver_payments` right after granting its prerequisite)
+    // could read the pre-grant snapshot and 400 for up to 30s. Mirrors the B509 fix
+    // `AddonService.enableAddon`/`disableAddon` already apply to themselves.
+    this.authority.invalidate(id);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_SET, {
+      featureKey: dto.featureKey,
+      effect: dto.effect,
+      // result.kind (not dto.kind): the row's actual persisted value, so an omitted `kind`
+      // still audits the true default (COMP) rather than `undefined`.
+      kind: result.kind,
+      reason: dto.reason,
+      expiresAt: dto.expiresAt ?? null,
+      // B524: the audit trail must show whether this write is one B524 would otherwise have
+      // blocked — "who granted an inconsistent entitlement and did they knowingly override
+      // the check" is exactly the question this field answers.
+      acknowledgeUnmetRequires: dto.acknowledgeUnmetRequires ?? false,
+    });
+    return result;
+  }
+
+  @Post("tenants/:id/feature-overrides/:overrideId/revoke")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Revoke a tenant feature override (immediate — history is kept)" })
+  async revokeFeatureOverride(
+    @Param("id") id: string,
+    @Param("overrideId") overrideId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    const result = await this.featureOverrides.revoke(id, overrideId);
+    // B524 fix round (F1) — same resolver-cache staleness as createFeatureOverride above,
+    // in the other direction: a revoke that removes a `requires` prerequisite must be visible
+    // to the NEXT grant attempt immediately, not up to 30s later.
+    this.authority.invalidate(id);
+    await this.svc.recordAdminAction(id, admin.sub, AdminAuditAction.FEATURE_OVERRIDE_REVOKED, {
+      overrideId,
+    });
+    return result;
+  }
+
+  // ─── Configuration snapshots (Lane B A2 step c) ───────────────────────────
+  // Every route here inherits the class-level SuperAdminGuard.
+
+  @Get("tenants/:id/config-snapshots")
+  @ApiOperation({
+    summary: "A tenant's archived feature-config snapshots (taken on downgrade), newest first",
+  })
+  listConfigSnapshots(@Param("id", ParseUUIDPipe) id: string) {
+    return this.snapshotAdmin.list(id);
+  }
+
+  @Get("tenants/:id/config-snapshots/:snapshotId/preview")
+  @ApiOperation({
+    summary: "What restoring this snapshot would restore / keep / skip right now — writes nothing",
+  })
+  previewConfigSnapshotRestore(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+  ) {
+    return this.snapshotAdmin.preview(id, snapshotId);
+  }
+
+  @Post("tenants/:id/config-snapshots/:snapshotId/restore")
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: "Restore Now — apply one snapshot as-was to the tenant's current plan" })
+  async restoreConfigSnapshot(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("snapshotId", ParseUUIDPipe) snapshotId: string,
+    @CurrentUser() admin: JwtPayload,
+  ) {
+    // The audit row (with the report) is written by the service INSIDE the restore transaction.
+    return this.snapshotAdmin.restoreNow(id, snapshotId, admin.sub);
   }
 
   // ─── Platform AI Configuration ────────────────────────────────────────────

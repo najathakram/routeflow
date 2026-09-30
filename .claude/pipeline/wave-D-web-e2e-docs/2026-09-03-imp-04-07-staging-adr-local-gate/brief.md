@@ -1,0 +1,39 @@
+# Brief — PR-12 · Items 4 + 7: ADR 0002 (staging, deferred), delete `deploy-staging.yml`, PR template (docs, light loop)
+
+Branch `docs/imp-04-07-staging-adr-local-gate` (after PR-11). Commit type `docs:`. Scale small.
+
+## Facts (surveyed)
+
+No `railway.toml` defines a staging environment; E2E runs post-deploy against prod. Dormant:
+`.github/workflows/deploy-staging.yml` (`branches: [__disabled_develop__]`, GHCR build, auto
+`prisma migrate deploy` — contradicts the never-auto-migrate policy) and
+`deploy-production.yml` (`workflow_dispatch` only; its header keeps it as a reference
+implementation for a future registry pipeline). `docs/railway-deployment.md:240-258` documents a
+staging token/GitHub-environment setup. `tenant-host.ts` treats `*.railway.app` as a hosting
+domain (a staging host on Railway's domain is safe; a custom `acme.staging.…` scheme would need
+care). Web bakes `NEXT_PUBLIC_API_URL` at build (`apps/web/Dockerfile:50-52`), so a staging web
+image needs its own ARG. ADR 0001 §option 2 already defers cloud staging on cost. Item 7's two
+gaps: `RUN_STARTUP_DDL` (closed by PR-1 — the concept is gone) and the PR-template line.
+`.github/PULL_REQUEST_TEMPLATE.md` checklist: "Tested locally / No console.log / Migration
+included / Relevant mocks updated".
+
+## Requirements
+
+| R#  | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Verified by |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| R1  | `docs/adr/0002-staging-environment.md` (same template as ADR 0001): Status **Deferred — design of record**; Context (the facts above, with file refs); Decision: a `staging` Railway environment in the same project — api + web + postgres + redis — deployed from a `staging` branch by Railway's native GitHub auto-deploy (not a GHCR push), a staging-tagged web image built with `NEXT_PUBLIC_API_URL` pointing at the staging API, seeded only from the test-tenant allow-list (`scripts/lib/test-tenants.cjs`), E2E gating on `deployment_status` for the staging environment before a manual promotion to prod; explicit non-decisions (custom staging subdomains; build-once-promote — deferred with the ARG constraint named); Consequences: recurring cost (why deferred), what the local lane (PR-7) covers instead and what it does not (residual: E2E still reports on prod); Follow-ons listed by name: P-18 httpOnly JWT migration, P-20 nonce CSP, `deploy-production.yml` cited as the worked GHCR→Railway reference. | review      |
+| R2  | Delete `.github/workflows/deploy-staging.yml`. Keep `deploy-production.yml` unchanged. `docs/railway-deployment.md`: prepend a 3-line status banner ("historical; the staging design of record is ADR 0002; the live deploy flow is Railway auto-deploy — see CLAUDE.md"), no other edit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | review, A1  |
+| R3  | `.github/PULL_REQUEST_TEMPLATE.md` checklist gains: `- [ ] Ran \`npm run local:validate\` (and \`npm run local:e2e\` for UI changes) against the local Docker stack` placed first.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | review      |
+| R4  | `docs/IMPROVEMENTS.md`: row 4 `deferred (ADR 0002)`, row 7 `shipped (#606; gaps closed PR-1/PR-12)`; `README.md` CI table is PR-14's — untouched here. Code-map: none; `_meta.json` `generatedAt`; lessons `updatedAt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | review      |
+
+## Acceptance
+
+- A1: `ls .github/workflows` shows no `deploy-staging.yml`; `git grep -n "deploy-staging"` returns
+  only historical prose (CHANGELOG/lessons/ADR); `npm run verify` green (no workflow lint exists;
+  YAML unaffected).
+
+## Files
+
+`docs/adr/0002-staging-environment.md` (new); `.github/workflows/deploy-staging.yml` (deleted);
+`docs/railway-deployment.md` (banner); `.github/PULL_REQUEST_TEMPLATE.md`; `docs/IMPROVEMENTS.md`;
+bookkeeping.

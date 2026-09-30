@@ -9,6 +9,10 @@ export interface Driver {
   vehicleModel?: string;
   vehicleColour?: string;
   vehiclePlate?: string;
+  /** Composed home base ("line1, city, state, zip"), set via the four home* update fields. */
+  homeAddress?: string | null;
+  homeLat?: number | null;
+  homeLng?: number | null;
   status: "ACTIVE" | "INACTIVE";
   user: {
     id: string;
@@ -32,7 +36,10 @@ interface PaginatedResponse<T> {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-export function useDrivers(params?: ListParams, options?: { refetchInterval?: number }) {
+export function useDrivers(
+  params?: ListParams,
+  options?: { refetchInterval?: number; enabled?: boolean },
+) {
   return useQuery<PaginatedResponse<Driver>>({
     queryKey: ["drivers", params],
     queryFn: () => apiClient.get("/drivers", { params }).then((r) => r.data),
@@ -69,9 +76,21 @@ export function useCreateDriver() {
   });
 }
 
+/**
+ * PATCH /drivers/:id body. The home base is WRITTEN as four structured fields
+ * (the API composes + geocodes them into `homeAddress`/`homeLat`/`homeLng`) but
+ * READ back as the composed string, so the write shape isn't `Partial<Driver>`.
+ */
+export type UpdateDriverInput = Partial<Driver> & {
+  homeLine1?: string;
+  homeCity?: string;
+  homeState?: string;
+  homeZip?: string;
+};
+
 export function useUpdateDriver() {
   const qc = useQueryClient();
-  return useMutation<Driver, Error, { id: string; data: Partial<Driver> }>({
+  return useMutation<Driver, Error, { id: string; data: UpdateDriverInput }>({
     mutationFn: ({ id, data }) => apiClient.patch(`/drivers/${id}`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["drivers"] });

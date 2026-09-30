@@ -29,8 +29,19 @@ export const useBuyerSessionStore = create<BuyerSessionState>()((set) => ({
   isLoading: true,
 
   initialize: async () => {
-    const [buyer, seller] = await Promise.all([getStoredBuyer(), getActiveSeller()]);
-    set({ buyer, activeSeller: seller, isLoading: false });
+    // REG-B204: this was the ONE boot store whose initialize had no catch, and
+    // the root layout's `bootstrapping` gate ANDs over all three — so a
+    // storage failure here (on device, SecureStore rejecting our colon
+    // -namespaced keys) left the app on the splash spinner forever. A failed
+    // read must resolve to "signed out", never to an eternal gate.
+    try {
+      const [buyer, seller] = await Promise.all([getStoredBuyer(), getActiveSeller()]);
+      set({ buyer, activeSeller: seller });
+    } catch {
+      set({ buyer: null, activeSeller: null });
+    } finally {
+      set({ isLoading: false });
+    }
     // BUG-B1-1: when buyer-auth's 401 retry fails it clears tokens; mirror
     // that into in-memory state so the layout redirect-to-login fires.
     registerBuyerSessionExpiredHandler(() => {

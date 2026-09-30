@@ -20,14 +20,16 @@ import {
 } from "lucide-react";
 import { Button, Card, Input, useToast, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useQuery } from "@tanstack/react-query";
 import {
   useCreateInvoice,
   useUpdateInvoice,
   useCreateInvoiceFromOrder,
+  useInvoiceSettings,
   type CreateInvoiceItem,
 } from "@/lib/api/invoices";
-import { useCreateSale, useUninvoicedOrders } from "@/lib/api/orders";
+import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
 import {
   useCustomers,
@@ -36,18 +38,27 @@ import {
   type CustomerPrice,
 } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import {
+  saleLineMovedOffSpecial,
+  saleLineNeedsReason,
+  saleLinePricing,
+  type SaleLinePricing,
+} from "@/lib/sale-line-pricing";
+import { reasonRequiredMessage } from "@/lib/staff-price-override";
 import { apiClient } from "@/lib/api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { displayProductName } from "@/lib/product-display";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
-import { fmt } from "@/lib/formatting";
+import { fmt, fmtCalendarDate } from "@/lib/formatting";
+import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
+  isSpecialTier,
   computeLineSubtotal,
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
 import { DecimalInput, MoneyInput } from "@/components/MoneyInput";
@@ -62,23 +73,6 @@ const TERMS_OPTIONS = [
   { value: "Net 45", label: "Net 45" },
   { value: "Net 60", label: "Net 60" },
 ];
-
-function getDaysForTerms(terms: string): number | null {
-  switch (terms) {
-    case "Due on Receipt":
-      return 0;
-    case "Net 15":
-      return 15;
-    case "Net 30":
-      return 30;
-    case "Net 45":
-      return 45;
-    case "Net 60":
-      return 60;
-    default:
-      return null;
-  }
-}
 
 /** Current UTC calendar day — the bound the API applies to a backdated sale. */
 function todayIso(): string {
@@ -207,6 +201,8 @@ function ProductSearchInput({
     unitPrice: string,
     avgCost?: number,
     unitsPerBox?: number,
+    /** #2696(c): the picked product itself — its tier ladder prices the line (SA-558e). */
+    product?: Record<string, unknown>,
   ) => void;
   onCreateProduct?: (searchTerm: string) => void;
   onBarcodeNotFound?: (barcode: string) => void;
@@ -249,6 +245,7 @@ function ProductSearchInput({
       String(p.pricePerUnit),
       p.averageCost ? parseFloat(String(p.averageCost)) : undefined,
       p.unitsPerBox ? Number(p.unitsPerBox) : undefined,
+      p,
     );
     setQuery(p.name);
     setOpen(false);
@@ -405,6 +402,10 @@ interface LineItemState {
   /** UI-only qty entry mode for case-packed lines. NEVER submitted — the payload always
    *  carries {qty, boxes, pieces} and the per-case unitPrice. */
   sellBy?: "case" | "unit";
+  /** #2696(c) SA-558e: the one-rule inputs (tier price, list, special?) — see sale-line-pricing. */
+  pricing?: SaleLinePricing;
+  /** Why a New-sale line's price moves off the customer's special price (sent then). */
+  overrideReason?: string;
 }
 
 function createEmptyItem(): LineItemState {
@@ -417,6 +418,20 @@ function createEmptyItem(): LineItemState {
     discount: 0,
     taxable: false,
   };
+}
+
+/**
+ * B664: only unitsPerBox > 1 is real box packaging. A product can carry unitsPerBox = 1
+ * (the DTO has no minimum), and a truthy check alone (`upb ? … : undefined`) seeds a line
+ * with boxes:1/pieces:0/unitsPerBox:1 for it — on the server, `manual-invoice-lines.ts`
+ * re-derives quantity from those boxes/pieces via `normalizeBoxesPieces` and, because
+ * `pricing.ts`'s own `hasBoxPackaging` is also `upb > 1`, stores the line at qty 0 / $0.
+ * The edit form's hydrate already guards with `> 1` (see its onChange callback); this
+ * mirrors that so the new-invoice form never sends boxes/pieces for a degenerate upb.
+ */
+function boxedUnitsPerBox(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
 function lineTotal(item: LineItemState): number {
@@ -652,6 +667,11 @@ export default function NewInvoicePage() {
   // New-sale only: are the goods going out today? Yes = van/cash sale (order
   // delivered + invoice sent now); No = bill before delivery (PENDING order + draft).
   const [deliveredNow, setDeliveredNow] = React.useState(true);
+  // Delivery-date picker (replaces the old delivered-today binary): past/today ⇒
+  // delivered semantics (deliveredAt = that date, backdated when before today);
+  // future ⇒ scheduled deliver-later with that requested date. Defaults to today,
+  // same as the "Yes, delivered today" starting state.
+  const [deliveredOn, setDeliveredOn] = React.useState(todayIso());
 
   // Track the draft id we've previewed so subsequent "Preview" clicks update
   // the same draft instead of creating a new one each time.
@@ -668,11 +688,13 @@ export default function NewInvoicePage() {
   const [subject, setSubject] = React.useState("");
   const [terms, setTerms] = React.useState("");
   const [issueDate, setIssueDate] = React.useState(todayIso);
-  const [dueDate, setDueDate] = React.useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 30);
-    return d.toISOString().slice(0, 10);
-  });
+  // Provisional only — the seeding effect below replaces it with the tenant's
+  // configured default term as soon as /settings/invoice resolves, and submit
+  // refuses to post a due date that no term ever backed.
+  const [dueDate, setDueDate] = React.useState(() => addDaysIso(todayIso(), 30));
+  // Set when the operator types straight into the Due Date field: their exact
+  // date then wins over the tenant-default seed and over an issue-date change.
+  const dueDateEditedRef = React.useRef(false);
   const [items, setItems] = React.useState<LineItemState[]>([createEmptyItem()]);
   // Live cost/margin — the negotiation floor (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
@@ -687,6 +709,11 @@ export default function NewInvoicePage() {
   }, [scrollToKey, items]);
   const [notes, setNotes] = React.useState("");
   const [termsText, setTermsText] = React.useState("");
+  // Deposit schedule — deliberately minimal (Tier 1), standalone invoices only:
+  // CreateSaleDto has no deposit fields, so this never applies to a "new sale".
+  const [depositOpen, setDepositOpen] = React.useState(false);
+  const [depositPercent, setDepositPercent] = React.useState<number | null>(null);
+  const [depositDueDate, setDepositDueDate] = React.useState("");
   const [adjustment, setAdjustment] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [showAvgCost, setShowAvgCost] = React.useState(false);
@@ -721,6 +748,51 @@ export default function NewInvoicePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings]);
 
+  // Seed the Payment Terms dropdown — and the due date it drives — from the
+  // tenant's configured default (Settings → Invoicing, the same value the
+  // server's resolveDefaultTerms() applies). The composer posts its due date,
+  // so leaving this at the page's hardcoded +30 silently overrode a tenant
+  // configured for Net 15 / Due on Receipt on every sale. Seeds once, and
+  // never over a choice the operator already made.
+  const { data: invoiceSettings } = useInvoiceSettings();
+  const didSeedTermsRef = React.useRef(false);
+  // Tracks WHO last auto-seeded `terms`, so a later, more specific seed can
+  // still replace an earlier auto-seed (customer default beats tenant default,
+  // whichever fires first) without ever overriding the operator's own pick.
+  const termsSourceRef = React.useRef<"tenant" | "customer" | "manual" | null>(null);
+  React.useEffect(() => {
+    const configured = invoiceSettings?.defaultTerms;
+    if (didSeedTermsRef.current || !configured) return;
+    didSeedTermsRef.current = true;
+    if (termsSourceRef.current || dueDateEditedRef.current) return;
+    const days = getDaysForTerms(configured);
+    if (days === null) return; // a term this page can't price — leave it to the server
+    termsSourceRef.current = "tenant";
+    setTerms(configured);
+    setDueDate(addDaysIso(issueDate, days));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoiceSettings]);
+
+  // Seed Payment Terms from the selected customer's defaultPaymentTerms
+  // ("this customer is always Net 60") — beats the tenant default above even
+  // if that one already fired, but never overrides a term the operator
+  // explicitly picked or a hand-typed due date. Once per customer selection,
+  // so switching customers before choosing a term re-prefills for the new one.
+  const seededCustomerIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (!customer || seededCustomerIdRef.current === customer.id) return;
+    seededCustomerIdRef.current = customer.id;
+    const customerDefault = customer.defaultPaymentTerms;
+    if (!customerDefault) return;
+    if (termsSourceRef.current === "manual" || dueDateEditedRef.current) return;
+    const days = getDaysForTerms(customerDefault);
+    if (days === null) return;
+    termsSourceRef.current = "customer";
+    setTerms(customerDefault);
+    setDueDate(addDaysIso(issueDate, days));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer]);
+
   const { data: customerPricesData } = useCustomerPrices(customer?.id);
   // Per-product PRICE resolved from the CustomerPrice TIER override through
   // the product's tier ladder. The old code read a nonexistent `specialPrice`
@@ -730,34 +802,55 @@ export default function NewInvoicePage() {
     const map: Record<string, number> = {};
     for (const cp of (customerPricesData ?? []) as CustomerPrice[]) {
       if (!cp.product) continue;
-      const price = getTierPrice(cp.product, cp.pricingTier);
+      // An msrp-only override row has pricingTier null — price at the customer's default tier.
+      const price = getTierPrice(cp.product, cp.pricingTier ?? customer?.pricingTier ?? 1);
       if (Number.isFinite(price)) map[cp.productId] = price;
     }
     return map;
-  }, [customerPricesData]);
+  }, [customerPricesData, customer]);
+  // #2696(c): the tier the server prices each product at (CustomerPrice row, else the default).
+  const tierFor = (productId: string): number => {
+    const cp = ((customerPricesData ?? []) as CustomerPrice[]).find(
+      (c) => c.productId === productId,
+    );
+    return cp?.pricingTier ?? customer?.pricingTier ?? 1;
+  };
 
   // ── Auto-update due date when terms change ────────────────────────────────
 
   function handleTermsChange(t: string) {
+    // Picking a REAL term re-derives the due date, superseding any hand-typed
+    // one. Reverting to the "Select terms…" placeholder (value "") must keep
+    // the screen honest about what will be SAVED: a hand-typed date (edited
+    // ref) stays and keeps being posted; otherwise the display re-syncs to the
+    // tenant default the server will apply (`?? 30` mirrors the server's
+    // TERM_DAYS fallback), instead of showing a stale date from the previous
+    // pick that would silently not be saved.
+    // Any deliberate dropdown pick — including reverting to the placeholder —
+    // is the operator's own choice: it must never be overwritten by a later
+    // tenant/customer auto-seed.
+    termsSourceRef.current = "manual";
     setTerms(t);
     const days = getDaysForTerms(t);
-    if (days !== null && issueDate) {
-      const d = new Date(issueDate);
-      d.setDate(d.getDate() + days);
-      setDueDate(d.toISOString().slice(0, 10));
+    if (days !== null) {
+      dueDateEditedRef.current = false;
+      if (issueDate) setDueDate(addDaysIso(issueDate, days));
+    } else if (!dueDateEditedRef.current && issueDate) {
+      const defaultDays = getDaysForTerms(invoiceSettings?.defaultTerms ?? "") ?? 30;
+      setDueDate(addDaysIso(issueDate, defaultDays));
     }
   }
 
   function handleIssueDateChange(d: string) {
     setIssueDate(d);
-    if (terms) {
-      const days = getDaysForTerms(terms);
-      if (days !== null && d) {
-        const due = new Date(d);
-        due.setDate(due.getDate() + days);
-        setDueDate(due.toISOString().slice(0, 10));
-      }
-    }
+    // Keep the due date anchored to the ISSUE date — a backdated sale runs its
+    // payment term from the sale date, not from today. A hand-typed due date is
+    // the operator's explicit choice, so it survives an issue-date change; when
+    // the dropdown is untouched, fall back to the tenant's configured default so
+    // a backdate still moves the due date (it used to keep the mount-time today+30).
+    if (dueDateEditedRef.current) return;
+    const days = getDaysForTerms(terms || (invoiceSettings?.defaultTerms ?? ""));
+    if (days !== null && d) setDueDate(addDaysIso(d, days));
   }
 
   // ── Calculations ────────────────────────────────────────────────────────────
@@ -806,12 +899,14 @@ export default function NewInvoicePage() {
    * (or 1 unit) — same ergonomics as the order scan flow.
    */
   function addProductFromCatalog(product: any) {
-    const upb = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
+    const upb = boxedUnitsPerBox(product.unitsPerBox);
     const listPrice = parseFloat(String(product.pricePerUnit ?? 0));
     // Per-product tier override first, then the customer's own tier ladder —
     // a Tier-3 customer previously billed at LIST on every catalog add here.
     const customerTier = customer?.pricingTier ?? 1;
-    const tierLadderPrice = customerTier !== 1 ? getTierPrice(product, customerTier) : undefined;
+    const tierLadderPrice = isSpecialTier(customerTier)
+      ? getTierPrice(product, customerTier)
+      : undefined;
     const specialPrice: number | undefined = priceMap[product.id] ?? tierLadderPrice;
     const effectivePrice =
       specialPrice != null && Number.isFinite(specialPrice) && specialPrice !== listPrice
@@ -832,6 +927,7 @@ export default function NewInvoicePage() {
       taxable: false,
       regularPrice: effectivePrice !== listPrice ? listPrice : undefined,
       isSpecialPrice: effectivePrice !== listPrice,
+      pricing: saleLinePricing(product, tierFor(product.id)),
       avgCost: product.averageCost ? parseFloat(String(product.averageCost)) : undefined,
       category: product.category ?? undefined,
       unitsPerBox: upb,
@@ -869,7 +965,7 @@ export default function NewInvoicePage() {
     setScrollToKey(existing ? existing.key : lineItem.key);
     setErrors((e) => ({ ...e, items: "" }));
     // Refocus the scanner input so a sequence of scans is uninterrupted.
-    setTimeout(() => scanInputRef.current?.focus(), 30);
+    scheduleScannerRefocus(scanInputRef, 30);
   }
 
   // ── Top-of-table scan/search input ───────────────────────────────────────────
@@ -959,6 +1055,14 @@ export default function NewInvoicePage() {
         break;
       }
     }
+    if (depositOpen) {
+      if (depositPercent != null && depositPercent > 0 && !depositDueDate) {
+        errs.depositDueDate = "Deposit due date is required.";
+      }
+      if (depositDueDate && !(depositPercent != null && depositPercent > 0)) {
+        errs.depositPercent = "Enter a deposit percentage.";
+      }
+    }
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -1002,6 +1106,10 @@ export default function NewInvoicePage() {
       // making the configured Terms & Conditions invisible on every new
       // invoice. The dropdown's effect is preserved via dueDate above.
       terms: termsText.trim() || undefined,
+      // The structured "Net 30"-style label — distinct from `terms` above.
+      // Always agrees with the dueDate above: picking a term derives the date,
+      // and hand-typing a date clears the term, so the two can never disagree.
+      paymentTermsLabel: terms || undefined,
       items: items.map(
         (it): CreateInvoiceItem => ({
           productId: it.productId,
@@ -1011,7 +1119,9 @@ export default function NewInvoicePage() {
           discount: Number(it.discount) || undefined,
           // Map the taxable checkbox to an actual tax rate sent to the API
           taxRate: it.taxable ? taxRate : 0,
-          ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+          // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+          // item state for upb<=1, but a read site should never trust a single write-side guard.
+          ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
         }),
       ),
       notes: notes.trim() || undefined,
@@ -1020,6 +1130,13 @@ export default function NewInvoicePage() {
       // Map adjustment to discount (negative = reduce price) or shippingFee (positive = surcharge)
       ...(adjustment < 0 ? { discount: Math.abs(adjustment) } : {}),
       ...(adjustment > 0 ? { shippingFee: adjustment } : {}),
+      // Deposit is deliberately all-or-nothing here: a percent with no due date
+      // (or vice versa) isn't a usable schedule, so validate() already blocks
+      // submit on that combination — this mirrors the same completeness check
+      // rather than silently sending a half-set deposit.
+      ...(depositOpen && depositPercent != null && depositPercent > 0 && depositDueDate
+        ? { depositPercent, depositDueDate }
+        : {}),
       ...(sendNow ? { send: true } : {}),
     };
   }
@@ -1163,15 +1280,25 @@ export default function NewInvoicePage() {
    * otherwise a PENDING order + DRAFT invoice is created (sent now only when `send`).
    */
   function handleSubmitSale(send: boolean) {
+    const saleLines = items.filter((it) => it.productId && Number(it.qty) > 0);
+    // #2696(c) SA-558e: never send what the server refuses — a special price needs its reason.
+    const needsReason = saleLines.find(saleLineNeedsReason);
+    if (needsReason) {
+      toast({ title: reasonRequiredMessage(needsReason.description), variant: "error" });
+      return;
+    }
     // A sale must be made of real products (an order needs products).
-    const saleItems = items
-      .filter((it) => it.productId && Number(it.qty) > 0)
-      .map((it) => ({
-        productId: it.productId as string,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-        ...(it.unitsPerBox ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
-      }));
+    const saleItems = saleLines.map((it) => ({
+      productId: it.productId as string,
+      qty: Number(it.qty),
+      unitPrice: Number(it.unitPrice),
+      ...(saleLineMovedOffSpecial(it) && it.overrideReason?.trim()
+        ? { overrideReason: it.overrideReason.trim() }
+        : {}),
+      // Defense in depth (#1176 review): boxedUnitsPerBox() already keeps unitsPerBox out of
+      // item state for upb<=1, but a read site should never trust a single write-side guard.
+      ...((it.unitsPerBox ?? 0) > 1 ? { boxes: it.boxes ?? 0, pieces: it.pieces ?? 0 } : {}),
+    }));
 
     const errs: Record<string, string> = {};
     if (!customer) errs.customer = "Please select a customer.";
@@ -1194,11 +1321,24 @@ export default function NewInvoicePage() {
         customerId: customer!.id,
         items: saleItems,
         deliveredNow,
+        // The delivery-date picker: replaces deliveredNow's binary on the server
+        // (deliveredNow above is still sent for backward compat with older callers).
+        deliveredOn,
         notes: notes.trim() || undefined,
         ...(adjustment < 0 ? { discountAmount: Math.abs(adjustment) } : {}),
         ...(backdatedTo ? { orderDate: backdatedTo } : {}),
+        // Only post a due date some term actually produced: the operator's
+        // pick, their hand-typed date, or the tenant default once it seeded.
+        // Otherwise this page's provisional +30 would override the server's
+        // resolveDefaultTerms() with a date nobody chose.
+        ...((terms || dueDateEditedRef.current) && dueDate ? { dueDate } : {}),
+        ...(termsText.trim() ? { terms: termsText.trim() } : {}),
+        // Structured "Net 30"-style label — orders.ts's CreateSaleDto isn't
+        // part of this package's file set, so the API-supported field is sent
+        // via a local cast rather than widening that shared type here.
+        ...(terms ? { paymentTermsLabel: terms } : {}),
         send,
-      },
+      } as CreateSaleDto & { paymentTermsLabel?: string },
       {
         onSuccess: (inv) => {
           toast({
@@ -1298,15 +1438,20 @@ export default function NewInvoicePage() {
             <div>
               <p className="text-sm font-semibold text-navy">Going out today?</p>
               <p className="text-sm text-navy/70">
-                {deliveredNow
-                  ? "Delivered today — the order is marked delivered and the invoice is issued now."
-                  : "Deliver later — a draft invoice is created and mirrors the order; review and send it after the order is delivered."}
+                {deliveredOn > todayIso()
+                  ? `Scheduled — the order is created and delivers on ${fmtCalendarDate(deliveredOn)}.`
+                  : deliveredOn === todayIso()
+                    ? "Delivered today — the order is marked delivered and the invoice is issued now."
+                    : `Delivered — the order is marked delivered on ${fmtCalendarDate(deliveredOn)} and the invoice is issued now.`}
               </p>
             </div>
-            <div className="flex shrink-0 gap-2">
+            <div className="flex shrink-0 flex-wrap items-end gap-2">
               <button
                 type="button"
-                onClick={() => setDeliveredNow(true)}
+                onClick={() => {
+                  setDeliveredNow(true);
+                  setDeliveredOn(todayIso());
+                }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                   deliveredNow
@@ -1318,7 +1463,12 @@ export default function NewInvoicePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setDeliveredNow(false)}
+                onClick={() => {
+                  setDeliveredNow(false);
+                  // Deliver-later defaults to tomorrow, but only if the field isn't
+                  // already scheduled in the future — don't clobber a chosen date.
+                  setDeliveredOn((prev) => (prev > todayIso() ? prev : addDaysIso(todayIso(), 1)));
+                }}
                 className={cn(
                   "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                   !deliveredNow
@@ -1328,6 +1478,26 @@ export default function NewInvoicePage() {
               >
                 {!deliveredNow && <Check className="h-4 w-4" />} No, deliver later
               </button>
+              <div>
+                <label className="mb-1 block text-[11px] font-medium text-navy/60">
+                  Delivery date
+                </label>
+                <input
+                  type="date"
+                  value={deliveredOn}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (!value) return;
+                    // The date drives the semantics: a future pick auto-switches to
+                    // deliver-later, and stepping it back to today/the past switches
+                    // back to delivered (possibly backdated) — the two buttons above
+                    // just reflect this, they don't independently gate it.
+                    setDeliveredOn(value);
+                    setDeliveredNow(value <= todayIso());
+                  }}
+                  className="h-9 w-32 rounded-lg border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+              </div>
             </div>
           </div>
         ) : (
@@ -1424,7 +1594,15 @@ export default function NewInvoicePage() {
                       type="date"
                       value={dueDate}
                       min={issueDate || undefined}
-                      onChange={(e) => setDueDate(e.target.value)}
+                      onChange={(e) => {
+                        dueDateEditedRef.current = true;
+                        // A hand-typed due date supersedes the term that derived it, so
+                        // drop the stale selection: posting `paymentTermsLabel: "Net 30"`
+                        // alongside a due date that is not issue+30 is exactly the
+                        // label/due-date disagreement this model exists to eliminate.
+                        setTerms("");
+                        setDueDate(e.target.value);
+                      }}
                       className={cn(
                         "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
                         errors.dueDate ? "border-danger" : "border-surface-border",
@@ -1433,6 +1611,76 @@ export default function NewInvoicePage() {
                     {errors.dueDate && <p className="mt-1 text-xs text-danger">{errors.dueDate}</p>}
                   </div>
                 </div>
+
+                {/* Deposit schedule — deliberately minimal (Tier 1): a percent
+                    of the total due by a separate date, e.g. "50% up front,
+                    50% after Net 60". The dollar amount is always derived
+                    server-side from depositPercent × total, never stored.
+                    Standalone invoices only — a "new sale" posts through
+                    CreateSaleDto, which has no deposit fields. */}
+                {!isSale &&
+                  (depositOpen ? (
+                    <div className="space-y-2 rounded-lg border border-surface-border bg-surface-raised p-3">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                            Deposit %
+                          </label>
+                          <DecimalInput
+                            decimals={2}
+                            min={0.01}
+                            max={99.99}
+                            value={depositPercent}
+                            onChange={(v) => setDepositPercent(v)}
+                            className={cn(
+                              "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                              errors.depositPercent ? "border-danger" : "border-surface-border",
+                            )}
+                          />
+                          {errors.depositPercent && (
+                            <p className="mt-1 text-xs text-danger">{errors.depositPercent}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                            Deposit Due Date
+                          </label>
+                          <input
+                            type="date"
+                            value={depositDueDate}
+                            onChange={(e) => setDepositDueDate(e.target.value)}
+                            className={cn(
+                              "h-10 w-full rounded-lg border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500",
+                              errors.depositDueDate ? "border-danger" : "border-surface-border",
+                            )}
+                          />
+                          {errors.depositDueDate && (
+                            <p className="mt-1 text-xs text-danger">{errors.depositDueDate}</p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDepositOpen(false);
+                          setDepositPercent(null);
+                          setDepositDueDate("");
+                        }}
+                        className="text-xs font-medium text-navy/50 hover:text-danger transition-colors"
+                      >
+                        Remove deposit
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setDepositOpen(true)}
+                      className="flex items-center gap-1.5 text-sm font-medium text-brand-500 hover:text-brand-600 transition-colors"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add deposit
+                    </button>
+                  ))}
               </div>
             </Card>
 
@@ -1512,7 +1760,9 @@ export default function NewInvoicePage() {
                                     ) : (
                                       <span className="italic">no SKU</span>
                                     )}
-                                    {p.unitsPerBox ? <span> · {p.unitsPerBox} per box</span> : null}
+                                    {Number(p.unitsPerBox ?? 0) > 1 ? (
+                                      <span> · {p.unitsPerBox} per box</span>
+                                    ) : null}
                                   </p>
                                 </div>
                                 <div className="text-right">
@@ -1606,15 +1856,26 @@ export default function NewInvoicePage() {
                           setCreateProductTargetIdx(idx);
                           setCreateProductOpen(true);
                         }}
-                        onChange={(desc, pid, price, avgCost, unitsPerBox) => {
-                          const specialPrice = pid ? priceMap[pid] : undefined;
+                        onChange={(desc, pid, price, avgCost, unitsPerBox, product) => {
+                          // #2696(c) SA-558e: a picked product prices at the customer's TIER (the
+                          // server's own baseline) — list for a tier customer would be refused.
+                          const pricing =
+                            pid && product ? saleLinePricing(product, tierFor(pid)) : undefined;
+                          const specialPrice =
+                            pricing && pricing.tierPrice !== pricing.listPrice
+                              ? pricing.tierPrice
+                              : pid
+                                ? priceMap[pid]
+                                : undefined;
                           const effectivePrice =
                             specialPrice ?? (price ? parseFloat(price) : item.unitPrice);
-                          const upb = unitsPerBox ?? undefined;
+                          const upb = boxedUnitsPerBox(unitsPerBox);
                           updateItem(item.key, {
                             description: desc,
                             productId: pid || undefined,
                             unitPrice: effectivePrice,
+                            pricing,
+                            overrideReason: undefined,
                             regularPrice:
                               specialPrice !== undefined ? parseFloat(price) : undefined,
                             isSpecialPrice: specialPrice !== undefined,
@@ -1659,7 +1920,7 @@ export default function NewInvoicePage() {
                     </div>
 
                     {/* Qty — box/piece mode if unitsPerBox set, otherwise plain number */}
-                    {item.unitsPerBox ? (
+                    {(item.unitsPerBox ?? 0) > 1 ? (
                       item.sellBy === "unit" ? (
                         <div className="flex flex-col gap-0.5">
                           <input
@@ -1698,7 +1959,7 @@ export default function NewInvoicePage() {
                             <input
                               type="number"
                               min={0}
-                              max={item.unitsPerBox - 1}
+                              max={(item.unitsPerBox ?? 0) - 1}
                               value={item.pieces ?? 0}
                               onChange={(e) => {
                                 const pieces = Math.max(0, parseInt(e.target.value, 10) || 0);
@@ -1739,8 +2000,26 @@ export default function NewInvoicePage() {
                         min={0}
                         value={item.unitPrice}
                         onChange={(v) => updateItem(item.key, { unitPrice: v ?? 0 })}
+                        aria-label="Unit price"
                         className="h-9 w-full rounded border border-surface-border bg-white px-2 text-right text-sm text-navy focus:border-transparent focus:outline-none focus:ring-1 focus:ring-brand-500"
                       />
+                      {/* #2696(c) SA-558e: off the customer's special price ⇒ a reason, as the
+                          server requires on a sale (pricing's decideStaffOverride). */}
+                      {isSale && saleLineMovedOffSpecial(item) && (
+                        <input
+                          type="text"
+                          maxLength={200}
+                          value={item.overrideReason ?? ""}
+                          onChange={(e) => updateItem(item.key, { overrideReason: e.target.value })}
+                          aria-label="Reason (required)"
+                          aria-invalid={saleLineNeedsReason(item)}
+                          placeholder="Reason (required)"
+                          className={cn(
+                            "mt-1 h-8 w-full rounded border bg-white px-2 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500",
+                            saleLineNeedsReason(item) ? "border-danger" : "border-surface-border",
+                          )}
+                        />
+                      )}
                       {item.unitsPerBox && item.unitsPerBox > 1 && item.unitPrice > 0 && (
                         <p className="text-[9px] text-navy/70 text-right mt-0.5">
                           ${perUnitPrice(item.unitPrice, item.unitsPerBox)?.toFixed(2)}/pc
@@ -1953,7 +2232,7 @@ export default function NewInvoicePage() {
           if (createProductTargetIdx !== null) {
             // Real box size so a just-created boxed product gets the Boxes+Pcs
             // editor — mirrors the ProductSearchInput onChange handler above.
-            const upb = product.unitsPerBox ?? undefined;
+            const upb = boxedUnitsPerBox(product.unitsPerBox);
             setItems((prev) =>
               prev.map((item, i) =>
                 i === createProductTargetIdx

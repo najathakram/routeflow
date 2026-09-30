@@ -5,6 +5,7 @@
  * the pending-order-mirror edit block — all mirrors of server guards.
  */
 import {
+  canSendInvoiceNow,
   canWriteOff,
   invoiceActionFlags,
   isPaymentEditable,
@@ -128,5 +129,36 @@ describe("isPendingOrderMirror", () => {
     expect(
       isPendingOrderMirror({ orderId: "o1", deliveryBatchId: "b1", orderStatus: "CONFIRMED" }),
     ).toBe(false);
+  });
+});
+
+describe("canSendInvoiceNow", () => {
+  it("allows sending a plain DRAFT", () => {
+    expect(canSendInvoiceNow("DRAFT", false)).toBe(true);
+  });
+
+  it("blocks a DRAFT that is still a pending order mirror (the 400 this fixes)", () => {
+    // assertOrderInvoiceUnlocked rejects the send until the order is delivered,
+    // so DRAFT alone was never a sufficient gate.
+    expect(canSendInvoiceNow("DRAFT", true)).toBe(false);
+  });
+
+  it("blocks every already-sent or terminal status", () => {
+    for (const s of ["SENT", "VIEWED", "PARTIAL", "OVERDUE", "PAID", "VOID", "WRITTEN_OFF"]) {
+      expect(canSendInvoiceNow(s, false)).toBe(false);
+    }
+  });
+
+  it("leaves a mirrored draft with neither Send nor Edit offered", () => {
+    // The screen renders Edit as `flags.canEdit && !pendingMirror`; Send now
+    // carries the same mirror term instead of trusting DRAFT alone.
+    const pendingMirror = true;
+    const flags = invoiceActionFlags({
+      status: "DRAFT",
+      paymentCount: 0,
+      isOrderLinked: true,
+    });
+    expect(flags.canEdit && !pendingMirror).toBe(false);
+    expect(canSendInvoiceNow("DRAFT", pendingMirror)).toBe(false);
   });
 });

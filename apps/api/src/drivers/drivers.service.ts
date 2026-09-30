@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
 } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import * as crypto from "crypto";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
@@ -14,10 +16,16 @@ import { CreateDriverDto } from "./dto/create-driver.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
 import { ChangeDriverStatusDto } from "./dto/change-driver-status.dto";
 import { PostLocationDto } from "./dto/post-location.dto";
+import { geocodeAddress } from "../common/geocode.util";
 
 @Injectable()
 export class DriversService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(DriversService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   async findAll(query: ListDriversDto) {
     const { search, status, page = 1, limit = 20 } = query;
@@ -103,6 +111,7 @@ export class DriversService {
         heading: dto.heading,
         speedKph: dto.speedKph,
         batteryPct: dto.batteryPct,
+        accuracy: dto.accuracy,
         recordedAt,
       },
     });
@@ -176,9 +185,38 @@ export class DriversService {
 
   async update(id: string, dto: UpdateDriverDto) {
     await this.findOneOrThrow(id);
+    const { homeLine1, homeCity, homeState, homeZip, ...rest } = dto;
+    const data: Record<string, unknown> = { ...rest };
+    const homeFieldPresent =
+      homeLine1 !== undefined ||
+      homeCity !== undefined ||
+      homeState !== undefined ||
+      homeZip !== undefined;
+
+    if (homeFieldPresent) {
+      const parts = [homeLine1, homeCity, homeState, homeZip].filter(
+        (part): part is string => !!part,
+      );
+      data.homeAddress = parts.length > 0 ? parts.join(", ") : null;
+
+      const key = this.config.get<string>("googleMaps.apiKey") ?? "";
+      const coords = await geocodeAddress(
+        {
+          line1: homeLine1 ?? "",
+          city: homeCity ?? "",
+          state: homeState ?? "",
+          zip: homeZip ?? "",
+        },
+        key,
+        this.logger,
+      );
+      data.homeLat = coords?.lat ?? null;
+      data.homeLng = coords?.lng ?? null;
+    }
+
     return this.prisma.forTenant().driver.update({
       where: { id },
-      data: dto,
+      data,
       include: { user: { select: { id: true, username: true, email: true, status: true } } },
     });
   }
@@ -235,9 +273,27 @@ export class DriversService {
       await tx.route.updateMany({ where: { driverId: id }, data: { driverId: null } });
       await tx.routeRun.updateMany({ where: { driverId: id }, data: { driverId: null } });
       await tx.deliveryMutation.updateMany({ where: { driverId: id }, data: { driverId: null } });
-      // Delete driver profile then the linked user account
+
+      const linkedUser = await tx.user.findUnique({
+        where: { id: driver.userId },
+        select: { role: true },
+      });
+
+      // Delete the driver profile, then decide what happens to the linked login
       await tx.driver.delete({ where: { id } });
-      await tx.user.delete({ where: { id: driver.userId } });
+
+      if (linkedUser?.role === UserRole.DRIVER) {
+        // Pure driver accounts exist only to drive — remove the login with the profile.
+        await tx.user.delete({ where: { id: driver.userId } });
+      } else {
+        // Dual-role staff (OPERATOR / TENANT_ADMIN acting as driver): NEVER delete the
+        // login (owner decision 2026-08-28 — deleting the admin's driver profile must not
+        // nuke the tenant's admin account, and restrict-FKs on User made the whole tx roll
+        // back silently, which is why deleted admin drivers "kept coming back"). Clear the
+        // capability flag so Settings/nav stop offering driver surfaces and
+        // toggleDriverPermit cannot silently resurrect the row.
+        await tx.user.update({ where: { id: driver.userId }, data: { canActAsDriver: false } });
+      }
     });
 
     return { success: true };

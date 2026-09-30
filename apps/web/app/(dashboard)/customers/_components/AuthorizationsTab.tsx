@@ -16,6 +16,7 @@ import {
   authStatusBadge,
   type CustomerAuthorization,
 } from "@/lib/api/authorizations";
+import { renderLicenceExpiry } from "./authorizations-expiry.logic";
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
@@ -270,7 +271,7 @@ export function AuthorizationsTab({ customerId }: { customerId: string }) {
                   <p className="mt-0.5 text-xs text-navy/60">
                     {sourceLabel(auth.source)}
                     {auth.licenseNumber ? ` · #${auth.licenseNumber}` : ""}
-                    {auth.expiresAt ? ` · Expires ${fmtDate(auth.expiresAt)}` : ""}
+                    {auth.expiresAt ? ` · Expires ${renderLicenceExpiry(auth.expiresAt)}` : ""}
                   </p>
                   {auth.status === "VERIFIED" && auth.verifiedByName && (
                     <p className="mt-0.5 text-xs text-navy/40">

@@ -19,8 +19,13 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { SubscriptionService } from "./subscription.service";
 import { ProrationService } from "./proration.service";
 import { SubscriptionMutationService } from "./subscription-mutation.service";
+import { BillingService } from "./billing.service";
 import { QuoteDto } from "./dto/quote.dto";
 import { SubscribeDto, UpgradeDto, DowngradeDto, EnableAddonDto } from "./dto/mutation.dto";
+import {
+  inviteOnlyCheckoutAllowed,
+  INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT,
+} from "./plan-catalog.constants";
 
 interface AuthUser {
   tenantId: string | null;
@@ -42,6 +47,7 @@ export class SettingsBillingController {
     private readonly subscription: SubscriptionService,
     private readonly proration: ProrationService,
     private readonly mutations: SubscriptionMutationService,
+    private readonly billing: BillingService,
   ) {}
 
   /**
@@ -77,8 +83,15 @@ export class SettingsBillingController {
   @Post("quote")
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Price a plan + add-on selection at a cycle (choose-plan)" })
-  quote(@Body() dto: QuoteDto) {
-    return this.proration.quote(dto);
+  async quote(@CurrentUser() user: AuthUser, @Body() dto: QuoteDto) {
+    // No role gate here beyond the class-level @Roles(OPERATOR): a SUPER_ADMIN satisfies that
+    // via the role hierarchy but carries no tenant context, so the plan-change preview is
+    // simply skipped (`change: null`) rather than 403ing a legitimate quote read.
+    const quote = await this.proration.quote(dto);
+    const change = user.tenantId
+      ? await this.mutations.planChangePreview(user.tenantId, dto.planKey, dto.cycle)
+      : null;
+    return { ...quote, change };
   }
 
   @Get("proration-preview")
@@ -138,6 +151,32 @@ export class SettingsBillingController {
   @ApiOperation({ summary: "Undo a scheduled cancellation" })
   resume(@CurrentUser() user: AuthUser) {
     return this.mutations.resume(this.tenantIdOf(user), user.sub);
+  }
+
+  /**
+   * R2.9: a Stripe Checkout session for the tenant's OWN pinned plan/price — e.g. an
+   * invited LITE tenant completing its first payment (see SubscriptionService.getSubscription's
+   * `paymentRequired`). DELIBERATELY takes no request body: accepting a planKey here would let
+   * a caller check out into an arbitrary plan, defeating the invite-only structural guarantee.
+   * Switching plans still goes through subscribe/upgrade/downgrade above.
+   */
+  @Post("subscription/checkout")
+  @HttpCode(HttpStatus.OK)
+  @Roles(UserRole.TENANT_ADMIN)
+  @ApiOperation({ summary: "Start a Stripe Checkout session for the tenant's own pinned plan" })
+  async createCheckout(@CurrentUser() user: AuthUser) {
+    const tenantId = this.tenantIdOf(user);
+    const { planKey } = await this.subscription.getSubscription(tenantId);
+    if (!inviteOnlyCheckoutAllowed(planKey, INVITE_ONLY_PLAN_SELF_SERVE_CHECKOUT)) {
+      throw new ForbiddenException(
+        "Self-serve checkout is currently disabled for this plan — contact us to complete your subscription.",
+      );
+    }
+    const base = process.env.FRONTEND_URL ?? "http://localhost:3001";
+    return this.billing.createCheckoutSession(tenantId, {
+      successUrl: `${base}/settings/billing?checkout=success`,
+      cancelUrl: `${base}/settings/billing?checkout=cancelled`,
+    });
   }
 
   @Post("addons/:sku/enable")

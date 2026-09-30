@@ -1,0 +1,116 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/bug-test-plan.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-06-F12-route-windows/cause-ruling.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-07T01:50:00Z",
+  "mode": "bugfix",
+  "scale": "small",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "F12 route delivery windows (B147 B161 B177 one invariant; B31 deletion; B29 deferred). Ruling: cause-ruling.md. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "radiusFiles": [
+    "apps/api/src/route-optimization/route-analysis.service.ts",
+    "apps/api/src/route-optimization/cost-matrix.ts",
+    "apps/api/src/routes/routes.service.ts",
+    "apps/web/lib/api/routes.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "pattern": "points: LatLng\\[\\] = \\[",
+      "note": "window-blind stop reduction before a solver"
+    },
+    { "pattern": "defaultStartTime \\?\\?", "note": "hand-rolled start-time precedence copy" }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API",
+      "files": [
+        "apps/api/src/route-optimization/route-optimization.service.spec.ts",
+        "apps/api/src/route-optimization/route-analysis.service.spec.ts"
+      ],
+      "tests": ["T1", "T2", "T3", "T5", "T6"],
+      "effort": "high",
+      "brief": "bug-test-plan.md + Harness notes; implement nothing"
+    },
+    {
+      "id": "TP-E2E",
+      "files": ["apps/web/e2e/35-route-windows.spec.ts", "apps/web/playwright.config.ts"],
+      "tests": ["T4"],
+      "effort": "medium",
+      "brief": "bug-test-plan.md T4; project entry; no local Playwright"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/route-optimization --runInBand -t \"REG-B(147|161|177)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "files": [
+        "apps/api/src/route-optimization/route-optimization.service.ts",
+        "apps/api/src/route-optimization/route-analysis.service.ts"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P1"
+    },
+    {
+      "id": "P2",
+      "files": ["apps/api/src/route-optimization/route-optimization.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P2",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P3",
+      "files": [
+        "apps/web/lib/api/routes.ts",
+        "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "apps/web/app/(dashboard)/routes/page.tsx"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P3",
+      "dependsOn": ["P2"]
+    },
+    {
+      "id": "P4",
+      "files": [
+        "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.tsx",
+        "apps/web/app/(dashboard)/routes/_components/CreateRouteModal.test.tsx"
+      ],
+      "effort": "low",
+      "brief": "build-plan.md P4"
+    },
+    {
+      "id": "P5",
+      "files": ["apps/web/e2e/35-route-windows.spec.ts", "apps/web/playwright.config.ts"],
+      "effort": "medium",
+      "brief": "build-plan.md P5",
+      "dependsOn": ["P3"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/route-optimization src/routes --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/route-optimization/route-optimization.service.ts",
+        "revertFix": true,
+        "behavior": "window-feasible order persisted",
+        "test": "REG-B147"
+      }
+    ]
+  }
+}

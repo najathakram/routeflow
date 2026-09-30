@@ -1,0 +1,210 @@
+{
+  "seq": 4,
+  "idempotencyKey": "2026-09-11-crm-gohighlevel-handoff:Implement:1",
+  "phase": {
+    "phase": "Implement",
+    "ran": true,
+    "agents": 5,
+    "rawFindings": 0,
+    "tokens": 335612,
+    "model": "claude-sonnet-5",
+    "effort": "medium (a package's own effort wins)",
+    "estUsd": 3.36,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 20, "tokens": 544710, "estUsd": 6.06 },
+  "findingsBySeverity": { "blocker": 0, "major": 0, "minor": 0 },
+  "findingSummaries": [],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-12T03:58:27Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/spec.md",
+    "uxSpecPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/ux-spec.md",
+    "testPlanPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/test-plan.md",
+    "designSystemPath": ".claude/pipeline/design-system.md",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm",
+    "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm/.claude/pipeline/2026-09-11-crm-gohighlevel-handoff"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-12T03:58:27Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 4,
+        "tokens": 52653,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.26,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": true,
+        "agents": 7,
+        "rawFindings": 0,
+        "tokens": 98554,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 0.99,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 1,
+        "tokens": 57891,
+        "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+        "effort": "low run / high audit / medium remediation",
+        "estUsd": 1.45,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 0,
+        "tokens": 335612,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 3.36,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      {
+        "file": "(gate-command)",
+        "severity": "major",
+        "summary": "`npm test -w apps/api -- --maxWorkers=2` already fails on the unmodified baseline tree — the command is broken, not the code",
+        "detail": "Baseline output: FAIL common/ci-freshness-guard-script.spec.ts: Expected: \"true\" Received: undefined at line 201 (expect(outputs.run).toBe(\"true\")). A worker process failed to exit gracefully.. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+        "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+        "phase": "Baseline",
+        "fixComplexity": "mechanical"
+      },
+      {
+        "file": "(gate-command)",
+        "severity": "major",
+        "summary": "`npm run format:check` already fails on the unmodified baseline tree — the command is broken, not the code",
+        "detail": "Baseline output: Prettier format check failed: 40+ files have formatting issues (e.g. .claude/handoffs/*.md, .claude/pipeline/**/*.md, apps/api/scripts/*.js, apps/web/lib/*.ts, docs/**/*.md). This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+        "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+        "phase": "Baseline",
+        "fixComplexity": "mechanical"
+      },
+      {
+        "file": "(artifact)",
+        "line": 524,
+        "severity": "major",
+        "summary": "Malformed Windows path in pipeline args JSON workdir field",
+        "detail": "In build-plan.md: Line 524 claims `\"workdir\": \"C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm\"` but the path is malformed. Missing backslash after C: and `.claudeworktrees` is concatenated. Should be `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm`. This path will not be recognized by the dev-pipeline engine.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Replace the malformed path string with proper Windows path syntax: change `C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm` to `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm`",
+        "phase": "Baseline"
+      },
+      {
+        "file": "(artifact)",
+        "line": 766,
+        "severity": "major",
+        "summary": "Malformed Windows path in pipeline args JSON runDir field",
+        "detail": "In build-plan.md: Line 766 claims `\"runDir\": \"C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm.claudepipeline6-09-11-crm-gohighlevel-handoff\"` but the path is malformed with the same issues as line 524, plus `.claudepipeline6` instead of proper subdirectory structure. Should be `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm\\.claude\\pipeline\\2026-09-11-crm-gohighlevel-handoff`. This path will not be usable by the dev-pipeline engine.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Replace with correct path: `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm\\.claude\\pipeline\\2026-09-11-crm-gohighlevel-handoff`",
+        "phase": "Baseline"
+      },
+      {
+        "file": "(red-gate)",
+        "severity": "blocker",
+        "phase": "Red gate",
+        "summary": "Red gate never went structurally RED — the new tests are not proven able to fail",
+        "detail": "A test that has never failed proves nothing. Auditor notes: [\"STRUCTURAL: gohighlevel.client.spec.ts T7 fails as a Jest MATCHER ERROR, not an assertion — 'received value must be a promise or a function returning a promise. Received has value: undefined'. The skeleton GoHighLevelClient methods are synchronous and return `undefined as never`, so `await expect(client.getLocation()).rejects...` never reaches a behavioral comparison.\",\"STRUCTURAL: gohighlevel.client.spec.ts T9 dies with `TypeError: Cannot read properties of undefined (reading '0')` reading (global.fetch as jest.Mock).mock.calls[0][0] before any expect() runs — zero fetch calls were recorded.\",\"STRUCTURAL: gohighlevel.client.spec.ts T10 dies with `TypeError: undefined is not iterable` destructuring `const [, init] = mock.calls[0]` before any expect() runs.\",\"STRUCTURAL: gohighlevel.client.spec.ts T11 dies with the same destructuring TypeError as T10 before any expect() runs.\",\"STRUCTURAL: the recorded crm-identity run does not match the files on disk — the runner prints T2 as 'returns undefined on non-email input' (Expected undefined, Received null) while the current spec reads 'returns null when there is no @' with toBeNull(), and the current crm-identity.ts stub returns undefined for every input (so T1's 'Received: undefined' and T2's 'Received: null' cannot both come from it). The red evidence is from an earlier spec/skeleton pair; the gate needs a re-run against the current tree before the result can be trusted.\",\"STRUCTURAL (unverified): the runner output is truncated — 31 failure blocks printed for 60 failing API tests — so 29 API tests were classified from the totals line ('60 failed, 60 total', no passes, no skips) plus reading the specs, not from their own output. Three of them are at risk of being matcher errors rather than assertion failures and could not be checked: poll T52b and T52d (`rejects.toBeInstanceOf(ConflictException)` — a non-async retryHandoff/dismissHandoff skeleton reproduces the T7 failure mode) and poll T54 preview (`expect(undefined).toMatchObject({count:2})` raises 'received value must be a non-null object').\",\"STRUCTURAL (type, unverified by a run): gohighlevel-handoff.service.spec.ts T51 constructs `new CrmHttpError(\\\"GoHighLevel 404\\\")` while the skeleton's constructor is `(status: number, code: string, message: string)`. Jest compiled it, but `npm run check-types -w apps/api` was not run in this session and would likely fail.\",\"BEHAVIORAL: every one of the 65 new tests fails against a uniform skeleton whose methods `return undefined as never` (and a web component that returns null), so the observed failures are all 'received undefined' or 'Number of calls: 0'. The suite has proven wiring, not oracles — no test yet demonstrates it would fail on a WRONG value rather than on a missing one.\",\"BEHAVIORAL: client T6/T9/T10/T11 — the URL, query-param names and request bodies are asserted only against a fetch that was never called; nothing yet shows the assertion discriminates a wrong URL or a wrong body key.\",\"BEHAVIORAL: writeback T33/T34/T35 — the step ordering, the exact three-element customFields payload and the toggle-skip matrix all fail on an empty order array / 0 calls; the ordering oracle in particular would fail identically for any wrong order, so it is unproven.\",\"BEHAVIORAL: writeback T37 is the one oracle that failed on a fully self-contained computed value (Expected 2026-09-11T00:01:00.000Z vs undefined) but still only against undefined, never against a wrong interval.\",\"BEHAVIORAL: handoff T26-T31/T51 and poll T13-T20/T52/T54 fail at 'Number of calls: 0' on their first positive assertion, so the reason codes ('no-identity', 'identity-conflict', 'contact-not-found'), the tag names and the cutoff logic are untested discriminators so far.\",\"BEHAVIORAL: web T49 fails at the listener-registration precondition (hasListener false), so the pinned title 'New customer from GoHighLevel' and href '/customers/c1' — the actual R30 oracle — are never evaluated.\",\"BEHAVIORAL: controller T39 (8 tests) asserts only on Nest `__guards__` metadata class NAMES and the REQUIRE_ADDON_KEY value. It will pass the moment the decorators are attached, regardless of whether an unauthorized or unentitled caller is actually denied — a wiring assertion masquerading as an access-control oracle.\",\"BEHAVIORAL (wrong-reason risk): controller T42 asserts `rejects.toThrow(/BadRequestException|Bad Request/)` on the error MESSAGE instead of `rejects.toBeInstanceOf(BadRequestException)`; any error whose message happens to contain 'Bad Request' satisfies it.\",\"BEHAVIORAL (wrong-reason risk): poll T19/T20 and handoff T29 fabricate error doubles with `Object.assign(new Error(...), { name: 'CrmAuthError' | 'CrmRateLimitError' | 'BadRequestException' })` rather than throwing the real exported classes. That steers the implementation toward name-string branching and will not catch instanceof-based handling.\",\"BEHAVIORAL (wrong-reason risk): handoff T26-T31b stub the unit under test's own `matchExistingCustomer` via jest.spyOn, so `handle`'s matching path is asserted against a mock the test itself configured; only the post-match branch is really covered.\",\"BEHAVIORAL (wrong-reason risk): crm-identity T4's `expect(() => normalizePhoneE164('12','CA')).not.toThrow()` can never fail against any non-throwing implementation, and handoff T30 / controller T40's 'secret never appears' checks are pure negative assertions that pass vacuously whenever the positive path did not run — T30 and T40 do carry a positive guard assertion, T4 does not.\"]",
+        "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists."
+      }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": false
+}

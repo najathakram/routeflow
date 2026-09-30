@@ -16,6 +16,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useInvoicePayments, type AllPayment } from "../../../lib/api/payments";
 import { paymentMethodPill, paymentStatusPill } from "../../../lib/payments-logic";
 import { checkBadgeFor } from "../../../lib/check-badge";
+import { ALL_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "../../../lib/payment-methods";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -26,17 +27,12 @@ const FILTERS = [
 
 type FilterId = (typeof FILTERS)[number]["id"];
 
-// Method filter — the server takes one exact enum value (`method=`).
+// Method filter — the server takes one exact enum value (`method=`). Filters cover
+// every method, including the display-only CREDIT_NOTE / ADVANCE.
 const METHOD_FILTERS = [
-  { id: "ALL", label: "Any method" },
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Card" },
-  { id: "CREDIT_NOTE", label: "Credit note" },
-  { id: "ADVANCE", label: "Advance" },
-  { id: "OTHER", label: "Other" },
-] as const;
+  { id: "ALL" as const, label: "Any method" },
+  ...ALL_PAYMENT_METHODS.map((id) => ({ id, label: PAYMENT_METHOD_LABELS[id] })),
+];
 
 type MethodFilterId = (typeof METHOD_FILTERS)[number]["id"];
 

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -25,6 +25,7 @@ import {
   useDriverMetrics,
   useUpdateDriver,
   useDeleteDriver,
+  type UpdateDriverInput,
 } from "@/lib/api/drivers";
 import { EditDriverModal } from "../_components/EditDriverModal";
 
@@ -107,14 +108,16 @@ function InfoRow({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function DriverDetailPage({ params }: { params: { id: string } }) {
+export default function DriverDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: driver, isLoading: driverLoading } = useDriver(params.id);
-  const { data: historyData } = useDriverHistory(params.id);
-  const { data: metrics } = useDriverMetrics(params.id);
+  const { data: driver, isLoading: driverLoading } = useDriver(id);
+  const { data: historyData } = useDriverHistory(id);
+  const { data: metrics } = useDriverMetrics(id);
   const updateDriver = useUpdateDriver();
   const deleteDriver = useDeleteDriver();
 
@@ -159,14 +162,14 @@ export default function DriverDetailPage({ params }: { params: { id: string } })
 
   const completionRate = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
 
-  const handleSaveDriver = async (data: Partial<typeof driver>) => {
-    await updateDriver.mutateAsync({ id: params.id, data });
+  const handleSaveDriver = async (data: UpdateDriverInput) => {
+    await updateDriver.mutateAsync({ id: id, data });
     toast({ title: "Driver updated", variant: "success" });
   };
 
   const handleDeleteDriver = async () => {
     try {
-      await deleteDriver.mutateAsync(params.id);
+      await deleteDriver.mutateAsync(id);
       toast({ title: "Driver deleted", variant: "success" });
       router.push("/drivers");
     } catch (err: unknown) {

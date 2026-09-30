@@ -31,7 +31,7 @@ export class MessagesService {
       this.prisma.forTenant().driver.findFirst({ where: { userId } }),
       this.prisma
         .forTenant()
-        .routeRun.findUnique({ where: { id: runId }, select: { driverId: true } }),
+        .routeRun.findFirst({ where: { id: runId }, select: { driverId: true } }),
     ]);
     if (!driver || !run || run.driverId !== driver.id) throw new ForbiddenException();
   }

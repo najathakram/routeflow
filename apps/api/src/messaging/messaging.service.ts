@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
 import { isInternalEmail } from "../common/internal-email";
 import { MESSAGE_PROVIDER, type MessageProvider } from "./providers/message-provider.interface";
+import { DEFAULT_TEMPLATES, EVENT_CHANNELS, seedDefaultsFor } from "./messaging-config.service";
 import {
   isInvoicePolicyViolation,
   isMetered,
@@ -18,7 +19,26 @@ export type SkipReason =
   | "OPTED_OUT"
   | "NO_CONTACT"
   | "NO_CUSTOMER"
-  | "SEND_FAILED";
+  | "SEND_FAILED"
+  | "NO_TRANSPORT";
+
+/**
+ * N1: order-status events gated by the buyer's own `Customer.orderStatusEmails`
+ * preference (opt-OUT, default true) — EMAIL only, and ONLY these five events.
+ * ORDER_CHANGED_AT_DOOR joined the set per owner ruling 2026-09-16: a buyer who
+ * opted out of order-status email gets no at-door change mail either. Every
+ * other EMAIL-capable event (INVOICE_SENT, PAYMENT_REMINDER, LICENSE_EXPIRING)
+ * and every non-order-status security mail sent directly via EmailService
+ * (verification/password/invite — outside this engine entirely) is NEVER
+ * opt-out.
+ */
+const ORDER_STATUS_EMAIL_EVENTS = new Set<NotificationEvent>([
+  NotificationEvent.ORDER_CONFIRMED,
+  NotificationEvent.OUT_FOR_DELIVERY,
+  NotificationEvent.DELIVERED,
+  NotificationEvent.CANCELLED,
+  NotificationEvent.ORDER_CHANGED_AT_DOOR,
+]);
 
 export interface SendOutcome {
   channel: MessageChannel;
@@ -38,6 +58,8 @@ export interface SendMessageInput {
   senderRole?: string;
   eventKey?: NotificationEvent;
   templateName?: string;
+  /** N1: email subject — see SendInput.subject. Ignored by non-EMAIL channels. */
+  subject?: string;
 }
 
 /**
@@ -94,7 +116,7 @@ export class MessagingService {
     if (isInvoicePolicyViolation(eventKey, channel)) return skip("INVOICE_POLICY");
 
     const db = this.prisma.forTenant();
-    const customer = await db.customer.findUnique({
+    const customer = await db.customer.findFirst({
       where: { id: customerId },
       select: {
         id: true,
@@ -103,6 +125,7 @@ export class MessagingService {
         email: true,
         smsConsent: true,
         waConsent: true,
+        orderStatusEmails: true,
       },
     });
     if (!customer) return skip("NO_CUSTOMER");
@@ -118,6 +141,19 @@ export class MessagingService {
     if (requiresConsent(channel)) {
       const optOut = await db.messageOptOut.findFirst({ where: { customerId, channel } });
       if (optOut) return skip("OPTED_OUT");
+    }
+
+    // 3b. N1 — buyer's own order-status EMAIL preference (opt-OUT, default true).
+    // EMAIL + one of the four order-status events ONLY: never gates INVOICE_SENT/
+    // PAYMENT_REMINDER/LICENSE_EXPIRING, and never gates security mail (that goes
+    // through EmailService directly, outside this engine).
+    if (
+      channel === MessageChannel.EMAIL &&
+      eventKey &&
+      ORDER_STATUS_EMAIL_EVENTS.has(eventKey) &&
+      !customer.orderStatusEmails
+    ) {
+      return skip("OPTED_OUT");
     }
 
     // Destination must exist for provider channels.
@@ -137,6 +173,15 @@ export class MessagingService {
         })
       : false;
 
+    // 4b. Transport capability (F23/B145, cause-ruling.md §2) — INTERNAL is
+    //     always in-app (recorded, read by messages.service.ts) and is exempt;
+    //     every other channel must have a bound provider that actually
+    //     transports it, or a "sent" outcome would be fabricated. This is the
+    //     ONE capability seam consulted by both send and config.
+    if (channel !== MessageChannel.INTERNAL && !this.provider.transports(channel)) {
+      return { channel, outcome: "skipped", reason: "NO_TRANSPORT", wouldBeQuiet };
+    }
+
     // 5. Dispatch (provider channels only; INTERNAL/PORTAL record-only). A
     //    failed dispatch is NOT recorded and NOT metered — never bill for a
     //    message that didn't go out (matters once real adapters land in P6-3/4).
@@ -148,6 +193,7 @@ export class MessagingService {
         to,
         body,
         templateName: input.templateName,
+        subject: input.subject,
       });
       if (res.status === "failed") {
         return { channel, outcome: "failed", reason: "SEND_FAILED", wouldBeQuiet };
@@ -191,7 +237,30 @@ export class MessagingService {
     args: { customerId: string; senderId: string; vars?: Record<string, string | number> },
   ): Promise<SendOutcome[]> {
     const db = this.prisma.forTenant();
-    const rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+    let rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+    if (rules.length === 0) {
+      // F23/B182 (cause-ruling.md §2): a tenant that has never opened the notifications
+      // settings tab (⇐ the only path that reached the old private seeder) has an EMPTY
+      // notificationRule table, so notify() saw zero enabled rules forever even though
+      // e.g. INVOICE_SENT:EMAIL is documented as on by default. Seed the shared defaults
+      // here too (idempotent; createMany skipDuplicates) and re-read before giving up.
+      const [allRules, allTemplates] = await Promise.all([
+        db.notificationRule.findMany({}),
+        db.messageTemplate.findMany({}),
+      ]);
+      const seeded = await seedDefaultsFor(db, allRules, allTemplates);
+      if (seeded) {
+        rules = await db.notificationRule.findMany({ where: { eventKey, enabled: true } });
+      }
+    }
+    // N1 (Opus review): a persisted NotificationRule can predate this event's current
+    // EVENT_CHANNELS membership — e.g. INVOICE_SENT:EMAIL was seeded ON for existing
+    // tenants before EMAIL was removed from that event's channel list; without this
+    // filter the stale row keeps firing forever (and once EmailChannelProvider made
+    // EMAIL a real transport, would duplicate the PDF invoice email
+    // invoices.service.ts already sends for real). Only channels EVENT_CHANNELS[eventKey]
+    // currently allows are ever dispatched, regardless of what's persisted.
+    rules = rules.filter((r) => EVENT_CHANNELS[eventKey].includes(r.channel));
     const outcomes: SendOutcome[] = [];
     for (const rule of rules) {
       const template = await db.messageTemplate.findFirst({
@@ -208,6 +277,10 @@ export class MessagingService {
           senderRole: "SYSTEM",
           eventKey,
           templateName: template.waTemplateName ?? undefined,
+          // N1: email subject — the same human label the settings matrix
+          // already shows for this event (DEFAULT_TEMPLATES[eventKey].label).
+          // Ignored by every non-EMAIL channel.
+          subject: DEFAULT_TEMPLATES[eventKey].label,
         }),
       );
     }
@@ -253,7 +326,7 @@ export class MessagingService {
       }
       let vars = args.vars ?? {};
       if (vars.customerName === undefined) {
-        const customer = await this.prisma.forTenant().customer.findUnique({
+        const customer = await this.prisma.forTenant().customer.findFirst({
           where: { id: args.customerId },
           select: { businessName: true },
         });

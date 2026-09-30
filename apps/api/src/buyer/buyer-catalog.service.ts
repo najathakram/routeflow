@@ -1,40 +1,20 @@
-import { Injectable, ConflictException, NotFoundException } from "@nestjs/common";
+import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
-import { getTierPrice } from "../utils/pricing";
-import { effectiveBuyerPrice } from "../common/pricing";
+import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { signableImageKeys } from "../products/product-image-keys";
+import type { BuyerProduct } from "@routeflow/types";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew: boolean;
-  isDeal: boolean;
-  /** Presigned URLs for the first images (max 4) — the tile dot-pager. [] when no images. */
-  imageUrls: string[];
-  // RF-200: stock availability fields
-  inStock: boolean;
-  stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining, exposed ONLY while stockStatus === "LOW" ("Only N left"); else null. */
-  stockLeft: number | null;
-}
+// #2703: the catalog row shape is shared with web + mobile — one declaration in @routeflow/types.
+export type { BuyerProduct } from "@routeflow/types";
 
 @Injectable()
 export class BuyerCatalogService {
@@ -77,6 +57,28 @@ export class BuyerCatalogService {
   }
 
   /**
+   * The availability triple every buyer-facing product carries. Shared by the
+   * catalog listing and the single-product detail so a tile and its detail page
+   * can never disagree about stock (an OOS tile must stay OOS when opened).
+   */
+  private deriveStock(p: {
+    currentStock?: unknown;
+    lowStockThreshold?: unknown;
+  }): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft"> {
+    const stock = Number(p.currentStock ?? 0);
+    const lowThreshold = Number(p.lowStockThreshold ?? 5);
+    const stockStatus: BuyerProduct["stockStatus"] =
+      stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
+    return {
+      inStock: stock > 0,
+      stockStatus,
+      // Whole units only, floor >= 1 so a fractional Decimal never renders
+      // "Only 0 left" while status is LOW (stock > 0 by definition here).
+      stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+    };
+  }
+
+  /**
    * Get paginated product catalog with buyer-specific pricing.
    * Strips all seller-internal fields (stock, cost, raw tier prices).
    *
@@ -91,6 +93,7 @@ export class BuyerCatalogService {
       limit?: number;
       sort?: string;
       collection?: "usuals" | "favorites" | "new" | "deals";
+      ids?: string[];
     },
     customerId: string,
     buyerAccountId?: string,
@@ -99,9 +102,13 @@ export class BuyerCatalogService {
     const limit = query.limit ?? 20;
     const isPriceSort = query.sort === "price_asc" || query.sort === "price_desc";
     const isBestSort = query.sort === "best";
+    // An explicit id filter must return EVERY requested product, not a page of
+    // them — the cart prices its lines from this response, and a truncated page
+    // silently prices the missing lines at 0.
+    const byIds = (query.ids?.length ?? 0) > 0;
     // Price + best sorts rank on data resolved in-memory (buyer pricing /
     // replenishment frequency), so fetch ALL matches and paginate after sorting.
-    const fetchAll = isPriceSort || isBestSort;
+    const fetchAll = isPriceSort || isBestSort || byIds;
 
     // W7 gate: hide products in regulated categories the buyer isn't licensed for.
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
@@ -109,6 +116,11 @@ export class BuyerCatalogService {
     // Smart-collection filter → extra AND clauses (query-level so pagination
     // counts stay correct AND the regulated exclusion composes automatically).
     const andWhere: Record<string, unknown>[] = [];
+    // Composes with the regulated-visibility gate below, so an id filter can
+    // never surface a product the buyer isn't licensed to see.
+    if (byIds) {
+      andWhere.push({ id: { in: query.ids } });
+    }
     if (query.collection === "new") {
       andWhere.push({ isNew: true });
     } else if (query.collection === "deals") {
@@ -147,7 +159,7 @@ export class BuyerCatalogService {
     // Load customer's pricing tier
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     // Load per-product tier overrides for all products in this page
@@ -174,17 +186,12 @@ export class BuyerCatalogService {
           priceHist[p.id]?.lastPrice ?? null,
         );
 
-        const stock = Number(p.currentStock ?? 0);
-        const lowThreshold = Number(p.lowStockThreshold ?? 5);
-        const stockStatus: BuyerProduct["stockStatus"] =
-          stock <= 0 ? "OUT_OF_STOCK" : stock <= lowThreshold ? "LOW" : "IN_STOCK";
-
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
         // First entry corresponds to thumbnailUrl (same key, first image).
-        const imageUrls =
-          (p.imageKeys?.length ?? 0) > 0
-            ? await this.storage.presignedUrls(p.imageKeys.slice(0, MAX_TILE_IMAGES))
-            : [];
+        // #2533: only keys under this product's own prefix are listed or signed.
+        const ownKeys = signableImageKeys(p.id, p.imageKeys);
+        const tileKeys = ownKeys.slice(0, MAX_TILE_IMAGES);
+        const imageUrls = tileKeys.length > 0 ? await this.storage.presignedUrls(tileKeys) : [];
 
         return {
           id: p.id,
@@ -200,13 +207,9 @@ export class BuyerCatalogService {
           isNew: p.isNew ?? false,
           isDeal: p.isDeal ?? false,
           thumbnailUrl: p.thumbnailUrl ?? null,
-          imageKeys: p.imageKeys ?? [],
+          imageKeys: ownKeys,
           imageUrls,
-          inStock: stock > 0,
-          stockStatus,
-          // Whole units only, floor >= 1 so a fractional Decimal never renders
-          // "Only 0 left" while status is LOW (stock > 0 by definition here).
-          stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+          ...this.deriveStock(p),
         };
       }),
     );
@@ -265,7 +268,15 @@ export class BuyerCatalogService {
   async getCatalogCounts(customerId: string, buyerAccountId: string) {
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
     const baseWhere: Record<string, unknown> = { isActive: true };
-    if (hiddenIds.size > 0) baseWhere.trackedCategoryId = { notIn: [...hiddenIds] };
+    // Same NULL trap as products.service.findAll: `notIn` never matches NULL,
+    // so keying this on trackedCategoryId zeroed every rail count for
+    // untracked products whenever a license-gated category existed.
+    if (hiddenIds.size > 0) {
+      baseWhere.OR = [
+        { trackedCategoryId: null },
+        { trackedCategoryId: { notIn: [...hiddenIds] } },
+      ];
+    }
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
@@ -329,19 +340,35 @@ export class BuyerCatalogService {
     // Resolve buyer pricing
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
-    const cpOverride = await this.prisma.forTenant().customerPrice.findFirst({
-      where: { customerId, productId },
+    // Deactivated variants must never reach a buyer: findOne includes them (it
+    // only sorts isActive desc), every other buyer surface lists active products
+    // only, and such a row would quote a price whose link dead-ends on this
+    // endpoint's own isActive 404.
+    const activeVariants: any[] = ((product as any).variants ?? []).filter(
+      (v: any) => v.isActive !== false,
+    );
+    // Tier overrides for the parent AND every variant row in one query: a variant
+    // carrying its own CustomerPrice must price identically here and on its own
+    // tile/detail page (getCatalog resolves the tier per product the same way).
+    const variantIds: string[] = activeVariants.map((v: any) => v.id);
+    const cpOverrides = await this.prisma.forTenant().customerPrice.findMany({
+      where: { customerId, productId: { in: [product.id, ...variantIds] } },
     });
-    const effectiveTier = cpOverride?.pricingTier ?? defaultTier;
+    const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
+    const effectiveTier = cpMap.get(product.id) ?? defaultTier;
     const priceHist = await this.getRememberedPrices(customerId);
     const buyerPrice = effectiveBuyerPrice(
       getTierPrice(product, effectiveTier),
       Number(product.pricePerUnit),
       priceHist[product.id]?.lastPrice ?? null,
     );
+
+    // First entry corresponds to thumbnailUrl (same key, first image) — findOne
+    // presigns every image, the listing only the first MAX_TILE_IMAGES.
+    const imageUrls: string[] = (product as any).imageUrls ?? [];
 
     return {
       id: product.id,
@@ -352,18 +379,31 @@ export class BuyerCatalogService {
       unit: product.unit,
       category: product.category,
       buyerPrice,
-      imageUrls: (product as any).imageUrls ?? [],
+      // The merch/box/stock fields the listing returns must be here too: the
+      // detail page shares the tile's add-to-cart semantics (boxed => 1 box)
+      // and its stock/badge rendering.
+      unitsPerBox: product.unitsPerBox ?? null,
+      isFeatured: product.isFeatured ?? false,
+      isNew: product.isNew ?? false,
+      isDeal: product.isDeal ?? false,
+      thumbnailUrl: imageUrls[0] ?? null,
+      imageUrls,
       imageKeys: product.imageKeys ?? [],
-      variants: ((product as any).variants ?? []).map((v: any) => ({
+      ...this.deriveStock(product),
+      variants: activeVariants.map((v: any) => ({
         id: v.id,
         name: v.variantName,
         sku: v.sku,
         buyerPrice: effectiveBuyerPrice(
-          getTierPrice(v, effectiveTier),
+          getTierPrice(v, cpMap.get(v.id) ?? defaultTier),
           Number(v.pricePerUnit),
           priceHist[v.id]?.lastPrice ?? null,
         ),
         unit: v.unit,
+        // Promo inputs — a variant row's price must go through the same
+        // deriveTilePrice the variant's own tile/detail page uses.
+        category: v.category ?? null,
+        unitsPerBox: v.unitsPerBox ?? null,
       })),
     };
   }
@@ -407,7 +447,7 @@ export class BuyerCatalogService {
     // Load customer pricing tier + overrides
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     const productIds = activeFavorites.map((f) => f.productId);
@@ -435,7 +475,7 @@ export class BuyerCatalogService {
           priceHist[f.productId]?.lastPrice ?? null,
         ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
-        imageKeys: f.product.imageKeys ?? [],
+        imageKeys: signableImageKeys(f.productId, f.product.imageKeys),
         // Needed so add-to-cart from the mobile favorites screen orders a boxed
         // product as boxes (not loose pieces) — matches getCatalog.
         unitsPerBox: f.product.unitsPerBox ?? null,

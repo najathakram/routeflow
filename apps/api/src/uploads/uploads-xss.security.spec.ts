@@ -192,6 +192,8 @@ describe("RF-076/RF-157 — Customer-document MIME allowlist", () => {
 
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
+import { PrismaService } from "../prisma/prisma.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("RF-078 — GET /uploads/* response headers", () => {
   let app: INestApplication;
@@ -220,16 +222,28 @@ describe("RF-078 — GET /uploads/* response headers", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
-      providers: [{ provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        { provide: ConfigService, useValue: mockConfig },
+        // These suites serve flat keys, so the controller's B12 owner lookups
+        // never fire — but the constructor dependency must still resolve.
+        { provide: PrismaService, useValue: {} },
+      ],
     })
       // Bypass auth (signed URL OR JWT) for this unit test — we're testing
       // response headers, not the auth path itself.
       .overrideGuard(UploadsAccessGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (ctx: any) => {
+          // Signed-URL path: B52's JWT-path default-deny (unknown/flat keys → 403)
+          // must not fire here — this suite tests response headers, not auth.
+          ctx.switchToHttp().getRequest().signedUrlAuthorized = true;
+          return true;
+        },
+      })
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -280,14 +294,28 @@ describe("RF-078 — PDF is inline, non-allowlisted MIME still forces attachment
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
-      providers: [{ provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        { provide: ConfigService, useValue: mockConfig },
+        // These suites serve flat keys, so the controller's B12 owner lookups
+        // never fire — but the constructor dependency must still resolve.
+        { provide: PrismaService, useValue: {} },
+      ],
     })
       .overrideGuard(UploadsAccessGuard)
-      .useValue({ canActivate: () => true })
+      .useValue({
+        canActivate: (ctx: any) => {
+          // Signed-URL path: B52's JWT-path default-deny (unknown/flat keys → 403)
+          // must not fire here — this suite tests response headers, not auth.
+          // The default-deny itself is covered by REG-B52 in
+          // uploads-tenant-scope.security.spec.ts.
+          ctx.switchToHttp().getRequest().signedUrlAuthorized = true;
+          return true;
+        },
+      })
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

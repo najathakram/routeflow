@@ -18,7 +18,7 @@ import {
   orderEditable,
   qtyLabel,
 } from "../lib/shelf-logic";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { BuyerOrder, ChangeRequest, ShelfEstimate } from "../lib/api/buyer";
 
 function shelfEstimate(overrides: Partial<ShelfEstimate> = {}): ShelfEstimate {

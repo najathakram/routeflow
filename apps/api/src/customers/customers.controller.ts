@@ -16,6 +16,7 @@ import {
 } from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { memoryStorage } from "multer";
+import { MB, uploadLimits } from "../common/upload-limits";
 import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
 import type { Response } from "express";
@@ -24,6 +25,8 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CustomersService } from "./customers.service";
 import { StatementService } from "../buyer/statement.service";
 import { StatementPdfService } from "../buyer/statement-pdf.service";
@@ -35,6 +38,7 @@ import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
 import { ListCustomersDto } from "./dto/list-customers.dto";
 import { UpsertCustomerPriceDto } from "./dto/customer-price.dto";
+import { CreateAdvancePaymentDto, ApplyAdvancePaymentDto } from "./dto/advance-payment.dto";
 
 @ApiTags("customers")
 @ApiBearerAuth()
@@ -104,6 +108,8 @@ export class CustomersController {
 
   @Get("pending-portal-approvals")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   listPendingPortalApprovals(@CurrentUser() user: JwtPayload) {
     return this.customersService.listPendingPortalApprovals(user.tenantId!);
   }
@@ -179,6 +185,7 @@ export class CustomersController {
   }
 
   @Get(":id/orders")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
   findOrders(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.findOrders(id, user);
   }
@@ -186,7 +193,9 @@ export class CustomersController {
   @Get(":id/statement")
   @Roles(UserRole.OPERATOR)
   getStatement(@Param("id") id: string) {
-    return this.customersService.getStatementForOperator(id);
+    // Operator-only: adds creditExposure/pendingExposure (D6 / B462). The buyer
+    // route (buyer.controller.ts) deliberately does NOT pass this flag.
+    return this.customersService.getStatementForOperator(id, { includeExposure: true });
   }
 
   // Operator twins of the buyer statement-PDF endpoints (P5-15) — same
@@ -209,7 +218,7 @@ export class CustomersController {
 
   @Post(":id/advance-payments")
   @Roles(UserRole.OPERATOR)
-  createAdvancePayment(@Param("id") id: string, @Body() dto: any) {
+  createAdvancePayment(@Param("id") id: string, @Body() dto: CreateAdvancePaymentDto) {
     return this.customersService.createAdvancePayment(id, dto);
   }
 
@@ -221,24 +230,34 @@ export class CustomersController {
 
   @Post(":id/advance-payments/:apId/apply")
   @Roles(UserRole.OPERATOR)
-  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: any) {
+  applyAdvancePayment(@Param("apId") apId: string, @Body() dto: ApplyAdvancePaymentDto) {
     return this.customersService.applyAdvancePaymentToInvoice(apId, dto);
   }
 
   @Get(":id/prices")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
   getCustomerPrices(@Param("id") id: string) {
     return this.customersService.getCustomerPrices(id);
   }
 
   @Post(":id/prices")
-  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  upsertCustomerPrice(@Param("id") id: string, @Body() dto: UpsertCustomerPriceDto) {
-    return this.customersService.upsertCustomerPrice(id, dto);
+  @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
+  upsertCustomerPrice(
+    @Param("id") id: string,
+    @Body() dto: UpsertCustomerPriceDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.customersService.upsertCustomerPrice(id, dto, user);
   }
 
   @Delete(":id/prices/:priceId")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.pricing_tiers")
   deleteCustomerPrice(@Param("id") id: string, @Param("priceId") priceId: string) {
     return this.customersService.deleteCustomerPrice(id, priceId);
   }
@@ -257,6 +276,12 @@ export class CustomersController {
     @Body() dto: UpdateAddressDto,
   ) {
     return this.customersService.updateAddress(id, addrId, dto);
+  }
+
+  @Delete(":id/addresses/:addrId")
+  @Roles(UserRole.OPERATOR)
+  deleteAddress(@Param("id") id: string, @Param("addrId") addrId: string) {
+    return this.customersService.deleteAddress(id, addrId);
   }
 
   // ─── Tags (per customer) ──────────────────────────────────────────────────
@@ -335,6 +360,8 @@ export class CustomersController {
 
   @Post(":id/portal-invite")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   sendPortalInvite(
     @Param("id") id: string,
     @Body() dto: PortalInviteDto,
@@ -345,26 +372,42 @@ export class CustomersController {
 
   @Post(":id/portal-resend")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   resendPortalInvite(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.resendPortalInvite(id, user.tenantId!);
   }
 
   @Post(":id/portal-disconnect")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   disconnectPortal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.disconnectPortal(id, user.tenantId!);
   }
 
   @Get(":id/portal-status")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   getPortalStatus(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.getPortalStatus(id, user.tenantId!);
   }
 
   @Post(":id/portal-approve")
   @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
   approveBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
     return this.customersService.approveBuyerRequest(id, user.tenantId!);
+  }
+
+  @Post(":id/portal-decline")
+  @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("addon.buyer_portal")
+  declineBuyerRequest(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.customersService.declineBuyerRequest(id, user.tenantId!);
   }
 
   // ─── Delete ───────────────────────────────────────────────────────────────
@@ -377,11 +420,17 @@ export class CustomersController {
 
   // Restore a soft-deleted customer (the server side of the 8-second Undo).
   // `status` is the user's pre-delete status so the undo restores exactly.
+  // `username` (REG-B159) lets the caller retry with a different one after a
+  // 409 — the original was claimed by a newer customer while this one was removed.
   @Post(":id/restore")
   @Roles(UserRole.OPERATOR)
   @HttpCode(200)
-  restore(@Param("id") id: string, @Body() body?: { status?: string }) {
-    return this.customersService.restoreCustomer(id, body?.status);
+  restore(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() body?: { status?: string; username?: string },
+  ) {
+    return this.customersService.restoreCustomer(id, body?.status, body?.username, user.sub);
   }
 
   // ─── Suggest buyer account merge ──────────────────────────────────────────
@@ -414,7 +463,7 @@ export class CustomersController {
   @UseInterceptors(
     FilesInterceptor("files", 5, {
       storage: memoryStorage(),
-      limits: { fileSize: 15 * 1024 * 1024 }, // 15 MB (frontend compresses first)
+      limits: uploadLimits(MB(15)), // 15 MB (frontend compresses first)
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — raster images and PDF only.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.
@@ -466,7 +515,7 @@ export class CustomersController {
   @UseInterceptors(
     FilesInterceptor("files", 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 15 * 1024 * 1024 },
+      limits: uploadLimits(MB(15)),
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — raster images and PDF only.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.

@@ -1,4 +1,4 @@
-import { isUpsellLine } from "./pricing";
+import { isUpsellLine } from "@routeflow/pricing";
 
 /**
  * Customer-facing redaction for UPSELL lines.

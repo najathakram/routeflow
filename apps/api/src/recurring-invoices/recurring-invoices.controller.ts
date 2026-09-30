@@ -1,3 +1,5 @@
+import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   Body,
   Controller,
@@ -13,12 +15,19 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
 import { CreateRecurringInvoiceDto } from "./dto/create-recurring-invoice.dto";
+import { UpdateRecurringInvoiceDto } from "./dto/update-recurring-invoice.dto";
 
+// WP5a (R3b.3, R3b.5): flag.recurring_invoices ships dark (DARK_PLAN_FLAGS in
+// plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
+// PLAN_FLAG_ENFORCEMENT switch flips on.
 @Controller("recurring-invoices")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.recurring_invoices")
 export class RecurringInvoicesController {
   constructor(private readonly recurringInvoicesService: RecurringInvoicesService) {}
 
@@ -38,7 +47,7 @@ export class RecurringInvoicesController {
   }
 
   @Patch(":id")
-  update(@Param("id") id: string, @Body() dto: Partial<CreateRecurringInvoiceDto>) {
+  update(@Param("id") id: string, @Body() dto: UpdateRecurringInvoiceDto) {
     return this.recurringInvoicesService.update(id, dto);
   }
 
@@ -48,11 +57,11 @@ export class RecurringInvoicesController {
   }
 
   // Resume a paused template. A dedicated endpoint (mirrors DELETE=deactivate)
-  // — the PATCH path can't carry `isActive` (whitelist ValidationPipe + required
-  // CreateRecurringInvoiceDto fields reject a `{ isActive }` partial body).
+  // — the PATCH path can't carry `isActive` (UpdateRecurringInvoiceDto deliberately
+  // omits it, and the whitelist ValidationPipe rejects it as a non-whitelisted key).
   @Post(":id/activate")
-  activate(@Param("id") id: string) {
-    return this.recurringInvoicesService.activate(id);
+  activate(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.recurringInvoicesService.activate(id, user.sub);
   }
 
   @Post(":id/run")

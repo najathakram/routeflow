@@ -1,0 +1,20 @@
+{
+  "extends": "@routeflow/typescript-config/base.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "target": "ES2022",
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    // The moved money bodies must stay byte-identical (R2). They were written
+    // and compiled under apps/api, apps/web and apps/mobile — none of which
+    // enables `noUncheckedIndexedAccess` — so keep the base.json opt-in off
+    // here rather than editing a pricing body to satisfy a stricter flag.
+    "noUncheckedIndexedAccess": false,
+    "types": ["jest", "node"]
+  },
+  "include": ["src"]
+}

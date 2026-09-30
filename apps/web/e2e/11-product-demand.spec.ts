@@ -114,6 +114,26 @@ async function mockProductPage(
   await page.route(/\/api\/v1\/regulated\/templates(\?.*)?$/, (route) => fulfillJson(route, []));
   // Empty cost history so the neighbouring card self-hides and can't pollute locators.
   await page.route(/\/api\/v1\/analytics\/cost-history\/.*/, (route) => fulfillJson(route, []));
+  // The Sales card (SalesHistoryCard) fetches per-buyer sale lines — left unmocked it
+  // hits the live API, which answers an empty history for this fake product id and the
+  // card renders its own "Never sold" state. Mock it empty for determinism; the
+  // never-sold test below still scopes its assertion to the Demand card because BOTH
+  // cards legitimately say "Never sold" for a product with no sales.
+  await page.route(/\/api\/v1\/analytics\/product-sales\/e2e-demand-1(\?.*)?$/, (route) =>
+    fulfillJson(route, {
+      productId: PRODUCT_ID,
+      lines: [],
+      summary: {
+        count: 0,
+        buyers: 0,
+        totalQty: 0,
+        totalRevenue: 0,
+        minPrice: null,
+        maxPrice: null,
+        avgPrice: null,
+      },
+    }),
+  );
   await page.route(/\/api\/v1\/analytics\/demand\/e2e-demand-1(\?.*)?$/, (route) => {
     const range = new URL(route.request().url()).searchParams.get("range") ?? "(none)";
     seen.push(range);
@@ -205,7 +225,13 @@ test.describe("Product detail — Sales Demand", () => {
     }));
     test.skip(!(await gotoCard(page)), SKIP_REASON);
 
-    await expect(page.getByText("Never sold")).toBeVisible();
+    // Scoped to the Demand card: the Sales history card below it ALSO renders a
+    // "Never sold" <p> for a product with no sales, and an unscoped getByText
+    // resolves both and violates strict mode.
+    const demandCard = page
+      .getByRole("heading", { name: "Sales Demand" })
+      .locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
+    await expect(demandCard.getByText("Never sold")).toBeVisible();
     // No range or metric can change this answer, so the controls are not rendered.
     await expect(page.getByRole("group", { name: "Demand range" })).toHaveCount(0);
     await expect(page.getByRole("group", { name: "Demand metric" })).toHaveCount(0);

@@ -16,6 +16,16 @@ export const TENANT_SLUG: string = assertTestTenant(
   "playwright e2e",
 );
 
+// B449 fix-round finding 3: `qa-lite` is a standing LITE-plan tenant, seeded by
+// apps/api/scripts/e2e-seed.js alongside e2e-routeflow — so a LITE-plan spec
+// (48-lite-locked-route-ux.spec.ts) no longer self-skips when this env var is
+// unset locally. Override PLAYWRIGHT_LITE_TENANT_SLUG for a post-deploy run
+// against a differently-named LITE tenant.
+export const LITE_TENANT_SLUG: string = assertTestTenant(
+  process.env.PLAYWRIGHT_LITE_TENANT_SLUG ?? "qa-lite",
+  "playwright e2e (lite)",
+);
+
 export const CREDENTIALS = {
   superAdmin: {
     username: process.env.PLAYWRIGHT_SA_USERNAME ?? "",
@@ -23,6 +33,17 @@ export const CREDENTIALS = {
   },
   operator: { username: "admin", password: "Admin@123" },
   customer: { username: "harbor_cafe", password: "Customer1!" },
+  tenantAdmin: { username: "e2e_admin", password: "TenantAdmin1!" },
+  // Dedicated identity for the spec that revokes /auth/sessions rows server-side (L-050) — never
+  // the shared operator/tenant-admin above, which every storageState: operator.json project
+  // also loads. Seeded by apps/api/scripts/e2e-seed.js.
+  sessionsOp: { username: "e2e_sessions_op", password: "Sessions1!" },
+  // Approved buyer (BUYER role, email login): ACTIVE-linked to a dedicated customer on the
+  // e2e-routeflow tenant so it can reach the order call — a self-registered buyer has no seller
+  // link. Seeded by apps/api/scripts/e2e-seed.js ONLY on a local database (a LOCAL THROWAWAY
+  // password by design; the seed refuses any non-local target); auth.setup.ts logs it in (no
+  // registration) and skips on a non-local base URL.
+  buyer: { email: "e2e_buyer@e2e-routeflow.test", password: "BuyerPortal1!" },
 } as const;
 
 /** True when super-admin credentials are provided via env (super-admin specs skip otherwise). */
@@ -33,3 +54,6 @@ export const HAS_SUPER_ADMIN_CREDS =
 export function uniqueBuyerEmail(): string {
   return `e2e_buyer_${Date.now()}@example.com`;
 }
+
+// Re-exported so the e2e setup can skip non-local targets (unit-tested in lib/local-url.test.ts).
+export { isLocalUrl } from "../../lib/local-url";

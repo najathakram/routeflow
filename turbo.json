@@ -1,6 +1,36 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "tui",
+
+  // Files whose contents feed EVERY task's cache key.
+  //
+  // Turbo hashes the dependency GRAPH it resolves out of package-lock.json, not the
+  // lockfile itself. Measured on a545a10d: changing a transitive dep's `version` moves
+  // all 28 task hashes, but changing its `integrity` (so a DIFFERENT tarball installs),
+  // flipping `dev`/`devOptional` metadata (the drift a foreign npm regenerates), or
+  // reformatting the file moves NONE of them. So a dependency-shaped change could land,
+  // `npm ci` could install a different tree, and `npm run verify` would replay a cached
+  // pass without executing a single test — 18/18 CACHED, FULL TURBO, 4.6s (PR #495;
+  // independently reproduced on a second branch whose replayed log reported 3130 api
+  // tests "passing" that never ran).
+  //
+  // The root package.json was likewise absent from the global hash, so edits to the
+  // `verify` script itself invalidated nothing; a workspace manifest only ever
+  // invalidated its OWN package's tasks (3/28), never its dependents'.
+  //
+  // Trade-off, accepted deliberately: ANY dependency change now busts EVERY task's
+  // cache, so the first local run after a dep bump is cold by design. CI is unaffected
+  // — it has no turbo cache at all (no TURBO_TOKEN/TURBO_TEAM, no actions/cache of
+  // .turbo, fresh runners), so every CI run was already cold.
+  //
+  // Kept as an explicit list rather than a bare `**/package.json`: both resolve to the
+  // same 9 tracked manifests, but these globs cannot be misread as walking node_modules.
+  "globalDependencies": [
+    "package-lock.json",
+    "package.json",
+    "apps/*/package.json",
+    "packages/*/package.json"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -9,6 +39,7 @@
     },
     "dev": {
       "cache": false,
+      "dependsOn": ["^build"],
       "persistent": true
     },
     "lint": {
@@ -17,7 +48,67 @@
     },
     "test": {
       "dependsOn": ["^build"],
-      "inputs": ["src/**", "test/**", "**/*.spec.ts", "**/*.test.ts"],
+      // $TURBO_DEFAULT$, not a hand-picked list: apps/mobile has no src/ (its code
+      // lives in app/, lib/, store/, hooks/, utils/), so a narrow inputs list let
+      // edits to e.g. mobile lib/pricing.ts bust NO hashed input — turbo replayed a
+      // cached pass and printed a green jest summary for code it never ran.
+      "inputs": ["$TURBO_DEFAULT$"],
+      "outputs": ["coverage/**"]
+    },
+    // A package's $TURBO_DEFAULT$ only ever covers its OWN directory. @routeflow/pricing's
+    // specs reach outside packages/pricing — no-mirrors.spec.ts walks apps/api/src, apps/web
+    // and apps/mobile to prove no mirror pricing files exist; package-shape.spec.ts reads the
+    // root package.json, turbo.json and each app's Dockerfile — so those paths must be hashed
+    // into THIS task's own key. Add an entry here whenever a spec in packages/pricing reaches
+    // outside packages/pricing.
+    "@routeflow/pricing#test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/api/src/**",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/apps/api/test/**",
+        "$TURBO_ROOT$/apps/web/**",
+        "$TURBO_ROOT$/apps/mobile/**",
+        "$TURBO_ROOT$/apps/*/Dockerfile",
+        "$TURBO_ROOT$/turbo.json",
+        "!$TURBO_ROOT$/apps/web/.next/**",
+        "!**/node_modules/**"
+      ],
+      "outputs": ["coverage/**"]
+    },
+    // @routeflow/scanning's specs reach outside the package: no-second-scan-normaliser.spec.ts walks
+    // apps/ and packages/ + scripts/, and package-shape.spec.ts reads the root manifest, turbo.json and
+    // each app's Dockerfile. $TURBO_DEFAULT$ covers only packages/scanning, so hash those here.
+    "@routeflow/scanning#test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/apps/*/src/**",
+        "$TURBO_ROOT$/apps/*/lib/**",
+        "$TURBO_ROOT$/apps/*/app/**",
+        "$TURBO_ROOT$/apps/*/components/**",
+        "$TURBO_ROOT$/apps/*/hooks/**",
+        "$TURBO_ROOT$/apps/*/Dockerfile",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/packages/*/src/**",
+        "$TURBO_ROOT$/packages/*/package.json",
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/turbo.json",
+        "!**/node_modules/**"
+      ],
+      "outputs": ["coverage/**"]
+    },
+    // A web spec that imports from apps/mobile (a web<->mobile parity guard) needs the mobile files
+    // it reads hashed into ITS cache key. apps/web's $TURBO_DEFAULT$ covers only apps/web, so without
+    // an entry a mobile-only edit replays a CACHED green for the very guard meant to catch drift
+    // (measured with a dry-run: 0 of 671 inputs from apps/mobile). Add an entry here whenever a web
+    // spec reaches into apps/mobile. (A `@routeflow/api#test` override is the one that
+    // package-shape.spec.ts forbids; this is a different workspace.)
+    "@routeflow/web#test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/mobile/lib/**", "!**/node_modules/**"],
       "outputs": ["coverage/**"]
     },
     "test:e2e": {
@@ -25,8 +116,60 @@
       "inputs": ["test/**", "**/*.e2e-spec.ts"],
       "outputs": []
     },
+    // apps/api's docs-truth.spec.ts and no-dead-deps.spec.ts are tripwires that reach
+    // OUTSIDE apps/api (README.md, CLAUDE.md, apps/web's app/components/hooks/lib trees,
+    // apps/web + apps/mobile package.json) — apps/api's own `test` task's $TURBO_DEFAULT$
+    // never hashes those, so a change to any of them would replay a cached green. A
+    // `@routeflow/api#test` workspace-task override was tried for this and reverted:
+    // packages/pricing/src/package-shape.spec.ts forbids that key outright (one spec away
+    // from being forbidden entirely). A GENERIC task with explicit inputs survives instead —
+    // it isn't scoped to apps/api, so it can't collide with the forbidden override.
+    "test:repo-truth": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/README.md",
+        "$TURBO_ROOT$/CLAUDE.md",
+        "$TURBO_ROOT$/apps/web/package.json",
+        "$TURBO_ROOT$/apps/web/app/**",
+        "$TURBO_ROOT$/apps/web/components/**",
+        "$TURBO_ROOT$/apps/web/hooks/**",
+        "$TURBO_ROOT$/apps/web/lib/**",
+        // size-ratchet.spec.ts reads the mobile giants (edit-items.tsx, NewOrderScreen.tsx).
+        "$TURBO_ROOT$/apps/mobile/app/**",
+        "$TURBO_ROOT$/apps/mobile/components/**",
+        "$TURBO_ROOT$/apps/mobile/package.json",
+        // no-single-schema-path.spec.ts (moved here from apps/api's plain `test` task)
+        // walks all of these outside apps/api/src — same reasoning as the docs-truth /
+        // no-dead-deps entries above: an edit here must bust this task's cache too.
+        "$TURBO_ROOT$/scripts/**",
+        "$TURBO_ROOT$/.github/workflows/**",
+        "$TURBO_ROOT$/.claude/skills/**",
+        "$TURBO_ROOT$/apps/api/scripts/**",
+        "$TURBO_ROOT$/apps/api/Dockerfile",
+        "$TURBO_ROOT$/apps/api/prisma.config.ts",
+        "$TURBO_ROOT$/package.json",
+        "$TURBO_ROOT$/docker-compose.yml",
+        // The Next 15 upgrade guards (client-page-params, no-react-skew-hacks, next-version,
+        // audit-allowlist-retired) read these beyond the apps/web/app + scripts entries above.
+        "$TURBO_ROOT$/apps/web/Dockerfile",
+        "$TURBO_ROOT$/apps/web/jest.config.js",
+        "$TURBO_ROOT$/apps/web/next.config.mjs",
+        "$TURBO_ROOT$/security/**"
+      ],
+      "outputs": []
+    },
+    // `^build` first: @routeflow/pricing is a COMPILED workspace package, so its
+    // dependents cannot typecheck until its dist/*.d.ts exists.
     "check-types": {
-      "dependsOn": ["^check-types"],
+      "dependsOn": ["^build", "^check-types"],
+      "outputs": []
+    },
+    // apps/web's typecheck walks the apps/mobile files such a spec imports (see the
+    // `@routeflow/web#test` note above), so those must be hashed into ITS key too.
+    "@routeflow/web#check-types": {
+      "dependsOn": ["^build", "^check-types"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/apps/mobile/lib/**", "!**/node_modules/**"],
       "outputs": []
     },
     "clean": {

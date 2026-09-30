@@ -8,8 +8,16 @@ import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreateExpense, useExpenseCategories } from "../../../lib/api/expenses";
 import { useSuppliers } from "../../../lib/api/purchase-orders";
 import { showToast } from "../../../lib/toast";
+import {
+  PAYMENT_METHOD_LABELS,
+  SELECTABLE_METHOD_OPTIONS,
+  type AnyPaymentMethod,
+} from "../../../lib/payment-methods";
 
-const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "CHECK", "OTHER"];
+/** Shared labels, with a title-case fallback for legacy values (CARD, BANK_TRANSFER). */
+const methodLabel = (m: string): string =>
+  PAYMENT_METHOD_LABELS[m as AnyPaymentMethod] ??
+  m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 
 const CATEGORY_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   fuel: "speedometer-outline",
@@ -58,9 +66,6 @@ export default function NewExpenseScreen() {
   const [categoryPickerOpen, setCategoryPickerOpen] = useState(false);
   const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
   const [supplierPickerOpen, setSupplierPickerOpen] = useState(false);
-
-  const formatPaymentLabel = (m: string) =>
-    m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
 
   const submit = () => {
     const parsedAmount = Number(amount);
@@ -153,7 +158,7 @@ export default function NewExpenseScreen() {
         <FormField label="Payment method">
           <Pressable style={styles.picker} onPress={() => setPaymentPickerOpen(true)}>
             <Text style={[styles.pickerText, !paymentMethod && styles.placeholder]}>
-              {paymentMethod ? formatPaymentLabel(paymentMethod) : "Select method…"}
+              {paymentMethod ? methodLabel(paymentMethod) : "Select method…"}
             </Text>
             <Ionicons name="chevron-down" size={16} color={ios.label3} />
           </Pressable>
@@ -292,9 +297,10 @@ function PaymentMethodSheet({
 }) {
   const iconFor: Record<string, keyof typeof Ionicons.glyphMap> = {
     CASH: "cash-outline",
-    CARD: "card-outline",
-    BANK_TRANSFER: "swap-horizontal-outline",
     CHECK: "document-text-outline",
+    ZELLE: "phone-portrait-outline",
+    ACH: "swap-horizontal-outline",
+    CREDIT_CARD: "card-outline",
     OTHER: "ellipsis-horizontal-outline",
   };
   return (
@@ -304,17 +310,20 @@ function PaymentMethodSheet({
         <View style={styles.sheetHandle} />
         <Text style={styles.sheetTitle}>Payment method</Text>
         <View style={styles.grid}>
-          {PAYMENT_METHODS.map((m) => {
-            const active = m === selected;
-            const label = m.charAt(0) + m.slice(1).toLowerCase().replace("_", " ");
+          {SELECTABLE_METHOD_OPTIONS.map(({ id, label }) => {
+            const active = id === selected;
             return (
               <Pressable
-                key={m}
+                key={id}
                 style={[styles.tile, active && styles.tileActive]}
-                onPress={() => onSelect(m)}
+                onPress={() => onSelect(id)}
                 accessibilityLabel={`Payment ${label}`}
               >
-                <Ionicons name={iconFor[m]} size={22} color={active ? ios.brand : ios.label} />
+                <Ionicons
+                  name={iconFor[id] ?? "ellipsis-horizontal-outline"}
+                  size={22}
+                  color={active ? ios.brand : ios.label}
+                />
                 <Text style={[styles.tileText, active && styles.tileTextActive]} numberOfLines={2}>
                   {label}
                 </Text>

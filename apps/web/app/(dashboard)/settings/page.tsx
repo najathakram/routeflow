@@ -71,18 +71,23 @@ import { apiClient } from "@/lib/api-client";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { useInvoiceSettings, useUpdateInvoiceSettings } from "@/lib/api/invoices";
 import { useTenant } from "@/components/tenant-provider";
+import { BRAND_MARK_SRC } from "@/components/brand";
 import { useMarginConfig, useUpdateMarginConfig } from "@/lib/api/margin";
 import {
   useRemittanceConfig,
   useUpdateRemittanceConfig,
   type RemittanceConfig,
 } from "@/lib/api/remittance";
+import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
 import { SettingsHub } from "./_components/SettingsHub";
 import { SendingDomainCard } from "./_components/SendingDomainCard";
+import { MailboxCard } from "./_components/MailboxCard";
+import { StripeConnectCard } from "./_components/StripeConnectCard";
+import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 
@@ -301,7 +306,7 @@ function BusinessProfileTab() {
                 className="h-full w-full object-contain p-2"
               />
             ) : (
-              <img src="/logo.svg" alt="RouteFlow" className="h-10 w-10 object-contain" />
+              <img src={BRAND_MARK_SRC} alt="RouteFlow" className="h-10 w-10 object-contain" />
             )}
           </div>
           <div className="space-y-2">
@@ -1045,19 +1050,21 @@ const EMAIL_PROVIDERS = [
     passwordPlaceholder: "xxxx xxxx xxxx xxxx",
     helpTitle: "You need a Google App Password",
     helpSteps: [
-      "Go to myaccount.google.com → Security",
-      "Turn on 2-Step Verification if not already on",
-      'Under "How you sign in to Google", click App Passwords',
-      'Select "Mail" and your device, then click Generate',
-      "Copy the 16-character password and paste it here",
+      "Turn on 2-Step Verification first — App Passwords don't exist without it",
+      "Open myaccount.google.com/apppasswords directly — Google no longer links it from the Security page",
+      'Type any name you\'ll recognise (e.g. "RouteFlow") and click Create',
+      "Copy the 16-character code and paste it here — Google shows it only once",
+      "Google Workspace: an admin must first allow app passwords (Admin console → Security → Authentication → 2-Step Verification)",
+      "Changing your Google password revokes the app password — create a new one if sending stops",
     ],
     helpLink: "https://myaccount.google.com/apppasswords",
     helpLinkLabel: "Open App Passwords →",
   },
   {
     id: "microsoft365",
-    label: "Microsoft 365 / Outlook",
-    description: "Office 365, Outlook.com, and GoDaddy Microsoft 365 email",
+    label: "Microsoft 365 (business)",
+    description:
+      "Work mailboxes on Microsoft 365, including GoDaddy M365 — not personal Outlook.com",
     logo: (
       <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
         <rect x="1" y="1" width="10" height="10" fill="#F25022" />
@@ -1071,15 +1078,16 @@ const EMAIL_PROVIDERS = [
     smtpSecure: false,
     userLabel: "Email address",
     userPlaceholder: "you@yourbusiness.com",
-    passwordLabel: "Password (or app password)",
+    passwordLabel: "Mailbox password",
     passwordPlaceholder: "Your email password",
-    helpTitle: "SMTP sign-in must be enabled for your mailbox",
+    helpTitle: "An admin must switch SMTP on for this mailbox",
     helpSteps: [
-      "Microsoft turns SMTP sign-in OFF by default — an admin must enable it once",
-      "Microsoft 365 admin center → Users → Active users → select the user",
-      'Open the "Mail" tab → "Manage email apps" → tick "Authenticated SMTP" → Save',
-      "If you use 2-step verification, create an app password and use it here",
-      "GoDaddy email is usually Microsoft 365 — this preset is the right one for it",
+      "Personal Outlook.com, Hotmail, Live and MSN addresses will NOT work — Microsoft ended password sign-in for them on 30 April 2026, and they need OAuth instead",
+      "For a business Microsoft 365 mailbox, SMTP sign-in is off by default — an admin enables it once",
+      "Microsoft 365 admin center → Users → Active users → select the user → Mail → Manage email apps",
+      'Tick "Authenticated SMTP", save, then wait a few minutes before testing',
+      "Security defaults must be off for the tenant, or SMTP sign-in stays blocked regardless of that tick",
+      "Microsoft turns this off for all tenants at the end of December 2026 — plan to move to Gmail or another SMTP provider before then",
     ],
     helpLink: "https://aka.ms/smtp_auth_disabled",
     helpLinkLabel: "How to enable SMTP sign-in →",
@@ -1105,8 +1113,9 @@ const EMAIL_PROVIDERS = [
     passwordPlaceholder: "Your GoDaddy email password",
     helpTitle: "Only for legacy Workspace Email",
     helpSteps: [
-      'If your GoDaddy email is Microsoft 365 (most are now), pick "Microsoft 365 / Outlook" instead',
-      "Use the full email address you created in GoDaddy and its password",
+      "Check GoDaddy → My Products → Email & Microsoft 365 first — if it says Microsoft 365, use that preset instead",
+      "GoDaddy has migrated nearly all Workspace Email to Microsoft 365; these settings only work on the few mailboxes still on the old platform",
+      "Use the full email address as the username, with its mailbox password",
       "If you forgot it, reset it in GoDaddy → Email & Office → Manage",
     ],
     helpLink: "https://email.godaddy.com",
@@ -1128,6 +1137,8 @@ const EMAIL_PROVIDERS = [
     helpSteps: [
       'Search your provider\'s help for "SMTP settings" (host, port, SSL)',
       "Port 587 usually pairs with the secure toggle OFF (STARTTLS); port 465 with it ON (SSL)",
+      "Only ports 25, 465, 587 and 2525 are accepted",
+      "Most providers want the full email address as the username, not just the part before the @",
       "Providers with 2-step verification usually need an app password instead of your normal one",
     ],
     helpLink: "",
@@ -1286,10 +1297,17 @@ function EmailSettingsTab() {
     try {
       const { data } = await apiClient.post("/settings/email/test", { toEmail: emailAddress });
       if (data.success) {
+        // sendTestEmail() returns the generic "Test email sent successfully" when the
+        // tenant's own SMTP delivered cleanly, but appends the mapped SMTP-diagnostic
+        // reason (verbatim) when Resend had to rescue the send. Show that distinctly —
+        // it's still a success, but the tenant's own mail is broken.
+        const isFallbackWarning = !!data.message && data.message !== "Test email sent successfully";
         toast({
-          title: "Test email sent!",
-          description: `Check ${emailAddress} for the test message.`,
-          variant: "success",
+          title: isFallbackWarning ? "Sent via RouteFlow's mail service" : "Test email sent!",
+          description: isFallbackWarning
+            ? data.message
+            : `Check ${emailAddress} for the test message.`,
+          variant: isFallbackWarning ? "warning" : "success",
         });
       } else {
         toast({ title: "Test failed", description: data.message, variant: "error" });
@@ -1539,6 +1557,10 @@ function EmailSettingsTab() {
         </div>
       </div>
 
+      {/* Connect Gmail (email-connect-google) — hidden entirely unless the
+          email.connected_mailbox add-on is granted; see MailboxCard's own doc comment. */}
+      <MailboxCard />
+
       {/* OPTIONAL: RouteFlow-managed sending (platform transactional service with a
           verified domain) — for tenants who don't want to touch their mail account. */}
       <details className="group max-w-xl overflow-hidden rounded-card border border-surface-border bg-white [&_summary]:list-none">
@@ -1628,6 +1650,9 @@ function SessionsCard() {
       toast({ title: "Session revoked", variant: "success" });
     } catch {
       toast({ title: "Failed to revoke session", variant: "error" });
+      // B155: the row we showed may already be gone server-side — re-sync instead
+      // of leaving a phantom the user cannot act on.
+      await loadSessions();
     } finally {
       setRevoking(null);
     }
@@ -1636,17 +1661,19 @@ function SessionsCard() {
   const handleRevokeAll = async () => {
     setRevokingAll(true);
     setConfirmRevokeAll(false);
-    try {
-      await Promise.all(
-        sessions.map((s) => apiClient.delete(`/auth/sessions/${s.id}`).catch(() => null)),
-      );
+    const results = await Promise.allSettled(
+      sessions.map((s) => apiClient.delete(`/auth/sessions/${s.id}`)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed === 0) {
       setSessions([]);
       toast({ title: "All sessions revoked", variant: "success" });
-    } catch {
-      toast({ title: "Failed to revoke all sessions", variant: "error" });
-    } finally {
-      setRevokingAll(false);
+    } else {
+      // B155: never claim success for a call that failed.
+      toast({ title: "Some sessions could not be revoked", variant: "error" });
+      await loadSessions();
     }
+    setRevokingAll(false);
   };
 
   return (
@@ -1704,7 +1731,11 @@ function SessionsCard() {
         {!loading && sessions.length > 0 && (
           <ul className="divide-y divide-surface-border">
             {sessions.map((session) => (
-              <li key={session.id} className="flex items-start justify-between gap-3 py-3">
+              <li
+                key={session.id}
+                data-session-id={session.id}
+                className="flex items-start justify-between gap-3 py-3"
+              >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-raised text-navy/70">
                     <DeviceIconInline ua={session.userAgent} />
@@ -1924,26 +1955,14 @@ function MyAccountTab() {
   const handleLinkGoogle = async () => {
     setIsLinking(true);
     try {
-      const apiUrl =
-        process.env.NEXT_PUBLIC_API_URL ?? "https://routeflowapi-production.up.railway.app/api/v1";
-      const token = typeof window !== "undefined" ? localStorage.getItem("accessToken") : null;
-      const res = await fetch(`${apiUrl}/auth/google/link`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const { data } = await apiClient.get("/auth/google/link");
+      if (data?.url) window.location.href = data.url;
+    } catch (err: any) {
+      toast({
+        title: "Google link failed",
+        description: err?.response?.data?.message ?? "Please try again.",
+        variant: "error",
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        toast({
-          title: "Google link failed",
-          description: body.message ?? "Please try again.",
-          variant: "error",
-        });
-        setIsLinking(false);
-        return;
-      }
-      const { url } = await res.json();
-      if (url) window.location.href = url;
-    } catch {
-      toast({ title: "Google link failed", description: "Please try again.", variant: "error" });
       setIsLinking(false);
     }
   };
@@ -2305,6 +2324,78 @@ function RemittanceTab() {
   );
 }
 
+// ─── CARD: Pricing tier names ──────────────────────────────────────────────────
+// A tenant can rename price tiers to match how their business talks about them
+// (e.g. "Wholesaler" instead of "Tier 2"). Mounted directly on the settings hub
+// (not behind a `?tab=`) the same way StripeConnectCard is — five inputs is too
+// small to earn its own screen. Everyone on Settings can see the configured
+// names (GET is OPERATOR + DRIVER server-side); only TENANT_ADMIN can edit,
+// mirroring RemittanceTab's gate.
+const TIER_KEYS = ["1", "2", "3", "4", "5"] as const;
+
+function TierLabelsCard() {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
+  const { data: labels, isLoading } = useTierLabels();
+  const update = useUpdateTierLabels();
+
+  const [form, setForm] = React.useState<TierLabelsConfig>({});
+
+  React.useEffect(() => {
+    if (labels) setForm(labels);
+  }, [labels]);
+
+  const set = (key: (typeof TIER_KEYS)[number]) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const save = () => {
+    update.mutate(form, {
+      onSuccess: () => toast({ title: "Tier names saved", variant: "success" }),
+      onError: (err: any) =>
+        toast({
+          title: "Could not save",
+          description: err?.response?.data?.message ?? "Please try again.",
+          variant: "error",
+        }),
+    });
+  };
+
+  if (isLoading) return null;
+
+  return (
+    <Card className="space-y-5 p-5">
+      <div>
+        <h3 className="text-sm font-semibold text-navy">Pricing tier names</h3>
+        <p className="mt-1 text-xs text-navy/70">
+          Rename price tiers to match your business (e.g. &quot;Wholesaler&quot; instead of
+          &quot;Tier 2&quot;). Leave a field blank to use the default.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {TIER_KEYS.map((key) => (
+          <Input
+            key={key}
+            label={`Tier ${key}`}
+            placeholder={`Tier ${key}`}
+            maxLength={24}
+            value={form[key] ?? ""}
+            onChange={set(key)}
+            disabled={!isAdmin}
+          />
+        ))}
+      </div>
+      {isAdmin ? (
+        <Button variant="primary" loading={update.isPending} onClick={save}>
+          Save changes
+        </Button>
+      ) : (
+        <p className="text-xs text-navy/50">Only admins can rename pricing tiers.</p>
+      )}
+    </Card>
+  );
+}
+
 // ─── TAB: Invoicing ──────────────────────────────────────────────────────────
 
 const TERMS_OPTIONS = [
@@ -2361,6 +2452,91 @@ function InvoicingTab() {
     );
   };
 
+  const handleHideOriginalPriceChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { hideOriginalPrice: !checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Original price display updated successfully.",
+            variant: "success",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  // Deposit % is free text, so — like customers/[id]/page.tsx's
+  // defaultDepositPercent field — it must NOT PATCH per keystroke: typing "50"
+  // would persist 5 first and the server value would fight the field
+  // mid-typing. Hold it locally, re-seed from the server, and commit once on
+  // blur/Enter (clamped to the DTO's 0–100).
+  const serverDepositPercent =
+    invoiceSettings?.depositDefaultPercent != null
+      ? Number(invoiceSettings.depositDefaultPercent)
+      : null;
+  const [depositPercentInput, setDepositPercentInput] = React.useState("");
+  React.useEffect(() => {
+    setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+  }, [serverDepositPercent]);
+
+  const commitDepositPercent = () => {
+    const raw = depositPercentInput.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    if (parsed != null && !Number.isFinite(parsed)) {
+      setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+      return;
+    }
+    const next = parsed == null ? null : Math.min(100, Math.max(0, parsed));
+    setDepositPercentInput(next != null ? String(next) : "");
+    if (next === serverDepositPercent) return;
+    updateSettings.mutate(
+      { depositDefaultPercent: next },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Default deposit updated successfully.",
+            variant: "success",
+          }),
+        onError: (err: any) => {
+          setDepositPercentInput(serverDepositPercent != null ? String(serverDepositPercent) : "");
+          toast({
+            title: "Failed to save",
+            description: err?.response?.data?.message ?? "Could not update invoice settings.",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
+  const handleDepositCollectAtOrderChange = (checked: boolean) => {
+    updateSettings.mutate(
+      { depositCollectAtOrder: checked },
+      {
+        onSuccess: () =>
+          toast({
+            title: "Invoice settings saved",
+            description: "Deposit collection setting updated successfully.",
+            variant: "success",
+          }),
+        onError: () =>
+          toast({
+            title: "Failed to save",
+            description: "Could not update invoice settings.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
   const handleSaveDefaults = async () => {
     setSavingDefaults(true);
     try {
@@ -2405,6 +2581,90 @@ function InvoicingTab() {
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-navy">
+                Show original price on discounted lines
+              </p>
+              <p className="text-xs text-navy/70">
+                When off, invoices show only the final unit price — no struck-through original price
+                or badge.
+              </p>
+            </div>
+            <label className="inline-flex shrink-0 cursor-pointer items-center">
+              <input
+                type="checkbox"
+                aria-label="Show original price on discounted lines"
+                checked={!invoiceSettings?.hideOriginalPrice}
+                onChange={(e) => handleHideOriginalPriceChange(e.target.checked)}
+                disabled={isLoading || updateSettings.isPending}
+                className="h-4 w-4 rounded border-surface-border"
+              />
+            </label>
+          </div>
+
+          <div className="border-t border-surface-border pt-4">
+            <p className="mb-3 text-sm font-semibold text-navy">Deposits</p>
+            <div className="space-y-4">
+              <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-brand-50">
+                  <Landmark className="h-5 w-5 text-brand-500" />
+                </div>
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-semibold text-navy">
+                    Default deposit (% of order total)
+                  </p>
+                  <p className="text-xs text-navy/70">
+                    Customers with their own deposit % override this; 0 on a customer disables it.
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    max={100}
+                    placeholder="—"
+                    value={depositPercentInput}
+                    onChange={(e) => setDepositPercentInput(e.target.value)}
+                    onBlur={commitDepositPercent}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    disabled={isLoading || updateSettings.isPending}
+                    className="w-16 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <span className="text-sm text-navy/70">%</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-lg border border-surface-border bg-surface-raised p-4">
+                <div className="flex-1 space-y-1">
+                  <p className="text-sm font-semibold text-navy">
+                    Collect deposit at order placement
+                  </p>
+                  <p className="text-xs text-navy/70">
+                    Issues the order&apos;s invoice immediately so the deposit can be paid; the
+                    order stays editable until delivery.
+                  </p>
+                </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center">
+                  <input
+                    type="checkbox"
+                    aria-label="Collect deposit at order placement"
+                    checked={!!invoiceSettings?.depositCollectAtOrder}
+                    onChange={(e) => handleDepositCollectAtOrderChange(e.target.checked)}
+                    disabled={isLoading || updateSettings.isPending}
+                    className="h-4 w-4 rounded border-surface-border"
+                  />
+                </label>
+              </div>
             </div>
           </div>
         </div>
@@ -2551,6 +2811,11 @@ function SettingsPageInner() {
     costing: { title: "Costing", node: <CostingTab />, width: "max-w-3xl" },
     remittance: { title: "How to pay", node: <RemittanceTab />, width: "max-w-3xl" },
     integrations: { title: "Integrations", node: <AIIntegrationsTab />, width: "max-w-3xl" },
+    gohighlevel: {
+      title: "GoHighLevel",
+      node: <GoHighLevelSettingsTab />,
+      width: "max-w-4xl",
+    },
     account: { title: "My account", node: <MyAccountTab />, width: "max-w-3xl" },
     ...(isAdmin
       ? {
@@ -2571,8 +2836,18 @@ function SettingsPageInner() {
     <div className="mx-auto max-w-5xl p-6">
       {!section ? (
         <>
-          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
           <SettingsHub isAdmin={isAdmin} />
+          {/* Stripe Connect lives on the hub itself (not behind a `?tab=`) because the
+              OAuth callback returns the operator to bare `/settings?stripe=...` and the
+              card renders that banner. */}
+          <div className="mt-5 max-w-3xl">
+            <StripeConnectCard />
+          </div>
+          {/* Pricing tier names — a small card, not worth its own `?tab=` screen. */}
+          <div className="mt-5 max-w-3xl">
+            <TierLabelsCard />
+          </div>
         </>
       ) : (
         <>
@@ -2582,7 +2857,7 @@ function SettingsPageInner() {
           >
             <ArrowLeft className="h-4 w-4" /> All settings
           </NextLink>
-          <h1 className="mb-5 text-2xl font-bold text-navy">{section.title}</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">{section.title}</h2>
           <div className={section.width ?? ""}>{section.node}</div>
         </>
       )}
@@ -2596,7 +2871,7 @@ export default function SettingsPage() {
     <React.Suspense
       fallback={
         <div className="mx-auto max-w-5xl p-6">
-          <h1 className="mb-5 text-2xl font-bold text-navy">Settings</h1>
+          <h2 className="mb-5 text-2xl font-bold text-navy">Settings</h2>
         </div>
       }
     >

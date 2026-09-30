@@ -3,12 +3,12 @@
 import * as React from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Skeleton } from "@routeflow/ui/web";
-import { formatQtySplit, normalizeBoxesPieces } from "@/lib/pricing";
 import {
   type DemandGranularity,
   type DemandRange,
   useProductDemand,
 } from "@/lib/api/product-demand";
+import { unitsLabel } from "@/lib/stock-label";
 
 /**
  * Real per-product demand, from invoiced sales. Replaces a seeded-PRNG demo chart.
@@ -100,20 +100,6 @@ function monthYear(iso: string): string {
 function tickInterval(count: number): number {
   if (count <= 12) return 0;
   return Math.ceil(count / 10) - 1;
-}
-
-/**
- * "1,240 pcs (51 boxes + 16 pcs)" for a boxed product, "340 pcs" otherwise.
- * The split is a display re-grouping of a summed piece count, so the raw count stays
- * primary and the split is parenthetical.
- */
-function unitsLabel(units: number, unitsPerBox?: number | null): string {
-  const n = units.toLocaleString("en-US");
-  const upb = Number(unitsPerBox ?? 0);
-  if (!(upb > 1) || units <= 0) return `${n} pcs`;
-  const split = normalizeBoxesPieces({ qty: units, unitsPerBox: upb });
-  // No unitLabel — `product.unit` is the SELLING unit ("case"), not the loose-piece noun.
-  return `${n} pcs (${formatQtySplit({ qty: split.qty, boxes: split.boxes, pieces: split.pieces })})`;
 }
 
 function Segmented<T extends string>({

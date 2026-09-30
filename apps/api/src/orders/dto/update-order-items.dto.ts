@@ -15,6 +15,7 @@ import {
 import { Type } from "class-transformer";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
 import { AppliedCreditNoteDto } from "./create-order.dto";
+import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 class UpdateOrderItemDto {
   @IsOptional()
@@ -24,6 +25,14 @@ class UpdateOrderItemDto {
   @IsOptional()
   @IsString()
   productId?: string;
+
+  /**
+   * units_v1 (A1): sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY,
+   * behind flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Absent on
+   * an existing unit-aware line's edit is REFUSED (never interpreted), not "keep the old unit" —
+   * see unit-line-edit.ts assertUnitLabelNamed.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
 
   /**
    * Free-text label for an unlisted (non-catalog) line. Present on a new
@@ -55,8 +64,11 @@ class UpdateOrderItemDto {
    * Box/piece split for products with `unitsPerBox > 1`. When EITHER is
    * present the server recomputes `qty` from them (boxes × unitsPerBox +
    * pieces) and uses BOX-price proration for the line subtotal — matching
-   * the create-order flow. Operator/driver roles only; the customer-edit
-   * branch ignores these fields.
+   * the create-order flow. Operator/driver roles resolve it this way
+   * directly; on the buyer (CUSTOMER) edit path — REG-B47 — a present
+   * boxes/pieces field instead serves as a denomination SIGNAL (a folded
+   * merge payload marking this line piece-denominated), server-re-split from
+   * `qty` + the LIVE product `unitsPerBox`, never trusted verbatim (B13).
    */
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
@@ -73,6 +85,7 @@ class UpdateOrderItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   notes?: string;
 
   @IsOptional()
@@ -97,11 +110,13 @@ export class UpdateOrderItemsDto {
   /**
    * When true, the operator path treats `items` as the FULL line set: it deletes
    * existing items and recreates from the payload (the mobile "replace-all"
-   * pattern). When false, items are merged incrementally — id-less entries are
-   * appended, existing items not present are left untouched. When omitted, the
-   * server falls back to the legacy heuristic ("every item lacks an id" ⇒ replace)
-   * so older mobile clients keep working. The web edit UI sends `false` so adding
-   * a new item never wipes the untouched lines.
+   * pattern). Otherwise — false OR omitted — items are merged incrementally:
+   * id-less entries are appended, existing items not present are left untouched.
+   *
+   * F30/R10 (B198): explicit-only. The old fallback heuristic ("every item lacks
+   * an id" ⇒ replace) is gone — it wiped an order on any id-less "just add these"
+   * PATCH that omitted the flag, which is exactly the mobile per-scan shape. A
+   * caller that wants a wholesale replace must now say `replaceAll: true` out loud.
    */
   @IsOptional()
   @IsBoolean()
@@ -128,4 +143,14 @@ export class UpdateOrderItemsDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
+
+  /**
+   * #2094 (SA-194): a return taken inside this edit's own transaction. Customer and order are DERIVED
+   * from the document; `returnKey` is the per-attempt nonce. Staff and driver only: a buyer carrying
+   * it is refused before any read (OrdersService).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InlineReturnLinesDto)
+  inlineReturn?: InlineReturnLinesDto;
 }

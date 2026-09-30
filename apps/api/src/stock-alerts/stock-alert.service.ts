@@ -91,7 +91,7 @@ export class StockAlertService {
 
     let notified = 0;
     for (const productId of unique) {
-      const product = await this.prisma.forTenant().product.findUnique({
+      const product = await this.prisma.forTenant().product.findFirst({
         where: { id: productId },
         select: { id: true, name: true, currentStock: true },
       });

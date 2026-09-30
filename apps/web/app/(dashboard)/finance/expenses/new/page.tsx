@@ -14,6 +14,7 @@ import { useSuppliers } from "@/lib/api/suppliers";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast } from "@routeflow/ui/web";
 import { SupplierSelect } from "@/components/SupplierSelect";
+import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 // ─── Shared field styles ───────────────────────────────────────────────────────
 
@@ -274,11 +275,11 @@ function RecordExpenseTab({ onSaved }: { onSaved: () => void }) {
             onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
             className={fieldCls}
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -895,12 +896,12 @@ export default function NewExpensePage() {
   const router = useRouter();
 
   const [activeTab, setActiveTab] = React.useState<TabKey>("single");
-  const handleSaved = () => router.push("/finance/expenses");
+  const handleSaved = () => router.push("/vendor-bills");
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <div>
-        <h1 className="text-xl font-semibold text-navy">New Expense</h1>
+        <h2 className="text-xl font-semibold text-navy">New Expense</h2>
         <p className="text-sm text-navy/70">Record a business expense</p>
       </div>
 

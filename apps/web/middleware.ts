@@ -1,163 +1,86 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { tenantSlugFromHostname } from "@/lib/tenant-host";
+import {
+  BUYER_PRESENCE_COOKIE,
+  LAST_PORTAL_COOKIE,
+  OP_PRESENCE_COOKIE,
+} from "@/lib/presence-cookies";
+import { resolveLandingTarget, resolveOperatorPathGuard } from "@/lib/portal-routing";
 
-// Subdomains that are platform-level, never tenant slugs
-const PLATFORM_HOSTS = new Set([
-  "www",
-  "app",
-  "api",
-  "admin",
-  "static",
-  "assets",
-  "mail",
-  "support",
-  "platform",
-  "billing",
-  "localhost",
-]);
-
-// Hosting provider base domains — never extract tenant slug from these
-const HOSTING_PROVIDER_DOMAINS = new Set([
-  "railway.app",
-  "up.railway.app",
-  "vercel.app",
-  "netlify.app",
-  "render.com",
-  "fly.dev",
-  "onrender.com",
-  "herokuapp.com",
-]);
-
-// Mobile-web build served by the @routeflow/mobile Railway service. When phones
-// hit the Next.js web app we rewrite (proxy) the response from this URL so the
-// browser address bar keeps showing www.routeflow.info instead of changing domains.
-const MOBILE_WEB_URL =
-  process.env.NEXT_PUBLIC_MOBILE_WEB_URL ?? "https://routeflowmobile-production.up.railway.app";
-
-/** Rough mobile UA detection — matches phones + small tablets, not desktop. */
-function isMobileUserAgent(ua: string): boolean {
-  // "Mobi" covers Firefox/Chrome mobile; "Android" covers Android WebViews.
-  // iPad UAs say "Macintosh" in iPadOS 13+, so we also check for touch via
-  // the viewport hint below. This is intentionally coarse — desktop browsers
-  // in DevTools mobile mode will still match, which is fine.
-  return /Mobi|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-}
+// Platform-level subdomains and hosting-provider base domains live in
+// `@/lib/tenant-host` so the login page derives the workspace with exactly these
+// rules. They were duplicated here and there, and the copies drifted — see the
+// header of that module.
 
 /**
  * Extracts the tenant slug from the subdomain of the Host header and stores it
  * as a cookie so the TenantProvider can fetch branding on the client side.
- * Also redirects mobile browsers to the mobile-web Railway deployment.
  *
  * e.g.  acme.routeflow.io  →  cookie tenant-slug=acme
  *       localhost:3001      →  no cookie set (dev: use X-Tenant-Slug header instead)
  */
 export function middleware(request: NextRequest) {
-  // Redirect phones to the mobile-web build. Skip API routes, Next.js
-  // internals, and anyone who opts out via `?desktop=1` (escape hatch for
-  // people intentionally using the desktop UI on a phone).
   const pathname = request.nextUrl.pathname;
   const url = request.nextUrl;
-  const optedOutOfMobile =
-    url.searchParams.get("desktop") === "1" || request.cookies.get("prefer-desktop")?.value === "1";
-  const skipMobileRedirect =
-    optedOutOfMobile || pathname.startsWith("/api/") || pathname.startsWith("/_next/");
-
-  if (!skipMobileRedirect) {
-    const ua = request.headers.get("user-agent") ?? "";
-    if (isMobileUserAgent(ua)) {
-      // Proxy the mobile-web content so the browser URL stays at www.routeflow.info.
-      // The JS bundles/assets are still served from the Railway origin directly (CORS),
-      // but the initial HTML is proxied and the visible URL never changes.
-      const proxyTarget = new URL(MOBILE_WEB_URL);
-      proxyTarget.pathname = pathname;
-      proxyTarget.search = url.search;
-      return NextResponse.rewrite(proxyTarget);
-    }
-  }
+  const opAuthed = request.cookies.get(OP_PRESENCE_COOKIE)?.value === "1";
+  const buyerAuthed = request.cookies.get(BUYER_PRESENCE_COOKIE)?.value === "1";
+  const isProd = process.env.NODE_ENV === "production";
 
   // Signed-in users skip the landing page: operators → dashboard, buyers →
-  // buyer portal. Keyed on the presence cookies, which now track the live
-  // session (3-day sliding window re-set on every token refresh, cleared on
-  // refresh failure — see lib/presence-cookies.ts). Deliberately scoped to
-  // exactly "/": every other marketing page stays reachable while signed in.
-  // Runs AFTER the mobile-UA proxy so phones land in the mobile-web build,
-  // which does its own role-based routing. Operator wins when both cookies
-  // are present (consistent with the buyer guard below). 307 (never 308) so
-  // nothing is cached if the user signs out.
+  // buyer portal; when both sessions are live the portal used last wins
+  // (rf-last-portal, written by each portal's authenticated layout) and the
+  // seller dashboard is the default. Keyed on the presence cookies, which track
+  // the live session (30-day sliding window re-set on every token refresh,
+  // cleared on refresh failure — see lib/presence-cookies.ts). Deliberately
+  // scoped to exactly "/": every other marketing page stays reachable while
+  // signed in. Everyone reaches this block now — phones included: the
+  // mobile-web (Expo) proxy this middleware used to run for phone UAs is
+  // gone (owner ruling: phones get the same redesigned web site as desktop;
+  // drivers use the installed app). 307 (never 308) so nothing is cached if
+  // the user signs out. Decisions live in lib/portal-routing.ts.
   if (pathname === "/") {
-    const opAuthed = request.cookies.get("rf-op-auth")?.value === "1";
-    const buyerAuthed = request.cookies.get("rf-buyer-auth")?.value === "1";
-    const target = opAuthed ? "/dashboard" : buyerAuthed ? "/buyer/portal" : null;
+    const target = resolveLandingTarget({
+      opAuthed,
+      buyerAuthed,
+      lastPortal: request.cookies.get(LAST_PORTAL_COOKIE)?.value,
+    });
     if (target) {
       const dest = url.clone();
       dest.pathname = target;
       dest.search = "";
-      const res = NextResponse.redirect(dest, 307);
-      // Preserve the desktop opt-out even though we return before the
-      // prefer-desktop block below.
-      if (url.searchParams.get("desktop") === "1") {
-        res.cookies.set("prefer-desktop", "1", {
-          sameSite: "lax",
-          path: "/",
-          maxAge: 60 * 60 * 24 * 30,
-        });
-      }
-      return res;
+      return NextResponse.redirect(dest, 307);
     }
   }
 
-  // Buyer-only guard: signed-in buyers without an operator session must not be
-  // able to reach operator surfaces — bounce them back to the buyer portal.
-  const OPERATOR_PATH_PREFIXES = [
-    "/dashboard",
-    "/settings",
-    "/invoices",
-    "/customers",
-    "/products",
-    "/routes",
-    "/orders",
-    "/finance",
-    "/credit-notes",
-    "/estimates",
-    "/inventory",
-    "/suppliers",
-    "/purchases",
-    "/vendor-bills",
-    "/returns",
-    "/analytics",
-    "/bookkeeping",
-    "/drivers",
-  ];
-  const isOperatorPath = OPERATOR_PATH_PREFIXES.some(
-    (p) => pathname === p || pathname.startsWith(`${p}/`),
-  );
-  if (isOperatorPath) {
-    const buyerCookie = request.cookies.get("rf-buyer-auth")?.value;
-    const opCookie = request.cookies.get("rf-op-auth")?.value;
-    if (buyerCookie && !opCookie) {
-      const target = url.clone();
-      target.pathname = "/buyer/portal";
-      target.search = "";
-      return NextResponse.redirect(target);
-    }
+  // Buyer-only guard: a signed-in buyer with no operator session who asks for an
+  // operator surface goes to the operator sign-in with the destination kept, so
+  // a person who is both a buyer and a seller can open the second session (the
+  // sign-in page offers "Go to buyer portal" to everyone else). The operator
+  // path list lives in lib/portal-routing.ts, shared with that page's redirect
+  // validation so the two can never drift.
+  const guardTarget = resolveOperatorPathGuard({
+    pathname,
+    search: url.search,
+    opAuthed,
+    buyerAuthed,
+  });
+  if (guardTarget) {
+    const parsed = new URL(guardTarget, url.origin);
+    const dest = url.clone();
+    dest.pathname = parsed.pathname;
+    dest.search = parsed.search;
+    return NextResponse.redirect(dest, 307);
   }
 
-  // Remember the desktop opt-out so subsequent nav on the phone stays here.
-  if (url.searchParams.get("desktop") === "1") {
-    const res = NextResponse.next();
-    res.cookies.set("prefer-desktop", "1", {
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 30,
-    });
-    return res;
-  }
-
+  // `?desktop=1` and the `prefer-desktop` cookie are dead now that there's no
+  // mobile-web build to opt out of — harmless (never an error) but no longer
+  // read or written by this middleware. Left un-stripped from any old link/
+  // bookmark rather than actively rejected.
   const response = NextResponse.next();
 
   // Allow manual override via request header (useful in dev / mobile apps).
   // In production this header is stripped by the reverse proxy; only local dev uses it.
-  const isProd = process.env.NODE_ENV === "production";
   const headerSlug = request.headers.get("x-tenant-slug");
   if (headerSlug) {
     response.cookies.set("tenant-slug", headerSlug, {
@@ -179,29 +102,14 @@ export function middleware(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   // host may be "acme.routeflow.io" or "acme.routeflow.io:443" — strip port
   const hostname = host.split(":")[0];
-  const parts = hostname.split(".");
 
   // Tenant resolution precedence:
   //   1. Real subdomain (e.g. acme.routeflow.info) → authoritative, overwrites cookie
   //   2. Existing cookie (user picked a workspace on the login form, or
   //      previous successful login anchored it to the user's actual tenant) → preserve
   //   3. Otherwise → no cookie set; the login page asks the user for a workspace.
-  let subdomainSlug: string | null = null;
-
-  if (parts.length >= 3) {
-    // Check against known hosting provider base domains (last 2 or 3 parts)
-    const twoPartBase = parts.slice(-2).join(".");
-    const threePartBase = parts.slice(-3).join(".");
-    const isHostingProvider =
-      HOSTING_PROVIDER_DOMAINS.has(twoPartBase) || HOSTING_PROVIDER_DOMAINS.has(threePartBase);
-
-    if (!isHostingProvider) {
-      const subdomain = parts[0];
-      if (subdomain && !PLATFORM_HOSTS.has(subdomain)) {
-        subdomainSlug = subdomain;
-      }
-    }
-  }
+  // Shared with the login page's getSubdomainWorkspace() — see `@/lib/tenant-host`.
+  const subdomainSlug: string | null = tenantSlugFromHostname(hostname);
 
   const existingCookieSlug = request.cookies.get("tenant-slug")?.value || null;
 

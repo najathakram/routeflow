@@ -5,7 +5,7 @@
  * qty*unitPrice on a boxed line).
  */
 import { estimateActionFlags, estimateLineAmount, estimatePillFor } from "../lib/estimates-logic";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { EstimateStatus } from "../lib/api/estimates";
 
 describe("estimatePillFor", () => {
@@ -14,7 +14,6 @@ describe("estimatePillFor", () => {
     ["SENT", "brand", "Sent"],
     ["ACCEPTED", "green", "Accepted"],
     ["DECLINED", "red", "Declined"],
-    ["EXPIRED", "orange", "Expired"],
     ["CONVERTED", "purple", "Converted"],
   ];
   it.each(cases)("%s → %s / %s", (status, variant, label) => {
@@ -59,8 +58,8 @@ describe("estimateActionFlags", () => {
     });
   });
 
-  it.each(["DECLINED", "EXPIRED"] as EstimateStatus[])("%s → no actions, cannot void", (status) => {
-    expect(estimateActionFlags(status)).toEqual({
+  it("DECLINED → no actions, cannot void", () => {
+    expect(estimateActionFlags("DECLINED")).toEqual({
       canSend: false,
       canAcceptDecline: false,
       canConvert: false,

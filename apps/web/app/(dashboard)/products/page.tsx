@@ -23,17 +23,23 @@ import {
 import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { useProducts, useUpdateProduct, useBulkDeleteProducts } from "@/lib/api/products";
-import { cascadeTierPrices, type TierField } from "@/lib/pricing";
+import { cascadeTierPrices, type TierField } from "@routeflow/pricing";
+import { useTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
+import { unitsLabel } from "@/lib/stock-label";
 import { useTrackedCategories, type TrackedCategory } from "@/lib/api/tracked-categories";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { MSRP_ADDON } from "@/lib/api/addons";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { GroupAsVariantsModal } from "@/components/GroupAsVariantsModal";
 import { ProductCreateModal } from "@/components/ProductCreateModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { AssignToSectionModal } from "@/components/AssignToSectionModal";
 import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 
@@ -53,6 +59,8 @@ interface ApiProduct {
   priceTier3?: string;
   priceTier4?: string;
   priceTier5?: string;
+  /** Suggested retail price, per PIECE (even for boxed products). Flag-gated (flag.msrp). */
+  msrp?: string | null;
   isActive: boolean;
   currentStock: number;
   averageCost?: string;
@@ -294,6 +302,8 @@ function makeTableColumns(
     patch: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
     prior: { trackedCategoryId: string | null; trackedSubcategoryId: string | null },
   ) => void,
+  hasMsrpAddon: boolean,
+  tierLabels: TierLabelsConfig | undefined,
 ): ColumnDef<ApiProduct, unknown>[] {
   const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
   const someSelected = !allSelected && allIds.some((id) => selected.has(id));
@@ -333,6 +343,41 @@ function makeTableColumns(
           className="inline-flex items-center rounded-full border border-brand-200 bg-brand-50 px-2 py-0.5 text-[11px] text-brand-700"
         >
           {sectionName}
+        </span>
+      );
+    },
+  };
+
+  // MSRP column — flag-gated (flag.msrp); the primary bulk-edit surface for it.
+  const msrpCol: ColumnDef<ApiProduct, unknown> = {
+    id: "msrp",
+    header: "MSRP",
+    enableSorting: false,
+    cell: ({ row }) => {
+      const p = row.original;
+      if (quickEditMode) {
+        return (
+          <QuickEditCell
+            productId={p.id}
+            productName={p.name}
+            field="msrp"
+            type="number"
+            value={p.msrp != null ? parseFloat(String(p.msrp)).toFixed(2) : ""}
+            quickEditMode={quickEditMode}
+            onSave={(newVal, rec) => onQuickSave(p, "msrp", newVal, rec)}
+          />
+        );
+      }
+      return (
+        <span className="font-mono tabular-nums text-sm text-navy/70">
+          {p.msrp != null && parseFloat(String(p.msrp)) > 0 ? (
+            <>
+              ${parseFloat(String(p.msrp)).toFixed(2)}
+              <span className="ml-0.5 text-[10px] text-navy/40">/pc</span>
+            </>
+          ) : (
+            <span className="text-navy/30">—</span>
+          )}
         </span>
       );
     },
@@ -593,7 +638,10 @@ function makeTableColumns(
     // Tier price columns — always shown, editable only in Quick Edit mode
     ...[2, 3, 4, 5].map((tier) => ({
       id: `priceTier${tier}`,
-      header: `T${tier}`,
+      // Compact column header — keep the existing "T2".."T5" abbreviation as the
+      // fallback (this column is narrow) and only swap in a configured tier name,
+      // rather than tierLabel()'s "Tier N" fallback which would widen it by default.
+      header: tierLabels?.[String(tier)]?.trim() || `T${tier}`,
       enableSorting: false,
       cell: ({ row }: any) => {
         const p = row.original;
@@ -625,6 +673,7 @@ function makeTableColumns(
         );
       },
     })),
+    ...(hasMsrpAddon ? [msrpCol] : []),
     {
       accessorKey: "currentStock",
       header: "Stock",
@@ -633,8 +682,11 @@ function makeTableColumns(
         return (
           <div className="flex items-center gap-2">
             <StockBadge status={status} />
+            {/* `currentStock` is a PIECE count system-wide, so it must never be printed
+                next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
+                for unboxed products and shows a box+piece split otherwise. */}
             <span className="text-xs text-navy/70">
-              {Number(row.original.currentStock).toFixed(0)} {row.original.unit}
+              {unitsLabel(row.original.currentStock, row.original.unitsPerBox, row.original.unit)}
             </span>
           </div>
         );
@@ -658,12 +710,20 @@ export default function ProductsPage() {
   }, [setTitle]);
 
   // Auto-open the create modal from a deep link (e.g. /products?action=new,
-  // the target of the /products/create redirect stub).
+  // the target of the /products/create redirect stub). The param is consumed —
+  // stripped as soon as it's honored — because this effect re-runs on every
+  // searchParams change, and search now writes to the URL: leaving `action` in
+  // place would re-open the modal on the next keystroke after the user closed it.
   React.useEffect(() => {
-    if (searchParams.get("action") === "new") setShowCreate(true);
-  }, [searchParams]);
+    if (searchParams.get("action") !== "new") return;
+    setShowCreate(true);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("action");
+    const qs = params.toString();
+    router.replace(qs ? `/products?${qs}` : "/products", { scroll: false });
+  }, [searchParams, router]);
 
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
   const [stockFilter, setStockFilter] = React.useState("");
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
@@ -678,8 +738,11 @@ export default function ProductsPage() {
   const [selectMode, setSelectMode] = React.useState(false);
   const [showGroupAsVariants, setShowGroupAsVariants] = React.useState(false);
   const [showAssignToSection, setShowAssignToSection] = React.useState(false);
-  const [page, setPage] = React.useState(1);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
+  const [page, setPage] = useUrlPage();
   const [pageSize, setPageSize] = React.useState(50);
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const bulkDelete = useBulkDeleteProducts();
 
@@ -912,9 +975,10 @@ export default function ProductsPage() {
     setEditPriceValue("");
   };
 
-  const debouncedSearch = useDebounce(search, 300);
-
-  // USB barcode detection on the main search input — rapid keystrokes + Enter = scan
+  // USB barcode detection on the main search input — rapid keystrokes + Enter = scan.
+  // Scan timing is unaffected by search living in the URL: only the debounced value
+  // is written, so a burst of scanner keystrokes still triggers no navigation until
+  // the burst ends.
   React.useEffect(() => {
     const input = searchInputRef.current;
     if (!input) return;
@@ -942,10 +1006,31 @@ export default function ProductsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Reset to page 1 whenever filters change
+  // Reset to page 1 whenever a filter CHANGES — but not on mount, or the reset
+  // would clobber the ?page= restored when the operator presses Back (page now
+  // lives in the URL via useUrlPage).
+  useResetPageOnChange(setPage, [
+    debouncedSearch,
+    categoryFilter,
+    stockFilter,
+    sectionFilter,
+    pageSize,
+  ]);
+
+  // REG-B154: the selection Set used to accumulate across page/search/category/
+  // section changes (toggleAll only ever concatenated — see toggleAll below), so
+  // a selection made on one page silently carried into another page's bulk
+  // actions. Reset it whenever the visible set could have changed underneath it.
+  // Deps must mirror the useProducts query keys below (NOT just the inputs
+  // useResetPageOnChange watches): on page 1 its setPage(1) is a no-op, so `page`
+  // never changes and a stock-filter or page-size switch would otherwise leave a
+  // stale selection pointing at rows that are no longer visible.
   React.useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
+    setSelected(new Set());
+    setShowBulkDeleteConfirm(false);
+    setShowAssignToSection(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, debouncedSearch, categoryFilter, stockFilter, sectionFilter, pageSize]);
 
   const {
     data: result,
@@ -967,6 +1052,7 @@ export default function ProductsPage() {
   const productList: ApiProduct[] = result?.data ?? [];
   const meta = result?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
   const totalItems = meta?.total ?? 0;
 
   const categories = Array.from(
@@ -986,6 +1072,11 @@ export default function ProductsPage() {
 
   const filteredIds = filtered.map((p) => p.id);
   const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+  // Lookup for the FULL selection (not just the currently-visible page) — REG-B154:
+  // AssignToSectionModal used to receive `filtered.filter(p => selected.has(p.id))`,
+  // the intersection of the selection with whatever page happened to be loaded, which
+  // silently dropped any id selected on a different page/filter view.
+  const productById = React.useMemo(() => new Map(filtered.map((p) => [p.id, p])), [filtered]);
 
   const toggleOne = (id: string) =>
     setSelected((prev) => {
@@ -1007,11 +1098,18 @@ export default function ProductsPage() {
   const handleBulkDelete = async () => {
     const ids = Array.from(selected);
     try {
+      // R1's server contract is {deleted, softDeleted, skipped[]} (vendor-bills'
+      // processed-vs-skipped shape); the hook merges those three across chunks.
       const res = await bulkDelete.mutateAsync(ids);
       setSelected(new Set());
+      const { softDeleted, skipped } = res;
+      const parts = [`${res.deleted} deleted`];
+      if (softDeleted > 0) parts.push(`${softDeleted} deactivated (has history)`);
+      if (skipped.length > 0) parts.push(`${skipped.length} skipped`);
       toast({
-        title: `${res.deleted} product${res.deleted !== 1 ? "s" : ""} deleted`,
-        variant: "success",
+        title: parts.join(", "),
+        description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
+        variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
     } catch {
       toast({ title: "Failed to delete products", variant: "error" });
@@ -1043,6 +1141,8 @@ export default function ProductsPage() {
         activeSections,
         hasSections,
         handleSectionSave,
+        hasMsrpAddon,
+        tierLabels,
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
@@ -1059,6 +1159,8 @@ export default function ProductsPage() {
       activeSections,
       hasSections,
       handleSectionSave,
+      hasMsrpAddon,
+      tierLabels,
     ],
   );
 
@@ -1072,7 +1174,7 @@ export default function ProductsPage() {
             : "Manage your product catalog"
         }
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={
@@ -1285,7 +1387,7 @@ export default function ProductsPage() {
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={bulkDelete.isPending}
-              onClick={handleBulkDelete}
+              onClick={() => setShowBulkDeleteConfirm(true)}
             >
               Delete {selected.size} item{selected.size !== 1 ? "s" : ""}
             </Button>
@@ -1309,17 +1411,37 @@ export default function ProductsPage() {
         }}
       />
 
-      {/* Assign to section modal (bulk) */}
+      {/* Assign to section modal (bulk) — the FULL selection, not the
+          intersection with whatever page is currently loaded (see productById
+          above). Falls back to trackedCategoryId: null for an id the loaded
+          page doesn't carry, which only affects the "None — remove" grouping
+          (the assign path only needs the id). */}
       <AssignToSectionModal
         isOpen={showAssignToSection}
         onClose={() => setShowAssignToSection(false)}
-        products={filtered
-          .filter((p) => selected.has(p.id))
-          .map((p) => ({ id: p.id, trackedCategoryId: p.trackedCategoryId ?? null }))}
+        products={Array.from(selected).map((id) => ({
+          id,
+          trackedCategoryId: productById.get(id)?.trackedCategoryId ?? null,
+        }))}
         onSuccess={() => {
           setSelected(new Set());
           setShowAssignToSection(false);
         }}
+      />
+
+      {/* Bulk delete confirmation */}
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        onClose={() => setShowBulkDeleteConfirm(false)}
+        onConfirm={async () => {
+          await handleBulkDelete();
+          setShowBulkDeleteConfirm(false);
+        }}
+        title={`Delete ${selected.size} product${selected.size !== 1 ? "s" : ""}?`}
+        description="Products referenced by an order, invoice, or other record are deactivated instead of deleted; products with active order items are skipped entirely. Only reference-free products are removed permanently."
+        confirmLabel="Delete"
+        variant="danger"
+        loading={bulkDelete.isPending}
       />
 
       {/* Content */}

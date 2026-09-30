@@ -25,6 +25,7 @@ import { BuyerSetPasswordDto } from "./dto/buyer-set-password.dto";
 import { BuyerRequestPasswordResetDto } from "./dto/buyer-request-password-reset.dto";
 import { BuyerResetPasswordDto } from "./dto/buyer-reset-password.dto";
 import { BuyerUpdateAccountDto } from "./dto/buyer-update-account.dto";
+import { BuyerVerifyEmailDto } from "./dto/buyer-verify-email.dto";
 
 @ApiTags("buyer-auth")
 @Controller("buyer/auth")
@@ -116,6 +117,26 @@ export class BuyerAuthController {
   @ApiOperation({ summary: "Reset buyer password with token" })
   resetPassword(@Body() dto: BuyerResetPasswordDto) {
     return this.buyerAuthService.resetPassword(dto.token, dto.newPassword);
+  }
+
+  // ─── Email verification ───────────────────────────────────────────────────────
+
+  @Post("verify-email")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP — matches reset endpoints
+  @ApiOperation({ summary: "Verify a buyer email address with an emailed token" })
+  verifyEmail(@Body() dto: BuyerVerifyEmailDto) {
+    return this.buyerAuthService.verifyEmail(dto.token);
+  }
+
+  @Post("resend-verification")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerJwtAuthGuard)
+  @ApiBearerAuth()
+  @Throttle({ default: { ttl: 900_000, limit: 5 } }) // 5 per 15 min per IP
+  @ApiOperation({ summary: "Re-send the email verification link to the signed-in buyer" })
+  resendVerification(@CurrentBuyer() buyer: BuyerJwtPayload) {
+    return this.buyerAuthService.resendVerification(buyer.sub);
   }
 
   // ─── Profile ──────────────────────────────────────────────────────────────────

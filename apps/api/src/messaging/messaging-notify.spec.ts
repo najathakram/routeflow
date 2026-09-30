@@ -115,7 +115,7 @@ describe("MessagingService (P6-5 notifyEvent + resolveSystemSenderId)", () => {
   describe("notifyEvent", () => {
     it("uses the explicit senderId and auto-fills customerName from Customer.businessName", async () => {
       const notifySpy = jest.spyOn(service, "notify").mockResolvedValue([]);
-      prisma.customer.findUnique.mockResolvedValue({ businessName: "Acme Foods" });
+      prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Foods" });
 
       await service.notifyEvent(NotificationEvent.ORDER_CONFIRMED, {
         customerId: "cust-1",
@@ -123,7 +123,7 @@ describe("MessagingService (P6-5 notifyEvent + resolveSystemSenderId)", () => {
         vars: { orderNumber: "SO-1" },
       });
 
-      expect(prisma.customer.findUnique).toHaveBeenCalledWith({
+      expect(prisma.customer.findFirst).toHaveBeenCalledWith({
         where: { id: "cust-1" },
         select: { businessName: true },
       });
@@ -143,7 +143,7 @@ describe("MessagingService (P6-5 notifyEvent + resolveSystemSenderId)", () => {
         vars: { customerName: "Caller Co" },
       });
 
-      expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+      expect(prisma.customer.findFirst).not.toHaveBeenCalled();
       expect(notifySpy).toHaveBeenCalledWith(NotificationEvent.ORDER_CONFIRMED, {
         customerId: "cust-1",
         senderId: "user-op",
@@ -154,7 +154,7 @@ describe("MessagingService (P6-5 notifyEvent + resolveSystemSenderId)", () => {
     it("resolves the system sender from tenant context when senderId is null", async () => {
       const notifySpy = jest.spyOn(service, "notify").mockResolvedValue([]);
       prisma.user.findFirst.mockResolvedValueOnce({ id: "admin-1" });
-      prisma.customer.findUnique.mockResolvedValue({ businessName: "Acme Foods" });
+      prisma.customer.findFirst.mockResolvedValue({ businessName: "Acme Foods" });
 
       await service.notifyEvent(NotificationEvent.LICENSE_EXPIRING, {
         customerId: "cust-1",

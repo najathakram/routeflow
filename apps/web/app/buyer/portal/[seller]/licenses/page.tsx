@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ShieldCheck, ShieldAlert, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
+import { fmtCalendarDate } from "@/lib/formatting";
 import {
   useBuyerAuthorizations,
   useSubmitBuyerAuthorization,
@@ -46,13 +47,6 @@ function statusIcon(status: AuthStatus) {
     default:
       return <ShieldAlert className="h-5 w-5 text-navy/40" />;
   }
-}
-
-function fmtDate(d?: string | null): string {
-  if (!d) return "—";
-  const dt = new Date(d);
-  if (isNaN(dt.getTime())) return "—";
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -196,7 +190,9 @@ function LicenseCard({
             <div className="mt-1 flex items-center gap-2">
               <Badge variant={badge.variant}>{badge.label}</Badge>
               {row.status === "VERIFIED" && row.expiresAt && (
-                <span className="text-xs text-navy/60">Expires {fmtDate(row.expiresAt)}</span>
+                <span className="text-xs text-navy/60">
+                  Expires {fmtCalendarDate(row.expiresAt)}
+                </span>
               )}
             </div>
             {row.licenseNumber && (

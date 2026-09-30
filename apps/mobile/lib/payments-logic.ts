@@ -1,7 +1,14 @@
 import type { Ionicons } from "@expo/vector-icons";
 import type { PaymentMethod } from "./api/invoices";
 import type { PaymentStatus } from "./api/payments";
-import { roundMoney } from "./pricing";
+import { remainingCapacity, roundMoney } from "@routeflow/pricing";
+import { CHECK_TRANSITIONS, type CheckStatus } from "@routeflow/types";
+
+// Re-exported for backward compatibility — nothing in this repo currently imports either symbol
+// from this file (checked by grep), but both were public exports of this module before the
+// post-dated check payments PR-1 de-duplication.
+export { CHECK_TRANSITIONS };
+export type { CheckStatus };
 
 /**
  * Pure payments helpers — method/status → pill + icon, and void gating. Kept out
@@ -24,6 +31,8 @@ export function paymentMethodPill(method: PaymentMethod): {
       return { variant: "green", label: "Cash", icon: "cash-outline" };
     case "CHECK":
       return { variant: "brand", label: "Check", icon: "document-text-outline" };
+    case "ZELLE":
+      return { variant: "purple", label: "Zelle", icon: "flash-outline" };
     case "ACH":
       return { variant: "purple", label: "ACH", icon: "swap-horizontal-outline" };
     case "CREDIT_CARD":
@@ -69,18 +78,30 @@ export function paymentActionFlags(
   return { canVoid: status !== "VOID" && method !== "CREDIT_NOTE" };
 }
 
+/**
+ * Amount cap when editing an existing payment: how much more capacity the
+ * invoice has once every OTHER payment (not this one) is reserved. PR-2
+ * (check-payments B1 hardening): routes through the shared remainingCapacity()
+ * predicate (DRAFT+PAID+PENDING) — the same "not VOID" semantics this screen
+ * already had, now the one copy web/api also use — mirroring the server's
+ * updatePayment guard and web's editPaymentMax. `otherPayments` must already
+ * exclude the payment being edited; the caller does that filtering since this
+ * module carries no payment id.
+ */
+export function editPaymentMaxAmount(
+  total: number,
+  otherPayments: ReadonlyArray<{ amount: unknown; status?: string }>,
+): number {
+  return Math.max(0, remainingCapacity(total, otherPayments));
+}
+
 // ─── Check lifecycle (P5-12; Wave 3 operator controls) ───────────────────────
-
-export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-
-/** Mirror of the server's transition table (invoices.service.ts CHECK_TRANSITIONS)
- *  so no offered action can 400. BOUNCED is terminal. */
-export const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
-  RECORDED: ["DEPOSITED", "BOUNCED"],
-  DEPOSITED: ["CLEARED", "BOUNCED"],
-  CLEARED: ["BOUNCED"],
-  BOUNCED: [],
-};
+//
+// `CheckStatus`/`CHECK_TRANSITIONS` now come from `@routeflow/types`
+// (post-dated check payments PR-1) — the ONE canonical copy shared with the API
+// (`invoices.service.ts`) and web (`invoices/[id]/page.tsx`), which used to each hand-maintain
+// an identical local copy. See `packages/types/api/checks.ts` for the V1-only rule (no
+// `CHECK_TRANSITIONS_V2` here — a later PR owns that).
 
 /**
  * Legal next check states for a payment row: only CHECK payments that aren't

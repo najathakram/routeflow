@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { normalizeInvoiceNumber } from "../import/duplicate-match.service";
 
 /**

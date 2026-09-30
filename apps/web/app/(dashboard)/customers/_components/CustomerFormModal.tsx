@@ -1,19 +1,29 @@
 "use client";
 
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { useQueryClient } from "@tanstack/react-query";
 import { Modal, Input, Textarea, Select, Button, useToast, cn } from "@routeflow/ui/web";
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/api/customers";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { useSalesAgents } from "@/lib/api/sales-agents";
+import { AgentFormModal } from "../../sales-agents/_components/AgentFormModal";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
 const customerSchema = z
   .object({
     customerType: z.enum(["BUSINESS", "INDIVIDUAL"]),
+    // Default fulfillment for orders created for this customer — ROUTE (delivery
+    // route) vs SHIP (supplier/carrier-shipped, excluded from trip/route dispatch).
+    // Orders still get their own per-order override in CreateOrderModal.
+    fulfillPath: z.enum(["ROUTE", "SHIP"]).optional(),
     // Business-specific
     businessName: z.string().optional().or(z.literal("")),
     contactName: z.string().optional().or(z.literal("")),
@@ -96,6 +106,8 @@ export interface CustomerFormModalProps {
     isTaxExempt?: boolean;
     creditLimit?: number;
     currency?: string;
+    /** ROUTE (default) or SHIP — this customer's own fulfillment default. */
+    fulfillPath?: string;
     user?: { email?: string };
     notes?: string;
     addresses?: {
@@ -116,6 +128,7 @@ function buildDefaultValues(
   if (!initialData) {
     return {
       customerType: "BUSINESS",
+      fulfillPath: "ROUTE",
       businessName: "",
       contactName: "",
       salutation: "",
@@ -138,6 +151,7 @@ function buildDefaultValues(
   }
   return {
     customerType: (initialData.customerType as "BUSINESS" | "INDIVIDUAL") ?? "BUSINESS",
+    fulfillPath: initialData.fulfillPath === "SHIP" ? "SHIP" : "ROUTE",
     businessName: initialData.businessName ?? "",
     contactName: initialData.contactName ?? "",
     salutation: initialData.salutation ?? "",
@@ -145,13 +159,11 @@ function buildDefaultValues(
     lastName: initialData.lastName ?? "",
     phone: initialData.phone ?? "",
     mobile: initialData.mobile ?? "",
-    // Don't surface the internal sentinel minted for emailless/CSV-imported customers.
-    email:
-      initialData.email ??
-      (initialData.user?.email && !isInternalEmail(initialData.user.email)
-        ? initialData.user.email
-        : "") ??
-      "",
+    // Don't surface the internal sentinel minted for emailless/CSV-imported customers —
+    // from EITHER source: CSV import writes `<name>@imported.local` onto Customer.email
+    // itself, not just the linked User. (Saving with the field left blank then scrubs
+    // the stored sentinel — the update payload sends "" which the API clears to null.)
+    email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
     creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
@@ -169,12 +181,26 @@ function buildDefaultValues(
 
 export function CustomerFormModal({ isOpen, onClose, mode, initialData }: CustomerFormModalProps) {
   const { toast } = useToast();
+  const router = useRouter();
+  const qc = useQueryClient();
   const createCustomer = useCreateCustomer();
   const updateCustomer = useUpdateCustomer();
 
   const [streetError, setStreetError] = React.useState("");
   const [cityError, setCityError] = React.useState("");
   const [zipError, setZipError] = React.useState("");
+
+  // Add-mode-only: optional sales agent assignment at creation. Edit mode has
+  // no reassignment path here — that lives in the customer page's agent box
+  // (the PATCH customer route has no agent field; assignment-open lives
+  // inside the engine's create() only).
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const [salesAgentId, setSalesAgentId] = React.useState("");
+  const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
+  const { data: salesAgents } = useSalesAgents(
+    { status: "ACTIVE" },
+    { enabled: isOpen && hasSalesAgents && mode === "add" },
+  );
 
   const {
     register,
@@ -200,6 +226,8 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       setStreetError("");
       setCityError("");
       setZipError("");
+      setSalesAgentId("");
+      setIsAgentModalOpen(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData]);
@@ -256,18 +284,23 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
+          fulfillPath: data.fulfillPath || "ROUTE",
           notes: data.notes,
           addresses: [
             {
               line1: data.street!,
               city: data.city!,
-              state: data.state?.trim() || "TX",
+              // Never default a blank state (it used to become "TX"): the selling-restrictions
+              // engine keys off the address state, so a guessed one judges the customer in the
+              // wrong jurisdiction and hides the "can't tell where" path. Blank stays blank.
+              state: data.state?.trim() ?? "",
               zip: data.zip!,
               isDefault: true,
               label: "Main",
               addressType: data.addressType || "BILLING",
             },
           ],
+          ...(salesAgentId ? { salesAgentId } : {}),
         },
         {
           onSuccess: () => {
@@ -282,7 +315,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
       updateCustomer.mutate(
         {
           id: initialData.id,
-          email: data.email || undefined,
+          // Always send email — "" clears the stored address server-side (emptyToNull).
+          // `|| undefined` here made an emptied field a silent no-op, so a bad or
+          // sentinel email could never be removed.
+          email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
           phone: data.phone || undefined,
@@ -296,6 +332,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
+          fulfillPath: data.fulfillPath || "ROUTE",
           notes: data.notes,
         },
         {
@@ -426,6 +463,39 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
             )}
           </section>
 
+          {/* ── Sales agent (add mode only, flag-gated) ──────────────────────── */}
+          {hasSalesAgents && mode === "add" && (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Sales Agent
+              </p>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <Select
+                    label="Sales agent (optional)"
+                    value={salesAgentId}
+                    onChange={(e) => setSalesAgentId(e.target.value)}
+                    options={[
+                      // A real selectable option, not `placeholder` — the shared Select
+                      // renders a placeholder as a DISABLED option, which would make a
+                      // picked agent impossible to un-pick.
+                      { value: "", label: "No agent" },
+                      ...(salesAgents ?? []).map((a) => ({ value: a.id, label: a.name })),
+                    ]}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsAgentModalOpen(true)}
+                >
+                  + New agent
+                </Button>
+              </div>
+            </section>
+          )}
+
           {/* ── Contact Details (shared) ─────────────────────────────────────── */}
           <section className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
@@ -493,72 +563,110 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </label>
               </div>
             </div>
+            <div className="space-y-1">
+              <Select
+                label="Default fulfillment"
+                options={[
+                  { value: "ROUTE", label: "Delivery route" },
+                  { value: "SHIP", label: "Ship via carrier" },
+                ]}
+                register={register("fulfillPath")}
+              />
+              {watch("fulfillPath") === "SHIP" && (
+                <p className="text-[11px] leading-snug text-navy/70">
+                  Ships via carrier — won&apos;t appear on delivery routes.
+                </p>
+              )}
+            </div>
           </section>
 
-          {/* ── Primary Delivery Address ─────────────────────────────────────── */}
-          <section className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-              Primary Delivery Address
-              {mode === "edit" && (
-                <span className="ml-1 font-normal normal-case text-navy/30">(optional)</span>
-              )}
-            </p>
-            <div className="flex gap-2">
-              {(["BILLING", "SHIPPING"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setValue("addressType", t)}
-                  className={cn(
-                    "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
-                    watch("addressType") === t
-                      ? "border-brand-500 bg-brand-50 text-brand-600"
-                      : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
-                  )}
-                >
-                  {t === "BILLING" ? "Billing" : "Shipping"}
-                </button>
-              ))}
-            </div>
-            <AddressAutocomplete
-              label="Street"
-              placeholder="123 Main St — start typing for suggestions"
-              value={watch("street") ?? ""}
-              onChange={(v) => setValue("street", v, { shouldDirty: true })}
-              onAddressSelect={({ street, city, state, zip }) => {
-                setValue("street", street, { shouldDirty: true });
-                setValue("city", city, { shouldDirty: true });
-                setValue("state", state, { shouldDirty: true });
-                setValue("zip", zip, { shouldDirty: true });
-                setStreetError("");
-                setCityError("");
-                setZipError("");
-              }}
-              error={errors.street?.message || streetError}
-            />
-            <div className="grid grid-cols-3 gap-3">
-              <div className="col-span-2">
+          {/* ── Primary Delivery Address (add mode only) ─────────────────────── */}
+          {/* Edit mode used to prefill from addresses[0] only and the submit payload
+              omitted address fields entirely — a silent discard of anything typed
+              here. Addresses are now a full CRUD surface on the customer's own
+              Addresses tab (mobile's CustomerForm already excludes them the same
+              way in edit mode), so edit mode gets an honest link there instead. */}
+          {mode === "add" ? (
+            <section className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+                Primary Delivery Address
+              </p>
+              <div className="flex gap-2">
+                {(["BILLING", "SHIPPING"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setValue("addressType", t)}
+                    className={cn(
+                      "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+                      watch("addressType") === t
+                        ? "border-brand-500 bg-brand-50 text-brand-600"
+                        : "border-surface-border bg-white text-navy/70 hover:border-brand-300",
+                    )}
+                  >
+                    {t === "BILLING" ? "Billing" : "Shipping"}
+                  </button>
+                ))}
+              </div>
+              <AddressAutocomplete
+                label="Street"
+                placeholder="123 Main St — start typing for suggestions"
+                value={watch("street") ?? ""}
+                onChange={(v) => setValue("street", v, { shouldDirty: true })}
+                onAddressSelect={({ street, city, state, zip }) => {
+                  setValue("street", street, { shouldDirty: true });
+                  setValue("city", city, { shouldDirty: true });
+                  setValue("state", state, { shouldDirty: true });
+                  setValue("zip", zip, { shouldDirty: true });
+                  setStreetError("");
+                  setCityError("");
+                  setZipError("");
+                }}
+                error={errors.street?.message || streetError}
+              />
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <Input
+                    label="City"
+                    placeholder="Austin"
+                    register={register("city")}
+                    error={errors.city?.message || cityError}
+                  />
+                </div>
                 <Input
-                  label="City"
-                  placeholder="Austin"
-                  register={register("city")}
-                  error={errors.city?.message || cityError}
+                  label="State"
+                  placeholder="TX"
+                  register={register("state")}
+                  error={errors.state?.message}
                 />
               </div>
               <Input
-                label="State"
-                placeholder="TX"
-                register={register("state")}
-                error={errors.state?.message}
+                label="ZIP Code"
+                placeholder="78701"
+                register={register("zip")}
+                error={errors.zip?.message || zipError}
               />
+            </section>
+          ) : (
+            <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised px-4 py-3">
+              <p className="text-sm text-navy/70">
+                Addresses are managed on the customer&apos;s{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    if (initialData?.id) {
+                      router.push(`/customers/${initialData.id}?tab=addresses`);
+                    }
+                  }}
+                  className="font-medium text-brand-500 hover:underline"
+                >
+                  Addresses tab
+                </button>
+                .
+              </p>
             </div>
-            <Input
-              label="ZIP Code"
-              placeholder="78701"
-              register={register("zip")}
-              error={errors.zip?.message || zipError}
-            />
-          </section>
+          )}
 
           {/* ── Notes ───────────────────────────────────────────────────────── */}
           <section className="space-y-2">
@@ -571,6 +679,17 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           </section>
         </div>
       </form>
+
+      {/* Sales-agent quick-create — an agent not yet in the system shouldn't force
+          leaving this form. Reuses the list page's create-only modal as-is. */}
+      <AgentFormModal
+        isOpen={isAgentModalOpen}
+        onClose={() => setIsAgentModalOpen(false)}
+        onCreated={(id) => {
+          qc.invalidateQueries({ queryKey: ["sales-agents"] });
+          setSalesAgentId(id);
+        }}
+      />
     </Modal>
   );
 }

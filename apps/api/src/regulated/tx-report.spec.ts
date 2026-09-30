@@ -560,11 +560,15 @@ describe("buildTxReport — per-product case/unit bucketing", () => {
   });
 
   it("a legacy no-split boxed line with regUomCase set reports the stored CASES quantity, not qty*unitsPerBox", () => {
+    // Post-B661 shape: `qty` (the CASES count, every era) is 4 boxes; `unitBasisQty`
+    // (PIECES since f45eaf52) is 48 — the report must read `qty`, never `unitBasisQty`.
     const product = productCfg({ regUomCase: "CC", regUomUnit: "CP", unitsPerBox: 12 });
     const ln = line({ qty: 4, boxes: null, pieces: null, unitsPerBox: 12 });
     const report = buildTxReport({
       category: COMPLETE_CATEGORY,
-      ledgerRows: [{ invoiceId: "inv-1", invoiceItemId: "line-1", unitBasisQty: 4, netSales: 40 }],
+      ledgerRows: [
+        { invoiceId: "inv-1", invoiceItemId: "line-1", qty: 4, unitBasisQty: 48, netSales: 40 },
+      ],
       linesById: new Map([["line-1", ln]]),
       productsById: new Map([["prod-1", product]]),
       invoicesById: new Map([["inv-1", invoice()]]),
@@ -575,6 +579,52 @@ describe("buildTxReport — per-product case/unit bucketing", () => {
     expect(report.rows.length).toBe(1);
     expect(report.rows[0][9]).toBe("CC");
     expect(report.rows[0][10]).toBe("4"); // NOT 48
+  });
+
+  describe("SA-051: the legacy no-split boxed branch reads `qty`, never `unitBasisQty`", () => {
+    // B661 (f45eaf52) changed `unitBasisQty` from a box count to a piece count and left
+    // `qty` alone in every era, so a post-fix 5-box pack-12 row previously reported 60
+    // cases instead of 5. No era flag is needed: `qty` is always the line's own unit.
+    // `line.qty` is the INVOICE ITEM's own (always-positive) total — fixed at 5
+    // throughout, distinct from the LEDGER ROW's signed qty/unitBasisQty below. A
+    // line.qty of 0 would misroute into the back-compat path (`!(line.qty > 0)`),
+    // which is not what these cases test.
+    const setup = (rowQty: number, unitBasisQty: number, netSales = 50) => {
+      const product = productCfg({ regUomCase: "CC", regUomUnit: "CP", unitsPerBox: 12 });
+      const ln = line({ qty: 5, boxes: null, pieces: null, unitsPerBox: 12 });
+      return buildTxReport({
+        category: COMPLETE_CATEGORY,
+        ledgerRows: [
+          { invoiceId: "inv-1", invoiceItemId: "line-1", qty: rowQty, unitBasisQty, netSales },
+        ],
+        linesById: new Map([["line-1", ln]]),
+        productsById: new Map([["prod-1", product]]),
+        invoicesById: new Map([["inv-1", invoice()]]),
+        customersById: new Map([["cust-1", customer()]]),
+        from: "2026-07-01",
+        to: "2026-07-31",
+      });
+    };
+
+    it("{qty 5, unitBasisQty 60} -> 5 cases, not 60 (the post-fix SALE row)", () => {
+      const report = setup(5, 60);
+      expect(report.rows[0][10]).toBe("5");
+    });
+
+    it("{qty 5, unitBasisQty 5} -> 5 cases (a pre-fix-shaped SALE row, unaffected)", () => {
+      const report = setup(5, 5);
+      expect(report.rows[0][10]).toBe("5");
+    });
+
+    it("{qty -5, unitBasisQty -60} -> -5 cases (a post-fix REVERSAL row)", () => {
+      const report = setup(-5, -60, -50);
+      expect(report.rows[0][10]).toBe("-5");
+    });
+
+    it("{qty 0, unitBasisQty 55} -> 0 cases (a B681 units-only correction row contributes 0)", () => {
+      const report = setup(0, 55, 0);
+      expect(report.rows.length).toBe(0); // net 0 + qty 0 -> nothing to report
+    });
   });
 
   it("the same legacy boxed line with regUomCase null reports under the unit UoM instead", () => {

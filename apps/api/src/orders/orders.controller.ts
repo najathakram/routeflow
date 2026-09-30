@@ -1,3 +1,4 @@
+import type { BannedMergedLine } from "./merge-restriction-warning";
 import {
   Controller,
   Get,
@@ -7,11 +8,14 @@ import {
   Body,
   Param,
   Query,
+  Headers,
   UseGuards,
   BadRequestException,
   ConflictException,
+  Logger,
+  ServiceUnavailableException,
 } from "@nestjs/common";
-import { ApiTags, ApiBearerAuth } from "@nestjs/swagger";
+import { ApiTags, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { OrdersService } from "./orders.service";
 import { ChangeRequestsService } from "./change-requests.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -26,8 +30,19 @@ import { CreateSaleDto } from "./dto/create-sale.dto";
 import { ChangeOrderStatusDto } from "./dto/change-order-status.dto";
 import { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import { UpdateShipmentDto } from "./dto/update-shipment.dto";
+import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
+import { foldMergeItems } from "./merge-items";
+import { assertNoUnitAwareLines } from "./unit-aware-guard";
+import { mergeRequestHash } from "./merge-idempotency";
+import { withAdvisoryLock } from "../common/db-locks";
+import {
+  LOCK_UNAVAILABLE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  isMergeContention,
+  mapLockError,
+} from "./merge-contention";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -39,6 +54,35 @@ export class OrdersController {
     private readonly changeRequestsService: ChangeRequestsService,
   ) {}
 
+  private readonly logger = new Logger(OrdersController.name);
+
+  // F30/R11 (B199): the staff merge's read-fold-write critical section is
+  // serialized by `withAdvisoryLock` (../common/db-locks) — a Postgres
+  // advisory lock in the "order-merge" family, keyed by CUSTOMER and held on
+  // a dedicated pinned connection, so it serializes across replicas and not
+  // merely within one process. Do NOT reintroduce an in-process lock (the
+  // former `mergeLocksByOrder` Map): it cannot see the other replicas.
+
+  /**
+   * F30/R8 (B196): `Idempotency-Key` arrives as a raw, entirely client-chosen
+   * header and is written straight into a btree unique index — an oversized
+   * one fails the INSERT with a raw index-row-size error that surfaces as a
+   * 500. Bound it here, at the edge, before it reaches Prisma: a single
+   * printable-ASCII token of at most 128 chars (the client sends a uuid). An
+   * absent or blank header means "no key", never "the empty key".
+   */
+  private normalizeIdempotencyKey(raw: string | undefined): string | undefined {
+    if (raw == null) return undefined;
+    const key = raw.trim();
+    if (!key) return undefined;
+    if (!/^[\x21-\x7e]{1,128}$/.test(key)) {
+      throw new BadRequestException(
+        "Idempotency-Key must be at most 128 printable characters with no spaces",
+      );
+    }
+    return key;
+  }
+
   @Get()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
@@ -46,17 +90,30 @@ export class OrdersController {
     return this.ordersService.findAll(query, user);
   }
 
+  // F30/R8 (B196): a client-generated uuid-per-cart-session key. Threaded onto
+  // the DTO (never a declared body field — see OrdersService.create's
+  // comment) so a duplicate submit — queue self-duplication, a timed-out
+  // request that actually completed — replays the ORIGINAL order instead of
+  // creating a second one.
   @Post()
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
-  async create(@Body() dto: CreateOrderDto, @CurrentUser() user: JwtPayload) {
+  @ApiHeader({ name: "Idempotency-Key", required: false })
+  async create(
+    @Body() dto: CreateOrderDto,
+    @CurrentUser() user: JwtPayload,
+    @Headers("Idempotency-Key") rawIdempotencyKey?: string,
+  ) {
+    const idempotencyKey = this.normalizeIdempotencyKey(rawIdempotencyKey);
     const isStaff = user.role === UserRole.OPERATOR || (user.role as string) === "TENANT_ADMIN";
     // Legacy: forceNew=true is treated as an explicit "separate" choice.
     const choice: "merge" | "separate" | undefined =
       dto.mergeChoice ?? (dto.forceNew ? "separate" : undefined);
 
     if (isStaff && dto.customerId) {
-      const activeOrder = await this.ordersService.findActiveOrder(dto.customerId);
+      const activeOrder = await this.ordersService.findActiveOrder(dto.customerId, {
+        forMerge: true,
+      });
       if (activeOrder) {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
@@ -76,67 +133,255 @@ export class OrdersController {
         if (choice === "merge") {
           // The merge writes items onto the existing order, whose own business date
           // stays authoritative — OrdersService.create (the only place orderDate is
-          // parsed and stored) never runs on this branch, so accepting a date here
-          // would silently drop it.
+          // parsed and stored) does not run on the merge path, so accepting a date here
+          // would silently drop it. Rejecting it up here also keeps the "stale" branch
+          // below honest: if the merge target turns out to be gone and the request falls
+          // through to create(), `dto.orderDate` is guaranteed absent by this guard.
           if (dto.orderDate) {
             throw new BadRequestException(
               "A backdated order cannot be merged. Enter it as a separate order.",
             );
           }
-          const mergedMap = new Map<string, number>();
-          // Unlisted lines (no productId) can't be keyed by product — pass them
-          // through as their own line items so a merge never drops them.
-          const unlisted: Array<{ name?: string; qty: number; unitPrice: number }> = [];
-          for (const li of activeOrder.lineItems) {
-            if (!li.productId) {
-              unlisted.push({
-                name: li.name ?? undefined,
-                qty: Number(li.qty),
-                unitPrice: Number(li.unitPrice),
+          // F30/R11 (B199): denomination-aware fold (foldMergeItems above),
+          // computed and written under the CUSTOMER advisory lock so concurrent
+          // merges serialize — across replicas — instead of racing a lost
+          // update. `activeOrder` above may already be stale by the time this
+          // request's turn in the lock arrives, so re-read fresh state INSIDE it
+          // rather than reuse that snapshot — and write to / return THAT order,
+          // never the stale one.
+          // B215: the fingerprint a same-key retry must match to be replayed (stored with the key).
+          const requestHash = idempotencyKey
+            ? mergeRequestHash({
+                customerId: dto.customerId!,
+                items: dto.items,
+                appliedCreditNotes: dto.appliedCreditNotes,
+                inlineReturn: dto.inlineReturn,
+              })
+            : undefined;
+          let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
+          try {
+            const lock = await withAdvisoryLock(
+              // 10s, not the module default of 20s: the mobile api client aborts every request
+              // at 15s (apps/mobile/lib/api-client.ts), so a 20s wait can only ever be seen by
+              // the operator as a client-side timeout — the 409 that tells them to retry must be
+              // reachable inside that budget. This is the ONE lock on this path that waits at
+              // all: it is PRE-commit, so waiting buys a correct merge. Every POST-COMMIT
+              // consolidation below passes `{ lockMode: "try" }` and never waits — only the
+              // sweep/force paths (no client attached) take the service's 20s wait.
+              { family: "order-merge", key: dto.customerId, mode: "wait", waitMs: 10_000 },
+              async () => {
+                const current = await this.ordersService.findActiveOrder(dto.customerId!, {
+                  forMerge: true,
+                });
+                // The in-lock re-read is AUTHORITATIVE. A null here means the pre-lock snapshot
+                // is stale — the request that held this lock before us merged that order away or
+                // deleted it — so there is nothing to fold into. Folding into `activeOrder`
+                // anyway (the old `?? activeOrder` fallback) would write ABSOLUTE totals onto a
+                // row that no longer exists or no longer belongs to this cart. Hand a sentinel
+                // back instead and let the caller take the create path, exactly as it would have
+                // had the PRE-lock read returned null.
+                if (!current) return { kind: "stale" as const };
+                // F30/R8 (B196): this branch returns without ever reaching
+                // OrdersService.create, so honour the replay key HERE too — the
+                // fold computes ABSOLUTE totals, so a replayed merge (queue
+                // re-delivery of a frozen mergeChoice:"merge" body) would fold the
+                // same incoming items in a second time and inflate the order.
+                // Scoped to THIS customer as well as the key — the key is
+                // client-chosen, so a bare match could replay onto another
+                // customer's order (and hand it back through findOne below).
+                if (idempotencyKey) {
+                  // B215: reads OrderIdempotencyKey (every merge wave's own key) before the Order
+                  // column; the same key with a different cart is refused (409), never folded.
+                  const replayed = await this.ordersService.findOrderIdByIdempotencyKey(
+                    idempotencyKey,
+                    dto.customerId!,
+                    requestHash,
+                    dto.inlineReturn, // #2424: the replay compares its items too
+                  );
+                  if (replayed) {
+                    const replayedOrderId = replayed.orderId;
+                    // B215: the fold runs at most ONCE per key — but its convergent tail may
+                    // never have run. The key commits INSIDE the fold's transaction, so a retry
+                    // that arrives after that commit and before (or during) the post-fold
+                    // invoice resync + credit sync/settle lands here, and returning straight
+                    // away would leave the order's linked invoice and applied credits silently
+                    // out of sync forever. Re-run that tail — it is idempotent and may run N
+                    // times — while still holding the customer advisory lock, so it cannot race
+                    // a concurrent fold. The revision append is NOT re-run: it is append-only,
+                    // not convergent.
+                    //
+                    // B215/R1 (round 2): the retry's own credit selection is applied ONLY on a
+                    // VERIFIED hit — the key TABLE row whose stored fingerprint matched this
+                    // body, i.e. provably the same cart the fold applied. A hit on the Order
+                    // COLUMN carries no fingerprint (nothing stored to compare), so this body may
+                    // be a DIFFERENT cart that merely reuses the key; passing its
+                    // `appliedCreditNotes` would re-point a real order's credits from an
+                    // unvalidated request. `undefined` there means "settle only, leave the stored
+                    // selection alone" (reconcileOrderAfterEdit skips the sync outright).
+                    await this.ordersService.replayMergeReconcile(
+                      replayedOrderId,
+                      dto.customerId!,
+                      replayed.verified ? dto.appliedCreditNotes : undefined,
+                    );
+                    return { kind: "merged" as const, orderId: replayedOrderId, replayed: true };
+                  }
+                }
+                // B649: foldMergeItems has no unitLabel field on MergeIncomingItem and never
+                // reads or forwards one — a Case count merged into an open order would
+                // silently fold as loose pieces/pack units at the pack price. The existing
+                // unit-aware fence (assertOrderEditAllowed, called inside updateOrderItems
+                // below) only inspects the ORDER's pre-fold lineItems, never this incoming
+                // dto.items — by the time that guard runs, the fold has already happened and
+                // the label is already gone. Refuse here instead, while the real unitLabel is
+                // still on the wire, same fail-closed posture as every other un-converted
+                // rewrite path (unit-aware-guard.ts's own doc comment).
+                assertNoUnitAwareLines(
+                  dto.items ?? [],
+                  "added to an existing order this way",
+                  // SA-142: this is the CREATE path — there is no existing order to send the
+                  // operator to edit yet. The actual remedy is to not merge at all.
+                  'Choose "Create as a separate order" instead.',
+                );
+                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                if (foldResult.livePackFallbackProductIds.length > 0) {
+                  this.logger.warn(
+                    `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+                  );
+                }
+                const foldDto = {
+                  items: foldResult.items,
+                  // foldMergeItems returns the order's COMPLETE new line set, so
+                  // this is a full replace. R10 made `replaceAll` explicit-only —
+                  // without saying so out loud the merged absolute totals would
+                  // land in the incremental-ADD branch and be appended on top of
+                  // the untouched originals (every merged product duplicated).
+                  replaceAll: true,
+                  // Thread the operator's credit-note selection into the merge winner
+                  // so the existing sync+settle logic applies it (else it's dropped).
+                  ...(dto.appliedCreditNotes !== undefined
+                    ? { appliedCreditNotes: dto.appliedCreditNotes }
+                    : {}),
+                  // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
+                  ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
+                } as any;
+                // B215: the idempotency key (when present) rides INTO updateOrderItems and
+                // commits inside the fold's own transaction — a crash or a later throw can no
+                // longer separate the two.
+                // B465: isCreateMerge tells updateOrderItems this replace-all IS the staff
+                // create path's own auto-merge, not an operator editing an existing order —
+                // a line NEW to the order (no existing counterpart) skips the reason-required
+                // guard here, exactly as separate create (no merge at all) already does. This
+                // is an internal flag threaded from THIS call site only, never inferred from
+                // the request body or the order's own state.
+                await this.ordersService.updateOrderItems(current.id, foldDto, user, {
+                  isCreateMerge: true,
+                  ...(idempotencyKey
+                    ? { idempotency: { key: idempotencyKey, responseHash: requestHash! } }
+                    : {}),
+                });
+                // Recorded only after the fold actually landed: a merge that threw
+                // is retryable, and a retry must re-run rather than replay a write
+                // that never happened.
+                if (idempotencyKey) {
+                  // Order-column stamp, kept for create()'s replay path (first key wins, best-effort,
+                  // a separate commit). Merge replay no longer depends on it: the authoritative key
+                  // row committed together with the fold above (B215).
+                  try {
+                    await this.ordersService.recordIdempotencyKey(current.id, idempotencyKey);
+                  } catch (err) {
+                    this.logger.error(
+                      `idempotency record failed after merge commit tenant=${user.tenantId} customer=${dto.customerId} order=${current.id} key=${idempotencyKey}`,
+                      err instanceof Error ? err.stack : String(err),
+                    );
+                  }
+                }
+                return { kind: "merged" as const, orderId: current.id, replayed: false };
+              },
+            );
+            // `wait` mode either acquires or throws, so this is defensive only. Carries the
+            // same coded body as mapLockError's 503 so downstream `isMergeContention` callers
+            // recognise it too — it is the identical "no lock, nothing written" signal.
+            if (!lock.acquired) {
+              throw new ServiceUnavailableException({
+                code: LOCK_UNAVAILABLE,
+                message: LOCK_UNAVAILABLE_MESSAGE,
               });
-              continue;
             }
-            mergedMap.set(li.productId, Number(li.qty));
+            merged = lock.value;
+          } catch (e) {
+            // 55P03 → 409 MERGE_IN_PROGRESS, no lock connection → 503, anything else rethrown.
+            // This is PRE-commit: nothing has been written, so a retryable 409 is honest here.
+            mapLockError(e);
           }
-          for (const item of dto.items ?? []) {
-            if (!item.productId) {
-              unlisted.push({ name: item.name, qty: item.qty, unitPrice: item.unitPrice ?? 0 });
-              continue;
+          if (merged.kind === "stale") {
+            // The merge target vanished while we queued for the lock. Nothing was written, so
+            // this falls to `OrdersService.create`, whose customer-scoped key replay answers a
+            // cart-mismatch 409 for a replayed merge (no second row); pre-lock-null behaviour,
+            // unchanged.
+            this.logger.warn(
+              `merge target vanished before the lock — creating a new order instead tenant=${user.tenantId} customer=${dto.customerId} staleOrderId=${activeOrder.id}`,
+            );
+          } else {
+            if (!merged.replayed) {
+              // After merging, sweep any other unflagged PENDING orders for this customer.
+              //
+              // POST-COMMIT (see ./merge-contention.ts): the fold above has already committed, so
+              // contention on this sweep is DEFERRED work, not a failed request — swallow it and
+              // hand back the merged order. Raising 409 here would tell the client to retry a
+              // merge that already landed, and the fold computes ABSOLUTE totals, so the retry
+              // would fold the same items in a second time. The hourly sweep picks up the leftover.
+              // `lockMode: "try"`: deferrable work must not sit on a held lock for 20 s inside a
+              // request that has already committed its write.
+              try {
+                await this.ordersService.mergeAllPendingForCustomer(
+                  dto.customerId,
+                  {},
+                  { lockMode: "try", actor: user },
+                );
+              } catch (e) {
+                if (!isMergeContention(e)) throw e;
+                this.logger.warn(
+                  `post-commit consolidation deferred (merge in progress) tenant=${user.tenantId} customer=${dto.customerId}`,
+                );
+              }
             }
-            mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
+            return this.ordersService.findOne(merged.orderId, user);
           }
-          const mergedItems = [
-            ...Array.from(mergedMap.entries()).map(([productId, qty]) => ({ productId, qty })),
-            ...unlisted,
-          ];
-          await this.ordersService.updateOrderItems(
-            activeOrder.id,
-            {
-              items: mergedItems,
-              // Thread the operator's credit-note selection into the merge winner
-              // so the existing sync+settle logic applies it (else it's dropped).
-              ...(dto.appliedCreditNotes !== undefined
-                ? { appliedCreditNotes: dto.appliedCreditNotes }
-                : {}),
-            } as any,
-            user,
-          );
-          // After merging, sweep any other unflagged PENDING orders for this customer.
-          await this.ordersService.mergeAllPendingForCustomer(dto.customerId);
-          return this.ordersService.findOne(activeOrder.id, user);
         }
-        // choice === "separate" — fall through to plain create with skipAutoMerge=true
+        // Fall through to the plain create below: either choice === "separate" (with
+        // skipAutoMerge=true), or the merge found its target already gone (the "stale" branch).
       }
     }
 
-    const created = await this.ordersService.create(dto, user, {
-      skipAutoMerge: choice === "separate",
-    });
+    const created = await this.ordersService.create(
+      idempotencyKey ? ({ ...dto, idempotencyKey } as CreateOrderDto) : dto,
+      user,
+      { skipAutoMerge: choice === "separate" },
+    );
     // For non-staff (driver / customer) callers, keep the old auto-consolidate behaviour
     // for newly-created orders that don't have skipAutoMerge set.
     if (!isStaff && created.customerId) {
-      const merged = await this.ordersService.mergeAllPendingForCustomer(created.customerId);
-      if (merged) return merged;
+      // POST-COMMIT (see ./merge-contention.ts): `created` is already in the database, so lock
+      // contention here must NOT become the response — the caller would be told its order
+      // failed while the row exists, and a retry would create a second one. Fall through and
+      // return the created order unconsolidated; the hourly sweep folds it later.
+      try {
+        // Only the CUSTOMER's own consolidation may earn NEW BUY_N_GET_M free units
+        // for the combined quantity — a driver's order is priced like staff's.
+        const merged = await this.ordersService.mergeAllPendingForCustomer(
+          created.customerId,
+          { buyerInitiated: user.role === UserRole.CUSTOMER },
+          // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
+          // customer anyway, so `try` defers to them instead of spending this request's budget.
+          { lockMode: "try", actor: user },
+        );
+        if (merged) return merged;
+      } catch (e) {
+        if (!isMergeContention(e)) throw e;
+        this.logger.warn(
+          `post-commit consolidation deferred (merge in progress) tenant=${user.tenantId} customer=${created.customerId}`,
+        );
+      }
     }
     return created;
   }
@@ -163,7 +408,7 @@ export class OrdersController {
   @Roles(UserRole.OPERATOR)
   async getActiveOrderForCustomer(@Query("customerId") customerId: string) {
     if (!customerId) return null;
-    const order = await this.ordersService.findActiveOrder(customerId);
+    const order = await this.ordersService.findActiveOrder(customerId, { forMerge: true });
     if (!order) return null;
     return {
       id: order.id,
@@ -205,9 +450,13 @@ export class OrdersController {
     return this.ordersService.findOne(id, user);
   }
 
+  // Staff-only demotions (incl. the DELIVERED → CONFIRMED "Reopen Order" action
+  // and PENDING → DRAFT) are gated by role INSIDE changeStatus — TENANT_ADMIN
+  // must be allowed through here too, or the RolesGuard 403s before the service
+  // ever gets a chance to allow it.
   @Patch(":id/status")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER, UserRole.DRIVER)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN, UserRole.CUSTOMER, UserRole.DRIVER)
   changeStatus(
     @Param("id") id: string,
     @Body() dto: ChangeOrderStatusDto,
@@ -282,6 +531,19 @@ export class OrdersController {
     return this.ordersService.updateShipment(id, dto, user);
   }
 
+  // Ad-hoc trips + fulfillment mode: staff-only ROUTE/SHIP switch. Locked once
+  // the order has left the "open" states (service enforces the 400).
+  @Patch(":id/fulfill-path")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  updateFulfillPath(
+    @Param("id") id: string,
+    @Body() dto: UpdateFulfillPathDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.updateFulfillPath(id, dto, user);
+  }
+
   // F2-005: drivers have no business flipping order urgency — restrict to the
   // office and the owning customer (service still enforces CUSTOMER own-order).
   @Patch(":id/urgent")
@@ -295,6 +557,21 @@ export class OrdersController {
     return this.ordersService.toggleUrgent(id, user, body.urgent);
   }
 
+  // Sales agents & commissions: staff-only per-order commission-rate override
+  // (0 = exempt, null = clear). Body kept as an inline type — no dedicated DTO
+  // file — mirroring the toggleUrgent precedent above; validated in the
+  // service (setCommissionRate), same gate as parseOrderDate.
+  @Patch(":id/commission-rate")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  setCommissionRate(
+    @Param("id") id: string,
+    @Body() body: { commissionRatePct: number | null },
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.setCommissionRate(id, body.commissionRatePct, user);
+  }
+
   @Post("sweep-pending")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
@@ -305,21 +582,30 @@ export class OrdersController {
   @Post("force-consolidate/:customerId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  forceConsolidate(@Param("customerId") customerId: string) {
-    return this.ordersService.forceConsolidateCustomer(customerId);
+  async forceConsolidate(@Param("customerId") customerId: string, @CurrentUser() user: JwtPayload) {
+    // F-05 (SA-255): merge-and-warn — the banned lines of the merged order ride along for the acting UI.
+    let bannedLines: BannedMergedLine[] = [];
+    const merged = await this.ordersService.forceConsolidateCustomer(customerId, {
+      actor: user,
+      onBannedLines: (lines) => (bannedLines = lines),
+    });
+    return merged && bannedLines.length > 0 ? { ...merged, bannedLines } : merged;
   }
 
+  // Delete-any: staff (OPERATOR/TENANT_ADMIN) may delete an order in any status;
+  // the service 409s when a linked invoice has recorded payments. `user` is
+  // threaded through so the service can apply its per-role delete rules.
   @Delete("bulk")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  bulkDelete(@Body() dto: { ids: string[] }) {
-    return this.ordersService.bulkDeleteOrders(dto.ids);
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  bulkDelete(@Body() dto: { ids: string[] }, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.bulkDeleteOrders(dto.ids, user);
   }
 
   @Delete(":id")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  remove(@Param("id") id: string) {
-    return this.ordersService.deleteOrder(id);
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  remove(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.ordersService.deleteOrder(id, user);
   }
 }

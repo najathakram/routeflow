@@ -10,7 +10,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 
 - **Monorepo**: npm workspaces (`apps/*`, `packages/*`) orchestrated by **Turbo**. Package manager **npm 10.8** (Node ≥ 18, CI pins 20).
 - **API** (`apps/api`): NestJS 11, Prisma 7 + PostgreSQL, Redis (Socket.io), Passport JWT auth. Tests: **Jest** (`*.spec.ts`).
-- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, Zustand, react-hook-form + zod. Tests: **Playwright** (`e2e/*.spec.ts`).
+- **Web** (`apps/web`): Next.js 14 App Router — the **golden reference** for flows/DTOs. Radix + Tailwind, TanStack Query, react-hook-form + zod. Tests: **Jest + RTL** (`*.test.tsx`, `npm test -w apps/web`) + **Playwright E2E** (`e2e/*.spec.ts`).
 - **Mobile** (`apps/mobile`): Expo 55 / RN 0.83, expo-router, multi-role (`(auth)`,`(customer)`,`(driver)`,`(operator)`,`(tenant)`). Tests: **Jest** (`__tests__/*.test.ts`, pure-logic only).
 - **Shared** (`packages/*`): `types`, `ui`, `eslint-config`, `config`, `typescript-config`.
 - **Lint/format**: ESLint **flat config** (per-workspace) + **Prettier** (root `prettier.config.js`).
@@ -24,7 +24,7 @@ Next.js web dashboard, and an Expo (React Native) multi-role mobile app, deploye
 | `npm run build`           | `turbo run build`                                      |
 | `npm run lint`            | `turbo run lint` — eslint **per workspace**            |
 | `npm run check-types`     | `turbo run check-types` — `tsc --noEmit` per workspace |
-| `npm run test`            | `turbo run test` — Jest (api, mobile)                  |
+| `npm run test`            | `turbo run test` — Jest (api, web, mobile)             |
 | `npm run test:e2e`        | `turbo run test:e2e` — Playwright (web)                |
 | `npm run format`          | Prettier write across the repo                         |
 | `npm run db:up` / `:down` | docker-compose Postgres + Redis for local dev          |
@@ -37,6 +37,75 @@ or inside a workspace — `eslint` from the repo root will not resolve a config.
 - **API runs from compiled `dist`**: `nest build` then `node dist/main.js`. `nest start --watch` is broken by TS errors under `scripts/` (already excluded in `tsconfig.build.json`). Listens on `:3000`, global prefix `/api/v1`. Health: `GET /api/v1/health`.
 - **Web**: `next dev` on `:3001`.
 - **Mobile**: `expo start`.
+
+## Local hosting environment (Docker — test features before you commit)
+
+There is **no staging env** — `master` deploys straight to Railway. Before committing a
+new feature/fix, run it against the **whole system built from the production Dockerfiles**
+locally. This is the pre-PR gate the reverse-engineering review flagged as missing; the
+decision + rationale is [`docs/adr/0001-local-hosting-environment.md`](docs/adr/0001-local-hosting-environment.md).
+
+**Two modes, one [`docker-compose.yml`](docker-compose.yml), gated by profiles:**
+
+- **Deps only** (backs the fast `npm run dev` host loop) — `npm run db:up` (== `docker compose up -d postgres redis`). Unchanged.
+- **Full stack** (the pre-PR test target) — the `--profile app` services: a one-shot
+  `migrate` (`prisma migrate deploy`, mirrors prod), `api` (`:3000`), `web` (`:3001`).
+
+### Runbook (agent: run these in order)
+
+```bash
+npm run local:up          # build images + start postgres, redis, migrate, api, web
+npm run local:seed        # seed `test` tenant (operator admin / Admin@123) + publish genesis plan catalog
+npm run local:validate    # smoke + post-deploy-check + local:drift @ localhost:3000 (the core gate)
+npm run local:e2e         # third gate tier, UI changes: allow-listed Playwright projects, ≤ 10 min
+```
+
+`local:validate` is the dependable pre-PR gate: `smoke` (health + unauth routes) then
+`post-deploy-check` (operator login, orders/invoices/customers/products, **money-math +
+invoice reconciliation**), then `local:drift` (read-only schema drift against the compose DB via
+`apps/api/scripts/schema-drift.mjs`; exit 2 = drift). `npm run local:validate:features` runs the deeper
+`feature-smoke` battery (estimate→invoice convert, AP bills, product-sales, fail-closed
+uploads). That battery needs a **published billing plan catalog** — global reference data
+the `PlanVersion` table starts empty of — so `local:seed` now publishes it as a genesis
+step: after the guarded tenant seed it runs the shipped, idempotent
+`db:publish:catalog:v11` publisher (tenant seed **first**, so its `assertSafeTarget` guard
+aborts a mis-pointed DB before the prod-capable catalog publisher writes). Verified working
+2026-09-03: build → migrate → healthy api+web → seed (+catalog v1) → `local:validate` **and**
+`local:validate:features` both green.
+
+Then exercise the feature: **Web** http://localhost:3001 · **API/Swagger**
+http://localhost:3000/api/docs · **Health** http://localhost:3000/api/v1/health.
+`npm run local:logs` tails api+web; `npm run local:down` stops (keeps data);
+`npm run local:reset` stops **and wipes** the Postgres/Redis volumes for a clean DB.
+Added a Prisma migration mid-session? Re-run `npm run local:migrate` before re-validating.
+`npm run local:drift` runs the read-only schema-drift gate against the compose DB.
+`npm run local:test:db` runs the `*.db.spec.ts` lane (DB-backed specs) on its **own fresh database**
+(`scripts/local-db-specs.mjs`: creates `rf_dbspec_*` on the compose Postgres, `migrate deploy`, runs the
+lane serially, drops it; never `routeflow_dev`, which the live api shares — #2183). Needs `db:up` only.
+`npm run local:e2e` is the third gate tier, for UI changes — a pre-PR Playwright pass against
+this stack (allow-listed money/guard projects, ≤ 10 min; `npm run local:e2e:all` runs every
+project as a report, not a gate). Hosted staging is still deferred, so E2E remains
+authoritative only post-deploy against prod; this lane catches a UI regression before that.
+See `apps/web/e2e/LOCAL-LANE.md`.
+
+**Disk running low?** `npm run janitor` (report-only) / `npm run janitor:apply` reclaims
+worktree `node_modules`, merged-and-clean worktrees, Docker build cache, npm cache, and old
+`local-assets/proofs`/`local-assets/handoff` folders, in that order, stopping once free space
+clears its target. `npm run janitor:preflight -- <gb>` gates an `npm ci` on a free-space
+threshold. See `docs/runbooks/disk-cleanup-janitor.md` for exactly what it never touches.
+
+### Guardrails
+
+- `local:validate` runs **only** against the approved **`test`** tenant (`SMOKE_TENANT_SLUG=test`) —
+  never a live tenant (enforced by `assertTestTenant` / the seed's `assertSafeTarget`).
+- Compose secrets are **local throwaways** (obvious `*-change-me` values, localhost-only) —
+  never reuse them anywhere real; never add prod connection strings or client identifiers.
+- Full image builds take minutes (cold cache) — that's fine for a pre-PR check; keep using
+  `npm run dev` for line-by-line editing. `web`'s API URL is baked at build time, so
+  changing it needs a rebuild. Mobile (Expo) is out of scope — run `expo start` against `:3000`.
+- The `/auth/login` throttle (`AUTH_LOGIN_THROTTLE_LIMIT` / `AUTH_LOGIN_THROTTLE_TTL_MS`, prod
+  default 10/300000 unchanged) is set to a generous local-only value in `docker-compose.yml`'s
+  `api` environment so repeated local Playwright logins from `127.0.0.1` don't exhaust it.
 
 ## Architecture (API feature modules → `apps/api/src/*`)
 
@@ -52,24 +121,70 @@ skill). **Use it instead of re-reading the repo.**
 
 - **Before reading/changing code:** read `code-map/INDEX.md` → the relevant area file
   (`api`/`web`/`mobile`/`packages`.md) → open only the file it points to. Plan changes from the map.
-- **After _every_ change (surgical, not a regen):** update the touched entries (purpose,
-  exports/signatures, cross-refs) and bump `_meta.json` (`mappedSha`, `generatedAt`). A small code
-  change is a few-line map edit.
+- **After _every_ change (surgical, not a regen):** the map update lands in the docs-only
+  follow-up commit/PR the landing coordinator opens right after the code PR merges, citing the
+  merged sha (Bookkeeping Option B, owner ruling 2026-09-05) — the code PR's HEAD commit carries
+  a `Bookkeeping-Follow-Up: pending` trailer, which Gate 2 of `.claude/hooks/stop.mjs` accepts in
+  place of an updated entry.
 - Trust the code over the map when they disagree, and fix the map. Money math lives in
-  `apps/{api/src/common,web/lib,mobile/lib}/pricing.ts` — keep all three mirrors in sync.
+  `packages/pricing` (`@routeflow/pricing`) — api, web and mobile import it; there are no mirrors.
+
+## Lessons learned routine
+
+The rules this project has already paid for live at
+[`.claude/lessons/LESSONS.md`](.claude/lessons/LESSONS.md) (the `lessons-learned` skill).
+
+- **Before any major task, implementation, or bug fix:** read it alongside the code map and
+  carry the relevant **Lesson** lines into the plan — cite entry ids (`L-016`) when one changes
+  the approach.
+- **After _every_ bug fix:** the lesson still gets written — an entry (Symptom / Root cause /
+  **Lesson** / Guard) plus the `_meta.json` bump — but it lands in the docs-only follow-up
+  commit/PR the landing coordinator opens right after the code PR merges (Bookkeeping Option B,
+  owner ruling 2026-09-05), not in the code PR itself. **Gate 3 of `.claude/hooks/stop.mjs`
+  blocks the turn otherwise** on `fix/*` branches and on `fix:` commits that landed since the
+  register last changed, unless the code PR's HEAD commit carries a `Bookkeeping-Follow-Up:
+pending` trailer, which Gate 3 accepts in place of an updated entry. A fix with no transferable
+  lesson bumps `_meta.json.updatedAt` alone — never invent a junk entry.
+- Caps: ≤ 52 active entries / 65,536 bytes (the values `.claude/lessons/_meta.json` sets and
+  `scripts/validate-lessons.mjs` actually enforces — it reads `maxEntries`/`maxBytes` from
+  `_meta.json` when present, falling back to its own 40/25,600 defaults only if that file is
+  missing the fields), overflow to `ARCHIVE.md`. Entries are generalizable rules, not incident
+  diaries, and carry **no client identifiers** (this repo goes public for CI).
 
 ## Money discipline
 
-All line/tax/total math goes through `pricing.ts` helpers: `computeLineSubtotal` (boxed proration),
+All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`) — api, web and mobile
+import it; there are no mirrors — every consumer, including root scripts, imports
+`@routeflow/pricing`. Key helpers: `computeLineSubtotal` (boxed proration),
 `normalizeBoxesPieces` (integer boxes/pieces + rollover), and `roundMoney` (cents). **Round every
 monetary write**; never re-derive `qty * unitPrice` for a boxed line (over-charges by `unitsPerBox`).
-Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` before pushing.
+Regression specs: `packages/pricing/src/pricing.spec.ts`. Run `npm run verify` before pushing.
+
+**Entitlement gates**: every `@RequireAddon` key is declared in
+`apps/api/src/billing/addon-gate-registry.ts`; a new gate ships `dark` (allow + would-deny warn)
+and flips to `enforced` only in a separate diff after the owner runs
+`apps/api/scripts/report-addon-gate-blast-radius.mjs` against prod; the registry spec makes an
+unregistered key a red `npm run verify`. The sibling `@RequirePlanFlag` gate has no registry yet:
+a new plan flag ships inside `DARK_PLAN_FLAGS` (`apps/api/src/billing/plan-flag.guard.ts`) until
+the same blast-radius evidence exists, and `DARK_PLAN_FLAGS` / `PLAN_FLAG_ENFORCEMENT` may be
+removed only after a registry equivalent for plan flags lands.
+
+Customer-level order merges (staff `create()` auto-merge, buyer `createOrder`, `mergeAllPendingForCustomer`, `forceConsolidateCustomer`) serialize through `withAdvisoryLock` in `apps/api/src/common/db-locks.ts` — a customer-keyed Postgres advisory lock that is cross-replica safe. **Never add a second in-process lock** on top of it, and never thread a transaction into `updateOrderItems`.
+
+Scheduled jobs use **`@LeaderCron(expr, "<area>.<method>")`** (`apps/api/src/common/cron-lock.ts`) — a per-job try-mode advisory lock, so a second replica is safe. **Never write a bare `@Cron(`**; `apps/api/src/common/no-bare-cron.spec.ts` fails the build if you do.
 
 ## Conventions
 
 - **Tests**: NestJS `Test.createTestingModule`; mock at the module boundary; `class-validator` DTOs. **No snapshot tests, no Vitest.**
 - **Commits**: Conventional Commits (enforced by commitlint) — `feat|fix|test|ci|refactor|docs|chore|perf|revert|build|style`.
 - **Mobile mirrors web**: reuse the same API endpoints/DTOs/flows; only the UI differs.
+- **Shared DTOs/enums**: request/response shapes identical (or near-identical) between web and
+  mobile live in `packages/types/api/*.ts`, imported via `@routeflow/types` — never redeclare one
+  a second time. Prisma-enum mirrors specifically live in `packages/types/api/enums.ts` — the
+  shared source for the pinned enums (see `enum-parity.spec.ts` for coverage) — with one
+  `X_VALUES` const array + derived type per enum, pinned set-equal to `@prisma/client`'s
+  generated enum by `apps/api/src/common/enum-parity.spec.ts` — a hand-typed local mirror of a
+  server enum is how three real bugs shipped (see lesson `L-072`).
 - **Prettier**: semicolons, double quotes, `printWidth` 100, trailing commas.
 
 ## Test tenants & real-client data (POLICY — no exceptions)
@@ -77,11 +192,15 @@ Regression specs: `apps/api/src/common/pricing.spec.ts`. Run `npm run verify` be
 Live client tenants (and their users, products, orders, and documents) are **real businesses'
 production data**. They are never test targets and never examples.
 
-- **Approved test tenants**: `test`, `e2e-routeflow`, and throwaway slugs matching `qa-*`,
-  `e2e-*`, or `ux-audit-*`. ALL testing, seeding, QA, and cleanup — local **or production** —
-  happens ONLY on these, with dummy retailers/buyers. Enforced in code by
+- **Approved test tenants**: `test`, `e2e-routeflow`, `routeflow-demo`, and throwaway slugs
+  matching `qa-*`, `e2e-*`, or `ux-audit-*`. ALL testing, seeding, QA, and cleanup — local
+  **or production** — happens ONLY on these, with dummy retailers/buyers. Enforced in code by
   [`scripts/lib/test-tenants.cjs`](scripts/lib/test-tenants.cjs) (`assertTestTenant`); every
   tenant-scoped script/test entry point must call it before any write.
+- **`routeflow-demo`** is the standing sales-demo tenant (fictional customers, synthetic
+  orders/invoices; catalog copied from a real tenant but written only to the demo). Reseed with
+  [`apps/api/scripts/demo-seed.js`](apps/api/scripts/demo-seed.js) — see its header for the
+  refresh routine. Never demo on a live client tenant.
 - **Never reference a live client** (slug, business name, product names, order/invoice numbers,
   tenant UUIDs) in code, tests, fixtures, UI placeholders, examples, docs, or the code map — use
   `acme`-style placeholders instead.
@@ -108,31 +227,67 @@ Names only — see each app's example file. Never commit values.
 ## Deployment & DB safety (Railway)
 
 - Docker `CMD` is **only** `node dist/main.js` — **never** auto-migrate on deploy.
-- Schema changes apply to prod **only** via `railway run npx prisma migrate deploy`; locally `npx prisma migrate dev` against docker-compose.
+- **The Prisma schema is a FOLDER, not a file** (item 10a): `apps/api/prisma/schema/{_base,tenancy,catalog,sales,finance,platform,compliance}.prisma`,
+  pointed at by `prisma.config.ts` (`schema: prisma/schema`, explicit `migrations.path: prisma/migrations`).
+  Add a model to the domain file it belongs to **and** to the `MODEL_DOMAIN` map in
+  [`apps/api/scripts/split-prisma-schema.mjs`](apps/api/scripts/split-prisma-schema.mjs) — an unmapped
+  model fails `node apps/api/scripts/split-prisma-schema.mjs --check` (there is no "misc" bucket).
+  `--check` ALWAYS enforces the structural invariants (file set, `_base` holds only
+  datasource+generator, unique names, every model where the map says, every enum in a file that
+  actually references it) with **no original file needed**. Only with `--from <path>` or
+  `--from-ref <git-ref>` does it ALSO re-derive the concatenation and prove the folder
+  block-identical to that original — the retired single file itself is never read implicitly. The
+  one-time lossless proof was recorded at split time against `e39bf9db` (207 blocks) and is **not**
+  re-derivable now that the folder has legitimately gained models — `--check --from-ref e39bf9db`
+  fails on block count 208 vs 207, so do not run it expecting green. The
+  permanent _standing_ lossless guard going forward is the drift gate (`npm run local:drift` /
+  CI replay), not a byte/block diff against a file that no longer exists. `apps/api/prisma/migrations/`
+  is untouched by the split — the split generated **no** migration. `migrate diff --to-schema`
+  takes the folder (help text says "file"; the folder form works).
+- Schema changes apply to prod **only** via `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (a bare `prisma migrate deploy` only resolves the schema folder + `prisma.config.ts` when run from `apps/api` — cwd-relative — so this script `cd`s there internally instead of relying on the caller's cwd); locally `npx prisma migrate dev` against docker-compose.
 - **Never** `--force-reset`; **never** run the destructive scripts listed in `CLAUDE_SESSION_PREAMBLE.md`; seed additively.
+- Destructive migrations are blocked in CI by Squawk (`npm run lint:migrations`); whitelist a
+  statement with `-- reason:` + `-- squawk-ignore <rule>`.
+- Boot-time DDL is gone (PR-1, `imp-03a`) — `main.ts` and `platform-config.service.ts` no longer
+  run any boot-time DDL — `main.ts` issued it through a raw `pg` `Pool.query`,
+  `platform-config.service.ts` through `$executeRaw` tagged templates; a grep for runtime DDL
+  must cover `$executeRaw`, `$executeRawUnsafe`/`$queryRaw*`, and `.query(` on a pg client.
+  `npm run db:drift -w apps/api`
+  (`apps/api/scripts/schema-drift.mjs`) is the drift gate: read-only `prisma migrate status` +
+  `migrate diff … --exit-code` against the target DB, exit 0 = no drift. Any schema PR runs it
+  against prod after deploy — `railway run --service postgres node
+apps/api/scripts/schema-drift.mjs` — and requires exit 0. Its `SCHEMA_DRIFT_PRISMA_CLI` stand-in
+  is a **test-only** hook: it is honoured only inside a Jest worker (`JEST_WORKER_ID`) that also
+  sets the override (and prints a WARNING when it is); `NODE_ENV` is deliberately not part of the
+  guard (CI's db-migrations job sets `NODE_ENV: test`). It is ignored — loudly — anywhere else, so
+  a stray export can never make the gate report NO DRIFT from a stub.
+- CI's `npm audit` steps run through `scripts/ci-audit-critical.mjs`: the advisory gate fails on
+  critical findings, never on registry unavailability (warning + skip; Dependabot is the standing
+  net).
 
 ### Canonical deploy flow: **public → push/CI → merge → private** (deploy continues private)
 
-The repo is **private by default** (commercial source). CI (public repos = free Actions) needs it
-public; Railway's GitHub deploy does **not** (the Railway GitHub App clones private repos fine —
-proven on #244/#245 and every batch since, incl. #318 which shipped fully private). The public
-window exists ONLY to run CI, so keep it to minutes.
+Full rationale, failure modes, and the retirement checklist:
+[`docs/runbooks/deploy-visibility-flip.md`](docs/runbooks/deploy-visibility-flip.md).
 
 > **Owner authorization (2026-07-31):** the assistant IS authorized to perform the visibility
-> flips as part of this routine — a brief public window for CI is an accepted trade-off. Two hard
-> rules: (1) **never leave the repo public** — flip back to private even if CI fails, the merge
-> fails, or anything else goes wrong (treat the private flip as a `finally`); (2) keep the public
-> window minimal — flip private **immediately after the merge**, never wait for the Railway
-> deploy (it clones fine while private).
+> flips as part of this routine — a brief public window for CI is an accepted trade-off.
 
-1. **(schema change only)** apply the prod migration FIRST — fresh backup, then
-   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs` (must precede the app deploy).
-2. **Make it public** — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
-3. **Push + CI green + merge the PR to master** (squash). The master push triggers Railway's auto-deploy.
-4. **Make it private again, immediately** — `gh repo edit najathakram/routeflow --visibility private --accept-visibility-change-consequences`.
-   Do this even if CI failed or the merge was aborted.
-5. **Watch the deploy** (`railway deployment list --service @routeflow/{api,web,mobile}`) until
-   SUCCESS, then `npm run post-deploy-check`.
+1. **(schema change only)** apply the prod migration first — fresh backup, then
+   `railway run --service postgres node apps/api/scripts/prod-migrate.mjs`.
+2. **Start `scripts/visibility-watchdog.mjs` detached first** (45 min; see the runbook's
+   "Watchdog (mandatory)" section), **then** make it public — `gh repo edit najathakram/routeflow --visibility public --accept-visibility-change-consequences`
+3. **Push + CI green + merge the PR to master** (squash) — Railway auto-deploys from the push.
+   Right after the merge, the coordinator opens the follow-up bookkeeping PR in the same public
+   window (docs-only; audited `SKIP_VERIFY` allowed per the owner 2026-09-05).
+4. **Wait until BOTH deployments reach `SUCCESS`** (never flip on `BUILDING` — both 1b413d07
+   deployments failed at the code snapshot when flipped there on 2026-09-07, #652), **then flip
+   private as a `finally`** — even if CI or the merge failed — and read visibility back to confirm
+   `PRIVATE`.
+5. **Watch the deploy to SUCCESS**, then `npm run post-deploy-check` — E2E fires itself off the
+   deploy signal; do not dispatch it. The deploy-triggered E2E's freshness guard
+   (`scripts/ci-freshness-guard.mjs`) fails OPEN on any API error and needs `deployments: read`
+   on the `e2e` job.
 
 > ⚠️ Don't `railway up` an UNMERGED branch when master will later auto-deploy: a subsequent master
 > push auto-deploys master-without-your-branch and can briefly regress it (hit + fixed on
@@ -145,6 +300,18 @@ window exists ONLY to run CI, so keep it to minutes.
 > Permanent fix = reinstall the Railway GitHub App with private-repo access on `najathakram`.
 > Docs-only changes (outside `watchPatterns` = `apps/<svc>/**` + `packages/**`) are SKIPPED by
 > Railway — nothing to watch.
+
+## Heavy files policy
+
+No images, videos, or office binaries in git (mobile app icons in
+`apps/mobile/assets/` are the exception — required build assets). Machine-local
+home: `local-assets/` (gitignored). Generated docs/screenshots go there, never
+into `docs/`. The repo goes public briefly for CI, and clones should stay lean.
+`.claude/settings.local.json` is per-machine and gitignored; never commit it.
+
+`apps/web/public/brand/`, `apps/web/public/marketing/`, and `apps/web/fonts/` are a second
+exception — required build assets of the marketing-port site (brand PNGs, hero WebP photography,
+two self-hosted Geist webfonts), not generated output. Total ≤ 476 KB, verified 2026-09-07.
 
 ## Token Budget
 
@@ -159,3 +326,8 @@ git status && git log --oneline -5
 npm run check-types
 npx jest --selectProjects api --listTests >/dev/null 2>&1 || true  # confirm Jest resolves
 ```
+
+`npm run verify` runs `check-types`/`lint`/`test` with `--continue=dependencies-successful`, so a
+failing task no longer hides the others. `SKIP_VERIFY=1` (the pre-push escape hatch) now requires
+`SKIP_VERIFY_REASON="<why>"` for any push touching code (`apps/`, `packages/`, `scripts/`,
+`.github/`) and writes an audit line to `.git/skip-verify.log`; docs-only pushes are exempt.

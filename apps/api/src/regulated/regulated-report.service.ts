@@ -15,10 +15,25 @@ import {
 import { allColumnKeys, defaultColumnKeys } from "./template-registry";
 import { projectReportColumns } from "./report-projection";
 import { RegulatedReport } from "./report-types";
+import { listParkedReversals, parkedRestockNote, withParkedFirst } from "./parked-reversals";
+import { periodBucketOf } from "./period";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { uncategorisedLineWarnings } from "./uncategorised-lines";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_RANGE_DAYS = 366;
+
+/** Every "YYYY-MM" ledger bucket a half-open [from, to) window touches (a partial month counts: conservative). */
+function bucketsCovering(from: Date, toExclusive: Date): string[] {
+  const out: string[] = [];
+  const cursor = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+  while (cursor < toExclusive) {
+    out.push(periodBucketOf(cursor));
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+  }
+  return out;
+}
 
 /**
  * WP11: stateless regulated reporting — computes a `RegulatedReport` over an
@@ -32,6 +47,7 @@ export class RegulatedReportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly regulated: RegulatedService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
   ) {}
 
   /**
@@ -68,13 +84,16 @@ export class RegulatedReportService {
    * category's authorizations). Non-TX templates reuse
    * RegulatedService.getLedger (half-open) and feed buildAggregateReport.
    */
-  async buildReport(params: {
-    category: string;
-    from: string;
-    to: string;
-    template?: string;
-    columns?: string;
-  }): Promise<RegulatedReport> {
+  async buildReport(
+    params: {
+      category: string;
+      from: string;
+      to: string;
+      template?: string;
+      columns?: string;
+    },
+    opts: { reviewRows?: boolean } = {},
+  ): Promise<RegulatedReport> {
     const { fromDate, toExclusive } = this.parseRange(params.from, params.to);
 
     const category = await this.prisma
@@ -169,7 +188,35 @@ export class RegulatedReportService {
       }
     }
 
-    return report;
+    // The filing gate's other half: unresolved parked reversals of the range's months (and the parked-restock
+    // stock note) lead the report; a preview with any is marked "do not file from this export".
+    const db = this.prisma.forTenant();
+    const [parked, restockNote] = await Promise.all([
+      listParkedReversals(db, {
+        trackedCategoryId: category.id,
+        buckets: bucketsCovering(fromDate, toExclusive),
+      }),
+      parkedRestockNote(db, { trackedCategoryId: category.id, from: fromDate, to: toExclusive }),
+    ]);
+    // F-05: custom lines are exempt from the ban check — list the ones sold into a restricted jurisdiction for review.
+    const tenantId = this.prisma.getTenantId();
+    // The review list is for the in-app preview only: the CSV is the filing export, not a review surface.
+    if (tenantId && opts.reviewRows !== false) {
+      const policy = await this.sellingRestrictions.getPolicy(tenantId);
+      // the tenant timezone is only needed (and only read) when the engine is ON
+      const tz = policy.enabled
+        ? ((
+            await this.prisma.tenantConfig.findUnique({
+              where: { tenantId },
+              select: { timezone: true },
+            })
+          )?.timezone ?? null)
+        : null;
+      report.warnings.push(
+        ...(await uncategorisedLineWarnings(db, policy, { from: fromDate, toExclusive }, tz)),
+      );
+    }
+    return withParkedFirst(report, parked, restockNote);
   }
 
   /**
@@ -188,11 +235,18 @@ export class RegulatedReportService {
   ): Promise<RegulatedReport> {
     const ledgerRows = await this.prisma.forTenant().regulatedSalesLedger.findMany({
       where: { trackedCategoryId: category.id, soldAt: { gte: fromDate, lt: toExclusive } },
-      select: { invoiceId: true, invoiceItemId: true, unitBasisQty: true, netSales: true },
+      select: {
+        invoiceId: true,
+        invoiceItemId: true,
+        qty: true,
+        unitBasisQty: true,
+        netSales: true,
+      },
     });
     const txLedgerRows: TxLedgerRow[] = ledgerRows.map((r) => ({
       invoiceId: r.invoiceId,
       invoiceItemId: r.invoiceItemId,
+      qty: Number(r.qty),
       unitBasisQty: Number(r.unitBasisQty),
       netSales: Number(r.netSales),
     }));
@@ -337,7 +391,7 @@ export class RegulatedReportService {
     template?: string;
     columns?: string;
   }): Promise<{ csv: string; filename: string }> {
-    const report = await this.buildReport(params);
+    const report = await this.buildReport(params, { reviewRows: false });
     const csv = serializeReportCsv(report);
     const filename = `${this.slugify(report.categoryName)}-${this.safeToken(report.template)}${report.custom ? "-custom" : ""}-${params.from}-${params.to}.csv`;
     return { csv, filename };

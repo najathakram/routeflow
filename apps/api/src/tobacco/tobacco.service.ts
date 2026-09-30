@@ -2,7 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { AuditService } from "../audit/audit.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { TOBACCO_EXCLUDE_KEY } from "../analytics/analytics.service";
 import { TobaccoRangeDto } from "./dto/tobacco-range.dto";
 import { UpdateTobaccoSettingsDto } from "./dto/update-tobacco-settings.dto";
@@ -85,6 +85,9 @@ export class TobaccoService {
         isActive: true,
         currentStock: true,
         averageCost: true,
+        // Stock is denominated in PIECES; the reader needs the case size to label
+        // it without printing a piece count next to the box noun.
+        unitsPerBox: true,
       },
     });
     return products.map((p) => {
@@ -106,10 +109,11 @@ export class TobaccoService {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: {
         type: "PURCHASE",
-        createdAt: { gte: from, lte: to },
+        // B562: the purchase's accounting date (a backdated bill counts in its own period).
+        effectiveAt: { gte: from, lte: to },
         product: { isTobacco: true },
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
       include: {
         product: { select: { id: true, name: true, sku: true, unit: true } },
         supplier: { select: { id: true, name: true, tobaccoLicenseNo: true } },
@@ -117,7 +121,7 @@ export class TobaccoService {
     });
     return movements.map((m) => ({
       id: m.id,
-      date: m.createdAt,
+      date: m.effectiveAt,
       product: m.product,
       supplier: m.supplier,
       reference: m.reference,
@@ -178,10 +182,11 @@ export class TobaccoService {
       this.prisma.forTenant().stockMovement.findMany({
         where: {
           type: "PURCHASE",
-          createdAt: { gte: from, lte: to },
+          // B562: bucketed by the accounting date, not the insertion time.
+          effectiveAt: { gte: from, lte: to },
           product: { isTobacco: true },
         },
-        select: { createdAt: true, quantity: true, unitCost: true },
+        select: { effectiveAt: true, quantity: true, unitCost: true },
       }),
       this.prisma.forTenant().invoiceItem.findMany({
         where: {
@@ -199,7 +204,7 @@ export class TobaccoService {
       taxCollected: 0,
     }));
     for (const p of purchases) {
-      const idx = p.createdAt.getUTCMonth();
+      const idx = p.effectiveAt.getUTCMonth();
       months[idx].purchaseValue += Number(p.quantity) * Number(p.unitCost ?? 0);
     }
     for (const s of sales) {

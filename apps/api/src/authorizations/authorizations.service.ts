@@ -8,6 +8,7 @@ import { CreateAuthorizationDto } from "./dto/create-authorization.dto";
 import { RejectAuthorizationDto } from "./dto/reject-authorization.dto";
 import { RenewAuthorizationDto } from "./dto/renew-authorization.dto";
 import { SubmitAuthorizationDto } from "./dto/submit-authorization.dto";
+import { escapeHtml } from "../common/html-escape";
 
 export interface BuyerAuthorizationRow {
   trackedCategoryId: string;
@@ -371,7 +372,7 @@ export class AuthorizationsService {
   private async assertCustomer(customerId: string) {
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { id: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { id: true } });
     if (!customer) throw new NotFoundException("Customer not found");
   }
 
@@ -381,7 +382,7 @@ export class AuthorizationsService {
   private async assertCategory(trackedCategoryId: string) {
     const cat = await this.prisma
       .forTenant()
-      .trackedCategory.findUnique({ where: { id: trackedCategoryId }, select: { id: true } });
+      .trackedCategory.findFirst({ where: { id: trackedCategoryId }, select: { id: true } });
     if (!cat) throw new NotFoundException("Tracked category not found");
   }
 
@@ -402,7 +403,7 @@ export class AuthorizationsService {
   /** Buyer submissions are only meaningful for license-gated categories. Returns
    *  the category (tenant-scoped, so a cross-tenant id 404s). */
   private async assertLicenseCategory(trackedCategoryId: string) {
-    const cat = await this.prisma.forTenant().trackedCategory.findUnique({
+    const cat = await this.prisma.forTenant().trackedCategory.findFirst({
       where: { id: trackedCategoryId },
       select: { id: true, name: true, requiresLicense: true },
     });
@@ -421,7 +422,7 @@ export class AuthorizationsService {
     const tenantId = this.prisma.getTenantId();
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { businessName: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { businessName: true } });
     const who = customer?.businessName ?? "A customer";
     const operators = await this.prisma.user.findMany({
       where: { tenantId, role: { in: ["OPERATOR", "TENANT_ADMIN"] }, status: "ACTIVE" },
@@ -433,7 +434,11 @@ export class AuthorizationsService {
       await this.notifications.sendToUser(op.id, { title: subject, body }).catch(() => {});
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
-          .send({ to: op.email, subject: `${who} — ${subject}`, html: `<p>${body}</p>` })
+          .send({
+            to: op.email,
+            subject: `${who} — ${subject}`,
+            html: `<p>${escapeHtml(body)}</p>`,
+          })
           .catch(() => {});
       }
     }

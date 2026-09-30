@@ -1,9 +1,31 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
+import { API_ERROR_CODES } from "@routeflow/types";
+import type {
+  CheckVendorBillDuplicateDto,
+  DuplicateVendorBillError,
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  UnlinkedItemsError,
+  VendorBillStatus,
+} from "@routeflow/types";
+/**
+ * Close-out review (2026-09-05): was a hand-typed local union missing
+ * `"OVERDUE"` — now imported from `@routeflow/types`, pinned to the schema by
+ * `enum-parity.spec.ts` (see mobile's `apps/mobile/lib/api/vendor-bills.ts`,
+ * L-072, for the same fix applied there in wave E).
+ */
+export type {
+  CheckVendorBillDuplicateDto,
+  DuplicateVendorBillError,
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  UnlinkedItemsError,
+  VendorBillStatus,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-export type VendorBillStatus = "DRAFT" | "RECEIVED" | "PARTIAL" | "PAID" | "VOID";
 
 export interface VendorBillItem {
   id: string;
@@ -26,7 +48,8 @@ export interface VendorBillItem {
 export interface VendorBillPayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  /** Display type — BillPayment.method is the full Prisma `PaymentMethod` enum. */
+  method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
   createdAt: string;
@@ -42,6 +65,9 @@ export interface VendorBill {
   status: VendorBillStatus;
   billDate?: string;
   dueDate?: string;
+  /** Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …).
+   *  Persisted verbatim — the server never derives dueDate from it. */
+  termsLabel?: string;
   receivedDate?: string;
   totalOwed: number;
   totalPaid: number;
@@ -72,68 +98,47 @@ interface PaginatedResponse<T> {
   };
 }
 
-/** Payload of the 409 thrown when receiving a bill with unmapped lines. */
-export interface UnlinkedItemsError {
-  code: "UNLINKED_ITEMS";
-  message: string;
-  unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
-}
-
 /** Extract the UNLINKED_ITEMS payload from an axios error, if that's what it is. */
 export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
+  return data?.code === API_ERROR_CODES.UNLINKED_ITEMS ? (data as UnlinkedItemsError) : null;
 }
 
-/** An already-recorded bill that matches the one being entered. */
-export interface DuplicateVendorBillInfo {
-  billId: string;
-  billNumber: string;
-  status: string;
-  /** The existing bill is still DRAFT — finishing it beats creating a second one. */
-  resumable: boolean;
-  totalOwed: number;
-  billDate: string | null;
-  receivedDate: string | null;
-  supplierName: string | null;
-  itemCount: number;
-  /** "number" = the supplier's own invoice number matched; "fuzzy" = supplier + date + total. */
-  matchedBy: "number" | "fuzzy";
-  totalMatches: boolean;
+/** One line the API's PACK_SIZE_UNKNOWN gate flagged (B743; mirrors pack-size-gate.ts). */
+export interface PackSizeUnknownLine {
+  id: string | null;
+  lineIndex: number;
+  description: string;
+  productId: string;
+  productName: string;
+  qty: number;
+  unitCost: number;
+  /** The product's own known pack, for display only; 0 = none known. */
+  productPack: number;
 }
-
-/** Payload of the 409 thrown when creating a bill that already exists. */
-export interface DuplicateVendorBillError {
-  code: "DUPLICATE_VENDOR_BILL";
+export interface PackSizeUnknownError {
+  code: typeof API_ERROR_CODES.PACK_SIZE_UNKNOWN;
   message: string;
-  duplicate: DuplicateVendorBillInfo;
+  packSizeUnknownItems: PackSizeUnknownLine[];
+}
+
+/** B743: extract the PACK_SIZE_UNKNOWN payload from an axios error, if that's what it is. */
+export function getPackSizeUnknownError(error: unknown): PackSizeUnknownError | null {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === API_ERROR_CODES.PACK_SIZE_UNKNOWN ? (data as PackSizeUnknownError) : null;
 }
 
 /** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
 export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
+  return data?.code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL
+    ? (data as DuplicateVendorBillError)
+    : null;
 }
 
 /** Lifecycle of an archived scan. DISCARDED is filtered out server-side, so a
  *  re-upload never reports one. */
 export type InvoiceScanStatus = "SCANNED" | "POSTED" | "DISCARDED" | "DUPLICATE";
-
-/**
- * The archive entry for a document that was read before. Present only when the
- * uploaded bytes hash to a scan already on file — in which case the extraction
- * it arrives with is the STORED one, replayed without a second AI call.
- */
-export interface PriorScanSummary {
-  scanId: string;
-  /** ISO timestamp of the earlier scan. */
-  scannedAt: string;
-  status: InvoiceScanStatus;
-  vendorBillId: string | null;
-  billNumber: string | null;
-  supplierInvoiceNumber: string | null;
-  total: number | null;
-}
 
 /**
  * What `POST /vendor-bills/scan-invoice` returns on top of the extraction
@@ -203,8 +208,13 @@ export interface CreateVendorBillItem {
 export interface CreateVendorBillDto {
   supplierId: string;
   purchaseOrderId?: string;
+  /** Scan flow: raise a draft PO from the bill's own lines and link it (never together with purchaseOrderId). */
+  createPurchaseOrder?: boolean;
   billDate: string;
   dueDate: string;
+  /** Net-terms label as entered on the bill, prefillable from Supplier.defaultTerms.
+   *  Persisted verbatim — the client computes dueDate = billDate + days. */
+  termsLabel?: string;
   items: CreateVendorBillItem[];
   notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed server-side. */
@@ -227,13 +237,6 @@ export function useCreateVendorBill() {
   });
 }
 
-export interface CheckVendorBillDuplicateDto {
-  supplierId?: string;
-  supplierInvoiceNumber?: string;
-  total?: number;
-  billDate?: string;
-}
-
 /**
  * Read-only pre-flight of the guard `POST /vendor-bills` enforces, so a client
  * can warn before the operator commits. Needs either the supplier invoice
@@ -254,6 +257,7 @@ export interface UpdateVendorBillDto {
   supplierId?: string;
   billDate?: string;
   dueDate?: string;
+  termsLabel?: string;
   notes?: string;
   items?: CreateVendorBillItem[];
 }
@@ -278,17 +282,34 @@ export interface ReceiveVendorBillLine {
   qty: number;
 }
 
+/** B562: a received line whose product's stock ledger has a gap (order sales/
+ *  edits write no StockMovement) — the line's quantity was still received,
+ *  but its cost-replay was skipped rather than risk a sales-blind average.
+ *  Same per-line shape as RecomputeCostsResult's `gapsDetected`. */
+export interface VendorBillReceiveGap {
+  productId: string;
+  name: string;
+  stockDrift: number;
+}
+
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
   return useMutation<
-    VendorBill,
+    VendorBill & { gapsDetected: VendorBillReceiveGap[] },
     Error,
-    { id: string; acknowledgeUnlinked?: boolean; items?: ReceiveVendorBillLine[] }
+    {
+      id: string;
+      acknowledgeUnlinked?: boolean;
+      /** B743: sent ONLY after the operator explicitly chose "Receive as loose pieces". */
+      acknowledgePackSizeUnknown?: boolean;
+      items?: ReceiveVendorBillLine[];
+    }
   >({
-    mutationFn: ({ id, acknowledgeUnlinked, items }) =>
+    mutationFn: ({ id, acknowledgeUnlinked, acknowledgePackSizeUnknown, items }) =>
       apiClient
         .post(`/vendor-bills/${id}/receive`, {
           ...(acknowledgeUnlinked ? { acknowledgeUnlinked } : {}),
+          ...(acknowledgePackSizeUnknown ? { acknowledgePackSizeUnknown } : {}),
           ...(items ? { items } : {}),
         })
         .then((r) => r.data),
@@ -308,6 +329,9 @@ export function useRevertVendorBillToDraft() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -319,6 +343,9 @@ export function useVoidVendorBill() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): the server restocks / un-stocks here — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
     },
   });
 }
@@ -326,7 +353,7 @@ export function useVoidVendorBill() {
 export interface RecordVendorBillPaymentDto {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
 }

@@ -36,7 +36,11 @@ export class RouteAnalysisService {
    * Analyze a route template for delivery window compliance.
    * Calculates ETAs and optionally uses Claude for natural language insights.
    */
-  async analyzeRoute(routeId: string, startTime?: string): Promise<RouteAnalysisResult> {
+  async analyzeRoute(
+    routeId: string,
+    startTime?: string,
+    options?: { windowsOnly?: boolean },
+  ): Promise<RouteAnalysisResult> {
     // Load route with stops + customer delivery windows
     const route = await this.prisma.forTenant().route.findUnique({
       where: { id: routeId },
@@ -69,11 +73,10 @@ export class RouteAnalysisService {
     // Load route settings
     const avgSpeedRaw = await this.systemConfig.get("route.averageSpeedKmh");
     const serviceTimeRaw = await this.systemConfig.get("route.serviceTimeMinutes");
-    const defaultStartTimeRaw = await this.systemConfig.get("route.defaultStartTime");
 
     const avgSpeed = avgSpeedRaw != null ? parseFloat(avgSpeedRaw) : 50;
     const serviceTime = serviceTimeRaw != null ? parseFloat(serviceTimeRaw) : 15;
-    const effectiveStartTime = startTime ?? defaultStartTimeRaw ?? "08:00";
+    const effectiveStartTime = await this.optimizationService.resolveStartTime(startTime, null);
 
     // Build stop data
     const stopsWithCoords = route.stops
@@ -97,6 +100,14 @@ export class RouteAnalysisService {
       serviceTime,
     );
 
+    // Window-feasibility callers (the dispatch modals) need only the
+    // deterministic ETA pass above — never the metered Anthropic call. Return
+    // through the same shape the missing-API-key branch below uses, BEFORE any
+    // client construction, prompt build or AiUsageEvent write.
+    if (options?.windowsOnly) {
+      return { configured: false, etas };
+    }
+
     // Resolve Anthropic API key
     const tenantKey = await this.systemConfig.get("anthropic.apiKey");
     const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
@@ -106,6 +117,8 @@ export class RouteAnalysisService {
     }
 
     // Call Claude for analysis
+    let model: string | null = null;
+    let usageRecorded = false;
     try {
       const depotAddress = depot
         ? route.depotAddress || "configured depot"
@@ -118,7 +131,7 @@ export class RouteAnalysisService {
         )
         .join("\n");
 
-      const model = await this.platformConfig.resolveModel();
+      model = await this.platformConfig.resolveModel();
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -151,6 +164,17 @@ Status guide:
         ],
       });
 
+      // The call succeeded, so the spend is real — record it even if parsing
+      // the response fails below.
+      usageRecorded = true;
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "insights.route",
+        model,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
+
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
 
@@ -178,6 +202,14 @@ Status guide:
       };
     } catch (err) {
       this.logger.warn("AI route analysis failed", err instanceof Error ? err.message : err);
+      if (!usageRecorded) {
+        await this.platformConfig.recordAiUsage({
+          tenantId: this.prisma.getTenantId(),
+          feature: "insights.route",
+          model: model ?? "unknown",
+          success: false,
+        });
+      }
       return { configured: true, summary: "AI analysis unavailable — showing ETAs only.", etas };
     }
   }
@@ -219,11 +251,10 @@ Status guide:
         ? { lat: run.depotLat, lng: run.depotLng, address: run.depotAddress ?? "" }
         : await this.optimizationService.resolveDepot(run.routeId);
 
-    const effectiveStartTime =
-      startTime ??
-      run.startTime ??
-      (await this.systemConfig.get("route.defaultStartTime")) ??
-      "08:00";
+    const effectiveStartTime = await this.optimizationService.resolveStartTime(
+      startTime,
+      run.startTime,
+    );
 
     // Delegate to analyzeRoute logic using the run's route
     // But since the run has its own stop order, we use its stops directly
@@ -262,6 +293,8 @@ Status guide:
       return { configured: false, etas };
     }
 
+    let model: string | null = null;
+    let usageRecorded = false;
     try {
       const depotAddress = depot
         ? run.depotAddress || run.route.depotAddress || "configured depot"
@@ -274,7 +307,7 @@ Status guide:
         )
         .join("\n");
 
-      const model = await this.platformConfig.resolveModel();
+      model = await this.platformConfig.resolveModel();
       const anthropic = new Anthropic({ apiKey });
 
       const response = await anthropic.messages.create({
@@ -307,6 +340,17 @@ Status guide:
         ],
       });
 
+      // The call succeeded, so the spend is real — record it even if parsing
+      // the response fails below.
+      usageRecorded = true;
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "insights.route",
+        model,
+        inputTokens: response.usage?.input_tokens ?? 0,
+        outputTokens: response.usage?.output_tokens ?? 0,
+      });
+
       const textBlock = response.content.find((b) => b.type === "text");
       const rawText = textBlock?.type === "text" ? textBlock.text : "";
       const jsonStr = rawText
@@ -332,6 +376,14 @@ Status guide:
       };
     } catch (err) {
       this.logger.warn("AI route run analysis failed", err instanceof Error ? err.message : err);
+      if (!usageRecorded) {
+        await this.platformConfig.recordAiUsage({
+          tenantId: this.prisma.getTenantId(),
+          feature: "insights.route",
+          model: model ?? "unknown",
+          success: false,
+        });
+      }
       return { configured: true, summary: "AI analysis unavailable — showing ETAs only.", etas };
     }
   }

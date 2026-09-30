@@ -28,6 +28,8 @@ export class CreatePartialInvoiceDto {
   /** ISO date — when omitted, defaults to today + tenant default term. */
   @IsOptional() @IsDateString() dueDate?: string;
   @IsOptional() @IsString() @MaxLength(64) terms?: string;
+  /** Structured "Net N" label describing dueDate. NOT the long-form T&C (`terms`). */
+  @IsOptional() @IsString() @MaxLength(40) paymentTermsLabel?: string;
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   /** When true, transition the new invoice DRAFT → SENT immediately after create. */
   @IsOptional() @IsBoolean() send?: boolean;

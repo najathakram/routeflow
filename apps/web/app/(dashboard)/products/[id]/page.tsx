@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Package,
@@ -28,7 +29,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuery } from "@tanstack/react-query";
-import { Badge, Button, Modal, cn } from "@routeflow/ui/web";
+import { Badge, Button, Modal, cn, TAP_TARGET } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import {
@@ -48,16 +49,27 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
-import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@/lib/pricing";
+import { getTierPrice, cascadeTierPrices, perUnitPrice, type TierField } from "@routeflow/pricing";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
+import { unitsLabel } from "@/lib/stock-label";
 import { apiClient } from "@/lib/api-client";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { DecimalInput } from "@/components/MoneyInput";
 import { CategoryCombobox } from "@/components/CategoryCombobox";
 import { SubcategoryCombobox } from "@/components/SubcategoryCombobox";
+import { SetCostModal } from "@/components/SetCostModal";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { PackSizePrompt } from "@/components/PackSizePrompt";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { DemandCard } from "./DemandCard";
+import { SalesHistoryCard } from "./SalesHistoryCard";
+import { ProductLabelsCard } from "./ProductLabelsCard";
+import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
 
@@ -297,16 +309,20 @@ function CostHistoryCard({ productId }: { productId: string }) {
   );
 }
 
-export default function ProductDetailPage({ params }: { params: { id: string } }) {
+export default function ProductDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
+  const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
-  const { data: product, isLoading } = useProduct(params.id);
+  const { data: product, isLoading } = useProduct(id);
   const { data: allProductsResult } = useProducts({ limit: 0 });
+  const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
-  const uploadImages = useUploadProductImages(params.id);
-  const deleteImage = useDeleteProductImage(params.id);
+  const uploadImages = useUploadProductImages(id);
+  const deleteImage = useDeleteProductImage(id);
 
   const [isEditing, setIsEditing] = React.useState(false);
   const [editDraft, setEditDraft] = React.useState<Record<string, unknown>>({});
@@ -384,10 +400,20 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const { user } = useAuth();
   const isOperator = user?.role === "OPERATOR";
   const hasTobaccoAddon = useHasAddon(TOBACCO_ADDON);
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
 
   // ── Lightbox state ────────────────────────────────────────────────────────
   const [lightboxOpen, setLightboxOpen] = React.useState(false);
   const [lightboxIdx, setLightboxIdx] = React.useState(0);
+
+  // ── Set-cost modal state ──────────────────────────────────────────────────
+  const [showCostModal, setShowCostModal] = React.useState(false);
+
+  // ── Variant-split modal state (PR-D) ──────────────────────────────────────
+  const [showVariantSplit, setShowVariantSplit] = React.useState(false);
+
+  // ── Delete confirmation (R2 — was declared, never wired) ──────────────────
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
 
   // ── Crop-existing state ───────────────────────────────────────────────────
   // When set, the next crop completion replaces this key instead of adding a new image
@@ -409,9 +435,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   ).sort() as string[];
 
   // Standalone products eligible as parents in the "Variant of" edit dropdown
-  const variantOfCandidates = allProducts.filter(
-    (p: any) => !p.parentProductId && p.id !== params.id,
-  );
+  const variantOfCandidates = allProducts.filter((p: any) => !p.parentProductId && p.id !== id);
 
   // Reset active image index if images change
   React.useEffect(() => {
@@ -441,6 +465,27 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const currentStock = Number(product.currentStock ?? 0);
   const stockStatus = getStockStatus(currentStock, product.isActive);
 
+  // MSRP — display-only, never money math. Warn (non-blocking) when it undercuts
+  // the wholesale price expressed per PIECE (pricePerUnit / unitsPerBox), which is
+  // the same comparison basis MSRP is always displayed in.
+  const msrpNumber = isEditing
+    ? (editDraft.msrp as string)?.trim()
+      ? parseFloat(editDraft.msrp as string)
+      : null
+    : product.msrp != null
+      ? Number(product.msrp)
+      : null;
+  const wholesaleListPrice = isEditing
+    ? parseFloat(String(editDraft.pricePerUnit ?? priceNumber))
+    : priceNumber;
+  const wholesaleUnitsPerBox = isEditing
+    ? parseFloat((editDraft.unitsPerBox as string) || "0") || 0
+    : Number(product.unitsPerBox ?? 0);
+  const wholesalePerPiece =
+    wholesaleUnitsPerBox > 1 ? wholesaleListPrice / wholesaleUnitsPerBox : wholesaleListPrice;
+  const msrpBelowWholesale =
+    msrpNumber != null && wholesalePerPiece > 0 && msrpNumber < wholesalePerPiece;
+
   const startEdit = () => {
     setEditDraft({
       name: product.name,
@@ -452,6 +497,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       priceTier3: String(parseFloat(String(product.priceTier3 ?? priceNumber))),
       priceTier4: String(parseFloat(String(product.priceTier4 ?? priceNumber))),
       priceTier5: String(parseFloat(String(product.priceTier5 ?? priceNumber))),
+      msrp: product.msrp != null ? String(parseFloat(String(product.msrp))) : "",
       category: product.category ?? "",
       description: product.description ?? "",
       parentProductId: product.parentProductId ?? "",
@@ -486,7 +532,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     };
     updateProduct.mutate(
       {
-        id: params.id,
+        id: id,
         name: composedName,
         unit: draft.unit || undefined,
         sku: draft.sku?.trim() || null,
@@ -511,6 +557,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
         regItemType: draft.regItemType || null,
         regUomCase: draft.regUomCase || null,
         regUomUnit: draft.regUomUnit || null,
+        // MSRP: only ever include the key when the tenant has the addon — the
+        // server 403s any PATCH where `msrp` is *present* (even unchanged) for a
+        // tenant without flag.msrp, which would otherwise block ordinary product
+        // edits for a product that carries a stale MSRP from before the addon
+        // was disabled. Explicit null clears (same "" → null convention as sku).
+        ...(hasMsrpAddon
+          ? { msrp: draft.msrp?.trim() ? String(parseFloat(draft.msrp)) : null }
+          : {}),
         ...(draft.parentProductId
           ? {
               parentProductId: draft.parentProductId,
@@ -533,6 +587,23 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const cancelEdit = () => {
     setEditDraft({});
     setIsEditing(false);
+  };
+
+  // ── Delete (mirrors the mobile app's confirm → toast → navigate-back flow) ─
+  const handleDeleteProduct = async () => {
+    try {
+      await deleteProduct.mutateAsync(id);
+      toast({ title: "Product deleted", variant: "success" });
+      router.push("/products");
+    } catch (err: any) {
+      toast({
+        title: "Failed to delete product",
+        description: err?.response?.data?.message,
+        variant: "error",
+      });
+    } finally {
+      setShowDeleteConfirm(false);
+    }
   };
 
   // ── Crop helpers ──────────────────────────────────────────────────────────
@@ -600,7 +671,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     const [moved] = keys.splice(fromIdx, 1);
     keys.splice(toIdx, 0, moved);
     try {
-      await updateProduct.mutateAsync({ id: params.id, imageKeys: keys });
+      await updateProduct.mutateAsync({ id: id, imageKeys: keys });
       setActiveImageIdx(toIdx);
     } catch {
       toast({ title: "Reorder failed", variant: "error" });
@@ -754,7 +825,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
       // If the scanned product is itself a variant, resolve to its parent
       const parentId: string = found.parentProductId || found.id;
       // Don't allow linking to self
-      if (parentId === params.id) {
+      if (parentId === id) {
         toast({ title: "Cannot link a product to itself", variant: "error" });
         return;
       }
@@ -785,7 +856,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     const doLink = () =>
       updateProduct.mutate(
         {
-          id: params.id,
+          id: id,
           parentProductId: makeVariantParentId,
           variantName: makeVariantName.trim(),
           name: newName,
@@ -832,7 +903,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
   const linkCandidates = allProducts.filter(
     (p: any) =>
       !p.parentProductId && // standalone only
-      p.id !== params.id && // not self
+      p.id !== id && // not self
       !existingVariantIds.has(p.id), // not already a variant of this product
   );
   const filteredLinkCandidates = linkExistingSearch
@@ -899,7 +970,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
     )
       return;
     updateProduct.mutate(
-      { id: params.id, parentProductId: null, variantName: null },
+      { id: id, parentProductId: null, variantName: null },
       {
         onSuccess: () => toast({ title: "Product unlinked — now standalone", variant: "success" }),
         onError: () => toast({ title: "Failed to unlink", variant: "error" }),
@@ -909,9 +980,12 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
   // Display-only per-unit hint for a case-packed product's price fields (Tier 1 row + tier
   // grid). NEVER enters a payload — perUnitPrice is a display derivation, not line math.
+  // Reads `activeUnitsPerBox` (the in-progress edit draft while editing, the saved value
+  // otherwise) — NOT `product.unitsPerBox` directly — so accepting a pack-size suggestion
+  // shows the resulting per-piece price immediately, live, before the operator ever saves.
   const perUnitHint = (v: number) => {
-    if (!(Number(product.unitsPerBox) > 1)) return null;
-    const pu = perUnitPrice(v, product.unitsPerBox);
+    if (!(activeUnitsPerBox > 1)) return null;
+    const pu = perUnitPrice(v, activeUnitsPerBox);
     return pu != null ? (
       <p className="mt-0.5 text-[11px] text-navy/50">≈ ${pu.toFixed(2)} / unit</p>
     ) : null;
@@ -937,6 +1011,49 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
           onClose={() => setLightboxOpen(false)}
         />
       )}
+      {/* Set-cost modal — writes an audited COST_BASIS movement, same component
+          as the Inventory Stock tab (table row + search suggestions). */}
+      {showCostModal && (
+        <SetCostModal
+          item={{
+            id: product.id,
+            name: product.name,
+            unit: product.unit,
+            currentStock,
+            unitsPerBox: product.unitsPerBox,
+            averageCost: product.averageCost != null ? Number(product.averageCost) : null,
+          }}
+          onClose={() => setShowCostModal(false)}
+        />
+      )}
+      {/* Variant-split modal (PR-D) — moves this product's unassigned stock
+          onto its variants. Same component as the Inventory Stock tab row
+          action and the vendor-bill line badge. */}
+      {showVariantSplit && (
+        <VariantSplitModal
+          parent={{
+            id: product.id,
+            name: product.name,
+            currentStock,
+            averageCost: product.averageCost != null ? Number(product.averageCost) : null,
+            unitsPerBox: product.unitsPerBox ?? null,
+            costingMethod: product.costingMethod,
+          }}
+          pool={currentStock}
+          onClose={() => setShowVariantSplit(false)}
+          onSuccess={() => setShowVariantSplit(false)}
+        />
+      )}
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDeleteProduct}
+        title="Delete product?"
+        description={`${product.name} will be deactivated and hidden from the catalog. Existing order and invoice history is preserved. Products with an in-flight (undelivered) order cannot be deleted.`}
+        confirmLabel="Yes, delete"
+        variant="danger"
+        loading={deleteProduct.isPending}
+      />
       <div className="space-y-5 p-6">
         {/* Back */}
         <Link
@@ -1080,7 +1197,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                                     toast({ title: "Delete failed", variant: "error" });
                                   }
                                 }}
-                                className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white hover:bg-danger transition-colors"
+                                className={cn(
+                                  TAP_TARGET,
+                                  "absolute right-2 top-2 rounded-full bg-black/50 text-white hover:bg-danger transition-colors",
+                                )}
                                 title="Delete this image"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -1096,7 +1216,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                                       (i) => (i - 1 + images.length) % images.length,
                                     );
                                   }}
-                                  className="absolute left-1 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "absolute left-1 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                  )}
                                 >
                                   <ChevronLeft className="h-4 w-4" />
                                 </button>
@@ -1105,7 +1228,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                                     e.stopPropagation();
                                     setActiveImageIdx((i) => (i + 1) % images.length);
                                   }}
-                                  className="absolute right-8 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "absolute right-8 top-1/2 -translate-y-1/2 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors",
+                                  )}
                                 >
                                   <ChevronRight className="h-4 w-4" />
                                 </button>
@@ -1183,7 +1309,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             onClick={() => handleMoveImage(safeIdx, safeIdx - 1)}
                             disabled={safeIdx === 0 || updateProduct.isPending}
                             title="Move left"
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
                           </button>
@@ -1191,7 +1320,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             onClick={() => handleMoveImage(safeIdx, safeIdx + 1)}
                             disabled={safeIdx === images.length - 1 || updateProduct.isPending}
                             title="Move right"
-                            className="flex h-7 w-7 items-center justify-center rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded-lg border border-surface-border text-navy/70 hover:text-navy disabled:opacity-30 transition-colors",
+                            )}
                           >
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>
@@ -1290,10 +1422,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
             </div>
 
             <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-              <div className="border-b border-surface-border px-4 py-3">
+              <div className="flex items-center justify-between border-b border-surface-border px-4 py-3">
                 <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
                   Stock &amp; Cost
                 </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCostModal(true)}
+                  className="text-xs font-medium text-brand-600 transition-colors hover:underline"
+                >
+                  Set cost
+                </button>
               </div>
               <div className="px-4">
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
@@ -1309,9 +1448,22 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
                   <span className="text-navy/70">On hand</span>
                   <span className="font-mono font-medium tabular-nums text-navy">
-                    {currentStock.toFixed(2)} {product.unit}
+                    {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
                   </span>
                 </div>
+                {!product.parentProductId && (product.variants?.length ?? 0) > 0 && (
+                  <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
+                    <span
+                      className="text-navy/70"
+                      title="Stock on this generic not yet attributed to a variant"
+                    >
+                      Unassigned stock
+                    </span>
+                    <span className="font-mono font-medium tabular-nums text-navy">
+                      {unitsLabel(currentStock, product.unitsPerBox, product.unit)}
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between border-b border-surface-border py-3 text-sm">
                   <span className="text-navy/70">Waitlist</span>
                   <span
@@ -1331,12 +1483,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       ${parseFloat(String(product.averageCost)).toFixed(2)}
                     </span>
                   ) : (
-                    <span
-                      title="No cost basis recorded — set one from Inventory → Set Costs, or receive a purchase"
-                      className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                    <button
+                      type="button"
+                      onClick={() => setShowCostModal(true)}
+                      title="No cost basis recorded — click to set one"
+                      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
                     >
                       No cost set
-                    </span>
+                    </button>
                   )}
                 </div>
                 <Link
@@ -1363,7 +1517,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <button
                         onClick={cancelEdit}
                         title="Cancel"
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        className={cn(
+                          TAP_TARGET,
+                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                        )}
                       >
                         <X className="h-4 w-4" />
                       </button>
@@ -1381,7 +1538,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <button
                         onClick={startEdit}
                         title="Edit product"
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        className={cn(
+                          TAP_TARGET,
+                          "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                        )}
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
@@ -1399,7 +1559,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          updateProduct.mutate({ id: params.id, isActive: !product.isActive })
+                          updateProduct.mutate({ id: id, isActive: !product.isActive })
                         }
                         loading={updateProduct.isPending}
                       >
@@ -1411,7 +1571,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           variant="secondary"
                           onClick={() =>
                             updateProduct.mutate({
-                              id: params.id,
+                              id: id,
                               isTobacco: !(product as any).isTobacco,
                             } as any)
                           }
@@ -1419,6 +1579,16 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                           title="Tobacco products are tracked separately for monthly tax reports"
                         >
                           {(product as any).isTobacco ? "Unmark tobacco" : "Mark as tobacco"}
+                        </Button>
+                      )}
+                      {isOperator && (
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          leftIcon={<Trash2 className="h-4 w-4" />}
+                          onClick={() => setShowDeleteConfirm(true)}
+                        >
+                          Delete
                         </Button>
                       )}
                     </>
@@ -1472,8 +1642,18 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                       <span className="font-semibold">Tobacco product</span> — purchases and sales
                       are tracked separately for monthly tax reports.
                     </p>
-                    <Link href="/tobacco" className="text-xs font-medium text-amber-800 underline">
-                      Tobacco section →
+                    {/* The standalone /tobacco surface retired into the Regulated Items hub
+                        (2026-08-24 consolidation) — link straight at this product's own
+                        regulated section, falling back to the hub when it has none. */}
+                    <Link
+                      href={
+                        product.trackedCategory
+                          ? `/compliance/${product.trackedCategory.id}`
+                          : "/compliance"
+                      }
+                      className="text-xs font-medium text-amber-800 underline"
+                    >
+                      Regulated Items →
                     </Link>
                   </div>
                 )}
@@ -1497,7 +1677,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         disabled={updateProduct.isPending}
                         onToggle={() =>
                           updateProduct.mutate(
-                            { id: params.id, isFeatured: !(product as any).isFeatured } as any,
+                            { id: id, isFeatured: !(product as any).isFeatured } as any,
                             {
                               onSuccess: () =>
                                 toast({ title: "Merchandising updated", variant: "success" }),
@@ -1512,14 +1692,11 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         active={!!(product as any).isNew}
                         disabled={updateProduct.isPending}
                         onToggle={() =>
-                          updateProduct.mutate(
-                            { id: params.id, isNew: !(product as any).isNew } as any,
-                            {
-                              onSuccess: () =>
-                                toast({ title: "Merchandising updated", variant: "success" }),
-                              onError: () => toast({ title: "Failed to update", variant: "error" }),
-                            },
-                          )
+                          updateProduct.mutate({ id: id, isNew: !(product as any).isNew } as any, {
+                            onSuccess: () =>
+                              toast({ title: "Merchandising updated", variant: "success" }),
+                            onError: () => toast({ title: "Failed to update", variant: "error" }),
+                          })
                         }
                       />
                       <MerchFlagToggle
@@ -1529,7 +1706,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         disabled={updateProduct.isPending}
                         onToggle={() =>
                           updateProduct.mutate(
-                            { id: params.id, isDeal: !(product as any).isDeal } as any,
+                            { id: id, isDeal: !(product as any).isDeal } as any,
                             {
                               onSuccess: () =>
                                 toast({ title: "Merchandising updated", variant: "success" }),
@@ -1676,7 +1853,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     }
                   />
                   <InfoRow
-                    label="Tier 1 Price (List)"
+                    label={`${tierLabel(tierLabels, 1)} Price (List)`}
                     value={
                       isEditing ? (
                         <>
@@ -1766,6 +1943,48 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   )}
                 </div>
 
+                {/* Pack-size prompt — suggested from the name/unit while the
+                    pack-size field itself is unset. Never guesses: it only
+                    pre-fills for HIGH/MEDIUM confidence, states the conflict
+                    and leaves the input empty for AMBIGUOUS, and renders
+                    nothing at all for a piece-priced unit. */}
+                {isEditing &&
+                  (() => {
+                    const editParent = (editDraft.parentProductId as string)
+                      ? allProducts.find((p: any) => p.id === editDraft.parentProductId)
+                      : null;
+                    // A variant's own stored `name` is just the flavour (e.g.
+                    // "Strawberry") — a count that lives in the PARENT's name
+                    // (e.g. "Acme Widgets 24ct") would never reach the parser
+                    // from the bare name alone. Compose the same
+                    // parent + flavor string the name-field preview above
+                    // shows so a parent-borne count is still offered — the
+                    // AMBIGUOUS refusal below still fires untouched if the
+                    // two names disagree on the count.
+                    const trimmedVariantName = ((editDraft.variantName as string) ?? "").trim();
+                    const classifyName = editParent
+                      ? trimmedVariantName
+                        ? `${(editParent as any).name} - ${trimmedVariantName}`
+                        : (editParent as any).name
+                      : ((editDraft.name as string) ?? product.name);
+                    return (
+                      <PackSizePrompt
+                        className="mt-3"
+                        name={classifyName}
+                        unit={(editDraft.unit as string) ?? product.unit}
+                        unitSku={(editDraft.unitSku as string) ?? product.unitSku}
+                        unitPrice={parseFloat(String(editDraft.pricePerUnit ?? priceNumber))}
+                        unitsPerBox={editDraft.unitsPerBox as string}
+                        // Existing product: warn that a pack size re-denominates
+                        // the stored on-hand and cost rather than converting them.
+                        currentStock={Number(product.currentStock ?? 0)}
+                        onAccept={(value) =>
+                          setEditDraft((d) => ({ ...d, unitsPerBox: String(value) }))
+                        }
+                      />
+                    );
+                  })()}
+
                 {/* Tier Prices */}
                 <div className="mt-5 border-t border-surface-border pt-4">
                   <div className="flex items-center justify-between mb-2.5">
@@ -1787,17 +2006,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                         }}
                         className="text-xs text-brand-600 hover:underline"
                       >
-                        Set all to Tier 1
+                        Set all to {tierLabel(tierLabels, 1)}
                       </button>
                     )}
                   </div>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
                     {(
                       [
-                        ["Tier 2", "priceTier2", product.priceTier2],
-                        ["Tier 3", "priceTier3", product.priceTier3],
-                        ["Tier 4", "priceTier4", product.priceTier4],
-                        ["Tier 5", "priceTier5", product.priceTier5],
+                        [tierLabel(tierLabels, 2), "priceTier2", product.priceTier2],
+                        [tierLabel(tierLabels, 3), "priceTier3", product.priceTier3],
+                        [tierLabel(tierLabels, 4), "priceTier4", product.priceTier4],
+                        [tierLabel(tierLabels, 5), "priceTier5", product.priceTier5],
                       ] as [string, string, any][]
                     ).map(([label, field, productVal], idx) => {
                       const prevFields = ["pricePerUnit", "priceTier2", "priceTier3", "priceTier4"];
@@ -1891,6 +2110,63 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     <p className="mt-1.5 text-xs text-navy/50">
                       Tiers left at 0 inherit the list price at checkout.
                     </p>
+                  )}
+                </div>
+
+                {/* MSRP — suggested retail, per PIECE (even for boxed products).
+                    Display-only: never feeds pricing/tax/margin math. Flag-gated
+                    (flag.msrp) on write; the warning below is advisory only. */}
+                <div className="mt-5 border-t border-surface-border pt-4">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">
+                    MSRP (Suggested Retail)
+                  </p>
+                  {isEditing ? (
+                    hasMsrpAddon ? (
+                      <>
+                        <DecimalInput
+                          min={0}
+                          value={
+                            (editDraft.msrp as string)?.trim()
+                              ? parseFloat(editDraft.msrp as string)
+                              : null
+                          }
+                          onChange={(v) =>
+                            setEditDraft((d) => ({ ...d, msrp: v == null ? "" : String(v) }))
+                          }
+                          className="w-32 rounded border border-surface-border px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        />
+                        <p className="mt-1 text-xs text-navy/50">
+                          per piece — even for boxed products
+                        </p>
+                        {!(editDraft.msrp as string)?.trim() && (
+                          <p className="mt-1 text-xs text-navy/50">
+                            Shown on new invoices once set — existing invoices keep their original
+                            snapshot.
+                          </p>
+                        )}
+                        {msrpBelowWholesale && (
+                          <p className="mt-1 text-xs text-warning">
+                            Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-xs italic text-navy/50">Requires the MSRP add-on.</p>
+                    )
+                  ) : msrpNumber != null ? (
+                    <>
+                      <p className="font-mono text-sm font-medium tabular-nums text-navy">
+                        ${msrpNumber.toFixed(2)}
+                        <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                      </p>
+                      {msrpBelowWholesale && (
+                        <p className="mt-1 text-xs text-warning">
+                          Below wholesale price (${wholesalePerPiece.toFixed(2)}/pc)
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-navy/30">—</p>
                   )}
                 </div>
 
@@ -2118,10 +2394,17 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               </div>
             )}
 
+            <ProductLabelsCard productId={product.id} />
+            <ProductUnitsCard product={product} />
+
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
                 CostHistoryCard below) because it owns range/metric state and five
                 render states; this file is already ~2.7k lines. */}
             <DemandCard productId={product.id} unitsPerBox={product.unitsPerBox} />
+
+            {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
+                when, and at what price, with min/avg/max price summary chips. */}
+            <SalesHistoryCard productId={product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
@@ -2135,6 +2418,14 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                   </h3>
                   {isOperator && (
                     <div className="flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Scissors className="h-3.5 w-3.5" />}
+                        onClick={() => setShowVariantSplit(true)}
+                      >
+                        Assign to variants
+                      </Button>
                       <Button size="sm" variant="secondary" onClick={openLinkExistingModal}>
                         Link existing
                       </Button>
@@ -2165,10 +2456,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                             SKU
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Tier 1
+                            {tierLabel(tierLabels, 1)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
-                            Tier 2
+                            {tierLabel(tierLabels, 2)}
                           </th>
                           <th className="border-b-2 border-navy px-3 py-2.5 text-[11px] font-semibold uppercase tracking-[0.07em] text-navy/70">
                             Status
@@ -2218,7 +2509,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                               <button
                                 onClick={startEdit}
                                 title="Edit this product"
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                                className={cn(
+                                  TAP_TARGET,
+                                  "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                                )}
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -2259,7 +2553,10 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                                   <button
                                     onClick={() => openVariantModal(variant)}
                                     title="Edit variant"
-                                    className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                                    className={cn(
+                                      TAP_TARGET,
+                                      "rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors",
+                                    )}
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
                                   </button>
@@ -2358,16 +2655,20 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
 
           <div>
             <label className="mb-1 block text-xs font-medium text-navy/70">Pricing Tiers</label>
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
               {(
                 [
-                  ["T1 (List)", "price"],
-                  ["T2", "priceTier2"],
-                  ["T3", "priceTier3"],
-                  ["T4", "priceTier4"],
-                  ["T5", "priceTier5"],
-                ] as [string, keyof typeof variantForm][]
-              ).map(([label, field], idx) => {
+                  ["price", 1, "T1 (List)"],
+                  ["priceTier2", 2, "T2"],
+                  ["priceTier3", 3, "T3"],
+                  ["priceTier4", 4, "T4"],
+                  ["priceTier5", 5, "T5"],
+                ] as [keyof typeof variantForm, number, string][]
+              ).map(([field, tier, fallbackLabel], idx) => {
+                // Compact grid heading — swap in a configured tier name when the tenant
+                // set one, else keep the existing "T1 (List)".."T5" abbreviation (these
+                // cells are narrow), same posture as the products list tier columns.
+                const label = tierLabels?.[String(tier)]?.trim() || fallbackLabel;
                 const val = parseFloat(variantForm[field]) || 0;
                 const prevField =
                   idx > 0
@@ -2393,7 +2694,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
                     />
                     {warn && (
                       <p className="mt-0.5 text-xs text-warning">
-                        Higher than {label.split(" ")[0] === "T2" ? "T1" : `T${idx}`}
+                        Higher than {tierLabels?.[String(idx)]?.trim() || `T${idx}`}
                       </p>
                     )}
                   </div>
@@ -2401,7 +2702,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               })}
             </div>
             <p className="mt-1.5 text-xs text-navy/70">
-              Higher tiers (volume) are typically equal to or lower than Tier 1.
+              Higher tiers (volume) are typically equal to or lower than {tierLabel(tierLabels, 1)}.
             </p>
           </div>
 
@@ -2454,7 +2755,7 @@ export default function ProductDetailPage({ params }: { params: { id: string } }
               >
                 <option value="">— Select a product —</option>
                 {allProducts
-                  .filter((p: any) => !p.parentProductId && p.id !== params.id)
+                  .filter((p: any) => !p.parentProductId && p.id !== id)
                   .map((p: any) => (
                     <option key={p.id} value={p.id}>
                       {p.name}

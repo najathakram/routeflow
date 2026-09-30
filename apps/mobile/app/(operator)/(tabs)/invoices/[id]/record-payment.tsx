@@ -11,21 +11,19 @@ import {
 } from "../../../../../components/FormSheet";
 import { PhotoCapture } from "../../../../../components/PhotoCapture";
 import { useAdminInvoice } from "../../../../../lib/api/admin";
-import { useRecordInvoicePayment, type PaymentMethod } from "../../../../../lib/api/invoices";
+import { useRecordInvoicePayment } from "../../../../../lib/api/invoices";
 import { useUploadPaymentImage } from "../../../../../lib/api/payments";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../../../lib/payment-methods";
 import { productImageFile } from "../../../../../lib/product-image";
 import { showToast } from "../../../../../lib/toast";
 
 // Advance / Credit-Note are intentionally excluded: the server rejects them here
 // ("use the dedicated Apply Credit Note / Apply Advance actions") so offering
 // them as chips only ever produced an error toast.
-const METHODS: { id: PaymentMethod; label: string }[] = [
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "OTHER", label: "Other" },
-];
+const METHODS = SELECTABLE_METHOD_OPTIONS;
 
 // Distinct from paidAt (the recorded payment date) and from the server-stamped
 // check-lifecycle clearedAt: this is when the funds hit the account.
@@ -41,7 +39,7 @@ export default function RecordPaymentScreen() {
   const uploadImageMut = useUploadPaymentImage();
 
   const balance = invoice?.balanceDue ?? invoice?.total ?? 0;
-  const [method, setMethod] = useState<PaymentMethod>("CASH");
+  const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState<string>(balance ? String(Number(balance).toFixed(2)) : "");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");

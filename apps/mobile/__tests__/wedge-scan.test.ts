@@ -53,6 +53,27 @@ describe("findExactScanMatch", () => {
     expect(r.match).toBeNull();
     expect(r.multiple).toBe(true);
   });
+
+  it("REG-MSCAN-M5: excludes an isActive:false row — never a valid local match on its own", () => {
+    const archived = [{ id: "p5", barcode: "9999999999990", isActive: false }];
+    const r = findExactScanMatch("9999999999990", archived);
+    expect(r).toEqual({ match: null, multiple: false });
+  });
+
+  it("REG-MSCAN-M5: an ACTIVE row still matches when an inactive sibling shares the same code — the exclusion never hides a legitimate match", () => {
+    const mixed = [
+      { id: "p6", barcode: "8888888888880", isActive: true },
+      { id: "p7", sku: "8888888888880", isActive: false },
+    ];
+    const r = findExactScanMatch("8888888888880", mixed);
+    expect(r.match?.id).toBe("p6");
+    expect(r.multiple).toBe(false);
+  });
+
+  it("REG-MSCAN-M5: isActive undefined/absent is treated as active (only an explicit false excludes)", () => {
+    const noFlag = [{ id: "p8", barcode: "7777777777770" }];
+    expect(findExactScanMatch("7777777777770", noFlag).match?.id).toBe("p8");
+  });
 });
 
 describe("scanUnitKind (case code vs piece code)", () => {

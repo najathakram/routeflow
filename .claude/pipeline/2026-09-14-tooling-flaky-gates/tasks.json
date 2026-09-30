@@ -1,0 +1,156 @@
+{
+  "mode": "bugfix",
+  "buildPlanPath": ".claude/pipeline/2026-09-14-tooling-flaky-gates/build-plan.md",
+  "scriptsDir": "C:/Users/nakram/.claude/skills/dev-pipeline/scripts",
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts src/common/prod-migrate-script.spec.ts src/common/next-version.spec.ts src/common/bugs-self-test-script.spec.ts --maxWorkers=2",
+      "node scripts/campaign/bugs.mjs self-test",
+      "node .claude/hooks/stop.gate5.spec.mjs"
+    ],
+    "final": ["npm run verify"]
+  },
+  "tasks": [
+    {
+      "id": "RC1",
+      "title": "B225+B244 root-cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "brief": "apps/api/src/common/ci-freshness-guard-script.spec.ts, describe('ci-freshness-guard.mjs contract'). '(pin) hang' (line 260-276) sets CI_FRESHNESS_GH_TIMEOUT_MS=500 (fake gh sleeps 10s, script times out at 500ms) and asserts elapsedMs<5000 (line 274) around the WHOLE spawnSync -- a 4.5s margin meant to absorb node/subprocess startup, not a real regression signal. Probe: run this exact case 5x while os.cpus().length CPU-bound busy-loop child processes (each a tight loop, ~8s) saturate the host in the background; confirm elapsedMs sometimes exceeds 5000 while outputs.run/warning/status stay correct -- that split (behavior correct, wall-clock wrong) IS the bug. Also run T1 (REG-E2EGUARD-403, line 194, runYamlDrivenFreshnessStep) under the same contention and report whether it shares this mechanism or is separate. Report reproduced=true ONLY if you actually observed elapsedMs exceed 5000 with correct behavior; do not implement or write a permanent test."
+    },
+    {
+      "id": "RT1",
+      "title": "B225+B244 repro-test",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/common/ci-freshness-guard-script.spec.ts"],
+      "dependsOn": ["RC1"],
+      "brief": "Add REG-B225/REG-B244 as a new case in the same describe block as '(pin) hang' (line ~276). Reuse RC1's CPU-saturation harness (os.cpus().length busy-loop children for the case's duration) around the SAME fakeEnv('hang',{CI_FRESHNESS_GH_TIMEOUT_MS:'500'}) run. This case's own assertions must be behavioral ONLY (outputs.run, warning marker, res.status) -- never elapsedMs. It must go RED on the CURRENT file: keep the existing '(pin) hang' test's own `expect(elapsedMs).toBeLessThan(5000)` (line 274) UNTOUCHED, and structure your new case so that assertion is exercised under the same saturated-host block (e.g. run both scenarios in the one saturated window) -- the existing line trips under contention even though your new behavior-only assertions pass, proving the wall-clock check is the false signal. If contention does not reliably trip it after several tries, report that honestly in your summary rather than forcing a pass."
+    },
+    {
+      "id": "FIX1",
+      "title": "B225+B244 fix",
+      "type": "fix",
+      "files": ["apps/api/src/common/ci-freshness-guard-script.spec.ts"],
+      "tests": [],
+      "dependsOn": ["RC1", "RT1"],
+      "brief": "In '(pin) hang' (line 260-276): delete `const start = Date.now()`, `elapsedMs`, and `expect(elapsedMs).toBeLessThan(5000)` (lines 261, 265, 274) entirely -- keep every behavioral assertion (outputs.run, warning marker, res.status) as the sole oracle. If RC1/RT1's report says T1 (line 194) shares this mechanism, apply the identical fix there; if RC1 found it's a separate startup-latency race, do not guess a fix for it -- note it in your summary as a separate, unfixed finding. Do not weaken any other assertion in the file, and do not remove RT1's new saturation-harness test."
+    },
+
+    {
+      "id": "RC2",
+      "title": "B231+B415 root-cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "brief": "scripts/campaign/bugs.mjs self-test, two sites: (a) line 6779 `elapsedMs < 5000` in the 'lock order (runtime)' check -- a real execSync race between two child processes (move + discharge), comment says the bound distinguishes a real ~10s+ deadlock from a fast completion, but a busy host can push a genuinely-correct fast race past 5000ms. (b) line 5757 `awaitExit(victim, 3000)` in the lock-liveness dead-holder check -- awaitExit's own default (line 5706) is 15000ms; this call uses a tighter 3000ms to observe a SIGKILLed child's pid go 'gone'. Probe: run `node scripts/campaign/bugs.mjs self-test` 3-5x under the same CPU-saturation technique as RC1 and confirm whether either check trips while the underlying exit codes / liveness outcome stay correct. Report reproduced=true only if actually observed. Do not implement."
+    },
+    {
+      "id": "RT2",
+      "title": "B231+B415 repro-test wrapper",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/common/bugs-self-test-script.spec.ts"],
+      "dependsOn": ["RC2"],
+      "introducesObservable": true,
+      "brief": "Create apps/api/src/common/bugs-self-test-script.spec.ts (new file -- does not exist yet, so this is the honest RED state per introducesObservable). A thin jest wrapper: spawnSync `node scripts/campaign/bugs.mjs self-test` from the repo root (timeout generous, e.g. 120_000ms) and assert exit code 0 plus stdout contains 'self-test: all checks passed'. Title it to include REG-B231 and REG-B415 (campaign-check needs a literal jest test carrying these tokens -- bugs.mjs's own self-test harness is not jest, so this wrapper is the only place they can be proven from). This file is new; nothing else to make red -- do not touch scripts/campaign/bugs.mjs in this task."
+    },
+    {
+      "id": "FIX2",
+      "title": "B231+B415 fix",
+      "type": "fix",
+      "files": ["scripts/campaign/bugs.mjs"],
+      "tests": [],
+      "dependsOn": ["RC2", "RT2"],
+      "brief": "Two edits in scripts/campaign/bugs.mjs's self-test section: (1) line ~6779, drop the `elapsedMs < 5000` check in the 'lock order (runtime)' block -- keep `raced.code === 0` and `kids.map(k=>k.code) === [0,0]` as the sole oracle (same shape as B411/B420: assert the outcome, never ambient timing). (2) line ~5757, raise `awaitExit(victim, 3000)` to `awaitExit(victim, 15000)` to match the block's own default convention (line 5706) -- do not restructure the polling logic, just the bound. Run `node scripts/campaign/bugs.mjs self-test` yourself and confirm it still reports all checks passed."
+    },
+
+    {
+      "id": "RC3",
+      "title": "B418 root-cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "brief": "apps/api/src/common/prod-migrate-script.spec.ts, run() (line 43-50) calls spawnSync(process.execPath, [SCRIPT], {timeout:30_000,...}); line 148 asserts `expect(res.status).toBe(2)` on a real (DB-free, port-1-target) invocation of scripts/prod-migrate.mjs. Node's own spawnSync contract: when `timeout` fires, the child is killed and `status` comes back null, not the real exit code -- under severe host contention this specific real invocation can exceed 30s and flip a correct run into `status:null`, indistinguishable from a real wrong value. Probe: write a throwaway script (NOT the real prod-migrate.mjs) that never exits (e.g. `setInterval(()=>{},1000)`), spawnSync it with the identical {timeout:30_000} option, and confirm status comes back null and signal is set -- this deterministically reproduces Node's own timeout-kill contract, independent of host speed. Do not touch the real script or the test file."
+    },
+    {
+      "id": "RT3",
+      "title": "B418 repro-test",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/common/prod-migrate-script.spec.ts"],
+      "dependsOn": ["RC3"],
+      "brief": "Add REG-B418 to prod-migrate-script.spec.ts: a new case using a small fixture script (write it under a __fixtures__ or inline temp file next to the spec, NEVER touch scripts/prod-migrate.mjs) that never exits, spawned with the SAME {timeout:30_000} shape as run(). Assert the CURRENT test file's bare pattern (`expect(res.status).toBe(2)`, mirroring line 148) FAILS with `Expected: 2, Received: null` when applied to this timeout case -- i.e. write the assertion the way line 148 does today, so this case goes RED on the current file exactly because nothing here distinguishes a timeout from a wrong value. This is the deterministic repro RC3 confirmed; it needs no host contention at all."
+    },
+    {
+      "id": "FIX3",
+      "title": "B418 fix",
+      "type": "fix",
+      "files": ["apps/api/src/common/prod-migrate-script.spec.ts"],
+      "tests": [],
+      "dependsOn": ["RC3", "RT3"],
+      "brief": "Fix line 148's bare `expect(res.status).toBe(2)` pattern (and RT3's new case) to assert `res.signal` is null as a precondition BEFORE checking status -- e.g. `expect(res.signal).toBeNull(); expect(res.status).toBe(2);` -- so a real timeout-kill (signal set, status null) now fails with a clear 'process was killed by the test harness's own timeout, not a real assertion failure' style message instead of the bare 'Expected 2, Received null'. Apply the same precondition to RT3's new case so it now reports the SAME clear distinguishing failure (still red, but readable) -- RT3's case is expected to demonstrate the message improvement, not to go green; state which outcome you produced in your summary."
+    },
+
+    {
+      "id": "RC4",
+      "title": "B411 root-cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "brief": "Already independently root-caused on the B411 registry record (.claude/campaign/bugs/B411.md, Root cause / Fix approach sections) -- read those first. .claude/hooks/stop.gate5.spec.mjs: REPO_DIRS (line 149) is this run's own registered scaffold dirs; tmpDirsBefore (line 164) snapshots a global tmpdir count; F4 (line 647-652) compares that count before/after IN THE SAME PROCESS. A stale dir from an earlier completed run cancels out in both counts and can't trip it -- the real trigger is a CONCURRENT sibling run creating stop-gate5-spec-* dirs in the window between the two counts. Probe: create an unrelated stop-gate5-spec-* directory directly (simulating a concurrent sibling run) between the before/after snapshots and confirm F4 fails even though this run's own REPO_DIRS are all correctly cleaned up. Do not implement or write a permanent test."
+    },
+    {
+      "id": "RT4",
+      "title": "B411 repro-test",
+      "type": "repro-test",
+      "files": [],
+      "tests": [".claude/hooks/stop.gate5.spec.mjs"],
+      "dependsOn": ["RC4"],
+      "brief": "Add REG-B411 to stop.gate5.spec.mjs: a case that creates an UNRELATED stop-gate5-spec-* directory directly (matching countSpecTmpDirs's own naming pattern) during F4's before/after window, simulating a concurrent sibling run, and asserts F4 (the count-based check at line 651) currently FAILS even though this run's own REPO_DIRS entries are genuinely all cleaned up -- deterministic, no host contention needed. Clean up the extra directory yourself at the end of the case regardless of pass/fail."
+    },
+    {
+      "id": "FIX4",
+      "title": "B411 fix",
+      "type": "fix",
+      "files": [".claude/hooks/stop.gate5.spec.mjs"],
+      "tests": [],
+      "dependsOn": ["RC4", "RT4"],
+      "brief": "Rewrite F4 (line 647-652) to iterate REPO_DIRS (this run's own registered paths, line 149) and assert each one no longer exists (`!existsSync(dir)`), dropping the countSpecTmpDirs()-based before/after comparison entirely -- tmpDirsBefore (line 164) and the ambient count become unused by F4 specifically (leave them if another gate still reads them; remove only if provably dead). Re-run RT4's new case and confirm it now passes: the unrelated sibling dir it creates must no longer affect F4's verdict."
+    },
+
+    {
+      "id": "RC5",
+      "title": "B352 root-cause",
+      "type": "root-cause",
+      "files": [],
+      "tests": [],
+      "dependsOn": [],
+      "brief": "apps/api/src/common/next-version.spec.ts reads the REAL apps/web/package.json (readWebManifest, line 21-23) and pins three exact literals: dependencies.next==='15.5.25' (line 30), devDependencies['eslint-config-next']==='15.5.25' (line 35), optionalDependencies['@next/swc-win32-x64-msvc']==='^15.5.25' (line 41). Same class as #745/L-129 (this session's own lesson): the guard only needs to confirm the Next-14 pin hack never returns, not pin the exact current patch -- a routine Next patch/minor bump will break this test for no real regression. Confirm this by reading #745's fix for the equivalent React-skew guard (cite the file/commit). IMPORTANT: do NOT bump the real apps/web/package.json version as part of this probe -- report the mismatch by reading code only, do not implement."
+    },
+    {
+      "id": "RT5",
+      "title": "B352 repro-test",
+      "type": "repro-test",
+      "files": [],
+      "tests": ["apps/api/src/common/next-version.spec.ts"],
+      "dependsOn": ["RC5"],
+      "introducesObservable": true,
+      "brief": "Add REG-B352 to next-version.spec.ts as a NEW describe block testing a small local helper (does not exist yet -- honest RED via introducesObservable, matches #745's own fix shape): `function pinnedToMajorLine(version: string, major: number): boolean` using a regex equivalent to `/^\\^?${major}\\./`. Assert it returns true for '15.6.0' and '^15.6.0', false for '14.2.35'. Do NOT modify apps/web/package.json and do NOT change the three existing exact-match assertions (lines 30/35/41) in this task -- those stay for FIX5."
+    },
+    {
+      "id": "FIX5",
+      "title": "B352 fix",
+      "type": "fix",
+      "files": ["apps/api/src/common/next-version.spec.ts"],
+      "tests": [],
+      "dependsOn": ["RC5", "RT5"],
+      "brief": "Using RT5's new `pinnedToMajorLine` helper, rewrite the three exact-match assertions (lines 30, 35, 41) to `toMatch(/^\\^?15\\./)` (or equivalent via the helper) against the REAL manifest values (readWebManifest stays the data source, unchanged) -- mirror exactly what #745 did for the React-skew guard. Do not touch apps/web/package.json. Keep RT5's synthetic-value describe block as a permanent regression pin that a reverted-to-14.x value still fails."
+    }
+  ]
+}

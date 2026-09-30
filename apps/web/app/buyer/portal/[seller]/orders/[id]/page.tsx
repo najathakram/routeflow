@@ -29,8 +29,10 @@ import {
   useBuyerCreateChangeRequest,
   type BuyerOrder,
 } from "@/lib/api/buyer";
-import { computeLineSubtotal, normalizeBoxesPieces } from "@/lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
+import { fmtCalendarDate } from "@/lib/formatting";
+import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -42,31 +44,71 @@ const STATUS_STEPS = [
   "DELIVERED",
 ];
 
+interface BuyerEditLine {
+  unitPrice: number;
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+  /** BUY_N_GET_M snapshot on the loaded line + the whole-unit count it was earned at. */
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+}
+
+/**
+ * Only prorate lines the server will prorate: those stored box-aware (boxSplit).
+ * Selling-unit and newly-added lines stay unitPrice*qty, matching the server's
+ * denomination gate — otherwise the preview and the saved total would disagree.
+ */
+function buyerLineSplit(item: BuyerEditLine): { boxes: number | null; pieces: number | null } {
+  const upb = Number(item.unitsPerBox ?? 0);
+  if (upb > 1 && item.boxSplit) {
+    const s = normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb });
+    return { boxes: s.boxes, pieces: s.pieces };
+  }
+  return { boxes: null, pieces: null };
+}
+
+/**
+ * BUY_N_GET_M free units for the edit preview, rescaled when the buyer changes
+ * the qty: the snapshot was earned at `promoBaseUnits` whole selling units, so a
+ * shrunk line earns proportionally fewer and a grown one never earns MORE than
+ * was agreed (mirrors the order engine's `rescaleBogoFreeUnits` fallback and the
+ * invoice edit form). Capped at units − 1 — the buyer always pays the N in every
+ * (N + M), so no line is ever entirely free.
+ */
+function buyerLineFreeUnits(item: BuyerEditLine, boxes: number | null): number {
+  const stored = Math.max(0, Math.trunc(Number(item.promoFreeUnits ?? 0) || 0));
+  if (stored <= 0) return 0;
+  const units = Math.trunc(Number(boxes != null ? boxes : item.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(Number(item.promoBaseUnits ?? units) || 0));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
+}
+
+/** The free whole units `buyerLineAmount` nets off this line — also the label. */
+function buyerLineAmountFreeUnits(item: BuyerEditLine): number {
+  return buyerLineFreeUnits(item, buyerLineSplit(item).boxes);
+}
+
 /**
  * Boxed-aware line amount for the edit preview: a boxed line prices by the BOX
  * (unitPrice is the box price, qty is the piece count), so it prorates as
  * `unitPrice * (boxes + pieces / unitsPerBox)`. Matches the server on save; a
  * plain unitPrice*qty over-shows boxed lines by unitsPerBox.
  */
-function buyerLineAmount(item: {
-  unitPrice: number;
-  qty: number;
-  unitsPerBox?: number | null;
-  boxSplit?: boolean;
-}): number {
+function buyerLineAmount(item: BuyerEditLine): number {
   const upb = Number(item.unitsPerBox ?? 0);
-  // Only prorate lines the server will prorate: those stored box-aware
-  // (boxSplit). Selling-unit and newly-added lines stay unitPrice*qty, matching
-  // the server's denomination gate — otherwise the preview and the saved total
-  // would disagree.
-  const split =
-    upb > 1 && item.boxSplit ? normalizeBoxesPieces({ qty: item.qty, unitsPerBox: upb }) : null;
+  const split = buyerLineSplit(item);
   return computeLineSubtotal({
     unitPrice: item.unitPrice,
     qty: item.qty,
-    boxes: split?.boxes ?? null,
-    pieces: split?.pieces ?? null,
+    boxes: split.boxes,
+    pieces: split.pieces,
     unitsPerBox: upb,
+    // BUY_N_GET_M: free whole units come off before pricing, exactly like the
+    // server — without this a 12-box line with 2 free previews at full price.
+    freeUnits: buyerLineFreeUnits(item, split.boxes),
   });
 }
 
@@ -394,7 +436,7 @@ function RequestChangeModal({
                 <option value="">Select an item…</option>
                 {changeableLines.map((li) => (
                   <option key={li.id} value={li.id}>
-                    {li.product.name} (qty {Number(li.qty)})
+                    {lineLabel(li)} (qty {Number(li.qty)})
                   </option>
                 ))}
               </select>
@@ -441,6 +483,15 @@ function RequestChangeModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Label / unit for a buyer-visible order line. A staff-added custom (unlisted) line has
+ * `product: null` and carries its label in `name` (B586: reading `li.product.name` unguarded
+ * crashed the whole page for any order containing one).
+ */
+function lineLabel(li: BuyerOrder["lineItems"][number]): string {
+  return li.product?.name ?? li.name ?? "Custom item";
+}
+
 export default function BuyerOrderDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -454,15 +505,13 @@ export default function BuyerOrderDetailPage() {
 
   const [editMode, setEditMode] = React.useState(false);
   const [editItems, setEditItems] = React.useState<
-    Array<{
-      productId: string;
-      qty: number;
-      name: string;
-      unit: string;
-      unitPrice: number;
-      unitsPerBox?: number | null;
-      boxSplit?: boolean;
-    }>
+    Array<
+      BuyerEditLine & {
+        productId: string;
+        name: string;
+        unit: string;
+      }
+    >
   >([]);
   const [cancelOpen, setCancelOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -496,10 +545,16 @@ export default function BuyerOrderDetailPage() {
   // Buyer direct edit: DRAFT/PENDING only, AND the P5-08 server edit window
   // must still be open (it closes when the run dispatches). Older API without
   // editWindow falls back to the pure status check.
-  const canEdit =
-    order &&
+  const editWindowOpen =
+    !!order &&
     (order.status === "DRAFT" || order.status === "PENDING") &&
     (order.editWindow?.editable ?? true);
+  // A staff-added custom (unlisted) line has no product, so the buyer editor cannot list it. The
+  // server keeps it anyway: `updateOrderItems`' buyer replace only deletes rows with a product
+  // and ignores product-less payload entries (REG-B51) — so edit mode lists the catalog lines
+  // and the custom line is left as the seller set it.
+  const hasCustomLine = !!order?.lineItems.some((li) => li.status !== "CANCELLED" && !li.productId);
+  const canEdit = editWindowOpen;
   // P5-10: change requests exist exactly where direct editing ended — mirror
   // the server's create gate (run IN_PROGRESS + order still deliverable).
   const canRequestChange =
@@ -515,19 +570,27 @@ export default function BuyerOrderDetailPage() {
 
   const enterEditMode = () => {
     if (!order) return;
+    // Catalog lines only — see hasCustomLine.
+    const active = order.lineItems.filter(
+      (li) => li.status !== "CANCELLED" && li.productId && li.product,
+    );
     setActionError(null);
     setEditItems(
-      order.lineItems
-        .filter((li) => li.status !== "CANCELLED")
-        .map((li) => ({
-          productId: li.productId,
-          qty: Number(li.qty),
-          name: li.product.name,
-          unit: li.product.unit,
-          unitPrice: Number(li.unitPrice),
-          unitsPerBox: li.product.unitsPerBox ?? null,
-          boxSplit: li.boxes != null || li.pieces != null,
-        })),
+      active.map((li) => ({
+        productId: li.productId!,
+        qty: Number(li.qty),
+        name: li.product!.name,
+        unit: li.product!.unit,
+        unitPrice: Number(li.unitPrice),
+        unitsPerBox: li.product!.unitsPerBox ?? null,
+        boxSplit: li.boxes != null || li.pieces != null,
+        // BUY_N_GET_M snapshot + the whole-unit count it was earned at, so the
+        // preview keeps the reduced subtotal the read-only row already shows.
+        promoFreeUnits: li.promoFreeUnits ?? null,
+        promoBaseUnits: li.promoFreeUnits
+          ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+          : null,
+      })),
     );
     setEditMode(true);
   };
@@ -598,11 +661,11 @@ export default function BuyerOrderDetailPage() {
 
       <div className="flex items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-navy">{order.orderNumber}</h1>
+          <h1 className="text-2xl font-bold text-navy">{order.orderNumber ?? ""}</h1>
           <p className="text-sm text-navy/70 mt-0.5">
             Placed {formatDate(order.createdAt)}
             {order.requestedDeliveryDate && (
-              <> · Delivery requested {formatDate(order.requestedDeliveryDate)}</>
+              <> · Delivery requested {fmtCalendarDate(order.requestedDeliveryDate)}</>
             )}
           </p>
         </div>
@@ -613,6 +676,9 @@ export default function BuyerOrderDetailPage() {
       <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
         <OrderTimeline status={order.status} />
       </div>
+
+      {/* #2095: where this delivery stands on its route (driver, stops before you, window) */}
+      <DeliveryTrackingCard order={order} />
 
       {/* P5-10: change requests filed after dispatch — PENDING (amber) flips to
           Approved (green) / Declined + reason (red) once resolved. */}
@@ -726,162 +792,192 @@ export default function BuyerOrderDetailPage() {
           )}
         </div>
 
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
-              <th className="px-4 py-2.5 text-left">Product</th>
-              <th className="px-4 py-2.5 text-right w-20">
-                {showDeliveryProgress ? "Ordered" : "Qty"}
-              </th>
-              {showDeliveryProgress && (
-                <>
-                  <th className="px-4 py-2.5 text-right w-20">Delivered</th>
-                  <th className="px-4 py-2.5 text-right w-20">Remaining</th>
-                </>
-              )}
-              <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
-              <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border">
-            {editMode
-              ? editItems.map((item) => (
-                  <tr key={item.productId} className="hover:bg-surface-raised/50">
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() =>
-                            setEditItems((prev) =>
-                              prev.filter((i) => i.productId !== item.productId),
-                            )
-                          }
-                          className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
-                          title="Remove item"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                        <span className="text-sm font-medium text-navy">{item.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() =>
-                            setEditItems((prev) =>
-                              prev.map((i) =>
-                                i.productId === item.productId
-                                  ? { ...i, qty: Math.max(1, i.qty - 1) }
-                                  : i,
-                              ),
-                            )
-                          }
-                          className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                        >
-                          <Minus className="h-3.5 w-3.5" />
-                        </button>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.qty}
-                          onChange={(e) => {
-                            const v = Math.max(1, Number(e.target.value));
-                            setEditItems((prev) =>
-                              prev.map((i) =>
-                                i.productId === item.productId ? { ...i, qty: v } : i,
-                              ),
-                            );
-                          }}
-                          className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
-                        />
-                        <button
-                          onClick={() =>
-                            setEditItems((prev) =>
-                              prev.map((i) =>
-                                i.productId === item.productId ? { ...i, qty: i.qty + 1 } : i,
-                              ),
-                            )
-                          }
-                          className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy/70">
-                      {item.unitPrice ? fmt(item.unitPrice) : "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {item.unitPrice ? fmt(buyerLineAmount(item)) : "—"}
-                    </td>
-                  </tr>
-                ))
-              : order.lineItems.map((li) => (
-                  <tr
-                    key={li.id}
-                    className={`hover:bg-surface-raised/50 ${li.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}
-                  >
-                    <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-navy">{li.product.name}</p>
-                      <p className="text-xs text-navy/70">
-                        {li.product.unit}
-                        {li.priceType !== "STANDARD" && (
-                          <span
-                            className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                              li.priceType === "DISCOUNTED"
-                                ? "bg-success-bg text-success"
-                                : "bg-buyer-50 text-buyer-600"
-                            }`}
+        {editMode && hasCustomLine && (
+          <p
+            className="border-b border-surface-border bg-surface-raised px-4 py-2 text-xs text-navy/70"
+            data-testid="custom-line-edit-note"
+          >
+            Custom items added by the seller aren&apos;t listed here — they stay on your order as
+            they are.
+          </p>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px]">
+            <thead>
+              <tr className="border-b border-surface-border text-xs text-navy/70 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left">Product</th>
+                <th className="px-4 py-2.5 text-right w-20">
+                  {showDeliveryProgress ? "Ordered" : "Qty"}
+                </th>
+                {showDeliveryProgress && (
+                  <>
+                    <th className="px-4 py-2.5 text-right w-20">Delivered</th>
+                    <th className="px-4 py-2.5 text-right w-20">Remaining</th>
+                  </>
+                )}
+                <th className="px-4 py-2.5 text-right w-28">Unit Price</th>
+                <th className="px-4 py-2.5 text-right w-28">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-surface-border">
+              {editMode
+                ? editItems.map((item) => (
+                    <tr key={item.productId} className="hover:bg-surface-raised/50">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() =>
+                              setEditItems((prev) =>
+                                prev.filter((i) => i.productId !== item.productId),
+                              )
+                            }
+                            className="rounded p-1 text-danger/40 hover:bg-danger-bg hover:text-danger transition-colors"
+                            title="Remove item"
                           >
-                            {li.priceType === "DISCOUNTED"
-                              ? "Discounted"
-                              : li.priceType === "PROMO"
-                                ? "Promo"
-                                : "Special"}
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                          <span className="text-sm font-medium text-navy">{item.name}</span>
+                          {/* BUY_N_GET_M: the preview subtotal already nets these off. */}
+                          {buyerLineAmountFreeUnits(item) > 0 && (
+                            <span className="inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                              {buyerLineAmountFreeUnits(item)} free
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() =>
+                              setEditItems((prev) =>
+                                prev.map((i) =>
+                                  i.productId === item.productId
+                                    ? { ...i, qty: Math.max(1, i.qty - 1) }
+                                    : i,
+                                ),
+                              )
+                            }
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                          >
+                            <Minus className="h-3.5 w-3.5" />
+                          </button>
+                          <input
+                            type="number"
+                            min={1}
+                            value={item.qty}
+                            onChange={(e) => {
+                              const v = Math.max(1, Number(e.target.value));
+                              setEditItems((prev) =>
+                                prev.map((i) =>
+                                  i.productId === item.productId ? { ...i, qty: v } : i,
+                                ),
+                              );
+                            }}
+                            className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                          />
+                          <button
+                            onClick={() =>
+                              setEditItems((prev) =>
+                                prev.map((i) =>
+                                  i.productId === item.productId ? { ...i, qty: i.qty + 1 } : i,
+                                ),
+                              )
+                            }
+                            className="rounded p-1 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-navy/70">
+                        {item.unitPrice ? fmt(item.unitPrice) : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        {item.unitPrice ? fmt(buyerLineAmount(item)) : "—"}
+                      </td>
+                    </tr>
+                  ))
+                : order.lineItems.map((li) => (
+                    <tr
+                      key={li.id}
+                      className={`hover:bg-surface-raised/50 ${li.status === "CANCELLED" ? "opacity-40 line-through" : ""}`}
+                    >
+                      <td className="px-4 py-3">
+                        <p className="text-sm font-medium text-navy">{lineLabel(li)}</p>
+                        <p className="text-xs text-navy/70">
+                          {li.product?.unit}
+                          {li.product && li.priceType !== "STANDARD" && (
+                            <span
+                              className={`ml-1.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                li.priceType === "DISCOUNTED"
+                                  ? "bg-success-bg text-success"
+                                  : "bg-buyer-50 text-buyer-600"
+                              }`}
+                            >
+                              {li.priceType === "DISCOUNTED"
+                                ? "Discounted"
+                                : li.priceType === "PROMO"
+                                  ? "Promo"
+                                  : "Special"}
+                            </span>
+                          )}
+                        </p>
+                        {li.notes?.trim() && (
+                          <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
+                            {li.notes}
+                          </p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-navy">
+                        <span>{Number(li.qty)}</span>
+                        {li.boxes != null && li.boxes > 0 && (
+                          <p className="text-[10px] text-navy/70">
+                            {li.boxes} box{li.boxes > 1 ? "es" : ""}
+                            {li.pieces ? ` + ${li.pieces} pcs` : ""}
+                          </p>
+                        )}
+                        {/* BUY_N_GET_M: without this the reduced subtotal reads as a
+                          pricing error to the buyer. */}
+                        {Number(li.promoFreeUnits ?? 0) > 0 && (
+                          <p className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                            {Number(li.promoFreeUnits)} free
+                          </p>
+                        )}
+                      </td>
+                      {showDeliveryProgress && (
+                        <>
+                          <td className="px-4 py-3 text-right text-sm text-success font-medium">
+                            {Number(li.deliveredQty ?? 0)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm">
+                            {(() => {
+                              const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
+                              return remaining > 0 ? (
+                                <span className="text-warning font-medium">{remaining}</span>
+                              ) : (
+                                <span className="text-success">0</span>
+                              );
+                            })()}
+                          </td>
+                        </>
+                      )}
+                      <td className="px-4 py-3 text-right text-sm text-navy/70">
+                        {fmt(Number(li.unitPrice))}
+                        {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
+                          <span className="ml-1 text-xs text-navy/70 line-through">
+                            {fmt(Number(li.originalPrice))}
                           </span>
                         )}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm text-navy">
-                      <span>{Number(li.qty)}</span>
-                      {li.boxes != null && li.boxes > 0 && (
-                        <p className="text-[10px] text-navy/70">
-                          {li.boxes} box{li.boxes > 1 ? "es" : ""}
-                          {li.pieces ? ` + ${li.pieces} pcs` : ""}
-                        </p>
-                      )}
-                    </td>
-                    {showDeliveryProgress && (
-                      <>
-                        <td className="px-4 py-3 text-right text-sm text-success font-medium">
-                          {Number(li.deliveredQty ?? 0)}
-                        </td>
-                        <td className="px-4 py-3 text-right text-sm">
-                          {(() => {
-                            const remaining = Number(li.qty) - Number(li.deliveredQty ?? 0);
-                            return remaining > 0 ? (
-                              <span className="text-warning font-medium">{remaining}</span>
-                            ) : (
-                              <span className="text-success">0</span>
-                            );
-                          })()}
-                        </td>
-                      </>
-                    )}
-                    <td className="px-4 py-3 text-right text-sm text-navy/70">
-                      {fmt(Number(li.unitPrice))}
-                      {li.originalPrice && Number(li.originalPrice) > Number(li.unitPrice) && (
-                        <span className="ml-1 text-xs text-navy/70 line-through">
-                          {fmt(Number(li.originalPrice))}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {fmt(Number(li.subtotal))}
-                    </td>
-                  </tr>
-                ))}
-          </tbody>
-        </table>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        {fmt(Number(li.subtotal))}
+                      </td>
+                    </tr>
+                  ))}
+            </tbody>
+          </table>
+        </div>
 
         {/* Inline product search (edit mode only) */}
         {editMode && (
@@ -961,7 +1057,7 @@ export default function BuyerOrderDetailPage() {
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
         title="Cancel Order?"
-        description={`Cancel order ${order.orderNumber}?`}
+        description={`Cancel order ${order.orderNumber ?? ""}?`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setCancelOpen(false)}>
@@ -974,8 +1070,8 @@ export default function BuyerOrderDetailPage() {
         }
       >
         <p className="text-sm text-navy/70">
-          This will cancel your order <strong>{order.orderNumber}</strong>. This action cannot be
-          undone.
+          This will cancel your order <strong>{order.orderNumber ?? ""}</strong>. This action cannot
+          be undone.
         </p>
       </Modal>
 

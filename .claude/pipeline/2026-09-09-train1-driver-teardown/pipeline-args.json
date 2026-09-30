@@ -1,0 +1,136 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-09-train1-driver-teardown/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-09-train1-driver-teardown/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-09T05:21:00Z",
+  "scale": "minor",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "Train 1 (mobile, High): B111 POD attach failures swallowed; B136 POD/settlement stores not persisted; B137 offline queue replays under the next user; B140 sign-out never clears the query cache; B150 sign-out never stops background GPS (operator realm has no stop at all). Design of record = cause-ruling.md section 3 (D1 one teardown function called BEFORE apiLogout: stop GPS, mark queue owner, cancelQueries+clear, reset 7 user-scoped stores, tenant store untouched; D2 identity-stamped queue + per-user failedActions; D3 persist podStore + runSettlementStore, reconcile against server artifacts before re-attach; D4 file:// fallback converted not filtered, attach errors surfaced). Binding facts = cause-refutation.md (verified at 1dca1242). Mobile Jest = pure-logic node tests only; no renderer; never Expo/Playwright. Do not touch the API, the buyer realm, or the token deletion order in lib/auth.ts. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/mobile/lib/auth-store.ts",
+    "apps/mobile/lib/auth.ts",
+    "apps/mobile/lib/session-teardown.ts",
+    "apps/mobile/lib/query-client.ts",
+    "apps/mobile/lib/queue-drain.ts",
+    "apps/mobile/lib/pod-reconcile.ts",
+    "apps/mobile/app/_layout.tsx",
+    "apps/mobile/store/offlineQueue.ts",
+    "apps/mobile/store/podStore.ts",
+    "apps/mobile/store/runSettlementStore.ts",
+    "apps/mobile/components/OfflineBanner.tsx",
+    "apps/mobile/app/(driver)",
+    "apps/mobile/app/(operator)/(tabs)/home.tsx",
+    "apps/mobile/lib/location-tracker.native.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "catch\\s*\\{\\s*\\}",
+      "note": "bare empty catch in a driver flow — FILE any outside this train"
+    },
+    {
+      "regex": "startLocationUpdatesAsync|startBackgroundTracking",
+      "note": "a tracking start site without a matching stop on sign-out — FILE"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP",
+      "title": "teardown, queue identity, POD persistence, attach visibility",
+      "files": [
+        "apps/mobile/__tests__/session-teardown.test.ts",
+        "apps/mobile/__tests__/offline-queue-identity.test.ts",
+        "apps/mobile/__tests__/pod-persistence.test.ts",
+        "apps/mobile/__tests__/pod-attach-visibility.test.ts"
+      ],
+      "brief": "bug-test-plan T1-T4 (REG-B150/B140/B137/B136/B111); mocked natives per network-sync-wiring.test.ts; implement nothing",
+      "effort": "high"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/mobile && npx jest __tests__/session-teardown.test.ts __tests__/offline-queue-identity.test.ts __tests__/pod-persistence.test.ts __tests__/pod-attach-visibility.test.ts --runInBand -t \"REG-B1\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "session teardown function + wiring",
+      "files": [
+        "apps/mobile/lib/session-teardown.ts",
+        "apps/mobile/lib/auth-store.ts",
+        "apps/mobile/lib/query-client.ts",
+        "apps/mobile/app/_layout.tsx",
+        "apps/mobile/app/(operator)/(tabs)/home.tsx"
+      ],
+      "brief": "build-plan P1",
+      "effort": "high"
+    },
+    {
+      "id": "P2",
+      "title": "identity-stamped offline queue",
+      "files": [
+        "apps/mobile/store/offlineQueue.ts",
+        "apps/mobile/lib/queue-drain.ts",
+        "apps/mobile/components/OfflineBanner.tsx"
+      ],
+      "brief": "build-plan P2",
+      "effort": "high"
+    },
+    {
+      "id": "P3",
+      "title": "POD + settlement persistence and reconcile",
+      "files": [
+        "apps/mobile/store/podStore.ts",
+        "apps/mobile/store/runSettlementStore.ts",
+        "apps/mobile/lib/pod-reconcile.ts"
+      ],
+      "brief": "build-plan P3",
+      "effort": "high",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P4",
+      "title": "attach visibility in payment/photo screens",
+      "files": ["apps/mobile/app/(driver)"],
+      "brief": "build-plan P4",
+      "effort": "high",
+      "dependsOn": ["P3"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/mobile && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/mobile && npx jest --runInBand"
+    ],
+    "final": [
+      "cd apps/mobile && npx jest --silent",
+      "npm run lint -w apps/mobile",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/mobile/lib/session-teardown.ts",
+        "behavior": "stop GPS + clear cache + reset stores",
+        "test": "REG-B150-A REG-B140-A REG-B140-B",
+        "revertFix": true
+      },
+      {
+        "file": "apps/mobile/lib/queue-drain.ts",
+        "behavior": "per-user replay",
+        "test": "REG-B137-B",
+        "revertFix": true
+      },
+      {
+        "file": "apps/mobile/store/podStore.ts",
+        "behavior": "persistence",
+        "test": "REG-B136-A",
+        "revertFix": true
+      }
+    ]
+  }
+}

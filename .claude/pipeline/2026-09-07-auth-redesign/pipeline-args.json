@@ -1,0 +1,150 @@
+{
+  "planPath": ".claude/pipeline/2026-09-07-auth-redesign/build-plan.md",
+  "discoveryPath": ".claude/pipeline/2026-09-07-auth-redesign/discovery.md",
+  "specPath": ".claude/pipeline/2026-09-07-auth-redesign/spec.md",
+  "uxSpecPath": ".claude/pipeline/2026-09-07-auth-redesign/ux-spec.md",
+  "testPlanPath": ".claude/pipeline/2026-09-07-auth-redesign/test-plan.md",
+  "designSystemPath": ".claude/pipeline/design-system.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-07T17:19:22Z",
+  "scale": "major",
+  "ui": true,
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09",
+  "context": "Reskin 13 real auth pages into the redesign AuthShell; logic untouched; auth = HIGH risk; no next build on this host; no Playwright in gates.",
+  "formatCommand": "cd apps/web && npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "AuthShell RTL tests (T1)",
+      "files": ["apps/web/components/auth/AuthShell.test.tsx"],
+      "brief": "test-plan.md T1: require-in-try existence assertion, then T1a-T1e.",
+      "effort": "medium"
+    },
+    {
+      "id": "TP2",
+      "title": "auth-redesign static test (T2)",
+      "files": ["apps/web/app/(auth)/auth-redesign.static.test.ts"],
+      "brief": "test-plan.md T2a-T2g; fs-based like marketing-port.static.test.ts.",
+      "effort": "medium"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/web && npx jest components/auth/AuthShell.test.tsx \"app/(auth)/auth-redesign.static.test.ts\" --maxWorkers=2"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "auth-shell",
+      "files": [
+        "apps/web/components/auth/AuthShell.tsx",
+        "apps/web/components/auth/auth-shell.css",
+        "apps/web/components/auth/auth-copy.ts",
+        "apps/web/components/auth/index.ts"
+      ],
+      "brief": "build-plan.md P1: shell + scoped CSS + verbatim copy; redesign source READ-ONLY.",
+      "effort": "high",
+      "satisfies": ["R1", "R4", "R5", "R6", "R7", "R12"],
+      "provenBy": ["T1", "T2"]
+    },
+    {
+      "id": "P2",
+      "title": "operator-pages",
+      "files": [
+        "apps/web/app/(auth)/login/page.tsx",
+        "apps/web/app/(auth)/signup/page.tsx",
+        "apps/web/app/(auth)/signup/check-email/page.tsx",
+        "apps/web/app/(auth)/forgot-password/page.tsx",
+        "apps/web/app/(auth)/reset-password/page.tsx"
+      ],
+      "brief": "build-plan.md P2 recipe; logic byte-identical; spec copy table.",
+      "effort": "high",
+      "dependsOn": ["P1"],
+      "satisfies": ["R2", "R3", "R8", "R9", "R13"],
+      "provenBy": ["T2", "T4", "T5"]
+    },
+    {
+      "id": "P3",
+      "title": "buyer-auth-pages",
+      "files": [
+        "apps/web/app/buyer/login/page.tsx",
+        "apps/web/app/buyer/register/page.tsx",
+        "apps/web/app/buyer/forgot-password/page.tsx",
+        "apps/web/app/buyer/reset-password/page.tsx"
+      ],
+      "brief": "build-plan.md P3 recipe (audience retailer).",
+      "effort": "high",
+      "dependsOn": ["P1"],
+      "satisfies": ["R2", "R3", "R13"],
+      "provenBy": ["T2", "T4", "T5"]
+    },
+    {
+      "id": "P4",
+      "title": "buyer-utility-pages",
+      "files": [
+        "apps/web/app/buyer/verify-email/page.tsx",
+        "apps/web/app/buyer/verify-merge/page.tsx",
+        "apps/web/app/buyer/change-password/page.tsx",
+        "apps/web/app/buyer/invite/[token]/page.tsx"
+      ],
+      "brief": "build-plan.md P4 recipe.",
+      "effort": "medium",
+      "dependsOn": ["P1"],
+      "satisfies": ["R2", "R3", "R13"],
+      "provenBy": ["T2"]
+    },
+    {
+      "id": "P5",
+      "title": "e2e-spec-46",
+      "files": ["apps/web/e2e/46-auth-redesign.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "build-plan.md P5: spec 46 per T5 + auth-redesign project after marketing; keep every project.",
+      "effort": "medium",
+      "satisfies": ["R10"],
+      "provenBy": ["T5"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": ["cd apps/web && npx tsc --noEmit -p tsconfig.json", "npm run lint -w apps/web"],
+    "final": [
+      "cd apps/web && npx jest --maxWorkers=2",
+      "cd apps/web && npx prettier --check \"app/(auth)/**/*.tsx\" \"app/buyer/**/*.tsx\" \"components/auth/**\" e2e/46-auth-redesign.spec.ts playwright.config.ts"
+    ]
+  },
+  "uiVerify": {
+    "url": "http://localhost:3009",
+    "startCommand": "cd apps/web && npx next dev -p 3009",
+    "flows": [
+      "prove branch build: GET /login HTML contains rf-auth, else stop",
+      "/login desktop: 2 panels, h1 Welcome back., labels Workspace/Username or email/Password, button Sign in",
+      "/signup desktop: h1 Your next chapter starts here.",
+      "/forgot-password desktop: h1 Reset your password",
+      "/reset-password desktop: invalid-link state",
+      "/buyer/login desktop: retailer story, h1 Welcome back.",
+      "/buyer/register desktop",
+      "/login + /buyer/login 375x812 reducedMotion: slim navy band, card visible, no x-scroll"
+    ],
+    "viewports": ["desktop", "mobile"],
+    "checks": ["console-errors", "network-failures", "a11y", "design-system"]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/web/components/auth/auth-copy.ts",
+        "behavior": "retailer heading is 'Stock your shelves. Stay in control.'",
+        "test": "T1b"
+      },
+      {
+        "file": "apps/web/components/auth/AuthShell.tsx",
+        "behavior": "footer prop renders before the Need help? link inside .rf-auth-footer",
+        "test": "T1d"
+      },
+      {
+        "file": "apps/web/components/auth/auth-shell.css",
+        "behavior": "850px collapse rule present",
+        "test": "T2c"
+      }
+    ]
+  }
+}

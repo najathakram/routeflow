@@ -78,4 +78,43 @@ describe("describeCancelImpact", () => {
     expect(copy.title).toBe("Cancel this order?");
     expect(copy.confirmLabel).toBe("Cancel order");
   });
+
+  // T5/R3 REG-B56: delivered-goods refusal must not be swallowed by the paid-block branch,
+  // and must not swallow it either — both reasons need their own distinct, correct copy.
+  it("REG-B56 explains a delivered-goods refusal when nothing was paid", () => {
+    const copy = describeCancelImpact({
+      ...base,
+      canCancel: false,
+      blockingPayments: [],
+      deliveredUnits: 3,
+    } as any);
+    expect(copy.blockedReason).toContain("already been delivered");
+    expect(copy.confirmLabel).toBeNull();
+  });
+
+  it("REG-B56 keeps the existing paid-block copy byte-identical when a payment blocks cancel", () => {
+    const copy = describeCancelImpact({
+      ...base,
+      canCancel: false,
+      blockingPayments: [{ invoiceNumber: "INV-7", amount: 80 }],
+      deliveredUnits: 3,
+    } as any);
+    expect(copy.title).toBe("Can't cancel yet");
+    expect(copy.confirmLabel).toBeNull();
+    expect(copy.blockedReason).toBe(
+      "This order has been paid: $80.00 on INV-7. Refund or reverse that payment first, then cancel.",
+    );
+  });
+
+  it("REG-B56 leaves the allowed-cancel shape unchanged", () => {
+    const copy = describeCancelImpact({
+      ...base,
+      canCancel: true,
+      deliveredUnits: 0,
+    } as any);
+    expect(copy.title).toBe("Cancel this order?");
+    expect(copy.blockedReason).toBeNull();
+    expect(copy.confirmLabel).toBe("Cancel order");
+    expect(copy.lines).toEqual([]);
+  });
 });

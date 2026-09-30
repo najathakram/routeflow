@@ -55,6 +55,25 @@ describe("compress.util", () => {
         /Unsupported mime type/,
       );
     });
+
+    // Durable POD signatures arrive as stroke-built SVG data URLs and are
+    // rasterized here — this pins libvips' SVG (librsvg) support so a sharp
+    // upgrade that drops it fails the suite instead of production ingest.
+    it("rasterizes an SVG (POD signature) to a real raster image", async () => {
+      const svg = Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140" viewBox="0 0 300 140">` +
+          `<rect width="300" height="140" fill="#ffffff"/>` +
+          `<path d="M10 70 L80 40 L150 90 L290 30" fill="none" stroke="#1e293b" stroke-width="2.5"/>` +
+          `</svg>`,
+      );
+
+      const result = await compressImage(svg, "image/svg+xml");
+      const meta = await sharp(result.buffer).metadata();
+
+      expect(["image/jpeg", "image/webp"]).toContain(result.mimeType);
+      expect(meta.width).toBe(300);
+      expect(meta.height).toBe(140);
+    });
   });
 
   describe("compressDocument", () => {

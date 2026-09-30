@@ -14,7 +14,9 @@ import {
 import { useCustomers } from "@/lib/api/customers";
 import { useInvoices, useInvoice } from "@/lib/api/invoices";
 import { fmt } from "@/lib/formatting";
-import { roundMoney } from "@/lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 // P5-13: canonical open-credit predicate — not VOID, has a positive remaining
 // balance (amount - amountUsed), and is not expired. Mirrors the API's
@@ -32,7 +34,6 @@ function isOpenCredit(cn: CreditNote): boolean {
 
 const STATUS_CHIPS: { value: string; label: string }[] = [
   { value: "", label: "All" },
-  { value: "DRAFT", label: "Draft" },
   { value: "ISSUED", label: "Issued" },
   { value: "APPLIED", label: "Applied" },
   { value: "VOID", label: "Void" },
@@ -508,7 +509,7 @@ function StatTile({
 }) {
   return (
     <div className="rounded-lg border border-surface-border bg-white p-4 shadow-card">
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -532,16 +533,16 @@ export default function CreditNotesPage() {
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
 
   const { data, isLoading, isError } = useCreditNotes({
     status: statusFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     page,
@@ -550,14 +551,14 @@ export default function CreditNotesPage() {
 
   const creditNotes = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const { data: allData } = useCreditNotes({ limit: 999 });
   const all = allData?.data ?? [];
 
   const kpiCounts = React.useMemo(() => {
-    const counts = { total: all.length, draft: 0, issued: 0, applied: 0, void: 0 };
+    const counts = { total: all.length, issued: 0, applied: 0, void: 0 };
     for (const cn of all) {
-      if (cn.status === "DRAFT") counts.draft++;
       if (cn.status === "ISSUED") counts.issued++;
       if (cn.status === "APPLIED") counts.applied++;
       if (cn.status === "VOID") counts.void++;
@@ -671,15 +672,12 @@ export default function CreditNotesPage() {
             const count =
               chip.value === ""
                 ? kpiCounts.total
-                : chip.value === "DRAFT"
-                  ? kpiCounts.draft
-                  : chip.value === "ISSUED"
-                    ? kpiCounts.issued
-                    : chip.value === "APPLIED"
-                      ? kpiCounts.applied
-                      : kpiCounts.void;
-            const showCount =
-              chip.value === "" || chip.value === "DRAFT" || chip.value === "ISSUED";
+                : chip.value === "ISSUED"
+                  ? kpiCounts.issued
+                  : chip.value === "APPLIED"
+                    ? kpiCounts.applied
+                    : kpiCounts.void;
+            const showCount = chip.value === "" || chip.value === "ISSUED";
             return (
               <button
                 key={chip.value || "all"}
@@ -719,7 +717,7 @@ export default function CreditNotesPage() {
                 setDateFrom(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date from"
             />
             <span className="text-navy/70">–</span>
@@ -731,7 +729,7 @@ export default function CreditNotesPage() {
                 setDateTo(e.target.value);
                 setPage(1);
               }}
-              className="h-8 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-8 w-32 rounded-lg border border-surface-border bg-white px-2 text-xs text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="Issue date to"
             />
             {(dateFrom || dateTo) && (
@@ -776,7 +774,9 @@ export default function CreditNotesPage() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Source</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Amount</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Applied To</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Issued against
+                </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
                 <th className="w-10 px-3 py-3" />
               </tr>
@@ -850,9 +850,11 @@ export default function CreditNotesPage() {
                     </td>
                     <td className="px-4 py-3">
                       {cn.invoiceId ? (
-                        <span className="font-mono text-xs text-brand-600">{cn.invoiceId}</span>
+                        <span className="font-mono text-xs text-brand-600">
+                          {cn.invoice?.invoiceNumber ?? cn.invoiceId}
+                        </span>
                       ) : (
-                        <span className="text-xs text-navy/40">next invoice (auto)</span>
+                        <span className="text-xs text-navy/40">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3">

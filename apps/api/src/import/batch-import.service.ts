@@ -9,7 +9,9 @@ import { ImportFileStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { DuplicateMatchService, formatSupplierInvoiceNote } from "./duplicate-match.service";
+import { matchSupplier } from "./supplier-match";
 import type { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** The actual shape vendor-bills.scanInvoice returns (see its prompt schema + line matcher). */
 type ScanConfidence = "high" | "medium" | "low" | "none";
@@ -39,37 +41,17 @@ interface ExtractedInvoice {
   notes?: string | null;
 }
 
+/**
+ * B666: `{ packSize }` for a scanned line that printed a whole units-per-case above 1; `{}` otherwise (no
+ * pack, 1, or a value that is not a whole number is NOT guessed at: the line keeps today's pieces path).
+ */
+export function packSizeOf(raw: unknown): { packSize?: number } {
+  const n = Number(raw);
+  return raw != null && Number.isInteger(n) && n > 1 ? { packSize: n } : {};
+}
+
 /** Numeric confidence per line, to store a representative (worst-case) value. */
 const CONF_SCORE: Record<ScanConfidence, number> = { high: 1, medium: 0.66, low: 0.33, none: 0 };
-
-interface SupplierCandidate {
-  id: string;
-  name: string;
-}
-
-/**
- * Scored supplier auto-match: exact name → unique startsWith → unique
- * substring (either direction). Several equally-plausible candidates or no
- * candidate at all → null, never a silent wrong pick — the item is routed to
- * NEEDS_REVIEW instead (see `deriveStatus`).
- */
-function matchSupplier(detected: string, suppliers: SupplierCandidate[]): SupplierCandidate | null {
-  const d = detected.trim().toLowerCase();
-  if (!d) return null;
-  const exact = suppliers.filter((s) => s.name.trim().toLowerCase() === d);
-  if (exact.length === 1) return exact[0];
-  if (exact.length > 1) return null;
-  const starts = suppliers.filter(
-    (s) => s.name.trim().toLowerCase().startsWith(d) || d.startsWith(s.name.trim().toLowerCase()),
-  );
-  if (starts.length === 1) return starts[0];
-  if (starts.length > 1) return null;
-  const contains = suppliers.filter((s) => {
-    const n = s.name.trim().toLowerCase();
-    return n.includes(d) || d.includes(n);
-  });
-  return contains.length === 1 ? contains[0] : null;
-}
 
 /**
  * The `duplicate` payload VendorBillsService.create attaches to its 409.
@@ -86,7 +68,8 @@ interface DuplicateVendorBill {
 function duplicateVendorBillConflict(err: unknown): DuplicateVendorBill | null {
   if (!(err instanceof ConflictException)) return null;
   const response = err.getResponse() as { code?: string; duplicate?: DuplicateVendorBill };
-  if (response?.code !== "DUPLICATE_VENDOR_BILL" || !response.duplicate?.billId) return null;
+  if (response?.code !== API_ERROR_CODES.DUPLICATE_VENDOR_BILL || !response.duplicate?.billId)
+    return null;
   return response.duplicate;
 }
 
@@ -455,6 +438,10 @@ export class BatchImportService {
         description: l.extractedName,
         qty: l.qty,
         unitCost: l.unitCost,
+        // B666: the units-per-case the invoice printed. Without it vendor-bills' lineInventoryDelta reads
+        // the line as PIECES (5 cases of 12 = +5 pieces at the case price), skewing stock and averageCost
+        // by the pack. The line's OWN packSize only, never the live product's.
+        ...packSizeOf(l.packSize),
       }));
       // Use the invoice's OWN date for costing/AP aging — falling back to
       // today only when the scan genuinely didn't extract one.

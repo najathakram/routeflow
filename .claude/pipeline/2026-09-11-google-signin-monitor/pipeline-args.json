@@ -1,0 +1,72 @@
+{
+  "mode": "feature",
+  "scale": "small",
+  "planPath": ".claude/pipeline/2026-09-11-google-signin-monitor/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-11-google-signin-monitor/test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "context": "DECIDE-29/OPS-23: synthetic Google sign-in reachability check (both OAuth doors, follow consent URL, fail on Google's error page) in post-deploy-check + smoke + a 6-hourly monitor workflow; apex DNS warn; mandatory-dependencies runbook. Plan by Fable 5.1.",
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "google-signin-check self-test (fake API + fake Google)",
+      "files": ["scripts/lib/google-signin-check.self-test.mjs"],
+      "brief": "test-plan.md T1-T8; node:http fakes on 127.0.0.1; injected fetchImpl/lookupImpl; structural pins T7/T8 read source files",
+      "satisfies": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R10"]
+    }
+  ],
+  "redGate": {
+    "commands": ["node scripts/lib/google-signin-check.self-test.mjs"],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "google-signin-check.mjs module",
+      "files": ["scripts/lib/google-signin-check.mjs"],
+      "brief": "build-plan.md WP1 hard lines: checkGoogleSignIn, checkApexDns, resolveRequired, resolveApexRequired, DOORS, ERROR_MARKERS; pure, one AbortController budget",
+      "satisfies": ["R1", "R2", "R3", "R4", "R5", "R10"],
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6"],
+      "effort": "medium"
+    },
+    {
+      "id": "WP2",
+      "title": "Wiring: post-deploy-check, smoke, monitor script, workflow, package.json",
+      "files": [
+        "scripts/post-deploy-check.mjs",
+        "scripts/smoke.mjs",
+        "scripts/google-signin-monitor.mjs",
+        ".github/workflows/google-signin-monitor.yml",
+        "package.json"
+      ],
+      "brief": "build-plan.md WP2/R6/R7/R8; sections 6-7 in post-deploy-check using TENANT/pass/fail; smoke step after loop; monitor exit 1; verify chain gains the self-test",
+      "dependsOn": ["WP1"],
+      "satisfies": ["R6", "R7", "R8"],
+      "provenBy": ["T7", "T8"],
+      "effort": "low"
+    },
+    {
+      "id": "WP3",
+      "title": "Runbook + code map",
+      "files": [
+        "docs/runbooks/mandatory-dependencies.md",
+        ".claude/code-map/INDEX.md",
+        ".claude/code-map/_meta.json"
+      ],
+      "brief": "build-plan.md R9: no secrets/uuids/client ids; code-map rows for the 4 new files + edited scripts",
+      "dependsOn": ["WP2"],
+      "satisfies": ["R9"],
+      "effort": "low"
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "node -e \"for (const f of ['scripts/lib/google-signin-check.mjs','scripts/lib/google-signin-check.self-test.mjs','scripts/google-signin-monitor.mjs','scripts/smoke.mjs','scripts/post-deploy-check.mjs']) if (require('fs').existsSync(f)) require('child_process').execFileSync(process.execPath,['--check',f],{stdio:'inherit'})\"",
+      "npx prettier --check scripts/lib scripts/smoke.mjs scripts/post-deploy-check.mjs package.json"
+    ],
+    "final": [
+      "node -e \"const f='scripts/lib/google-signin-check.self-test.mjs';require('fs').existsSync(f)?require('child_process').execFileSync(process.execPath,[f],{stdio:'inherit'}):console.log('not yet created')\"",
+      "node scripts/campaign/bugs.mjs self-test"
+    ]
+  },
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-smoke"
+}

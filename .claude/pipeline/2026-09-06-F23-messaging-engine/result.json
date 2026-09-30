@@ -1,0 +1,970 @@
+{
+  "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+  "mode": "bugfix",
+  "artifacts": {
+    "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+    "discovery": "",
+    "spec": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/cause-ruling.md",
+    "uxSpec": "",
+    "testPlan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "small",
+  "startedAt": "2026-09-07T02:55:00Z",
+  "estimatedCostUsd": 18.61,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": false,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": false,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 0,
+    "dropped": 0,
+    "votesCast": 0,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 0,
+    "locationChecked": 0,
+    "locationInvalid": 0,
+    "preRefuted": 0,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/messaging src/messages src/notifications --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+          "pass": true,
+          "summary": "TypeScript compilation succeeded with no errors",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest src/messaging src/messages src/notifications --runInBand",
+          "pass": true,
+          "summary": "6 test suites, 71 tests passed",
+          "executed": 71
+        },
+        {
+          "command": "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+          "pass": true,
+          "summary": "TypeScript compilation succeeded with no errors",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest --silent",
+          "pass": true,
+          "summary": "Test Suites: 255 passed, 255 total; Tests: 4137 passed, 4137 total",
+          "executed": 4137
+        },
+        {
+          "command": "cd apps/web && npx jest --silent",
+          "pass": true,
+          "summary": "Test Suites: 30 passed, 30 total; Tests: 161 passed, 161 total",
+          "executed": 161
+        },
+        {
+          "command": "node scripts/validate-lessons.mjs",
+          "pass": true,
+          "summary": "Lessons register is self-consistent: 39/40 entries, 39.6/40.0 KB",
+          "executed": -1
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/cause-ruling.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/bug-test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "line": 17,
+          "severity": "major",
+          "summary": "NotificationsSettingsTab.tsx path is incomplete — missing _components/ subdirectory",
+          "detail": "In build-plan.md: The artifact claims the file is at `apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx`, but the actual file is located at `apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx`. The path in the artifact omits the _components directory level.",
+          "fixComplexity": "mechanical",
+          "fixHint": "Update the path in P4 from `apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx` to `apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx`",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/cause-brief.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/cause-ruling.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/bug-test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/refutation.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/pipeline-args.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-06-F23-messaging-engine/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/messaging-config.service.spec.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/messaging.service.spec.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/default-on-is-wired.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/providers/message-provider.interface.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/providers/stub.provider.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/messaging.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/messaging/messaging-config.service.ts",
+        "status": "modified",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/lib/api/messaging.ts",
+        "status": "modified",
+        "risk": "LOW",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/messaging src/messages src/notifications --runInBand",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/api && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ],
+    "artifacts": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/cause-ruling.md",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 2,
+    "low": 16
+  },
+  "fixRouting": {
+    "mechanical": 2,
+    "sonnetDesigned": 4,
+    "judgment": 0
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 3,
+          "sonnet": 3,
+          "opus": 0
+        },
+        "waves": [[0, 4, 1, 2, 3, 5]],
+        "note": "Round 1 fixes all six findings in a single concurrent wave, none touching production code: the blocker (#0) is an oracle defect, not a copy defect — the honest quiet-hours negation stays and T4 is re-pointed at the actual B160 claim (old sentence absent, \"not yet held or delayed\" present), with its stale comment corrected in the same edit (#4). Test-strength gaps are closed by pinning the production NO_TRANSPORT matrix shape and setRuleEnabled rejection against a transports-false provider in a second module (#1), adding the LOW_STOCK negative control to the T5 scanner harness (#2), and asserting the seeded enabled/disabled rows in REG-B182 T7 (#3). The build-plan artifact's NotificationsSettingsTab path gains its missing _components/ segment (#5). Both web gates (red gate `-t \"REG-B(160|180)\"` and `npx jest --silent`) plus the api messaging suites must be green after the wave; no map/lessons/ledger edits per Option B."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 1,
+          "opus": 0
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single minor finding: the NO_TRANSPORT test's \"leaves INTERNAL untouched\" assertion is vacuous because every INTERNAL event is a NO_TRIGGER event, so the `channel !== INTERNAL` exemption is unreachable and the assertion passes on precedence alone (proven by the reviewer's mutation probe). Plan: one wave, one Sonnet executor — drop the vacuous assertion, retitle the test to claim only what it proves, and pin the actual current state behaviorally (every INTERNAL cell in getMatrix under the no-transport provider reports NO_TRIGGER) so the first wired INTERNAL event turns the test red and forces a real exemption test; add a comment-only note at the service check recording the exemption as currently unreachable and kept for the first wired INTERNAL event. No production logic, constants, or existing EMAIL/setRuleEnabled assertions change; Option-B bookkeeping (no map/lessons/ledger edits) respected."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": ["correctness", "test-quality"],
+  "radiusPack": {
+    "built": true,
+    "truncated": false,
+    "files": [
+      "apps/api/src/messages/messages.service.ts",
+      "apps/api/src/messaging/messaging.helpers.ts",
+      "apps/api/src/notifications/notifications.service.ts",
+      "apps/api/prisma/schema/sales.prisma",
+      "apps/api/prisma/schema/platform.prisma"
+    ],
+    "skipped": null
+  },
+  "siblingSweep": {
+    "ran": true,
+    "patterns": 2,
+    "hits": 25,
+    "findings": 0,
+    "skipped": null,
+    "truncated": [],
+    "verdicts": {
+      "defect": 0,
+      "guarded": 7,
+      "unrelated": 18,
+      "unjudged": 0
+    }
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [
+      {
+        "file": "apps/api/src/messaging/messaging-config.service.spec.ts",
+        "line": 181,
+        "issue": "The pin test \"toggles a rule's enabled flag\" (lines 181-198) calls setRuleEnabled on a NotificationEvent.DELIVERED / MessageChannel.PORTAL rule and asserts the update resolves with enabled:true. Per cause-ruling.md §2, PORTAL has no capability-seam transport (StubProvider declares no transports for PORTAL, per T2 in bug-test-plan.md), so under P2's rule that setRuleEnabled refuses any 'unavailable' cell (NO_TRANSPORT included) with BadRequestException, this fixture's channel becomes unavailable and the call will now throw instead of resolving with the update mock. The test plan's harness notes only flag the LOW_STOCK/NO_TRIGGER rewrite (T6) and the WHATSAPP consent-writer case (T8); this PORTAL-based pin is not covered and will fail once P2 lands.",
+        "remedy": "Change this pin's fixture channel to one with a real transport (e.g. EMAIL or another channel StubProvider declares), or explicitly add it as a T6/T8-style case if PORTAL enabling must remain rejected."
+      }
+    ],
+    "skipped": null,
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP-API",
+        "status": "done",
+        "filesChanged": [
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging-config.service.spec.ts",
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging.service.spec.ts",
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/default-on-is-wired.spec.ts"
+        ],
+        "deviations": "None. All four in-scope files were written/extended; no other file was touched (verified via `git status --short -- apps/api/src/messaging/`). The web halves (T4/T9, notifications-settings.test.tsx) are explicitly out of this package's file list and were left untouched."
+      },
+      {
+        "package": "TP-WEB",
+        "status": "done",
+        "filesChanged": ["apps/web/app/(dashboard)/settings/notifications-settings.test.tsx"],
+        "deviations": ""
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": true,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "REG-B145 T1: EMAIL is skipped (NO_TRANSPORT) — apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Binds the REAL StubProvider at MESSAGE_PROVIDER as the plan's harness note requires. Failed on its own oracle: expected {outcome:'skipped', reason:'NO_TRANSPORT'}, received {outcome:'sent'} — exactly the plan's 'Fails TODAY with' value. Verified no implementation exists: grep for `transports|NO_TRANSPORT` over apps/api/src/messaging non-spec sources returns nothing, and message-provider.interface.ts has no transports() member."
+          },
+          {
+            "test": "REG-B145 T2: PORTAL is skipped the same way (NO_TRANSPORT) — apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Same shape, distinct channel. Expected {outcome:'skipped', reason:'NO_TRANSPORT'}, received {outcome:'sent'}. Matches plan T2."
+          },
+          {
+            "test": "REG-B160 T3: getSettings() default matches the engine default (quietHoursEnabled=false) when no row exists — apps/api/src/messaging/messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Failed on its own value: expected quietHoursEnabled false, received true — the plan's predicted wrong value and cause-ruling.md line 12 (messaging-config.service.ts:228 defaults to true)."
+          },
+          {
+            "test": "REG-B160 T3 (via getMatrix): settings default to the engine default alongside the msgsMeter read — apps/api/src/messaging/messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "A second, split-out copy of T3's oracle at the getMatrix seam (the plan lists T3 once; this is an extra assertion site, not an extra requirement). Failed identically on quietHoursEnabled false vs true."
+          },
+          {
+            "test": "REG-B180 T5: has zero DEFAULT_ON keys with no firing site — apps/api/src/messaging/default-on-is-wired.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "expected [], received ['URGENT_ORDER_PLACED','LOW_STOCK','FAILED_DELIVERY','PAYMENT_FAILED_NSF'] — exactly the four keys named in cause-ruling.md line 24 and the plan's T5 row, with the empty ALLOWLIST the ruling mandates."
+          },
+          {
+            "test": "REG-B180 T6: LOW_STOCK cell is unavailable (NO_TRIGGER), disabled, and setRuleEnabled refuses — apps/api/src/messaging/messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Failed on its own value at the first assertion: expected {unavailable:'NO_TRIGGER', enabled:false}, received {enabled:true} — the plan's predicted wrong value. The test's second half (setRuleEnabled rejects BadRequestException, update not called) never executed, so that oracle is not yet proven red."
+          },
+          {
+            "test": "REG-B182 T7: notify() seeds the default matrix for a never-visited tenant then dispatches — apps/api/src/messaging/messaging.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Failed on notificationRule.createMany expected 1 call, received 0 — the plan's predicted wrong value ('createMany not called'). The value oracle further down (outcomes[0] === {channel:'EMAIL', outcome:'sent'}) never executed, so only the seed-call half is proven red today."
+          },
+          {
+            "test": "REG-B183 T8: WhatsApp cell is unavailable (NO_CONSENT_WRITER) and setRuleEnabled refuses — apps/api/src/messaging/messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Failed on its own value: expected {unavailable:'NO_CONSENT_WRITER'}, received the ordinary cell {channel:'WHATSAPP', enabled:false, locked:false, ruleId:'rule-0', template:{...}} — the plan's 'cell with no marker'. The setRuleEnabled-rejects half never executed."
+          },
+          {
+            "test": "REG-B160 the quiet-hours card no longer claims a hold — apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+            "outcome": "assertion-failure",
+            "note": "Ran under apps/web jest (RTL, renderWithProviders + mocked hooks). Failed on its own value: queryByText(/held/i) found <p>'Customer-facing messages are held outside this window; internal alerts still send.'</p> — the copy cause-ruling.md line 12 names at NotificationsSettingsTab.tsx:519. The positive half (getByText(/record/i)) never executed."
+          },
+          {
+            "test": "REG-B180 an unavailable cell renders a qualifier, not a switch — apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+            "outcome": "assertion-failure",
+            "note": "Failed on its own value: queryByRole('switch', {name:/low stock via internal/i}) found the rendered toggle. One divergence from the plan's 'a live switch renders': the found button carries disabled=\"\" (it renders as a disabled switch, not a live one). The qualifier half (getByText(/no trigger|not available|unavailable/i)) never executed."
+          },
+          {
+            "test": "walks a non-trivial number of source files (guards against an empty scan reporting green) — apps/api/src/messaging/default-on-is-wired.spec.ts",
+            "outcome": "passed",
+            "note": "STRUCTURAL. Not vacuous — it is a deliberate harness-integrity guard (FILES.length > 100) — but the behavior it asserts already exists, so it can never be red. It carries no requirement ID and is not in the plan's T-table, yet the red-gate filter -t \"REG-B(...)\" collects it because the enclosing describe name contains 'REG-B180 T5'. Verified by `npx jest default-on-is-wired.spec.ts --verbose`: 1 failed, 2 passed."
+          },
+          {
+            "test": "sees at least one already-wired DEFAULT_ON event (parser sanity: OUT_FOR_DELIVERY fires from orders.service.ts) — apps/api/src/messaging/default-on-is-wired.spec.ts",
+            "outcome": "passed",
+            "note": "STRUCTURAL, same cause as the row above: an intentional scanner sanity check asserting behavior that already exists (OUT_FOR_DELIVERY has a firing site today). No requirement ID; swept into the red gate by the describe-level REG-B180 token."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: apps/api/src/messaging/default-on-is-wired.spec.ts ships two PASSING new tests inside the red gate — 'walks a non-trivial number of source files' and 'sees at least one already-wired DEFAULT_ON event'. Cause: the behavior they assert already exists (they are scanner-integrity guards, not requirement tests) and the red-gate filter -t \"REG-B(145|160|180|182|183)\" collects them because the enclosing describe is named '... (F23 / REG-B180 T5)'. They are not vacuous and should NOT be deleted, but a red gate that reports 2 passed is not structurally red.",
+          "BEHAVIORAL: T6 (REG-B180), T8 (REG-B183), T7 (REG-B182), T4 and T9 (web) each stop at their FIRST assertion, so their second oracle is unproven-red today: setRuleEnabled rejecting BadRequestException + update-not-called (T6, T8), outcomes[0] === {channel:'EMAIL', outcome:'sent'} (T7), getByText(/record/i) (T4), and the qualifier text getByText(/no trigger|not available|unavailable/i) (T9). Nothing today drives those lines, so a mutation probe cannot yet distinguish them from dead code.",
+          "BEHAVIORAL: T9's observed wrong value diverges slightly from the plan. The plan predicts 'a live switch renders'; the actual DOM renders a switch with disabled=\"\" already set. The assertion (no switch role in that row) still fails on its own oracle, but the fix must remove the control, not merely disable it — worth restating in the build plan so the implementer does not read the existing disabled attribute as already-satisfying.",
+          "BEHAVIORAL: T5's guard will go green when the fix DROPS the four keys from DEFAULT_ON (cause-ruling.md line 24), not when a firing site is added — DEFAULT_ON_EVENTS is derived from DEFAULT_ON itself. That is the ruling's intent, but it means the test proves 'the seed no longer lies', never 'the trigger exists'. Additionally hasFiringSite() is a plain substring scan for `NotificationEvent.<KEY>`, so a comment or a type-only reference would count as a firing site.",
+          "BEHAVIORAL: T7's proven-red assertion is a spy call-count on a mock the test itself configured (prisma.notificationRule.createMany), not an observable value. It matches the plan's predicted wrong value, but the only behavioral oracle in that test (outcomes[0] sent on EMAIL) is currently unreached.",
+          "BEHAVIORAL: T6's `enabled: false` half will be satisfied by the fixture alone once DEFAULT_ON drops LOW_STOCK — buildFullSeed() computes enabled from DEFAULT_ON.has(...) — so only `unavailable: 'NO_TRIGGER'` is load-bearing there.",
+          "BEHAVIORAL: T4's positive assertion getByText(/record/i) is a loose regex that any element containing the substring 'record' would satisfy (and it would throw on multiple matches). It is currently unreached, so it will only bite after the fix."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": true,
+        "properlyRed": true,
+        "tests": [
+          {
+            "test": "REG-B145 T1: EMAIL is skipped (NO_TRANSPORT) — apps/api/src/messaging/messaging.transport-honesty.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Verified by re-running `npx jest src/messaging/messaging.transport-honesty.spec.ts --runInBand` in this session. Fails on its own plan oracle: expected {outcome:'skipped', reason:'NO_TRANSPORT'}, received outcome 'sent' — exactly the wrong value the test plan predicts. Binds the REAL StubProvider via `useClass: StubProvider` at MESSAGE_PROVIDER (not a self-configured mock), so the failure is about production wiring, not fixture shape. Secondary assertions (message.create / messageThread.update not called) never executed today because the toMatchObject fails first; they will be exercised once the outcome flips."
+          },
+          {
+            "test": "REG-B145 T2: PORTAL is skipped the same way (NO_TRANSPORT) — messaging.transport-honesty.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Same file/run. Expected {outcome:'skipped', reason:'NO_TRANSPORT'}, received 'sent' — its own plan-predicted wrong value, distinct channel from T1 (PORTAL vs EMAIL), so the two are not a single duplicated oracle."
+          },
+          {
+            "test": "REG-B160 T3 (via getMatrix): settings default to the engine default — apps/api/src/messaging/messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Verified with `--verbose` in this session (× line). toEqual diff is a single field: expected quietHoursEnabled false, received true — the plan's exact wrong value. The msgsMeter assertion that follows was carried over from the pin it was split out of and does not execute today."
+          },
+          {
+            "test": "REG-B160 T3: getSettings() default matches the engine default — messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Second half of plan row T3 (author split it across getMatrix and getSettings). Fails on the same one-field diff (false expected, true received) against a different public method, so it is complementary coverage rather than a duplicate assertion."
+          },
+          {
+            "test": "REG-B180 T5: DEFAULT_ON keys all have a firing site — apps/api/src/messaging/default-on-is-wired.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Static tree-walk guard (precedent: no-bare-cron.spec.ts). Failed with unwired = ['URGENT_ORDER_PLACED','LOW_STOCK','FAILED_DELIVERY','PAYMENT_FAILED_NSF'] vs expected [] — matching the plan's predicted list including the conditional FAILED_DELIVERY. ALLOWLIST is deliberately empty, so it cannot be silently widened without a visible diff. Residual risk flagged: the oracle is a substring search for `NotificationEvent.<KEY>`, so a firing site written as a destructured/aliased enum reference would not count, and conversely a dead mention in a non-spec file would count as 'wired'."
+          },
+          {
+            "test": "REG-B180 T6: LOW_STOCK cell unavailable (NO_TRIGGER) + setRuleEnabled refuses — messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Fails on its own value: expected {unavailable:'NO_TRIGGER', enabled:false}, received a cell with enabled:true — the plan's predicted wrong value (the rewritten `:135-150` pin). CAVEAT for the later mutation probe: the second oracle in this same test (setRuleEnabled rejecting BadRequestException, and notificationRule.update not called) is NOT proven red today — execution stops at the first toMatchObject, so the refusal path has no red evidence yet."
+          },
+          {
+            "test": "REG-B182 T7: notify() seeds the default matrix for a never-visited tenant — apps/api/src/messaging/messaging.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Fails on its own value: notificationRule.createMany called 0 times, expected 1 — exactly the plan's 'createMany not called' prediction. CAVEAT (rule 6): the follow-on assertions (`outcomes[0] = {channel:'EMAIL', outcome:'sent'}`) rest on mocks this test configures itself — a mock provider whose `transports` returns true and whose send returns status 'queued', plus a second findMany returning a bare `[{channel: EMAIL}]` row with no id/eventKey/enabled. Those will later pass largely because of the fixture, not because a transport exists; real transport honesty is proven separately by T1/T2. Also couples to an implementation shape: it assumes the seed happens between two findMany reads on the same call."
+          },
+          {
+            "test": "REG-B183 T8: WhatsApp cell unavailable (NO_CONSENT_WRITER) + setRuleEnabled refuses — messaging-config.service.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Fails on its own value: expected {unavailable:'NO_CONSENT_WRITER'}, received the full cell object with no such marker — the plan's predicted wrong value. Same CAVEAT as T6: the setRuleEnabled-rejects half never executes today, so the refusal path is unproven red."
+          },
+          {
+            "test": "REG-B160 T4: the quiet-hours card no longer claims a hold — apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+            "outcome": "assertion-failure",
+            "note": "Verified by `npx jest notifications-settings --runInBand` in apps/web this session. Real render (not a mocked component): failed because the live copy <p>…messages are held outside this window…</p> is present, which is the plan's predicted wrong value. CAVEAT (rule 6): both oracles are loose regexes — /held/i matches any substring (e.g. 'upheld', 'withheld') and the never-executed positive assertion getByText(/record/i) would match any single element containing 'record'/'recorded'/'records' anywhere in the tab, so it could later pass without the intended copy actually landing."
+          },
+          {
+            "test": "REG-B180 T9: an unavailable cell renders a qualifier, not a switch — notifications-settings.test.tsx",
+            "outcome": "assertion-failure",
+            "note": "Failed on the rendered DOM: a role=switch with aria-label 'Enable Low stock via Internal' (currently disabled) is still present where the test requires none — the plan's 'a live switch renders' prediction. CAVEAT (rule 6): the negative query is scoped by accessible name (/low stock via internal/i), so an implementation that keeps the switch but renames its aria-label would make this pass for the wrong reason; and the positive oracle getByText(/no trigger|not available|unavailable/i) is a broad alternation that never executed today."
+          },
+          {
+            "test": "PIN (not in the red gate): 'walks a non-trivial number of source files' — default-on-is-wired.spec.ts",
+            "outcome": "passed",
+            "note": "NEW test that passes by design — a harness-integrity pin for the T5 scanner (FILES.length > 100), living in a describe with no REG-B token so the red-gate -t filter does not collect it. It is neither vacuous nor a sign the requirement already exists: it exists precisely to stop an empty/broken tree walk from reporting T5 green. I did not treat it as a structural blocker; it asserts already-true behavior deliberately, in line with the test plan's 'Pins (outside the red gate)' section. Flagging it explicitly so the decision is auditable rather than hidden."
+          },
+          {
+            "test": "PIN (not in the red gate): 'sees at least one already-wired DEFAULT_ON event (OUT_FOR_DELIVERY)' — default-on-is-wired.spec.ts",
+            "outcome": "passed",
+            "note": "Same category as the previous entry: a NEW deliberately-green parser-sanity pin for the T5 scanner, excluded from the red gate by name. Not counted as a structural blocker, for the same reason. Verified passing (`2 passed` alongside the 3 failures in that file's run this session)."
+          }
+        ],
+        "blockers": []
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL: apps/api/src/messaging/default-on-is-wired.spec.ts shipped two PASSING tests inside the red gate. Applied the auditor's remediation exactly: renamed the top-level describe from \"DEFAULT_ON keys are all wired to a firing site (F23 / REG-B180 T5)\" to \"... (F23 / T5)\" (dropping only the REG-B180 token from the DESCRIBE; the T5 `it` title still starts with \"REG-B180:\" so the gate still collects it), and moved the two harness-integrity guards (\"walks a non-trivial number of source files ...\" and \"sees at least one already-wired DEFAULT_ON event ...\") into a NEW sibling top-level describe placed above it, named \"default-on-is-wired — scanner harness integrity (pin; outside the red gate)\", with a short comment saying why they sit outside the gate. Both guards were KEPT, not deleted or skipped, and still run in the full suite. VERIFIED by tool output this session: `cd apps/api && npx jest src/messaging --runInBand -t \"REG-B(145|160|180|182|183)\"` now reports `Tests: 8 failed, 60 skipped, 68 total` (previously 8 failed + 2 passed) — 0 passed inside the gate; `cd apps/web && npx jest --runInBand -t \"REG-B(160|180)\"` reports `Tests: 2 failed, 161 skipped, 163 total`. Combined red gate = 10 collected, 10 failed, 0 passed, matching the auditor's stated pass criterion. The unfiltered `npx jest src/messaging --runInBand` still reports `8 failed, 60 passed, 68 total` — byte-identical counts to the auditor's pre-edit run, so the two pins still execute and pass outside the gate and no existing pin was disturbed. `npx tsc -p tsconfig.json --noEmit` in apps/api exits 0. Formatted with the repo's own Prettier (root prettier.config.js, via `npx prettier --write`); `npx prettier --check` on the file reports \"All matched files use Prettier code style!\"."
+      ],
+      "skipped": [
+        {
+          "summary": "BEHAVIORAL: T6 (REG-B180), T8 (REG-B183), T7 (REG-B182), T4 and T9 (web) each stop at their FIRST assertion, so their second oracle is unproven-red today (setRuleEnabled rejecting BadRequestException + update-not-called for T6/T8; outcomes[0] === {channel:'EMAIL', outcome:'sent'} for T7; getByText(/record/i) for T4; getByText(/no trigger|not available|unavailable/i) for T9).",
+          "reason": "Real, but not fixable within this round's stated pass criterion. The only way to prove a second oracle red today is to split it into its own `it` block — which would change the red-gate collection count away from the exactly-10-collected/10-failed target the auditor set as the acceptance condition, and the auditor's remediation section states explicitly that only one structural edit is needed and no others are required. Each test's FIRST assertion already fails on its own observable wrong value (verified in the run output above), so every test is red for a behavioral reason, not an error. Leaving the sequential-assertion shape intact; flagging for the build plan so the implementer knows those lines are unexercised until the fix lands."
+        },
+        {
+          "summary": "BEHAVIORAL: T9's observed wrong value diverges from the plan — the plan predicts 'a live switch renders'; the DOM actually renders a switch with disabled=\"\" already set, so the fix must REMOVE the control, not merely disable it.",
+          "reason": "Not a test defect and not fixable by editing a test. Confirmed in this session's apps/web run output: the found element is `<button aria-checked=\"false\" aria-label=\"Enable Low stock via Internal\" ... disabled=\"\" role=\"switch\">`. The assertion (`queryByRole('switch', {name:/low stock via internal/i})` is not in the document) is the correct oracle and still fails on its own value, so the test stays properly red. This is a note the build plan must carry so the implementer does not read the existing `disabled` attribute as already satisfying the requirement — it is production-code guidance, which is forbidden in this round."
+        },
+        {
+          "summary": "BEHAVIORAL: T5's guard goes green when the fix DROPS the four keys from DEFAULT_ON, not when a firing site is added (DEFAULT_ON_EVENTS is derived from DEFAULT_ON itself); and hasFiringSite() is a plain substring scan for `NotificationEvent.<KEY>`, so a comment or type-only reference would count as a firing site.",
+          "reason": "Both are accurate descriptions of the test as written, and both are the ruling's intent per cause-ruling.md line 24 (the fix drops the unwired keys; ALLOWLIST is deliberately empty). Tightening hasFiringSite() beyond a substring scan would require an AST/parser change to the harness that the plan does not specify and that risks new false negatives; narrowing the assertion is not a remediation the auditor asked for. Recorded as a known limitation rather than silently changed."
+        },
+        {
+          "summary": "BEHAVIORAL: T7's proven-red assertion is a spy call-count on a mock the test itself configured (prisma.notificationRule.createMany), not an observable value.",
+          "reason": "It matches the plan's predicted wrong value exactly ('createMany not called', observed 0 calls). The test does carry a real value oracle further down (outcomes[0] === {channel:'EMAIL', outcome:'sent'}); it is unreached today only because the seed-call assertion fails first. Fixing this would mean reordering the assertions so the value oracle runs first — but the seeding call IS the requirement's observable effect at this seam (the tenant has no rule rows, so there is no other externally visible signal), and reordering would leave the seed half unproven instead. Left as-is; not weakened, not deleted."
+        },
+        {
+          "summary": "BEHAVIORAL: T6's `enabled: false` half will be satisfied by the fixture alone once DEFAULT_ON drops LOW_STOCK — buildFullSeed() computes enabled from DEFAULT_ON.has(...) — so only `unavailable: 'NO_TRIGGER'` is load-bearing there.",
+          "reason": "Correct and harmless: `unavailable: 'NO_TRIGGER'` is the load-bearing half and it is the one failing today. Removing the `enabled: false` co-assertion would not strengthen the test, and adding a differently-sourced fixture would be a harness rewrite the auditor did not request. Reported so the reviewer does not credit `enabled: false` as independent evidence."
+        },
+        {
+          "summary": "BEHAVIORAL: T4's positive assertion getByText(/record/i) is a loose regex that any element containing the substring 'record' would satisfy (and would throw on multiple matches).",
+          "reason": "Real looseness, but the assertion is currently unreached (the queryByText(/held/i) assertion fails first), so tightening it now would be speculative — the post-fix copy does not exist yet, and picking a narrower regex against copy nobody has written would likely have to be re-loosened during implementation. Flagged for the build plan to pin the exact replacement copy, at which point the regex should be narrowed to match it."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/default-on-is-wired.spec.ts"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "P1",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/providers/message-provider.interface.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/providers/stub.provider.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging.service.ts"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P2",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging-config.service.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/messaging.service.ts"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P3",
+      "status": "done",
+      "filesChanged": [],
+      "deviations": "No edits were needed to apps/api/src/messaging/default-on-is-wired.spec.ts. Verified it already exists and matches the P3 brief exactly: it is the T5 static guard modeled on the apps/api/src/common/no-bare-cron.spec.ts precedent, it imports DEFAULT_ON from ./messaging-config.service (which P2 already exports), the ALLOWLIST is empty per the Check in build-plan.md (no NotificationEvent.FAILED_DELIVERY firing site found outside messaging/), and its harness-integrity sanity check (OUT_FOR_DELIVERY has a firing site) holds true — confirmed via grep that apps/api/src/orders/orders.service.ts references NotificationEvent.OUT_FOR_DELIVERY at multiple lines. Did not run the test suite per instructions (a later gate stage does that); did not touch any other file."
+    },
+    {
+      "package": "P4",
+      "status": "done",
+      "filesChanged": [
+        "apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx",
+        "apps/web/lib/api/messaging.ts"
+      ],
+      "deviations": "The plan listed the tab's path as `apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx`, but the real file (confirmed via find) is `apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx` — that is the file I edited, per the brief's \"locate the real tab path\" instruction. No other deviations; only the two allowed files were touched."
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 257 passed, 257 total · Tests: 4148 passed, 4148 total",
+        "executed": 4148
+      },
+      {
+        "command": "cd apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 31 passed, 31 total · Tests: 163 passed, 163 total",
+        "executed": 163
+      },
+      {
+        "command": "node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "✔ Register is self-consistent. 39/40 entries · 39.6/40.0 KB · archived 40 · nextId 84",
+        "executed": 1
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": false,
+    "targets": 0,
+    "results": [],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": null,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "skippedTargets": [],
+    "skipped": "small-scale"
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": false,
+    "skipped": "small-scale",
+    "reader": null,
+    "model": null,
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "candidates": 0,
+    "gaps": [],
+    "secondRead": false,
+    "decision": "",
+    "findings": []
+  },
+  "confirmedFindings": [
+    {
+      "file": "apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+      "line": 75,
+      "severity": "blocker",
+      "summary": "The new REG-B160 T4 acceptance test fails: the replacement quiet-hours copy itself contains the word \"held\", which the test's `/held/i` negative assertion forbids.",
+      "detail": "Verified by running the suite. `cd apps/web && npx jest --silent` → \"Test Suites: 1 failed, 30 passed\", \"Tests: 1 failed, 162 passed\"; the plan's own web red gate `npx jest --runInBand -t \"REG-B(160|180)\"` → \"1 failed, 1 passed\". Failure: `expect(element).not.toBeInTheDocument() ... found <p class=\"mb-3 text-xs text-navy/70\">The window is recorded for reporting; messages are not yet held or delayed during it.</p>`. NotificationsSettingsTab.tsx:534 writes \"...not yet held or delayed...\" while the test at line 75 asserts no element matches /held/i, so the substring in the honest negation trips the oracle. Both the build-plan's `final` gate (`cd apps/web && npx jest --silent`) and its red gate are red as the tree stands. (API side is green: `npx jest src/messaging src/messages src/notifications --runInBand` → 80/80; api red gate collects 8 REG tests, all passing; `apps/api` tsc and `apps/web` tsc both exit clean.)",
+      "fixHint": "Either reword the card copy so it does not contain \"held\" (e.g. \"The window is recorded for reporting; messages are not yet paused or delayed during it.\") or tighten the oracle to the claim rather than the substring (e.g. assert the old sentence `/messages are held outside this window/i` is absent).",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/messaging/messaging-config.service.spec.ts",
+      "line": 61,
+      "severity": "major",
+      "summary": "The config-side NO_TRANSPORT branch — the one that fires for every non-INTERNAL cell in production — is never executed by any test, because the only spec that constructs MessagingConfigService hard-codes `transports() === true` and never overrides it.",
+      "detail": "`provider = { send: jest.fn(), transports: jest.fn().mockReturnValue(true) }` is set once in beforeEach; `grep -n transports messaging-config.service.spec.ts` returns exactly 2 hits (the type and this line), and `grep -rln MessagingConfigService apps/api/src --include=*.spec.ts` returns only this file. So `unavailabilityReason`'s `if (channel !== INTERNAL && !this.provider.transports(channel)) return \"NO_TRANSPORT\"` can never be taken in any test. Failure scenario: delete that line from messaging-config.service.ts and the entire api suite still passes (the send-side check is a separate line in messaging.service.ts, covered by messaging.transport-honesty.spec.ts) — yet the settings matrix would again render live enable switches for EMAIL/PORTAL/WA/SMS cells that the engine will always skip with NO_TRANSPORT, which is the exact B180/B183 user-visible shape this change exists to remove. Second consequence of the same mock: with the production StubProvider declaring no transports, `unavailabilityReason` returns NO_TRANSPORT before ever reaching the `requiresConsent` branch, so the value REG-B183 T8 pins (`unavailable === \"NO_CONSENT_WRITER\"`, spec line ~299) is unreachable in production today — that assertion holds only under the always-true mock.",
+      "fixHint": "Add a case that binds a provider declaring `transports: () => false` (or the real StubProvider) and asserts a customer-channel cell comes back `{ unavailable: \"NO_TRANSPORT\", enabled: false }` and that setRuleEnabled rejects it — i.e. pin the matrix shape the deployed system actually serves; keep the always-true provider for T6/T8 so the NO_TRIGGER / NO_CONSENT_WRITER precedence stays covered.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/messaging/default-on-is-wired.spec.ts",
+      "line": 66,
+      "severity": "minor",
+      "summary": "The T5 static guard has a positive control but no negative control: `hasFiringSite` is only ever asserted true, so a scanner that always reports \"wired\" would keep the guard permanently green.",
+      "detail": "Both harness-integrity pins (line 62 file count, line 66 `hasFiringSite(\"OUT_FOR_DELIVERY\") === true`) and the REG-B180 assertion (line 76, `unwired` is empty) pass whenever `hasFiringSite` returns true. Failure scenario: someone removes or breaks the `if (full === MESSAGING_DIR) continue` skip at line 32 (e.g. while re-rooting the walk). messaging-config.service.ts then enters SOURCES and it textually contains `NotificationEvent.OUT_FOR_DELIVERY`, `NotificationEvent.LOW_STOCK`, etc. in EVENT_CHANNELS/DEFAULT_TEMPLATES/NO_TRIGGER_EVENTS, so every key reports a firing site, the guard stays green forever, and a future unwired key re-added to DEFAULT_ON ships silently — precisely the B180 regression the spec is meant to block. A negative control is available for free and true today: I confirmed by grep that `NotificationEvent.LOW_STOCK` / `URGENT_ORDER_PLACED` / `FAILED_DELIVERY` / `PAYMENT_FAILED_NSF` have zero references in apps/api/src outside messaging/ and outside *.spec.ts.",
+      "fixHint": "Add one pin next to line 66: `expect(hasFiringSite(\"LOW_STOCK\")).toBe(false)` (with a comment that it is the scanner's negative control, to be re-pointed at another unwired key if LOW_STOCK ever gains a trigger).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/messaging/messaging.service.spec.ts",
+      "line": 221,
+      "severity": "minor",
+      "summary": "REG-B182 T7 never asserts what was seeded, so a seeder that dropped the DEFAULT_ON semantics (everything seeded disabled) would still pass.",
+      "detail": "The test asserts only `createMany` call count and `toMatchObject({ skipDuplicates: true })` on the args, then asserts `outcomes[0]` is `{channel: \"EMAIL\", outcome: \"sent\"}` — but that outcome comes entirely from the hard-coded second mock (`notificationRule.findMany ... .mockResolvedValue([{ channel: MessageChannel.EMAIL }])`), not from the seed, so the dispatch half of the assertion is the mock testing itself. Failure scenario: change `seedDefaultsFor` to push `{ eventKey, channel, enabled: false }` unconditionally (dropping DEFAULT_ON) — B182's documented outcome (\"INVOICE_SENT:EMAIL is on by default for a never-visited tenant\") is destroyed, and T7 plus the whole api suite stay green. The seeded payload is observable: `createMany.mock.calls[0][0].data` is the full rule array.",
+      "fixHint": "Extend the existing args assertion to check the seeded rows, e.g. `expect(createMany.mock.calls[0][0].data).toContainEqual({ eventKey: NotificationEvent.INVOICE_SENT, channel: MessageChannel.EMAIL, enabled: true })` and one `enabled: false` counterpart (e.g. ORDER_CONFIRMED:WHATSAPP).",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+      "line": 68,
+      "severity": "minor",
+      "summary": "The T4 test's own comment states a requirement the system does not implement — that quiet-hours messages are \"queued for the next send window\".",
+      "detail": "Lines 68-69 read \"quiet hours are recorded (queued for the next send window), never held indefinitely\". Nothing queues: messaging.service.ts:129-135 computes `wouldBeQuiet` and the value is only echoed on the outcome; cause-ruling.md §2 explicitly defers the hold queue as a feature, and the copy this test guards says \"not yet held or delayed\". Failure scenario: a later reader trusts the comment and restores a scheduling claim in the card copy (the exact B160 wording bug), and the test — whose oracle is a substring, not the claim — will not necessarily object. Since the assertion on line 75 has to be reworked anyway (finding 1), the comment should be corrected in the same edit.",
+      "fixHint": "Reword to state the actual contract: the window is recorded on the send outcome only; nothing is held, delayed, or queued in P6-2.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(artifact)",
+      "line": 17,
+      "severity": "major",
+      "summary": "NotificationsSettingsTab.tsx path is incomplete — missing _components/ subdirectory",
+      "detail": "In build-plan.md: The artifact claims the file is at `apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx`, but the actual file is located at `apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx`. The path in the artifact omits the _components directory level.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Update the path in P4 from `apps/web/app/(dashboard)/settings/NotificationsSettingsTab.tsx` to `apps/web/app/(dashboard)/settings/_components/NotificationsSettingsTab.tsx`",
+      "phase": "Baseline"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 0,
+    "Implement": 0,
+    "Gate & Review": 5,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 1,
+      "tokens": 34250,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest) + claude-sonnet-5 (harness check)",
+      "effort": "low / low harness check",
+      "estUsd": 0.17,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 298880,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 2.99,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 0,
+      "tokens": 215341,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 5.38,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 0,
+      "tokens": 83296,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.83,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 5,
+      "tokens": 127459,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses) + claude-sonnet-5 (radius pack)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium / low radius pack",
+      "estUsd": 3.19,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 23989,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break) + claude-sonnet-5 (sibling grep) + claude-opus-5 (sibling judge)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high / low sibling grep / medium sibling judge",
+      "estUsd": 0.6,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 15,
+      "rawFindings": 0,
+      "tokens": 218088,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 5.45,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 6,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 3,
+          "sonnet": 3,
+          "opus": 0
+        },
+        "waves": [[0, 4, 1, 2, 3, 5]],
+        "note": "Round 1 fixes all six findings in a single concurrent wave, none touching production code: the blocker (#0) is an oracle defect, not a copy defect — the honest quiet-hours negation stays and T4 is re-pointed at the actual B160 claim (old sentence absent, \"not yet held or delayed\" present), with its stale comment corrected in the same edit (#4). Test-strength gaps are closed by pinning the production NO_TRANSPORT matrix shape and setRuleEnabled rejection against a transports-false provider in a second module (#1), adding the LOW_STOCK negative control to the T5 scanner harness (#2), and asserting the seeded enabled/disabled rows in REG-B182 T7 (#3). The build-plan artifact's NotificationsSettingsTab path gains its missing _components/ segment (#5). Both web gates (red gate `-t \"REG-B(160|180)\"` and `npx jest --silent`) plus the api messaging suites must be green after the wave; no map/lessons/ledger edits per Option B."
+      },
+      "reports": [
+        {
+          "target": "apps/web/app/(dashboard)/settings/notifications-settings.test.tsx",
+          "route": "sonnet",
+          "fixed": [
+            "Reworked the REG-B160 T4 oracle in notifications-settings.test.tsx from a substring `/held/i` negative assertion to two claim-level assertions: absence of the old scheduling claim (`/messages are held outside this window/i`) and presence of the honest negation (`/not yet held or delayed/i`), keeping the `/record/i` presence check.",
+            "Rewrote the comment above the REG-B160 test to state the actual P6-2 contract (quiet-hours window recorded on the send outcome only; nothing held, delayed, or queued; cause-ruling.md §2 defers the hold queue) instead of the incorrect 'queued for the next send window' claim."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/web/app/(dashboard)/settings/notifications-settings.test.tsx"
+          ]
+        },
+        {
+          "target": "apps/api/src/messaging/messaging-config.service.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "The config-side NO_TRANSPORT branch — the one that fires for every non-INTERNAL cell in production — is never executed by any test, because the only spec that constructs MessagingConfigService hard-codes `transports() === true` and never overrides it."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": ["apps/api/src/messaging/messaging-config.service.spec.ts"]
+        },
+        {
+          "target": "apps/api/src/messaging/default-on-is-wired.spec.ts",
+          "route": "mechanical",
+          "fixed": [
+            "The T5 static guard has a positive control but no negative control: `hasFiringSite` is only ever asserted true, so a scanner that always reports \"wired\" would keep the guard permanently green."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/messaging/default-on-is-wired.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/messaging/messaging.service.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "REG-B182 T7 never asserts what was seeded, so a seeder that dropped the DEFAULT_ON semantics (everything seeded disabled) would still pass."
+          ],
+          "skipped": [],
+          "filesChanged": ["apps/api/src/messaging/messaging.service.spec.ts"]
+        },
+        {
+          "target": "(artifact)",
+          "route": "mechanical",
+          "fixed": [
+            "NotificationsSettingsTab.tsx path is incomplete — missing _components/ subdirectory"
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/.claude/pipeline/2026-09-06-F23-messaging-engine/build-plan.md"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 1,
+          "opus": 0
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single minor finding: the NO_TRANSPORT test's \"leaves INTERNAL untouched\" assertion is vacuous because every INTERNAL event is a NO_TRIGGER event, so the `channel !== INTERNAL` exemption is unreachable and the assertion passes on precedence alone (proven by the reviewer's mutation probe). Plan: one wave, one Sonnet executor — drop the vacuous assertion, retitle the test to claim only what it proves, and pin the actual current state behaviorally (every INTERNAL cell in getMatrix under the no-transport provider reports NO_TRIGGER) so the first wired INTERNAL event turns the test red and forces a real exemption test; add a comment-only note at the service check recording the exemption as currently unreachable and kept for the first wired INTERNAL event. No production logic, constants, or existing EMAIL/setRuleEnabled assertions change; Option-B bookkeeping (no map/lessons/ledger edits) respected."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/messaging/messaging-config.service.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "The new NO_TRANSPORT test's third assertion (\"leaves INTERNAL untouched\") is vacuous — it passes on NO_TRIGGER precedence, so the `channel !== INTERNAL` exemption it appears to pin is uncovered and currently dead."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "apps/api/src/messaging/messaging-config.service.spec.ts",
+            "apps/api/src/messaging/messaging-config.service.ts"
+          ],
+          "disputed": []
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [],
+  "clean": true
+}

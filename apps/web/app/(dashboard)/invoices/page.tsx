@@ -13,29 +13,104 @@ import {
   ChevronsUpDown,
   Trash2,
   Download,
+  Printer,
 } from "lucide-react";
 import { PageHeader, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
+import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { usePageTitle } from "@/lib/page-title-context";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import {
   useInvoices,
+  useInvoiceKpiSummary,
   useDeleteInvoice,
+  useDownloadInvoicePdf,
   type Invoice,
   type InvoiceStatus,
 } from "@/lib/api/invoices";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 import { apiClient } from "@/lib/api-client";
 import { useBookkeepingSummary } from "@/lib/api/bookkeeping";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, calendarDaysUntil } from "@/lib/formatting";
 import { useAuth } from "@/lib/auth-context";
+
+/** Add calendar days to a YYYY-MM-DD date, in UTC end to end — mirrors
+ *  invoices/new/page.tsx's addDaysIso (local-getter math loses a day across a
+ *  DST boundary). */
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return iso;
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The VIEWER'S current calendar day as YYYY-MM-DD. Deliberately NOT
+ * `todayIso()` (which is `toISOString()`, i.e. the UTC day): the operator's
+ * "today" is their local day, and both the due-soon chips and the Due Today
+ * KPI tile must anchor on the same one — a UTC anchor rolls over hours early
+ * for every negative-UTC-offset viewer, so the tile and the chip it triggers
+ * would target different dates for part of every day. Mirrors
+ * dispatch/page.tsx's todayLocalISO.
+ */
+function todayLocalIso(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * B421: the list row's Balance Due figure. The old inline version
+ * (`inv.paidAmount ?? (inv.payments ?? []).reduce((s, p) => s + Number(p.amount), 0)`)
+ * had no status OR method filter at all — it summed DRAFT/VOID rows and
+ * counted a CREDIT_NOTE/ADVANCE application as cash, both inflating "paid"
+ * and understating the balance. Delegates entirely to the shared
+ * `resolveConfirmedAmounts` (same helper the PDF/detail page use) — no local
+ * re-derivation. Exported for direct unit testing.
+ */
+export function resolveInvoiceListBalance(
+  inv: Pick<
+    Invoice,
+    "total" | "balanceDue" | "paidAmount" | "creditApplied" | "advanceApplied" | "payments"
+  >,
+): number {
+  if (inv.balanceDue !== undefined) return Number(inv.balanceDue);
+  const { cash, creditApplied, advanceApplied } = resolveConfirmedAmounts(
+    {
+      totalPaid: inv.paidAmount,
+      creditApplied: inv.creditApplied,
+      advanceApplied: inv.advanceApplied,
+    },
+    inv.payments ?? [],
+  );
+  return Math.max(0, Number(inv.total) - cash - creditApplied - advanceApplied);
+}
+
+/**
+ * The same "unpaid" status set the API's `isOverdue` filter composes
+ * server-side (invoices.service.ts findAll: SENT/VIEWED/PARTIAL/OVERDUE,
+ * i.e. everything except DRAFT/PAID/VOID/WRITTEN_OFF). The due-soon chips
+ * send this via the API's pre-existing `statuses` (plural) param so a
+ * due-window query doesn't surface invoices that are already settled or not
+ * yet issued — reusing the existing mechanism rather than inventing a new one.
+ */
+const UNPAID_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
+
+type DueChipKey = "today" | "tomorrow" | "7d";
+
+const DUE_CHIPS: { key: DueChipKey; label: string }[] = [
+  { key: "today", label: "Due Today" },
+  { key: "tomorrow", label: "Due Tomorrow" },
+  { key: "7d", label: "Next 7 Days" },
+];
 
 // ─── Contextual status display (Zoho-style) ───────────────────────────────────
 
 function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.ReactNode {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
   if (status === "PAID") {
     return <span className="text-xs font-semibold text-success">Paid</span>;
   }
@@ -56,18 +131,15 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
   }
 
   // For PARTIAL / OVERDUE — compute days to add context
-  if (dueDate) {
-    const due = new Date(dueDate);
-    due.setHours(0, 0, 0, 0);
-    const diffMs = due.getTime() - today.getTime();
-    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
+  const diffDays = calendarDaysUntil(dueDate);
+  if (diffDays !== null) {
     if (status === "OVERDUE" || diffDays < 0) {
       const overdueDays = Math.abs(diffDays);
       if (status === "PARTIAL") {
         return (
           <span className="text-xs font-semibold text-danger">
-            Partial · Overdue{overdueDays > 0 ? ` by ${overdueDays}d` : ""}
+            Partial · Overdue
+            {overdueDays > 0 ? ` by ${overdueDays} day${overdueDays !== 1 ? "s" : ""}` : ""}
           </span>
         );
       }
@@ -87,7 +159,9 @@ function renderStatus(status: InvoiceStatus, dueDate?: string | null): React.Rea
 
     if (status === "PARTIAL") {
       return (
-        <span className="text-xs font-semibold text-warning">Partial · Due in {diffDays}d</span>
+        <span className="text-xs font-semibold text-warning">
+          Partial · Due in {diffDays} day{diffDays !== 1 ? "s" : ""}
+        </span>
       );
     }
 
@@ -128,6 +202,7 @@ function StatTile({
   valueClass,
   active,
   onClick,
+  ariaLabel,
 }: {
   label: string;
   value: string;
@@ -136,10 +211,11 @@ function StatTile({
   valueClass?: string;
   active?: boolean;
   onClick?: () => void;
+  ariaLabel?: string;
 }) {
   const content = (
     <>
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -160,9 +236,10 @@ function StatTile({
       <button
         type="button"
         onClick={onClick}
+        aria-label={ariaLabel}
         className={cn(
           base,
-          "transition-all hover:bg-surface-raised",
+          "cursor-pointer transition-all hover:bg-surface-raised",
           active ? "border-brand-200 ring-1 ring-inset ring-brand-200" : "border-surface-border",
         )}
       >
@@ -179,131 +256,109 @@ function StatTile({
 function PaymentSummaryBar({
   activeFilter,
   onFilter,
+  dueTodayActive,
+  onDueTodayClick,
 }: {
   activeFilter: string;
   onFilter: (status: string) => void;
+  dueTodayActive: boolean;
+  onDueTodayClick: () => void;
 }) {
-  const { data: allData } = useInvoices({ limit: 999 });
-  const all: Invoice[] = allData?.data ?? [];
-
-  const kpis = React.useMemo(() => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const in30 = new Date(today);
-    in30.setDate(in30.getDate() + 30);
-
-    let totalOutstanding = 0;
-    let dueToday = 0;
-    let dueIn30 = 0;
-    let overdue = 0;
-    let paidInvoiceCount = 0;
-    let totalDaysToPay = 0;
-
-    for (const inv of all) {
-      const total = Number(inv.total);
-      const paid =
-        inv.paidAmount ??
-        (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-      const balance =
-        inv.balanceDue !== undefined ? Number(inv.balanceDue) : Math.max(0, total - paid);
-      const due = inv.dueDate ? new Date(inv.dueDate) : null;
-      if (due) due.setHours(0, 0, 0, 0);
-
-      if (
-        inv.status !== "PAID" &&
-        inv.status !== "VOID" &&
-        inv.status !== "WRITTEN_OFF" &&
-        inv.status !== "DRAFT"
-      ) {
-        totalOutstanding += balance;
-      }
-
-      if (
-        inv.status === "OVERDUE" ||
-        (due && due < today && inv.status !== "PAID" && inv.status !== "VOID")
-      ) {
-        overdue += balance;
-      } else if (due && due.getTime() === today.getTime() && inv.status !== "PAID") {
-        dueToday += balance;
-      } else if (
-        due &&
-        due <= in30 &&
-        due > today &&
-        inv.status !== "PAID" &&
-        inv.status !== "VOID"
-      ) {
-        dueIn30 += balance;
-      }
-
-      if (inv.status === "PAID" && inv.sentAt && inv.paidAt) {
-        const sent = new Date(inv.sentAt);
-        const paidAt = new Date(inv.paidAt);
-        const days = Math.round((paidAt.getTime() - sent.getTime()) / (1000 * 60 * 60 * 24));
-        if (days >= 0) {
-          totalDaysToPay += days;
-          paidInvoiceCount++;
-        }
-      }
-    }
-
-    const avgDays = paidInvoiceCount > 0 ? Math.round(totalDaysToPay / paidInvoiceCount) : 0;
-
-    return { totalOutstanding, dueToday, dueIn30, overdue, avgDays };
-  }, [all]);
+  // Calendar-date basis: the VIEWER's local calendar day, the same anchor the
+  // due-soon chips send to the server (L-047 — never derived from the
+  // server's own clock). B12: the six tiles are now computed server-side over
+  // the tenant's whole OPEN set — `useInvoices({ limit: 999 })` silently
+  // dropped whichever invoices page 1000+ would have held.
+  const today = todayLocalIso();
+  const { data: summary } = useInvoiceKpiSummary(today);
+  const kpis = summary ?? {
+    totalOutstanding: 0,
+    dueToday: 0,
+    dueIn30: 0,
+    overdue: 0,
+    avgDays: 0,
+    awaitingConfirmationCount: 0,
+  };
 
   const items = [
     {
       label: "Total Outstanding",
       value: fmt(kpis.totalOutstanding),
-      filter: "SENT",
+      hint: undefined as string | undefined,
       money: true,
       valueClass: undefined as string | undefined,
+      active: activeFilter === "SENT",
+      onClick: () => onFilter(activeFilter === "SENT" ? "" : "SENT"),
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Due Today",
       value: fmt(kpis.dueToday),
-      filter: "",
+      hint: undefined as string | undefined,
       money: true,
       valueClass: kpis.dueToday > 0 ? "text-orange-500" : undefined,
+      active: dueTodayActive,
+      onClick: onDueTodayClick,
+      ariaLabel: "Filter invoices due today",
     },
     {
       label: "Due Within 30 Days",
       value: fmt(kpis.dueIn30),
-      filter: "",
+      hint: undefined as string | undefined,
       money: true,
       valueClass: undefined as string | undefined,
+      active: false,
+      onClick: undefined as (() => void) | undefined,
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Overdue",
       value: fmt(kpis.overdue),
-      filter: "OVERDUE",
+      hint: undefined as string | undefined,
       money: true,
       valueClass: kpis.overdue > 0 ? "text-red-600" : undefined,
+      active: activeFilter === "OVERDUE",
+      onClick: () => onFilter(activeFilter === "OVERDUE" ? "" : "OVERDUE"),
+      ariaLabel: undefined as string | undefined,
     },
     {
       label: "Avg. Days to Get Paid",
-      value: kpis.avgDays > 0 ? `${kpis.avgDays} Days` : "N/A",
-      filter: "PAID",
+      value: kpis.avgDays > 0 ? `${Math.round(kpis.avgDays)} Days` : "N/A",
+      hint: undefined as string | undefined,
       money: false,
       valueClass: undefined as string | undefined,
+      active: activeFilter === "PAID",
+      onClick: () => onFilter(activeFilter === "PAID" ? "" : "PAID"),
+      ariaLabel: undefined as string | undefined,
+    },
+    {
+      // F03/R2 (REG-B11) — count of DRAFT (unconfirmed) payments across all
+      // invoices; not an invoice-status filter (DRAFT is a payment-level
+      // status here), so this tile is a read-only counter, not a toggle.
+      label: "Awaiting Confirmation",
+      value: String(kpis.awaitingConfirmationCount),
+      hint: "Draft payments not yet counted as paid",
+      money: false,
+      valueClass: kpis.awaitingConfirmationCount > 0 ? "text-warning" : undefined,
+      active: false,
+      onClick: undefined as (() => void) | undefined,
+      ariaLabel: undefined as string | undefined,
     },
   ];
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-6">
       {items.map((item) => (
         <StatTile
           key={item.label}
           label={item.label}
           value={item.value}
+          hint={item.hint}
           money={item.money}
           valueClass={item.valueClass}
-          active={!!item.filter && item.filter === activeFilter}
-          onClick={
-            item.filter
-              ? () => onFilter(item.filter === activeFilter ? "" : item.filter)
-              : undefined
-          }
+          active={item.active}
+          onClick={item.onClick}
+          ariaLabel={item.ariaLabel}
         />
       ))}
     </div>
@@ -339,14 +394,65 @@ export default function InvoicesPage() {
   const { toast } = useToast();
   const deleteInvoice = useDeleteInvoice();
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
+  const downloadPdf = useDownloadInvoicePdf();
+  const [printingIds, setPrintingIds] = React.useState<ReadonlySet<string>>(() => new Set());
 
-  const [urlFilters, setFilter] = useUrlFilters({ status: "", dateFrom: "", dateTo: "" });
+  const [urlFilters, setFilter, , setFilters] = useUrlFilters({
+    status: "",
+    dateFrom: "",
+    dateTo: "",
+    dueFrom: "",
+    dueTo: "",
+  });
   const statusFilter = (urlFilters.status as string) ?? "";
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
-  const [page, setPage] = React.useState(1);
+  const dueFrom = (urlFilters.dueFrom as string) ?? "";
+  const dueTo = (urlFilters.dueTo as string) ?? "";
+
+  // Due-soon chip windows, computed fresh each render off the viewer's LOCAL
+  // calendar day — the same anchor the Due Today KPI tile uses, so the tile and
+  // the chip it applies always target the same date. The server compares these
+  // against dueDate, which is stored at UTC midnight, so a bare YYYY-MM-DD
+  // (parsed as UTC midnight) lines up with the stored calendar date exactly.
+  const todayStr = todayLocalIso();
+  const tomorrowStr = addDaysIso(todayStr, 1);
+  const in7Str = addDaysIso(todayStr, 7);
+
+  const activeDueChip: DueChipKey | "" =
+    !dueFrom && !dueTo
+      ? ""
+      : dueFrom === todayStr && dueTo === todayStr
+        ? "today"
+        : dueFrom === tomorrowStr && dueTo === tomorrowStr
+          ? "tomorrow"
+          : dueFrom === todayStr && dueTo === in7Str
+            ? "7d"
+            : "";
+
+  function handleDueChipClick(key: DueChipKey) {
+    if (activeDueChip === key) {
+      setFilters({ dueFrom: "", dueTo: "" });
+      return;
+    }
+    const window =
+      key === "today"
+        ? { dueFrom: todayStr, dueTo: todayStr }
+        : key === "tomorrow"
+          ? { dueFrom: tomorrowStr, dueTo: tomorrowStr }
+          : { dueFrom: todayStr, dueTo: in7Str };
+    setFilters(window);
+  }
+
+  // Due-soon chips imply "not yet settled" — when no explicit status tab is
+  // picked, compose the SAME unpaid status set the API's isOverdue filter
+  // already uses (server-side, invoices.service.ts findAll) via the
+  // pre-existing `statuses` (plural) param, so a due window never surfaces
+  // DRAFT/PAID/VOID/WRITTEN_OFF invoices. An explicit status tab still wins.
+  const dueWindowActive = Boolean(dueFrom || dueTo);
+  const composedStatuses = dueWindowActive && !statusFilter ? UNPAID_STATUSES : undefined;
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("issueDate");
   const [sortOrder, setSortOrder] = React.useState<"asc" | "desc">("desc");
@@ -371,9 +477,12 @@ export default function InvoicesPage() {
 
   const { data, isLoading, isError } = useInvoices({
     status: statusFilter || undefined,
+    statuses: composedStatuses,
     search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
+    dueFrom: dueFrom || undefined,
+    dueTo: dueTo || undefined,
     sortBy,
     sortOrder,
     page,
@@ -383,6 +492,7 @@ export default function InvoicesPage() {
   const invoices = data?.data ?? [];
   const meta = data?.meta;
   const totalPages = meta?.totalPages ?? 1;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const [isExporting, setIsExporting] = React.useState(false);
 
@@ -394,9 +504,12 @@ export default function InvoicesPage() {
       const res = await apiClient.get("/invoices", {
         params: {
           status: statusFilter || undefined,
+          statuses: composedStatuses,
           search: debouncedSearch || undefined,
           dateFrom: dateFrom || undefined,
           dateTo: dateTo || undefined,
+          dueFrom: dueFrom || undefined,
+          dueTo: dueTo || undefined,
           sortBy,
           sortOrder,
           page: 1,
@@ -433,9 +546,14 @@ export default function InvoicesPage() {
     }
   };
 
+  // No setPage(1) here (nor beside any other setFilter/setSearch call on this
+  // page): both useUrlFilters.setFilter and useUrlSearch already delete the
+  // `page` param on every write. A second write from setPage would rebuild the
+  // query from window.location.search BEFORE the router applied the filter
+  // write, replacing the URL with the pre-filter one — silently reverting the
+  // status/date the operator just picked.
   function handleFilterChange(status: string) {
     setFilter("status", status);
-    setPage(1);
   }
 
   return (
@@ -445,7 +563,12 @@ export default function InvoicesPage() {
         subtitle="Track receivables — what's outstanding, due soon, and overdue across your customers."
         action={
           !isCustomer ? (
-            <div className="flex items-center gap-2">
+            // B770: overflowed at 390px (New Invoice off-screen) because PageHeader's own
+            // action wrapper (shrink-0, no max-w-full) never actually shrank enough for THIS
+            // flex-wrap to trigger — fixed at the PageHeader level too
+            // (packages/ui/src/web/PageHeader.tsx), this row's own wrap is still needed so
+            // the content itself has somewhere to go once it can.
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <Button
                 variant="secondary"
                 size="sm"
@@ -489,7 +612,12 @@ export default function InvoicesPage() {
       />
 
       {/* Payment Summary — KPI stat tiles */}
-      <PaymentSummaryBar activeFilter={statusFilter} onFilter={handleFilterChange} />
+      <PaymentSummaryBar
+        activeFilter={statusFilter}
+        onFilter={handleFilterChange}
+        dueTodayActive={activeDueChip === "today"}
+        onDueTodayClick={() => handleDueChipClick("today")}
+      />
 
       {/* Status filter tabs */}
       <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide border-b border-surface-border">
@@ -509,16 +637,33 @@ export default function InvoicesPage() {
         ))}
       </div>
 
+      {/* Due-soon chips */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-navy/70">Due:</span>
+        {DUE_CHIPS.map((chip) => (
+          <button
+            key={chip.key}
+            type="button"
+            onClick={() => handleDueChipClick(chip.key)}
+            className={cn(
+              "rounded-full border px-3 py-1.5 text-sm font-medium transition-colors",
+              activeDueChip === chip.key
+                ? "border-brand-500 bg-brand-500 text-white"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="search"
           placeholder="Search by invoice # or customer…"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setSearch(e.target.value)}
           className="h-9 w-56 rounded border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/70 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <div className="flex items-center gap-1.5">
@@ -526,12 +671,9 @@ export default function InvoicesPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => {
-              setFilter("dateFrom", e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -539,20 +681,13 @@ export default function InvoicesPage() {
             type="date"
             value={dateTo}
             min={dateFrom || undefined}
-            onChange={(e) => {
-              setFilter("dateTo", e.target.value);
-              setPage(1);
-            }}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            onChange={(e) => setFilter("dateTo", e.target.value)}
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
             <button
-              onClick={() => {
-                setFilter("dateFrom", "");
-                setFilter("dateTo", "");
-                setPage(1);
-              }}
+              onClick={() => setFilters({ dateFrom: "", dateTo: "" })}
               className="rounded p-1 text-navy/70 hover:text-danger transition-colors"
               title="Clear dates"
             >
@@ -562,218 +697,261 @@ export default function InvoicesPage() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* Table — B750: the bare table clipped (overflow-hidden) instead of scrolling at 390px;
+          an inner overflow-x-auto lets it scroll horizontally while the outer div keeps the
+          rounded-corner clip, same pattern as the orders list table. */}
       <div className="overflow-hidden rounded-lg border border-surface-border bg-white">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-gray-50">
-            <tr>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("issueDate")}
-              >
-                Date <SortIcon col="issueDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("invoiceNumber")}
-              >
-                Invoice # <SortIcon col="invoiceNumber" />
-              </th>
-              <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Customer Name
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("status")}
-              >
-                Status <SortIcon col="status" />
-              </th>
-              <th
-                className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("dueDate")}
-              >
-                Due Date <SortIcon col="dueDate" />
-              </th>
-              <th
-                className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                onClick={() => toggleSort("total")}
-              >
-                Amount <SortIcon col="total" />
-              </th>
-              <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
-                Balance Due
-              </th>
-              <th className="w-20 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-gray-50">
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("issueDate")}
+                >
+                  Date <SortIcon col="issueDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("invoiceNumber")}
+                >
+                  Invoice # <SortIcon col="invoiceNumber" />
+                </th>
+                <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Customer Name
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("status")}
+                >
+                  Status <SortIcon col="status" />
+                </th>
+                <th
+                  className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("dueDate")}
+                >
+                  Due Date <SortIcon col="dueDate" />
+                </th>
+                <th
+                  className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                  onClick={() => toggleSort("total")}
+                >
+                  Amount <SortIcon col="total" />
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                  Balance Due
+                </th>
+                <th className="w-20 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load invoices. Please try again.
-                </td>
-              </tr>
-            ) : invoices.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching invoices"
-                      description="No invoices match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setFilter("status", "");
-                            setFilter("dateFrom", "");
-                            setFilter("dateTo", "");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No invoices yet"
-                      description="Create an invoice to bill a customer and start tracking receivables."
-                      action={
-                        <Button size="sm" onClick={() => router.push("/invoices/new")}>
-                          New Invoice
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              invoices.map((inv: Invoice) => {
-                const paid =
-                  inv.paidAmount ??
-                  (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount), 0);
-                const balance =
-                  inv.balanceDue !== undefined
-                    ? Number(inv.balanceDue)
-                    : Math.max(0, Number(inv.total) - paid);
-                return (
-                  <tr
-                    key={inv.id}
-                    onClick={() => router.push(`/invoices/${inv.id}`)}
-                    className="group cursor-pointer transition-colors hover:bg-blue-50/40"
-                  >
-                    <td className="px-4 py-3 text-sm text-navy">
-                      {fmtDate((inv as any).issueDate ?? inv.createdAt)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-mono text-xs font-semibold text-brand-500">
-                          {inv.invoiceNumber}
-                        </span>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
+                  </td>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load invoices. Please try again.
+                  </td>
+                </tr>
+              ) : invoices.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo || dueFrom || dueTo ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching invoices"
+                        description="No invoices match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setFilters({
+                                status: "",
+                                dateFrom: "",
+                                dateTo: "",
+                                dueFrom: "",
+                                dueTo: "",
+                              });
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No invoices yet"
+                        description="Create an invoice to bill a customer and start tracking receivables."
+                        action={
+                          <Button size="sm" onClick={() => router.push("/invoices/new")}>
+                            New Invoice
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                invoices.map((inv: Invoice) => {
+                  const balance = resolveInvoiceListBalance(inv);
+                  return (
+                    <tr
+                      key={inv.id}
+                      onClick={() => router.push(`/invoices/${inv.id}`)}
+                      className="group cursor-pointer transition-colors hover:bg-blue-50/40"
+                    >
+                      <td className="px-4 py-3 text-sm text-navy">
+                        {fmtCalendarDate((inv as any).issueDate ?? inv.createdAt)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-mono text-xs font-semibold text-brand-500">
+                            {inv.invoiceNumber}
+                          </span>
+                          <span
+                            className={cn(
+                              "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
+                              (inv as any).orderId
+                                ? "bg-brand-50 text-brand-600"
+                                : "bg-surface-raised text-navy/70",
+                            )}
+                          >
+                            {(inv as any).orderId ? "From Order" : "Manual"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {inv.customer?.businessName ?? "—"}
+                      </td>
+                      <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
+                      <td className="px-4 py-3 text-sm text-navy">
+                        {fmtCalendarDate(inv.dueDate)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        {fmt(Number(inv.total))}
+                      </td>
+                      <td className="px-4 py-3 text-right">
                         <span
                           className={cn(
-                            "inline-flex w-fit items-center rounded-full px-1.5 py-px text-[10px] font-medium leading-tight",
-                            (inv as any).orderId
-                              ? "bg-brand-50 text-brand-600"
-                              : "bg-surface-raised text-navy/70",
+                            "text-sm font-semibold",
+                            balance > 0 ? "text-danger" : "text-navy",
                           )}
                         >
-                          {(inv as any).orderId ? "From Order" : "Manual"}
+                          {fmt(balance)}
                         </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      {inv.customer?.businessName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3">{renderStatus(inv.status, inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-sm text-navy">{fmtDate(inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                      {fmt(Number(inv.total))}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <span
-                        className={cn(
-                          "text-sm font-semibold",
-                          balance > 0 ? "text-danger" : "text-navy",
-                        )}
-                      >
-                        {fmt(balance)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      {!isCustomer && confirmDeleteId === inv.id ? (
-                        <div className="flex items-center gap-1">
-                          <button
-                            title="Confirm delete"
-                            disabled={deleteInvoice.isPending}
-                            onClick={async () => {
-                              try {
-                                await deleteInvoice.mutateAsync(inv.id);
-                                setConfirmDeleteId(null);
-                                toast({ title: "Invoice deleted", variant: "success" });
-                              } catch (err: any) {
-                                setConfirmDeleteId(null);
-                                toast({
-                                  title: "Delete failed",
-                                  description:
-                                    err?.response?.data?.message ?? err?.message ?? "Unknown error",
-                                  variant: "error",
-                                });
-                              }
-                            }}
-                            className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
-                          >
-                            {deleteInvoice.isPending ? (
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                            ) : (
-                              "Delete"
-                            )}
-                          </button>
-                          <button
-                            title="Cancel"
-                            onClick={() => setConfirmDeleteId(null)}
-                            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-0.5">
-                          <button
-                            title="View invoice"
-                            onClick={() => router.push(`/invoices/${inv.id}`)}
-                            className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          {!isCustomer && (
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        {!isCustomer && confirmDeleteId === inv.id ? (
+                          <div className="flex items-center gap-1">
                             <button
-                              title="Delete invoice"
-                              onClick={() => setConfirmDeleteId(inv.id)}
-                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+                              title="Confirm delete"
+                              disabled={deleteInvoice.isPending}
+                              onClick={async () => {
+                                try {
+                                  await deleteInvoice.mutateAsync(inv.id);
+                                  setConfirmDeleteId(null);
+                                  toast({ title: "Invoice deleted", variant: "success" });
+                                } catch (err: any) {
+                                  setConfirmDeleteId(null);
+                                  toast({
+                                    title: "Delete failed",
+                                    description:
+                                      err?.response?.data?.message ??
+                                      err?.message ??
+                                      "Unknown error",
+                                    variant: "error",
+                                  });
+                                }
+                              }}
+                              className="rounded px-2 py-1 text-xs font-semibold text-white bg-danger hover:bg-danger/80 disabled:opacity-50 transition-colors"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              {deleteInvoice.isPending ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                "Delete"
+                              )}
                             </button>
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+                            <button
+                              title="Cancel"
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              title="View invoice"
+                              onClick={() => router.push(`/invoices/${inv.id}`)}
+                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                            <button
+                              title="Print invoice"
+                              aria-label={`Print invoice ${inv.invoiceNumber}`}
+                              disabled={printingIds.has(inv.id)}
+                              onClick={async () => {
+                                if (printingIds.has(inv.id)) return;
+                                setPrintingIds((prev) => new Set(prev).add(inv.id));
+                                try {
+                                  // mutateAsync (not mutate + per-call options) — TanStack
+                                  // Query v5's useMutation is ONE shared observer, so
+                                  // per-call onSuccess/onError/onSettled on a concurrent
+                                  // .mutate() would be overwritten by whichever row calls
+                                  // it last, silently dropping every other row's print,
+                                  // error toast and spinner clear (review finding F1).
+                                  const { blob } = await downloadPdf.mutateAsync(inv.id);
+                                  printPdfBlob(blob);
+                                } catch {
+                                  toast({
+                                    title: "Failed to generate PDF",
+                                    description: "Please try again.",
+                                    variant: "error",
+                                  });
+                                } finally {
+                                  setPrintingIds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(inv.id);
+                                    return next;
+                                  });
+                                }
+                              }}
+                              className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-navy transition-colors disabled:opacity-50"
+                            >
+                              {printingIds.has(inv.id) ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Printer className="h-4 w-4" />
+                              )}
+                            </button>
+                            {!isCustomer && inv.status === "DRAFT" && (
+                              <button
+                                title="Delete invoice"
+                                onClick={() => setConfirmDeleteId(inv.id)}
+                                className="rounded p-1.5 text-navy/70 hover:bg-white hover:text-danger transition-colors"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

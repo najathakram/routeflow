@@ -1,12 +1,18 @@
-import { NestFactory } from "@nestjs/core";
+import "./instrument";
+
+import { HttpAdapterHost, NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
-import { json } from "express";
+
 import helmet from "helmet";
-import { Pool } from "pg";
 import { AppModule } from "./app.module";
 import { RedisIoAdapter } from "./gateways/redis-io.adapter";
 import { ThrottlerExceptionFilter } from "./common/throttler-exception.filter";
+import { SentryExceptionFilter } from "./common/sentry-exception.filter";
+import { MulterExceptionFilter } from "./common/multer-exception.filter";
+import { schemelessLinkBaseVars } from "./common/html-escape";
+import { assertSecrets } from "./assert-secrets";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:3001", // web dashboard
@@ -32,84 +38,16 @@ function buildWildcardPatterns(): RegExp[] {
     });
 }
 
-function assertSecrets() {
-  const missing: string[] = [];
-  if (!process.env.JWT_SECRET) missing.push("JWT_SECRET");
-  if (!process.env.JWT_REFRESH_SECRET) missing.push("JWT_REFRESH_SECRET");
-  // F5-001: in production the storage-URL signing secret MUST be set independently.
-  // Without it the key was derived from JWT_SECRET, so a JWT_SECRET leak let an
-  // attacker forge signed file-access URLs cross-tenant. Fail closed instead.
-  if (process.env.NODE_ENV === "production" && !process.env.STORAGE_URL_SIGNING_SECRET) {
-    missing.push("STORAGE_URL_SIGNING_SECRET");
-  }
-  if (missing.length > 0) {
-    console.error(`\n❌ FATAL: Missing required environment variables: ${missing.join(", ")}`);
-    console.error("   These must be set before the API can start.\n");
-    process.exit(1);
-  }
-
-  // F5-002: warn (do NOT crash) when ENCRYPTION_KEY is unset in production —
-  // encrypt() self-disables so the app can still boot for non-encryption paths.
-  if (process.env.NODE_ENV === "production") {
-    const encKey = process.env.ENCRYPTION_KEY ?? "";
-    if (encKey.length !== 64) {
-      console.warn(
-        "\n⚠️  Production secret not fully configured: ENCRYPTION_KEY (expected 64 hex chars)\n",
-      );
-    }
-  }
-}
-
-/** Idempotent startup migrations — runs before NestJS boots. */
-async function runStartupMigration() {
-  const url = process.env.DATABASE_URL;
-  if (!url) return;
-  const pool = new Pool({ connectionString: url });
-  try {
-    await pool.query(
-      `ALTER TABLE "TenantConfig"
-         ADD COLUMN IF NOT EXISTS "invoiceNotes" TEXT,
-         ADD COLUMN IF NOT EXISTS "invoiceTerms" TEXT`,
-    );
-    // Emergency 20260623: unlisted items + shipment tracking columns
-    await pool.query(`
-      DO $$ BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'OrderItem' AND column_name = 'productId' AND is_nullable = 'NO'
-        ) THEN
-          ALTER TABLE "OrderItem" ALTER COLUMN "productId" DROP NOT NULL;
-        END IF;
-      END $$;
-      ALTER TABLE "OrderItem" ADD COLUMN IF NOT EXISTS "name" TEXT;
-      ALTER TABLE "Order"
-        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
-        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
-        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3);
-      ALTER TABLE "Invoice"
-        ADD COLUMN IF NOT EXISTS "shippingCarrier"        TEXT,
-        ADD COLUMN IF NOT EXISTS "shippingTrackingNumber" TEXT,
-        ADD COLUMN IF NOT EXISTS "shippedAt"              TIMESTAMP(3)
-    `);
-    console.log("✅ Startup migrations applied");
-  } catch (err) {
-    console.warn("⚠️  Startup migration error:", (err as Error).message);
-  } finally {
-    await pool.end();
-  }
-}
-
 async function bootstrap() {
-  // F12-002: the raw boot-time ALTER TABLE DDL contradicts the never-auto-migrate
-  // deploy policy, but is the current safety net for columns not yet backfilled by a
-  // Prisma migration. Gate it behind an env flag that DEFAULTS ON (prod behavior is
-  // unchanged) so it can be turned OFF — set RUN_STARTUP_DDL=false — once proper
-  // migrations cover these columns, with no code change or redeploy of logic.
-  if (process.env.RUN_STARTUP_DDL !== "false") {
-    await runStartupMigration();
-  }
   assertSecrets();
-  const app = await NestFactory.create(AppModule, {
+  // B809: every email link is built from these. Without a scheme, each link renders as plain
+  // text (see safeLinkHref), so say so loudly at boot rather than per email.
+  for (const name of schemelessLinkBaseVars()) {
+    console.error(
+      `\n⚠️  ${name} does not start with http:// or https:// — email links built from it render without a link\n`,
+    );
+  }
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // rawBody: true preserves req.rawBody for Stripe webhook signature verification
     rawBody: true,
   });
@@ -129,7 +67,13 @@ async function bootstrap() {
   // ─── Body size limit ────────────────────────────────────────────────────────
   // 2mb covers all regular payloads. Bulk-import endpoints that need more
   // should stream uploads to object storage (R2/S3) directly.
-  app.use(json({ limit: "2mb" }));
+  // MUST go through Nest's useBodyParser, never `app.use(json(...))`: a manual
+  // express.json() consumes the stream ahead of Nest's parser, so the
+  // `rawBody: true` capture above silently never happens and every Stripe
+  // webhook (platform AND connect) fails signature verification with
+  // req.rawBody undefined. Found live: all connect webhooks 503'd with
+  // "rawBody=false" while the secret and key were fine.
+  app.useBodyParser("json", { limit: "2mb" });
 
   // ─── WebSocket adapter (Redis pub/sub) ──────────────────────────────────────
   app.useWebSocketAdapter(new RedisIoAdapter(app));
@@ -161,7 +105,21 @@ async function bootstrap() {
 
   // ─── Global exception filters ────────────────────────────────────────────────
   // RF-160: emit Retry-After header on 429 throttle responses
-  app.useGlobalFilters(new ThrottlerExceptionFilter());
+  // Sentry filter runs first (reports 5xx before the throttler filter handles
+  // its own exception type), then defers to Nest's default handling.
+  //
+  // ⚠️ ORDER IS LOAD-BEARING. Nest checks globally-registered filters in REVERSE
+  // registration order, so the narrow `@Catch(X)` filters must come AFTER the
+  // catch-all SentryExceptionFilter or they are never reached. MulterExceptionFilter
+  // maps multer 2.3.0's newer error codes (which @nestjs/platform-express does not
+  // know) to 400 — without it they arrive as raw MulterErrors, which the Sentry
+  // filter scores as 500 and captures once per request.
+  const { httpAdapter } = app.get(HttpAdapterHost);
+  app.useGlobalFilters(
+    new SentryExceptionFilter(httpAdapter),
+    new ThrottlerExceptionFilter(),
+    new MulterExceptionFilter(),
+  );
 
   // ─── Validation ─────────────────────────────────────────────────────────────
   app.useGlobalPipes(

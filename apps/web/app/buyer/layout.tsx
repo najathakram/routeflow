@@ -1,11 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
+// B481: maximumScale/userScalable previously locked pinch-zoom here, failing WCAG 2.1 §1.4.4
+// (Resize Text) — removed to match the root layout, which deliberately avoids this restriction.
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
   themeColor: "#047857",
 };
 
@@ -20,8 +20,8 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
   },
   icons: {
-    icon: [{ url: "/logo-buyer.svg", type: "image/svg+xml" }],
-    apple: "/logo-buyer.svg",
+    icon: [{ url: "/brand/routeflow-mark-64.png", type: "image/png", sizes: "64x64" }],
+    apple: "/brand/routeflow-mark-180.png",
   },
   openGraph: {
     title: "RouteFlow Buyer Portal",

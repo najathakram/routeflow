@@ -10,7 +10,9 @@ import { useBuyerCreateOrder, useBuyerPromotions } from "../../../lib/api/buyer"
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
+import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -19,6 +21,9 @@ function formatDateInput(raw: string): string {
   return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`;
 }
 
+// Not `fmtCalendarDate`: this preview keeps the weekday (buyers pick delivery
+// days by weekday), and parsing the typed YYYY-MM-DD as LOCAL midnight already
+// renders the same calendar day in every timezone.
 function formatDisplayDate(iso: string): string {
   if (!iso || iso.length < 10) return "";
   try {
@@ -135,6 +140,7 @@ export default function CartScreen() {
                   const original = line?.original ?? null;
                   const lineTotal = line?.lineSubtotal ?? 0;
                   const promoted = original != null && original > net;
+                  const freeLabel = freeUnitsLabel(line?.freeUnits);
                   return (
                     <View
                       key={item.productId}
@@ -159,6 +165,7 @@ export default function CartScreen() {
                           </Text>
                           {boxed ? " / box" : item.unit ? ` / ${item.unit}` : ""}
                         </Text>
+                        {freeLabel ? <Text style={styles.itemFreeLabel}>{freeLabel}</Text> : null}
                       </View>
                       <View style={styles.qtyRow}>
                         <Pressable
@@ -344,6 +351,12 @@ const styles = StyleSheet.create({
   itemPrice: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   itemPriceWas: { color: ios.label3, textDecorationLine: "line-through" },
   itemPriceNet: { color: ios.brand, fontFamily: "Inter_600SemiBold" },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   qtyRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -361,7 +374,15 @@ const styles = StyleSheet.create({
     minWidth: 18,
     textAlign: "center",
   },
-  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
+  // #2727: a DEFINITE width (row-layout.ts) — on react-native-web the TextInput is an <input> with
+  // the UA `size=20` intrinsic width (~177px), which ballooned the stepper and squeezed the name
+  // column to "B…" at 390. `minWidth` (qtyText) is only a floor.
+  qtyInputReset: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    width: QTY_INPUT_WIDTH.buyerCart,
+    flexShrink: 0,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

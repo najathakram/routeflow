@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -18,6 +19,8 @@ import type { AppConfig } from "../config/configuration";
 import type { JwtPayload } from "./jwt-payload.interface";
 import type { BuyerJwtPayload } from "../buyer/interfaces/buyer-jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import type { DeviceInfo } from "./auth.service";
+import { escapeHtml } from "../common/html-escape";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,6 +42,18 @@ interface OAuthState {
    * builds don't send it.
    */
   deviceState?: string;
+  /**
+   * B825: the browser origin the callback should redirect back to for a
+   * BROWSER-based flow (never the native `mobile` deep-link flow above) —
+   * the Expo mobile-web build's own origin, so a driver signing in from
+   * there returns to it instead of always landing on the Next web app.
+   * Already validated against the exact allow-list (AuthController's
+   * `resolveReturnOrigin`) at mint time, in `generateAuthUrl` — the HMAC over
+   * this whole payload (B349) makes it tamper-proof from here on, so nothing
+   * downstream needs to re-derive or re-check it against the allow-list;
+   * only the callback's PRE-signature-check peek does (untrusted input).
+   */
+  returnOrigin?: string;
 }
 
 export interface GoogleProfile {
@@ -56,6 +71,8 @@ export interface GoogleProfile {
   mobile?: boolean;
   /** F12-005: device-generated state nonce to echo back in the mobile deep link. */
   deviceState?: string;
+  /** B825: already-validated browser origin for a non-`mobile` (browser) flow. */
+  returnOrigin?: string;
 }
 
 interface TokenPair {
@@ -82,11 +99,19 @@ export type GoogleAuthResult =
 
 const NONCE_TTL_SECS = 600; // 10 minutes
 
+// B349: the OAuth `state` is signed so a caller cannot rewrite `linkUserId` (or any
+// other field) to attach their Google identity to someone else's account. The key is
+// HKDF-derived from JWT_SECRET (same isolation pattern as STORAGE_URL_SIGNING_SECRET)
+// — no new secret to provision.
+const OAUTH_STATE_HKDF_INFO = "routeflow-oauth-state-v1";
+const OAUTH_STATE_KEY_LEN = 32;
+
 @Injectable()
 export class GoogleOAuthService {
   private readonly logger = new Logger(GoogleOAuthService.name);
   private readonly oauth2Client: OAuth2Client;
   private readonly redis: Redis;
+  private readonly stateSigningKey: Buffer;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -99,6 +124,22 @@ export class GoogleOAuthService {
     const clientId = configService.get<string>("GOOGLE_CLIENT_ID") ?? "";
     const clientSecret = configService.get<string>("GOOGLE_CLIENT_SECRET") ?? "";
     this.oauth2Client = new OAuth2Client(clientId, clientSecret);
+
+    const jwtSecret = configService.get<{ secret: string }>("jwt")?.secret ?? "";
+    if (!jwtSecret) {
+      // B349 round 1: deriving the state-signing key from an empty string is a fixed,
+      // publicly-known key — fail closed instead of silently signing state with it.
+      throw new Error("JWT_SECRET is required to sign OAuth state");
+    }
+    this.stateSigningKey = Buffer.from(
+      crypto.hkdfSync(
+        "sha256",
+        jwtSecret,
+        Buffer.alloc(0),
+        OAUTH_STATE_HKDF_INFO,
+        OAUTH_STATE_KEY_LEN,
+      ),
+    );
 
     if (!clientId || !clientSecret) {
       this.logger.warn(
@@ -159,6 +200,48 @@ export class GoogleOAuthService {
   }
 
   /**
+   * B349: sign a state payload — base64url(payloadJson) + "." + base64url(HMAC-SHA256).
+   * The MAC covers the exact JSON string, so any edit to the payload (e.g. rewriting
+   * `linkUserId`) invalidates it.
+   */
+  private signState(payloadJson: string): string {
+    const mac = crypto.createHmac("sha256", this.stateSigningKey).update(payloadJson).digest();
+    return `${Buffer.from(payloadJson, "utf-8").toString("base64url")}.${mac.toString("base64url")}`;
+  }
+
+  /**
+   * B349: verify a state's signature and return the raw payload JSON on success.
+   * Throws the same generic ForbiddenException("state_invalid") the rest of the
+   * callback path uses — no oracle distinguishing a bad MAC from any other failure.
+   */
+  private verifyStateSignature(stateParam: string): string {
+    const parts = typeof stateParam === "string" ? stateParam.split(".") : [];
+    if (parts.length !== 2) throw new ForbiddenException("state_invalid");
+    const [payloadB64, macB64] = parts;
+
+    let payloadJson: string;
+    let presentedMac: Buffer;
+    try {
+      payloadJson = Buffer.from(payloadB64, "base64url").toString("utf-8");
+      presentedMac = Buffer.from(macB64, "base64url");
+    } catch {
+      throw new ForbiddenException("state_invalid");
+    }
+
+    const expectedMac = crypto
+      .createHmac("sha256", this.stateSigningKey)
+      .update(payloadJson)
+      .digest();
+    if (
+      presentedMac.length !== expectedMac.length ||
+      !crypto.timingSafeEqual(presentedMac, expectedMac)
+    ) {
+      throw new ForbiddenException("state_invalid");
+    }
+    return payloadJson;
+  }
+
+  /**
    * Build a Google OAuth consent URL.
    * Persists a one-time nonce in Redis (TTL 10 min) for CSRF protection.
    */
@@ -169,6 +252,9 @@ export class GoogleOAuthService {
     context?: "portal" | "staff" | "buyer-standalone",
     mobile?: boolean,
     deviceState?: string,
+    // B825: already validated by the caller (AuthController.resolveReturnOrigin)
+    // against the exact WEB_URL/MOBILE_WEB_URL allow-list — never re-derived here.
+    returnOrigin?: string,
   ): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = {
@@ -180,12 +266,18 @@ export class GoogleOAuthService {
       ...(mobile && { mobile: true }),
       // F12-005: carry the device state nonce through Google (opaque round-trip).
       ...(deviceState && { deviceState }),
+      ...(returnOrigin && { returnOrigin }),
     };
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+    const payloadJson = JSON.stringify(stateObj);
+    const state = this.signState(payloadJson);
 
-    // Fire-and-forget — a Redis outage must not prevent login initiation
+    // Fire-and-forget — a Redis outage must not prevent login initiation.
+    // B349: bind the nonce to this exact payload (its content hash) rather than a
+    // bare presence flag, so the callback can reject a nonce presented alongside a
+    // payload it wasn't minted for.
+    const payloadHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
     this.redis
-      .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
+      .set(`oauth:nonce:${nonce}`, payloadHash, "EX", NONCE_TTL_SECS)
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
     const redirectUri = this.resolveRedirectUri(type);
@@ -206,10 +298,12 @@ export class GoogleOAuthService {
   async generateLinkUrl(type: "platform" | "tenant", userId: string): Promise<string> {
     const nonce = crypto.randomUUID();
     const stateObj: OAuthState = { type, nonce, linkUserId: userId };
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+    const payloadJson = JSON.stringify(stateObj);
+    const state = this.signState(payloadJson);
 
+    const payloadHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
     this.redis
-      .set(`oauth:nonce:${nonce}`, "1", "EX", NONCE_TTL_SECS)
+      .set(`oauth:nonce:${nonce}`, payloadHash, "EX", NONCE_TTL_SECS)
       .catch((e: Error) => this.logger.warn(`Nonce write failed: ${e.message}`));
 
     const redirectUri = this.resolveRedirectUri(type);
@@ -248,7 +342,7 @@ export class GoogleOAuthService {
       data: { googleId, forcePasswordChange: false },
     });
 
-    this.logger.log(`Google account linked for user ${linkUserId} (${email})`);
+    this.logger.log(`Google account linked for user ${linkUserId}`);
 
     // Fire-and-forget security notification
     if (user.email) {
@@ -256,7 +350,9 @@ export class GoogleOAuthService {
         .send({
           to: user.email,
           subject: "Google Sign-In linked to your RouteFlow account",
-          html: `<p>Your Google account (<strong>${email}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          html: `<p>Your Google account (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+          // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+          senderClass: "platform",
         })
         .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
     }
@@ -267,9 +363,13 @@ export class GoogleOAuthService {
    * Throws ForbiddenException("state_invalid") if the nonce is missing or expired.
    */
   async verifyCallback(code: string, stateParam: string): Promise<GoogleProfile> {
+    // B349: verify the HMAC BEFORE parsing — reject a tampered payload without ever
+    // trusting its content (e.g. a rewritten `linkUserId`).
+    const payloadJson = this.verifyStateSignature(stateParam);
+
     let stateObj: OAuthState;
     try {
-      stateObj = JSON.parse(Buffer.from(stateParam, "base64url").toString("utf-8")) as OAuthState;
+      stateObj = JSON.parse(payloadJson) as OAuthState;
     } catch {
       throw new ForbiddenException("state_invalid");
     }
@@ -295,6 +395,20 @@ export class GoogleOAuthService {
       stored = luaResult as string | null;
     }
     if (!stored) throw new ForbiddenException("state_invalid");
+
+    // B349: bind the nonce to the payload it was minted for — reject a presented
+    // payload whose content hash doesn't match what this nonce was stored against.
+    // The MAC above already proves the payload wasn't tampered with post-mint; this
+    // additionally proves it's the SAME payload the nonce was issued for.
+    const presentedHash = crypto.createHash("sha256").update(payloadJson).digest("hex");
+    const storedBuf = Buffer.from(stored, "utf-8");
+    const presentedBuf = Buffer.from(presentedHash, "utf-8");
+    if (
+      storedBuf.length !== presentedBuf.length ||
+      !crypto.timingSafeEqual(storedBuf, presentedBuf)
+    ) {
+      throw new ForbiddenException("state_invalid");
+    }
 
     const redirectUri = this.resolveRedirectUri(stateObj.type);
 
@@ -336,6 +450,7 @@ export class GoogleOAuthService {
       linkUserId: stateObj.linkUserId,
       mobile: stateObj.mobile,
       deviceState: stateObj.deviceState,
+      returnOrigin: stateObj.returnOrigin,
     };
   }
 
@@ -388,24 +503,112 @@ export class GoogleOAuthService {
     }
   }
 
+  // ─── Lookup order (#2495) ───────────────────────────────────────────────────
+  // Shared by handlePlatformAuth, handleTenantAuth's staff lookup and
+  // handleBuyerPortalAuth. The old `findFirst({ OR: [{ googleId }, { email }] })`
+  // was nondeterministic when two rows matched (one bound to this Google sub,
+  // another merely sharing the email) — Postgres gives no ordering guarantee over
+  // an OR with no ORDER BY, so which row "won" could vary. Resolve by the Google
+  // sub FIRST (a bound identity is unambiguous); only fall back to email when no
+  // sub match exists. If the email match is already bound to a DIFFERENT Google
+  // sub, refuse outright — signing in must never silently re-target someone
+  // else's linked account.
+  //
+  // Callers only ever receive a `GoogleProfile` from `verifyCallback`, which
+  // rejects `email_verified === false` before ever constructing one (see
+  // `google-oauth.email-verified.security.spec.ts`) — so an unverified email
+  // can never reach this lookup or the auto-link branches below it. Pinned,
+  // not re-checked here, to avoid duplicating that gate.
+  private async resolveBySubThenEmail<T extends { googleId: string | null }>(
+    findFirst: (args: Record<string, unknown>) => Promise<T | null>,
+    baseWhere: Record<string, unknown>,
+    profile: GoogleProfile,
+  ): Promise<T | null> {
+    // #2664: fail closed before touching the DB at all — a falsy sub or email means
+    // `verifyCallback`'s profile is malformed (should never happen downstream of a real
+    // Google ID token), and querying with an undefined/empty filter would turn `where`
+    // into an unscoped match instead of refusing outright.
+    if (!profile.googleId || !profile.email) {
+      throw new ForbiddenException("unauthorized");
+    }
+
+    const bySub = await findFirst({ where: { ...baseWhere, googleId: profile.googleId } });
+    if (bySub) return bySub;
+
+    // #2664: SUPER_ADMIN rows are scoped by `tenantId: null`, and Postgres treats every
+    // NULL as distinct under `@@unique([tenantId, email])` — two platform admins CAN share
+    // an email. `findFirst` with no `orderBy` has no defined row order, so pin one:
+    // oldest-created row wins, `id` as the final tiebreak for rows created in the same tick.
+    const byEmail = await findFirst({
+      where: { ...baseWhere, email: profile.email },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    if (byEmail && byEmail.googleId && byEmail.googleId !== profile.googleId) {
+      // A different Google account is already bound to this email — no sign-in,
+      // no update. The caller must resolve the conflict out-of-band.
+      throw new ConflictException("google_account_mismatch");
+    }
+    return byEmail;
+  }
+
+  // ─── Link race guard (#2495 LOW) ────────────────────────────────────────────
+  // The googleId-NULL email-match auto-link (handlePlatformAuth, handleTenantAuth's
+  // staff link, handleBuyerPortalAuth's first-link branch) used to be check-then-update:
+  // read the row with googleId:null, then unconditionally write the sub. Two concurrent
+  // sign-ins for the same email (one with the rightful sub, one with an attacker's) could
+  // both pass the read before either wrote, and the writer that lost the race would still
+  // overwrite whatever the winner just set. Guard the write itself with a compare-and-set
+  // (`updateMany` scoped to `googleId: null`) so only the first writer succeeds; a losing
+  // writer re-reads and either finds itself already linked (a harmless duplicate — same
+  // sub) or a DIFFERENT sub now bound, which is refused exactly like the read-time check.
+  private async casLinkGoogleId<T extends { id: string; googleId: string | null }>(
+    updateMany: (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => Promise<{ count: number }>,
+    findUnique: (id: string) => Promise<T | null>,
+    row: T,
+    profile: GoogleProfile,
+    data: Record<string, unknown>,
+  ): Promise<{ row: T; linked: boolean }> {
+    const result = await updateMany({ where: { id: row.id, googleId: null }, data });
+    if (result.count === 1) {
+      return { row: { ...row, ...data } as T, linked: true };
+    }
+
+    // Lost the race — someone else wrote googleId on this row between our read and
+    // our write. Re-read and decide who won.
+    const fresh = await findUnique(row.id);
+    if (!fresh) throw new ForbiddenException("unauthorized");
+    if (fresh.googleId && fresh.googleId !== profile.googleId) {
+      throw new ConflictException("google_account_mismatch");
+    }
+    // Already linked to THIS same sub (a duplicate concurrent request) — proceed
+    // with the row as it now stands; no side effect to repeat.
+    return { row: fresh, linked: false };
+  }
+
   /** Find or create the appropriate user record and return a token pair. */
-  async findOrCreateUser(profile: GoogleProfile): Promise<GoogleAuthResult> {
+  async findOrCreateUser(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
     return profile.type === "platform"
-      ? this.handlePlatformAuth(profile)
-      : this.handleTenantAuth(profile);
+      ? this.handlePlatformAuth(profile, deviceInfo)
+      : this.handleTenantAuth(profile, deviceInfo);
   }
 
   // ─── Platform flow (SUPER_ADMIN only) ─────────────────────────────────────
 
-  private async handlePlatformAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    const user = await this.prisma.user.findFirst({
-      where: {
-        tenantId: null,
-        role: "SUPER_ADMIN",
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+  private async handlePlatformAuth(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
+    const user = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      { tenantId: null, role: "SUPER_ADMIN", deletedAt: null },
+      profile,
+    );
 
     if (!user || user.status !== "ACTIVE") {
       throw new ForbiddenException("unauthorized");
@@ -415,13 +618,16 @@ export class GoogleOAuthService {
     // Also clear forcePasswordChange — Google-authenticated users cannot set a
     // password via the change-password form, so the flag must not block them.
     if (!user.googleId) {
-      await this.prisma.user.update({
-        where: { id: user.id },
-        data: { googleId: profile.googleId, forcePasswordChange: false },
-      });
+      await this.casLinkGoogleId(
+        (args) => this.prisma.user.updateMany(args),
+        (id) => this.prisma.user.findUnique({ where: { id } }),
+        user,
+        profile,
+        { googleId: profile.googleId, forcePasswordChange: false },
+      );
     }
 
-    const tokens = await this.issueUserTokenPair(user, null);
+    const tokens = await this.issueUserTokenPair(user, null, deviceInfo);
     return {
       kind: "platform",
       ...tokens,
@@ -437,7 +643,10 @@ export class GoogleOAuthService {
 
   // ─── Tenant flow (OPERATOR/DRIVER or buyer portal) ─────────────────────────
 
-  private async handleTenantAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
+  private async handleTenantAuth(
+    profile: GoogleProfile,
+    deviceInfo?: DeviceInfo,
+  ): Promise<GoogleAuthResult> {
     // buyer-standalone: Google sign-in from the buyer portal without a seller invite link.
     // Skip tenant resolution entirely and go straight to buyer portal auth.
     if (profile.context === "buyer-standalone") {
@@ -453,14 +662,15 @@ export class GoogleOAuthService {
     }
 
     // Check for a matching staff user in this tenant first
-    let staffUser = await this.prisma.user.findFirst({
-      where: {
+    let staffUser = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.user.findFirst(args),
+      {
         tenantId: tenant.id,
         deletedAt: null,
         role: { in: ["OPERATOR", "DRIVER", "TENANT_ADMIN"] },
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
       },
-    });
+      profile,
+    );
 
     if (staffUser) {
       if (staffUser.status !== "ACTIVE") throw new ForbiddenException("unauthorized");
@@ -469,14 +679,18 @@ export class GoogleOAuthService {
       if (profile.context === "portal") throw new ForbiddenException("google_email_is_staff");
 
       if (!staffUser.googleId) {
-        staffUser = await this.prisma.user.update({
-          where: { id: staffUser.id },
+        const { row } = await this.casLinkGoogleId(
+          (args) => this.prisma.user.updateMany(args),
+          (id) => this.prisma.user.findUnique({ where: { id } }),
+          staffUser,
+          profile,
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
-          data: { googleId: profile.googleId, forcePasswordChange: false },
-        });
+          { googleId: profile.googleId, forcePasswordChange: false },
+        );
+        staffUser = row;
       }
-      const tokens = await this.issueUserTokenPair(staffUser, tenant.slug);
+      const tokens = await this.issueUserTokenPair(staffUser, tenant.slug, deviceInfo);
       return {
         kind: "staff",
         ...tokens,
@@ -495,29 +709,113 @@ export class GoogleOAuthService {
   }
 
   private async handleBuyerPortalAuth(profile: GoogleProfile): Promise<GoogleAuthResult> {
-    let buyer = await this.prisma.buyerAccount.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ googleId: profile.googleId }, { email: profile.email }],
-      },
-    });
+    let buyer = await this.resolveBySubThenEmail(
+      (args: any) => this.prisma.buyerAccount.findFirst(args),
+      { deletedAt: null },
+      profile,
+    );
 
     if (buyer) {
       if (buyer.status === "SUSPENDED") throw new ForbiddenException("unauthorized");
 
-      // Auto-link googleId and send a security notification (fire-and-forget)
+      // Google attests the mailbox it authenticated — when that's the account's own
+      // email, it satisfies the registration verification gate (requestSeller's
+      // emailVerified check) exactly like clicking the emailed link would. NOT when
+      // the account was found via a previously-linked googleId and the emails
+      // differ: Google proved profile.email, not the account email.
+      const googleAttestsMailbox = buyer.email.toLowerCase() === profile.email;
+
+      // SECURITY (buyer-connect account-takeover): registration issues tokens with no
+      // mailbox proof, so a password sitting on an account whose mailbox was NEVER
+      // verified is attacker-controlled by assumption — anyone could have registered
+      // under this email and chosen that password. When a Google sign-in is now about
+      // to VERIFY the mailbox, the rightful owner is the Google identity, not whoever
+      // set the password. Neutralize the squatted credential first: replace the hash
+      // with an unguessable placeholder (passwordSet:false, so the true owner can claim
+      // a real password via /buyer/auth/set-password) and revoke every existing session.
+      const squattedPassword = googleAttestsMailbox && buyer.passwordSet && !buyer.emailVerified;
+
       if (!buyer.googleId) {
-        await this.prisma.buyerAccount.update({
-          where: { id: buyer.id },
-          data: { googleId: profile.googleId },
-        });
-        void this.emailService
-          .send({
-            to: buyer.email,
-            subject: "Google Sign-In linked to your RouteFlow account",
-            html: `<p>Your Google account (<strong>${profile.email}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
-          })
-          .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        let linked: boolean;
+        if (squattedPassword) {
+          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
+              googleId: profile.googleId,
+              emailVerified: true,
+              passwordHash: placeholderHash,
+              passwordSet: false,
+            },
+          );
+          buyer = casResult.row;
+          linked = casResult.linked;
+          if (linked) {
+            await this.prisma.buyerRefreshToken.deleteMany({
+              where: { buyerAccountId: buyer.id },
+            });
+            this.logger.warn(
+              `Buyer ${buyer.id} had an unverified password neutralized on first Google link ` +
+                `(mailbox now attested by Google; prior sessions revoked)`,
+            );
+          }
+        } else {
+          const casResult = await this.casLinkGoogleId(
+            (args) => this.prisma.buyerAccount.updateMany(args),
+            (id) => this.prisma.buyerAccount.findUnique({ where: { id } }),
+            buyer,
+            profile,
+            {
+              googleId: profile.googleId,
+              ...(googleAttestsMailbox ? { emailVerified: true } : {}),
+            },
+          );
+          buyer = casResult.row;
+          linked = casResult.linked;
+        }
+        // Only notify when THIS request actually performed the link — a request
+        // that lost the race to an identical concurrent one must not re-send it.
+        if (linked) {
+          void this.emailService
+            .send({
+              to: buyer.email,
+              subject: "Google Sign-In linked to your RouteFlow account",
+              html: `<p>Your Google account (<strong>${escapeHtml(profile.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+              senderClass: "platform",
+            })
+            .catch((e: Error) => this.logger.warn(`Google link notification failed: ${e.message}`));
+        }
+      } else if (googleAttestsMailbox && !buyer.emailVerified) {
+        // Already-linked account whose mailbox was never verified (e.g. password
+        // registration followed by Google linking before this gate existed). Same
+        // squat exposure as the first-link path — neutralize the unproven password too.
+        if (squattedPassword) {
+          const placeholderHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 10);
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: {
+              emailVerified: true,
+              passwordHash: placeholderHash,
+              passwordSet: false,
+            },
+          });
+          await this.prisma.buyerRefreshToken.deleteMany({
+            where: { buyerAccountId: buyer.id },
+          });
+          this.logger.warn(
+            `Buyer ${buyer.id} had an unverified password neutralized on Google sign-in ` +
+              `(already-linked; prior sessions revoked)`,
+          );
+        } else {
+          buyer = await this.prisma.buyerAccount.update({
+            where: { id: buyer.id },
+            data: { emailVerified: true },
+          });
+        }
       }
     } else {
       // Auto-create portal account with an unguessable password hash (Google-only).
@@ -536,7 +834,7 @@ export class GoogleOAuthService {
           emailVerified: true,
         },
       });
-      this.logger.log(`BuyerAccount created via Google: ${profile.email}`);
+      this.logger.log(`BuyerAccount created via Google: ${buyer.id}`);
     }
 
     // Process an invite token embedded in the OAuth state
@@ -546,8 +844,12 @@ export class GoogleOAuthService {
       );
     }
 
+    // REG-B141: the count of USABLE sellers the Google callback hands the client (web reads it
+    // from the redirect). It must use the SAME definition as BuyerService.getSellers' ACTIVE
+    // links — a link whose customer was removed is not one. Mobile no longer branches on it
+    // (#2546): it reads GET /buyer/sellers itself so a pending-only buyer lands on its seller list.
     const sellerCount = await this.prisma.customerLink.count({
-      where: { buyerAccountId: buyer.id, status: "ACTIVE" },
+      where: { buyerAccountId: buyer.id, status: "ACTIVE", customer: { deletedAt: null } },
     });
     const tokens = await this.issueBuyerTokenPair(
       buyer.id,
@@ -572,8 +874,19 @@ export class GoogleOAuthService {
   // ─── Invite token helper ───────────────────────────────────────────────────
 
   private async acceptInviteToken(token: string, buyerAccountId: string): Promise<void> {
+    // PENDING_SELLER_APPROVAL is redeemable too: a buyer-initiated request against an
+    // INVITED row flips the status while PRESERVING the token, and the true invitee's
+    // emailed link must keep working. Mirrors BuyerService.acceptInvite's gate, including
+    // REG-B141's `customer: { deletedAt: null }`: a removed customer's invite is not
+    // redeemable, so the link is left untouched and the token is NOT consumed — restore has
+    // to be able to bring the pending invite back with the customer. The Google path ignores
+    // a non-redeemable token silently (`return`), exactly as it does an expired one.
     const link = await this.prisma.customerLink.findFirst({
-      where: { inviteToken: token, status: "INVITED" },
+      where: {
+        inviteToken: token,
+        status: { in: ["INVITED", "PENDING_SELLER_APPROVAL"] },
+        customer: { deletedAt: null },
+      },
     });
     if (!link) return;
     if (link.inviteExpiresAt && link.inviteExpiresAt < new Date()) return;
@@ -593,7 +906,18 @@ export class GoogleOAuthService {
 
   // ─── Token issuance helpers ────────────────────────────────────────────────
 
-  private async issueUserTokenPair(user: any, tenantSlug: string | null): Promise<TokenPair> {
+  private async issueUserTokenPair(
+    user: any,
+    tenantSlug: string | null,
+    deviceInfo?: DeviceInfo,
+  ): Promise<TokenPair> {
+    // #2159 S1: a Google sign-in is an interactive sign-in too — stamp lastLoginAt exactly as
+    // AuthService.login() does (best-effort; a failed stamp never blocks the sign-in).
+    try {
+      await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${user.id}: ${(err as Error).message}`);
+    }
     const jwtConfig = this.configService.get<{
       secret: string;
       refreshSecret: string;
@@ -609,6 +933,12 @@ export class GoogleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #2495: mirror AuthService.login()'s claims exactly — a Google-authenticated
+      // staff token must carry the same isAdmin claim a password login would.
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     // Plans & Billing: embed the entitlement snapshot for Google-login users too.
     const claims = await this.entitlements.claimsFor(payload.tenantId);
@@ -621,7 +951,7 @@ export class GoogleOAuthService {
       { sub: user.id, type: "staff" }, // F5-003: realm discriminator (Google staff login)
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
-    await this.storeUserRefreshToken(user.id, refreshToken);
+    await this.storeUserRefreshToken(user.id, refreshToken, deviceInfo);
     return { accessToken, refreshToken };
   }
 
@@ -663,14 +993,24 @@ export class GoogleOAuthService {
     return { accessToken, refreshToken };
   }
 
-  private async storeUserRefreshToken(userId: string, token: string): Promise<void> {
+  private async storeUserRefreshToken(
+    userId: string,
+    token: string,
+    deviceInfo?: DeviceInfo,
+  ): Promise<void> {
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const decoded = this.jwtService.decode(token);
     const expiresAt = new Date(decoded.exp * 1000);
     await this.prisma.refreshToken.upsert({
       where: { tokenHash },
-      create: { userId, tokenHash, expiresAt },
-      update: { expiresAt },
+      create: {
+        userId,
+        tokenHash,
+        expiresAt,
+        userAgent: deviceInfo?.userAgent,
+        ipAddress: deviceInfo?.ipAddress,
+      },
+      update: { expiresAt, userAgent: deviceInfo?.userAgent, ipAddress: deviceInfo?.ipAddress },
     });
   }
 }

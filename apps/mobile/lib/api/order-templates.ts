@@ -1,16 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { unwrapListEnvelope } from "../order-templates-logic";
+import type { OrderTemplateItem } from "@routeflow/types";
+export type { OrderTemplateItem } from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/order-templates.ts) ─────────────────────────
-
-export interface OrderTemplateItem {
-  id: string;
-  productId: string;
-  product?: { id: string; name: string; unit: string };
-  qty: number; // NO price field — order-template items carry no money
-  notes?: string;
-}
 
 export interface OrderTemplate {
   id: string;

@@ -14,6 +14,7 @@ import {
   type BuyerPayment,
 } from "../../lib/api/buyer";
 import { checkBadgeFor } from "../../lib/check-badge";
+import { fmtCalendarDate } from "../../lib/calendar-date";
 import {
   activeCreditRows,
   formatPaymentMethod,
@@ -63,6 +64,10 @@ export default function BuyerPaymentsScreen() {
   }, [months, selectedMonth]);
 
   const credits = activeCreditRows(statement?.transactions);
+  // M3: "active" presence and the sub-label read the uncapped `availableCredit`
+  // total, never a count of `credits` — that list is a capped, partial view of
+  // the ledger (the `transactions` array stops at the API's own take cap).
+  const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
 
   async function handleDownload() {
     if (!selectedMonth || downloading) return;
@@ -111,7 +116,7 @@ export default function BuyerPaymentsScreen() {
             <Tile
               label="Store credit"
               value={money(statement?.availableCredit)}
-              sub={credits.length > 0 ? `${credits.length} active` : "None available"}
+              sub={hasActiveCredit ? "Available" : "None available"}
               tint={ios.brand}
             />
             <Tile
@@ -122,9 +127,15 @@ export default function BuyerPaymentsScreen() {
           </View>
 
           {/* Active credits */}
-          {credits.length > 0 ? (
+          {hasActiveCredit ? (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Active credits</Text>
+              {statement?.transactionsTruncated ? (
+                <Text style={styles.truncationNote}>
+                  Showing the most recent transactions only — older entries are not listed in this
+                  ledger.
+                </Text>
+              ) : null}
               {credits.map((c, i) => (
                 <View
                   key={c.id}
@@ -142,7 +153,7 @@ export default function BuyerPaymentsScreen() {
                     </Text>
                     <Text style={styles.creditSub}>
                       {fmtDate(c.date)}
-                      {c.expiresAt ? ` · expires ${fmtDate(c.expiresAt)}` : ""}
+                      {c.expiresAt ? ` · expires ${fmtCalendarDate(c.expiresAt, "short")}` : ""}
                     </Text>
                   </View>
                   <Text style={styles.creditAmount}>{money(c.runningBalance)}</Text>
@@ -356,6 +367,12 @@ const styles = StyleSheet.create({
   creditRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 10 },
   creditDesc: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   creditSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  truncationNote: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    marginBottom: 10,
+  },
   creditAmount: {
     fontSize: 15,
     fontFamily: "Inter_600SemiBold",

@@ -2,6 +2,7 @@ import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
+import { toSecureStoreKey } from "./secure-key";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -12,7 +13,7 @@ export const apiClient = axios.create({ baseURL: `${BASE_URL}/api/v1`, timeout: 
 async function storageGet(key: string): Promise<string | null> {
   if (Platform.OS === "web") return localStorage.getItem(key);
   const { getItemAsync } = await import("expo-secure-store");
-  return getItemAsync(key);
+  return getItemAsync(toSecureStoreKey(key));
 }
 
 async function storageSet(key: string, value: string): Promise<void> {
@@ -21,7 +22,7 @@ async function storageSet(key: string, value: string): Promise<void> {
     return;
   }
   const { setItemAsync } = await import("expo-secure-store");
-  await setItemAsync(key, value);
+  await setItemAsync(toSecureStoreKey(key), value);
 }
 
 async function storageDel(key: string): Promise<void> {
@@ -30,7 +31,7 @@ async function storageDel(key: string): Promise<void> {
     return;
   }
   const { deleteItemAsync } = await import("expo-secure-store");
-  await deleteItemAsync(key);
+  await deleteItemAsync(toSecureStoreKey(key));
 }
 
 /**
@@ -114,6 +115,8 @@ function processQueue(error: unknown, token: string | null = null) {
 type ExtendedConfig = InternalAxiosRequestConfig & {
   _retry?: boolean;
   _offlineQueued?: boolean;
+  /** Per-request opt-out for READ-ONLY POSTs (e.g. the inline-return quote): never queued. */
+  _skipOfflineQueue?: boolean;
 };
 
 apiClient.interceptors.response.use(
@@ -127,8 +130,33 @@ apiClient.interceptors.response.use(
       (original?.method ?? "").toUpperCase(),
     );
     const isFormData = original?.data instanceof FormData;
+    // REG-B196 (T-B196a): a no-response error used to be classified as
+    // "offline" unconditionally. That is wrong for a TIMEOUT — the request
+    // reached the network and may well have committed server-side, so
+    // queueing it risks a duplicate write while the operator still has the
+    // full cart open. A timeout is therefore only treated as offline when the
+    // app affirmatively KNOWS it is offline.
+    //
+    // A hard transport failure (ERR_NETWORK / no code — DNS or route failure,
+    // raised immediately instead of after the 15s timeout) is the shape a
+    // genuinely offline device produces, and it never reached a server. Those
+    // stay queued unconditionally, because `isOnline` is a positive signal
+    // only useNetworkSync's NetInfo listener ever writes: it defaults to true,
+    // is deliberately not persisted, and nothing outside the (driver)/
+    // (operator) layouts mounts that listener. Gating the whole queue on it
+    // would silently drop offline mutations on every cold start and inside
+    // NetInfo's reachability-probe window (isInternetReachable === null).
+    const isTimeout = error.code === "ECONNABORTED" || error.code === "ETIMEDOUT";
+    const queueAsOffline = !isTimeout || useOfflineQueue.getState().isOnline === false;
 
-    if (isNetworkError && isMutation && !isFormData && !original?._offlineQueued) {
+    if (
+      isNetworkError &&
+      isMutation &&
+      !isFormData &&
+      !original?._offlineQueued &&
+      !original?._skipOfflineQueue &&
+      queueAsOffline
+    ) {
       if (original) original._offlineQueued = true;
       let body: unknown;
       try {

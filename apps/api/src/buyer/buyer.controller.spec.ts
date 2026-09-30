@@ -34,6 +34,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { UserRole } from "@prisma/client";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
 const MOCK_CTX = {
   customerId: "cust-abc",
@@ -53,7 +54,9 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     unsnooze: jest.Mock;
   };
   let invoicesService: jest.Mocked<Pick<InvoicesService, "findAll">>;
-  let templatesService: jest.Mocked<Pick<OrderTemplatesService, "findAllForUser">>;
+  let templatesService: jest.Mocked<
+    Pick<OrderTemplatesService, "findAllForUser" | "generateOrder">
+  >;
   let authorizationsService: jest.Mocked<Pick<AuthorizationsService, "listForBuyer" | "submit">>;
   let stockAlertService: {
     subscribe: jest.Mock;
@@ -63,6 +66,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
   };
   let prisma: ReturnType<typeof createMockPrisma>;
   let systemConfigService: { getRemittanceConfig: jest.Mock };
+  let customersService: { getStatementForOperator: jest.Mock };
 
   beforeEach(async () => {
     ordersService = {
@@ -78,6 +82,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     invoicesService = { findAll: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }) };
     templatesService = {
       findAllForUser: jest.fn().mockResolvedValue({ data: [], meta: { total: 0 } }),
+      generateOrder: jest.fn().mockResolvedValue({ id: "o1" }),
     };
     authorizationsService = {
       listForBuyer: jest.fn().mockResolvedValue([]),
@@ -92,6 +97,9 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     prisma = createMockPrisma();
     systemConfigService = {
       getRemittanceConfig: jest.fn().mockResolvedValue({ payToName: "Acme Wholesale" }),
+    };
+    customersService = {
+      getStatementForOperator: jest.fn().mockResolvedValue({ outstandingAmount: 0 }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -110,7 +118,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
         { provide: InvoicePdfService, useValue: {} },
         { provide: StatementService, useValue: {} },
         { provide: StatementPdfService, useValue: {} },
-        { provide: CustomersService, useValue: {} },
+        { provide: CustomersService, useValue: customersService },
         { provide: OrderTemplatesService, useValue: templatesService },
         { provide: AuthorizationsService, useValue: authorizationsService },
         { provide: PrismaService, useValue: prisma },
@@ -153,6 +161,18 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     }
   });
 
+  // D6 / B462: the buyer portal reuses getStatementForOperator. It must NOT ask for the
+  // operator-only exposure figures — a buyer is never shown the seller's unissued-draft
+  // totals. The call carries the customerId ONLY (no options argument at all).
+  it("getStatement: asks for the customer's statement WITHOUT the operator-only exposure flag", async () => {
+    await controller.getStatement(MOCK_CTX as any);
+
+    expect(customersService.getStatementForOperator).toHaveBeenCalledTimes(1);
+    const args = customersService.getStatementForOperator.mock.calls[0];
+    expect(args).toEqual(["cust-abc"]);
+    expect(args).toHaveLength(1);
+  });
+
   it("getStandingOrders: passes customerId directly — no userId lookup", async () => {
     await controller.getStandingOrders(MOCK_CTX as any);
 
@@ -180,6 +200,40 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     // templatesService.findAllForUser resolves to { data: [], meta: { total: 0 } }
     expect(result).toBeDefined();
     expect(templatesService.findAllForUser).toHaveBeenCalledTimes(1);
+  });
+
+  // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser entirely
+  // (there is no JwtPayload here), so it must pass isStaffRole itself — a hardcoded/
+  // defaulted true would let a buyer's "Reorder" silently oversell where their own
+  // checkout (orders.service.ts create()) returns 409 INSUFFICIENT_STOCK.
+  describe("reorderFromTemplate (POST /buyer/templates/:id/reorder)", () => {
+    it("generates with isStaffRole=false — the buyer's own hard-block posture, never staff oversell", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue({ customerId: "cust-abc" });
+
+      const result = await controller.reorderFromTemplate("tpl-1", MOCK_CTX as any);
+
+      expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
+      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false);
+      expect(result).toEqual({ id: "o1" });
+    });
+
+    it("refuses a template belonging to another customer — never calls generateOrder", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue({ customerId: "someone-elses-customer" });
+
+      await expect(controller.reorderFromTemplate("tpl-1", MOCK_CTX as any)).rejects.toThrow(
+        "This template does not belong to your account",
+      );
+      expect(templatesService.generateOrder).not.toHaveBeenCalled();
+    });
+
+    it("404s a nonexistent template — never calls generateOrder", async () => {
+      prisma.orderTemplate.findFirst.mockResolvedValue(null);
+
+      await expect(
+        controller.reorderFromTemplate("no-such-template", MOCK_CTX as any),
+      ).rejects.toThrow("Template not found");
+      expect(templatesService.generateOrder).not.toHaveBeenCalled();
+    });
   });
 
   // RF-217: GET /buyer/me returns 200 — it is a direct passthrough of ctx.customer

@@ -1,0 +1,37 @@
+{
+  "task": {
+    "id": "WP7",
+    "title": "web: shared type import, usePlanFlag, useCreateCheckout, nav map + route matcher",
+    "type": "feature",
+    "files": [
+      "apps/web/lib/api/billing.ts",
+      "apps/web/lib/api/plan-flags.ts",
+      "apps/web/lib/plan-gated-nav.ts"
+    ],
+    "tests": ["apps/web/lib/plan-gated-nav.test.ts", "apps/web/lib/api/plan-flags.test.tsx"],
+    "brief": "Satisfies R2.5, R4.1, R4.3, R4.5; provenBy T19, T20.\nbilling.ts: replace the local SubscriptionView with\n  import type { SubscriptionView } from \"@routeflow/types\"; export type { SubscriptionView };\nadd useCreateCheckout() = useMutation<{checkoutUrl:string}>() posting /billing/subscription/checkout,\nonSuccess: (r) => window.location.assign(r.checkoutUrl).\nplan-flags.ts: usePlanFlag(key, opts?) -> {enabled, resolved, failed} from\nuseSubscription({staleTime: 60_000, ...opts}) (resolved=q.isSuccess, failed=q.isError,\nenabled=q.data?.flags?.includes(key) ?? false).\nplan-gated-nav.ts — exact code (only hrefs that exist in OPERATOR_NAV, layout.tsx:90-153):\n  export const PLAN_GATED_NAV: Readonly<Record<string, FlagKey>> = {\n    \"/returns\": \"flag.returns\", \"/suppliers\": \"flag.suppliers\", \"/vendor-bills\": \"flag.ap_bills\",\n    \"/estimates\": \"flag.estimates\", \"/credit-notes\": \"flag.credit_notes\",\n    \"/finance/reports\": \"flag.reports\", \"/analytics\": \"flag.analytics\",\n  };\n  export type PlanFlagState = { enabled: boolean; resolved: boolean; failed: boolean };\n  export const planFlagVisible = (s: PlanFlagState) => (s.resolved ? s.enabled : s.failed);\n  export function matchPlanGatedRoute(pathname: string): FlagKey | null {\n    for (const [prefix, key] of Object.entries(PLAN_GATED_NAV))\n      if (pathname === prefix || pathname.startsWith(prefix + \"/\")) return key;\n    return null;\n  }\n/sales-agents, /finance/commissions, /dispatch|/routes|/deliveries|/drivers stay on their addon hooks (R7.7).",
+    "dependsOn": ["WP1", "WP3c"],
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(workdir)",
+        "severity": "blocker",
+        "phase": "Workdir guard",
+        "summary": "Task WP7's agent (tests:WP7) changed the MAIN checkout at \"C:/ClaudeCode/routeflow\" while its workdir is the separate worktree \"C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2\" -- HEAD moved 901f43a0a6a0f457361c9cd0d4a4259bfbe54766 -> 901f43a0a6a0f457361c9cd0d4a4259bfbe54766.",
+        "detail": "before: {\"sha\":\"901f43a0a6a0f457361c9cd0d4a4259bfbe54766\",\"status\":\"?? apps/api/.claude/\\n\"}; after: {\"sha\":\"901f43a0a6a0f457361c9cd0d4a4259bfbe54766\",\"status\":\"?? apps/api/.claude/\"}"
+      }
+    ],
+    "redRun": {
+      "ran": false,
+      "results": [
+        {
+          "command": "N/A — no test command could be run; task brief missing",
+          "exitCode": -1,
+          "output": "BLOCKED: .claude/pipeline/2026-09-15-lite-L2-plan/tasks/WP7/brief.md does not exist. Verified via `ls`/`find`: the plan directory C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2/.claude/pipeline/2026-09-15-lite-L2-plan contains only `phases/` (four checkpoint JSONs: wp5a, wp3c, wp5b, wp5c) and `progress.md` — there is no `tasks/` subdirectory anywhere under it, so `tasks/WP7/` and `tasks/WP7/brief.md` cannot be read. `git status --porcelain -- .claude/pipeline/2026-09-15-lite-L2-plan` shows the entire directory as a single untracked (??) entry, and `git log` on that path is empty — it has never been committed, so there is no history to recover the brief from. `grep -r WP7 .claude/pipeline` across the whole worktree finds only unrelated WP7 ids in other, older plans (2026-09-02-F11-run-cancel-skip, 2026-09-02-F14-authz-matrix, 2026-09-04-portal-switcher, plans/2026-07-13-p5-02-catalogue-v2) — none for lite-L2-plan. The sibling checkpoint files in this same plan (07-checkpoint-wp5a.json, 08-checkpoint-wp3c.json, 09-checkpoint-wp5b.json, 10-checkpoint-wp5c.json) independently document the same failure for WP5a/WP3c/WP5b/WP5c: each records that a prior test-author run's 'revert untracked files to HEAD' step deleted large numbers of unrelated untracked paths (other .claude/pipeline/* run directories, all of .claude/handoffs/*, .claude/settings.local.json.bak, apps/api/.claude, etc.) before the red gate ran, and WP3c's own checkpoint explicitly concludes 'the plan directory ... has no tasks/ subdirectory at all' — matching what I found. This strongly indicates tasks/WP7/brief.md (and every other task's brief) was destroyed by that same over-broad revert in an earlier session, not that it was never authored. Target test files apps/web/lib/plan-gated-nav.test.ts and apps/web/lib/api/plan-flags.test.tsx do not currently exist (confirmed via `ls`). No implementation or test files were created, edited, or deleted this session — only read-only `ls`, `find`, `cat`, `git status`, `git log` were run. Per scope rules I could write tests against guessed symbol names, but the task explicitly requires the brief for exact behavior and forbids implementing/guessing behavior myself, so I am stopping and reporting the blocker instead of fabricating test expectations (flag names, nav-gating contract, API shape) for plan-gated-nav.test.ts / plan-flags.test.tsx. I did not create tasks/WP7/ or a tests-report.md there, since that directory doesn't exist in this plan, isn't in my declared tests scope, and sibling checkpoints show new untracked paths under this plan dir have been wiped by a prior revert step — creating one risked the same loss and exceeded the SCOPE restriction (only the two named test files are mine to create/edit). blockedOn: tasks/WP7/brief.md is missing from the plan (likely destroyed by the same untracked-file revert recorded against WP5a/WP3c/WP5b/WP5c) — it needs to be restored or regenerated by the planning/orchestration step before this TEST AUTHOR step can write real tests. Recommend also investigating why the pipeline's revert-untracked-files step is deleting paths far outside a task's own scope (whole sibling pipeline run directories, all handoffs, repo-root scratch dirs) — this looks like a bug in that step's path-matching, not correct scope enforcement."
+        }
+      ],
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2"
+    }
+  },
+  "progressLine": "Task WP7: blocked (1 blocker(s))"
+}

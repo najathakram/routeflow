@@ -9,6 +9,7 @@ import {
 } from "./messaging-config.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { MeterService } from "../billing/meter.service";
+import { MESSAGE_PROVIDER } from "./providers/message-provider.interface";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { extractVariables } from "./messaging.helpers";
 
@@ -41,6 +42,11 @@ describe("MessagingConfigService (P6-6)", () => {
   let service: MessagingConfigService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let meter: { read: jest.Mock };
+  // F23/B183a, B180: getMatrix()/setRuleEnabled() consult the SAME capability seam sendMessage()
+  // uses (cause-ruling.md §2) to mark a cell `unavailable`. Default every channel "has a transport"
+  // here so unrelated cells stay available — REG-B145's own transport-honesty is proven separately
+  // against the REAL StubProvider in messaging.transport-honesty.spec.ts, not via this mock.
+  let provider: { send: jest.Mock; transports: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -52,12 +58,14 @@ describe("MessagingConfigService (P6-6)", () => {
         resetsAt: new Date("2026-08-01T00:00:00.000Z"),
       }),
     };
+    provider = { send: jest.fn(), transports: jest.fn().mockReturnValue(true) };
 
     const mod = await Test.createTestingModule({
       providers: [
         MessagingConfigService,
         { provide: PrismaService, useValue: prisma },
         { provide: MeterService, useValue: meter },
+        { provide: MESSAGE_PROVIDER, useValue: provider },
       ],
     }).compile();
     service = mod.get(MessagingConfigService);
@@ -84,7 +92,11 @@ describe("MessagingConfigService (P6-6)", () => {
       expect(tplArgs.data).toHaveLength(ALL_PAIRS.length);
     });
 
-    it("seeds INVOICE_SENT only for EMAIL+PORTAL; matrix surfaces WHATSAPP/SMS as locked (never seeded)", async () => {
+    it("seeds INVOICE_SENT only for PORTAL; matrix surfaces WHATSAPP/SMS as locked (never seeded)", async () => {
+      // N1 (2026-09-16): EMAIL removed from INVOICE_SENT's channels — the
+      // messaging engine's own copy was a second, previously-no-op attempt at
+      // the same email invoices.service.ts already sends for real via
+      // EmailService.sendInvoice(). PORTAL is unaffected.
       prisma.notificationRule.findMany.mockResolvedValue([]);
       prisma.messageTemplate.findMany.mockResolvedValue([]);
 
@@ -97,7 +109,7 @@ describe("MessagingConfigService (P6-6)", () => {
         )
         .map((r: { channel: MessageChannel }) => r.channel)
         .sort();
-      expect(invoiceRuleChannels).toEqual([MessageChannel.EMAIL, MessageChannel.PORTAL].sort());
+      expect(invoiceRuleChannels).toEqual([MessageChannel.PORTAL]);
 
       const tplArgs = prisma.messageTemplate.createMany.mock.calls[0][0];
       const invoiceTplChannels = tplArgs.data
@@ -106,7 +118,7 @@ describe("MessagingConfigService (P6-6)", () => {
         )
         .map((t: { channel: MessageChannel }) => t.channel)
         .sort();
-      expect(invoiceTplChannels).toEqual([MessageChannel.EMAIL, MessageChannel.PORTAL].sort());
+      expect(invoiceTplChannels).toEqual([MessageChannel.PORTAL]);
 
       const invoiceEvent = result.events.find(
         (e) => e.eventKey === NotificationEvent.INVOICE_SENT,
@@ -132,7 +144,7 @@ describe("MessagingConfigService (P6-6)", () => {
   });
 
   describe("getMatrix — cell shape / settings / meter", () => {
-    it("LOW_STOCK exposes a single enabled INTERNAL cell with the seeded template's parsed variables", async () => {
+    it("LOW_STOCK's INTERNAL cell carries the seeded template's parsed variables", async () => {
       const { rules, templates } = buildFullSeed();
       prisma.notificationRule.findMany.mockResolvedValue(rules);
       prisma.messageTemplate.findMany.mockResolvedValue(templates);
@@ -144,18 +156,46 @@ describe("MessagingConfigService (P6-6)", () => {
       expect(lowStock.channels).toHaveLength(1);
       const cell = lowStock.channels[0];
       expect(cell.channel).toBe(MessageChannel.INTERNAL);
-      expect(cell.enabled).toBe(true);
       expect(cell.ruleId).toBeTruthy();
       expect(cell.locked).toBe(false);
       expect(cell.template?.variables).toEqual(["productName", "quantity"]);
+    });
+
+    it("REG-B180 T6: LOW_STOCK has no firing site anywhere in the app — the matrix marks its cell unavailable (NO_TRIGGER), disabled, and setRuleEnabled refuses to turn it on", async () => {
+      const { rules, templates } = buildFullSeed();
+      prisma.notificationRule.findMany.mockResolvedValue(rules);
+      prisma.messageTemplate.findMany.mockResolvedValue(templates);
+      prisma.messagingSettings.findUnique.mockResolvedValue(null);
+
+      const result = await service.getMatrix();
+
+      const lowStock = result.events.find((e) => e.eventKey === NotificationEvent.LOW_STOCK)!;
+      const cell = lowStock.channels.find((c) => c.channel === MessageChannel.INTERNAL)!;
+      expect(cell).toMatchObject({ unavailable: "NO_TRIGGER", enabled: false });
+
+      const lowStockRule = rules.find((r) => r.eventKey === NotificationEvent.LOW_STOCK)!;
+      prisma.notificationRule.findFirst.mockResolvedValue(lowStockRule);
+
+      await expect(service.setRuleEnabled(lowStockRule.id, true)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.notificationRule.update).not.toHaveBeenCalled();
+    });
+
+    it("REG-B160 T3 (via getMatrix): settings default to the engine default (quietHoursEnabled=false) when no row exists, alongside the msgsMeter read", async () => {
+      const { rules, templates } = buildFullSeed();
+      prisma.notificationRule.findMany.mockResolvedValue(rules);
+      prisma.messageTemplate.findMany.mockResolvedValue(templates);
+      prisma.messagingSettings.findUnique.mockResolvedValue(null);
+
+      const result = await service.getMatrix();
 
       expect(result.settings).toEqual({
-        quietHoursEnabled: true,
+        quietHoursEnabled: false,
         quietHoursStart: "21:00",
         quietHoursEnd: "07:00",
         timezone: null,
       });
-
       expect(result.msgsMeter).toEqual({
         used: 3,
         included: 500,
@@ -178,17 +218,23 @@ describe("MessagingConfigService (P6-6)", () => {
   });
 
   describe("setRuleEnabled", () => {
+    // F23 harness fix: DELIVERED:PORTAL was the original fixture here, but PORTAL has no
+    // real transport (StubProvider declares none — cause-ruling.md §2) and no customer-facing
+    // reader, so once P2 lands it becomes an `unavailable` cell setRuleEnabled must refuse. This
+    // pin is about the ordinary toggle path, not about availability, so it fixtures a channel
+    // (EMAIL) that stays available under the mocked capability provider — the unavailable/refuse
+    // paths are covered on their own terms by T6 (NO_TRIGGER) and T8 (NO_CONSENT_WRITER) below.
     it("toggles a rule's enabled flag", async () => {
       prisma.notificationRule.findFirst.mockResolvedValue({
         id: "rule-1",
         eventKey: NotificationEvent.DELIVERED,
-        channel: MessageChannel.PORTAL,
+        channel: MessageChannel.EMAIL,
         enabled: false,
       });
       prisma.notificationRule.update.mockResolvedValue({
         id: "rule-1",
         eventKey: NotificationEvent.DELIVERED,
-        channel: MessageChannel.PORTAL,
+        channel: MessageChannel.EMAIL,
         enabled: true,
       });
 
@@ -240,6 +286,85 @@ describe("MessagingConfigService (P6-6)", () => {
         where: { id: "rule-inv" },
         data: { enabled: false },
       });
+    });
+
+    it("REG-B183 T8: a WhatsApp/SMS cell is unavailable (NO_CONSENT_WRITER) — there is no consent writer yet, so getMatrix marks it and setRuleEnabled refuses to enable it", async () => {
+      const { rules, templates } = buildFullSeed();
+      prisma.notificationRule.findMany.mockResolvedValue(rules);
+      prisma.messageTemplate.findMany.mockResolvedValue(templates);
+      prisma.messagingSettings.findUnique.mockResolvedValue(null);
+
+      const result = await service.getMatrix();
+      const orderConfirmed = result.events.find(
+        (e) => e.eventKey === NotificationEvent.ORDER_CONFIRMED,
+      )!;
+      const waCell = orderConfirmed.channels.find((c) => c.channel === MessageChannel.WHATSAPP)!;
+      expect(waCell).toMatchObject({ unavailable: "NO_CONSENT_WRITER" });
+
+      const waRule = rules.find(
+        (r) =>
+          r.eventKey === NotificationEvent.ORDER_CONFIRMED && r.channel === MessageChannel.WHATSAPP,
+      )!;
+      prisma.notificationRule.findFirst.mockResolvedValue(waRule);
+
+      await expect(service.setRuleEnabled(waRule.id, true)).rejects.toThrow(BadRequestException);
+      expect(prisma.notificationRule.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("NO_TRANSPORT — provider declares no transports (F23/B180/B183a)", () => {
+    // Unlike the shared beforeEach's always-true provider (kept so T6/T8 precedence stays
+    // covered), this mirrors the production StubProvider shape: no channel is transported.
+    it("marks a customer-channel cell NO_TRANSPORT/disabled, and every INTERNAL cell reports NO_TRIGGER, and setRuleEnabled refuses it", async () => {
+      const noTransportProvider = { send: jest.fn(), transports: jest.fn().mockReturnValue(false) };
+      const mod = await Test.createTestingModule({
+        providers: [
+          MessagingConfigService,
+          { provide: PrismaService, useValue: prisma },
+          { provide: MeterService, useValue: meter },
+          { provide: MESSAGE_PROVIDER, useValue: noTransportProvider },
+        ],
+      }).compile();
+      const noTransportService: MessagingConfigService = mod.get(MessagingConfigService);
+
+      const { rules, templates } = buildFullSeed();
+      prisma.notificationRule.findMany.mockResolvedValue(rules);
+      prisma.messageTemplate.findMany.mockResolvedValue(templates);
+      prisma.messagingSettings.findUnique.mockResolvedValue(null);
+
+      const result = await noTransportService.getMatrix();
+
+      // N1: INVOICE_SENT no longer carries an EMAIL cell at all (PORTAL only) —
+      // ORDER_CONFIRMED is still EMAIL-capable (CUSTOMER_CHANNELS) and proves the
+      // same NO_TRANSPORT behavior when the bound provider declares nothing
+      // transportable (mirrors the pre-N1 StubProvider shape).
+      const orderConfirmed = result.events.find(
+        (e) => e.eventKey === NotificationEvent.ORDER_CONFIRMED,
+      )!;
+      const emailCell = orderConfirmed.channels.find((c) => c.channel === MessageChannel.EMAIL)!;
+      expect(emailCell).toMatchObject({ unavailable: "NO_TRANSPORT", enabled: false });
+      expect(noTransportProvider.transports).toHaveBeenCalledWith(MessageChannel.EMAIL);
+
+      // Every INTERNAL event today is also a NO_TRIGGER event, so the `channel !== INTERNAL`
+      // exemption in unavailabilityReason is currently unreachable — this pins that fact.
+      // When the first INTERNAL event gains a firing site (leaves NO_TRIGGER_EVENTS), this
+      // assertion fails and the exemption needs a real NO_TRANSPORT test.
+      const internalCells = result.events.flatMap((e) =>
+        e.channels.filter((c) => c.channel === MessageChannel.INTERNAL),
+      );
+      expect(internalCells.length).toBeGreaterThan(0);
+      expect(internalCells.every((c) => c.unavailable === "NO_TRIGGER")).toBe(true);
+
+      const emailRule = rules.find(
+        (r) =>
+          r.eventKey === NotificationEvent.ORDER_CONFIRMED && r.channel === MessageChannel.EMAIL,
+      )!;
+      prisma.notificationRule.findFirst.mockResolvedValue(emailRule);
+
+      await expect(noTransportService.setRuleEnabled(emailRule.id, true)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.notificationRule.update).not.toHaveBeenCalled();
     });
   });
 
@@ -297,11 +422,11 @@ describe("MessagingConfigService (P6-6)", () => {
   });
 
   describe("getSettings / updateSettings", () => {
-    it("returns defaults when no settings row exists", async () => {
+    it("REG-B160 T3: getSettings() default matches the engine default (quietHoursEnabled=false) when no row exists", async () => {
       prisma.messagingSettings.findUnique.mockResolvedValue(null);
       const result = await service.getSettings();
       expect(result).toEqual({
-        quietHoursEnabled: true,
+        quietHoursEnabled: false,
         quietHoursStart: "21:00",
         quietHoursEnd: "07:00",
         timezone: null,

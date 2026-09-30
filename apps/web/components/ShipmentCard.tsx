@@ -24,6 +24,13 @@ export interface ShipmentCardProps {
   isSaving?: boolean;
   /** Hide the edit affordance (e.g. for non-operator viewers). Defaults to false. */
   readOnly?: boolean;
+  /**
+   * Bump this (e.g. a counter incremented by the caller) to nudge the card open
+   * for tracking entry — used after a SHIP order is marked shipped, so the
+   * operator isn't left to hunt for the edit button. Undefined/0 = no-op, so
+   * every other caller of this card is byte-identical.
+   */
+  openSignal?: number;
 }
 
 export function ShipmentCard({
@@ -33,6 +40,7 @@ export function ShipmentCard({
   onSave,
   isSaving,
   readOnly = false,
+  openSignal,
 }: ShipmentCardProps) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = React.useState(false);
@@ -40,6 +48,11 @@ export function ShipmentCard({
   // never blank; the tracking number drives whether a shipment exists at all.
   const [formCarrier, setFormCarrier] = React.useState<string>(carrier || CARRIERS[0].id);
   const [formTracking, setFormTracking] = React.useState<string>(trackingNumber ?? "");
+
+  React.useEffect(() => {
+    if (openSignal) setEditOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal]);
 
   const hasTracking = !!(trackingNumber && trackingNumber.trim());
   const trackUrl = getTrackingUrl(carrier, trackingNumber);

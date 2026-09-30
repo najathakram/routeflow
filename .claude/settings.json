@@ -25,10 +25,22 @@
     ]
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "node scripts/campaign/plane-triage.mjs --brief" },
+          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [{ "type": "command", "command": "node .claude/hooks/post_tool_use.mjs" }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "node scripts/work/claude-hook.mjs" }]
       }
     ],
     "Stop": [

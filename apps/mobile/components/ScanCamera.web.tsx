@@ -8,12 +8,22 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { gateScan, type ScanGateState, type ScanOutcome } from "../lib/scan-loop";
+import { type ScanOutcome } from "../lib/scan-loop";
+import { createScanEngine, frameScanned, manualScanned, scanSettled } from "../lib/scan-engine";
 import { scanFallbackContent } from "../lib/scan-fallback";
+import { cueForOutcome } from "../lib/scan-feedback";
+import { playScanCue, unlockScanCue } from "../lib/scan-cue";
 
 export interface ScanCameraProps {
   onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
   onOutcome?: (outcome: ScanOutcome) => void;
+  /**
+   * Fires whenever the pending buffer's resolving state flips — lets a host
+   * sheet (ScanOrderSheet) show a "looking up…" indicator instead of dead
+   * frames while a scan resolves (F30 / R2, REG-B192; wired into this web
+   * path as REG-B202).
+   */
+  onResolvingChange?: (isResolving: boolean) => void;
   active?: boolean;
   continuous?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -121,6 +131,7 @@ export function useScanCameraPermission(): { granted: boolean; request: () => vo
 export function ScanCamera({
   onScanned,
   onOutcome,
+  onResolvingChange,
   active = true,
   continuous = false,
   style,
@@ -134,8 +145,12 @@ export function ScanCamera({
   const rafRef = React.useRef<number | null>(null);
   const readerRef = React.useRef<any>(null);
   const firedRef = React.useRef(false);
-  const gateRef = React.useRef<ScanGateState | null>(null);
-  const busyRef = React.useRef(false);
+  // Replaces the old drop-not-queue `busyRef` boolean plus the single-slot
+  // `gateRef` (F30 / R2, REG-B192, wired into web as REG-B202): one pure
+  // state machine (`lib/scan-engine.ts`) sequencing scan-loop.ts's gate and
+  // scan-pending-buffer.ts's buffer, so a detection arriving mid-resolve is
+  // buffered instead of silently lost.
+  const engineRef = React.useRef(createScanEngine());
   // Loop state. `stopped` latches teardown, `inFlight` serialises decodes so a
   // slow frame can't queue behind itself, `lastDetect` throttles to ~15fps.
   const stoppedRef = React.useRef(false);
@@ -149,11 +164,13 @@ export function ScanCamera({
   const [torchOn, setTorchOn] = React.useState(false);
   const [caps, setCaps] = React.useState<{ torch: boolean }>({ torch: false });
   // Parents recreate these callbacks every render; route them through refs so
-  // `fire` stays stable and the camera effect doesn't restart after each scan.
+  // the handlers stay stable and the camera effect doesn't restart after each scan.
   const onScannedRef = React.useRef(onScanned);
   onScannedRef.current = onScanned;
   const onOutcomeRef = React.useRef(onOutcome);
   onOutcomeRef.current = onOutcome;
+  const onResolvingChangeRef = React.useRef(onResolvingChange);
+  onResolvingChangeRef.current = onResolvingChange;
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const onModeChangeRef = React.useRef(onModeChange);
@@ -201,11 +218,52 @@ export function ScanCamera({
   }, [torchOn]);
 
   /**
-   * One decoded code from any source (BarcodeDetector, zxing, manual input).
-   * `deliberate` skips the repeat-gate (manual submits are always intentional).
+   * Resolves one accepted code, then drains whatever the engine queued while
+   * it was in flight — recursing (not looping) so each queued code gets its
+   * own resolve/outcome cycle exactly like a fresh scan would (mirrors
+   * ScanCamera.tsx's `resolveCode`). Web keeps an `outcome?.close` branch
+   * native doesn't have — closing the scanner replaces it with a different
+   * screen — but the drain below is UNCONDITIONAL, same as native: a close
+   * must never strand a buffered code unresolved.
+   *
+   * The engine advances only once `onScanned` has actually SETTLED, for the
+   * same reason ScanCamera.tsx's version does: the per-scan deadline that
+   * keeps a slow lookup from holding this open lives in the handler itself
+   * (`lib/scan-ladder`'s `SCAN_RESOLVE_TIMEOUT_MS`), where it can abort the
+   * request.
    */
-  const fire = React.useCallback(
-    async (code: string, deliberate = false) => {
+  const resolveCode = React.useCallback(
+    async (code: string) => {
+      try {
+        const outcome = await onScannedRef.current(code);
+        // Audible + haptic accept/reject cue (F30 / REG-B202 PR1 commit 2):
+        // purely observational — `cueForOutcome` only READS the outcome
+        // already destined for `onOutcomeRef` below, and `playScanCue` never
+        // throws (see its header), so this can't alter what happens next.
+        // Placed here, not inside the engine or scan-loop.ts, precisely so a
+        // cue bug can never touch scan state.
+        playScanCue(cueForOutcome(outcome));
+        if (outcome?.close) stop();
+        onOutcomeRef.current?.(outcome);
+      } finally {
+        const step = scanSettled(engineRef.current);
+        engineRef.current = step.next;
+        if (step.indicator) onResolvingChangeRef.current?.(step.indicator === "on");
+        if (step.startResolving) void resolveCode(step.startResolving);
+      }
+    },
+    [stop],
+  );
+
+  /**
+   * One frame decoded off the continuous camera path. SYNCHRONOUS: it only
+   * threads the code through the engine and starts a resolve when the engine
+   * says to — nothing here is awaited, so the decode loop below can release
+   * its in-flight guard the moment the DECODE settles rather than the
+   * resolve, which is what let mid-resolve frames reach this at all.
+   */
+  const handleFrame = React.useCallback(
+    (code: string) => {
       if (!activeRef.current) return;
       if (!continuous) {
         if (firedRef.current) return;
@@ -214,30 +272,36 @@ export function ScanCamera({
         onScannedRef.current(code);
         return;
       }
-      if (busyRef.current) return;
-      if (!deliberate) {
-        const gated = gateScan(code, gateRef.current, Date.now());
-        gateRef.current = gated.state;
-        if (!gated.accept) return;
-      }
-      busyRef.current = true;
-      try {
-        const outcome = await onScannedRef.current(code);
-        if (outcome?.close) stop();
-        onOutcomeRef.current?.(outcome);
-      } finally {
-        // While onScanned was awaited, detections short-circuited at the busyRef
-        // guard (or the BarcodeDetector tick was blocked on the await) WITHOUT
-        // calling gateScan, so the sliding window's lastAt stayed frozen at
-        // scan-start. If the lookup outran the cooldown, the next detection of
-        // the SAME code would be re-accepted → double-add. Re-anchor the
-        // cooldown to completion so a held item can't re-add until it leaves the
-        // frame for a full window; a different code still differs and is accepted.
-        gateRef.current = { lastCode: code, lastAt: Date.now() };
-        busyRef.current = false;
-      }
+      const step = frameScanned(engineRef.current, code, Date.now());
+      engineRef.current = step.next;
+      if (step.indicator) onResolvingChangeRef.current?.(step.indicator === "on");
+      if (step.startResolving) void resolveCode(step.startResolving);
     },
-    [continuous, stop],
+    [continuous, resolveCode, stop],
+  );
+
+  /**
+   * A deliberate manual submit. Always intentional, so it SKIPS the gate —
+   * unlike a camera frame it never faces a repeat-suppression cooldown — but
+   * still goes through the buffer, so one arriving mid-resolve is queued
+   * instead of dropped.
+   */
+  const handleManual = React.useCallback(
+    (code: string) => {
+      if (!activeRef.current) return;
+      if (!continuous) {
+        if (firedRef.current) return;
+        firedRef.current = true;
+        stop();
+        onScannedRef.current(code);
+        return;
+      }
+      const step = manualScanned(engineRef.current, code);
+      engineRef.current = step.next;
+      if (step.indicator) onResolvingChangeRef.current?.(step.indicator === "on");
+      if (step.startResolving) void resolveCode(step.startResolving);
+    },
+    [continuous, resolveCode, stop],
   );
 
   /**
@@ -270,18 +334,30 @@ export function ScanCamera({
     lastDetectRef.current = now;
     inFlightRef.current = true;
     void detect()
-      .then((code) => (code ? fire(code) : undefined))
+      .then((code) => {
+        if (code) handleFrame(code);
+      })
       .catch(() => undefined)
       .finally(() => {
+        // Releases as soon as the DECODE settles, not the resolve — handleFrame
+        // is synchronous, so this chain no longer awaits the code lookup.
         inFlightRef.current = false;
       });
-  }, [fire]);
+  }, [handleFrame]);
 
   React.useEffect(() => {
     let cancelled = false;
     stoppedRef.current = false;
 
     const start = async () => {
+      // Mounting this screen already required the operator to navigate/tap
+      // into it, so this counts as "after a user gesture" for the browser's
+      // autoplay policy — least-invasive spot to unlock the scan cue's
+      // AudioContext, and it fires whether the camera opens or falls back to
+      // manual mode (`unlockScanCue` is a safe-to-call-repeatedly no-op
+      // otherwise). See `lib/scan-cue.web.ts`.
+      unlockScanCue();
+
       if (!navigator.mediaDevices?.getUserMedia) {
         setError("Camera access isn't available. Use HTTPS in Chrome or Safari.");
         setManualMode(true);
@@ -430,12 +506,12 @@ export function ScanCamera({
       cancelled = true;
       stop();
     };
-  }, [fire, loop, stop]);
+  }, [loop, stop]);
 
   const submitManual = () => {
     const trimmed = manualValue.trim();
     if (!trimmed) return;
-    void fire(trimmed, true);
+    handleManual(trimmed);
     if (continuous) setManualValue("");
   };
 

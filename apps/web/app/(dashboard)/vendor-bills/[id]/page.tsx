@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   CreditCard,
@@ -17,7 +18,7 @@ import {
   Save,
   AlertTriangle,
 } from "lucide-react";
-import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
+import { Button, Card, Modal, cn, TAP_TARGET, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useVendorBill,
@@ -29,6 +30,8 @@ import {
   useSaveProductMapping,
   getUnlinkedItemsError,
   type UnlinkedItemsError,
+  getPackSizeUnknownError,
+  type PackSizeUnknownError,
   type VendorBill,
   type VendorBillItem,
   type VendorBillStatus,
@@ -40,14 +43,35 @@ import { useSuppliers } from "@/lib/api/inventory";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
-import { roundMoney } from "@/lib/pricing";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { VariantSplitModal } from "@/components/VariantSplitModal";
+import { PackSizeUnknownModal } from "@/components/PackSizeUnknownModal";
+import { useProduct } from "@/lib/api/products";
+import { roundMoney } from "@routeflow/pricing";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePreferences, useSavePreferences } from "@/lib/api/users";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
+
+/**
+ * Extra fields the API additively includes on a bill's `findOne` mapped-
+ * product select (PR-D WP2: `parentProductId` + `_count.variants`) so the
+ * line-item table can show a "split into variants" hint. The shared
+ * `VendorBillItem["product"]` type isn't widened for this (out of scope for
+ * this change) — narrowed locally instead.
+ */
+type MappedProductVariantHint = {
+  parentProductId?: string | null;
+  _count?: { variants: number };
+};
 
 // ─── Record Payment Modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   amount: string;
   reference: string;
   notes: string;
@@ -126,10 +150,11 @@ function RecordPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -291,6 +316,20 @@ function lineRemaining(bill: VendorBill, item: VendorBillItem): number {
         ? Number(item.qty)
         : 0;
   return Math.max(0, Number(item.qty) - received);
+}
+
+/**
+ * How much of a line has been received so far, converted from the bill's own
+ * denomination (cases, when `packSize > 1`) into `Product.currentStock`'s
+ * PIECE denomination — mirrors the API's `lineInventoryDelta` (PR-D WP4).
+ * Used as the default pool for a generic→variant split started from this
+ * line: assigning cases as though they were loose pieces would move the
+ * wrong quantity entirely.
+ */
+function lineReceivedBaseUnits(bill: VendorBill, item: VendorBillItem): number {
+  const receivedInBillDenom = Number(item.qty) - lineRemaining(bill, item);
+  const pack = item.packSize ?? 0;
+  return pack > 1 ? receivedInBillDenom * pack : receivedInBillDenom;
 }
 
 function ReceiveBillModal({
@@ -478,6 +517,46 @@ const emptyRow = (): EditLineItemRow => ({
   packSize: "",
 });
 
+/** What a picked catalog product contributes to the line's cost fields. */
+interface PickableCostProduct {
+  id: string;
+  name: string;
+  averageCost?: string | number | null;
+  standardCost?: string | number | null;
+  unitsPerBox?: number | null;
+}
+
+/**
+ * Prefill for a linked line — COST-side truth, never the selling price.
+ * `averageCost`/`standardCost` are per PIECE; a boxed product's invoice line
+ * is priced per CASE, so a boxed product prefills the CASE cost
+ * (avg × unitsPerBox) and the case size together — receive() converts back
+ * to pieces at unitCost ÷ packSize (`lineInventoryDelta` in
+ * vendor-bills.service.ts). Mirrors mobile's `linePrefillFor`
+ * (apps/mobile/app/(operator)/vendor-bills/new.tsx). The old prefill here put
+ * a PIECE cost straight into the CASE cost field for any boxed product —
+ * over-costing every linked case line by a factor of `unitsPerBox`.
+ *
+ * Unlike mobile (a NEW bill, rows start blank), this is the EDIT screen: rows
+ * are seeded from the saved bill, so a product that declares no `unitsPerBox`
+ * must leave the row's own `packSize`/case cost alone — clearing them would
+ * silently re-denominate an already-boxed line into pieces.
+ */
+function linePrefillFor(p: PickableCostProduct, row: EditLineItemRow): Partial<EditLineItemRow> {
+  const perPiece = Number(p.averageCost ?? p.standardCost ?? 0);
+  const upb = Number(p.unitsPerBox ?? 0);
+  const patch: Partial<EditLineItemRow> = { productId: p.id, description: p.name };
+  if (upb > 1) {
+    patch.packSize = String(upb);
+    if (perPiece > 0) patch.unitCost = (perPiece * upb).toFixed(4);
+  } else if (perPiece > 0 && !(parseInt(row.packSize, 10) > 1)) {
+    // No catalog case size: only prefill when the row itself is priced per
+    // piece — never overwrite a case cost with a per-piece one.
+    patch.unitCost = perPiece.toFixed(4);
+  }
+  return patch;
+}
+
 function EditLineItems({
   items,
   onChange,
@@ -501,7 +580,10 @@ function EditLineItems({
   return (
     <div className="space-y-2">
       {items.map((row, i) => (
-        <div key={i} className="grid grid-cols-[1fr_72px_72px_100px_32px] gap-2 items-start">
+        <div
+          key={i}
+          className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[1fr_72px_72px_100px_32px]"
+        >
           <div>
             <SearchableProductPicker
               async
@@ -509,16 +591,7 @@ function EditLineItems({
               selectedLabel={row.description}
               placeholder="Search products… (or leave as custom item)"
               onChange={(id, product) =>
-                product
-                  ? update(i, {
-                      productId: id,
-                      description: product.name,
-                      unitCost:
-                        (product as any).averageCost != null
-                          ? String(parseFloat(String((product as any).averageCost)).toFixed(4))
-                          : row.unitCost,
-                    })
-                  : update(i, { productId: "" })
+                product ? update(i, linePrefillFor(product, row)) : update(i, { productId: "" })
               }
             />
             {!row.productId && (
@@ -571,7 +644,9 @@ function EditLineItems({
             </label>
             <input
               type="number"
-              min="0"
+              // B469: no `min` — a negative cost is a legitimate discount/deposit
+              // line (mirrors mobile scan-to-bill since #791); the server-side
+              // MONEY_INVARIANT check catches a bill that nets negative overall.
               step="0.0001"
               value={row.unitCost}
               onChange={(e) => update(i, { unitCost: e.target.value })}
@@ -582,7 +657,11 @@ function EditLineItems({
             type="button"
             onClick={() => remove(i)}
             disabled={items.length === 1}
-            className="mt-6 h-9 rounded p-1 text-navy/30 hover:text-danger transition-colors disabled:opacity-20"
+            title="Remove line"
+            className={cn(
+              TAP_TARGET,
+              "mt-1 justify-self-end rounded p-1 text-navy/30 transition-colors hover:text-danger disabled:opacity-20 sm:mt-6 sm:justify-self-auto",
+            )}
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -636,11 +715,13 @@ function EditLineItems({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function VendorBillDetailPage({ params }: { params: { id: string } }) {
+export default function VendorBillDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: bill, isLoading, isError } = useVendorBill(params.id);
+  const { data: bill, isLoading, isError } = useVendorBill(id);
   const receiveBill = useReceiveVendorBill();
   const voidBill = useVoidVendorBill();
   const recordPayment = useRecordVendorBillPayment();
@@ -657,7 +738,19 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isRevertOpen, setIsRevertOpen] = React.useState(false);
   const [isReceiveOpen, setIsReceiveOpen] = React.useState(false);
+  // Variant-split modal (PR-D) — set from a line's "Generic — split into
+  // variants?" badge. The badge only carries the product id + this line's
+  // received qty; the full product (currentStock/averageCost/unitsPerBox/
+  // costingMethod) is fetched on demand once a target is picked, same as the
+  // product detail page does for itself.
+  const [variantSplitProductId, setVariantSplitProductId] = React.useState<string | null>(null);
+  const [variantSplitPool, setVariantSplitPool] = React.useState(0);
+  const { data: variantSplitProduct } = useProduct(variantSplitProductId ?? "");
   const [unlinkedConfirm, setUnlinkedConfirm] = React.useState<UnlinkedItemsError | null>(null);
+  // B743: the PACK_SIZE_UNKNOWN refusal, and whether the attempt it refused had already
+  // acknowledged unlinked lines (the loose-pieces retry must keep that acknowledgement).
+  const [packSizeConfirm, setPackSizeConfirm] = React.useState<PackSizeUnknownError | null>(null);
+  const [lastAckUnlinked, setLastAckUnlinked] = React.useState(false);
   // The per-line quantities chosen in the receive modal — kept so the
   // UNLINKED_ITEMS confirm retry re-sends the same partial plan.
   const [pendingReceiveItems, setPendingReceiveItems] = React.useState<
@@ -709,7 +802,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
         <p className="text-base font-medium text-navy">Vendor bill not found.</p>
-        <Button variant="secondary" href="/purchases">
+        <Button variant="secondary" href="/vendor-bills">
           Back to Vendor Bills
         </Button>
       </div>
@@ -745,24 +838,67 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
-  const handleReceive = (acknowledgeUnlinked = false, items?: ReceiveVendorBillLine[]) => {
+  const handleReceive = (
+    acknowledgeUnlinked = false,
+    items?: ReceiveVendorBillLine[],
+    acknowledgePackSizeUnknown = false,
+  ) => {
+    setLastAckUnlinked(acknowledgeUnlinked);
     receiveBill.mutate(
-      { id: bill.id, acknowledgeUnlinked, items },
+      { id: bill.id, acknowledgeUnlinked, acknowledgePackSizeUnknown, items },
       {
         onSuccess: (updated) => {
           setUnlinkedConfirm(null);
+          setPackSizeConfirm(null);
           setIsReceiveOpen(false);
           setPendingReceiveItems(undefined);
           const partial = updated?.status === "PARTIAL";
           toast({
             title: partial ? "Partial delivery received" : "Bill marked as received",
-            description: partial
-              ? `Stock updated for what arrived — the rest of bill ${bill.billNumber} stays outstanding.`
-              : `Bill ${bill.billNumber} is now in Received status.`,
+            description: bill.purchaseOrder
+              ? // A PO-linked bill is money only — the purchase order moves the stock (guard e).
+                `Recorded on the bill only — stock is moved by purchase order ${bill.purchaseOrder.poNumber}, not by this bill.${
+                  partial ? ` The rest of bill ${bill.billNumber} stays outstanding.` : ""
+                }`
+              : partial
+                ? `Stock updated for what arrived — the rest of bill ${bill.billNumber} stays outstanding.`
+                : `Bill ${bill.billNumber} is now in Received status.`,
             variant: "success",
           });
+          // B562: quantity was still received for every line and costed
+          // normally (the weighted-average bump uses the real currentStock,
+          // independent of this) — this only flags that a product's
+          // HISTORICAL cost snapshots weren't recomputed because its stock
+          // ledger has a gap (usually past sales). The copy must not imply
+          // the cost wasn't updated — that reads as an invitation to hand-fix
+          // a value that is already correct.
+          // Same advice as the API's INVENTORY_LEDGER_GAP conflict ("Ask an admin to
+          // look into this product") — the two used to disagree (this toast said
+          // "No action needed"): it is one ledger gap, told one way.
+          if (updated?.gapsDetected && updated.gapsDetected.length > 0) {
+            const names = [...new Set(updated.gapsDetected.map((g) => g.name))];
+            const isPlural = names.length > 1;
+            toast({
+              title: "Received — cost history not recomputed",
+              description: `${names.join(", ")} — received and costed normally, but ${
+                isPlural ? "their" : "its"
+              } stock records don't fully explain the quantity on hand (this usually happens after past sales), so ${
+                isPlural ? "their" : "its"
+              } historical cost snapshots weren't recalculated. Ask an admin to look into ${
+                isPlural ? "these products" : "this product"
+              }.`,
+              variant: "warning",
+            });
+          }
         },
         onError: (err: any) => {
+          // B743: lines of a case-sold product with no units per case → an explicit choice.
+          const packUnknown = getPackSizeUnknownError(err);
+          if (packUnknown) {
+            setUnlinkedConfirm(null);
+            setPackSizeConfirm(packUnknown);
+            return;
+          }
           // Unmapped lines → show the confirm dialog listing what gets skipped
           const unlinked = getUnlinkedItemsError(err);
           if (unlinked) {
@@ -849,11 +985,14 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
           toast({ title: "Bill updated", variant: "success" });
         },
         onError: (err: any) => {
-          toast({
-            title: "Failed to update bill",
-            description: err?.response?.data?.message ?? "Please try again.",
-            variant: "error",
-          });
+          // B469: a negative-cost (discount/deposit) line is allowed, but the
+          // bill as a whole still can't net negative — surface that specific
+          // server refusal in plain language instead of its raw message.
+          const description =
+            err?.response?.data?.code === "MONEY_INVARIANT"
+              ? "These lines net to a negative amount — if this is a credit memo, record it as a supplier credit."
+              : (err?.response?.data?.message ?? "Please try again.");
+          toast({ title: "Failed to update bill", description, variant: "error" });
         },
       },
     );
@@ -890,16 +1029,18 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
   };
 
   // ── Computed edit total ───────────────────────────────────────────────────────
-  const editTotal = editItems.reduce(
-    (s, row) => s + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
-    0,
+  const editTotal = roundMoney(
+    editItems.reduce(
+      (s, row) => s + (parseFloat(row.qty) || 0) * (parseFloat(row.unitCost) || 0),
+      0,
+    ),
   );
 
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
       <Link
-        href="/purchases"
+        href="/vendor-bills"
         className="flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
       >
         <ArrowLeft className="h-4 w-4" />
@@ -910,7 +1051,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="mono text-2xl font-bold text-navy">{bill.billNumber}</h1>
+            <h2 className="mono text-2xl font-bold text-navy">{bill.billNumber}</h2>
             {status === "DRAFT" && unlinkedCount > 0 && (
               <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
                 {unlinkedCount} unlinked {unlinkedCount === 1 ? "item" : "items"}
@@ -924,8 +1065,8 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             )}
           </div>
           <p className="mt-1.5 text-sm text-navy/70">
-            {bill.supplier?.name ?? "—"} · billed {fmtDate(bill.billDate ?? bill.createdAt)}
-            {bill.dueDate && ` · due ${fmtDate(bill.dueDate)}`}
+            {bill.supplier?.name ?? "—"} · billed {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
+            {bill.dueDate && ` · due ${fmtCalendarDate(bill.dueDate)}`}
           </p>
         </div>
 
@@ -1055,7 +1196,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             {/* Supplier info & dates — view or edit mode */}
             {isEditing ? (
               <div className="mb-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                       Supplier
@@ -1068,7 +1209,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                       className="h-10"
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy/70">
                         Bill Date
@@ -1107,7 +1248,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 </div>
               </div>
             ) : (
-              <div className="mb-6 grid grid-cols-2 gap-6">
+              <div className="mb-6 grid grid-cols-1 gap-6 sm:grid-cols-2">
                 <div>
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Supplier
@@ -1137,7 +1278,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                   )}
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Bill Date:</span>{" "}
-                    {fmtDate(bill.billDate ?? bill.createdAt)}
+                    {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                   </p>
                   <p
                     className={cn(
@@ -1145,7 +1286,8 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                       isOverdue ? "text-red-600 font-semibold" : "text-navy/70",
                     )}
                   >
-                    <span className="font-medium text-navy">Due Date:</span> {fmtDate(bill.dueDate)}
+                    <span className="font-medium text-navy">Due Date:</span>{" "}
+                    {fmtCalendarDate(bill.dueDate)}
                     {isOverdue && " (Overdue)"}
                   </p>
                 </div>
@@ -1170,7 +1312,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
             ) : (
               <div className="border-t border-surface-border pt-4">
                 <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <p className="overline">Line Items</p>
+                  <p className="eyebrow-label">Line Items</p>
                   <span className="text-xs text-navy/70">
                     unlinked lines don&apos;t update stock or costs until mapped
                   </span>
@@ -1199,6 +1341,16 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                     <tbody className="divide-y divide-surface-border">
                       {billItems.map((item) => {
                         const unlinked = !item.productId;
+                        // Undefined unless this line's mapped product is a
+                        // splittable generic (has variants, isn't itself one).
+                        const variantHint = item.product
+                          ? (item.product as NonNullable<VendorBillItem["product"]> &
+                              MappedProductVariantHint)
+                          : undefined;
+                        const showVariantHint =
+                          !!variantHint &&
+                          !variantHint.parentProductId &&
+                          !!variantHint._count?.variants;
                         return (
                           <tr
                             key={item.id}
@@ -1218,10 +1370,25 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                             </td>
                             <td className="px-4 py-3">
                               {item.product ? (
-                                <span className="inline-flex items-center gap-1.5 text-navy">
-                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
-                                  {item.product.name}
-                                </span>
+                                <div className="space-y-1">
+                                  <span className="inline-flex items-center gap-1.5 text-navy">
+                                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                                    {item.product.name}
+                                  </span>
+                                  {showVariantHint && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setVariantSplitProductId(variantHint!.id);
+                                        setVariantSplitPool(lineReceivedBaseUnits(bill, item));
+                                      }}
+                                      title="This generic has variants — optionally split the stock received on this line into them. Never required; unsplit units simply stay on the generic."
+                                      className="block rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-amber-200"
+                                    >
+                                      Generic — split into variants?
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
                                 <span className="text-xs font-medium text-amber-700">
                                   Not mapped
@@ -1330,7 +1497,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                         <span className="text-xs text-navy/70">{fmtDate(pmt.createdAt)}</span>
                       </div>
                       <p className="mt-0.5 text-xs text-navy/70">
-                        {pmt.method}
+                        {paymentMethodLabel(pmt.method)}
                         {pmt.reference && ` · ${pmt.reference}`}
                       </p>
                       {pmt.notes && <p className="mt-0.5 text-xs text-navy/70">{pmt.notes}</p>}
@@ -1364,7 +1531,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">
                 <dt className="text-navy/70">Bill date</dt>
                 <dd className="text-right font-medium text-navy">
-                  {fmtDate(bill.billDate ?? bill.createdAt)}
+                  {fmtCalendarDate(bill.billDate ?? bill.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">
@@ -1372,7 +1539,7 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
                 <dd
                   className={cn("text-right font-medium", isOverdue ? "text-danger" : "text-navy")}
                 >
-                  {fmtDate(bill.dueDate)}
+                  {fmtCalendarDate(bill.dueDate)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3 border-b border-surface-border py-2">
@@ -1442,6 +1609,46 @@ export default function VendorBillDetailPage({ params }: { params: { id: string 
         onConfirm={() => handleReceive(true, pendingReceiveItems)}
         isPending={receiveBill.isPending}
       />
+
+      <PackSizeUnknownModal
+        payload={packSizeConfirm}
+        onClose={() => setPackSizeConfirm(null)}
+        onFixCaseSizes={
+          status === "DRAFT"
+            ? () => {
+                setPackSizeConfirm(null);
+                setIsReceiveOpen(false);
+                startEditing();
+              }
+            : null
+        }
+        onReceiveLoose={() => handleReceive(lastAckUnlinked, pendingReceiveItems, true)}
+        isPending={receiveBill.isPending}
+      />
+
+      {/* Variant-split modal (PR-D) — same component as the product detail
+          page and the Inventory Stock tab row action. Pool = this line's
+          received qty (converted to pieces), not the parent's full stock, so
+          splitting one bill doesn't offer up stock another line contributed.
+          Always skippable — never blocks receiving. */}
+      {variantSplitProductId && variantSplitProduct && (
+        <VariantSplitModal
+          parent={{
+            id: variantSplitProduct.id,
+            name: variantSplitProduct.name,
+            currentStock: Number(variantSplitProduct.currentStock ?? 0),
+            averageCost:
+              variantSplitProduct.averageCost != null
+                ? Number(variantSplitProduct.averageCost)
+                : null,
+            unitsPerBox: variantSplitProduct.unitsPerBox ?? null,
+            costingMethod: variantSplitProduct.costingMethod,
+          }}
+          pool={variantSplitPool}
+          onClose={() => setVariantSplitProductId(null)}
+          onSuccess={() => setVariantSplitProductId(null)}
+        />
+      )}
     </div>
   );
 }

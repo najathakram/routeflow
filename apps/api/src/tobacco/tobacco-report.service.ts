@@ -1,13 +1,13 @@
 import React from "react";
 import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { TobaccoReportPdf } from "./tobacco-report-pdf";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
 
@@ -155,7 +155,8 @@ export class TobaccoReportService {
       this.prisma.forTenant().stockMovement.findMany({
         where: {
           type: "PURCHASE",
-          createdAt: { gte: periodStart, lte: periodEnd },
+          // B562: the accounting date — a backdated bill belongs to its own period.
+          effectiveAt: { gte: periodStart, lte: periodEnd },
           product: { isTobacco: true },
         },
         select: { productId: true, quantity: true, unitCost: true },
@@ -173,7 +174,7 @@ export class TobaccoReportService {
       // Movements AFTER the period: ending stock = currentStock − Σ(after).
       // Works because SALE quantities are stored negative, PURCHASE positive.
       this.prisma.forTenant().stockMovement.findMany({
-        where: { createdAt: { gt: periodEnd }, product: { isTobacco: true } },
+        where: { effectiveAt: { gt: periodEnd }, product: { isTobacco: true } },
         select: { productId: true, quantity: true },
       }),
     ]);
@@ -317,7 +318,7 @@ export class TobaccoReportService {
 
   // ─── Monthly cron — 02:00 UTC on the 1st, for the month just ended ─────────
 
-  @Cron("0 2 1 * *")
+  @LeaderCron("0 2 1 * *", "tobacco-report.generateMonthlyReports")
   async generateMonthlyReports() {
     // One query for all active tobacco_dealer addons, intersect active tenants
     const [activeTenants, tobaccoAddons] = await Promise.all([

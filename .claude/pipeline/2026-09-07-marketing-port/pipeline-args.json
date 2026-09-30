@@ -1,0 +1,244 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-07-marketing-port/build-plan.md",
+  "discoveryPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-07-marketing-port/discovery.md",
+  "specPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-07-marketing-port/spec.md",
+  "uxSpecPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-07-marketing-port/ux-spec.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/2026-09-07-marketing-port/test-plan.md",
+  "designSystemPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/pipeline/design-system.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-07T05:20:00Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog",
+  "context": "Marketing interface port from the Codex redesign + logo update (feature; Phase 1 of the redesign migration). Redesign source C:/Users/nakram/Documents/Codex/2026-09-06/rev/work/routeflow-redesign is READ-ONLY (copy/read only; never run anything there). Inventories in local-assets/handoff/2026-09-06/redesign/marketing-*.md carry every headline/asset/token. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|css|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "testPackages": [
+    {
+      "id": "TP-UNIT",
+      "title": "unit + static tests",
+      "files": [
+        "apps/web/components/brand/BrandMark.test.tsx",
+        "apps/web/app/(marketing)/marketing-port.static.test.ts",
+        "apps/web/app/(marketing)/lib/operation-model.test.ts",
+        "apps/web/app/(marketing)/components/faq.test.tsx",
+        "apps/web/app/(marketing)/components/demo-form.test.tsx",
+        "apps/web/app/(marketing)/seo.test.ts",
+        "apps/web/middleware.marketing.test.ts"
+      ],
+      "brief": "test-plan.md T4 T5 T6 T7 T8a T8b T8c T9 T11 + Harness notes; implement nothing",
+      "effort": "high"
+    },
+    {
+      "id": "TP-E2E",
+      "title": "post-deploy Playwright",
+      "files": ["apps/web/e2e/36-marketing-site.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "test-plan.md T1 T2 T3 T12; project `marketing` (no storageState, dependencies []); never run locally",
+      "effort": "medium"
+    }
+  ],
+  "redGate": { "commands": ["cd apps/web && npx jest --runInBand -t \"R-MKT\""], "expect": "fail" },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "brand assets + BrandMark + every logo site",
+      "files": [
+        "apps/web/public/brand/routeflow-mark-64.png",
+        "apps/web/public/brand/routeflow-mark-180.png",
+        "apps/web/public/brand/routeflow-mark-192.png",
+        "apps/web/public/brand/routeflow-mark-512.png",
+        "apps/web/app/favicon.ico",
+        "apps/web/public/operator-manifest.json",
+        "apps/web/public/buyer-manifest.json",
+        "apps/web/app/layout.tsx",
+        "apps/web/components/brand/BrandMark.tsx",
+        "apps/web/components/brand/index.ts",
+        "apps/web/components/TenantLogo.tsx",
+        "apps/web/components/DocumentLetterhead.tsx",
+        "apps/web/components/PwaInstallPrompt.tsx",
+        "apps/web/components/InstallAppButton.tsx",
+        "apps/web/app/(auth)/login/page.tsx",
+        "apps/web/app/(auth)/signup/page.tsx",
+        "apps/web/app/buyer/login/page.tsx",
+        "apps/web/app/buyer/register/page.tsx",
+        "apps/web/app/buyer/invite/[token]/page.tsx",
+        "apps/web/app/buyer/change-password/page.tsx",
+        "apps/web/app/buyer/forgot-password/page.tsx",
+        "apps/web/app/buyer/reset-password/page.tsx",
+        "apps/web/app/buyer/verify-email/page.tsx",
+        "apps/web/app/buyer/layout.tsx",
+        "apps/web/app/buyer/portal/layout.tsx",
+        "apps/web/app/(dashboard)/layout.tsx",
+        "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
+        "apps/web/app/(platform-admin)/layout.tsx",
+        "apps/web/app/not-found.tsx",
+        "apps/web/public/logo.svg",
+        "apps/web/public/logo-buyer.svg",
+        "apps/web/public/logo-buyer.png",
+        "apps/web/public/logo-seller.png",
+        "apps/web/public/favicon.svg",
+        "apps/web/public/favicon.png"
+      ],
+      "brief": "build-plan.md P1",
+      "effort": "high",
+      "satisfies": ["R4", "R5"],
+      "provenBy": ["T4", "T5", "T6"]
+    },
+    {
+      "id": "P6",
+      "title": "middleware marketing allow-list",
+      "files": ["apps/web/middleware.ts"],
+      "brief": "build-plan.md P6",
+      "effort": "high",
+      "satisfies": ["R11", "R13"],
+      "provenBy": ["T11"]
+    },
+    {
+      "id": "P2",
+      "title": "marketing foundation: fonts, stylesheet, lib, chrome, layout",
+      "files": [
+        "apps/web/fonts/Geist-Variable.woff2",
+        "apps/web/fonts/GeistMono-Variable.woff2",
+        "apps/web/fonts/LICENSE.txt",
+        "apps/web/app/fonts.ts",
+        "apps/web/app/layout.tsx",
+        "apps/web/app/(marketing)/marketing.css",
+        "apps/web/app/(marketing)/layout.tsx",
+        "apps/web/app/(marketing)/lib/site.ts",
+        "apps/web/app/(marketing)/lib/operation-model.ts",
+        "apps/web/app/(marketing)/components/site-header.tsx",
+        "apps/web/app/(marketing)/components/site-footer.tsx",
+        "apps/web/app/(marketing)/components/editorial-motion.tsx",
+        "apps/web/app/(marketing)/components/auth-links.ts",
+        "apps/web/public/marketing/warehouse.webp",
+        "apps/web/public/marketing/retailer-technology.webp",
+        "apps/web/public/marketing/stock-cutout-v3.webp",
+        "apps/web/app/(marketing)/components/nav.tsx",
+        "apps/web/app/(marketing)/components/logo.tsx",
+        "apps/web/app/(marketing)/components/footer.tsx",
+        "apps/web/app/(marketing)/components/use-side.ts",
+        "apps/web/app/(marketing)/components/icons.tsx",
+        "apps/web/app/(marketing)/components/audience-split.tsx",
+        "apps/web/app/(marketing)/components/flow-spotlight.tsx",
+        "apps/web/app/(marketing)/components/get-app-section.tsx",
+        "apps/web/app/(marketing)/components/industries-marquee.tsx",
+        "apps/web/app/(marketing)/components/testimonial.tsx",
+        "apps/web/app/(marketing)/components/feature-block.tsx",
+        "apps/web/app/(marketing)/components/pricing-tiers.tsx",
+        "apps/web/app/(marketing)/components/pricing-faq.tsx",
+        "apps/web/app/(marketing)/components/sticky-app-bar.tsx",
+        "apps/web/app/(marketing)/components/mocks",
+        "apps/web/app/(marketing)/product-video.tsx",
+        "apps/web/public/video"
+      ],
+      "brief": "build-plan.md P2",
+      "effort": "high",
+      "dependsOn": ["P1"],
+      "satisfies": ["R2", "R6", "R7", "R12", "R15"],
+      "provenBy": ["T5", "T7", "T8a", "T10"]
+    },
+    {
+      "id": "P3",
+      "title": "static components + FAQ + WorkflowTour + DemoForm",
+      "files": [
+        "apps/web/app/(marketing)/components/marketing.tsx",
+        "apps/web/app/(marketing)/components/feature-catalog.tsx",
+        "apps/web/app/(marketing)/components/ai-spotlight.tsx",
+        "apps/web/app/(marketing)/components/conversion-sections.tsx",
+        "apps/web/app/(marketing)/components/technology-art.tsx",
+        "apps/web/app/(marketing)/components/faq.tsx",
+        "apps/web/app/(marketing)/components/workflow-tour.tsx",
+        "apps/web/app/(marketing)/components/demo-form.tsx"
+      ],
+      "brief": "build-plan.md P3",
+      "dependsOn": ["P2"],
+      "satisfies": ["R7", "R8"],
+      "provenBy": ["T8b", "T8c", "T10"]
+    },
+    {
+      "id": "P5",
+      "title": "OperationStory (DeliveryDemo)",
+      "files": [
+        "apps/web/app/(marketing)/components/operation-story.tsx",
+        "apps/web/app/(marketing)/components/delivery-demo.tsx"
+      ],
+      "brief": "build-plan.md P5",
+      "effort": "high",
+      "dependsOn": ["P2"],
+      "satisfies": ["R7"],
+      "provenBy": ["T8a", "T10"]
+    },
+    {
+      "id": "P4",
+      "title": "pages, metadata, sitemap, robots, 404",
+      "files": [
+        "apps/web/app/(marketing)/page.tsx",
+        "apps/web/app/(marketing)/product/page.tsx",
+        "apps/web/app/(marketing)/wholesalers/page.tsx",
+        "apps/web/app/(marketing)/retailers/page.tsx",
+        "apps/web/app/(marketing)/pricing/page.tsx",
+        "apps/web/app/(marketing)/company/page.tsx",
+        "apps/web/app/(marketing)/contact/page.tsx",
+        "apps/web/app/(marketing)/privacy/page.tsx",
+        "apps/web/app/(marketing)/terms/page.tsx",
+        "apps/web/app/(marketing)/distributors/page.tsx",
+        "apps/web/app/sitemap.ts",
+        "apps/web/app/robots.ts",
+        "apps/web/app/not-found.tsx",
+        "apps/web/app/contact/page.tsx"
+      ],
+      "brief": "build-plan.md P4",
+      "dependsOn": ["P3", "P5"],
+      "satisfies": ["R1", "R3", "R9", "R10"],
+      "provenBy": ["T1", "T3", "T9", "T10"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json",
+      "cd apps/web && npx jest --runInBand -t \"R-MKT\"",
+      "cd apps/web && npx eslint \"app/(marketing)/**\" components/brand middleware.ts --max-warnings 0"
+    ],
+    "final": [
+      "cd apps/web && npx jest --silent",
+      "cd apps/api && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "uiVerify": {
+    "url": "http://localhost:3001",
+    "startCommand": "npm run dev -w apps/web",
+    "flows": [
+      "home: / desktop — header nav, hero H1, story visible, footer legal links",
+      "home: / mobile — open the menu sheet, Escape closes it",
+      "product: /product — capability strip, connection diagram",
+      "wholesalers: /wholesalers — click the Routes tab",
+      "retailers: /retailers — hero image, FAQ open item 2 then 3",
+      "pricing: /pricing — featured Growth card",
+      "company: /company — warehouse image + credit link",
+      "contact: /contact — fill and submit, success state",
+      "privacy: /privacy — interim copy, noindex meta",
+      "404: /nope — the 404 page"
+    ],
+    "viewports": ["desktop", "mobile"],
+    "checks": ["console-errors", "network-failures", "a11y", "design-system"]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/web/components/brand/BrandMark.tsx",
+        "behavior": "brand link + wordmark render",
+        "test": "R-MKT T4"
+      },
+      {
+        "file": "apps/web/app/(marketing)/lib/site.ts",
+        "behavior": "routes table drives sitemap + titles",
+        "test": "R-MKT T9"
+      },
+      {
+        "file": "apps/web/middleware.ts",
+        "behavior": "marketing paths bypass the mobile rewrite",
+        "test": "R-MKT T11"
+      }
+    ]
+  }
+}

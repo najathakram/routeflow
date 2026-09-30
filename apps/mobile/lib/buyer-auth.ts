@@ -3,6 +3,7 @@ import { Platform } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import { BUYER_KEYS } from "./auth-keys";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
+import { toSecureStoreKey } from "./secure-key";
 
 // ─── Web-safe storage ─────────────────────────────────────────────────────────
 
@@ -10,7 +11,7 @@ const storage = {
   async get(key: string): Promise<string | null> {
     if (Platform.OS === "web") return localStorage.getItem(key);
     const { getItemAsync } = await import("expo-secure-store");
-    return getItemAsync(key);
+    return getItemAsync(toSecureStoreKey(key));
   },
   async set(key: string, value: string): Promise<void> {
     if (Platform.OS === "web") {
@@ -18,7 +19,7 @@ const storage = {
       return;
     }
     const { setItemAsync } = await import("expo-secure-store");
-    await setItemAsync(key, value);
+    await setItemAsync(toSecureStoreKey(key), value);
   },
   async del(key: string): Promise<void> {
     if (Platform.OS === "web") {
@@ -26,7 +27,7 @@ const storage = {
       return;
     }
     const { deleteItemAsync } = await import("expo-secure-store");
-    await deleteItemAsync(key);
+    await deleteItemAsync(toSecureStoreKey(key));
   },
 };
 
@@ -52,39 +53,13 @@ export interface BuyerSeller {
     id: string;
     businessName: string;
     email: string | null;
-  };
+  } | null;
 }
 
 interface BuyerAuthResponse {
   accessToken: string;
   refreshToken: string;
   buyer: BuyerUser;
-}
-
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "buyerAccessToken";
-const LEGACY_REFRESH = "buyerRefreshToken";
-const LEGACY_SELLER = "buyerActiveSeller";
-
-/**
- * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
- * delete the legacy keys. Idempotent — safe to call on every app start.
- */
-export async function migrateLegacyBuyerToken(): Promise<void> {
-  const legacy = await storage.get(LEGACY_ACCESS);
-  if (!legacy) return;
-  const existing = await storage.get(BUYER_KEYS.accessToken);
-  if (!existing) {
-    await storage.set(BUYER_KEYS.accessToken, legacy);
-    const legacyRefresh = await storage.get(LEGACY_REFRESH);
-    if (legacyRefresh) await storage.set(BUYER_KEYS.refreshToken, legacyRefresh);
-    const legacySeller = await storage.get(LEGACY_SELLER);
-    if (legacySeller) await storage.set(BUYER_KEYS.activeSeller, legacySeller);
-  }
-  await storage.del(LEGACY_ACCESS);
-  await storage.del(LEGACY_REFRESH);
-  await storage.del(LEGACY_SELLER);
 }
 
 // ─── Session-expired callback (set by buyer-session-store on init) ───────────
@@ -333,15 +308,21 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  * Returns the buyer profile and how many sellers they are linked to.
  */
 export async function buyerLoginWithGoogle(): Promise<{ buyer: BuyerUser; sellerCount: number }> {
-  // Web (the mobile-web build) cannot use the native routeflow:// deep link — a
-  // browser can't open a custom URL scheme, so openAuthSessionAsync never resolves
-  // and sign-in silently hangs. Use the same full-page-redirect + one-time-code
-  // exchange the operator web login (lib/auth.ts) uses: omit mobile=1 so the API
-  // redirects to ${WEB_URL}/auth/google/callback?code=…, handled by
-  // app/(auth)/auth/google/callback.tsx (which persists BUYER tokens by type).
+  // Web (this Expo mobile-web build) cannot use the native routeflow:// deep
+  // link — a browser can't open a custom URL scheme, so openAuthSessionAsync
+  // never resolves and sign-in silently hangs. Use the same full-page-redirect
+  // + one-time-code exchange the operator web login (lib/auth.ts) uses: omit
+  // mobile=1 so it's the browser exchange-code flow, and pass OUR OWN origin
+  // as `return_origin` (B825) so the API's callback redirects back HERE
+  // instead of always landing on the Next web app — validated server-side
+  // against an exact allow-list (WEB_URL/MOBILE_WEB_URL), never trusted as-is.
+  // Handled by app/(auth)/auth/google/callback.tsx (persists BUYER tokens by type).
   if (Platform.OS === "web") {
     const { data: web } = await axios.get<{ url: string }>(`${BASE_URL}/api/v1/auth/google`, {
-      params: { context: "buyer-standalone" }, // no mobile=1 → web exchange-code flow
+      params: {
+        context: "buyer-standalone", // no mobile=1 → web exchange-code flow
+        return_origin: typeof window !== "undefined" ? window.location.origin : undefined,
+      },
     });
     if (!web?.url) throw new Error("google_unavailable");
     if (typeof window !== "undefined") window.location.assign(web.url);

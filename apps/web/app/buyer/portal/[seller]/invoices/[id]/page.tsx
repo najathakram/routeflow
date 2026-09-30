@@ -5,25 +5,82 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   FileText,
-  Calendar,
   DollarSign,
   Download,
   Loader2,
   AlertTriangle,
   CheckCircle2,
   Clock,
+  CreditCard,
 } from "lucide-react";
 import { Badge, useToast } from "@routeflow/ui/web";
+import { resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerInvoice } from "@/lib/api/buyer";
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+/**
+ * `msrp` was snapshotted onto InvoiceItem (apps/api/src/invoices) after
+ * `BuyerInvoiceDetail.items` (lib/api/buyer.ts) was typed — that file isn't
+ * part of this package's file set, so read it via a narrow cast rather than
+ * widening that shared interface here (same pattern as `creditNoteOf` in
+ * app/(dashboard)/invoices/[id]/page.tsx).
+ */
+function itemMsrp(item: { id: string }): number | null {
+  const v = (item as unknown as { msrp?: number | string | null }).msrp;
+  return v != null ? Number(v) : null;
+}
+
+/**
+ * `paymentTermsLabel` (the structured "Net 30"-style label, persisted so it can
+ * never disagree with `dueDate`) was added to `Invoice` after `BuyerInvoiceDetail`
+ * (lib/api/buyer.ts) was typed — that file isn't part of this package's file set,
+ * so read it via a narrow cast rather than widening that shared interface here
+ * (same pattern as `itemMsrp` above). Null/undefined (historical invoices) → null.
+ */
+function invoicePaymentTermsLabel(invoice: { id: string }): string | null {
+  const v = (invoice as unknown as { paymentTermsLabel?: string | null }).paymentTermsLabel;
+  return v ?? null;
+}
+
+/**
+ * WP-D deposit schedule (`depositPercent`/`depositDueDate`/`depositAmount`) —
+ * `depositAmount` is server-computed at read time from the CURRENT total, never
+ * stored. Same narrow-cast pattern as `itemMsrp`/`invoicePaymentTermsLabel`
+ * above: `BuyerInvoiceDetail` (lib/api/buyer.ts) isn't part of this package's
+ * file set, so these fields are read off the payload without widening that
+ * shared type. `depositPercent == null` means the invoice has no deposit
+ * schedule — callers must render nothing in that case.
+ */
+function invoiceDepositFields(invoice: {
+  id: string;
+}): { depositPercent: number; depositDueDate: string | null; depositAmount: number } | null {
+  const v = invoice as unknown as {
+    depositPercent?: number | string | null;
+    depositDueDate?: string | null;
+    depositAmount?: number | string | null;
+  };
+  if (v.depositPercent == null) return null;
+  return {
+    depositPercent: Number(v.depositPercent),
+    depositDueDate: v.depositDueDate ?? null,
+    depositAmount: Number(v.depositAmount ?? 0),
+  };
+}
+
+/**
+ * Payment `paidAt`/`createdAt` are real timestamps (default `now()`, meaningful
+ * time-of-day) rather than UTC-midnight calendar dates, so displaying them in the
+ * viewer's local timezone is correct as-is — unlike `invoice.issueDate`/`dueDate`
+ * below, which go through the UTC-safe `fmtCalendarDate` from "@/lib/formatting".
+ */
 function formatDate(d: string | null) {
   if (!d) return "N/A";
   return new Date(d).toLocaleDateString("en-GB", {
@@ -32,6 +89,13 @@ function formatDate(d: string | null) {
     year: "numeric",
   });
 }
+
+/**
+ * Statuses the payments API will actually allocate against — mirrors
+ * `OPEN_STATUSES` in `apps/api/src/payment-requests/payment-requests.service.ts`.
+ * The buyer invoice list also returns PAID/VOID/WRITTEN_OFF, which owe nothing.
+ */
+const PAYABLE_STATUSES: string[] = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 function getStatusVariant(s: string): "success" | "warning" | "danger" | "neutral" {
   if (s === "PAID") return "success";
@@ -113,13 +177,31 @@ export default function BuyerInvoiceDetailPage() {
     );
   }
 
-  // P5-12: VOID payments (manually voided OR bounced checks) must not count
-  // toward the paid amount — a bounce re-opens the balance shown here.
-  const totalPaid =
-    invoice.payments
-      ?.filter((p) => p.status !== "VOID")
-      .reduce((s, p) => s + Number(p.amount), 0) ?? 0;
-  const balanceDue = Number(invoice.total) - totalPaid;
+  // B421: this used `status !== "VOID"` (so an unconfirmed DRAFT row also
+  // counted) AND summed every method (so a CREDIT_NOTE/ADVANCE application
+  // counted as cash) — TWO bugs the brief called out for this surface
+  // specifically. Prefer the server's own confirmed-basis fields (findOne
+  // has always returned them; only this page's type/usage was stale) via the
+  // shared resolveConfirmedAmounts, falling back to a correct CONFIRMED
+  // (status === "PAID") split only when the server fields are absent.
+  const {
+    cash: totalPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(
+    {
+      totalPaid: invoice.paidAmount,
+      creditApplied: invoice.creditApplied,
+      advanceApplied: invoice.advanceApplied,
+    },
+    invoice.payments ?? [],
+  );
+  const balanceDue =
+    invoice.balanceDue != null
+      ? Number(invoice.balanceDue)
+      : Math.max(0, Number(invoice.total) - totalPaid - creditApplied - advanceApplied);
+  const paymentTermsLabel = invoicePaymentTermsLabel(invoice);
+  const deposit = invoiceDepositFields(invoice);
 
   return (
     <div className="p-6 max-w-4xl">
@@ -135,13 +217,30 @@ export default function BuyerInvoiceDetailPage() {
         <div>
           <h1 className="text-2xl font-bold text-navy">{invoice.invoiceNumber}</h1>
           <p className="text-sm text-navy/70 mt-1">
-            Issued {formatDate(invoice.issueDate)} · Due {formatDate(invoice.dueDate)}
+            Issued {fmtCalendarDate(invoice.issueDate)} · Due {fmtCalendarDate(invoice.dueDate)}
+            {paymentTermsLabel ? ` · Terms: ${paymentTermsLabel}` : ""}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Badge variant={getStatusVariant(invoice.status)}>
             {invoice.status.replace(/_/g, " ")}
           </Badge>
+          {PAYABLE_STATUSES.includes(invoice.status) && balanceDue > 0.001 && (
+            <button
+              type="button"
+              onClick={() =>
+                router.push(
+                  `/buyer/portal/${sellerSlug}/payments?amount=${encodeURIComponent(
+                    balanceDue.toFixed(2),
+                  )}`,
+                )
+              }
+              className="flex items-center gap-1.5 rounded-lg bg-buyer-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-buyer-600"
+            >
+              <CreditCard className="h-4 w-4" />
+              Pay this invoice
+            </button>
+          )}
           {invoice.pdfUrl && (
             <button
               type="button"
@@ -159,6 +258,17 @@ export default function BuyerInvoiceDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Deposit schedule — only when the invoice carries one (WP-D). */}
+      {deposit && (
+        <div className="mb-6 flex items-center gap-2 rounded-xl border border-buyer-200 bg-buyer-50 px-4 py-3 text-sm font-medium text-buyer-700">
+          <Clock className="h-4 w-4 shrink-0" />
+          <span>
+            Deposit due {fmtCalendarDate(deposit.depositDueDate)}: {fmt(deposit.depositAmount)}
+            {" · "}Remainder due {fmtCalendarDate(invoice.dueDate)}
+          </span>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-4 gap-4 mb-6">
@@ -197,18 +307,43 @@ export default function BuyerInvoiceDetailPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-surface-border">
-            {(invoice.items ?? []).map((item) => (
-              <tr key={item.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-3 text-sm font-medium text-navy">{item.description}</td>
-                <td className="px-4 py-3 text-right text-sm text-navy">{Number(item.qty)}</td>
-                <td className="px-4 py-3 text-right text-sm text-navy/70">
-                  {fmt(Number(item.unitPrice))}
-                </td>
-                <td className="px-4 py-3 text-right text-sm font-medium text-navy">
-                  {fmt(Number(item.subtotal))}
-                </td>
-              </tr>
-            ))}
+            {(invoice.items ?? []).map((item) => {
+              const msrp = itemMsrp(item);
+              return (
+                <tr key={item.id} className="hover:bg-surface-raised/50">
+                  <td className="px-4 py-3 text-sm font-medium text-navy">
+                    {item.description}
+                    {item.notes?.trim() && (
+                      <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
+                        {item.notes}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm text-navy">
+                    {Number(item.qty)}
+                    {/* BUY_N_GET_M: name the free units, or the reduced subtotal
+                        reads as a pricing error. */}
+                    {Number(item.promoFreeUnits ?? 0) > 0 && (
+                      <p className="mt-0.5 inline-flex items-center rounded-full bg-buyer-50 px-1.5 py-0.5 text-[10px] font-semibold text-buyer-700">
+                        {Number(item.promoFreeUnits)} free
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm text-navy/70">
+                    {fmt(Number(item.unitPrice))}
+                    {/* Suggested retail price, snapshotted at line creation. Keyed off
+                        data presence, not the addon flag, so an issued invoice keeps
+                        rendering it even if the seller later loses the MSRP addon. */}
+                    {msrp != null && (
+                      <p className="mt-0.5 text-[10px] text-navy/50">MSRP {fmt(msrp)}/pc</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                    {fmt(Number(item.subtotal))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

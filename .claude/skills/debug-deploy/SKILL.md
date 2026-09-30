@@ -32,7 +32,7 @@ curl -fsS https://<api-domain>/api/v1/health        # expect {"status":"ok",...}
 - **PORT / not reachable**: Railway injects `PORT`; the app must read `process.env.PORT` (it does).
   Don't hardcode 3000 in deploy config.
 - **Prisma engine error in container**: Alpine needs the `linux-musl-*` binary targets in
-  `schema.prisma` — see the db-migration skill.
+  `prisma/schema/*.prisma` — see the db-migration skill.
 - **Wrong client IP / rate-limit / CORS oddities**: `main.ts` sets `trust proxy = 2` for Railway's
   LB + CDN; CORS uses `CORS_ORIGINS` + `CORS_WILDCARD_DOMAINS`.
 - **DB schema drift after deploy**: expected — deploys do **not** migrate. Apply intentionally with

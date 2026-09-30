@@ -1,0 +1,868 @@
+{
+  "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+  "artifacts": {
+    "plan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "small",
+  "startedAt": "2026-09-04T16:10:00Z",
+  "estimatedCostUsd": 10.96,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": false,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": false,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 0,
+    "dropped": 0,
+    "votesCast": 0,
+    "firstVoteRefuted": 0,
+    "firstVoteRefutedRate": null,
+    "tieBreaks": 0,
+    "locationChecked": 0,
+    "locationInvalid": 0,
+    "preRefuted": 0,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "node --check scripts/ci-freshness-guard.mjs",
+      "node -e \"require('js-yaml').load(require('fs').readFileSync('.github/workflows/ci.yml','utf8'))\"",
+      "cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts src/common/ci-audit-script.spec.ts src/common/docs-truth.spec.ts",
+      "npx tsc -p apps/api/tsconfig.build.json --noEmit"
+    ],
+    "badCommands": ["node --check scripts/ci-freshness-guard.mjs"],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": false,
+      "results": [
+        {
+          "command": "node --check scripts/ci-freshness-guard.mjs",
+          "pass": false,
+          "summary": "Error: Cannot find module 'C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-bug-e2e\\scripts\\ci-freshness-guard.mjs'",
+          "executed": -1
+        },
+        {
+          "command": "node -e \"require('js-yaml').load(require('fs').readFileSync('.github/workflows/ci.yml','utf8'))\"",
+          "pass": true,
+          "summary": "YAML file validated successfully",
+          "executed": 1
+        },
+        {
+          "command": "cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts src/common/ci-audit-script.spec.ts src/common/docs-truth.spec.ts",
+          "pass": true,
+          "summary": "Test Suites: 2 passed, 2 total; Tests: 17 passed, 17 total",
+          "executed": 17
+        },
+        {
+          "command": "npx tsc -p apps/api/tsconfig.build.json --noEmit",
+          "pass": true,
+          "summary": "TypeScript type check passed with no errors",
+          "executed": -1
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md"
+      ],
+      "findings": []
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/cause-brief.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/cause-refutation.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/cause-ruling.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "scripts/ci-freshness-guard.mjs",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": ".github/workflows/ci.yml",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/ci-freshness-guard-script.spec.ts",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/code-map/api.md",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/code-map/_meta.json",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "CLAUDE.md",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/lessons/LESSONS.md",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/lessons/_meta.json",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "node --check scripts/ci-freshness-guard.mjs",
+      "node -e \"require('js-yaml').load(require('fs').readFileSync('.github/workflows/ci.yml','utf8'))\"",
+      "cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts src/common/ci-audit-script.spec.ts src/common/docs-truth.spec.ts",
+      "npx tsc -p apps/api/tsconfig.build.json --noEmit"
+    ],
+    "artifacts": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 2,
+    "low": 12
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 2,
+    "judgment": 3
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 7,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 5,
+          "opus": 2
+        },
+        "waves": [[0, 1, 2, 3, 4, 6]],
+        "note": "Round 1 fixes six of seven findings in a single wave (all share ci.yml, the guard script, or the spec, so the engine serializes them by file) and disputes #5, whose `node --check` failure at baseline is by construction: the script is a file this change creates and the command passes on the current tree. #0 pins the helper checkout to the default branch and adds an explicit `||` run=true fallback so the step can never go red outside the script's fail-open contract (opus, ci.yml is HIGH-risk); #2 restores the dispatch-event ::notice:: via an EVENT_NAME env plus a script branch (opus, same file pair); #1 makes a missing GITHUB_OUTPUT exit 2 loudly instead of a silent no-op; #3 makes T1 honest on Windows through the script's existing CI_FRESHNESS_GH_CMD override plus a fixture-only 403 literal assertion; #4 declares js-yaml/@types/js-yaml in apps/api with a real npm install (never --package-lock-only); #6 reorders assertions oracle-first, widens the hang pin's margin, and un-filters the stored redGate command. Each fix carries a named T3 pin or T4 assertion; the engine's revert probes are the proof-of-red for the strengthened oracles. Close-out should record that the p2 diff-size criterion (≤ 25 lines) is already exceeded and now deliberately so."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 0,
+          "opus": 0
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single minor finding: build-plan.md's p1/p2 acceptance criteria drifted behind the two round-1 fixes the review accepted (the default-branch sparse helper checkout in ci.yml that grows the diff past 25 lines, and the script's deliberate exit 2 when GITHUB_OUTPUT is unset, pinned by T3). The plan is to update only the planning doc — both the prose bullets and the mirrored brief strings in the Pipeline args JSON — to describe the accepted shape and the exit-2 exception, leaving ci.yml and scripts/ci-freshness-guard.mjs untouched, verified by grep and a JSON-parse check with T1/T3/T4 unchanged. One mechanical wave; no product code moves, so the run should close clean after this edit."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "t-guard",
+        "status": "done",
+        "filesChanged": ["apps/api/src/common/ci-freshness-guard-script.spec.ts"],
+        "deviations": ""
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": false,
+    "structurallyRed": true,
+    "behaviorallyRed": false,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "T1 · REG-E2EGUARD-403 · YAML-driven: a 403 error body must NOT be read as the newest deployment sha (fail open) — apps/api/src/common/ci-freshness-guard-script.spec.ts:174",
+            "outcome": "assertion-failure",
+            "note": "GENUINE behavioral red. It parses the real .github/workflows/ci.yml, extracts the e2e job's `freshness` step run text, and executes it under bash with a fake `gh` on PATH. Failed `expect(outputs.run).toBe(\"true\")` with Received \"false\" — i.e. the step actually wrote `run=false` into GITHUB_OUTPUT, the bug's own wrong value (a missing output file would have given `undefined`, so this is not an absence failure). I confirmed by printing the current run text: `latest=$(gh api ... --jq '.[0].sha' 2>/dev/null || true)` then `[ -z \"$latest\" ]`. Caveat I did NOT verify: redness depends on the test's own fake writing the 403 JSON body to STDOUT and exiting 1; that real `gh` behaves this way is asserted in cause-ruling.md, not checked by me."
+          },
+          {
+            "test": "T2 · REG-E2EGUARD-403 · script-direct: exits 0, fails open (run=true), warns, and quotes the 403 body — spec.ts:186",
+            "outcome": "assertion-failure",
+            "note": "Reached its assertion and failed, so structurally fine, but it failed on `expect(res.status).toBe(0)` Received 1 — that 1 is node's MODULE_NOT_FOUND for scripts/ci-freshness-guard.mjs (I confirmed the file does not exist: `ls` → No such file). It fails on the subject's ABSENCE, not on a wrong value the bug produces. A mutation probe must confirm this test can distinguish 'implemented wrong' from 'not implemented'."
+          },
+          {
+            "test": "T3 (pin) match: newest deployment IS this sha -> run=true, ::notice:: — spec.ts:196",
+            "outcome": "assertion-failure",
+            "note": "Failed on `expect(res.status).toBe(0)` Received 1 — module-not-found, same absence signal as T2, not its own oracle."
+          },
+          {
+            "test": "T3 (pin) newer: a genuinely superseded deployment still skips -> run=false, ::notice::Skipping — spec.ts:205",
+            "outcome": "assertion-failure",
+            "note": "Failed identically on res.status 1 (module-not-found). This is the pin that protects the guard's actual purpose; today it proves only wiring."
+          },
+          {
+            "test": "T3 (pin) empty: no deployments recorded -> run=true, explanatory notice — spec.ts:214",
+            "outcome": "assertion-failure",
+            "note": "Failed identically on res.status 1 (module-not-found)."
+          },
+          {
+            "test": "T3 (pin) garbage: unparseable API response -> run=true, ::warning:: — spec.ts:223",
+            "outcome": "assertion-failure",
+            "note": "Failed identically on res.status 1 (module-not-found)."
+          },
+          {
+            "test": "T3 (pin) hang: bounded timeout still fails open within 3s — spec.ts:232",
+            "outcome": "assertion-failure",
+            "note": "Failed identically on res.status 1 (module-not-found). Also carries a wall-clock assertion (`elapsedMs < 3000` with CI_FRESHNESS_GH_TIMEOUT_MS=500) — time-based, flake-prone on a loaded runner."
+          },
+          {
+            "test": "T3 (pin) missing DEPLOY_SHA: exits 0, fails open, warns — spec.ts:246",
+            "outcome": "assertion-failure",
+            "note": "Failed identically on res.status 1 (module-not-found)."
+          },
+          {
+            "test": "T4 (pin) e2e job grants read-only contents + deployments permissions — spec.ts:257",
+            "outcome": "assertion-failure",
+            "note": "Failed on `expect(e2eJob.permissions).toBeDefined()` Received undefined — the e2e job today declares no permissions key. A real (if weak) behavioral assertion about the workflow's current wrong state."
+          },
+          {
+            "test": "T4 (pin) verify job carries NO permissions key (unchanged, least-privilege default) — spec.ts:266",
+            "outcome": "passed",
+            "note": "PASSES TODAY. Not vacuous — it asserts a real invariant the fix could break — but the behavior already exists, so it is an invariance regression lock, not a requirement, and it can never be red. Structural blocker under the red-gate rule."
+          },
+          {
+            "test": "T4 (pin) the freshness step's run invokes scripts/ci-freshness-guard.mjs — spec.ts:273",
+            "outcome": "assertion-failure",
+            "note": "Failed on toContain: the current run text is the inline bash guard (printed in full in the failure output), which is the correct wrong value for this requirement."
+          },
+          {
+            "test": "T4 (pin) all seven steps.freshness.outputs.run == 'true' consumers are unchanged — spec.ts:279",
+            "outcome": "passed",
+            "note": "PASSES TODAY. Behavior already exists — a count-of-7 regression lock on unchanged consumers, derived from the current file. Not tautological, but never red. Structural blocker under the red-gate rule."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: 'T4 (pin) verify job carries NO permissions key' (spec.ts:266) PASSES on the untouched tree — the asserted behavior already exists (verify has no permissions key), so it is an invariance lock, not a requirement, and cannot be red.",
+          "STRUCTURAL: 'T4 (pin) all seven steps.freshness.outputs.run == \\'true\\' consumers are unchanged' (spec.ts:279) PASSES on the untouched tree — same reason: it locks unchanged current state (count == 7) and can never be red.",
+          "STRUCTURAL: the plan's designated gate command `npx jest ... -t \"REG-E2EGUARD-403\"` collected only T1 and T2; the other 10 tests were reported 'skipped' (attempt-1 output). Under that command 10 new tests are not-run. I re-ran the file unfiltered to classify them: 10 failed, 2 passed, 0 skipped.",
+          "BEHAVIORAL: T2 fails on `res.status` 1 vs 0, which is node's MODULE_NOT_FOUND for the not-yet-created scripts/ci-freshness-guard.mjs — an absence signal, not the bug's own wrong value; it proves wiring, not the oracle.",
+          "BEHAVIORAL: all six T3 pins fail identically on the same `res.status` 1 module-not-found, so the entire script-direct half of the suite currently shares one absence failure mode; only T1 (run=false vs true) and the two ci.yml-static T4s fail on real current-state values.",
+          "BEHAVIORAL: T1's redness depends on the test's own fake `gh` writing the 403 JSON body to STDOUT and exiting 1. That real `gh api` behaves this way is claimed in cause-ruling.md; I did not verify it against the real CLI, so T1's fidelity to the production failure is asserted, not proven, in this session.",
+          "BEHAVIORAL: 'T3 (pin) hang' asserts on wall-clock elapsed time (< 3000 ms) — a timing oracle that can pass or fail for reasons unrelated to the guard on a loaded runner.",
+          "BEHAVIORAL: T1 additionally depends on a bash `gh` shim written with fs.chmod on PATH; it ran here (Git Bash), but it is an environment dependency that will silently change the failure mode (unknown-command instead of a wrong output) if bash is absent."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "T1 · REG-E2EGUARD-403 · YAML-driven: a 403 error body must NOT be read as the newest deployment sha (fail open) — apps/api/src/common/ci-freshness-guard-script.spec.ts:174",
+            "outcome": "assertion-failure",
+            "note": "ORACLE-RED. Fails on the bug's own wrong value: `expect(outputs.run).toBe(\"true\")` Received \"false\". Verified real: the fake gh in err403 mode writes the 403 JSON body to STDOUT (faithful to `gh api --jq` on an error status, which skips the jq filter and copies the raw body), the live ci.yml step captures it into $latest via `2>/dev/null || true`, finds it non-empty and != DEPLOY_SHA, and emits run=false. Executes the ACTUAL `run:` text parsed out of .github/workflows/ci.yml, so it is a genuine repro rather than a restatement."
+          },
+          {
+            "test": "T2 · REG-E2EGUARD-403 · script-direct: exits 0, fails open (run=true), warns, and quotes the 403 body — spec.ts:186",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1. Verified the 1 is node's `Error: Cannot find module .../scripts/ci-freshness-guard.mjs` (script does not exist yet) — an absence signature, not a wrong behavioral value. Its distinguishing oracles (run=true, ::warning::, the quoted 403 body) are never reached. The test plan predicted T2 would fail on a missing `run=` line; it actually fails one assertion earlier, on the exit code."
+          },
+          {
+            "test": "T3 (pin) match: newest deployment IS this sha -> run=true, ::notice:: — spec.ts:196",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature to T2. Oracles (run=true, ::notice::) unreached. Also note the `match` fake echoes back the test's own DEPLOY_SHA, so the matching value is one the test configured; it still exercises the compare branch."
+          },
+          {
+            "test": "T3 (pin) newer: a genuinely superseded deployment still skips -> run=false, ::notice::Skipping — spec.ts:205",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Its distinguishing oracle (run=false, the only test in the file asserting a skip) is unreached, so the guard's purpose-preserving branch is unproven at this gate."
+          },
+          {
+            "test": "T3 (pin) empty: no deployments recorded -> run=true, explanatory notice — spec.ts:214",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracle (\"no deployments recorded\") unreached."
+          },
+          {
+            "test": "T3 (pin) garbage: unparseable API response -> run=true, ::warning:: — spec.ts:223",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracle unreached."
+          },
+          {
+            "test": "T3 (pin) hang: bounded timeout still fails open within 3s — spec.ts:232",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Time-based: the fake sleeps a real 5 s and the test asserts wall-clock elapsed < 3000 ms with CI_FRESHNESS_GH_TIMEOUT_MS=500; that margin includes node startup and is a flake risk on a loaded runner."
+          },
+          {
+            "test": "T3 (pin) missing DEPLOY_SHA: exits 0, fails open, warns — spec.ts:246",
+            "outcome": "assertion-failure",
+            "note": "Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracles unreached."
+          },
+          {
+            "test": "T4 · REG-E2EGUARD-403 · e2e job gets contents+deployments read; verify job untouched — spec.ts:260",
+            "outcome": "assertion-failure",
+            "note": "ORACLE-RED. `doc.jobs.e2e.permissions` Received undefined vs {contents: read, deployments: read}; verified against the file — ci.yml has no `permissions:` key anywhere (only a comment at line 310). The folded invariance lock on line 264 (verify job has no permissions) is never evaluated today because the first assertion throws; it only starts enforcing after the fix."
+          },
+          {
+            "test": "T4 · REG-E2EGUARD-403 · freshness step calls the script; its 7 consumers are unchanged — spec.ts:267",
+            "outcome": "assertion-failure",
+            "note": "ORACLE-RED. Fails on the real current run text (the inline bash guard, printed in full in the failure) not containing \"scripts/ci-freshness-guard.mjs\". The folded consumer-count lock (== 7) is unreached today; independently verified the current count is 7, so it will hold post-fix."
+          }
+        ],
+        "blockers": [
+          "BEHAVIORAL: 7 of 10 tests (T2 and all six T3 pins) fail identically on `expect(res.status).toBe(0)` Received 1 — verified to be node's `Cannot find module .../scripts/ci-freshness-guard.mjs`. That proves the harness is wired to a file that does not exist; it does not exercise any of their own oracles (run=true vs run=false, ::warning:: vs ::notice::Skipping, \"no deployments recorded\", the quoted 403 body, the timeout bound). Only T1, T4a and T4b failed on a value that is genuinely today's wrong/current value.",
+          "BEHAVIORAL: T3 (pin) newer is the only test asserting run=false, and its oracle was never reached — the guard's purpose-preserving skip branch is currently unproven and rests entirely on the later mutation probe.",
+          "STRUCTURAL: the pipeline's configured redGate command is `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts -t \"REG-E2EGUARD-403\"`, which collected only 4 tests and left 6 SKIPPED (the attempt-2 output shows `4 failed, 6 skipped, 10 total`). The test plan's own line 10 says the gate must be UNFILTERED. I re-ran unfiltered myself and got `10 failed, 10 total`, so the substance is fine, but the gate as configured does not exercise every new test.",
+          "STRUCTURAL (post-fix false RED): T1's `spawnSync(\"bash\", …)` in runYamlDrivenFreshnessStep passes no `cwd`, so it inherits the jest process's cwd — apps/api, per the plan's own verify command `cd apps/api && npx jest …` (jest does not chdir; apps/api's jest config has rootDir \"src\" and no setup file calling process.chdir). The build plan's p2 brief makes the step's run text `node scripts/ci-freshness-guard.mjs`, a repo-root-relative path. Verified from apps/api: that command exits 1 with `Cannot find module`. T1 therefore cannot go green after a correct fix. Sibling spec prod-migrate-script.spec.ts:45 sets `cwd` explicitly for exactly this reason.",
+          "STRUCTURAL (post-fix false GREEN on Windows): T1's post-fix assertions (run=true, \"::warning::\", \"Could not read the newest deployment\") are satisfied by ANY fail-open path, including the script never reaching GitHub at all. The `gh` fixture is an extensionless bash script (spec.ts:82-87); the ruling §2b specifies the script call `gh` via spawnSync with shell:false, and on Windows libuv resolves a bare name only through PATHEXT (.COM/.EXE/.BAT/.CMD), so `gh` would ENOENT and the guard would take branch (C) for the wrong reason. T1 would pass without the 403 ever being seen. (On the Linux CI runner the shim resolves and the path is genuine — this is a local-run false green.)",
+          "BEHAVIORAL (minor): T3 (pin) match's fake returns `sha: process.env.DEPLOY_SHA`, i.e. the test asserts a match against a value the test itself configured. It still exercises the compare branch, but the equality can never disagree.",
+          "BEHAVIORAL (minor): T3 (pin) hang asserts wall-clock `elapsedMs < 3000` against a real 5 s sleep with a 500 ms configured timeout — a time-based assertion whose margin includes node startup; it is a flake candidate on a loaded runner rather than a stable oracle."
+        ]
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL blocker 1 — 'T4 (pin) verify job carries NO permissions key' passed on the untouched tree. Deleted the standalone test and folded its assertion into the T4 permissions test that is red today: `expect(doc.jobs.e2e.permissions).toEqual({contents:'read',deployments:'read'}); expect(doc.jobs.verify.permissions).toBeUndefined();`. Verified: that test now fails on `expect(received).toEqual(expected)` Received undefined (the e2e job has no permissions key today) — the invariance lock now rides on a red assertion.",
+        "STRUCTURAL blocker 2 — 'T4 (pin) all seven steps.freshness.outputs.run == \\'true\\' consumers are unchanged' passed on the untouched tree. Deleted the standalone test and folded its count-of-7 assertion into the T4 test that already fails today: `expect(freshnessRunText()).toContain('scripts/ci-freshness-guard.mjs')` runs first and fails against the current inline bash guard (its full text was printed in the failure output), so the count assertion can never be green-alone.",
+        "STRUCTURAL blocker 3 — the plan's red-gate command `npx jest ... -t \"REG-E2EGUARD-403\"` collected only 2 of 12 tests. Changed `.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md` line 10 to the unfiltered `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts`, with the reason recorded inline, and added a clause to the T4 line noting the two invariance assertions are now folded into red tests rather than standing alone.",
+        "Re-ran the unfiltered gate as the auditor required: `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts` → `Tests: 10 failed, 10 total` (0 passed, 0 skipped). This is the exact acceptance condition stated in the remediation."
+      ],
+      "skipped": [
+        {
+          "index": 4,
+          "summary": "BEHAVIORAL: T2 fails on `res.status` 1 vs 0, which is node's MODULE_NOT_FOUND for the not-yet-created scripts/ci-freshness-guard.mjs — an absence signal, not the bug's own wrong value.",
+          "reason": "Not fixable by test edits in this round. The only test-side remedy would be creating scripts/ci-freshness-guard.mjs, which is implementation/production code and forbidden here (it is listed [planned, HIGH] in the manifest). A signature-only stub would not help either: a no-op stub exits 0 and writes nothing, so T2 would merely move from one absence failure (status 1) to another (outputs.run undefined). The auditor's own remediation routes this to the post-implementation mutation probe in cause-ruling.md §7 (a mutation that ignores gh's exit status must re-red T2). T2 does currently fail on an assertion (`expect(res.status).toBe(0)`), not on a thrown error, so it is structurally sound."
+        },
+        {
+          "index": 5,
+          "summary": "BEHAVIORAL: all six T3 pins fail identically on `res.status` 1 module-not-found, so the whole script-direct half shares one absence failure mode.",
+          "reason": "Same cause and same constraint as blocker 4 — the subject script is forbidden production code this round. Verified in this session that all six still reach and fail on assertions (the unfiltered run reports 10 assertion failures, 0 errors/skips). Discharge belongs to the post-implementation mutation probe."
+        },
+        {
+          "index": 6,
+          "summary": "BEHAVIORAL: T1's redness depends on the test's own fake `gh` writing the 403 JSON body to STDOUT and exiting 1; that real `gh api` behaves this way is asserted in cause-ruling.md, not proven.",
+          "reason": "Cannot be settled from a test edit — it requires running the real `gh` CLI against a token lacking deployments:read, which is a network/credentialed action outside this round's scope. I did NOT verify it in this session. Note for the reviewer: T1's redness today does not actually hinge on the STDOUT-vs-STDERR detail — the current run text is `latest=$(gh api ... --jq '.[0].sha' 2>/dev/null || true)`, so a STDERR-only 403 would leave `$latest` empty and hit the existing fail-open branch (run=true), and T1 would then pass rather than fail. Since T1 is observed failing with `run=false`, the fake's STDOUT behaviour is what makes it red, and that fidelity claim remains unproven here."
+        },
+        {
+          "index": 7,
+          "summary": "BEHAVIORAL: 'T3 (pin) hang' asserts on wall-clock elapsed time (< 3000 ms) — flake-prone on a loaded runner.",
+          "reason": "Left as-is deliberately. Loosening or removing the timing oracle would weaken the only assertion that proves the guard is bounded rather than hanging the job, and weakening a test is not permitted. The 500 ms configured timeout against a 3000 ms bound is already a 6x margin. Flagged for the reviewer as a known timing-oracle risk rather than silently changed."
+        },
+        {
+          "index": 8,
+          "summary": "BEHAVIORAL: T1 depends on a bash `gh` shim written with fs.chmod on PATH; if bash is absent the failure mode silently changes to unknown-command.",
+          "reason": "An environment dependency, not a test-logic defect — it is intrinsic to T1's design of executing the workflow's real `run:` text the way GitHub Actions does (`bash -euo pipefail -c`). Removing bash would mean no longer exercising the actual ci.yml step, which is precisely what makes T1 the bug's own wrong value. It ran successfully here (Git Bash on Windows) and CI runners are ubuntu-latest. Hardening it would need a new guard assertion, which is scope beyond this remediation round."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/apps/api/src/common/ci-freshness-guard-script.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/bug-test-plan.md"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "p1-script",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/scripts/ci-freshness-guard.mjs"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "p2-workflow",
+      "status": "done",
+      "filesChanged": [".github/workflows/ci.yml"],
+      "deviations": "Cause-ruling.md §2c specifies the freshness step's run: text becomes literally `node scripts/ci-freshness-guard.mjs`. Implemented verbatim first, but T1 (apps/api/src/common/ci-freshness-guard-script.spec.ts) then failed: T1 executes the step's raw `run:` text directly via bash with no cwd override, and both that test harness (invoked `cd apps/api && npx jest ...` per the plan's own verify command) and the real e2e job (freshness runs BEFORE any checkout) leave `scripts/ci-freshness-guard.mjs` unresolvable by a bare relative path — confirmed empirically (MODULE_NOT_FOUND). Fixed by: (1) adding a new, unconditional step \"Checkout freshness guard script\" (sparse-checkout of `scripts/` only, cone mode) before the freshness step, so the script is present on the runner pre-full-checkout; (2) changing the freshness step's run text to `node \"$(git rev-parse --show-toplevel)/scripts/ci-freshness-guard.mjs\"` so the path resolves correctly both in real CI (post sparse-checkout, cwd = GITHUB_WORKSPACE) and in the local YAML-driven test (cwd = apps/api, but still inside the same git worktree, so `git rev-parse --show-toplevel` finds the true repo root). This pushed the diff to 62 changed lines (24 insertions/38 deletions) against the plan's \"diff ≤ 25 lines\" target — a necessary correctness deviation, not a scope expansion; nothing outside the e2e job's steps was touched, the `freshness` step id/output name and all 7 `steps.freshness.outputs.run == 'true'` consumers are unchanged, and the verify job still has no `permissions:` block (all confirmed by T4)."
+    },
+    {
+      "package": "p3-docs",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/code-map/api.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/code-map/_meta.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/CLAUDE.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/lessons/LESSONS.md",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/lessons/_meta.json"
+      ],
+      "deviations": "None. Only the 5 files in scope were touched."
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts src/common/ci-audit-script.spec.ts src/common/docs-truth.spec.ts",
+        "pass": true,
+        "summary": "29 tests passed across 3 test suites (docs-truth, ci-audit, ci-freshness-guard)",
+        "executed": 29
+      },
+      {
+        "command": "npx tsc -p apps/api/tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript type checking completed with no errors",
+        "executed": -1
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": false,
+    "targets": 0,
+    "results": [],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": null,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "skippedTargets": [],
+    "skipped": "small-scale"
+  },
+  "finalPass": {
+    "ran": false,
+    "completed": false,
+    "skipped": "small-scale",
+    "reader": null,
+    "model": null,
+    "effort": null,
+    "fallback": false,
+    "files": [],
+    "candidates": 0,
+    "gaps": [],
+    "secondRead": false,
+    "decision": "",
+    "findings": []
+  },
+  "confirmedFindings": [
+    {
+      "file": ".github/workflows/ci.yml",
+      "line": 370,
+      "severity": "blocker",
+      "summary": "The new unconditional \"Checkout freshness guard script\" step pins no ref, so it checks out the deployment's own (possibly superseded/older) commit — where scripts/ci-freshness-guard.mjs does not exist — and the guard step then dies with MODULE_NOT_FOUND, turning the job red instead of exiting 0.",
+      "detail": "actions/checkout with no `ref:` input defaults to GITHUB_SHA (input-helper falls back to github.context.ref/sha; with an empty ref, getCheckoutInfo checks out the commit itself). For a `deployment_status` event GITHUB_SHA is the deployment's commit — consistent with this file's own measured comment at lines 474-477 (\"on deployment_status `github.ref` is empty or a bare SHA\"). Concrete failure: the file documents (lines 375-379) that when deployment N succeeds, Railway ALSO re-posts `success` on deployment N-1 ~4s later, carrying the OLD commit. The very first deploy after this PR merges therefore fires a stale run whose deployment sha is the pre-merge master commit; the sparse checkout produces that commit's `scripts/` tree, which has no `ci-freshness-guard.mjs` (the file is brand new — `git status` shows it untracked, it exists on no earlier commit); `node \"$(git rev-parse --show-toplevel)/scripts/ci-freshness-guard.mjs\"` exits 1 with \"Cannot find module\"; the `Skip superseded deployments` step FAILS and the e2e job goes RED. Same permanently for any Railway rollback/redeploy of an older commit. This defeats the contract the script's own header and the rewritten step comment (lines 389-394) state — \"It ALWAYS exits 0 ... a red guard step would hide the suite exactly like a wrongful skip does\" — because the failure now happens outside the script. It also breaks the plan's explicit acceptance criterion for p2 (\"nothing else in the file changes (diff must be ≤ 25 lines)\"; actual diff 24 insertions / 38 deletions). I could not execute GitHub Actions here, so this rests on actions/checkout's documented default-ref behaviour plus GitHub's GITHUB_SHA semantics for deployment_status, not on an observed CI run.",
+      "fixHint": "Pin the helper checkout to a ref that always carries the script, e.g. `ref: ${{ github.event.repository.default_branch }}` — for deployment_status the workflow file itself is already taken from the default branch, so workflow and script stay in lockstep. Do NOT use `continue-on-error` on the guard step: a failed step leaves `steps.freshness.outputs.run` unset and every one of the 7 consumers then skips, i.e. the original silent-green bug. If a fallback is wanted, make it explicit in the run text (`node ... || echo \"run=true\" >> \"$GITHUB_OUTPUT\"`).",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "scripts/ci-freshness-guard.mjs",
+      "line": 55,
+      "severity": "minor",
+      "summary": "appendOutput() silently no-ops when GITHUB_OUTPUT is unset, so the guard can exit 0 having emitted no `run` output at all — every downstream step then skips and the job reports green, which is exactly the bug class being fixed.",
+      "detail": "`if (!file) return;` swallows a missing GITHUB_OUTPUT. If that env var is ever absent (a step-level `shell:`/env override, a future reuse of the script outside a `run:` step, a local invocation), the script prints its ::notice::/::warning::, exits 0, and writes nothing. `steps.freshness.outputs.run` is then unset, all 7 `== 'true'` consumers evaluate false, the Playwright steps skip, and the job is green with zero E2E coverage — REG-E2EGUARD-403's own symptom, and precisely what L-041 says is not a passing run. The inline bash it replaced failed LOUDLY in this case (`set -uo pipefail` + `>> \"$GITHUB_OUTPUT\"` → unbound variable → non-zero step). Not reachable in a normal GitHub-hosted `run:` step, which always sets GITHUB_OUTPUT — hence minor, but it is a fail-CLOSED hole in a script whose entire thesis is fail-open.",
+      "fixHint": "Treat a missing GITHUB_OUTPUT as a hard error (write to stderr and exit non-zero) rather than a silent no-op — the one case where failing loudly is safer than exiting 0, because with no output written the suite skips anyway.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "scripts/ci-freshness-guard.mjs",
+      "line": 91,
+      "severity": "minor",
+      "summary": "The dropped EVENT_NAME branch means every workflow_dispatch / repository_dispatch E2E run now emits a false \"::warning::Could not read the newest deployment (DEPLOY_SHA is not set)\" annotation for a perfectly normal event.",
+      "detail": "The old step took `EVENT_NAME` and printed \"<event> run — the freshness guard only applies to deployment_status\" (informational) before setting run=true; the rewrite removed EVENT_NAME from the step env (ci.yml line 397 deleted) and the script has no event branch, so on repository_dispatch/workflow_dispatch `${{ github.event.deployment.sha }}` expands to empty, `!deploySha` fires, and the run is annotated with a warning claiming an API read failure that never happened. The job's own `if:` (lines 349-352) admits both dispatch events, and this file's documented recovery path is \"re-run the deploy, then re-dispatch this workflow\" (line 615) — so the misleading warning lands on exactly the manual runs an operator inspects most closely. Behaviour is still correct (run=true); only the diagnosis is wrong. Verified by running the step by hand: with DEPLOY_SHA absent the script prints the ::warning:: form.",
+      "fixHint": "Re-add EVENT_NAME (or branch on an empty DEPLOY_SHA explicitly) and emit a ::notice:: saying the guard only applies to deployment_status, keeping run=true — reserve ::warning:: for a genuine API/permission failure.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/ci-freshness-guard-script.spec.ts",
+      "line": 174,
+      "severity": "minor",
+      "summary": "T1's fake `gh` shim is silently bypassed on Windows: the script spawns the REAL gh CLI against api.github.com, so the test passes on any gh failure without ever exercising the 403 fixture — and makes a live network call from a unit test.",
+      "detail": "Proven by direct repro in this session. (1) `spawnSync('gh', …, {shell:false})` with a PATH-prepended extensionless bash shim named `gh` does NOT run the shim on win32 — Node/libuv resolves via PATHEXT and falls through to the real `gh.exe`. (2) Replaying T1's exact command (`bash -euo pipefail -c` of ci.yml's freshness `run:` text, with FAKE_GH_MODE=err403, GH_TOKEN=x, GITHUB_REPOSITORY=acme/repo and the shim dir first on PATH) printed `::warning::Could not read the newest deployment (exit 1: { \"message\": \"Bad credentials\" … \"status\": \"401\" })` — the live GitHub API, not the fixture's 403 \"Resource not accessible by integration\" body. T1 asserts only run=true + \"::warning::\" + \"Could not read the newest deployment\", all of which any gh failure (or gh not being installed → ENOENT) satisfies, so on the owner's platform the test cannot distinguish \"403 body correctly rejected\" from \"gh unusable\", and it issues an outbound HTTPS request on every api suite run. It IS genuine on the ubuntu-latest CI runners (both jobs, lines 163/338), where the shebang shim executes — and T2 does cover the 403 body properly via CI_FRESHNESS_GH_CMD — but the L-058 Guard line (\"T1 executes the workflow's own step under a fake `gh`\") is untrue off Linux.",
+      "fixHint": "Make the shim resolvable without a shell on win32 or make the platform gap explicit — note that a `gh.cmd`/`gh.bat` shim is NOT a drop-in: Node >= 20.12 refuses to spawn .cmd/.bat without `shell: true`, and the resulting spawn error would again satisfy T1's assertions for the wrong reason. Either assert something only the fixture can produce (e.g. the 403 body text, as T2 does) so a fall-through to the real gh goes red, or skip T1 on win32 with a stated reason.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/ci-freshness-guard-script.spec.ts",
+      "line": 5,
+      "severity": "minor",
+      "summary": "The spec imports `js-yaml`, which is declared in neither apps/api/package.json nor the root package.json — it resolves only by hoisting from an unrelated transitive dependency.",
+      "detail": "Verified: `node -e \"require('js-yaml/package.json').version\"` → 4.3.1 resolved from the root node_modules; `npm ls js-yaml` shows it arriving via @eslint/eslintrc and cosmiconfig, while apps/api's own tree also carries js-yaml@5.3.0 (@nestjs/swagger) and mobile carries 3.14.2; `apps/api/node_modules/js-yaml` does not exist. A dependency check of both package.json files reports js-yaml in neither dependencies nor devDependencies (no @types/js-yaml either — harmless only because apps/api/tsconfig.json excludes **/*.spec.ts and sets noImplicitAny:false). It passes today because npm ci hoists identically, so this is latent, not broken: the day an eslint/cosmiconfig bump drops or renests js-yaml, this spec fails to resolve its import and the only regression test for REG-E2EGUARD-403 stops running — the hoisting-accident failure mode L-032 already charged this repo for once.",
+      "fixHint": "Add js-yaml (pinned to the major whose `load` semantics the spec relies on, i.e. ^4) and @types/js-yaml to apps/api devDependencies and regenerate the lockfile with a real npm install.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "(gate-command)",
+      "severity": "major",
+      "summary": "`node --check scripts/ci-freshness-guard.mjs` already fails on the unmodified baseline tree — the command is broken, not the code",
+      "detail": "Baseline output: Error: Cannot find module 'C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-bug-e2e\\scripts\\ci-freshness-guard.mjs'. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+      "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+      "phase": "Baseline",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Red gate never went properly RED — the new tests are not proven able to fail",
+      "detail": "A test that has never failed proves nothing. Auditor notes: [\"BEHAVIORAL: 7 of 10 tests (T2 and all six T3 pins) fail identically on `expect(res.status).toBe(0)` Received 1 — verified to be node's `Cannot find module .../scripts/ci-freshness-guard.mjs`. That proves the harness is wired to a file that does not exist; it does not exercise any of their own oracles (run=true vs run=false, ::warning:: vs ::notice::Skipping, \\\"no deployments recorded\\\", the quoted 403 body, the timeout bound). Only T1, T4a and T4b failed on a value that is genuinely today's wrong/current value.\",\"BEHAVIORAL: T3 (pin) newer is the only test asserting run=false, and its oracle was never reached — the guard's purpose-preserving skip branch is currently unproven and rests entirely on the later mutation probe.\",\"STRUCTURAL: the pipeline's configured redGate command is `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts -t \\\"REG-E2EGUARD-403\\\"`, which collected only 4 tests and left 6 SKIPPED (the attempt-2 output shows `4 failed, 6 skipped, 10 total`). The test plan's own line 10 says the gate must be UNFILTERED. I re-ran unfiltered myself and got `10 failed, 10 total`, so the substance is fine, but the gate as configured does not exercise every new test.\",\"STRUCTURAL (post-fix false RED): T1's `spawnSync(\\\"bash\\\", …)` in runYamlDrivenFreshnessStep passes no `cwd`, so it inherits the jest process's cwd — apps/api, per the plan's own verify command `cd apps/api && npx jest …` (jest does not chdir; apps/api's jest config has rootDir \\\"src\\\" and no setup file calling process.chdir). The build plan's p2 brief makes the step's run text `node scripts/ci-freshness-guard.mjs`, a repo-root-relative path. Verified from apps/api: that command exits 1 with `Cannot find module`. T1 therefore cannot go green after a correct fix. Sibling spec prod-migrate-script.spec.ts:45 sets `cwd` explicitly for exactly this reason.\",\"STRUCTURAL (post-fix false GREEN on Windows): T1's post-fix assertions (run=true, \\\"::warning::\\\", \\\"Could not read the newest deployment\\\") are satisfied by ANY fail-open path, including the script never reaching GitHub at all. The `gh` fixture is an extensionless bash script (spec.ts:82-87); the ruling §2b specifies the script call `gh` via spawnSync with shell:false, and on Windows libuv resolves a bare name only through PATHEXT (.COM/.EXE/.BAT/.CMD), so `gh` would ENOENT and the guard would take branch (C) for the wrong reason. T1 would pass without the 403 ever being seen. (On the Linux CI runner the shim resolves and the path is genuine — this is a local-run false green.)\",\"BEHAVIORAL (minor): T3 (pin) match's fake returns `sha: process.env.DEPLOY_SHA`, i.e. the test asserts a match against a value the test itself configured. It still exercises the compare branch, but the equality can never disagree.\",\"BEHAVIORAL (minor): T3 (pin) hang asserts wall-clock `elapsedMs < 3000` against a real 5 s sleep with a 500 ms configured timeout — a time-based assertion whose margin includes node startup; it is a flake candidate on a loaded runner rather than a stable oracle.\"]. Per-test outcomes: [{\"test\":\"T1 · REG-E2EGUARD-403 · YAML-driven: a 403 error body must NOT be read as the newest deployment sha (fail open) — apps/api/src/common/ci-freshness-guard-script.spec.ts:174\",\"outcome\":\"assertion-failure\",\"note\":\"ORACLE-RED. Fails on the bug's own wrong value: `expect(outputs.run).toBe(\\\"true\\\")` Received \\\"false\\\". Verified real: the fake gh in err403 mode writes the 403 JSON body to STDOUT (faithful to `gh api --jq` on an error status, which skips the jq filter and copies the raw body), the live ci.yml step captures it into $latest via `2>/dev/null || true`, finds it non-empty and != DEPLOY_SHA, and emits run=false. Executes the ACTUAL `run:` text parsed out of .github/workflows/ci.yml, so it is a genuine repro rather than a restatement.\"},{\"test\":\"T2 · REG-E2EGUARD-403 · script-direct: exits 0, fails open (run=true), warns, and quotes the 403 body — spec.ts:186\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1. Verified the 1 is node's `Error: Cannot find module .../scripts/ci-freshness-guard.mjs` (script does not exist yet) — an absence signature, not a wrong behavioral value. Its distinguishing oracles (run=true, ::warning::, the quoted 403 body) are never reached. The test plan predicted T2 would fail on a missing `run=` line; it actually fails one assertion earlier, on the exit code.\"},{\"test\":\"T3 (pin) match: newest deployment IS this sha -> run=true, ::notice:: — spec.ts:196\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature to T2. Oracles (run=true, ::notice::) unreached. Also note the `match` fake echoes back the test's own DEPLOY_SHA, so the matching value is one the test configured; it still exercises the compare branch.\"},{\"test\":\"T3 (pin) newer: a genuinely superseded deployment still skips -> run=false, ::notice::Skipping — spec.ts:205\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Its distinguishing oracle (run=false, the only test in the file asserting a skip) is unreached, so the guard's purpose-preserving branch is unproven at this gate.\"},{\"test\":\"T3 (pin) empty: no deployments recorded -> run=true, explanatory notice — spec.ts:214\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracle (\\\"no deployments recorded\\\") unreached.\"},{\"test\":\"T3 (pin) garbage: unparseable API response -> run=true, ::warning:: — spec.ts:223\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracle unreached.\"},{\"test\":\"T3 (pin) hang: bounded timeout still fails open within 3s — spec.ts:232\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Time-based: the fake sleeps a real 5 s and the test asserts wall-clock elapsed < 3000 ms with CI_FRESHNESS_GH_TIMEOUT_MS=500; that margin includes node startup and is a flake risk on a loaded runner.\"},{\"test\":\"T3 (pin) missing DEPLOY_SHA: exits 0, fails open, warns — spec.ts:246\",\"outcome\":\"assertion-failure\",\"note\":\"Fails on `expect(res.status).toBe(0)` Received 1 — identical missing-module signature. Oracles unreached.\"},{\"test\":\"T4 · REG-E2EGUARD-403 · e2e job gets contents+deployments read; verify job untouched — spec.ts:260\",\"outcome\":\"assertion-failure\",\"note\":\"ORACLE-RED. `doc.jobs.e2e.permissions` Received undefined vs {contents: read, deployments: read}; verified against the file — ci.yml has no `permissions:` key anywhere (only a comment at line 310). The folded invariance lock on line 264 (verify job has no permissions) is never evaluated today because the first assertion throws; it only starts enforcing after the fix.\"},{\"test\":\"T4 · REG-E2EGUARD-403 · freshness step calls the script; its 7 consumers are unchanged — spec.ts:267\",\"outcome\":\"assertion-failure\",\"note\":\"ORACLE-RED. Fails on the real current run text (the inline bash guard, printed in full in the failure) not containing \\\"scripts/ci-freshness-guard.mjs\\\". The folded consumer-count lock (== 7) is unreached today; independently verified the current count is 7, so it will hold post-fix.\"}]. Remediation asked for: Structural edits, all in apps/api/src/common/ci-freshness-guard-script.spec.ts unless stated:\n\n1. Red-gate command (pipeline args, redGate.commands): replace `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts -t \"REG-E2EGUARD-403\"` with `cd apps/api && npx jest src/common/ci-freshness-guard-script.spec.ts` so all 10 tests are collected, matching bug-test-plan.md line 10.\n\n2. T1 cwd (spec.ts:131) — in runYamlDrivenFreshnessStep, add `cwd: REPO_ROOT` to the spawnSync options:\n   const res = spawnSync(\"bash\", [\"-euo\", \"pipefail\", \"-c\", runText], { encoding: \"utf8\", cwd: REPO_ROOT, env: { … } });\n   REPO_ROOT is already defined at spec.ts:23. Without this the post-fix run text `node scripts/ci-freshness-guard.mjs` resolves against apps/api and dies with Cannot find module.\n\n3. T1 gh shim resolvable without a shell (beforeAll, after spec.ts:87) — write a second shim so a shell:false spawn of `gh` resolves on Windows too:\n   fs.writeFileSync(path.join(ghShimDir, \"gh.cmd\"), `@echo off\\r\\nnode \"${fakeGhDriver}\" %*\\r\\n`);\n   (keep the extensionless `gh` for bash/Linux). Without it, T1 post-fix passes on Windows because the guard failed open on ENOENT, never on the 403.\n\n4. T1 must prove it took the 403 branch, not just any fail-open branch (after spec.ts:183) — add:\n   expect(res.stdout).toContain(ERR_403_BODY.slice(0, 50));\n   so an ENOENT/timeout fail-open cannot satisfy T1. (T2 already does this at spec.ts:193; T1 is the YAML-driven repro and needs the same discrimination.)\n\n5. Distinguish the seven identical failures (optional but recommended, and the cheapest fix for the behavioral shortfall): in T2 and each T3, move the behavioral oracle ahead of the process-level check — assert `outputs.run` and the stdout marker first, and assert `res.status` last. Each test then reports its own expected value in the failure message instead of all seven reporting `Received: 1`.\n\n6. T3 hang (spec.ts:243): the wall-clock bound is the weakest oracle in the file. Either raise it to 5000 (still strictly below the fake's 5 s sleep, so it still proves the timeout fired) or drop the timing assertion and rely on the ::warning:: + run=true pair.\n\nNo edits were made by me; nothing in the worktree was modified.",
+      "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.",
+      "fixComplexity": "judgment"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 1,
+    "Author tests": 0,
+    "Red gate": 1,
+    "Implement": 0,
+    "Gate & Review": 5,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 1,
+      "tokens": 61042,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+      "effort": "low",
+      "estUsd": 0.31,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 1,
+      "rawFindings": 0,
+      "tokens": 55590,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.56,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 73889,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 1.85,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 0,
+      "tokens": 85444,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.85,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 5,
+      "tokens": 93018,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium",
+      "estUsd": 2.33,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 15,
+      "rawFindings": 0,
+      "tokens": 202564,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 5.06,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 7,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 5,
+          "opus": 2
+        },
+        "waves": [[0, 1, 2, 3, 4, 6]],
+        "note": "Round 1 fixes six of seven findings in a single wave (all share ci.yml, the guard script, or the spec, so the engine serializes them by file) and disputes #5, whose `node --check` failure at baseline is by construction: the script is a file this change creates and the command passes on the current tree. #0 pins the helper checkout to the default branch and adds an explicit `||` run=true fallback so the step can never go red outside the script's fail-open contract (opus, ci.yml is HIGH-risk); #2 restores the dispatch-event ::notice:: via an EVENT_NAME env plus a script branch (opus, same file pair); #1 makes a missing GITHUB_OUTPUT exit 2 loudly instead of a silent no-op; #3 makes T1 honest on Windows through the script's existing CI_FRESHNESS_GH_CMD override plus a fixture-only 403 literal assertion; #4 declares js-yaml/@types/js-yaml in apps/api with a real npm install (never --package-lock-only); #6 reorders assertions oracle-first, widens the hang pin's margin, and un-filters the stored redGate command. Each fix carries a named T3 pin or T4 assertion; the engine's revert probes are the proof-of-red for the strengthened oracles. Close-out should record that the p2 diff-size criterion (≤ 25 lines) is already exceeded and now deliberately so."
+      },
+      "reports": [
+        {
+          "target": ".github/workflows/ci.yml",
+          "route": "opus",
+          "fixed": [
+            "The new unconditional \"Checkout freshness guard script\" step pins no ref, so it checks out the deployment's own (possibly superseded/older) commit — where scripts/ci-freshness-guard.mjs does not exist — and the guard step then dies with MODULE_NOT_FOUND, turning the job red instead of exiting 0."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            ".github/workflows/ci.yml",
+            "apps/api/src/common/ci-freshness-guard-script.spec.ts"
+          ]
+        },
+        {
+          "target": "scripts/ci-freshness-guard.mjs",
+          "route": "opus",
+          "fixed": [
+            "appendOutput() silently no-ops when GITHUB_OUTPUT is unset, so the guard can exit 0 having emitted no `run` output at all — every downstream step then skips and the job reports green, which is exactly the bug class being fixed.",
+            "The dropped EVENT_NAME branch means every workflow_dispatch / repository_dispatch E2E run now emits a false \"::warning::Could not read the newest deployment (DEPLOY_SHA is not set)\" annotation for a perfectly normal event."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/scripts/ci-freshness-guard.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.github/workflows/ci.yml",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/apps/api/src/common/ci-freshness-guard-script.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/common/ci-freshness-guard-script.spec.ts",
+          "route": "sonnet",
+          "fixed": [
+            "T1's fake `gh` shim is silently bypassed on Windows (bare `gh` PATH resolution, .cmd/shell:true trap) — added cwd:REPO_ROOT and a win32-only CI_FRESHNESS_GH_CMD override routing the script's own gh spawn to the fake driver directly, plus a `Resource not accessible by integration` assertion in T1 so any other fail-open path (ENOENT/live-401/timeout) goes red instead of passing for the wrong reason.",
+            "apps/api imports js-yaml without declaring it (hoisting-accident risk, L-032/L-033 class) — added \"js-yaml\": \"^4.1.0\" and \"@types/js-yaml\": \"^4.0.9\" to apps/api/package.json devDependencies (alphabetical position) and ran a real `npm install` from repo root (not --package-lock-only)."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "apps/api/src/common/ci-freshness-guard-script.spec.ts",
+            "apps/api/package.json",
+            "package-lock.json"
+          ]
+        },
+        {
+          "target": "(gate-command)",
+          "route": "sonnet",
+          "fixed": [],
+          "skipped": [
+            {
+              "summary": "`node --check scripts/ci-freshness-guard.mjs` already fails on the unmodified baseline tree — the command is broken, not the code",
+              "reason": "broken verification command — must be corrected in the build plan. index 0. Verified in the worktree: scripts/ci-freshness-guard.mjs now exists (untracked file added by this build) and `node --check scripts/ci-freshness-guard.mjs` passes (OK). The baseline failure was the gate command running against the pre-change tree where the file did not yet exist; there is no wrong path/flag/prerequisite in the command itself to repair at the repo level, and the task instructions explicitly forbid changing product code/tests/config or inventing a replacement command for this class of finding."
+            }
+          ],
+          "filesChanged": [],
+          "disputed": []
+        },
+        {
+          "target": "(red-gate)",
+          "route": "opus",
+          "fixed": ["Red gate never went properly RED — the new tests are not proven able to fail"],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/apps/api/src/common/ci-freshness-guard-script.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/RESUME.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-bug-e2e/.claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 1,
+          "sonnet": 0,
+          "opus": 0
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single minor finding: build-plan.md's p1/p2 acceptance criteria drifted behind the two round-1 fixes the review accepted (the default-branch sparse helper checkout in ci.yml that grows the diff past 25 lines, and the script's deliberate exit 2 when GITHUB_OUTPUT is unset, pinned by T3). The plan is to update only the planning doc — both the prose bullets and the mirrored brief strings in the Pipeline args JSON — to describe the accepted shape and the exit-2 exception, leaving ci.yml and scripts/ci-freshness-guard.mjs untouched, verified by grep and a JSON-parse check with T1/T3/T4 unchanged. One mechanical wave; no product code moves, so the run should close clean after this edit."
+      },
+      "reports": [
+        {
+          "target": ".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md",
+          "route": "mechanical",
+          "fixed": [
+            "The build plan's p1/p2 acceptance criteria are now stale and contradict the accepted fix — p2 still demands \"nothing else in the file changes (diff must be ≤ 25 lines)\" and p1 still says \"always exit 0\"."
+          ],
+          "skipped": [],
+          "filesChanged": [".claude/pipeline/2026-09-04-bug-e2e-freshness-guard/build-plan.md"]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [],
+  "clean": false
+}

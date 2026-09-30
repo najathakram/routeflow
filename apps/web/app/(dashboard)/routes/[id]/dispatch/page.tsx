@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import {
   ArrowLeft,
   Package2,
@@ -19,6 +20,7 @@ import {
   Clock,
   Sparkles,
   DoorOpen,
+  ExternalLink,
 } from "lucide-react";
 import { Badge, Button, cn, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
@@ -29,10 +31,78 @@ import {
   useUpdateRouteRun,
   useUpdateRouteRunStatus,
   useOptimizeRoute,
+  useRoute,
   type RunPackingStop,
 } from "@/lib/api/routes";
 import { useDrivers } from "@/lib/api/drivers";
+import { buildGoogleMapsLegs, type GmapsPoint } from "@/lib/gmaps-export";
+import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
 import { ArrivedStopSheet } from "@/components/ArrivedStopSheet";
+
+// ─── Open in Google Maps export ───────────────────────────────────────────────
+//
+// Pure client-side URL building (lib/gmaps-export.ts) — no server call, no key.
+// A single leg renders as a plain link; a long stop list chunks into
+// sequential legs behind a small dropdown so a driver can tap through them.
+
+function GmapsExportButton({ points }: { points: GmapsPoint[] }) {
+  const [open, setOpen] = React.useState(false);
+  const legs = React.useMemo(() => buildGoogleMapsLegs(points), [points]);
+
+  if (legs.length === 0) return null;
+
+  const linkClass =
+    "no-print flex items-center gap-1.5 rounded-ctl border border-line-strong bg-white px-2.5 py-1.5 text-xs font-semibold text-navy/70 shadow-card transition-colors hover:bg-surface-raised hover:text-navy";
+
+  if (legs.length === 1) {
+    return (
+      <a
+        href={legs[0].url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Stop order is preserved — Google Maps re-checks roads live."
+        className={linkClass}
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Open in Google Maps
+      </a>
+    );
+  }
+
+  return (
+    <div className="no-print relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Stop order is preserved — Google Maps re-checks roads live."
+        className={linkClass}
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        Open in Google Maps
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <ul className="absolute right-0 top-full z-20 mt-1 w-36 overflow-hidden rounded-lg border border-surface-border bg-white shadow-lg">
+            {legs.map((leg) => (
+              <li key={leg.label}>
+                <a
+                  href={leg.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => setOpen(false)}
+                  className="block px-3 py-2 text-xs font-medium text-navy hover:bg-surface-raised transition-colors"
+                >
+                  {leg.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
 
 // ─── Change Driver Modal ──────────────────────────────────────────────────────
 
@@ -356,22 +426,51 @@ function OptionalStopCard({ stop, isLast }: { stop: RunPackingStop; isLast: bool
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function DispatchPage({ params }: { params: { id: string } }) {
+export default function DispatchPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { toast } = useToast();
   const isOperator = user?.role === "OPERATOR";
 
-  const { data: run, isLoading: runLoading } = useRouteRun(params.id);
-  const { data: packingData, isLoading: packingLoading } = useRunPackingList(params.id);
+  const { data: run, isLoading: runLoading } = useRouteRun(id);
+  const { data: packingData, isLoading: packingLoading } = useRunPackingList(id);
   const { mutate: optimizeRoute, isPending: isOptimizing } = useOptimizeRoute();
+  // Only needed for its depot/end coordinates — the "Open in Google Maps"
+  // export points to the route's planned start/end, not just today's stops.
+  const { data: route } = useRoute(run?.routeId ?? "");
 
   const [showDriverModal, setShowDriverModal] = React.useState(false);
   const [showCancelModal, setShowCancelModal] = React.useState(false);
   const [atDoorStop, setAtDoorStop] = React.useState<RunPackingStop | null>(null);
 
+  const gmapsPoints: GmapsPoint[] = React.useMemo(() => {
+    const points: GmapsPoint[] = [];
+    if (route?.depotLat != null && route?.depotLng != null) {
+      points.push({ lat: route.depotLat, lng: route.depotLng });
+    }
+    const orderedStops = packingData?.stops ?? [];
+    [...orderedStops]
+      .sort((a, b) => a.stopNumber - b.stopNumber)
+      .forEach((s) => {
+        if (s.customerAddress?.lat != null && s.customerAddress?.lng != null) {
+          points.push({ lat: s.customerAddress.lat, lng: s.customerAddress.lng });
+        }
+      });
+    if (
+      route?.endKind &&
+      route.endKind !== "NONE" &&
+      route.endLat != null &&
+      route.endLng != null
+    ) {
+      points.push({ lat: route.endLat, lng: route.endLng });
+    }
+    return points;
+  }, [route, packingData?.stops]);
+
   const handleOptimize = () => {
-    optimizeRoute(params.id, {
+    optimizeRoute(id, {
       onSuccess: (result) => {
         if (!result.usedFallback) {
           toast({
@@ -388,6 +487,8 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
             "Couldn't reach route intelligence (server error). Used estimated distance instead.",
           ORS_NETWORK_ERROR:
             "Couldn't reach route intelligence (network error). Used estimated distance instead.",
+          GOOGLE_MATRIX_FALLBACK:
+            "Live road distances were unavailable — used estimated distances instead. Check the Google Maps key / Routes API.",
         };
         const hint =
           (result.fallbackReason && fallbackHints[result.fallbackReason]) ??
@@ -434,11 +535,10 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
   const optionalStops = stops.filter((s) => s.orders.length === 0);
   const packingList = packingData?.packingList ?? [];
 
-  const scheduledDate = new Date(run.scheduledDate).toLocaleDateString([], {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  // scheduledDate is a UTC-midnight CALENDAR date — render its UTC calendar
+  // components directly, never the viewer's local timezone, which shows the
+  // previous day west of UTC (B91).
+  const scheduledDate = fmtCalendarDateWithWeekday(run.scheduledDate, "long");
   const driverName = run.driver?.contactName ?? "Unassigned";
 
   return (
@@ -477,7 +577,7 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
           <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
             <div className="flex flex-1 flex-col gap-2">
               <Link
-                href={`/routes/${params.id}`}
+                href={`/routes/${id}`}
                 className="inline-flex w-fit items-center gap-1.5 text-xs font-medium text-navy/70 transition-colors hover:text-navy"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
@@ -509,35 +609,40 @@ export default function DispatchPage({ params }: { params: { id: string } }) {
               </p>
             </div>
 
-            {/* Operator controls */}
-            {isOperator && run.status !== "CANCELLED" && run.status !== "COMPLETED" && (
-              <div className="flex shrink-0 items-center gap-2 self-center">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleOptimize}
-                  disabled={isOptimizing}
-                >
-                  {isOptimizing ? (
-                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-                  )}
-                  {isOptimizing ? "Optimizing…" : "Optimize"}
-                </Button>
-                <Button variant="secondary" size="sm" onClick={() => setShowDriverModal(true)}>
-                  <UserCheck className="mr-1.5 h-3.5 w-3.5" />
-                  Change Driver
-                </Button>
-                <button
-                  onClick={() => setShowCancelModal(true)}
-                  className="flex items-center gap-1.5 rounded-ctl border border-danger/40 px-3 py-1.5 text-sm font-semibold text-danger transition-colors hover:bg-danger-bg"
-                >
-                  <XCircle className="h-3.5 w-3.5" />
-                  Cancel Run
-                </button>
-              </div>
-            )}
+            <div className="flex shrink-0 items-center gap-2 self-center">
+              {/* Open in Google Maps — always available, not operator-gated */}
+              <GmapsExportButton points={gmapsPoints} />
+
+              {/* Operator controls */}
+              {isOperator && run.status !== "CANCELLED" && run.status !== "COMPLETED" && (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={handleOptimize}
+                    disabled={isOptimizing}
+                  >
+                    {isOptimizing ? (
+                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                    )}
+                    {isOptimizing ? "Optimizing…" : "Optimize"}
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setShowDriverModal(true)}>
+                    <UserCheck className="mr-1.5 h-3.5 w-3.5" />
+                    Change Driver
+                  </Button>
+                  <button
+                    onClick={() => setShowCancelModal(true)}
+                    className="flex items-center gap-1.5 rounded-ctl border border-danger/40 px-3 py-1.5 text-sm font-semibold text-danger transition-colors hover:bg-danger-bg"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Cancel Run
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
 

@@ -5,8 +5,9 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff, CheckCircle2, XCircle, ArrowLeft, Loader2 } from "lucide-react";
+import { Eye, EyeOff, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
+import { AuthShell } from "@/components/auth";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -27,11 +28,16 @@ const signupSchema = z
       .min(3, "Username must be at least 3 characters")
       .max(30, "Username must be 30 characters or less")
       .regex(/^[a-zA-Z0-9_]{3,30}$/, "Only letters, numbers, and underscores"),
+    // B03: mirrors the server DTO (register-tenant.dto.ts) and every other
+    // password-setting flow (reset-password, buyer register/change-password) —
+    // this used to require only uppercase+digit, so a password that passed
+    // signup could then be rejected the first time the user tried to reset it.
     adminPassword: z
       .string()
       .min(8, "Password must be at least 8 characters")
       .regex(/[A-Z]/, "Must contain at least one uppercase letter")
-      .regex(/[0-9]/, "Must contain at least one number"),
+      .regex(/[a-z]/, "Must contain at least one lowercase letter")
+      .regex(/[0-9\W]/, "Must contain at least one number or special character"),
     confirmPassword: z.string().min(1, "Please confirm your password"),
   })
   .refine((d) => d.adminPassword === d.confirmPassword, {
@@ -224,8 +230,16 @@ function SignupInner() {
         return;
       }
 
+      // The account is created either way, but the verification email itself
+      // may have failed to send (mail transport down, etc.) — carry that
+      // honestly to the check-email screen instead of always implying success.
+      const regBody: { emailSent?: boolean } = await regRes.json().catch(() => ({}));
+      const emailSentParam = regBody.emailSent === false ? "&emailSent=false" : "";
+
       // Redirect to "check your email" page — no auto-login, must verify first
-      router.push(`/signup/check-email?email=${encodeURIComponent(data.adminEmail)}`);
+      router.push(
+        `/signup/check-email?email=${encodeURIComponent(data.adminEmail)}${emailSentParam}`,
+      );
     } catch {
       setApiError("Something went wrong. Please try again.");
       setIsLoading(false);
@@ -233,198 +247,13 @@ function SignupInner() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        {/* Back */}
-        <a
-          href="/"
-          className="mb-6 flex items-center gap-1.5 text-sm text-navy/70 hover:text-navy transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to Home
-        </a>
-
-        {/* Brand */}
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <img src="/logo.svg" alt="RouteFlow" className="h-12 w-12 object-contain" />
-          <h1 className="text-2xl font-bold text-navy">Start Your Free Trial</h1>
-          <div className="flex items-center gap-2">
-            <span className="rounded-full bg-brand-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-brand-600">
-              14 Days Free
-            </span>
-          </div>
-          <p className="text-sm text-navy/70">No credit card required</p>
-        </div>
-
-        {/* Card */}
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-            {apiError && (
-              <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
-            )}
-
-            {/* Business Name */}
-            <Input
-              label="Business Name"
-              placeholder="Acme Distribution Co."
-              autoComplete="organization"
-              register={register("businessName")}
-              error={errors.businessName?.message}
-            />
-
-            {/* Workspace ID / Slug */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="slug" className="text-sm font-medium text-navy">
-                Workspace ID
-              </label>
-              <div className="relative">
-                <input
-                  id="slug"
-                  type="text"
-                  placeholder="acme-distribution"
-                  autoComplete="off"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 font-mono text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  {...register("slug", { onChange: () => setSlugEdited(true) })}
-                />
-                <span className="absolute inset-y-0 right-0 flex items-center pr-3">
-                  <AvailIndicator status={slugStatus} />
-                </span>
-              </div>
-              {errors.slug ? (
-                <p className="text-xs text-danger">{errors.slug.message}</p>
-              ) : slugStatus === "taken" ? (
-                <p className="text-xs text-danger">This workspace ID is already taken.</p>
-              ) : slugStatus === "available" ? (
-                <p className="text-xs text-success">This workspace ID is available.</p>
-              ) : (
-                <p className="text-xs text-navy/70">
-                  Used in your login URL. Lowercase letters, numbers, hyphens.
-                </p>
-              )}
-            </div>
-
-            {/* Admin Email */}
-            <Input
-              label="Email"
-              type="email"
-              placeholder="you@acme.com"
-              autoComplete="email"
-              register={register("adminEmail")}
-              error={errors.adminEmail?.message}
-            />
-
-            {/* Username */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="adminUsername" className="text-sm font-medium text-navy">
-                Username
-              </label>
-              <div className="relative">
-                <input
-                  id="adminUsername"
-                  type="text"
-                  placeholder="acme_admin"
-                  autoComplete="username"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
-                />
-                <span className="absolute inset-y-0 right-0 flex items-center pr-3">
-                  <AvailIndicator status={usernameStatus} />
-                </span>
-              </div>
-              {errors.adminUsername ? (
-                <p className="text-xs text-danger">{errors.adminUsername.message}</p>
-              ) : usernameStatus === "taken" ? (
-                <p className="text-xs text-danger">
-                  This username is reserved. Please choose a different one.
-                </p>
-              ) : usernameStatus === "available" ? (
-                <p className="text-xs text-success">This username is available.</p>
-              ) : (
-                <p className="text-xs text-navy/70">Letters, numbers, and underscores only.</p>
-              )}
-            </div>
-
-            {/* Password */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="signup-password" className="text-sm font-medium text-navy">
-                Password
-              </label>
-              <div className="relative">
-                <input
-                  id="signup-password"
-                  type={showPassword ? "text" : "password"}
-                  placeholder="At least 8 chars, 1 uppercase, 1 number"
-                  autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  {...register("adminPassword")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
-                  tabIndex={-1}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.adminPassword && (
-                <p className="text-xs text-danger">{errors.adminPassword.message}</p>
-              )}
-            </div>
-
-            {/* Confirm Password */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="signup-confirm" className="text-sm font-medium text-navy">
-                Confirm Password
-              </label>
-              <div className="relative">
-                <input
-                  id="signup-confirm"
-                  type={showConfirm ? "text" : "password"}
-                  placeholder="Re-enter your password"
-                  autoComplete="new-password"
-                  className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
-                  {...register("confirmPassword")}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirm((v) => !v)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
-                  tabIndex={-1}
-                  aria-label={showConfirm ? "Hide password" : "Show password"}
-                >
-                  {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-              {errors.confirmPassword && (
-                <p className="text-xs text-danger">{errors.confirmPassword.message}</p>
-              )}
-            </div>
-
-            <Button
-              type="submit"
-              loading={isLoading}
-              disabled={slugStatus === "taken" || usernameStatus === "taken"}
-              className="mt-2 w-full"
-            >
-              Create My Account
-            </Button>
-          </form>
-
-          <p className="mt-4 text-center text-xs text-navy/70">
-            By signing up you agree to our{" "}
-            <a href="/terms" className="text-brand-600 hover:underline">
-              Terms of Service
-            </a>
-            {" & "}
-            <a href="/privacy" className="text-brand-600 hover:underline">
-              Privacy Policy
-            </a>
-            .
-          </p>
-        </div>
-
-        <div className="mt-6 space-y-2 text-center">
+    <AuthShell
+      audience="distributor"
+      kicker="Distributor workspace"
+      title="Your next chapter starts here."
+      lead="Start your 14-day free trial. No card needed."
+      footer={
+        <>
           <p className="text-xs text-navy/70">
             Already have an account?{" "}
             <a href="/login" className="font-medium text-brand-600 hover:underline">
@@ -437,9 +266,179 @@ function SignupInner() {
               Sign up here
             </a>
           </p>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+        {apiError && (
+          <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">{apiError}</p>
+        )}
+
+        {/* Business Name */}
+        <Input
+          label="Business Name"
+          placeholder="Acme Distribution Co."
+          autoComplete="organization"
+          register={register("businessName")}
+          error={errors.businessName?.message}
+        />
+
+        {/* Workspace ID / Slug */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="slug" className="text-sm font-medium text-navy">
+            Workspace ID
+          </label>
+          <div className="relative">
+            <input
+              id="slug"
+              type="text"
+              placeholder="acme-distribution"
+              autoComplete="off"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 font-mono text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              {...register("slug", { onChange: () => setSlugEdited(true) })}
+            />
+            <span className="absolute inset-y-0 right-0 flex items-center pr-3">
+              <AvailIndicator status={slugStatus} />
+            </span>
+          </div>
+          {errors.slug ? (
+            <p className="text-xs text-danger">{errors.slug.message}</p>
+          ) : slugStatus === "taken" ? (
+            <p className="text-xs text-danger">This workspace ID is already taken.</p>
+          ) : slugStatus === "available" ? (
+            <p className="text-xs text-success">This workspace ID is available.</p>
+          ) : (
+            <p className="text-xs text-navy/70">
+              Used in your login URL. Lowercase letters, numbers, hyphens.
+            </p>
+          )}
         </div>
-      </div>
-    </div>
+
+        {/* Admin Email */}
+        <Input
+          label="Email"
+          type="email"
+          placeholder="you@acme.com"
+          autoComplete="email"
+          register={register("adminEmail")}
+          error={errors.adminEmail?.message}
+        />
+
+        {/* Username */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="adminUsername" className="text-sm font-medium text-navy">
+            Username
+          </label>
+          <div className="relative">
+            <input
+              id="adminUsername"
+              type="text"
+              placeholder="acme_admin"
+              autoComplete="username"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              {...register("adminUsername", { onChange: () => setUsernameEdited(true) })}
+            />
+            <span className="absolute inset-y-0 right-0 flex items-center pr-3">
+              <AvailIndicator status={usernameStatus} />
+            </span>
+          </div>
+          {errors.adminUsername ? (
+            <p className="text-xs text-danger">{errors.adminUsername.message}</p>
+          ) : usernameStatus === "taken" ? (
+            <p className="text-xs text-danger">
+              This username is reserved. Please choose a different one.
+            </p>
+          ) : usernameStatus === "available" ? (
+            <p className="text-xs text-success">This username is available.</p>
+          ) : (
+            <p className="text-xs text-navy/70">Letters, numbers, and underscores only.</p>
+          )}
+        </div>
+
+        {/* Password */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="signup-password" className="text-sm font-medium text-navy">
+            Password
+          </label>
+          <div className="relative">
+            <input
+              id="signup-password"
+              type={showPassword ? "text" : "password"}
+              placeholder="At least 8 characters"
+              autoComplete="new-password"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              {...register("adminPassword")}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
+              tabIndex={-1}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {errors.adminPassword ? (
+            <p className="text-xs text-danger">{errors.adminPassword.message}</p>
+          ) : (
+            <p className="text-xs text-navy/70">
+              Uppercase, lowercase, and a number or symbol required.
+            </p>
+          )}
+        </div>
+
+        {/* Confirm Password */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="signup-confirm" className="text-sm font-medium text-navy">
+            Confirm Password
+          </label>
+          <div className="relative">
+            <input
+              id="signup-confirm"
+              type={showConfirm ? "text" : "password"}
+              placeholder="Re-enter your password"
+              autoComplete="new-password"
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 pr-10 text-sm text-navy placeholder:text-navy/70 transition-colors focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              {...register("confirmPassword")}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center pr-3 text-navy/70 transition-colors hover:text-navy"
+              tabIndex={-1}
+              aria-label={showConfirm ? "Hide password" : "Show password"}
+            >
+              {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {errors.confirmPassword && (
+            <p className="text-xs text-danger">{errors.confirmPassword.message}</p>
+          )}
+        </div>
+
+        <Button
+          type="submit"
+          loading={isLoading}
+          disabled={slugStatus === "taken" || usernameStatus === "taken"}
+          className="rf-btn mt-2 w-full"
+        >
+          Create My Account
+        </Button>
+      </form>
+
+      <p className="mt-4 text-center text-xs text-navy/70">
+        By signing up you agree to our{" "}
+        <a href="/terms" className="text-brand-600 hover:underline">
+          Terms of Service
+        </a>
+        {" & "}
+        <a href="/privacy" className="text-brand-600 hover:underline">
+          Privacy Policy
+        </a>
+        .
+      </p>
+    </AuthShell>
   );
 }
 

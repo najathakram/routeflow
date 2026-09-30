@@ -15,7 +15,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
-import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
+import {
+  FilterChipRow,
+  NavBackButton,
+  NavBar,
+  SearchBar,
+  SegmentedControl,
+} from "@routeflow/ui/mobile/ios";
 import {
   useAdminCustomer,
   useAdminCustomers,
@@ -25,6 +31,15 @@ import { useProductCategories } from "../../../../lib/api/products";
 import { useProductSearch } from "../../../../lib/use-product-search";
 import { mergeProductIndex } from "../../../../lib/paged-rows";
 import { useCreateInvoice, type CreateInvoiceItem } from "../../../../lib/api/invoices";
+import { depositErrors, depositPayload } from "../../../../lib/invoice-deposit";
+import { useCreateSale, type CreateSaleItemInput } from "../../../../lib/api/orders";
+import {
+  decideTrayPrice,
+  reasonRequiredMessage,
+  saleLinePriceFields,
+} from "../../../../lib/staff-price-override";
+import { useTrackedCategories } from "../../../../lib/api/tracked-categories";
+import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
@@ -36,12 +51,16 @@ import {
   setLineUnits,
 } from "../../../../lib/sale-line";
 import { resolveProductByCode } from "../../../../lib/barcode-resolve";
-import { normalizeScanCode } from "../../../../lib/barcode-normalize";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../lib/loose-units";
+import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
+import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
+import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
 import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
+import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
 import { displayProductName as displayName } from "../../../../lib/product-display";
-import { computeLineSubtotal, effectiveQty, getTierPrice } from "../../../../lib/pricing";
+import { computeLineSubtotal, effectiveQty, getTierPrice, isSpecialTier } from "@routeflow/pricing";
 import { useCustomerPrices } from "../../../../lib/api/customers";
 import {
   computeInvoiceTotals,
@@ -49,9 +68,15 @@ import {
   type InvoiceTotals,
   type InvoiceTotalsLine,
 } from "../../../../lib/invoice-totals";
-import { DEFAULT_TERMS, ISO_DATE, TERM_CHIPS, dueDateFor } from "../../../../lib/invoice-terms";
+import {
+  DEFAULT_TERMS,
+  ISO_DATE,
+  TERM_CHIPS,
+  dueDateFor,
+  todayPlusDays,
+} from "../../../../lib/invoice-terms";
 import { MoneyTextInput } from "../../../../components/MoneyTextInput";
-import { alertInfo, chooseAction } from "../../../../lib/confirm";
+import { alertInfo, chooseAction, confirm } from "../../../../lib/confirm";
 import { QtyStepper } from "../../../../components/QtyStepper";
 import { InlineCreateProductSheet } from "../../../../components/InlineCreateProductSheet";
 import { ProductPickerSheet } from "../../../../components/ProductPickerSheet";
@@ -68,7 +93,7 @@ import {
   stepPendingScroll,
   type PendingScrollState,
 } from "../../../../lib/pending-scroll";
-import { isCatalogHeader, partitionCatalog, type CatalogRow } from "../../../../lib/visible-cart";
+import { isCatalogHeader, visibleCatalogRows, type CatalogRow } from "../../../../lib/visible-cart";
 import { unlistedAffordancePlacement } from "../../../../lib/unlisted-affordance";
 import { sanitizeIntInput } from "../../../../lib/qty";
 import { MONEY_INPUT_MAX_WIDTH } from "../../../../lib/row-layout";
@@ -114,6 +139,9 @@ type Product = {
   unitsPerBox?: number | null;
   parentProductId?: string | null;
   parent?: { id: string; name: string } | null;
+  /** Regulated category this product belongs to — drives the van-sale gate's
+   *  "a regulated item bills on its own invoice" check (WP4). */
+  trackedCategoryId?: string | null;
 };
 
 // `unitPrice` is an optional one-time price override (the "discounted price").
@@ -127,6 +155,8 @@ type LineState = {
   boxes?: number;
   pieces?: number;
   unitPrice?: number;
+  /** #2696(c) SA-558e: why a New-sale line's price moves off the customer's special price. */
+  overrideReason?: string;
   discount?: number;
   taxable?: boolean;
   note?: string;
@@ -335,6 +365,14 @@ function InvoiceComposer({
   const [unlistedPrefill, setUnlistedPrefill] = useState("");
   const [scannedById, setScannedById] = useState<Record<string, Product>>({});
   const [scanOpen, setScanOpen] = useState(false);
+  // Discard-confirm on the composer's own back button (this screen has no
+  // FormSheet). The preceding CustomerPicker stage is intentionally left
+  // unguarded — it renders before `items`/`unlisted` can hold anything, so
+  // it has nothing to lose (RULINGS.md R4, discard-guard.ts doc).
+  // `handleBack` itself is declared further below, once `saving` exists —
+  // see the FormSheet.tsx choke-point fix (finding #1): this screen has no
+  // FormSheet, so it must apply the same submitting-gated rule directly.
+  const dirty = hasUnsavedInvoiceDraft({ items, unlisted });
   // Newest-first ids for the scan tray + which row is flashing. Both are scan-UI
   // only: the invoice payload never reads them.
   const [scanOrder, setScanOrder] = useState<string[]>([]);
@@ -365,6 +403,24 @@ function InvoiceComposer({
   const [shippingFee, setShippingFee] = useState<number | null>(null);
   const [referenceNumber, setReferenceNumber] = useState("");
   const [subject, setSubject] = useState("");
+  // #1529 (SA-517 PR-B): web's opt-in deposit schedule — standalone invoices only (the van-sale
+  // DTO has no deposit fields, as on web). No tenant/customer default is prefilled.
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [depositPercent, setDepositPercent] = useState<number | null>(null);
+  const [depositDueDate, setDepositDueDate] = useState("");
+
+  // ── Van-sale mode (WP4, PR-4) ─────────────────────────────────────────────
+  // "Delivered today?" — default YES, the common van-sale case. Whether this
+  // actually collapses into POST /orders/sell is decided by saleModeGate below;
+  // this is just the operator's stated intent.
+  const [deliveredNow, setDeliveredNow] = useState(true);
+  // "Touched" flags for the header fields the sale gate disqualifies on — dirty
+  // means the operator EDITED the field, not that its current value happens to
+  // differ from the default (a from-order invoice has none of these set).
+  const [touchedDueDate, setTouchedDueDate] = useState(false);
+  const [touchedTerms, setTouchedTerms] = useState(false);
+  const [touchedReference, setTouchedReference] = useState(false);
+  const [touchedSubject, setTouchedSubject] = useState(false);
 
   // Tenant tax rate (a PERCENT in settings → fraction on the wire, web's exact
   // mapping) and the customer's exempt flag, which zeroes ALL tax server-side —
@@ -378,15 +434,42 @@ function InvoiceComposer({
   const { data: customerPrices } = useCustomerPrices(customerId ?? "");
   const customerTier = Number((pickedCustomer as any)?.pricingTier ?? 1) || 1;
   const cpMap = useMemo(() => {
-    const m = new Map<string, number>();
+    const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
     return m;
   }, [customerPrices]);
   const tierPriceFor = (p: Product) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1);
+  // #2696(c): the server's "special" — the tier it prices this product at is not tier 1.
+  const isSpecialFor = (p: Product) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
   const tenantTaxRate = (Number(settings?.taxRate) || 0) / 100;
   // Rate the row toggles actually offer: hidden entirely for exempt customers.
   const taxRateFraction = isTaxExempt ? 0 : tenantTaxRate;
 
+  // Regulated categories that bill on their OWN invoice — a SEPARATE_INVOICE
+  // line can't ride the sale path (POST /orders/sell always creates ONE
+  // invoice). Reuses the shipped tracked-categories hook, no new API surface.
+  // NO `active` filter: `groupOrderLinesForInvoicing` looks categories up by id
+  // with no active filter (invoices.service.ts), so a DEACTIVATED category with
+  // products still assigned still splits server-side — the client set has to
+  // match what the server actually groups on.
+  // `isSuccess` matters: react-query hands back `undefined` both in flight AND
+  // after a failure, and an empty id set would silently disarm gate rule 6.
+  const { data: saleTrackedCategories, isSuccess: saleCategoriesLoaded } = useTrackedCategories();
+  const separateInvoiceCategoryIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of saleTrackedCategories ?? []) {
+      if (c.invoiceTreatment === "SEPARATE_INVOICE") s.add(c.id);
+    }
+    return s;
+  }, [saleTrackedCategories]);
+
+  // Quiet by default — mirrors NewOrderScreen (see visibleCatalogRows): the
+  // list shows what is ON the invoice, with the full catalogue one tap away,
+  // because accepting a scan clears the search box and used to snap the list
+  // back to hundreds of rows. Declared ABOVE useProductSearch so the hook can
+  // read it — it used to sit 273 lines below its reader, a TDZ ReferenceError
+  // waiting to happen once the hook actually consumed it.
+  const [browsing, setBrowsing] = useState(false);
   // Debounced, server-filtered, paged — replaces the `limit: 0` fetch-all.
   // See NewOrderScreen and lib/use-product-search.ts.
   const {
@@ -400,7 +483,7 @@ function InvoiceComposer({
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useProductSearch<Product>({ category });
+  } = useProductSearch<Product>({ category, browsing });
 
   const productById = useMemo(
     () => mergeProductIndex<Product>(products, scannedById),
@@ -500,10 +583,13 @@ function InvoiceComposer({
       if (!prev) return m;
       if (value == null || value < 0) {
         const { unitPrice: _drop, ...rest } = prev;
+        delete rest.overrideReason;
         return { ...m, [id]: rest };
       }
       return { ...m, [id]: { ...prev, unitPrice: value } };
     });
+  const setLineReason = (id: string, overrideReason: string) =>
+    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], overrideReason } } : m));
 
   // Flat $ off one line (comes off BEFORE tax). Empty/invalid clears it.
   const setLineDiscount = (id: string, value: number | null) =>
@@ -548,6 +634,22 @@ function InvoiceComposer({
     setScanFlash((prev) => nextFlash(prev, id));
   };
 
+  // Cross-mechanism scan-accept guard (F30 open interleavings A/A'/B —
+  // RULINGS.md, design/scan-guard.json): a search-box submit dispatched on a
+  // stale render must read the CURRENT term, not the one captured when the
+  // handler closure was built, and a single physical scan must yield exactly
+  // one add whether the camera or the settled-search effect resolves it
+  // first. `clearSearch` writes the ref SYNCHRONOUSLY, before the re-render
+  // that empties `search` lands, so a submit fired in that gap no-ops instead
+  // of resubmitting the code that was just accepted.
+  const searchTermRef = useRef("");
+  searchTermRef.current = searchTerm;
+  const clearSearch = () => {
+    searchTermRef.current = "";
+    setSearch("");
+  };
+  const scanGuardRef = useRef(createScanAcceptGuard<Product>());
+
   /**
    * Land a resolved product on the invoice. In scan mode the tray row IS the
    * confirmation, so no banner and no search reset (which would swap the list
@@ -561,7 +663,7 @@ function InvoiceComposer({
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
-    setSearch("");
+    clearSearch();
     const label =
       unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
@@ -572,96 +674,83 @@ function InvoiceComposer({
   };
 
   // Continuous-scan handler: the scan sheet stays open between items; only the
-  // create-product hand-off (and Done) closes it.
-  const handleBarcodeScanned = async (code: string): Promise<ScanOutcome> => {
-    const trimmed = code.trim();
-    if (!trimmed) return;
-    // Local fast path over the rows already in memory, using the same candidate
-    // set the server matches on (UPC-E/EAN-13/leading-zero variants) and
-    // including unitSku, which the previous version omitted.
-    const candidates = new Set(normalizeScanCode(trimmed).map((c) => c.toUpperCase()));
-    const hit = (v?: string | null) => !!v && candidates.has(v.toUpperCase());
-    const local = products.find(
-      (p) =>
-        hit(p.barcode) ||
-        hit(p.sku) ||
-        hit(p.unitSku) ||
-        (p.id ?? "").toLowerCase() === trimmed.toLowerCase(),
-    );
-    if (local) return acceptScannedProduct(local, scanUnitKind(trimmed, local));
-    try {
-      const result = await resolveProductByCode<Product>(trimmed);
-      if (result.ambiguous) {
-        // Several substring hits, no exact code match — don't guess row #1.
-        // The picker stacks over the PAUSED camera so choosing is one tap and
-        // scanning resumes; see NewOrderScreen for the full reasoning.
-        return {
-          feedback: {
-            kind: "error",
-            text: `${result.matches?.length ?? 0} products match "${trimmed}"`,
-            action: { label: "Choose", onPress: () => setPickCode(trimmed) },
-          },
-        };
-      }
-      if (!result.notFound && result.product?.id) {
-        return acceptScannedProduct(result.product, scanUnitKind(trimmed, result.product));
-      }
-    } catch (err: any) {
-      const msg = err?.response?.data?.message ?? err?.message ?? "Couldn't look up barcode.";
-      return { feedback: { kind: "error", text: msg } };
-    }
-    // Nothing matched. STAY IN SCAN MODE — the pill carries the hand-off. A
-    // confirm dialog here is invisible on react-native-web (it renders behind
-    // the opaque scan sheet), which is why this used to close the scanner and
-    // strand the operator on the first mis-read.
-    const text = `No product for "${trimmed}"`;
-    if (canCreateProducts) {
-      return {
-        feedback: {
-          kind: "error",
-          text,
-          action: { label: "Create", onPress: () => setCreateCode(trimmed) },
-        },
-      };
-    }
-    return { feedback: { kind: "error", text } };
-  };
+  // create-product hand-off (and Done) closes it. Shared ladder — see
+  // lib/scan-ladder for why an ambiguous hit opens a picker instead of taking
+  // matches[0], and why a miss must never close the scanner.
+  const handleBarcodeScanned = makeScanHandler<Product>({
+    // Getter, not the array value: page 1 is no longer preloaded (the
+    // catalogue fetch is gated on a term or Browse — see
+    // lib/use-product-search.ts), so reading `productById` keeps the local
+    // fast path useful for every line already on the invoice (a re-scan of
+    // the same SKU for a second case), not just whatever the current page
+    // happens to hold.
+    products: () => Array.from(productById.values()),
+    accept: acceptScannedProduct,
+    // Forward the ladder's abort signal — without it a lookup that blows the
+    // scan deadline keeps running and still adds the line (F30 / R2).
+    resolve: (c, signal) => resolveProductByCode<Product>(c, signal),
+    onAmbiguous: setPickCode,
+    onCreate: canCreateProducts ? setCreateCode : undefined,
+    acceptGuard: scanGuardRef.current,
+  });
 
   // Wedge-scanner path — mirrors NewOrderScreen exactly (see its comment for
   // the full reasoning): Enter-as-scan for terminator scanners, settled
   // exact-match auto-add for the rest. Both gated on looksLikeScanCode so a
   // typed NAME search never auto-adds.
-  const searchScanBusy = useRef(false);
-  const handleSearchSubmit = async () => {
-    const code = searchTerm.trim();
-    if (!code || !looksLikeScanCode(code) || searchScanBusy.current) return;
-    searchScanBusy.current = true;
-    try {
-      const outcome = await handleBarcodeScanned(code);
-      if (!outcome?.feedback) return;
-      if (outcome.feedback.kind === "added") {
-        showInline(outcome.feedback.text);
-      } else if (outcome.feedback.action) {
-        setSearch("");
-        outcome.feedback.action.onPress();
-      } else {
-        showInline(outcome.feedback.text);
-      }
-    } finally {
-      searchScanBusy.current = false;
-    }
+  // Wedge-submit: the search field is cleared SYNCHRONOUSLY on every SCAN
+  // submit (never on a typed name) — mirrors NewOrderScreen exactly (see its
+  // comment) — and a burst arriving
+  // mid-resolve is buffered, never dropped, never concatenated (REG-B193). The
+  // handler's busy/queue state has to survive re-renders, so it's built ONCE
+  // via a ref; a "latest deps" ref keeps it pointed at the current
+  // searchTerm/handleBarcodeScanned/showInline closures instead of the ones
+  // captured on the render that built it.
+  const wedgeDepsRef = useRef<{ scan: (code: string) => Promise<void>; clearSearch: () => void }>({
+    scan: async () => undefined,
+    clearSearch: () => undefined,
+  });
+  wedgeDepsRef.current = {
+    scan: (code) =>
+      runWedgeSubmit({
+        term: code,
+        scan: handleBarcodeScanned,
+        clearSearch,
+        showInline,
+      }),
+    clearSearch,
   };
+  const wedgeSubmitRef = useRef(
+    createWedgeSubmitHandler({
+      scan: (code) => wedgeDepsRef.current.scan(code),
+      clearSearch: () => wedgeDepsRef.current.clearSearch(),
+    }),
+  );
+  // Reads the REF, not the render-scope `searchTerm`: a native submit
+  // dispatched against the last committed props (before clearSearch()'s
+  // re-render lands) would otherwise resubmit the code the effect just
+  // accepted — F30 open interleaving C.
+  const handleSearchSubmit = () => wedgeSubmitRef.current(searchTermRef.current);
 
-  const lastAutoAdd = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  // Settled exact-match auto-add (no-terminator scanners): a per-scan ATTEMPT
+  // — not a time window — decides whether a settle may fire (REG-B201); see
+  // NewOrderScreen's comment for why a window can't tell "already added" from
+  // "a background refetch re-settled", and why the attempt has to END when the
+  // field clears (otherwise a deliberate re-scan of the same item is eaten).
+  const autoAddAttemptRef = useRef(createScanAttempt());
   useEffect(() => {
     const code = searchTerm.trim();
-    if (!looksLikeScanCode(code) || isSearching) return;
+    if (!looksLikeScanCode(code)) {
+      autoAddAttemptRef.current.end();
+      return;
+    }
+    if (isSearching) return;
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
-    const now = Date.now();
-    if (lastAutoAdd.current.code === code && now - lastAutoAdd.current.at < 800) return;
-    lastAutoAdd.current = { code, at: now };
-    const outcome = acceptScannedProduct(match, scanUnitKind(code, match));
+    if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
+    const kind = scanUnitKind(code, match);
+    if (!scanGuardRef.current.offer(code, match, kind)) return;
+    const outcome = acceptScannedProduct(match, kind);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -695,13 +784,18 @@ function InvoiceComposer({
     [tenantCategories],
   );
 
-  const filtered = useMemo<CatalogRow<Product>[]>(() => {
-    // Search AND category are server-side. Browsing view: on-invoice lines
-    // float to a labeled top section (owner ask — see partitionCatalog for the
-    // no-shuffle ordering rule); search results stay flat.
-    if (searchTerm) return products;
-    return partitionCatalog(products, Object.keys(items), (id) => productById.get(id));
-  }, [products, searchTerm, items, productById]);
+  const visible = useMemo(
+    () =>
+      visibleCatalogRows<Product>({
+        base: products,
+        cartIds: Object.keys(items),
+        lookup: (id) => productById.get(id),
+        browsing,
+        searchTerm,
+      }),
+    [products, searchTerm, items, productById, browsing],
+  );
+  const filtered: CatalogRow<Product>[] = visible.rows;
 
   // Resolve a queued scroll against the ids the list renders THIS pass. A
   // just-scanned product is often absent for a render or two while it refetches.
@@ -716,17 +810,23 @@ function InvoiceComposer({
     listRef.current?.scrollToIndex({ index: scrollIndex, viewPosition: 0.12, animated: true });
   }, [pendingScroll, filtered]);
 
-  // Full money preview through lib/invoice-totals — the same formula the server
-  // runs, so the footer/review totals equal the saved invoice to the cent.
-  const { totals, totalItems } = useMemo(() => {
+  // The exact line set fed to computeInvoiceTotals below — ALSO fed verbatim to
+  // saleModeGate (WP4). The gate's equality assertion is only meaningful when
+  // both the preview and the gate see the identical lines; building them twice
+  // (even from the same inputs) would risk the two silently drifting apart.
+  const { invoiceLines, totalItems, hasSeparateInvoiceCategoryLine } = useMemo(() => {
     const lines: InvoiceTotalsLine[] = [];
     let totalItems = 0;
+    let hasSeparateInvoiceCategoryLine = false;
     for (const [id, line] of Object.entries(items)) {
       const p = productById.get(id);
       if (!p) continue;
       const qty = effectiveQty(line, p.unitsPerBox);
       if (qty <= 0) continue;
       totalItems += qty;
+      if (p.trackedCategoryId && separateInvoiceCategoryIds.has(p.trackedCategoryId)) {
+        hasSeparateInvoiceCategoryLine = true;
+      }
       lines.push({
         unitPrice: effectiveUnitPrice(line, p, tierPriceFor(p)),
         qty,
@@ -747,28 +847,119 @@ function InvoiceComposer({
         taxRate: u.taxable ? taxRateFraction : 0,
       });
     }
-    return {
-      totals: computeInvoiceTotals({
-        lines,
-        discount: invDiscount ?? 0,
-        shippingFee: shippingFee ?? 0,
-        isTaxExempt,
-      }),
-      totalItems,
-    };
+    return { invoiceLines: lines, totalItems, hasSeparateInvoiceCategoryLine };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     items,
     productById,
     unlisted,
-    invDiscount,
-    shippingFee,
-    isTaxExempt,
     taxRateFraction,
     cpMap,
     customerTier,
+    separateInvoiceCategoryIds,
   ]);
+
+  // Full money preview through lib/invoice-totals — the same formula the server
+  // runs, so the footer/review totals equal the saved invoice to the cent.
+  const totals = useMemo(
+    () =>
+      computeInvoiceTotals({
+        lines: invoiceLines,
+        discount: invDiscount ?? 0,
+        shippingFee: shippingFee ?? 0,
+        isTaxExempt,
+      }),
+    [invoiceLines, invDiscount, shippingFee, isTaxExempt],
+  );
   const total = totals.total;
+
+  // Any unlisted line the operator hasn't finished filling in yet — can't ride
+  // the sale path (POST /orders/sell requires a real name + price per item).
+  const hasUnlistedInvalid = useMemo(
+    () => unlisted.some((u) => u.name.trim() === "" || u.unitPrice <= 0),
+    [unlisted],
+  );
+
+  // The gate's input — pure, no network. Fed the SAME `invoiceLines` array as
+  // `totals` above (see lib/sale-mode.ts for the full rule set and the final
+  // total-equality assertion that is the real safety net). Hoisted so the gate
+  // can also be re-run at a hypothetical control position below.
+  const saleGateInput = useMemo(
+    () => ({
+      lines: invoiceLines,
+      hasUnlistedInvalid,
+      invDiscount: invDiscount ?? 0,
+      shippingFee: shippingFee ?? 0,
+      isTaxExempt,
+      taxRateFraction,
+      touched: {
+        dueDate: touchedDueDate,
+        terms: touchedTerms,
+        reference: touchedReference,
+        subject: touchedSubject,
+      },
+      sendNowOn: send,
+      deliveredNow,
+      hasSeparateInvoiceCategoryLine,
+    }),
+    [
+      invoiceLines,
+      hasUnlistedInvalid,
+      invDiscount,
+      shippingFee,
+      isTaxExempt,
+      taxRateFraction,
+      touchedDueDate,
+      touchedTerms,
+      touchedReference,
+      touchedSubject,
+      send,
+      deliveredNow,
+      hasSeparateInvoiceCategoryLine,
+    ],
+  );
+
+  const saleGate = useMemo(() => saleModeGate(saleGateInput), [saleGateInput]);
+
+  // Ineligibility the gate itself can't see, layered on top of it. Both are
+  // independent of the "Delivered today?" / Send controls, so they also decide
+  // whether that control stays tappable (see `saleControlEnabled`).
+  //  - saleModeGate deliberately leaves `hasUnlistedInvalid` unenforced — its
+  //    own doc comment makes this the CALLER's call. It has to be one here: an
+  //    unlisted line with a real price but no name still counts toward the
+  //    previewed total above, but the submit path below drops it (a nameless
+  //    line can't go on the wire), which would silently undercharge an
+  //    "eligible" sale.
+  //  - Rule 6 needs the tracked categories to have actually loaded. Until then
+  //    `separateInvoiceCategoryIds` is empty and the rule can't fire, so an
+  //    unresolved/failed fetch has to fail CLOSED — otherwise a
+  //    SEPARATE_INVOICE line rides the sale path and the server splits it into
+  //    sibling invoices that match neither the preview nor the success handler.
+  const saleExtraReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (hasUnlistedInvalid) reasons.push("an unlisted item needs a name and price");
+    if (!saleCategoriesLoaded) reasons.push("regulated categories haven't loaded yet");
+    return reasons;
+  }, [hasUnlistedInvalid, saleCategoriesLoaded]);
+
+  const saleMode = useMemo(() => {
+    if (saleExtraReasons.length === 0) return saleGate;
+    const reasons = saleGate.eligible ? [] : saleGate.reasons;
+    return { eligible: false as const, reasons: [...reasons, ...saleExtraReasons] };
+  }, [saleGate, saleExtraReasons]);
+
+  // Whether the "Delivered today?" control may be operated. It must NOT disable
+  // itself for an ineligibility it produced: rule 5 ("sending now without
+  // delivery") is a function of this control's own value, so disabling on it
+  // would strand the operator on "No" with no way back to "Yes". Re-run the
+  // gate at the control's clean position (delivered + not sending) — only a
+  // CART-level problem locks the control.
+  const saleControlEnabled = useMemo(
+    () =>
+      saleExtraReasons.length === 0 &&
+      saleModeGate({ ...saleGateInput, deliveredNow: true, sendNowOn: false }).eligible,
+    [saleGateInput, saleExtraReasons],
+  );
 
   // Newest-first "invoice so far" for the scan tray. Same inputs as the total
   // memo, so the tray and the footer cannot disagree.
@@ -947,11 +1138,34 @@ function InvoiceComposer({
   );
 
   const createMut = useCreateInvoice();
-  const canSave = totalItems > 0 && !createMut.isPending;
+  const createSaleMut = useCreateSale();
+  const saving = createMut.isPending || createSaleMut.isPending;
+  // A recorded sale already moved stock and issued an invoice. If we ever fail
+  // to navigate away from it (see the sale onSuccess below) the builder stays
+  // mounted with the whole cart intact — latch the Create button off so a
+  // missed toast can't become a second order, a second stock deduction and a
+  // second issued invoice.
+  const [saleRecorded, setSaleRecorded] = useState(false);
+  const canSave = totalItems > 0 && !saving && !saleRecorded;
+
+  // No FormSheet on this screen, so it applies the same choke-point rule as
+  // FormSheet.tsx's handleCancel directly: never prompt "Discard invoice?"
+  // while a create/sale request is in flight (finding #1).
+  const handleBack = () => {
+    if (shouldConfirmDiscard(dirty, saving)) {
+      confirm("Discard invoice?", "The lines on this invoice will be lost.", onBack, {
+        confirmText: "Discard",
+        destructive: true,
+      });
+      return;
+    }
+    onBack();
+  };
 
   const onTermsChange = (t: string) => {
     setTerms(t);
     setDueDate(dueDateFor(issueDate, t));
+    setTouchedTerms(true);
   };
 
   const onIssueDateChange = (v: string) => {
@@ -959,21 +1173,34 @@ function InvoiceComposer({
     if (ISO_DATE.test(v)) setDueDate(dueDateFor(v, terms));
   };
 
-  const onSave = () => {
+  const onDueDateChange = (v: string) => {
+    setDueDate(v);
+    setTouchedDueDate(true);
+  };
+
+  const onReferenceNumberChange = (v: string) => {
+    setReferenceNumber(v);
+    setTouchedReference(true);
+  };
+
+  const onSubjectChange = (v: string) => {
+    setSubject(v);
+    setTouchedSubject(true);
+  };
+
+  /**
+   * @param fromReview true only when the review sheet's own Create button fired
+   *   this. The van-sale path is gated on it — see the sale branch below.
+   */
+  const onSave = (fromReview = false) => {
     if (!canSave) {
       alertInfo("Add at least one item", "Tap + on any product to start the invoice.");
       return;
     }
-    if (!ISO_DATE.test(dueDate)) {
-      alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
-      return;
-    }
-    const issueTrim = issueDate.trim();
-    if (issueTrim && !ISO_DATE.test(issueTrim)) {
-      alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
-      return;
-    }
-    // The server's own money guards, surfaced before the round-trip.
+    // The server's own money guards, surfaced before the round-trip. Both save
+    // paths below are subject to them — the sale gate's own rules already keep
+    // an eligible sale clear of a line discount / invoice discount, but they
+    // still apply to the POST /invoices fallback.
     if (totals.hasNegativeLine) {
       alertInfo("Check line discounts", "A line's discount is larger than the line itself.");
       return;
@@ -983,6 +1210,117 @@ function InvoiceComposer({
         "Discount too large",
         `The invoice discount ($${totals.discount.toFixed(2)}) can't exceed the subtotal ($${totals.subtotal.toFixed(2)}).`,
       );
+      return;
+    }
+    const issueTrim = issueDate.trim();
+    if (issueTrim && !ISO_DATE.test(issueTrim)) {
+      alertInfo("Bad issue date", "Use the format YYYY-MM-DD, or leave it blank for today.");
+      return;
+    }
+
+    // Van-sale mode: collapse into ONE POST /orders/sell call. saleMode.eligible
+    // already re-ran the total-equality assertion against `invoiceLines` — the
+    // SAME lines `totals` above was computed from — so this can never silently
+    // save for a different amount than what's on screen. Every catalog line
+    // sends its EFFECTIVE unitPrice explicitly (never omitted) so the server's
+    // price resolution can't diverge from the previewed price.
+    if (saleMode.eligible) {
+      // A sale may only be recorded from the review sheet, because that is the
+      // only place the "Delivered today?" control, its disclosure and a button
+      // that NAMES the sale are on screen together (sheet sticky footer — see
+      // SaleModeField). The catalogue footer's Create opens the sheet instead;
+      // it can never move stock or issue an invoice on its own.
+      if (!fromReview) {
+        setReviewOpen(true);
+        return;
+      }
+      const saleItems: CreateSaleItemInput[] = [];
+      for (const [productId, line] of Object.entries(items)) {
+        const p = productById.get(productId);
+        if (!p) continue;
+        const qty = effectiveQty(line, p.unitsPerBox);
+        if (qty <= 0) continue;
+        const upb = Number(p.unitsPerBox ?? 0);
+        // #2696(c) SA-558e: the server's rule A — a special price moves only with a reason.
+        const price = saleLinePriceFields({
+          effective: effectiveUnitPrice(line, p, tierPriceFor(p)),
+          base: tierPriceFor(p),
+          listPrice: toNumber(p.pricePerUnit),
+          isSpecial: isSpecialFor(p),
+          reason: line.overrideReason,
+        });
+        if ("refused" in price) {
+          alertInfo("Reason needed", reasonRequiredMessage(displayName(p)));
+          return;
+        }
+        saleItems.push({
+          productId,
+          qty,
+          ...price,
+          ...(upb > 1 && line.boxes != null ? { boxes: line.boxes } : {}),
+          ...(upb > 1 && line.pieces != null ? { pieces: line.pieces } : {}),
+          ...(line.note?.trim() ? { notes: line.note.trim() } : {}),
+        });
+      }
+      // Unlisted lines are NOT filtered out — the gate's total-equality
+      // assertion already accounts for them, so they must ride along.
+      for (const u of unlisted) {
+        if (u.qty <= 0 || u.name.trim() === "" || u.unitPrice <= 0) continue;
+        saleItems.push({ name: u.name.trim(), qty: u.qty, unitPrice: u.unitPrice });
+      }
+      createSaleMut.mutate(
+        {
+          customerId,
+          items: saleItems,
+          deliveredNow,
+          ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
+          // Only a genuinely backdated sale carries orderDate — a same-day sale
+          // stays unsent so deliveredAt lands at the full current timestamp.
+          ...(issueTrim && issueTrim !== todayPlusDays(0) ? { orderDate: issueTrim } : {}),
+          // No dueDate: gate rule 4 (lib/sale-mode.ts) makes sale mode
+          // ineligible the moment the operator touches Due date or Terms, so an
+          // eligible sale's `dueDate` is always this screen's hardcoded Net-30
+          // default. Sending it would override the tenant's configured
+          // `invoice.defaultTerms` with a date nobody chose (and put a free-text
+          // field on the wire ahead of this path's ISO_DATE check).
+        },
+        {
+          // POST /orders/sell resolves to the created INVOICE (not the order) —
+          // see CreatedSaleInvoice in lib/api/orders.ts.
+          onSuccess: (inv) => {
+            if (inv?.id) {
+              onSaved(inv.id, inv.invoiceNumber);
+              return;
+            }
+            // Defensive only: the sale IS already recorded server-side, so lock
+            // the builder instead of leaving a live Create button behind a toast
+            // that's easy to miss on a phone.
+            setSaleRecorded(true);
+            showToast("Sale recorded — open the invoice from the Invoices tab.");
+          },
+          onError: (err: any) => {
+            alertInfo(
+              "Couldn't record the sale",
+              err?.response?.data?.message ?? err?.message ?? "Try again.",
+            );
+          },
+        },
+      );
+      return;
+    }
+
+    // Fallback: the existing standalone-invoice path (no order, no stock move).
+    if (!ISO_DATE.test(dueDate)) {
+      alertInfo("Bad due date", "Use the format YYYY-MM-DD.");
+      return;
+    }
+    const depErr = depositErrors(depositOpen, depositPercent, depositDueDate.trim());
+    if (depErr.depositDueDate || depErr.depositPercent) {
+      alertInfo("Deposit incomplete", depErr.depositDueDate ?? depErr.depositPercent ?? "");
+      return;
+    }
+    if (depositOpen && depositDueDate.trim() && !ISO_DATE.test(depositDueDate.trim())) {
+      alertInfo("Bad deposit due date", "Use the format YYYY-MM-DD.");
       return;
     }
     const payload: CreateInvoiceItem[] = [];
@@ -1031,6 +1369,7 @@ function InvoiceComposer({
         ...(shippingFee && shippingFee > 0 ? { shippingFee } : {}),
         ...(referenceNumber.trim() ? { referenceNumber: referenceNumber.trim() } : {}),
         ...(subject.trim() ? { subject: subject.trim() } : {}),
+        ...depositPayload(depositOpen, depositPercent, depositDueDate.trim()),
       },
       {
         onSuccess: (inv) => {
@@ -1061,7 +1400,10 @@ function InvoiceComposer({
   return (
     <>
       {/* One save trigger only — the footer Create. */}
-      <NavBar inlineTitle="New invoice" leading={<NavBackButton label="Back" onPress={onBack} />} />
+      <NavBar
+        inlineTitle="New invoice"
+        leading={<NavBackButton label="Back" onPress={handleBack} />}
+      />
 
       <View style={styles.customerChipWrap}>
         <Pressable style={styles.customerChip} onPress={onChangeCustomer}>
@@ -1079,6 +1421,7 @@ function InvoiceComposer({
         value={search}
         onChangeText={setSearch}
         onSubmitEditing={() => void handleSearchSubmit()}
+        autoFocus
         trailing={
           <View style={styles.searchTrailing}>
             {isSearching ? <ActivityIndicator size="small" color={ios.gray[1]} /> : null}
@@ -1094,8 +1437,28 @@ function InvoiceComposer({
         }
       />
 
-      {searchTerm === "" && categoryChips.length > 1 ? (
-        <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+      {visible.showCategoryChips ? (
+        <View style={styles.browseBar}>
+          {categoryChips.length > 1 ? (
+            <View style={{ flex: 1 }}>
+              <FilterChipRow chips={categoryChips} value={category} onChange={setCategory} />
+            </View>
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          <Pressable
+            onPress={() => {
+              setBrowsing(false);
+              setCategory("All");
+            }}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel="Close the catalogue"
+            style={styles.browseClose}
+          >
+            <Ionicons name="close" size={18} color={ios.label2} />
+          </Pressable>
+        </View>
       ) : null}
 
       <FlatList
@@ -1122,7 +1485,11 @@ function InvoiceComposer({
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={RowSpacer}
         ListEmptyComponent={
-          unlistedPlacement === "empty-state" ? (
+          visible.emptyHint ? (
+            <View style={styles.center}>
+              <Text style={styles.emptyText}>{visible.emptyHint}</Text>
+            </View>
+          ) : unlistedPlacement === "empty-state" ? (
             <View style={styles.center}>
               <Text style={styles.emptyText}>
                 No products{searchTerm ? " match your search" : " yet"}.
@@ -1146,6 +1513,17 @@ function InvoiceComposer({
         }
         ListFooterComponent={
           <>
+            {visible.showBrowseButton ? (
+              <Pressable
+                style={styles.listUnlistedBtn}
+                onPress={() => setBrowsing(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Browse the full catalogue"
+              >
+                <Ionicons name="grid-outline" size={16} color={ios.brand} />
+                <Text style={styles.listUnlistedText}>Browse catalogue</Text>
+              </Pressable>
+            ) : null}
             {unlistedPlacement === "list-footer" ? (
               <Pressable
                 style={styles.listUnlistedBtn}
@@ -1194,11 +1572,11 @@ function InvoiceComposer({
         <Pressable
           style={[styles.confirmBtn, !canSave && styles.confirmBtnDisabled]}
           disabled={!canSave}
-          onPress={onSave}
+          onPress={() => onSave()}
           accessibilityState={{ disabled: !canSave }}
         >
           <Text style={styles.confirmBtnText} numberOfLines={1}>
-            {createMut.isPending ? "Saving…" : "Create"}
+            {saving ? "Saving…" : "Create"}
           </Text>
           <Ionicons name="arrow-forward" size={14} color="#fff" />
         </Pressable>
@@ -1238,7 +1616,9 @@ function InvoiceComposer({
         totalItems={totalItems}
         taxRateFraction={taxRateFraction}
         tierPriceFor={tierPriceFor}
-        saving={createMut.isPending}
+        isSpecialFor={isSpecialFor}
+        onChangeReason={setLineReason}
+        saving={saving}
         onClose={() => setReviewOpen(false)}
         onIncrement={addOne}
         onDecrement={removeOne}
@@ -1262,21 +1642,34 @@ function InvoiceComposer({
           issueDate,
           onChangeIssueDate: onIssueDateChange,
           dueDate,
-          onChangeDueDate: setDueDate,
+          onChangeDueDate: onDueDateChange,
           send,
           onToggleSend: () => setSend((s) => !s),
           referenceNumber,
-          onChangeReferenceNumber: setReferenceNumber,
+          onChangeReferenceNumber: onReferenceNumberChange,
           subject,
-          onChangeSubject: setSubject,
+          onChangeSubject: onSubjectChange,
+          showDeposit: !saleMode.eligible,
+          depositOpen,
+          onToggleDeposit: () => setDepositOpen((o) => !o),
+          depositPercent,
+          onChangeDepositPercent: setDepositPercent,
+          depositDueDate,
+          onChangeDepositDueDate: setDepositDueDate,
           invoiceDiscount: invDiscount,
           onChangeInvoiceDiscount: setInvDiscount,
           shippingFee,
           onChangeShippingFee: setShippingFee,
+          total,
+          deliveredNow,
+          onChangeDeliveredNow: setDeliveredNow,
+          saleEligible: saleMode.eligible,
+          saleReasons: saleMode.eligible ? [] : saleMode.reasons,
+          saleControlEnabled,
         }}
         onSave={() => {
           setReviewOpen(false);
-          onSave();
+          onSave(true);
         }}
       />
 
@@ -1296,6 +1689,7 @@ function InvoiceComposer({
       <ProductPickerSheet
         visible={pickCode != null}
         title="Which one?"
+        activeOnly
         initialSearch={pickCode ?? undefined}
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
@@ -1334,12 +1728,37 @@ interface InvoiceDetails {
   onChangeReferenceNumber: (v: string) => void;
   subject: string;
   onChangeSubject: (v: string) => void;
+  /** #1529: the opt-in deposit schedule — hidden on the van-sale path (no deposit fields there). */
+  showDeposit: boolean;
+  depositOpen: boolean;
+  onToggleDeposit: () => void;
+  depositPercent: number | null;
+  onChangeDepositPercent: (v: number | null) => void;
+  depositDueDate: string;
+  onChangeDepositDueDate: (v: string) => void;
   /** Invoice-level $ discount — applied AFTER tax. Null = unset. */
   invoiceDiscount: number | null;
   onChangeInvoiceDiscount: (v: number | null) => void;
   /** Flat shipping added after tax; never taxed. Null = unset. */
   shippingFee: number | null;
   onChangeShippingFee: (v: number | null) => void;
+  /** The invoice grand total — only for the ineligible-sale disclosure copy. */
+  total: number;
+  // ── Van-sale mode (WP4) ──────────────────────────────────────────────────
+  /** "Delivered today?" control state — default true, independent of eligibility. */
+  deliveredNow: boolean;
+  onChangeDeliveredNow: (v: boolean) => void;
+  /** Whether the current cart can collapse into POST /orders/sell (saleModeGate). */
+  saleEligible: boolean;
+  /** Operator-facing reasons it can't, when ineligible ([] when eligible). */
+  saleReasons: string[];
+  /**
+   * Whether the Yes/No control itself may be operated. NOT `saleEligible`:
+   * gate rule 5 ("sending now without delivery") is a function of this
+   * control's own value, so disabling on it would strand the operator on "No".
+   * True whenever the CART could collapse at the control's clean position.
+   */
+  saleControlEnabled: boolean;
 }
 
 function ReviewSheet({
@@ -1351,6 +1770,8 @@ function ReviewSheet({
   totalItems,
   taxRateFraction,
   tierPriceFor,
+  isSpecialFor,
+  onChangeReason,
   saving,
   onClose,
   onIncrement,
@@ -1382,6 +1803,9 @@ function ReviewSheet({
   taxRateFraction: number;
   /** The customer's effective (tier / customer-price) catalog price per product. */
   tierPriceFor: (p: Product) => number;
+  /** #2696(c): the server's "special" for this customer (tier ≠ 1). */
+  isSpecialFor: (p: Product) => boolean;
+  onChangeReason: (id: string, reason: string) => void;
   saving: boolean;
   onClose: () => void;
   onIncrement: (id: string) => void;
@@ -1449,6 +1873,8 @@ function ReviewSheet({
                     line={line}
                     taxRateFraction={taxRateFraction}
                     catalogPrice={tierPriceFor(product)}
+                    isSpecial={details.saleEligible && isSpecialFor(product)}
+                    onChangeReason={(t) => onChangeReason(id, t)}
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onChangeQty={(n) => onChangeQty(id, n)}
@@ -1485,6 +1911,11 @@ function ReviewSheet({
           </ScrollView>
 
           <View style={styles.cartFooter}>
+            {/* Sticky, NOT in the ScrollView above: the sale disclosure has to
+                be on screen at the moment the operator commits, and anything in
+                the scrolling content sits below every line row. */}
+            <SaleModeField details={details} />
+
             {/* Money breakdown — only the rows that apply, so the common
                 no-tax/no-adjustment invoice keeps the old one-line footer. */}
             {totals.taxTotal > 0 || totals.discount > 0 || totals.shippingFee > 0 ? (
@@ -1531,7 +1962,11 @@ function ReviewSheet({
                   onPress={onSave}
                   accessibilityState={{ disabled: totalItems === 0 || saving }}
                 >
-                  <Text style={styles.confirmBtnText}>{saving ? "Saving…" : "Create invoice"}</Text>
+                  <Text style={styles.confirmBtnText}>
+                    {saving
+                      ? "Saving…"
+                      : saveActionLabel(details.saleEligible, details.deliveredNow)}
+                  </Text>
                   <Ionicons name="checkmark" size={14} color="#fff" />
                 </Pressable>
               </View>
@@ -1548,6 +1983,8 @@ function ReviewRow({
   line,
   taxRateFraction,
   catalogPrice: catalogPriceProp,
+  isSpecial = false,
+  onChangeReason,
   onIncrement,
   onDecrement,
   onChangeQty,
@@ -1565,6 +2002,9 @@ function ReviewRow({
   taxRateFraction: number;
   /** Customer-resolved (tier / customer-price) catalog price; list when absent. */
   catalogPrice?: number;
+  /** #2696(c) SA-558e: a New-sale line at a special (tier) price — moving it takes a reason. */
+  isSpecial?: boolean;
+  onChangeReason?: (reason: string) => void;
   onIncrement: () => void;
   onDecrement: () => void;
   onChangeQty: (n: number) => void;
@@ -1579,9 +2019,21 @@ function ReviewRow({
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   const isBoxed = upb > 1;
+  // #2698 (SA-564): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
   const catalogPrice = catalogPriceProp ?? toNumber(product.pricePerUnit);
   const effUnit = effectiveUnitPrice(line, product, catalogPrice);
   const isOverridden = line.unitPrice != null && line.unitPrice !== catalogPrice;
+  // #2696(c): off the special price by more than half a cent (pricing's own band).
+  const movedOffSpecial =
+    decideTrayPrice({
+      typed: line.unitPrice ?? null,
+      base: catalogPrice,
+      listPrice: toNumber(product.pricePerUnit),
+      isSpecial,
+      reason: "x",
+    }).kind === "set";
   const qty = effectiveQty(line, product.unitsPerBox);
   // Post-discount, matching the server's stored line subtotal (tax rides in the
   // sheet footer, never on the row).
@@ -1633,17 +2085,58 @@ function ReviewRow({
           ) : null}
         </View>
       </View>
+      {isSpecial && onChangeReason && movedOffSpecial ? (
+        <TextInput
+          style={styles.cartPriceInput}
+          value={line.overrideReason ?? ""}
+          onChangeText={onChangeReason}
+          maxLength={200}
+          placeholder="Reason (required)"
+          placeholderTextColor={ios.label3}
+          accessibilityLabel="Reason (required)"
+        />
+      ) : null}
 
       {isBoxed ? (
         <>
           <StepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
-          <StepperRow
-            label={`Loose ${product.unit ?? "units"}`}
-            value={line.pieces ?? 0}
-            onChange={onChangePieces}
-            max={upb - 1}
-            hint={`${upb} per case`}
-          />
+          {showLoose ? (
+            <View style={styles.looseRow}>
+              <View style={{ flex: 1 }}>
+                <StepperRow
+                  label="Extra loose units"
+                  value={line.pieces ?? 0}
+                  onChange={onChangePieces}
+                  max={upb - 1}
+                  hint={`${product.unit ?? "units"} · ${upb} per case`}
+                />
+              </View>
+              {canRemoveLooseUnits(line.boxes) ? (
+                <Pressable
+                  onPress={() => {
+                    onChangePieces(0);
+                    setLooseUnitsOpen(false);
+                  }}
+                  hitSlop={8}
+                  style={styles.looseRemove}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove extra units"
+                >
+                  <Ionicons name="close" size={16} color={ios.label2} />
+                </Pressable>
+              ) : null}
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => setLooseUnitsOpen(true)}
+              hitSlop={8}
+              style={styles.looseAdd}
+              accessibilityRole="button"
+              accessibilityLabel="Add extra loose units"
+            >
+              <Text style={styles.looseAddText}>+ units</Text>
+            </Pressable>
+          )}
         </>
       ) : (
         <StepperRow
@@ -1843,8 +2336,55 @@ function StepperRow({
   );
 }
 
+/**
+ * What the button about to be tapped will actually do. A van sale creates an
+ * order, deducts stock and (delivered-today) issues AND sends the invoice, so
+ * the label may never keep saying "Create invoice" on that path.
+ */
+function saveActionLabel(saleEligible: boolean, deliveredNow: boolean): string {
+  if (!saleEligible) return "Create invoice";
+  return deliveredNow ? "Record sale" : "Create order";
+}
+
+/**
+ * Van-sale mode (WP4/PR-4): collapses create→confirm→deliver→invoice→send into
+ * ONE POST /orders/sell call when saleModeGate says the previewed total can't
+ * silently change at save. Locked (both items disabled) when the CART can't
+ * collapse at all; the reason is always shown.
+ *
+ * This lives in the review sheet's STICKY footer, next to the Create button —
+ * never inside the scrolling content, which sits below every line row and so
+ * could let an operator record a sale without the disclosure ever rendering.
+ */
+function SaleModeField({ details: d }: { details: InvoiceDetails }) {
+  const disclosure = !d.saleEligible
+    ? `Saving as a regular invoice (no delivery tracking) — ${d.saleReasons.join(", ")}. Your total stays $${d.total.toFixed(2)} exactly as shown.`
+    : d.deliveredNow
+      ? "Records the sale now: the order is marked delivered, stock is deducted, and the invoice is issued and sent. Available customer credit is applied automatically."
+      : "Creates a pending order with a draft invoice. Stock is deducted now; the invoice unlocks for sending once the order is delivered.";
+
+  return (
+    <View style={styles.saleModeField}>
+      <Text style={styles.detailLabel}>Delivered today?</Text>
+      <SegmentedControl
+        items={["Yes", "No"]}
+        value={d.deliveredNow ? "Yes" : "No"}
+        onChange={(v) => d.onChangeDeliveredNow(v === "Yes")}
+        disabledItems={d.saleControlEnabled ? [] : ["Yes", "No"]}
+      />
+      <Text style={styles.detailHelp}>{disclosure}</Text>
+    </View>
+  );
+}
+
 /** Terms, dates and delivery — everything that isn't a line, in one card. */
 function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
+  // Sending is implied (not optional) only once the sale path is actually
+  // going to run — eligible AND the operator asked for delivered-today. An
+  // ineligible cart, or a NO (deliver-later) sale, still needs an explicit
+  // Send choice.
+  const showSendToggle = !(d.saleEligible && d.deliveredNow);
+
   return (
     <View style={styles.detailsCard}>
       <Text style={styles.detailsTitle}>Invoice details</Text>
@@ -1885,6 +2425,60 @@ function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
           style={styles.detailInput}
         />
       </View>
+
+      {/* #1529 (SA-517 PR-B): web's deposit schedule — a percent of the total due by its own date.
+          The dollar amount is derived server-side, never stored. Standalone invoices only. */}
+      {d.showDeposit &&
+        (d.depositOpen ? (
+          <View style={styles.detailField} testID="deposit-fields">
+            <View style={styles.detailMoneyRow}>
+              <View style={styles.detailMoneyCol}>
+                <Text style={styles.detailLabel}>Deposit %</Text>
+                <TextInput
+                  testID="deposit-percent"
+                  value={d.depositPercent == null ? "" : String(d.depositPercent)}
+                  onChangeText={(t) => {
+                    const v = t.replace(/[^0-9.]/g, "");
+                    d.onChangeDepositPercent(
+                      v === "" || Number.isNaN(Number(v)) ? null : Number(v),
+                    );
+                  }}
+                  placeholder="e.g. 50"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="decimal-pad"
+                  style={styles.detailInput}
+                />
+              </View>
+              <View style={styles.detailMoneyCol}>
+                <Text style={styles.detailLabel}>Deposit due date</Text>
+                <TextInput
+                  testID="deposit-due-date"
+                  value={d.depositDueDate}
+                  onChangeText={d.onChangeDepositDueDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={ios.label3}
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.detailInput}
+                />
+              </View>
+            </View>
+            <Text style={styles.detailHelp}>
+              The deposit amount is this percent of the invoice total, due by its own date.
+            </Text>
+            <Pressable onPress={d.onToggleDeposit} accessibilityRole="button" hitSlop={8}>
+              <Text style={styles.depositLink}>Remove deposit</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={d.onToggleDeposit}
+            accessibilityRole="button"
+            hitSlop={8}
+            testID="add-deposit"
+          >
+            <Text style={styles.depositLink}>+ Add deposit</Text>
+          </Pressable>
+        ))}
 
       <View style={styles.detailField}>
         <Text style={styles.detailLabel}>Reference number</Text>
@@ -1935,12 +2529,14 @@ function InvoiceDetailsCard({ details: d }: { details: InvoiceDetails }) {
         </View>
       </View>
 
-      <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
-        <View style={[styles.checkbox, d.send && styles.checkboxOn]}>
-          {d.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
-        </View>
-        <Text style={styles.sendLabel}>Send immediately on create</Text>
-      </Pressable>
+      {showSendToggle ? (
+        <Pressable style={styles.sendRow} onPress={d.onToggleSend}>
+          <View style={[styles.checkbox, d.send && styles.checkboxOn]}>
+            {d.send ? <Text style={styles.checkboxTick}>✓</Text> : null}
+          </View>
+          <Text style={styles.sendLabel}>Send immediately on create</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2043,6 +2639,29 @@ function UnlistedItemModal({
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  // #2698: the opt-in loose-units control (dashed, small) and its remove button — as CartRow.
+  looseRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  looseRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill,
+  },
+  looseAdd: {
+    alignSelf: "flex-start",
+    marginTop: 2,
+    marginBottom: 6,
+    paddingHorizontal: 12,
+    minHeight: 32,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   safe: { flex: 1, backgroundColor: ios.bgElev },
   center: { padding: 40, alignItems: "center" },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
@@ -2105,6 +2724,8 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
+  browseBar: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 12 },
+  browseClose: { padding: 6 },
   catalogList: { flex: 1 },
   listContent: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, flexGrow: 1 },
   pageSpinner: { paddingVertical: 16, alignItems: "center" },
@@ -2390,6 +3011,15 @@ const styles = StyleSheet.create({
   },
   detailsTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   detailField: { gap: 6 },
+  // Same field styling, but it sits in the sheet's sticky footer above the
+  // money breakdown — hence its own rule off.
+  saleModeField: {
+    gap: 6,
+    paddingBottom: 10,
+    marginBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: ios.separator,
+  },
   detailLabel: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.label },
   detailInput: {
     backgroundColor: ios.fill3,
@@ -2401,6 +3031,7 @@ const styles = StyleSheet.create({
     color: ios.label,
   },
   detailHelp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3 },
+  depositLink: { fontSize: 13, fontFamily: "Inter_500Medium", color: ios.brand },
   detailMoneyRow: { flexDirection: "row", gap: 10 },
   // flex-basis split, not flex:1 — RNW TextInputs carry an intrinsic width that
   // otherwise pushes the second column off a 320px sheet (see lib/row-layout.ts).

@@ -1,25 +1,74 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 
-const VALID_RETURN_REASONS = [
+// PR-1c: exported so InlineReturnsService (inline-returns.service.ts) shares the SAME
+// reason set and restock default instead of a second hand-typed copy (L-072-class risk) —
+// the values/text stay byte-identical, so returns-restock-parity.spec.ts's scan of this
+// exact declaration (it matches from `const NO_RESTOCK_REASONS` onward, `export` prefix and
+// all) still passes unchanged.
+export const VALID_RETURN_REASONS = [
   "DAMAGED",
   "WRONG_ITEM",
   "CUSTOMER_REFUSED",
   "QUALITY_ISSUE",
   "EXCESS_ORDER",
 ] as const;
+
+// Reasons where the returned goods are physically unsellable never restock by
+// default; the rest go back into stock unless the caller says otherwise.
+export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
+import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
+import { IdempotencyService } from "../common/idempotency.service";
+import { NumberingService } from "../import/numbering.service";
+import {
+  PACK_LINE_SELECT,
+  capBasis,
+  returnedPiecesByProduct,
+  soldQtyForProduct,
+  standardPackBases,
+  standardReturnPieces,
+} from "./returns-pieces.util";
+import { restockReturnItems } from "./returns-restock.util";
+import { standardRestockResolver } from "./returns-restock-pieces";
+
+/** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
+ * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
+const INLINE_RETURN_USE_INLINE_ENDPOINTS = "INLINE_RETURN_USE_INLINE_ENDPOINTS";
+
+/** The shape `create` returns — reused to type a replayed (idempotent) result. */
+type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
+
+/** F08 B166/B75: options object for `findAll`/`findAllForUser` — `search` narrows by
+ * return/order number or customer name; everything else is unchanged filtering. */
+export interface FindAllReturnsOptions {
+  orderId?: string;
+  customerId?: string;
+  /** B221: scopes to returns on orders assigned to this driver's route run. */
+  driverId?: string;
+  status?: string;
+  reason?: string;
+  search?: string;
+  /** #2406: STANDARD (default, unchanged list) | INLINE | ALL (no kind filter). Validated by
+   * the controller's whitelist before it ever reaches here. */
+  kind?: "STANDARD" | "INLINE" | "ALL";
+  page?: number;
+  limit?: number;
+}
 
 @Injectable()
 export class ReturnsService {
@@ -28,144 +77,383 @@ export class ReturnsService {
     private readonly gateway: RouteFlowGateway,
     private readonly ledger: RegulatedLedgerService,
     private readonly creditNotes: CreditNotesService,
+    private readonly numbering: NumberingService,
+    // Provided by the @Global CommonModule in every running app. Declared
+    // @Optional so the four existing ReturnsService spec suites (which predate
+    // it and provide no mock) still resolve; a request carrying no
+    // Idempotency-Key never touches it, which is the no-header regression pin.
+    @Optional() private readonly idempotency?: IdempotencyService,
   ) {}
 
-  private generateReturnNumber(): string {
-    const now = new Date();
-    const year = now.getFullYear();
-    const seq = Date.now().toString().slice(-6);
-    return `RET-${year}-${seq}`;
+  private readonly logger = new Logger(ReturnsService.name);
+
+  // DAMAGED/QUALITY_ISSUE goods are unsellable and must not restock by default;
+  // WRONG_ITEM/CUSTOMER_REFUSED/EXCESS_ORDER goods are fine and go back to stock.
+  private defaultRestockForReason(reason: string | undefined): boolean {
+    return !NO_RESTOCK_REASONS.has(reason ?? "");
   }
 
-  async create(dto: any, userId: string, userRole?: string) {
+  // B353: the last-six-digits-of-Date.now() scheme collided every ~16.7
+  // minutes (1e6 ms). RETURN's DocumentNumberType/DEFAULTS entry was seeded
+  // for exactly this call (see numbering.service.ts). Runs on the caller's
+  // OWN transaction (`opts.tx`) — this is always invoked from inside
+  // `create()`'s `tenantTransaction`, and reserving standalone here would be
+  // a nested transaction (numbering.service.ts's `reserveNext` doc comment).
+  private async generateReturnNumber(tx: Prisma.TransactionClient): Promise<string> {
+    const year = new Date().getFullYear();
+    const tenantId = this.prisma.getTenantId() ?? undefined;
+    return this.numbering.reserveNext("RETURN", { year, tenantId, tx });
+  }
+
+  async create(dto: any, userId: string, userRole?: string, idempotencyKey?: string) {
     if (!VALID_RETURN_REASONS.includes(dto.reason)) {
       throw new BadRequestException(
         `Invalid reason. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
       );
     }
-
-    const order = await this.prisma.forTenant().order.findUnique({
-      where: { id: dto.orderId },
-      include: {
-        customer: { select: { id: true, businessName: true } },
-        lineItems: { select: { productId: true, qty: true, unitPrice: true } },
-        invoices: { select: { id: true } },
-      },
-    });
-    if (!order) throw new NotFoundException("Order not found");
-    if (order.status !== "DELIVERED")
-      throw new BadRequestException("Returns can only be submitted for delivered orders");
-
-    // Customers can only create returns for their own orders
-    if (userRole === "CUSTOMER") {
-      const customer = await this.prisma.forTenant().customer.findFirst({ where: { userId } });
-      if (!customer || order.customerId !== customer.id) {
-        throw new ForbiddenException("You can only submit returns for your own orders");
-      }
+    // POST /returns binds `@Body() dto: any`, so nothing validates the payload
+    // shape — without this a body with no `items` reached the validation loop
+    // below and surfaced as a 500 ("dto.items is not iterable") instead of a 400.
+    if (!Array.isArray(dto.items) || dto.items.length === 0) {
+      throw new BadRequestException("At least one return item is required");
     }
 
-    // Query existing returns for this order to prevent cumulative over-return
-    const existingReturns = await this.prisma.forTenant().return.findMany({
-      where: { orderId: dto.orderId, status: { not: "REJECTED" } },
-      include: { items: { select: { productId: true, qty: true } } },
-    });
+    // F1 (independent review round 1, PR-2): the scope used to be tenant+orderId alone, so two
+    // DIFFERENT submitters (two drivers, or a driver and a customer-portal user) reusing the
+    // same orderId+client-generated key collided onto one submitter's cached result — scope now
+    // also includes the submitting user. The per-ATTEMPT half of F1 (the SAME submitter's own
+    // retry-vs-genuinely-new-return distinction) lives in the nonce the caller bakes into the
+    // key itself (`apps/mobile/lib/return-submit-key.ts`), not in this scope string. tenantId is
+    // a required positional argument on `check`/`save` now (F6), so it can never be folded into
+    // a hand-built scope string a caller forgets.
+    const idemScopeSuffix = `returns.create:${userId}:${dto.orderId}`;
+    const tenantId = this.prisma.getTenantId();
 
-    // Build a map of already-returned quantities per product
-    const alreadyReturned: Record<string, number> = {};
-    for (const ret of existingReturns) {
-      for (const ri of ret.items) {
-        alreadyReturned[ri.productId] = (alreadyReturned[ri.productId] ?? 0) + Number(ri.qty);
-      }
-    }
-
-    // Validate return qty does not exceed ordered qty per item (cumulative)
-    for (const item of dto.items) {
-      if (!item.qty || item.qty <= 0)
-        throw new BadRequestException("Return item quantity must be greater than zero");
-      const orderLine = (order as any).lineItems?.find(
-        (li: any) => li.productId === item.productId,
-      );
-      if (!orderLine)
-        throw new BadRequestException(`Product ${item.productId} was not in the original order`);
-      const orderedQty = Number(orderLine.qty);
-      const previouslyReturned = alreadyReturned[item.productId] ?? 0;
-      const remaining = orderedQty - previouslyReturned;
-      if (item.qty > remaining)
-        throw new BadRequestException(
-          `Return qty (${item.qty}) exceeds remaining returnable qty (${remaining}) for product ${item.productId}. Already returned: ${previouslyReturned} of ${orderedQty}.`,
+    // Cumulative-qty validation and the create must share one transaction: two
+    // concurrent requests previously read the same snapshot, both passed the
+    // remaining-qty check, and both committed — over-returning the order and
+    // (once each was refunded) paying the customer twice for the same goods.
+    const { ret, replayed, order } = await this.prisma.tenantTransaction(async (tx) => {
+      // F5 round 2 (N1, independent review round 2, PR-2): check-then-create-then-save is a
+      // check-then-act race — two concurrent replays of the same key both miss the check
+      // (neither has saved yet) and both create a return. Round 1 closed this with a SEPARATE
+      // session-level advisory lock on its own dedicated connection pool; the review judged that
+      // pool an unjustified extra failure surface. `acquireLock` instead takes a
+      // TRANSACTION-scoped `pg_advisory_xact_lock` on THIS transaction's own connection — no
+      // extra connection, auto-released at commit/rollback. `check`/`save` run on this same
+      // connection too, so the return row and its idempotency-key cache entry commit or roll
+      // back TOGETHER — see idempotency.service.ts's class docstring for the full savepoint
+      // reasoning, and for why `acquireLock` itself is the one method here that fails CLOSED.
+      //
+      // Round 3 (independent review round 3, PR-2): the replay check runs BEFORE the order
+      // lookup/DELIVERED/ownership validation below, not after — those checks read MUTABLE
+      // order state that can legitimately differ between a submission's first attempt and a
+      // later retry (the order's status can change for reasons that have nothing to do with
+      // this return, e.g. a separate workflow). A retry must return what was already recorded
+      // regardless of the order's CURRENT state, never a 404/400 for state that moved out from
+      // under an already-successful attempt.
+      if (idempotencyKey && this.idempotency) {
+        const lockHash = this.idempotency.hashFor(idempotencyKey, tenantId, idemScopeSuffix);
+        await this.idempotency.acquireLock(lockHash, tx);
+        const cached = await this.idempotency.check<CreatedReturn>(
+          idempotencyKey,
+          tenantId,
+          idemScopeSuffix,
+          tx,
         );
-    }
+        if (cached) return { ret: cached, replayed: true as const, order: undefined };
+      }
 
-    const ret = await this.prisma.forTenant().return.create({
-      data: {
-        returnNumber: this.generateReturnNumber(),
-        orderId: dto.orderId,
-        customerId: order.customerId,
-        reason: dto.reason,
-        notes: dto.notes,
-        photoUrls: dto.photoUrls ?? [],
-        status: "PENDING",
-        items: {
-          create: dto.items.map((i: any) => ({
-            productId: i.productId,
-            qty: i.qty,
-            reason: i.reason,
-            restock: i.restock ?? true,
-            tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
-          })),
+      // tx is already tenant-scoped (tenantTransaction wraps it with the same forTenant()
+      // extension) — this is the identical read `this.prisma.forTenant().order.findUnique(...)`
+      // used to be, just now sharing the lock/check's connection and transaction.
+      const order = await tx.order.findUnique({
+        where: { id: dto.orderId },
+        include: {
+          customer: { select: { id: true, businessName: true } },
+          // status/position feed returns-pieces.util.ts's CANCELLED exclusion and
+          // position-ordered axis pick (fix-round: these were missing, so both were
+          // silently no-ops against a real query — see returns-overreturn.spec.ts's
+          // CANCELLED-line probe, which only caught this because it mocked fields the
+          // real query never selected).
+          lineItems: {
+            select: {
+              ...PACK_LINE_SELECT, // id + the pack evidence the piece-axis cap reads (SA-158)
+              unitPrice: true,
+              subtotal: true,
+            },
+          },
+          invoices: { select: { id: true } },
         },
-      },
-      include: { items: true },
+      });
+      if (!order) throw new NotFoundException("Order not found");
+      if (order.status !== "DELIVERED")
+        throw new BadRequestException("Returns can only be submitted for delivered orders");
+
+      // Customers can only create returns for their own orders
+      if (userRole === "CUSTOMER") {
+        const customer = await tx.customer.findFirst({ where: { userId } });
+        if (!customer || order.customerId !== customer.id) {
+          throw new ForbiddenException("You can only submit returns for your own orders");
+        }
+      }
+
+      // §5: serialize every return against this CUSTOMER (not just this order) —
+      // the (PR-1c/1d) INLINE capture flow shares the same prior-returned accounting
+      // (returnedPiecesByProduct) across a customer's orders, so two concurrent
+      // returns — one STANDARD, one INLINE, on different orders for the same
+      // customer's same product — must not both read the same stale "remaining"
+      // snapshot. Placed after the idempotency lock/check and the unlocked order
+      // read (source of customerId) above, before the order-row FOR UPDATE below.
+      if (this.idempotency) {
+        await this.idempotency.acquireLock(
+          this.idempotency.hashFor(order.customerId, tenantId, "returns.customer"),
+          tx,
+        );
+      }
+
+      // The transaction ALONE does not close the race: tenantTransaction runs at
+      // Postgres' default READ COMMITTED, so two concurrent creates would each
+      // take a snapshot without the other's uncommitted insert, both pass the
+      // remaining-qty check, and both commit. Lock the order row first so they
+      // serialize here — mirrors the FOR UPDATE idiom in invoices.service.ts
+      // recordPayment() and routes.service.ts dispatch.
+      await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${dto.orderId} FOR UPDATE`;
+
+      // B4/m-6: prior-returned pieces per product, shared with the (PR-1c/1d) INLINE
+      // capture flow — sums STANDARD Return rows AND (once they exist) INLINE
+      // ReturnItem rows sourced from this order. See returns-pieces.util.ts.
+      // SA-158: cap, prior-returned and remaining are all in PIECES; the pack basis is resolved once
+      // per order (only ambiguous lines query) and shared, so a mixed or unknown basis refuses (409)
+      // before anything is written.
+      const packBases = await standardPackBases(tx, dto.orderId, order.lineItems as any);
+      const alreadyReturned = await returnedPiecesByProduct(tx, dto.orderId, packBases);
+
+      // Validate return qty does not exceed ordered qty per item (cumulative)
+      for (const item of dto.items) {
+        if (!item.qty || item.qty <= 0)
+          throw new BadRequestException("Return item quantity must be greater than zero");
+        // The ITEM-level reason overrides dto.reason when deciding restock below, and
+        // defaultRestockForReason treats every string outside NO_RESTOCK_REASONS as
+        // sellable — so an unvalidated "damaged" (lower-case) or any typo would restock
+        // unsellable goods, which is exactly the B61 defect. The body binds as
+        // `@Body() dto: any`, so no class-validator layer catches it: validate here.
+        if (item.reason != null && !VALID_RETURN_REASONS.includes(item.reason))
+          throw new BadRequestException(
+            `Invalid reason for product ${item.productId}. Must be one of: ${VALID_RETURN_REASONS.join(", ")}`,
+          );
+        // B4/m-6: sold pieces = the SUM of the product's non-CANCELLED lines on this
+        // order (not just the first one `.find()` happened to match) — see
+        // returns-pieces.util.ts. A product absent from every live line still 400s,
+        // matching the pre-fix "not in the original order" behaviour.
+        const soldLineUnits = soldQtyForProduct(order as any, item.productId);
+        if (soldLineUnits <= 0)
+          throw new BadRequestException(`Product ${item.productId} was not in the original order`);
+        const cap = capBasis(packBases, item.productId); // 409: mixed / no line / half-resolvable
+        const prior = alreadyReturned[item.productId];
+        if (cap.mode === "lineUnit") {
+          // SA-161: a legacy line whose pack cannot be resolved. Typed and sold share the line's own unit,
+          // so the cap is exact with no pack (master's arithmetic); nothing is guessed or written. The one
+          // honest refusal: a prior INLINE return (pieces) cannot be netted against line units.
+          const inlinePieces = prior ? ("unknown" in prior ? prior.inlinePieces : prior.pieces) : 0;
+          if (inlinePieces > 0)
+            throw new ConflictException(
+              `Product ${item.productId}: cannot reconcile a piece-based return with this line's unit; return it inline instead.`,
+            );
+          const returnedUnits = prior && "unknown" in prior ? prior.lineUnits : 0;
+          const remainingUnits = soldLineUnits - returnedUnits;
+          if (Number(item.qty) > remainingUnits)
+            throw new BadRequestException(
+              `Return qty (${Number(item.qty)}) exceeds remaining returnable qty (${remainingUnits}) for product ${item.productId}. Already returned: ${returnedUnits} of ${soldLineUnits}.`,
+            );
+          alreadyReturned[item.productId] = {
+            unknown: true,
+            reason: prior && "unknown" in prior ? prior.reason : "legacy line unit",
+            lineUnits: returnedUnits + Number(item.qty),
+            inlinePieces: 0,
+          };
+          continue;
+        }
+        if (prior && "unknown" in prior) throw new ConflictException(prior.reason);
+        const { pieces: returnPieces, toLineUnit } = standardReturnPieces(
+          packBases,
+          item.productId,
+          Number(item.qty),
+        );
+        const orderedQty = soldLineUnits * cap.factor;
+        const previouslyReturned = prior?.pieces ?? 0;
+        const remaining = orderedQty - previouslyReturned;
+        if (returnPieces > remaining)
+          throw new BadRequestException(
+            `Return qty (${toLineUnit(returnPieces)}) exceeds remaining returnable qty (${toLineUnit(remaining)}) for product ${item.productId}. Already returned: ${toLineUnit(previouslyReturned)} of ${toLineUnit(orderedQty)}.`,
+          );
+        // Count this line against the running total too: a single payload that
+        // lists the same productId twice previously validated every line against
+        // the same pre-request snapshot, so 2 × qty 10 against 10 ordered both
+        // passed and over-returned with no concurrency involved at all.
+        alreadyReturned[item.productId] = { pieces: previouslyReturned + returnPieces };
+      }
+
+      const returnNumber = await this.generateReturnNumber(tx);
+      const created = await tx.return.create({
+        data: {
+          returnNumber,
+          orderId: dto.orderId,
+          customerId: order.customerId,
+          reason: dto.reason,
+          notes: dto.notes,
+          photoUrls: dto.photoUrls ?? [],
+          status: "PENDING",
+          kind: "STANDARD",
+          items: {
+            create: dto.items.map((i: any) => ({
+              productId: i.productId,
+              qty: i.qty,
+              reason: i.reason,
+              condition: i.condition ?? undefined,
+              notes: i.notes ?? undefined,
+              restock: i.restock ?? this.defaultRestockForReason(i.reason ?? dto.reason),
+              tenantId: this.prisma.getTenantId(), // nested creates bypass forTenant() extension
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      // Saved INSIDE this same transaction — the row and its idempotency-key cache entry commit
+      // or roll back together (round 1 saved AFTER the transaction committed, on a separate
+      // connection, leaving a narrow crash window with no cache entry for an already-created row).
+      if (idempotencyKey && this.idempotency) {
+        await this.idempotency.save(idempotencyKey, tenantId, idemScopeSuffix, created, tx);
+      }
+
+      return { ret: created, replayed: false as const, order };
     });
 
-    this.gateway.emitReturnCreated(this.prisma.getTenantId(), {
-      returnId: ret.id,
-      customerId: order.customerId,
-      customerName: order.customer.businessName,
-      orderId: dto.orderId,
-      reason: dto.reason,
-    });
+    // Stored/replayed inside the transaction above, so a replay never reaches here having
+    // re-run any of the writes it replayed — but it DOES still need to skip the emit below, or
+    // a replayed return.created would light up the operator dashboard twice. `order` is only
+    // ever undefined on the replayed branch (round 3: order lookup now happens AFTER the replay
+    // check, so a cache hit never reaches it) — exactly when this block is skipped.
+    if (!replayed) {
+      this.gateway.emitReturnCreated(tenantId, {
+        returnId: ret.id,
+        customerId: order.customerId,
+        customerName: order.customer.businessName,
+        orderId: dto.orderId,
+        reason: dto.reason,
+      });
+    }
 
     return ret;
   }
 
-  async findAllForUser(
-    user: JwtPayload,
-    orderId?: string,
-    customerId?: string,
-    status?: string,
-    reason?: string,
-    page = 1,
-    limit = 20,
-  ) {
+  async findAllForUser(user: JwtPayload, options: FindAllReturnsOptions = {}) {
     if (user.role === "CUSTOMER") {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub } });
-      return this.findAll(orderId, customer?.id, status, reason, page, limit);
+      // A CUSTOMER user with no Customer row must see NOTHING — passing
+      // `customerId: undefined` through would drop the scoping filter entirely and
+      // hand them the tenant-wide list (mirrors credit-notes' findAllForUser guard).
+      if (!customer) {
+        const page = options.page ?? 1;
+        const limit = options.limit ?? 20;
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+      return this.findAll({ ...options, customerId: customer.id });
     }
-    return this.findAll(orderId, customerId, status, reason, page, limit);
+    // B221: findAll's own tenant scoping (forTenant()) is not USER scoping — a
+    // driver with no branch here saw every return in the tenant, not just
+    // returns on orders assigned to their own route runs.
+    if (user.role === "DRIVER") {
+      const driver = await this.prisma
+        .forTenant()
+        .driver.findFirst({ where: { userId: user.sub } });
+      if (!driver) {
+        const page = options.page ?? 1;
+        const limit = options.limit ?? 20;
+        return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+      }
+      return this.findAll({ ...options, driverId: driver.id });
+    }
+    return this.findAll(options);
   }
 
-  async findAll(
-    orderId?: string,
-    customerId?: string,
-    status?: string,
-    reason?: string,
-    page = 1,
-    limit = 20,
-  ) {
+  /**
+   * F08 B166: `search` narrows the list by return number, order number, or
+   * customer business name (case-insensitive contains) — ANDed with the
+   * existing filters, so a CUSTOMER's `customerId` scoping still applies.
+   * F08 B75: each row carries `refundEstimate`, priced by the SAME pure
+   * `priceReturn` helper `processRefund`/`findOne` price from — never a
+   * client-side `qty × unitPrice` re-derivation, and never the mint-time
+   * `billedBasisFor` (that one is a money GATE: it hits the DB per row and
+   * refuses). A row whose basis is not creditable reports 0 WITH
+   * `refundEstimateReason`, so a real $0 is distinguishable from a refusal.
+   */
+  async findAll(options: FindAllReturnsOptions = {}) {
+    const {
+      orderId,
+      customerId,
+      driverId,
+      status,
+      reason,
+      search,
+      kind = "STANDARD",
+      page = 1,
+      limit = 20,
+    } = options;
     const skip = (page - 1) * limit;
+    // M6/§2.3, extended by #2406: the default (STANDARD) keeps this the post-delivery RMA
+    // surface only, unchanged. `kind: "INLINE"` or `"ALL"` is opt-in (the order-detail panel,
+    // SA-484c) — an INLINE row's money is already resolved at capture (ReturnItem.unitPrice/
+    // subtotal), so it SKIPS the priceReturn()/billedBasisFor() enrichment below entirely.
     const where: any = {};
+    if (kind !== "ALL") where.kind = kind;
     if (orderId) where.orderId = orderId;
     if (customerId) where.customerId = customerId;
+    // A relation filter, not a scalar FK — Return carries no driverId of its
+    // own (RETURN → orderId → Order.routeRunId → RouteRun.driverId). An order
+    // with no route run assigned (routeRunId null) can never match, which is
+    // correct: it was never on any driver's route.
+    if (driverId) where.order = { routeRun: { driverId } };
     if (status) where.status = status;
     if (reason) where.reason = reason;
+    if (search) {
+      where.OR = [
+        { returnNumber: { contains: search, mode: "insensitive" } },
+        { order: { orderNumber: { contains: search, mode: "insensitive" } } },
+        { customer: { businessName: { contains: search, mode: "insensitive" } } },
+      ];
+    }
     const [data, total] = await Promise.all([
       this.prisma.forTenant().return.findMany({
         where,
         include: {
-          order: { select: { id: true, orderNumber: true } },
+          order: {
+            select: {
+              id: true,
+              orderNumber: true,
+              invoices: {
+                select: {
+                  id: true,
+                  status: true,
+                  total: true,
+                  createdAt: true,
+                  items: { select: { productId: true, qty: true, subtotal: true } },
+                },
+              },
+              lineItems: {
+                select: {
+                  productId: true,
+                  qty: true,
+                  unitPrice: true,
+                  subtotal: true,
+                  status: true,
+                },
+              },
+            },
+          },
           customer: { select: { id: true, businessName: true } },
           items: { include: { product: { select: { id: true, name: true } } } },
         },
@@ -175,12 +463,41 @@ export class ReturnsService {
       }),
       this.prisma.forTenant().return.count({ where }),
     ]);
-    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+    const enriched = data.map((ret: any) => {
+      // The invoice graph above is fetched ONLY to price a STANDARD row — it never crosses
+      // the wire (GET /returns is readable by DRIVER/CUSTOMER roles). The response's
+      // `order` keeps exactly the { id, orderNumber } shape it had before B75.
+      const { order, ...rest } = ret;
+      const strippedOrder = order ? { id: order.id, orderNumber: order.orderNumber } : order;
+      // #2406: an INLINE row's money was already resolved at capture (refundAmount, on `rest`
+      // via the ReturnItem/order graph) — it never calls priceReturn, and reports its refusal
+      // as "INLINE" so a client can tell it apart from a STANDARD row's real refusal/estimate.
+      if (ret.kind === "INLINE") {
+        return {
+          ...rest,
+          order: strippedOrder,
+          refundEstimate: null,
+          refundEstimateReason: "INLINE",
+        };
+      }
+      // Pure, DB-free pricing: the read path must never issue a per-row query (the
+      // list is fetched with limit 500 for the KPI tile) and must never swallow a
+      // refusal into a silent $0 — the reason travels with the row instead.
+      const { amount, refusal } = this.priceReturn(ret.items ?? [], ret.order ?? undefined);
+      return {
+        ...rest,
+        order: strippedOrder,
+        refundEstimate: amount,
+        refundEstimateReason: refusal ?? null,
+      };
+    });
+    return { data: enriched, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
   }
 
   async approve(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be approved");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "APPROVED" } });
@@ -189,6 +506,7 @@ export class ReturnsService {
   async reject(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "PENDING")
       throw new BadRequestException("Only PENDING returns can be rejected");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "REJECTED" } });
@@ -197,6 +515,7 @@ export class ReturnsService {
   async markInTransit(id: string) {
     const ret = await this.prisma.forTenant().return.findUnique({ where: { id } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "APPROVED")
       throw new BadRequestException("Only APPROVED returns can be marked in transit");
     return this.prisma.forTenant().return.update({ where: { id }, data: { status: "IN_TRANSIT" } });
@@ -207,6 +526,7 @@ export class ReturnsService {
       .forTenant()
       .return.findUnique({ where: { id }, include: { items: true } });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (!["APPROVED", "IN_TRANSIT"].includes(ret.status))
       throw new BadRequestException("Only APPROVED or IN_TRANSIT returns can be received");
 
@@ -231,33 +551,9 @@ export class ReturnsService {
         // actually put back on the shelf (nothing).
         await tx.returnItem.updateMany({ where: { returnId: id }, data: { restock: false } });
       } else {
-        for (const item of ret.items) {
-          if (item.restock) {
-            // Restock at the current average — leaves the average unchanged but
-            // records the cost so COGS/valuation reporting stays complete
-            const product = await tx.product.findUnique({
-              where: { id: item.productId },
-              select: { currentStock: true, averageCost: true },
-            });
-            const qty = new Prisma.Decimal(item.qty);
-            await tx.stockMovement.create({
-              data: {
-                productId: item.productId,
-                type: "RETURN",
-                quantity: qty,
-                unitCost: product?.averageCost ?? null,
-                avgCostAfter: product?.averageCost ?? null,
-                stockAfter: (product?.currentStock ?? new Prisma.Decimal(0)).add(qty),
-                performedById: userId,
-                reference: `RET-${ret.id.slice(0, 8)}`,
-              },
-            });
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { currentStock: { increment: qty } },
-            });
-          }
-        }
+        // PR-1c: shared with InlineReturnsService.capture() — see returns-restock.util.ts.
+        // B665: a STANDARD return is typed in the line's own unit; stock is in pieces.
+        await restockReturnItems(tx, ret, userId, standardRestockResolver(tx, ret.orderId));
       }
       // W5c: reverse the regulated sales ledger for the returned goods (pro-rated,
       // idempotent per return). Independent of `restock` — a returned regulated
@@ -273,11 +569,203 @@ export class ReturnsService {
         returnId: ret.id,
         orderId: ret.orderId,
         returnedByProduct,
+        // The STANDARD path's ReturnItem.qty mirrors OrderItem.qty (returns-pieces.util.ts
+        // converts to pieces only for the cap, never on disk) — the line's OWN unit,
+        // never pieces (live production regression, B661/B671 fix round 2).
+        returnedUnit: "LINE_UNIT",
         db: tx,
       });
       // Status already flipped to RECEIVED by the claim above; return the record.
       return tx.return.findUnique({ where: { id } });
     });
+  }
+
+  /**
+   * F08 B53: prices a refund from what was actually BILLED — the order's
+   * "creditable" (non-VOID/non-WRITTEN_OFF) invoices — instead of re-deriving it
+   * from the order line. A single creditable invoice sources the credit directly;
+   * 2+ mint against the LATEST one (by createdAt) so create()'s per-invoice cap
+   * still applies, gated by a headroom check against what's already been credited
+   * on those invoices; none creditable (invoices exist but all excluded) refuses
+   * rather than silently falling back; an order with zero invoice rows at all
+   * (never invoiced) keeps the legacy order-line basis. Refund qty is capped at
+   * the billed qty (`min(returned, billed)`); narrowing that further by what was
+   * already DELIVERED needs a `ReturnItem.deliveredQty` column (migration), so
+   * the B53 x B128 composition is filed separately rather than half-built here.
+   */
+  private async billedBasisFor(
+    items: any[],
+    order?: any,
+  ): Promise<{ amount: number; invoiceId?: string }> {
+    const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
+    if (refusal === "NOTHING_CREDITABLE") {
+      throw new BadRequestException("Nothing billed on this order can be refunded");
+    }
+    // No invoice rows at all: the amount came from the legacy order-line basis and
+    // there is no source invoice for create() to cap against, so nothing to gate.
+    if (creditable.length === 0) return { amount, invoiceId };
+
+    // The credit is always minted against ONE invoice — the only creditable one, or
+    // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
+    // undefined) credit would skip create()'s per-invoice cap entirely. Both shapes
+    // are gated BEFORE the caller's RECEIVED→REFUNDED claim: 2+ invoices additionally
+    // get an order-wide headroom check (the latest invoice alone is not the order's
+    // ceiling), and EVERY shape gets the source invoice's OWN remaining-room check,
+    // which is what create() actually caps against.
+    const latest = creditable.find((inv: any) => inv.id === invoiceId);
+
+    if (creditable.length >= 2) {
+      const totalBilled = creditable.reduce(
+        (sum: number, inv: any) => sum + Number(inv.total ?? 0),
+        0,
+      );
+      const creditableIds = creditable.map((inv: any) => inv.id);
+      // Scope the credited side by the ORDER, not just by invoice id: an unsourced
+      // credit note (invoiceId null — exactly what the pre-fix code minted for a
+      // 2+-invoice order) is linked to the order through OrderCreditNote, and must
+      // still reduce the headroom.
+      const creditedScope: any[] = [{ invoiceId: { in: creditableIds } }];
+      if (order?.id) creditedScope.push({ orderLinks: { some: { orderId: order.id } } });
+      const agg = await this.prisma.forTenant().creditNote.aggregate({
+        where: {
+          status: { not: "VOID" },
+          OR: creditedScope,
+        },
+        _sum: { amount: true },
+      });
+      const alreadyCredited = Number((agg as any)?._sum?.amount ?? 0);
+      const headroom = totalBilled - alreadyCredited;
+      if (amount > headroom + 0.001) {
+        throw new BadRequestException(
+          "Refund exceeds the remaining headroom on this order's billed invoices",
+        );
+      }
+    }
+
+    // create() caps against the SOURCE invoice alone (`existing credits on it +
+    // amount <= its total`), so an amount that clears the order-wide headroom can
+    // still be rejected there — after the claim has committed. Refuse here instead.
+    // This runs for a SINGLE creditable invoice too: create()'s cap does not care how
+    // many invoices the order has, so a lone invoice that already carries a credit
+    // note (an earlier partial return, or an operator-issued credit) would otherwise
+    // sail past this method and throw inside create() after the claim had committed.
+    const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
+      where: { status: { not: "VOID" }, invoiceId },
+      _sum: { amount: true },
+    });
+    const latestRoom = Number(latest?.total ?? 0) - Number((latestAgg as any)?._sum?.amount ?? 0);
+    if (amount > latestRoom + 0.001) {
+      // The operator reads this string verbatim, so it names the invoice the way the
+      // UI does. `invoiceNumber` is selected by every caller that can reach this line
+      // (processRefund's query); the `?? invoiceId` fallback covers only the impossible
+      // case of a row that lost the field, and a UUID there is a bug, not a label.
+      throw new BadRequestException(
+        `Refund ${amount} exceeds the remaining room ${roundMoney(latestRoom)} on invoice ` +
+          `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
+      );
+    }
+    return { amount, invoiceId };
+  }
+
+  /**
+   * F08 B75: the PURE half of the billed basis — the money figure only, with no
+   * DB round trip and no refusal thrown. Read paths (`findAll`, `findOne`) price
+   * from this; `billedBasisFor` wraps it with the mint-time gates (refusal +
+   * headroom) that only the write path may apply. `refusal` reports why an
+   * amount is 0 so a caller can tell "nothing creditable" from a genuine $0.
+   */
+  private priceReturn(
+    items: any[],
+    order?: any,
+  ): {
+    amount: number;
+    invoiceId?: string;
+    creditable: any[];
+    refusal?: "NOTHING_CREDITABLE";
+  } {
+    const allInvoices = order?.invoices ?? [];
+
+    if (allInvoices.length === 0) {
+      // Never invoiced (or its invoice rows are gone) — legacy order-line basis.
+      // PR-1a fix-round (Opus review F1): create()'s over-return cap now sums a
+      // product's qty across every non-CANCELLED line (soldQtyForProduct), but this
+      // basis used to price off a SINGLE `.find()`-matched line's per-unit rate against
+      // the full (now-pooled) returned qty — a product split across two lines priced
+      // the whole return at one line's rate, over-crediting whenever the lines differ
+      // in price. Pool qty/subtotal per product the same way the invoiced branch below
+      // already does, so the cap and the price always agree.
+      const soldQtyByProduct = new Map<string, number>();
+      const soldSubtotalByProduct = new Map<string, number>();
+      for (const li of order?.lineItems ?? []) {
+        if (!li.productId || li.status === "CANCELLED") continue;
+        soldQtyByProduct.set(
+          li.productId,
+          (soldQtyByProduct.get(li.productId) ?? 0) + Number(li.qty),
+        );
+        soldSubtotalByProduct.set(
+          li.productId,
+          (soldSubtotalByProduct.get(li.productId) ?? 0) + Number(li.subtotal),
+        );
+      }
+      let amount = 0;
+      for (const item of items) {
+        const soldQty = soldQtyByProduct.get(item.productId) ?? 0;
+        if (soldQty <= 0) continue;
+        const soldSubtotal = soldSubtotalByProduct.get(item.productId) ?? 0;
+        const perUnit = soldSubtotal / soldQty;
+        const refundQty = Math.min(Number(item.qty), soldQty);
+        amount += refundQty * perUnit;
+      }
+      return { amount: roundMoney(amount), invoiceId: undefined, creditable: [] };
+    }
+
+    const creditable = allInvoices.filter(
+      (inv: any) => !CREDIT_SOURCE_EXCLUDED.includes(inv.status as any),
+    );
+    if (creditable.length === 0) {
+      // Invoices exist but none of them can source a credit (all VOID/WRITTEN_OFF).
+      // Pricing reports it; only the mint path (billedBasisFor) turns it into a refusal.
+      return { amount: 0, invoiceId: undefined, creditable, refusal: "NOTHING_CREDITABLE" };
+    }
+
+    const billedQtyByProduct = new Map<string, number>();
+    const billedSubtotalByProduct = new Map<string, number>();
+    for (const inv of creditable) {
+      for (const invItem of inv.items ?? []) {
+        billedQtyByProduct.set(
+          invItem.productId,
+          (billedQtyByProduct.get(invItem.productId) ?? 0) + Number(invItem.qty),
+        );
+        billedSubtotalByProduct.set(
+          invItem.productId,
+          (billedSubtotalByProduct.get(invItem.productId) ?? 0) + Number(invItem.subtotal),
+        );
+      }
+    }
+
+    let amount = 0;
+    for (const item of items) {
+      const billedQty = billedQtyByProduct.get(item.productId) ?? 0;
+      if (billedQty <= 0) continue;
+      const billedSubtotal = billedSubtotalByProduct.get(item.productId) ?? 0;
+      const perUnit = billedSubtotal / billedQty;
+      const refundQty = Math.min(Number(item.qty), billedQty);
+      amount += refundQty * perUnit;
+    }
+    amount = roundMoney(amount);
+
+    if (creditable.length === 1) {
+      return { amount, invoiceId: creditable[0].id, creditable };
+    }
+
+    // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
+    // create()'s per-invoice cap still applies. billedBasisFor gates it.
+    const latest = [...creditable].sort((a: any, b: any) => {
+      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bt - at;
+    })[0];
+    return { amount, invoiceId: latest.id, creditable };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto) {
@@ -289,29 +777,55 @@ export class ReturnsService {
         items: true,
         order: {
           select: {
+            // `id` feeds the order-scoped headroom aggregate in billedBasisFor.
+            id: true,
             orderNumber: true,
-            invoices: { select: { id: true } },
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            // F08 B53: the creditable/VOID decision must be made IN CODE
+            // (billedBasisFor), never as a DB-level status filter here — excluding
+            // VOID/WRITTEN_OFF at the query makes a VOID-only order indistinguishable
+            // from a never-invoiced order (both come back with zero rows), which
+            // would silently take the legacy order-line fallback instead of refusing.
+            // Fetch every invoice with enough to price + rank it.
+            invoices: {
+              select: {
+                id: true,
+                // The remaining-room refusal below names this invoice to the operator
+                // (billedBasisFor → the toast description), so the HUMAN number has to
+                // travel with the row: without it the message degrades to a raw UUID.
+                invoiceNumber: true,
+                status: true,
+                total: true,
+                createdAt: true,
+                items: { select: { productId: true, qty: true, subtotal: true } },
+              },
+            },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
       },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     if (ret.status !== "RECEIVED")
       throw new BadRequestException("Only RECEIVED returns can be refunded");
 
-    // Refund value = Σ returned qty × the order line's EFFECTIVE per-unit price
-    // (subtotal ÷ qty — robust to box-priced lines where unitPrice is per box while
-    // qty is pieces). Items not on the order contribute 0.
-    let refundAmount = 0;
-    for (const item of ret.items ?? []) {
-      const line = ret.order?.lineItems?.find((li) => li.productId === item.productId);
-      if (!line) continue;
-      const lineQty = Number(line.qty);
-      const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
-      refundAmount += Number(item.qty) * perUnit;
-    }
-    refundAmount = roundMoney(refundAmount);
+    // F08 B53: refund value is priced from what was actually BILLED (the order's
+    // creditable invoices), not re-derived from the order line — see billedBasisFor.
+    // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the
+    // mint-time gates: a RECEIVED return on a VOID-only (or fully credited) order must
+    // still be resolvable by "refunded outside RouteFlow", or it is stuck forever.
+    const { amount: refundAmount, invoiceId: sourceInvoiceId } =
+      method === "EXTERNAL_REFUND"
+        ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
+        : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
@@ -340,14 +854,42 @@ export class ReturnsService {
 
     // Sequential, NOT nested: create() opens its own Serializable tx and books NO
     // regulated reversal for a lump-sum credit (no items) — the returned regulated
-    // goods were already reversed at receive(). Single source invoice engages the cap.
-    const invoices = ret.order?.invoices ?? [];
-    const cn = await this.creditNotes.create({
-      customerId: ret.customerId,
-      invoiceId: invoices.length === 1 ? invoices[0].id : undefined,
-      amount: refundAmount,
-      reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
-    });
+    // goods were already reversed at receive(). billedBasisFor already picked the
+    // single creditable invoice, or the latest of 2+ after a headroom check, or
+    // undefined for a zero-invoice (legacy) or VOID-sourced order.
+    let cn: Awaited<ReturnType<CreditNotesService["create"]>>;
+    try {
+      cn = await this.creditNotes.create({
+        customerId: ret.customerId,
+        invoiceId: sourceInvoiceId,
+        amount: refundAmount,
+        reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
+      });
+    } catch (err) {
+      // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
+      // must not strand the return in REFUNDED with no credit note — compensate the
+      // claim back to RECEIVED (only if the mint truly never landed: creditNoteId is
+      // still null) so the return can be re-attempted, then rethrow the original error.
+      this.logger.error(
+        `Refund mint failed for return ${id} (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"}): ${(err as Error)?.message}`,
+      );
+      try {
+        await this.prisma.forTenant().return.updateMany({
+          where: { id, status: "REFUNDED", creditNoteId: null },
+          data: { status: "RECEIVED", refundMethod: null, refundAmount: null, refundedAt: null },
+        });
+        this.logger.warn(
+          `Return ${id} bounced REFUNDED→RECEIVED after the failed mint (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"})`,
+        );
+      } catch (compErr) {
+        // The compensation itself failed — the row may be stranded in REFUNDED with no
+        // credit note. Log it, but NEVER let this error replace the real cause below.
+        this.logger.error(
+          `Compensation failed for return ${id} (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"}): ${(compErr as Error)?.message}`,
+        );
+      }
+      throw err;
+    }
     await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
 
     return { ...updated, creditNoteId: cn.id };
@@ -359,6 +901,9 @@ export class ReturnsService {
       include: { items: true },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    // M6/§2.3: refused for every caller, CUSTOMER included — an INLINE return cancels
+    // through its own endpoint (PR-1c/1d), never this one.
+    if (ret.kind === "INLINE") throw new BadRequestException(INLINE_RETURN_USE_INLINE_ENDPOINTS);
     // SECURITY (F2-001): a CUSTOMER may only cancel their OWN return. Without this
     // check any customer could cancel a tenant-mate's return and reverse stock.
     if (user.role === "CUSTOMER") {
@@ -374,10 +919,17 @@ export class ReturnsService {
       throw new BadRequestException("Refunded returns cannot be cancelled");
 
     return this.prisma.tenantTransaction(async (tx) => {
+      // B69: the pre-transaction `ret` read above can be stale by the time we get
+      // here (e.g. a concurrent receive() committed RECEIVED after our read but
+      // before this transaction started). Lock the row for the rest of the
+      // transaction, then re-read it fresh IN-TX — the undo decision below keys
+      // off `fresh`, never the stale outer `ret`.
+      await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
+      const fresh = await tx.return.findUnique({ where: { id }, include: { items: true } });
+
       // Concurrency guard: claim the →CANCELLED transition atomically so two
       // concurrent cancels can't both run the stock/ledger undo (double-decrement).
-      // The loser matches 0 rows and aborts. The RECEIVED/PROCESSED undo below is
-      // idempotent-safe under RECEIVED↔PROCESSED staleness (both branches undo).
+      // The loser matches 0 rows and aborts.
       const claimed = await tx.return.updateMany({
         where: { id, status: { notIn: ["CANCELLED", "REFUNDED"] } },
         data: { status: "CANCELLED" },
@@ -385,24 +937,68 @@ export class ReturnsService {
       if (claimed.count === 0) {
         throw new BadRequestException("Return can no longer be cancelled");
       }
-      // Reverse stock movements if items were already received into stock
-      if (ret.status === "RECEIVED" || ret.status === "PROCESSED") {
-        const returnRef = `RET-${ret.id.slice(0, 8)}`;
-        for (const item of ret.items) {
-          if (item.restock) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { currentStock: { decrement: Number(item.qty) } },
-            });
-          }
-          await tx.stockMovement.deleteMany({
-            where: { productId: item.productId, reference: returnRef },
+      // Reverse stock movements if items were already received into stock.
+      // F2 (independent review, PR-2): B348 removed the PROCESSED arm on the theory that no
+      // writer in this service ever sets it — true for CODE, not for DATA. PROCESSED is a
+      // legacy ReturnStatus: the enum member is retained in sales.prisma specifically because
+      // rows already sitting in that state predate whatever retired the writer, and cancelling
+      // one of THOSE must still undo its stock/ledger effects. Restored unconditionally rather
+      // than gated on a prod check — retire this arm only after a prod
+      // `GROUP BY status` count shows zero PROCESSED rows.
+      if (fresh.status === "RECEIVED" || fresh.status === "PROCESSED") {
+        const returnRef = `RET-${fresh.id.slice(0, 8)}`;
+        // A restock still parked for this return is void once the return is cancelled.
+        //
+        // This DELETE runs BEFORE the movement scan below, and the order is load-bearing. The parked row
+        // is the lock a concurrent `ParkedRestockResolutionService.resolve()` claims, so:
+        //   - resolve claimed first: this DELETE blocks on its row lock until resolve commits, then
+        //     matches 0 rows (resolvedAt is set) — and the movement scan below, a LATER statement with a
+        //     fresh snapshot, therefore SEES the movement resolve just booked and undoes it.
+        //   - this DELETE wins: the row is gone, so resolve's conditional claim matches 0 rows and books
+        //     nothing at all.
+        // Scanning the movements FIRST would let a resolve that commits in between book a movement this
+        // cancel has already looked past, leaving an orphan RET-<id> row and stock permanently inflated
+        // by the resolved pieces, with no second cancel to undo it.
+        await tx.returnParkedRestock.deleteMany({
+          where: { returnId: fresh.id, resolvedAt: null },
+        });
+        // B665: undo EXACTLY what receive() restocked (in PIECES), read from its own RET-<id>
+        // movements, never recomputed from the typed qty (a box-unaware line's qty counts BOXES). A parked
+        // or restock:false item has no movement, so there is nothing to undo for it.
+        const moved: any[] = await tx.stockMovement.findMany({
+          where: { reference: returnRef, type: "RETURN" },
+          select: { productId: true, quantity: true },
+        });
+        const undo = new Map<string, number>();
+        for (const m of moved)
+          undo.set(m.productId, (undo.get(m.productId) ?? 0) + Number(m.quantity));
+        // B562 PR-2 (SA-136 §2): nothing deletes a movement. The undo APPENDS one reversing RETURN row
+        // per product (negative quantity, same reference, notes RETURN_CANCELLED) with `stockAfter`
+        // read from the decrement's own result, so the reference nets to zero and the history stays.
+        for (const [productId, qty] of undo) {
+          if (qty === 0) continue;
+          const updated = await tx.product.update({
+            where: { id: productId },
+            data: { currentStock: { decrement: qty } },
+          });
+          await tx.stockMovement.create({
+            data: {
+              productId,
+              type: "RETURN",
+              quantity: new Prisma.Decimal(qty).neg(),
+              unitCost: updated.averageCost ?? null,
+              avgCostAfter: updated.averageCost ?? null,
+              stockAfter: updated.currentStock,
+              reference: returnRef,
+              notes: "RETURN_CANCELLED",
+              performedById: user?.sub ?? null,
+            },
           });
         }
         // W5c: undo the regulated ledger reversal written at receive() (symmetric
-        // to deleting the stock movements above). cancel() blocks REFUNDED returns,
+        // to reversing the stock movements above). cancel() blocks REFUNDED returns,
         // so a finalized reversal is never touched.
-        await this.ledger.unreverseReturnEntries({ returnId: ret.id, db: tx });
+        await this.ledger.unreverseReturnEntries({ returnId: fresh.id, db: tx });
       }
       return tx.return.findUnique({ where: { id } });
     });
@@ -430,7 +1026,26 @@ export class ReturnsService {
           select: {
             id: true,
             orderNumber: true,
-            lineItems: { select: { productId: true, qty: true, unitPrice: true, subtotal: true } },
+            // F08 B53: same creditable-invoice shape as processRefund, so
+            // refundEstimate below is priced by the same billedBasisFor helper.
+            invoices: {
+              select: {
+                id: true,
+                status: true,
+                total: true,
+                createdAt: true,
+                items: { select: { productId: true, qty: true, subtotal: true } },
+              },
+            },
+            lineItems: {
+              select: {
+                productId: true,
+                qty: true,
+                unitPrice: true,
+                subtotal: true,
+                status: true,
+              },
+            },
           },
         },
         customer: { select: { id: true, businessName: true } },
@@ -438,13 +1053,23 @@ export class ReturnsService {
       },
     });
     if (!ret) throw new NotFoundException("Return not found");
+    // #2406 (SA-484c): findOne now RENDERS an INLINE row (the order-detail panel links to
+    // it) — only the standard-path mutation endpoints (approve/reject/markInTransit/receive/
+    // processRefund/cancel, above) still refuse INLINE with INLINE_RETURN_USE_INLINE_ENDPOINTS.
+    // An INLINE row's pricing was already resolved at capture (refundAmount), so it skips the
+    // priceReturn() re-derivation below, same as findAll.
 
-    // Enrich each return item with orderedQty from the original order
+    // Enrich each return item with orderedQty from the original order. `orderedQty`
+    // uses the same pooled-across-lines basis as create()'s cap (soldQtyForProduct,
+    // fix-round: the pre-fix single-line `.find()` here could show an operator a cap
+    // lower than what create() actually enforces); `unitPrice` stays a single line's
+    // rate — display-only — since a pooled per-unit rate has no one line to attribute
+    // it to.
     const enrichedItems = ret.items.map((item) => {
       const orderLine = ret.order?.lineItems?.find((li) => li.productId === item.productId);
       return {
         ...item,
-        orderedQty: orderLine ? Number(orderLine.qty) : null,
+        orderedQty: ret.order ? soldQtyForProduct(ret.order as any, item.productId) : null,
         unitPrice: orderLine ? Number(orderLine.unitPrice) : null,
       };
     });
@@ -454,24 +1079,38 @@ export class ReturnsService {
     // deleted credit note — see WP0's schema note), so the lookup is manual and tolerant of a miss.
     let creditNote: any = null;
     if (ret.creditNoteId) {
-      creditNote = await this.prisma.forTenant().creditNote.findUnique({
+      creditNote = await this.prisma.forTenant().creditNote.findFirst({
         where: { id: ret.creditNoteId },
         select: { id: true, creditNoteNumber: true, amount: true, status: true },
       });
     }
 
-    // The same Σ qty × (subtotal/qty) figure processRefund computes, so a client can show
-    // the amount BEFORE resolving without re-deriving box-priced money itself.
-    let refundEstimate = 0;
-    for (const item of ret.items) {
-      const line = ret.order?.lineItems?.find((li) => li.productId === item.productId);
-      if (!line) continue;
-      const lineQty = Number(line.qty);
-      const perUnit = lineQty > 0 ? Number(line.subtotal) / lineQty : Number(line.unitPrice);
-      refundEstimate += Number(item.qty) * perUnit;
+    // The same billed-invoice basis processRefund prices from (priceReturn), so a
+    // client can show the amount BEFORE resolving without re-deriving box-priced
+    // money itself. Pure and DB-free: a read never runs the mint-time headroom
+    // query, and an unrefundable basis reports 0 WITH a reason rather than being
+    // swallowed into a silent $0 (which is indistinguishable from a DB failure).
+    // #2406: an INLINE row skips this — its money was already resolved at capture.
+    let refundEstimate: number | null;
+    let refusal: string | null | undefined;
+    if (ret.kind === "INLINE") {
+      refundEstimate = null;
+      refusal = "INLINE";
+    } else {
+      ({ amount: refundEstimate, refusal } = this.priceReturn(ret.items, ret.order ?? undefined));
     }
-    refundEstimate = roundMoney(refundEstimate);
 
-    return { ...ret, items: enrichedItems, creditNote, refundEstimate };
+    // The invoice graph is fetched only to price the row — strip it back out (this
+    // read returned no invoice money before F08 B53).
+    const { invoices: _invoices, ...orderWithoutInvoices } = (ret.order ?? {}) as any;
+
+    return {
+      ...ret,
+      order: ret.order ? orderWithoutInvoices : ret.order,
+      items: enrichedItems,
+      creditNote,
+      refundEstimate,
+      refundEstimateReason: refusal ?? null,
+    };
   }
 }

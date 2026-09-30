@@ -1,14 +1,19 @@
-import { CostingMethod, InvoiceStatus } from "@prisma/client";
+import { CostingMethod, CreditNoteStatus, InvoiceStatus } from "@prisma/client";
+import { roundMoney } from "@routeflow/pricing";
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
 
 /**
  * Invoiced-sales sourcing for the analytics / forecasting / COGS readers.
  *
  * Source of truth for "what sold" is INVOICED SALES, not `StockMovement
- * type:"SALE"`: the only SALE writer (the route-delivery path's
- * `InventoryService.recordSale` call) was removed in c5f579c2 (2026-07-16),
- * so no flow writes SALE rows anymore — and a tenant that invoices directly
- * never had them at all. Invoices cover both flows (route deliveries are
- * invoiced too, via delivered-basis invoicing).
+ * type:"SALE"`. B562 PR-2 (SA-136 §2): SALE rows are written again, by the
+ * order stock paths (orders/order-stock.ts — create, edit, cancel, uncancel,
+ * promote/demote, standing orders), but they exist for the STOCK LEDGER and
+ * the cost replay: they move at order time, carry no invoice pricing, and
+ * nothing before that PR has them. COGS and demand keep reading invoices,
+ * which cover every flow (route deliveries are invoiced too, via
+ * delivered-basis invoicing). A SALE row's `avgCostAfter` is the unchanged
+ * average, so the point-in-time cost index below reads it harmlessly.
  *
  * ⚠️ Always query THROUGH `invoice.findMany`, never top-level
  * `invoiceItem.findMany`: invoice lines are created as NESTED writes, which
@@ -17,7 +22,7 @@ import { CostingMethod, InvoiceStatus } from "@prisma/client";
  * `where.tenantId`, silently dropping every one of them. Same guard as
  * `analytics.service.ts getProductDemand` and `bookkeeping getSalesByItem`.
  *
- * Conventions (see common/pricing.ts):
+ * Conventions (see @routeflow/pricing):
  * - units = `Number(item.qty)` AS-IS — the same denomination order-create
  *   decrements `Product.currentStock` by; never re-derive from boxes/pieces.
  * - revenue = `Number(item.subtotal)` — NEVER `qty × unitPrice` (re-introduces
@@ -25,9 +30,14 @@ import { CostingMethod, InvoiceStatus } from "@prisma/client";
  * - Ad-hoc lines (`productId = null`) are excluded from per-product
  *   aggregates and contribute $0 to COGS.
  *
- * Known limitation: returns / credit notes are not netted out of units or
- * COGS (parity with getProductDemand); VOID / WRITTEN_OFF invoices drop out
- * wholesale via the status filter.
+ * Known limitation: returns / credit notes are not netted out of the units or
+ * COGS these LINE readers return, and their status filter
+ * (`REAL_INVOICE_STATUSES`) drops DRAFT / VOID / WRITTEN_OFF invoices wholesale.
+ * The revenue side is different since #2118 (plan A2): `fetchAccrualNetSales`
+ * and the product demand / sales reads (`sales-facts/`, which
+ * `getProductDemand` / `getProductSales` delegate to) use
+ * `ACCRUAL_REVENUE_STATUSES`, which keeps WRITTEN_OFF as a sale; only the net
+ * figures (`fetchAccrualNetSales`, the insights endpoints) subtract credits.
  */
 
 /**
@@ -39,6 +49,16 @@ import { CostingMethod, InvoiceStatus } from "@prisma/client";
 export const REAL_INVOICE_STATUSES = {
   notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
 };
+
+/**
+ * Revenue/net-sales predicate (B440) — WRITTEN_OFF *is* revenue at issue (bad
+ * debt is a later expense, see `fetchBadDebtExpense`); only DRAFT/VOID are
+ * excluded. Deliberately different from `REAL_INVOICE_STATUSES` (the units/
+ * COGS-lines predicate, which excludes WRITTEN_OFF too) — do not merge them.
+ */
+export const ACCRUAL_REVENUE_STATUSES = {
+  notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID],
+} as const;
 
 /**
  * Quantities are `Decimal(10,3)`, so they round to 3dp — NOT through `roundMoney`,
@@ -58,6 +78,29 @@ export interface InvoicedSalesDb {
   invoice: { findMany(args: any): Promise<any[]> };
   stockMovement: { findMany(args: any): Promise<any[]> };
   product: { findMany(args: any): Promise<any[]> };
+}
+
+/**
+ * Additive surface for the B440 accrual-net-sales helpers — extends
+ * `InvoicedSalesDb` rather than widening it, so `fetchInvoicedSaleLines`'s own
+ * (narrower) callers/stubs are untouched. Return types are `any`, matching
+ * `InvoicedSalesDb`'s own convention — a stricter structural `_sum` shape
+ * makes the REAL Prisma delegate (whose `.aggregate()`/`.groupBy()` return
+ * types are far richer) fail assignability against this interface.
+ */
+export interface AccrualSalesDb extends InvoicedSalesDb {
+  invoice: InvoicedSalesDb["invoice"] & {
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
+  };
+  creditNote: {
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
+  };
+  return: {
+    aggregate(args: any): Promise<any>;
+    groupBy(args: any): Promise<any[]>;
+  };
 }
 
 /** One flattened invoice line of a real sale. qty/subtotal already Number()ed. */
@@ -83,8 +126,9 @@ export async function fetchInvoicedSaleLines(
     to: Date;
     /** Which Invoice field the window filters. Cost lookups always use issueDate. */
     dateBasis: "issueDate" | "paidAt";
-    /** Default REAL_INVOICE_STATUSES; the P&L passes InvoiceStatus.PAID. */
-    status?: InvoiceStatus | typeof REAL_INVOICE_STATUSES;
+    /** Default REAL_INVOICE_STATUSES; the P&L passes ACCRUAL_REVENUE_STATUSES
+     *  (B440) for its COGS fetch, sharing revenue's accrual basis. */
+    status?: InvoiceStatus | typeof REAL_INVOICE_STATUSES | typeof ACCRUAL_REVENUE_STATUSES;
   },
 ): Promise<InvoicedSaleLine[]> {
   const invoices = await db.invoice.findMany({
@@ -123,6 +167,223 @@ export async function fetchInvoicedSaleLines(
   return lines;
 }
 
+// ─── Accrual net sales (B440/B455/B456) ─────────────────────────────────────
+//
+// Revenue/sales is booked at ISSUE, never at PAYMENT — `getCashFlow` and the
+// three other legitimate cash consumers (analytics.service.ts,
+// buyer/statement.service.ts, customers.service.ts) keep reading `paidAt`;
+// nothing here ever does. `gross` excludes sales tax collected (standard
+// accounting) via one `total - taxAmount` subtraction — `Invoice.taxAmount`
+// already folds in category/excise tax, so a second term is never needed;
+// shipping and discount stay IN revenue.
+
+export interface AccrualNetSales {
+  gross: number;
+  creditNotes: number;
+  externalRefunds: number;
+  net: number;
+}
+
+/** The three accrual-net terms as summed by a reader, before rounding. */
+export type AccrualNetTerms = Omit<AccrualNetSales, "net">;
+
+/**
+ * The ONE B440 composition (#2118): each term is rounded to cents FIRST, then `net` is taken
+ * from the rounded terms — never clamped (a credit-heavy window legitimately nets negative).
+ * `fetchAccrualNetSales*` below and the sales-facts layer (`apps/api/src/sales-facts/`) all
+ * call this, so no reader restates the arithmetic.
+ */
+export function netOf(terms: AccrualNetTerms): AccrualNetSales {
+  const gross = roundMoney(terms.gross);
+  const creditNotes = roundMoney(terms.creditNotes);
+  const externalRefunds = roundMoney(terms.externalRefunds);
+  return {
+    gross,
+    creditNotes,
+    externalRefunds,
+    net: roundMoney(gross - creditNotes - externalRefunds),
+  };
+}
+
+/**
+ * B440 credit-note term predicate: every non-VOID credit note nets, keyed on its OWN
+ * `createdAt` (never `appliedAt`). Shared by `fetchAccrualNetSales*` and the sales-facts
+ * readers so the two can never drift (L-167).
+ */
+export const ACCRUAL_CREDIT_NOTE_FILTER = {
+  status: { not: CreditNoteStatus.VOID },
+} as const;
+
+/**
+ * B455 return term predicate: only EXTERNAL_REFUND-method returns net here, keyed on
+ * `refundedAt` — a CREDIT_NOTE-method return is already netted through its credit note.
+ */
+export const EXTERNAL_REFUND_FILTER = { refundMethod: "EXTERNAL_REFUND" } as const;
+
+/** Inclusive date window — `lte` matches the `dateRange()` callers. */
+export interface AccrualWindow {
+  gte: Date;
+  lte: Date;
+}
+
+/**
+ * Accrual net sales for one tenant-window: `net = gross - creditNotes -
+ * externalRefunds`, never clamped (a CN-heavy period legitimately nets
+ * negative). Every component is keyed on its OWN event date — issueDate for
+ * the invoice, `createdAt` for the credit note (never `appliedAt`, a
+ * settlement event — the same trap as `paidAt`), `refundedAt` for the return
+ * — never `paidAt` anywhere in this function.
+ */
+export async function fetchAccrualNetSales(
+  db: AccrualSalesDb,
+  // B440 fix-round finding 2: fails CLOSED, not ambient. `forTenant()` under
+  // a null tenant context returns the UNSCOPED client, so relying on it
+  // alone to inject `where.tenantId` would sum across every tenant; every
+  // caller must resolve a non-null tenantId (throw if null) and this
+  // function puts it in every where-clause explicitly.
+  tenantId: string,
+  window: AccrualWindow,
+  opts?: { customerId?: string },
+): Promise<AccrualNetSales> {
+  const customerFilter = opts?.customerId ? { customerId: opts.customerId } : {};
+
+  const [invoiceAgg, creditNoteAgg, returnAgg] = await Promise.all([
+    db.invoice.aggregate({
+      where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window, ...customerFilter },
+      _sum: { total: true, taxAmount: true },
+    }),
+    // TODO B459 (returns-in-orders lane): once CreditNote.taxAmount ships,
+    // subtract (amount - taxAmount) here instead of amount — a freeform/
+    // lump-sum credit (no line selected) has no cap tying it to an invoice
+    // figure and may include tax in practice; a line-based credit is
+    // provably pre-tax (UI caps each line at InvoiceItem.subtotal). A CN
+    // issued against an invoice that is LATER voided/written-off is still
+    // counted here as-is — netting a credit note's own lifecycle against a
+    // separate invoice status change is out of this helper's scope.
+    db.creditNote.aggregate({
+      where: {
+        tenantId,
+        createdAt: window,
+        ...ACCRUAL_CREDIT_NOTE_FILTER,
+        ...customerFilter,
+      },
+      _sum: { amount: true },
+    }),
+    // Already pre-tax (`priceReturn` prices from `subtotal` only) — no
+    // exclusion term needed here. `refundMethod` is load-bearing: a
+    // CN-method return is already netted via the CreditNote read above.
+    db.return.aggregate({
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window, ...customerFilter },
+      _sum: { refundAmount: true },
+    }),
+  ]);
+
+  const sumTotal = Number(invoiceAgg._sum.total ?? 0);
+  const sumTaxAmount = Number(invoiceAgg._sum.taxAmount ?? 0);
+  return netOf({
+    gross: sumTotal - sumTaxAmount,
+    creditNotes: Number(creditNoteAgg._sum.amount ?? 0),
+    externalRefunds: Number(returnAgg._sum.refundAmount ?? 0),
+  });
+}
+
+/** Per-customer accrual net sales for one tenant-window — union of customers
+ *  appearing in any of the three underlying reads. */
+export async function fetchAccrualNetSalesByCustomer(
+  db: AccrualSalesDb,
+  tenantId: string,
+  window: AccrualWindow,
+): Promise<Map<string, AccrualNetSales>> {
+  const [invoiceRows, creditNoteRows, returnRows] = await Promise.all([
+    db.invoice.groupBy({
+      by: ["customerId"],
+      where: { tenantId, status: ACCRUAL_REVENUE_STATUSES, issueDate: window },
+      _sum: { total: true, taxAmount: true },
+    }),
+    db.creditNote.groupBy({
+      by: ["customerId"],
+      where: { tenantId, createdAt: window, ...ACCRUAL_CREDIT_NOTE_FILTER },
+      _sum: { amount: true },
+    }),
+    db.return.groupBy({
+      by: ["customerId"],
+      where: { tenantId, ...EXTERNAL_REFUND_FILTER, refundedAt: window },
+      _sum: { refundAmount: true },
+    }),
+  ]);
+
+  const gross = new Map<string, number>();
+  for (const row of invoiceRows) {
+    gross.set(row.customerId, Number(row._sum.total ?? 0) - Number(row._sum.taxAmount ?? 0));
+  }
+  const creditNotes = new Map<string, number>();
+  for (const row of creditNoteRows) {
+    creditNotes.set(row.customerId, Number(row._sum.amount ?? 0));
+  }
+  const externalRefunds = new Map<string, number>();
+  for (const row of returnRows) {
+    externalRefunds.set(row.customerId, Number(row._sum.refundAmount ?? 0));
+  }
+
+  const customerIds = new Set([...gross.keys(), ...creditNotes.keys(), ...externalRefunds.keys()]);
+  const result = new Map<string, AccrualNetSales>();
+  for (const customerId of customerIds) {
+    result.set(
+      customerId,
+      netOf({
+        gross: gross.get(customerId) ?? 0,
+        creditNotes: creditNotes.get(customerId) ?? 0,
+        externalRefunds: externalRefunds.get(customerId) ?? 0,
+      }),
+    );
+  }
+  return result;
+}
+
+/**
+ * Bad-debt expense (B456): the pre-tax share of the unpaid balance — `(total
+ * - paid) × (total - taxAmount) / total` — of every invoice WRITTEN_OFF
+ * inside `window`, keyed on `writtenOffAt`, NEVER `issueDate` (a write-off
+ * can land in a period long after the sale). Uncollected sales tax is a
+ * liability reversal, not an expense (owner ruling 2026-09-15, tax
+ * exclusion) — only the pre-tax portion of an unpaid invoice is a genuine
+ * cost to the business, consistent with `fetchAccrualNetSales`'s own
+ * pre-tax `gross`. `paid` sums only CONFIRMED (PAID) payments — a VOIDed
+ * (bounced) or DRAFT (unconfirmed) payment row is not recovered money, same
+ * predicate as `getBadDebtsReport`'s own read; a credit-note application is
+ * still counted (`applyCreditInTx` writes a CONFIRMED `method:CREDIT_NOTE`
+ * payment row) — the same relation `getBadDebtsReport` already reads,
+ * extracted here so both share one expression.
+ */
+export async function fetchBadDebtExpense(
+  db: AccrualSalesDb,
+  tenantId: string,
+  window: AccrualWindow,
+): Promise<number> {
+  const invoices = await db.invoice.findMany({
+    where: { tenantId, status: InvoiceStatus.WRITTEN_OFF, writtenOffAt: window },
+    select: {
+      total: true,
+      taxAmount: true,
+      payments: { where: CONFIRMED_PAYMENT, select: { amount: true } },
+    },
+  });
+
+  let total = 0;
+  for (const inv of invoices) {
+    const paid = (inv.payments ?? []).reduce((s: number, p: any) => s + Number(p.amount ?? 0), 0);
+    const invTotal = Number(inv.total ?? 0);
+    // Fable review of #791: an overpaid write-off (paid > total) must never
+    // contribute a NEGATIVE expense — clamp at 0, same as every other
+    // balance computation in this file.
+    const unpaid = Math.max(0, invTotal - paid);
+    const taxAmount = Number(inv.taxAmount ?? 0);
+    const preTaxShare = invTotal > 0 ? (invTotal - taxAmount) / invTotal : 0;
+    total += unpaid * preTaxShare;
+  }
+  return roundMoney(total);
+}
+
 /** Distinct non-null productIds of a line set (cost-resolver input). */
 export function soldProductIds(lines: { productId: string | null }[]): string[] {
   return [...new Set(lines.map((l) => l.productId).filter((x): x is string => x != null))];
@@ -132,25 +393,26 @@ export function soldProductIds(lines: { productId: string | null }[]): string[] 
 //
 // Invoice lines carry no unit cost, so COGS is an ESTIMATE: each line is
 // costed at the product's point-in-time average cost — the `avgCostAfter`
-// snapshot of the latest StockMovement (any type) at or before the sale's
-// issueDate. This is the exact pattern the schema comment on StockMovement
-// documents ("Point-in-time average cost = avgCostAfter of the latest
-// movement <= T"), and it is stable: a future restock never restates a past
-// period. FIFO/LIFO/LAST_COST cannot be honored retroactively — this is an
+// snapshot of the latest StockMovement (any type) whose `effectiveAt` is at or
+// before the sale's issueDate. This is the exact pattern the schema comment on
+// StockMovement documents ("Point-in-time average cost = avgCostAfter of the
+// latest movement <= T"), and it is stable: a future restock never restates a
+// past period. B562: `effectiveAt` (the accounting date), not `createdAt` (the
+// write-once insertion time) — a backdated receipt sits at its own date. FIFO/LIFO/LAST_COST cannot be honored retroactively — this is an
 // AVCO-style estimate regardless of the product's costing method.
 
-/** productId → ascending `[{ t: epochMs, cost }]` built from avgCostAfter snapshots. */
+/** productId → ascending `[{ t: epochMs, cost }]` built from avgCostAfter snapshots at `effectiveAt`. */
 export type CostIndex = Map<string, { t: number; cost: number }[]>;
 
 /** Pure: group + sort snapshot rows (rows with null avgCostAfter are skipped). */
 export function buildCostIndex(
-  rows: { productId: string; createdAt: Date; avgCostAfter: unknown }[],
+  rows: { productId: string; effectiveAt: Date; avgCostAfter: unknown }[],
 ): CostIndex {
   const index: CostIndex = new Map();
   for (const r of rows) {
     if (r.avgCostAfter == null) continue;
     const arr = index.get(r.productId) ?? [];
-    arr.push({ t: r.createdAt.getTime(), cost: Number(r.avgCostAfter) });
+    arr.push({ t: r.effectiveAt.getTime(), cost: Number(r.avgCostAfter) });
     index.set(r.productId, arr);
   }
   for (const arr of index.values()) arr.sort((a, b) => a.t - b.t);
@@ -227,8 +489,8 @@ export function estimateCogs(
 }
 
 /**
- * One bounded snapshot query for exactly the sold products. Snapshot volume is
- * restock-rate-bounded (SALE rows are no longer written), so this stays small;
+ * One bounded snapshot query for exactly the sold products. Snapshot volume grows
+ * with order stock events since B562 PR-2 (SALE rows carry `avgCostAfter`), not only restocks;
  * if a tenant ever makes it heavy, the escape hatch is a raw
  * `DISTINCT ON (productId)` lateral query — not built until needed.
  */
@@ -242,10 +504,11 @@ export async function fetchCostIndex(
     where: {
       productId: { in: productIds },
       avgCostAfter: { not: null },
-      createdAt: { lte: until },
+      effectiveAt: { lte: until },
     },
-    select: { productId: true, createdAt: true, avgCostAfter: true },
-    orderBy: { createdAt: "asc" },
+    select: { productId: true, effectiveAt: true, avgCostAfter: true },
+    // Ties on effectiveAt keep insertion order (buildCostIndex's sort is stable).
+    orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
   });
   return buildCostIndex(rows);
 }

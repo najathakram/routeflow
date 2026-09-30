@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
   ValidateNested,
 } from "class-validator";
@@ -20,7 +21,20 @@ export class VendorBillItemDto {
   @IsOptional() @IsString() productId?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() name?: string;
-  @IsOptional() @IsNumber() qty?: number;
+  // B451 gap 4: these carried no bound at all — a negative qty or unitCost
+  // reached vendor-bills.service.ts's totalOwed = Σ qty*unitCost unbounded,
+  // driving the bill's totalOwed negative with nothing to catch it.
+  // Opus review of #791: @Min(0) landed on unitCost/unitPrice/lineTotal too,
+  // but a scanned discount or deposit-return line is a LEGITIMATE negative
+  // cost (mobile scan-to-bill sends these) — @Min(0) there 400s a real
+  // supplier invoice, not an attack. qty stays @Min(0) (every real caller
+  // sends a non-negative qty; a negative one is normalized by the mobile
+  // scan layer before it ever reaches this DTO — see
+  // vendor-bill-scan.ts buildBillDtoFromScan). The actual guard against a
+  // bill netting negative is assertMoneyInvariantsOrThrow on the computed
+  // totalOwed in create()/update(), which catches it regardless of which
+  // individual line carried the negative amount.
+  @IsOptional() @IsNumber() @Min(0) qty?: number;
   @IsOptional() @IsNumber() unitCost?: number;
   @IsOptional() @IsNumber() unitPrice?: number;
   /** The supplier's own item code, as printed — the strongest signal for matching this line next scan. */
@@ -39,9 +53,21 @@ export class VendorBillItemDto {
  */
 export class CreateVendorBillDto {
   @IsOptional() @IsString() supplierId?: string;
+  /** Link this bill to an existing purchase order (one bill per PO; may not exceed it). */
   @IsOptional() @IsString() purchaseOrderId?: string;
+  /**
+   * Raise a DRAFT purchase order from this bill's own lines, in the same
+   * transaction, and link them (the scan flow). Needs a supplier and every line
+   * mapped to a product; not combinable with `purchaseOrderId`. The PO moves
+   * stock (send → receive); the linked bill is money only.
+   */
+  @IsOptional() @IsBoolean() createPurchaseOrder?: boolean;
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
+  /** Net-terms label as entered on the bill ("Net 30", "Due on Receipt", …),
+   * prefillable from Supplier.defaultTerms. Persisted verbatim — the server
+   * does NOT compute dueDate from it (the client derives Due Date = Bill Date + days). */
+  @IsOptional() @IsString() @MaxLength(40) termsLabel?: string;
   @IsOptional() @IsString() notes?: string;
   /** Sales tax on the supplier invoice — folded into totalOwed AND persisted. */
   @IsOptional() @IsNumber() @Min(0) taxAmount?: number;
@@ -53,6 +79,12 @@ export class CreateVendorBillDto {
   @IsOptional() @IsString() supplierInvoiceNumber?: string;
   /** Operator override after the duplicate warning — records the bill anyway. */
   @IsOptional() @IsBoolean() allowDuplicate?: boolean;
+  /**
+   * Operator confirmed a raised-PO line with no stated pack size should be
+   * recorded as loose pieces anyway (B743). Only meaningful once the
+   * PACK_SIZE_UNKNOWN gate is enforced.
+   */
+  @IsOptional() @IsBoolean() acknowledgePackSizeUnknown?: boolean;
 
   @IsOptional()
   @IsArray()

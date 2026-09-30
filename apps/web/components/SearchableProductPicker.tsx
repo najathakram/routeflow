@@ -19,6 +19,15 @@ interface PickerProduct {
   parent?: { name: string } | null;
   pricePerUnit?: string | number;
   thumbnailUrl?: string | null;
+  /**
+   * Cost-side fields — a boxed product's invoice line is priced per CASE,
+   * not per piece, so callers need `unitsPerBox` alongside `averageCost` to
+   * prefill the CASE cost (avg × unitsPerBox) instead of the piece cost.
+   * Populated by `/products` rows; absent from the narrow static-mode lists.
+   */
+  unitsPerBox?: number | null;
+  averageCost?: string | number | null;
+  standardCost?: string | number | null;
 }
 
 interface SearchableProductPickerProps {
@@ -197,6 +206,11 @@ export function SearchableProductPicker({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // B672 audit: a wedge-scan Enter (BarcodeScannerButton, when this input carries a companion
+    // scanner via `inputRef`) already called preventDefault() and handled itself — this handler
+    // must not also treat it as a manual Enter (opening the dropdown / picking the highlighted
+    // row), or a real scan double-fires.
+    if (e.defaultPrevented) return;
     if (!open && (e.key === "ArrowDown" || e.key === "Enter")) {
       e.preventDefault();
       setOpen(true);

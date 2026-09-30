@@ -1,12 +1,40 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { BadRequestException, NotFoundException, ForbiddenException } from "@nestjs/common";
-import { RoutesService } from "./routes.service";
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+  ForbiddenException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { RouteKind, OrderStatus, FulfillPath } from "@prisma/client";
+import { RoutesService, RUN_LINE_ITEMS_SELECT, RUN_STOP_INCLUDE } from "./routes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NotificationsService } from "../notifications/notifications.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { InvoicesService } from "../invoices/invoices.service";
+// F03 owns the "counts as collected money" predicate. The settlement cash basis
+// must stay pinned to THAT shared const rather than a literal `status: "PAID"`,
+// so a future widening of CONFIRMED_PAYMENT can never silently desync run
+// settlement from every other confirmed-money read in the codebase.
+import { CONFIRMED_PAYMENT } from "../invoices/payment-predicates";
+import { StorageService } from "../storage/storage.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { geocodeAddress } from "../common/geocode.util";
+import { compressImage } from "../storage/compress.util";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { AfterCommit } from "../common/after-commit";
+
+jest.mock("../common/geocode.util", () => ({ geocodeAddress: jest.fn() }));
+// Real sharp is exercised by compress.util.spec.ts (incl. the SVG-signature
+// case); here it's mocked so POD unit tests need no real image fixtures.
+jest.mock("../storage/compress.util", () => ({
+  compressImage: jest.fn().mockResolvedValue({
+    buffer: Buffer.from("compressed"),
+    mimeType: "image/jpeg",
+    ext: "jpg",
+  }),
+}));
 
 const MOCK_ROUTE = {
   id: "route-1",
@@ -37,6 +65,8 @@ const operatorPayload = {
   role: "OPERATOR" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 const driverPayload = {
@@ -45,6 +75,8 @@ const driverPayload = {
   role: "DRIVER" as const,
   status: "ACTIVE" as const,
   forcePasswordChange: false,
+  tenantId: "tenant-1",
+  tenantSlug: "test",
 };
 
 describe("RoutesService", () => {
@@ -56,13 +88,19 @@ describe("RoutesService", () => {
       | "emitStopCompleted"
       | "emitOrderCreated"
       | "emitOrderStatusChanged"
-      | "emitLowStock"
       | "emitToDriver"
+      | "emitRouteProgress"
+      | "emitDriverStatusUpdated"
     >
   >;
   let notifications: jest.Mocked<Pick<NotificationsService, "sendToDriver">>;
   let messaging: { notify: jest.Mock; notifyEvent: jest.Mock };
-  let invoicesService: { recordDeliveryPaymentInTx: jest.Mock };
+  let invoicesService: {
+    recordDeliveryPaymentInTx: jest.Mock;
+    reconcileDeliveredOrdersInTx: jest.Mock;
+    reverseRunAdvancesInTx: jest.Mock;
+  };
+  let storage: { upload: jest.Mock; presignedUrl: jest.Mock; delete: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -70,14 +108,17 @@ describe("RoutesService", () => {
       recordDeliveryPaymentInTx: jest
         .fn()
         .mockResolvedValue({ applied: 0, invoiceIds: [], paymentIds: [] }),
+      reconcileDeliveredOrdersInTx: jest.fn().mockResolvedValue(undefined),
+      reverseRunAdvancesInTx: jest.fn().mockResolvedValue(1),
     };
 
     gateway = {
       emitStopCompleted: jest.fn(),
       emitOrderCreated: jest.fn(),
       emitOrderStatusChanged: jest.fn(),
-      emitLowStock: jest.fn(),
       emitToDriver: jest.fn(),
+      emitRouteProgress: jest.fn(),
+      emitDriverStatusUpdated: jest.fn(),
     };
 
     notifications = {
@@ -89,6 +130,12 @@ describe("RoutesService", () => {
       notifyEvent: jest.fn().mockResolvedValue(undefined),
     };
 
+    storage = {
+      upload: jest.fn().mockImplementation((key: string) => Promise.resolve(key)),
+      presignedUrl: jest.fn().mockImplementation((key: string) => Promise.resolve(`signed:${key}`)),
+      delete: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RoutesService,
@@ -97,6 +144,14 @@ describe("RoutesService", () => {
         { provide: NotificationsService, useValue: notifications },
         { provide: MessagingService, useValue: messaging },
         { provide: InvoicesService, useValue: invoicesService },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+        { provide: StorageService, useValue: storage },
+        // Feature grants v2 brief C (PR-5): resolves "unset" so every existing test in this
+        // file keeps exercising today's (every-kind-allowed) dispatch behavior unchanged.
+        {
+          provide: FeatureConfigService,
+          useValue: { getEffectiveMode: jest.fn().mockResolvedValue("unset") },
+        },
       ],
     }).compile();
 
@@ -128,6 +183,62 @@ describe("RoutesService", () => {
         }),
       );
     });
+
+    // WP3: templates/route-run flows must never surface ADHOC trips unless
+    // explicitly asked for.
+    it("should default kind to SCHEDULED when omitted", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ kind: RouteKind.SCHEDULED }),
+        }),
+      );
+    });
+
+    it("should pass through an explicit kind filter", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ kind: RouteKind.ADHOC, page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ kind: RouteKind.ADHOC }),
+        }),
+      );
+    });
+
+    // WP2: the Deliveries history list needs run counts + a latest-run summary
+    // (status/date/driver) on every row without a second round-trip.
+    it("should include run/stop counts and a latest-run summary", async () => {
+      prisma.route.findMany.mockResolvedValue([]);
+      prisma.route.count.mockResolvedValue(0);
+
+      await service.findAllRoutes({ page: 1, limit: 20 });
+
+      expect(prisma.route.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            _count: { select: { runs: true, stops: true } },
+            runs: {
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: {
+                id: true,
+                status: true,
+                scheduledDate: true,
+                completedAt: true,
+                driver: { select: { id: true, contactName: true } },
+              },
+            },
+          },
+        }),
+      );
+    });
   });
 
   describe("findOneRoute", () => {
@@ -141,13 +252,216 @@ describe("RoutesService", () => {
       prisma.route.findUnique.mockResolvedValue(null);
       await expect(service.findOneRoute("nonexistent")).rejects.toThrow(NotFoundException);
     });
+
+    it("REG-B157: excludes a removed customer's stop from the route plan", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, stops: [] });
+
+      await service.findOneRoute("route-1");
+
+      expect(prisma.route.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            stops: expect.objectContaining({
+              where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  describe("addStop", () => {
+    beforeEach(() => {
+      prisma.route.findUnique.mockResolvedValue(MOCK_ROUTE);
+      prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
+      prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
+      prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
+    });
+
+    it("creates the stop for a live customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
+
+      await service.addStop("route-1", { customerId: "cust-1" } as any);
+
+      expect(prisma.routeStop.create).toHaveBeenCalled();
+    });
+
+    it("REG-B157: refuses to add a removed customer to a route", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: new Date() });
+
+      await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.routeStop.create).not.toHaveBeenCalled();
+    });
+
+    it("REG-B157: throws NotFoundException for a nonexistent customer", async () => {
+      prisma.customer.findUnique.mockResolvedValue(null);
+
+      await expect(service.addStop("route-1", { customerId: "cust-1" } as any)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe("getPackingList", () => {
+    it("REG-B157: excludes a removed customer's stop (and its order) from the packing list", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, stops: [] });
+
+      await service.getPackingList("route-1");
+
+      expect(prisma.route.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            stops: expect.objectContaining({
+              where: { OR: [{ customerId: null }, { customer: { deletedAt: null } }] },
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("throws NotFoundException for a nonexistent route", async () => {
+      prisma.route.findUnique.mockResolvedValue(null);
+      await expect(service.getPackingList("nonexistent")).rejects.toThrow(NotFoundException);
+    });
   });
 
   describe("createRoute", () => {
-    it("should create a route with just a name", async () => {
+    beforeEach(() => {
+      (geocodeAddress as jest.Mock).mockReset();
+    });
+
+    it("should create a route with just a name (no planning fields — unchanged behavior)", async () => {
       prisma.route.create.mockResolvedValue(MOCK_ROUTE);
-      const result = await service.createRoute({ name: "Downtown Route" });
+      await service.createRoute({ name: "Downtown Route" });
       expect(prisma.route.create).toHaveBeenCalledWith({ data: { name: "Downtown Route" } });
+    });
+
+    it("should persist depot* as-is + originKind=TENANT for a TENANT origin (no server geocode)", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        depotLat: 30.1,
+        depotLng: -97.1,
+        depotAddress: "123 Main St",
+        origin: { type: "TENANT" } as any,
+      });
+      expect(geocodeAddress).not.toHaveBeenCalled();
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.1,
+          depotLng: -97.1,
+          depotAddress: "123 Main St",
+          originKind: "TENANT",
+        },
+      });
+    });
+
+    it("should resolve a DRIVER origin from the driver's home base", async () => {
+      prisma.driver.findFirst.mockResolvedValue({
+        id: "drv-1",
+        contactName: "Sam",
+        homeLat: 31.0,
+        homeLng: -98.0,
+        homeAddress: "Sam's home",
+      });
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        origin: { type: "DRIVER", driverId: "drv-1" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 31.0,
+          depotLng: -98.0,
+          depotAddress: "Sam's home",
+          originKind: "DRIVER",
+        },
+      });
+    });
+
+    it("should 400 a DRIVER origin when the driver has no home base", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", contactName: "Sam", homeLat: null });
+      await expect(
+        service.createRoute({
+          name: "Downtown Route",
+          origin: { type: "DRIVER", driverId: "drv-1" } as any,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+
+    it("should geocode an ADDRESS origin", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue({ lat: 30.27, lng: -97.74 });
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        origin: { type: "ADDRESS", line1: "1 Congress Ave", city: "Austin", state: "TX" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.27,
+          depotLng: -97.74,
+          depotAddress: "1 Congress Ave, Austin, TX",
+          originKind: "ADDRESS",
+        },
+      });
+    });
+
+    it("should 400 when an ADDRESS origin fails to geocode", async () => {
+      (geocodeAddress as jest.Mock).mockResolvedValue(null);
+      await expect(
+        service.createRoute({
+          name: "Downtown Route",
+          origin: { type: "ADDRESS", line1: "nowhere" } as any,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.route.create).not.toHaveBeenCalled();
+    });
+
+    it("should persist a RETURN_TO_START end mirroring the resolved origin coords", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        depotLat: 30.1,
+        depotLng: -97.1,
+        depotAddress: "123 Main St",
+        origin: { type: "TENANT" } as any,
+        end: { type: "RETURN_TO_START" } as any,
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          depotLat: 30.1,
+          depotLng: -97.1,
+          depotAddress: "123 Main St",
+          originKind: "TENANT",
+          endKind: "RETURN_TO_START",
+          endLat: 30.1,
+          endLng: -97.1,
+          endAddress: "123 Main St",
+        },
+      });
+    });
+
+    it("should persist avoidTolls/optimizeBy when provided", async () => {
+      prisma.route.create.mockResolvedValue(MOCK_ROUTE);
+      await service.createRoute({
+        name: "Downtown Route",
+        avoidTolls: true,
+        optimizeBy: "DISTANCE",
+      });
+      expect(prisma.route.create).toHaveBeenCalledWith({
+        data: {
+          name: "Downtown Route",
+          avoidTolls: true,
+          optimizeBy: "DISTANCE",
+        },
+      });
     });
   });
 
@@ -165,6 +479,146 @@ describe("RoutesService", () => {
     it("should throw NotFoundException when stop does not belong to route", async () => {
       prisma.routeStop.findFirst.mockResolvedValue(null);
       await expect(service.removeStop("route-1", "stop-x")).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ─── deleteRoute — REG-B96 (destructive-write guard) ─────────────────────
+  //
+  // R3: refuse hard delete when ANY run is IN_PROGRESS/COMPLETED, regardless
+  // of route.kind — not just ADHOC (drop the ADHOC gate, keep the existing
+  // message). Today's guard only fires for `route.kind === RouteKind.ADHOC`,
+  // so a SCHEDULED route with a delivered, POD-bearing run sails straight
+  // through it and is destroyed. createMockPrisma()'s model mocks are plain
+  // jest.fn()s here (no stateful fake store needed) — the oracle is which
+  // methods get called, not persisted row state, exactly like the existing
+  // "plannedPolyline invalidation" tests in this file.
+
+  describe("deleteRoute", () => {
+    it("REG-B96 / T-B96: refuses a SCHEDULED route with a COMPLETED run and deletes nothing", async () => {
+      prisma.route.findUnique.mockResolvedValue({ ...MOCK_ROUTE, kind: RouteKind.SCHEDULED });
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          id: "run-1",
+          status: "COMPLETED",
+          // A POD-bearing stop — exactly the row R3 says must never be
+          // deletable through this path.
+          stops: [{ id: "rrs-1", signatureUrl: "tenants/test-tenant/pod/rrs-1/signature-x.png" }],
+        },
+      ]);
+
+      // RED TODAY: the guard is gated on `route.kind === RouteKind.ADHOC`, so
+      // a SCHEDULED route sails straight through it and nothing is rejected.
+      await expect(service.deleteRoute("route-1")).rejects.toThrow(BadRequestException);
+
+      // Call-shape, not return value: a guard that throws AFTER already
+      // deleting would still pass a return-value-only check.
+      expect(prisma.routeRunStop.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.routeRun.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.route.delete).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── plannedPolyline invalidation ─────────────────────────────────────────
+  //
+  // The map renders Route.plannedPolyline verbatim and deliberately SKIPS its
+  // Routes API fetch while one is present. So any change to which stops are on
+  // a route — or what order they're in — must clear it, or the map keeps
+  // drawing the old path with no way to self-correct. applyRouteVariant
+  // (route-optimization.service.ts) is the only writer.
+
+  describe("plannedPolyline invalidation on stop mutations", () => {
+    const polylineCleared = () =>
+      prisma.route.update.mock.calls.some(
+        ([args]: any) => args?.data?.plannedPolyline === null && args?.where?.id === "route-1",
+      );
+
+    beforeEach(() => {
+      prisma.route.findUnique.mockResolvedValue(MOCK_ROUTE);
+      prisma.route.findFirst.mockResolvedValue(MOCK_ROUTE);
+    });
+
+    it("addStop clears it", async () => {
+      prisma.customer.findUnique.mockResolvedValue({ deletedAt: null });
+      prisma.routeStop.findFirst.mockResolvedValue({ stopNumber: 3 });
+      prisma.customerAddress.findFirst.mockResolvedValue({ id: "addr-1" });
+      prisma.routeStop.create.mockResolvedValue({ id: "stop-new" });
+
+      await service.addStop("route-1", { customerId: "cust-1" } as any);
+
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("removeStop clears it", async () => {
+      prisma.routeStop.findFirst.mockResolvedValue({ id: "stop-1", routeId: "route-1" });
+      prisma.routeRunStop.findFirst.mockResolvedValue(null);
+      prisma.routeStop.delete.mockResolvedValue({});
+
+      await service.removeStop("route-1", "stop-1");
+
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("reorderStops clears it in the same transaction", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([
+        { id: "stop-1", stopNumber: 1 },
+        { id: "stop-2", stopNumber: 2 },
+      ]);
+      prisma.$transaction = jest.fn().mockResolvedValue([]);
+
+      await service.reorderStops("route-1", [
+        { id: "stop-2", stopNumber: 1 },
+        { id: "stop-1", stopNumber: 2 },
+      ]);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(polylineCleared()).toBe(true);
+    });
+
+    it("reorderRunStops clears the PARENT route's polyline — it's what the run map draws", async () => {
+      prisma.routeRun.findFirst.mockResolvedValue({ ...MOCK_RUN, routeId: "route-1" });
+      prisma.routeRunStop.findMany.mockResolvedValue([
+        { id: "runstop-1", stopNumber: 1, status: "PENDING" },
+        { id: "runstop-2", stopNumber: 2, status: "PENDING" },
+      ]);
+      prisma.routeRunStop.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.reorderRunStops("run-1", [
+        { id: "runstop-2", stopNumber: 1 },
+        { id: "runstop-1", stopNumber: 2 },
+      ]);
+
+      expect(prisma.route.update).toHaveBeenCalledWith({
+        where: { id: "route-1" },
+        data: { plannedPolyline: null },
+      });
+    });
+  });
+
+  describe("getCustomerRouteAssignments", () => {
+    // WP3: ad-hoc trips must never pollute the "Currently in:" customer hints.
+    it("should filter to SCHEDULED routes only", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([]);
+
+      await service.getCustomerRouteAssignments();
+
+      expect(prisma.routeStop.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ route: { kind: RouteKind.SCHEDULED } }),
+        }),
+      );
+    });
+
+    it("REG-B157: excludes a removed customer's stop — same predicate customers.service.ts's unassigned=1 filter relies on", async () => {
+      prisma.routeStop.findMany.mockResolvedValue([]);
+
+      await service.getCustomerRouteAssignments();
+
+      expect(prisma.routeStop.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ customer: { deletedAt: null } }),
+        }),
+      );
     });
   });
 
@@ -199,6 +653,9 @@ describe("RoutesService", () => {
     it("should allow drivers to set IN_PROGRESS", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
       prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "IN_PROGRESS" });
+      // B72: updateRunStatus now verifies driver ownership via the driver
+      // table — MOCK_RUN.driverId is "drv-1".
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
       await service.updateRunStatus("run-1", { status: "IN_PROGRESS" as any }, driverPayload);
       expect(prisma.routeRun.update).toHaveBeenCalled();
@@ -206,6 +663,7 @@ describe("RoutesService", () => {
 
     it("should forbid drivers from setting CANCELLED", async () => {
       prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
 
       await expect(
         service.updateRunStatus("run-1", { status: "CANCELLED" as any }, driverPayload),
@@ -244,6 +702,106 @@ describe("RoutesService", () => {
       await expect(
         service.updateRunStatus("nonexistent", { status: "COMPLETED" as any }, operatorPayload),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    // T-B152c / R7a / REG-B152 — a cash-carrying run cannot close unsettled via
+    // ANY path (role-agnostic). This is the backstop for the (rare, but real)
+    // case where something other than RF-016 drives the run to COMPLETED.
+    describe("cash-settlement backstop (T-B152c / R7a / REG-B152)", () => {
+      // Refusal AND allowance in ONE test, deliberately: a standalone
+      // "allows it once the note is set" case would PASS today (no guard exists,
+      // so every COMPLETED transition already succeeds) and would keep passing
+      // whether the guard is written correctly, incorrectly, or not at all.
+      // Folded behind the refusal, the whole test is red pre-fix on phase 1 and
+      // only goes green when BOTH halves of the predicate hold.
+      it("REG-B152: refuses COMPLETED when cash sits uncollected and no settlementNote is set, naming the amount — and allows it once the note is set", async () => {
+        // ── phase 1: cash outstanding, no note → refused, message names the amount
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+        prisma.advancePayment.findMany.mockResolvedValue([]);
+
+        const err: any = await service
+          .updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload)
+          .catch((e: any) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toEqual(expect.stringContaining("40"));
+
+        // ── phase 2: same run and same outstanding cash, note now present → completes.
+        // No invoicePayment assertion here on purpose — a correct implementation
+        // may short-circuit on `settlementNote != null` before it ever queries.
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: "settled at close",
+        });
+        prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "COMPLETED" });
+
+        await service.updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload);
+
+        expect(prisma.routeRun.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+        );
+      });
+
+      // The gate's basis is PHYSICAL money — CASH **and CHECK** — matching
+      // mobile's `shouldForceSettlement`. A cash-only predicate would let a
+      // check-only run close with no settlement on record: the same B152 gap,
+      // reached through CHECK instead of CASH.
+      it("REG-B152: refuses COMPLETED when the run's only at-door money was a CHECK", async () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 500, method: "CHECK" }]);
+        prisma.advancePayment.findMany.mockResolvedValue([]);
+
+        const err: any = await service
+          .updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload)
+          .catch((e: any) => e);
+
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.message).toEqual(expect.stringContaining("500"));
+        expect(prisma.routeRun.update).not.toHaveBeenCalled();
+      });
+
+      it("REG-B152: completes a run with nothing collected, having actually evaluated the cash predicate", async () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          status: "IN_PROGRESS",
+          settlementNote: null,
+        });
+        prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+        // invoicePayment/advancePayment findMany default to [] in the prisma mock —
+        // i.e. a run that collected nothing.
+        prisma.routeRun.update.mockResolvedValue({ ...MOCK_RUN, status: "COMPLETED" });
+
+        await service.updateRunStatus("run-1", { status: "COMPLETED" as any }, operatorPayload);
+
+        expect(prisma.routeRun.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+        );
+        // The discriminating half: the completion must have been ALLOWED by a
+        // zero balance, not by a guard that was never evaluated. False today
+        // (updateRunStatus reads no payments at all), true only once R7a's
+        // predicate runs on this path.
+        expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              invoice: expect.objectContaining({
+                order: expect.objectContaining({ routeRunId: "run-1" }),
+              }),
+            }),
+          }),
+        );
+      });
     });
   });
 
@@ -351,6 +909,496 @@ describe("RoutesService", () => {
 
       expect(gateway.emitToDriver).not.toHaveBeenCalled();
     });
+
+    // REG-B131: a removed (soft-deleted) customer's stop is never dispatched — every write at that
+    // door (delivery, order, invoice) is already refused, so sending a driver there is a wasted trip.
+    describe("removed-customer stops (B131)", () => {
+      const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+      const stops = (removedAt: Date | null) => [
+        {
+          id: "rs-live",
+          stopNumber: 1,
+          customerId: "c-live",
+          customerAddressId: "a1",
+          customer: { deletedAt: null },
+        },
+        {
+          id: "rs-removed",
+          stopNumber: 2,
+          customerId: "c-removed",
+          customerAddressId: "a2",
+          customer: { deletedAt: removedAt },
+        },
+        // A manual/depot stop: no customer at all, so the relation filter must not drop it.
+        {
+          id: "rs-manual",
+          stopNumber: 3,
+          customerId: null,
+          customerAddressId: null,
+          customer: null,
+        },
+      ];
+
+      // Honest stand-in for Postgres: applies the nested `include.stops.where` the service actually
+      // sends, so a where-only fix is observable (L-081: a mock that hands back a fixed stop list
+      // cannot see one).
+      function boot(rows: any[]) {
+        prisma.route.findUnique.mockImplementation((async (args: any) => {
+          const where = args?.include?.stops?.where;
+          const matches = (r: any) =>
+            !where ||
+            where.OR.some((c: any) =>
+              Object.prototype.hasOwnProperty.call(c, "customerId")
+                ? r.customerId === c.customerId
+                : r.customer?.deletedAt === null,
+            );
+          return { ...MOCK_ROUTE, stops: rows.filter(matches) };
+        }) as any);
+        prisma.routeRun.create.mockResolvedValue({
+          ...MOCK_RUN,
+          driverId: null,
+          scheduledDate: new Date("2026-09-10"),
+          route: { id: "route-1", name: "Downtown Route" },
+          stops: [],
+        });
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+      }
+
+      it("REG-B131 T15: createRun skips stops of removed customers and warns", async () => {
+        boot(stops(REMOVED_AT));
+        prisma.routeStop.count.mockResolvedValue(1 as any);
+        const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2026-09-10" } as any);
+
+        const created = prisma.routeRun.create.mock.calls[0][0] as any;
+        expect(created.data.stops.create.map((s: any) => s.routeStopId)).toEqual([
+          "rs-live",
+          "rs-manual",
+        ]);
+        // The warned number must come from the suppressed set, not from any set: a count whose where
+        // is flipped (or loses the relation filter) would log a confident wrong number.
+        expect(prisma.routeStop.count).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({ customer: { deletedAt: { not: null } } }),
+          }),
+        );
+        const suppressionWarnings = warn.mock.calls
+          .map((c) => String(c[0]))
+          .filter((m) => m.includes("REG-B131"));
+        expect(suppressionWarnings).toHaveLength(1);
+        expect(suppressionWarnings[0]).toContain("1");
+        expect(suppressionWarnings[0]).toContain("route-1");
+      });
+
+      it("B131 P14: live stops are all dispatched", async () => {
+        boot(stops(null));
+        const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2026-09-10" } as any);
+
+        const created = prisma.routeRun.create.mock.calls[0][0] as any;
+        expect(created.data.stops.create.map((s: any) => s.routeStopId)).toEqual([
+          "rs-live",
+          "rs-removed",
+          "rs-manual",
+        ]);
+        expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+      });
+    });
+
+    // WP3: ad-hoc trip sweep narrowing — the SCHEDULED where-object is
+    // money-critical (it controls which orders attach to a run, and thus
+    // delivery payments downstream), so it is pinned by deep-equal here. The
+    // ONE deliberate addition vs. the pre-feature shape is the `fulfillPath`
+    // guard; it needs owner sign-off and a pre-deploy customer audit, both
+    // documented in docs/phase0-adhoc-trips-findings.md.
+    describe("dispatch sweep narrowing (kind / orderIds)", () => {
+      const routeStops = [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }];
+      const createdRun = {
+        ...MOCK_RUN,
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [{ id: "rrs-1", customerId: "c1" }],
+      };
+      // Every key the sweep has ever had, plus the fulfillPath guard that keeps
+      // carrier-shipped orders off delivery runs. `fulfillPath` defaults to ROUTE
+      // and is never backfilled, so this is behaviour-identical for existing data.
+      const EXPECTED_SCHEDULED_WHERE = {
+        customerId: "c1",
+        status: { notIn: [OrderStatus.DRAFT, OrderStatus.DELIVERED, OrderStatus.CANCELLED] },
+        routeRunStopId: null,
+        fulfillPath: FulfillPath.ROUTE,
+      };
+
+      it("SCHEDULED dispatch with no orderIds: sweep where deep-equals today's shape, no id key", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+        } as any);
+
+        const sweepArgs = prisma.order.updateMany.mock.calls[0][0];
+        expect(sweepArgs.where).toEqual(EXPECTED_SCHEDULED_WHERE);
+        expect(sweepArgs.where).not.toHaveProperty("id");
+      });
+
+      it("SCHEDULED route + orderIds: rejects with BadRequestException before any writes", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("ADHOC route + orderIds: sweep where gains ONLY id:{in:...}, retains customerId + routeRunStopId:null", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+          orderIds: ["ord-1", "ord-2"],
+        } as any);
+
+        const sweepArgs = prisma.order.updateMany.mock.calls[0][0];
+        expect(sweepArgs.where).toEqual({
+          ...EXPECTED_SCHEDULED_WHERE,
+          id: { in: ["ord-1", "ord-2"] },
+        });
+      });
+
+      // A draft trip writes no order linkage, so a dispatch that arrives without
+      // orderIds (route-detail "Dispatch Run", a re-dispatch of a finished trip)
+      // has nothing to narrow the sweep with and would attach every open order of
+      // each stop's customer. Fail closed — only the trip builder may dispatch.
+      it("ADHOC route with no orderIds: rejects with BadRequestException before any writes", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+          } as any),
+        ).rejects.toThrow(BadRequestException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("reports attachedOrderCount so the caller can detect orders dropped between build and send", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        // Asked for two orders; one was cancelled/dispatched elsewhere meanwhile.
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        const run = await service.createRun({
+          routeId: "route-1",
+          scheduledDate: "2025-06-01",
+          orderIds: ["ord-1", "ord-2"],
+        } as any);
+
+        expect(run.attachedOrderCount).toBe(1);
+      });
+
+      it("re-pin: a second dispatch on a route with an active run still throws ConflictException", async () => {
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.findFirst.mockResolvedValue({ id: "run-existing" });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+          } as any),
+        ).rejects.toThrow(ConflictException);
+
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+    });
+
+    // Feature grants v2 brief C (PR-5), oracle 5/6 — routes_dispatch mode gates createRun's
+    // dispatch by Route.kind. The beforeEach's FeatureConfigService mock resolves "unset" by
+    // default (matching every real tenant today, since no TenantFeatureConfig row exists yet)
+    // — these tests override it per-case to prove the gate is actually wired through the
+    // service, not just unit-tested in isolation (route-dispatch-mode.spec.ts). Fix round 1
+    // (Opus review, item 1): createRun gates on FeatureConfigService.getEffectiveMode (which
+    // resolves fallback when requires.allOf is no longer met), not the raw stored value — these
+    // tests stub getEffectiveMode directly, so they exercise the SAME seam whether the stored
+    // value or the fallback is what should actually gate.
+    describe("routes_dispatch mode gate (feature grants v2 brief C)", () => {
+      const routeStops = [{ id: "rs-1", stopNumber: 1, customerId: "c1", customerAddressId: "a1" }];
+      const createdRun = {
+        ...MOCK_RUN,
+        route: { id: "route-1", name: "Downtown Route" },
+        stops: [{ id: "rrs-1", customerId: "c1" }],
+      };
+
+      function mockMode(value: string) {
+        (service as any).featureConfig.getEffectiveMode.mockResolvedValue(value);
+      }
+
+      it("HARD INVARIANT — unset (today's default, no TenantFeatureConfig row) dispatches a SCHEDULED route exactly as before", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("HARD INVARIANT — unset dispatches an ADHOC route (with orderIds) exactly as before", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=scheduled rejects dispatching an ADHOC route with a 409 FEATURE_MODE body, before any write", async () => {
+        mockMode("scheduled");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).rejects.toMatchObject({
+          response: {
+            code: "FEATURE_MODE",
+            key: "routes_dispatch",
+            mode: "scheduled",
+            allowed: [RouteKind.SCHEDULED],
+          },
+        });
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+        expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      });
+
+      it("mode=scheduled still accepts dispatching a SCHEDULED route", async () => {
+        mockMode("scheduled");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=adhoc rejects dispatching a SCHEDULED route with a 409 FEATURE_MODE body, before any write", async () => {
+        mockMode("adhoc");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).rejects.toMatchObject({
+          response: {
+            code: "FEATURE_MODE",
+            key: "routes_dispatch",
+            mode: "adhoc",
+            allowed: [RouteKind.ADHOC],
+          },
+        });
+        expect(prisma.routeRun.create).not.toHaveBeenCalled();
+      });
+
+      it("mode=adhoc still accepts dispatching an ADHOC route", async () => {
+        mockMode("adhoc");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("mode=mixed accepts both SCHEDULED and ADHOC", async () => {
+        mockMode("mixed");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+        await expect(
+          service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any),
+        ).resolves.toBeDefined();
+      });
+
+      it("reads the mode for the ambient tenant (getTenantId()), scoped per-tenant via FeatureConfigService", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.SCHEDULED,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 0 });
+
+        await service.createRun({ routeId: "route-1", scheduledDate: "2025-06-01" } as any);
+
+        expect((service as any).featureConfig.getEffectiveMode).toHaveBeenCalledWith(
+          "test-tenant",
+          "routes_dispatch",
+        );
+      });
+
+      // Fix round 1 (Opus review, item 1) — the exact case named in the review: a tenant SET to
+      // "scheduled" who no longer holds recurring_routes (addon revoked after being configured)
+      // must still be able to dispatch an ADHOC route. getEffectiveMode is what computes this
+      // fallback (feature-config.service.spec.ts owns the unit-level proof); here it's stubbed
+      // to return the ALREADY-FALLEN-BACK value ("unset"), proving createRun trusts whatever
+      // getEffectiveMode says rather than re-deriving it from a raw stored value of its own.
+      it("a tenant stored as 'scheduled' but effectively fallen back to 'unset' (lost recurring_routes) can still dispatch ADHOC", async () => {
+        mockMode("unset");
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          service.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+      });
+
+      // Fix round 2 (Opus review, item 1) — end-to-end proof: a REAL FeatureConfigService (not
+      // the fully-mocked one this describe block otherwise uses) whose can() dependency throws
+      // must still let createRun succeed, gated on the registry default. resolveEffective's
+      // try/catch is what makes this true (feature-config.service.spec.ts owns the unit-level
+      // proof); this is the "can() throws -> createRun still succeeds" case named in review.
+      it("resilience: FeatureConfigService.can() throwing (a DB blip) still lets createRun succeed, gated on the registry default", async () => {
+        const throwingAddons = { hasAddon: jest.fn().mockRejectedValue(new Error("db blip")) };
+        const noOverride = { get: jest.fn().mockResolvedValue(null) };
+        const noFlag = { hasFlag: jest.fn().mockResolvedValue(false) };
+        const realStore = {
+          getMode: jest.fn().mockResolvedValue({ value: "scheduled", source: "TENANT" }),
+          invalidate: jest.fn(),
+        };
+        const realAudit = { log: jest.fn().mockResolvedValue(undefined) };
+        const realFeatureConfig = new FeatureConfigService(
+          prisma as any,
+          realStore as any,
+          realAudit as any,
+          throwingAddons as any,
+          noFlag as any,
+          noOverride as any,
+        );
+
+        const resilientService = new RoutesService(
+          prisma as any,
+          gateway as any,
+          notifications as any,
+          messaging as any,
+          invoicesService as any,
+          { get: jest.fn().mockReturnValue("test-key") } as any,
+          storage as any,
+          realFeatureConfig,
+        );
+
+        // stored "scheduled" would normally FORBID an ADHOC dispatch — this route.kind proves
+        // resolveEffective actually fell back to "unset" (which allows both), not that the
+        // stored value happened to already allow it.
+        prisma.route.findUnique.mockResolvedValue({
+          ...MOCK_ROUTE,
+          kind: RouteKind.ADHOC,
+          stops: routeStops,
+        });
+        prisma.routeRun.create.mockResolvedValue(createdRun);
+        prisma.order.updateMany.mockResolvedValue({ count: 1 });
+
+        await expect(
+          resilientService.createRun({
+            routeId: "route-1",
+            scheduledDate: "2025-06-01",
+            orderIds: ["ord-1"],
+          } as any),
+        ).resolves.toBeDefined();
+        expect(throwingAddons.hasAddon).toHaveBeenCalled();
+      });
+    });
   });
 
   // ─── RF-016: Auto-complete run when last stop is DELIVERED ────────────────
@@ -376,7 +1424,7 @@ describe("RoutesService", () => {
             { id: "stop-1", status: "PENDING" },
             { id: "stop-2", status: "COMPLETED" },
           ]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
           findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
         },
         routeRun: {
@@ -384,7 +1432,7 @@ describe("RoutesService", () => {
           update: jest.fn().mockResolvedValue({}),
         },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -421,11 +1469,11 @@ describe("RoutesService", () => {
             { id: "stop-1", status: "PENDING" },
             { id: "stop-2", status: "PENDING" }, // still pending
           ]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn() },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -438,6 +1486,114 @@ describe("RoutesService", () => {
       await service.completeStop("run-1", "stop-1", {}, operatorPayload);
 
       expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // T-B152d / R7b / REG-B152 — RF-016 bypasses updateRunStatus entirely, so on
+    // the common path (last stop closes with cash in hand) no backstop there can
+    // ever fire. The auto-complete itself must refuse to flip the run when cash
+    // sits uncollected and no settlementNote exists yet.
+    it("REG-B152: RF-016 does not auto-complete when cash sits uncollected and no settlementNote is set", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...IN_PROGRESS_RUN, settlementNote: null });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([
+            { id: "stop-1", status: "PENDING" },
+            { id: "stop-2", status: "COMPLETED" },
+          ]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+          findUniqueOrThrow: jest.fn().mockResolvedValue({ id: "stop-1", status: "COMPLETED" }),
+        },
+        routeRun: {
+          ...prisma.routeRun,
+          update: jest.fn().mockResolvedValue({}),
+        },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop("run-1", "stop-1", {}, operatorPayload);
+
+      // Every stop is done (allDone=true) yet the run must stay IN_PROGRESS.
+      expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // T-B148b / R3 / REG-B148 — findOneRun selects productId and reopenStop gates
+    // stock-restore on it, but both deliveryMutation.create sites omit it. The
+    // value persisted is the ORDER ITEM's productId (a real Product FK read
+    // through the tenant-scoped tx), never the client's — the payload below
+    // deliberately carries a different id to pin that.
+    it("REG-B148: deliveryMutation.create receives the order item's productId, not the client's", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn() },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest
+            .fn()
+            .mockResolvedValue({ orderId: "ord-1", productId: "prod-1", unitPrice: 10 }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [
+            {
+              orderItemId: "oi-1",
+              productId: "prod-from-client",
+              type: "DELIVERED",
+              quantityDelivered: 3,
+            },
+          ],
+        } as any,
+        operatorPayload,
+      );
+
+      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
+      );
     });
 
     // P6-5: transactional trigger — DELIVERED fires per eligible order after
@@ -478,11 +1634,11 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -503,6 +1659,272 @@ describe("RoutesService", () => {
           vars: expect.objectContaining({ orderNumber: "ORD-100", orderTotal: "$42.00" }),
         }),
       );
+    });
+
+    // Durable POD: a data-URL signature is ingested into storage and the stop
+    // persists the storage KEY; legacy strings (file:// URIs) pass through.
+    it("ingests a data-URL signature into storage and persists the key", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        orders: [],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn() },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeStop(
+        "run-1",
+        "stop-1",
+        {
+          signatureUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+          podPhotoUrls: ["file:///legacy-device-path.jpg"],
+        },
+        operatorPayload,
+      );
+
+      const keyRe = /^tenants\/test-tenant\/pod\/stop-1\/signature-[a-f0-9-]+\.jpg$/;
+      expect(storage.upload).toHaveBeenCalledWith(
+        expect.stringMatching(keyRe),
+        expect.any(Buffer),
+        "image/jpeg",
+      );
+      expect(txMock.routeRunStop.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "stop-1", status: { in: ["PENDING", "IN_PROGRESS"] } }, // #2409: SKIPPED is not claimable
+          data: expect.objectContaining({
+            signatureUrl: expect.stringMatching(keyRe),
+            podPhotoUrls: ["file:///legacy-device-path.jpg"],
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── Durable POD artifacts ───────────────────────────────────────────────
+
+  describe("attachPodArtifact / getStopPod", () => {
+    const STOP = {
+      id: "stop-1",
+      routeRunId: "run-1",
+      status: "PENDING",
+      podPhotoUrls: [] as string[],
+      signatureUrl: null as string | null,
+      driverNote: null,
+      completedAt: null,
+      ageCheckRequired: false,
+      identityCheckRequired: false,
+      ageVerified: false,
+      identityVerified: false,
+      identityType: null,
+    };
+    const PHOTO_DATA_URL = "data:image/jpeg;base64,/9j/fake";
+
+    beforeEach(() => {
+      prisma.routeRun.findUnique.mockResolvedValue(MOCK_RUN);
+    });
+
+    it("appends a photo key to the stop and returns a presigned url", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "abcd1234",
+        },
+        operatorPayload,
+      );
+
+      const key = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
+      expect(storage.upload).toHaveBeenCalledWith(key, expect.any(Buffer), "image/jpeg");
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { podPhotoUrls: { push: key } },
+      });
+      expect(result).toEqual({ key, url: `signed:${key}` });
+    });
+
+    it("sets the signature key on a signature attach", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "signature",
+          dataUrl: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=",
+          artifactId: "sig00001",
+        },
+        operatorPayload,
+      );
+
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { signatureUrl: "tenants/test-tenant/pod/stop-1/signature-sig00001.jpg" },
+      });
+    });
+
+    it("is idempotent per artifactId — a replay returns the existing key without re-uploading", async () => {
+      const existingKey = "tenants/test-tenant/pod/stop-1/photo-abcd1234.jpg";
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP, podPhotoUrls: [existingKey] });
+
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "abcd1234",
+        },
+        operatorPayload,
+      );
+
+      expect(storage.upload).not.toHaveBeenCalled();
+      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+      expect(result).toEqual({ key: existingKey, url: `signed:${existingKey}` });
+    });
+
+    it("rejects a payload that is not an image data URL", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+
+      await expect(
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          {
+            kind: "photo",
+            dataUrl: "file:///device-local.jpg",
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          {
+            kind: "photo",
+            dataUrl: "data:text/html,<script>alert(1)</script>",
+          },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("404s when the stop does not belong to the run", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.attachPodArtifact(
+          "run-1",
+          "stop-x",
+          { kind: "photo", dataUrl: PHOTO_DATA_URL },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it("400s when the image bytes cannot be decoded (sharp rejects)", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({ ...STOP });
+      (compressImage as jest.Mock).mockRejectedValueOnce(new Error("unsupported image"));
+
+      await expect(
+        service.attachPodArtifact(
+          "run-1",
+          "stop-1",
+          { kind: "photo", dataUrl: PHOTO_DATA_URL },
+          operatorPayload,
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.routeRunStop.update).not.toHaveBeenCalled();
+    });
+
+    // REG-B121 (pin): a photo can still be attached to a stop that is already
+    // COMPLETED — R7's immutability rule is signature-only. Reopen remains the
+    // sanctioned path to re-capture a signature; photos stay appendable.
+    it("REG-B121 (pin): photos stay appendable on a COMPLETED stop", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        status: "COMPLETED",
+        signatureUrl: "tenants/test-tenant/pod/stop-1/signature-old-1.jpg",
+      });
+
+      const result = await service.attachPodArtifact(
+        "run-1",
+        "stop-1",
+        {
+          kind: "photo",
+          dataUrl: PHOTO_DATA_URL,
+          artifactId: "new-photo-1",
+        },
+        operatorPayload,
+      );
+
+      const key = "tenants/test-tenant/pod/stop-1/photo-new-photo-1.jpg";
+      expect(prisma.routeRunStop.update).toHaveBeenCalledWith({
+        where: { id: "stop-1" },
+        data: { podPhotoUrls: { push: key } },
+      });
+      expect(result).toEqual({ key, url: `signed:${key}` });
+    });
+
+    it("getStopPod presigns stored keys, passes data URLs through, and counts legacy strings", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        podPhotoUrls: [
+          "tenants/test-tenant/pod/stop-1/photo-a.jpg",
+          "data:image/png;base64,AAAA",
+          "file:///dead-device-path.jpg",
+          // another tenant's key must never be presigned, even if a hostile
+          // completion payload smuggled it into the column
+          "tenants/other-tenant/pod/stop-1/photo-b.jpg",
+        ],
+        signatureUrl: "native-captured",
+      });
+
+      const pod = await service.getStopPod("run-1", "stop-1", operatorPayload);
+
+      expect(pod.photos).toEqual([
+        { url: "signed:tenants/test-tenant/pod/stop-1/photo-a.jpg" },
+        { url: "data:image/png;base64,AAAA" },
+      ]);
+      expect(pod.legacyPhotoCount).toBe(2);
+      expect(pod.signatureUrl).toBeNull();
+      expect(pod.signatureCaptured).toBe(true);
+    });
+
+    it("getStopPod presigns a stored signature key", async () => {
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        ...STOP,
+        signatureUrl: "tenants/test-tenant/pod/stop-1/signature-x.png",
+      });
+
+      const pod = await service.getStopPod("run-1", "stop-1", operatorPayload);
+
+      expect(pod.signatureUrl).toBe("signed:tenants/test-tenant/pod/stop-1/signature-x.png");
+      expect(pod.signatureCaptured).toBe(true);
+      expect(pod.photos).toEqual([]);
     });
   });
 
@@ -528,11 +1950,11 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-        orderItem: { ...prisma.orderItem, findUnique: jest.fn().mockResolvedValue(null) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
         $executeRaw: jest.fn().mockResolvedValue(0),
       };
@@ -557,13 +1979,25 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // 5th arg = the orders delivered in THIS completion (empty here — no
-      // deliveries were sent — so nothing is reconciled to the delivered basis).
+      // B663: the reconcile-to-delivered-basis step is reconcileDeliveredOrdersInTx's
+      // job now, called unconditionally before this regardless of payment — see the
+      // "passes only the orders delivered in THIS completion" test below for that.
+      // 5th arg here = the run/stop context B83 turns into the AdvancePayment
+      // `reference` token — load-bearing for the settlement cash lookup.
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1"],
         50,
         "CASH",
+        { runId: "run-1", stopId: "stop-1" },
+      );
+      // B663: reconciled unconditionally too, even though a payment was ALSO
+      // collected here — no deliveries were sent in this payload, so nothing is
+      // reconciled to the delivered basis (empty subset).
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
         [],
       );
       // Additive field: the driver app attaches a best-effort payment photo to
@@ -597,13 +2031,15 @@ describe("RoutesService", () => {
         routeRunStop: {
           ...prisma.routeRunStop,
           findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
-          update: jest.fn().mockResolvedValue({}),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         },
         routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
         order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
         orderItem: {
           ...prisma.orderItem,
-          findUnique: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+
           update: jest.fn().mockResolvedValue({}),
         },
         deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
@@ -625,15 +2061,200 @@ describe("RoutesService", () => {
         operatorPayload,
       );
 
-      // Bill/collect across BOTH non-cancelled orders, but reconcile-to-delivered
-      // ONLY ord-1 — ord-2 (not delivered here) must keep its invoice, not be zeroed.
+      // Bill/collect across BOTH non-cancelled orders (recordDeliveryPaymentInTx no
+      // longer takes a reconcile subset at all — B663 moved that decision to
+      // reconcileDeliveredOrdersInTx, asserted separately below).
       expect(invoicesService.recordDeliveryPaymentInTx).toHaveBeenCalledWith(
         txMock,
+        expect.any(AfterCommit), // #2175: the route tx's post-commit queue
         ["ord-1", "ord-2"],
         50,
         "CASH",
+        { runId: "run-1", stopId: "stop-1" },
+      );
+      // reconcile-to-delivered ONLY ord-1 — ord-2 (not delivered here) must keep its
+      // invoice, not be zeroed.
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1", "ord-2"],
         ["ord-1"],
       );
+    });
+
+    // B785/SA-116: a second visit must ADD to what earlier visits already delivered,
+    // never replace it — other consumers (order-cancel-impact.ts, order-stock.ts,
+    // orders.service.ts's stock-settle deltas) still sum OrderItem.deliveredQty as a
+    // CUMULATIVE total across every visit.
+    it("B785/SA-133: RECOMPUTES OrderItem.deliveredQty from the evidence basis, never increment/overwrite", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const orderItemUpdate = jest.fn().mockResolvedValue({});
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: orderItemUpdate,
+        },
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          create: jest.fn(),
+          // The recompute re-reads AFTER this completion's own create — this is what
+          // it would see once that row (plus any prior visit's rows) is in place.
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 3 }]),
+        },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { deliveries: [{ orderItemId: "oi-1", type: "DELIVERED", quantityDelivered: 3 }] },
+        operatorPayload,
+      );
+
+      expect(orderItemUpdate).toHaveBeenCalledWith({
+        where: { id: "oi-1" },
+        data: { deliveredQty: 3 },
+      });
+    });
+
+    it("B785/SA-133: a REFUSED evidence row recomputes deliveredQty to 0, not its own quantityDelivered", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const orderItemUpdate = jest.fn().mockResolvedValue({});
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "p1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: orderItemUpdate,
+        },
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          create: jest.fn(),
+          findMany: jest
+            .fn()
+            .mockResolvedValue([{ orderItemId: "oi-1", type: "REFUSED", quantityDelivered: 0 }]),
+        },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { deliveries: [{ orderItemId: "oi-1", type: "REFUSED", quantityDelivered: 0 }] },
+        operatorPayload,
+      );
+
+      expect(orderItemUpdate).toHaveBeenCalledWith({
+        where: { id: "oi-1" },
+        data: { deliveredQty: 0 },
+      });
+    });
+
+    // Opus review of #1292: this shape (no `payment` at all — the ordinary case for
+    // most tenants) had no coverage in the CI-run unit lane, and the DB lane's path
+    // filter doesn't cover routes/**, so a regression that moved the reconcile call
+    // back behind `if (dto.payment...)` — B663's ENTIRE bug — would pass CI unnoticed.
+    it("B663: an on-account completion (no payment) still reconciles to the delivered basis, and never calls recordDeliveryPaymentInTx", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [{ orderItemId: "oi-1", type: "SHORT", quantityDelivered: 7 }],
+          // No `payment` at all — on-account, the ordinary case for most tenants.
+        },
+        operatorPayload,
+      );
+
+      expect(invoicesService.reconcileDeliveredOrdersInTx).toHaveBeenCalledWith(
+        txMock,
+        ["ord-1"],
+        ["ord-1"],
+      );
+      expect(invoicesService.recordDeliveryPaymentInTx).not.toHaveBeenCalled();
     });
 
     it("should throw BadRequestException for CASH payment with amount=0 (RF-006)", async () => {
@@ -654,6 +2275,172 @@ describe("RoutesService", () => {
           operatorPayload,
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // T-B152d / R7b / REG-B152 — same RF-016 bypass as completeStop, but on the
+    // path that JUST collected the cash in the same call.
+    it("REG-B152: RF-016 does not auto-complete when cash sits uncollected and no settlementNote is set", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...IN_PROGRESS_RUN, settlementNote: null });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 40, method: "CASH" }]);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+      invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+        applied: 50,
+        invoiceIds: ["inv-1"],
+        paymentIds: ["pay-1"],
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { payment: { amount: 50, method: "CASH" } },
+        operatorPayload,
+      );
+
+      expect(txMock.routeRun.update).not.toHaveBeenCalled();
+    });
+
+    // T-B152d / R7b / REG-B152 — the allowance half of the gate above. Without
+    // it, deleting the whole RF-016 auto-complete block from THIS flow would
+    // still pass (the driver would silently never get the run closed out).
+    it("REG-B152: RF-016 still auto-completes on the paid path once the run is settled", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...IN_PROGRESS_RUN,
+        settlementNote: "Cash settled: 50.00",
+      });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: { ...prisma.orderItem, findFirst: jest.fn().mockResolvedValue(null) },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+      invoicesService.recordDeliveryPaymentInTx.mockResolvedValue({
+        applied: 50,
+        invoiceIds: ["inv-1"],
+        paymentIds: ["pay-1"],
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        { payment: { amount: 50, method: "CASH" } },
+        operatorPayload,
+      );
+
+      expect(txMock.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ status: "COMPLETED" }),
+        }),
+      );
+    });
+
+    // T-B148b / R3 / REG-B148 — same create-args gap as completeStop, and the
+    // same rule: the persisted productId is the order item's, not the body's.
+    it("REG-B148: deliveryMutation.create receives the order item's productId, not the client's", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(IN_PROGRESS_RUN);
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        id: "stop-1",
+        routeRunId: "run-1",
+        status: "PENDING",
+        signatureUrl: null,
+        orders: [
+          { id: "ord-1", status: "PENDING", customerId: "cust-1", orderNumber: "SO-1", total: 50 },
+        ],
+      });
+      prisma.driver.findFirst.mockResolvedValue(null);
+      const txMock = {
+        ...prisma,
+        routeRunStop: {
+          ...prisma.routeRunStop,
+          findMany: jest.fn().mockResolvedValue([{ id: "stop-1", status: "PENDING" }]),
+          updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        order: { ...prisma.order, updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+        orderItem: {
+          ...prisma.orderItem,
+          findFirst: jest.fn().mockResolvedValue({ orderId: "ord-1", productId: "prod-1" }),
+          findMany: jest.fn().mockResolvedValue([{ id: "oi-1", orderId: "ord-1", qty: 10 }]),
+
+          update: jest.fn().mockResolvedValue({}),
+        },
+        deliveryMutation: { ...prisma.deliveryMutation, create: jest.fn() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      prisma.routeRunStop.findUniqueOrThrow.mockResolvedValue({
+        id: "stop-1",
+        status: "COMPLETED",
+      });
+
+      await service.completeWithPayment(
+        "run-1",
+        "stop-1",
+        {
+          deliveries: [
+            {
+              orderItemId: "oi-1",
+              productId: "prod-from-client",
+              type: "DELIVERED",
+              quantityDelivered: 3,
+            },
+          ],
+        } as any,
+        operatorPayload,
+      );
+
+      expect(txMock.deliveryMutation.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ productId: "prod-1" }) }),
+      );
     });
   });
 
@@ -712,6 +2499,716 @@ describe("RoutesService", () => {
       prisma.driver.findFirst.mockResolvedValue(null);
       const result = await service.findMyRuns(driverPayload);
       expect(result.data).toHaveLength(0);
+    });
+  });
+
+  // ─── G7 / F05: RUN_LINE_ITEMS_SELECT shared across the run read path ─────
+
+  // T-B49a / R1 / REG-B49 — today the `{ id, productId, product, qty, unitPrice,
+  // status }` lineItems select literal is duplicated three times (RUN_STOP_INCLUDE,
+  // findOneRun's main query, its unlinked-orders fallback) and none carries
+  // subtotal/boxes/pieces/unitsPerBox. No RUN_LINE_ITEMS_SELECT export exists yet,
+  // so the imported binding is `undefined` — every assertion below is red until
+  // all three sites are collapsed onto one shared, enriched const.
+  describe("RUN_LINE_ITEMS_SELECT (G7) — enriched money fields (T-B49a / R1 / REG-B49)", () => {
+    it("REG-B49: carries subtotal/boxes/pieces/unitsPerBox alongside the existing fields", () => {
+      expect(RUN_LINE_ITEMS_SELECT).toEqual({
+        id: true,
+        productId: true,
+        product: { select: { id: true, name: true, unit: true } },
+        qty: true,
+        // SA-345a: the legacy delivered column (a line with no DeliveryMutation row reads it).
+        deliveredQty: true,
+        unitPrice: true,
+        status: true,
+        subtotal: true,
+        boxes: true,
+        pieces: true,
+        unitsPerBox: true,
+        // B305 round 2 (RULING 1/3): per-line regulated-category tax snapshot —
+        // see routes.run-stop-select.spec.ts for the dedicated oracle.
+        categoryTaxAmount: true,
+        // B648: units_v1 selling unit — see routes.run-stop-select.spec.ts.
+        unitLabel: true,
+      });
+    });
+
+    // The three identity tests below assert `toBe(RUN_LINE_ITEMS_SELECT)` and
+    // never inspect a field, so they would pass against ANY shared object. The
+    // `toEqual` test above is the SOLE content oracle for R1 — delete or weaken
+    // it and all four tests here go green on a const carrying the wrong fields.
+    it("REG-B49: findAllRuns' RUN_STOP_INCLUDE references the exact same select object", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]);
+      prisma.routeRun.count.mockResolvedValue(0);
+
+      await service.findAllRuns({} as any, operatorPayload);
+
+      const call = prisma.routeRun.findMany.mock.calls[0][0];
+      const actualSelect = call.include.stops.include.orders.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+
+    it("REG-B49: findOneRun's main query references the exact same select object", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.routeRun.findUnique.mock.calls[0][0];
+      const actualSelect = call.include.stops.include.orders.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+
+    it("REG-B49: findOneRun's unlinked-orders fallback references the exact same select object", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.order.findMany).toHaveBeenCalled();
+      const call = prisma.order.findMany.mock.calls[0][0];
+      const actualSelect = call.select.lineItems.select;
+      expect(actualSelect).toBe(RUN_LINE_ITEMS_SELECT);
+    });
+  });
+
+  // B305 round 5 — the money-fields REGRESSION: every prior B305 round enriched
+  // RUN_STOP_INCLUDE (subtotal/tax/total/discountAmount/shippingFee/invoices on
+  // the order, isTaxExempt on the customer) but findOneRun's stops clause was a
+  // SEPARATE, hand-rolled `include` that never referenced RUN_STOP_INCLUDE at
+  // all — so the driver's actual read path (GET /route-runs/:id, the only
+  // endpoint the stop/payment screens call) never carried any of it, and
+  // run-money.ts's orderAmountDue could only ever reach its pre-tax fallback.
+  // routes.run-stop-select.spec.ts's tests on the CONSTANT stayed green through
+  // every round; these pin what findOneRun's Prisma call ACTUALLY sends.
+  describe("findOneRun's stops query uses RUN_STOP_INCLUDE (B305 round 5 — the projection drift)", () => {
+    it("references RUN_STOP_INCLUDE's own sub-objects by identity, not a re-literalled copy", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.routeRun.findUnique.mock.calls[0][0];
+      const stopsInclude = call.include.stops.include;
+      // A spread (`{ ...RUN_STOP_INCLUDE, deliveryMutations }`) preserves each
+      // property's own reference — this is what a hand-rolled literal, however
+      // faithfully copied, could never pass.
+      expect(stopsInclude.customer).toBe(RUN_STOP_INCLUDE.customer);
+      expect(stopsInclude.orders).toBe(RUN_STOP_INCLUDE.orders);
+      expect(stopsInclude.routeStop).toBe(RUN_STOP_INCLUDE.routeStop);
+      // The one field findOneRun needs beyond the shared shape (list views don't).
+      expect(stopsInclude.deliveryMutations).toEqual(
+        expect.objectContaining({ select: expect.objectContaining({ orderItemId: true }) }),
+      );
+    });
+
+    it("carries the order money fields the driver's amount-due math needs (subtotal/tax/total/discountAmount/shippingFee/invoices)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const orderSelect =
+        prisma.routeRun.findUnique.mock.calls[0][0].include.stops.include.orders.select;
+      expect(orderSelect).toEqual(
+        expect.objectContaining({
+          subtotal: true,
+          tax: true,
+          total: true,
+          discountAmount: true,
+          shippingFee: true,
+        }),
+      );
+      expect(orderSelect.invoices).toBeDefined();
+    });
+
+    it("carries the customer's tax-exemption column", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, stops: [] });
+
+      await service.findOneRun("run-1");
+
+      const customerSelect =
+        prisma.routeRun.findUnique.mock.calls[0][0].include.stops.include.customer.select;
+      expect(customerSelect.isTaxExempt).toBe(true);
+    });
+
+    it("the unlinked-orders fallback ALSO carries the money fields (same drift, second site)", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([]);
+
+      await service.findOneRun("run-1");
+
+      const call = prisma.order.findMany.mock.calls[0][0];
+      expect(call.select).toEqual(
+        expect.objectContaining({
+          customerId: true,
+          subtotal: true,
+          tax: true,
+          total: true,
+          discountAmount: true,
+          shippingFee: true,
+        }),
+      );
+      expect(call.select.invoices).toBe(RUN_STOP_INCLUDE.orders.select.invoices);
+    });
+  });
+
+  // ─── B810 (SA-125): balanceDue wiring at all 4 RUN_STOP_INCLUDE call sites ──
+  // withBalanceDue/withRunOrderBalances (run-invoice-balance.spec.ts) are the
+  // proven money math in isolation — these prove the SERVICE actually applies
+  // them before a response leaves, at every one of the 4 sites.
+  describe("B810/SA-130a: balanceDue is computed via a SEPARATE batched invoice.findMany, and payment rows are stripped, at every call site", () => {
+    // Raw non-void rows as invoice.findMany would actually return them —
+    // orderId-keyed, since payableInvoices is NOT a Prisma relation on Order
+    // and can never come back nested under an `orders` fixture.
+    const rawNonVoidInvoices = [
+      {
+        id: "inv-sent",
+        orderId: "ord-1",
+        status: "SENT",
+        total: 100,
+        depositPercent: null,
+        deliveryBatchId: null,
+        payments: [{ amount: 40, status: "PAID" }],
+      },
+    ];
+    const expectedPayable = [
+      { id: "inv-sent", status: "SENT", total: 100, balanceDue: 60, isDepositMirror: false },
+    ];
+
+    it("findOneRun's normal path computes balanceDue and strips raw payments", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customer: { id: "cust-1" },
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [{ id: "ord-1" }],
+          },
+        ],
+      });
+
+      const result: any = await service.findOneRun("run-1");
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ orderId: { in: ["ord-1"] } }) }),
+      );
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findOneRun's unlinked-orders fallback ALSO computes balanceDue and strips payments (same drift, second site)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customerId: "cust-1",
+            customer: null,
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [], // no stop has a linked order -> triggers the fallback
+            deliveryMutations: [],
+          },
+        ],
+      });
+      prisma.order.findMany.mockResolvedValue([{ id: "ord-1", customerId: "cust-1" }]);
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+
+      const result: any = await service.findOneRun("run-1");
+
+      const payable = result.stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findAllRuns computes balanceDue and strips payments", async () => {
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1" }],
+            },
+          ],
+        },
+      ]);
+      prisma.routeRun.count.mockResolvedValue(1);
+
+      const result: any = await service.findAllRuns({} as any, operatorPayload);
+
+      expect(prisma.invoice.findMany).toHaveBeenCalledTimes(1); // ONE batched call for the whole page, never per-run
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("findMyRuns computes balanceDue and strips payments", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      prisma.invoice.findMany.mockResolvedValue(rawNonVoidInvoices);
+      prisma.routeRun.findMany.mockResolvedValue([
+        {
+          ...MOCK_RUN,
+          stops: [
+            {
+              id: "stop-1",
+              customer: { id: "cust-1" },
+              customerAddress: { id: "addr-1" },
+              routeStop: null,
+              orders: [{ id: "ord-1" }],
+            },
+          ],
+        },
+      ]);
+
+      const result: any = await service.findMyRuns(driverPayload);
+
+      const payable = result.data[0].stops[0].orders[0].payableInvoices;
+      expect(payable).toEqual(expectedPayable);
+      expect(JSON.stringify(result)).not.toContain('"payments"');
+    });
+
+    it("SA-130a BLOCKER regression: never selects `payableInvoices` as a nested Order field — the real Prisma client has no such relation", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        stops: [
+          {
+            id: "stop-1",
+            customer: { id: "cust-1" },
+            customerAddress: { id: "addr-1" },
+            routeStop: null,
+            orders: [{ id: "ord-1" }],
+          },
+        ],
+      });
+
+      await service.findOneRun("run-1");
+
+      const stopsCall = prisma.routeRun.findUnique.mock.calls[0]![0];
+      expect(stopsCall.include.stops.include.orders.select).not.toHaveProperty("payableInvoices");
+    });
+  });
+
+  // ─── F05: server-truth run cash collections ──────────────────────────────
+
+  // T-B152a / R5 / REG-B152 — findOneRun exposes zero collected-payment data
+  // today (no invoicePayment reads in the file outside reopenStop's tx). The
+  // fix folds CONFIRMED CASH/CHECK InvoicePayments (via invoice.order.routeRunId,
+  // windowed on paidAt >= startedAt) PLUS AdvancePayments referenced to this run.
+  describe("findOneRun — collectedPayments (server cash truth) (T-B152a / R5 / REG-B152)", () => {
+    it("REG-B152: folds CONFIRMED CASH/CHECK invoice payments plus RUN-scoped advances into collectedPayments", async () => {
+      const startedAt = new Date("2026-08-01T00:00:00.000Z");
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, startedAt, stops: [] });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 40, method: "CASH" },
+        { amount: 25, method: "CHECK" },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 30, method: "CASH", reference: "RUN:run-1:STOP:s2" },
+      ]);
+
+      const result: any = await service.findOneRun("run-1");
+
+      // 40 (CASH) + 30 (RUN-scoped advance) = 70; CHECK stays 25; 3 rows folded.
+      expect(result.collectedPayments).toEqual({ cashTotal: 70, checkTotal: 25, count: 3 });
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            ...CONFIRMED_PAYMENT,
+            method: { in: ["CASH", "CHECK"] },
+            invoice: expect.objectContaining({
+              order: expect.objectContaining({ routeRunId: "run-1" }),
+            }),
+            paidAt: expect.objectContaining({ gte: startedAt }),
+          }),
+        }),
+      );
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ reference: { startsWith: "RUN:run-1" } }),
+        }),
+      );
+    });
+  });
+
+  // ─── F05: POST /route-runs/:id/settlement ────────────────────────────────
+
+  // T-B152b / R6 / REG-B152 — new endpoint (never a PATCH :id retrofit). The
+  // service method does not exist today, so every call below throws
+  // "service.settleRun is not a function" — the plan's own oracle for this row
+  // ("Endpoint does not exist — red (method undefined)").
+  describe("settleRun (POST :id/settlement) (T-B152b / R6 / REG-B152)", () => {
+    const SETTLE_RUN = {
+      ...MOCK_RUN,
+      status: "IN_PROGRESS" as const,
+      settlementNote: null as string | null,
+    };
+
+    beforeEach(() => {
+      prisma.routeRunStop.findMany.mockResolvedValue([{ status: "COMPLETED" }]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+      prisma.routeRun.update.mockImplementation((args: any) =>
+        Promise.resolve({ ...SETTLE_RUN, ...args.data }),
+      );
+    });
+
+    it("REG-B152: counted cash matching the server's expected figure settles at variance 0, no reason required", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70 },
+        operatorPayload,
+      );
+
+      expect(result.variance).toBe(0);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({ settlementVariance: 0 }),
+        }),
+      );
+    });
+
+    // The reconciliation basis is the PHYSICAL money the driver carries — cash
+    // AND checks. Every other fixture in this block is CASH-only, which a
+    // cash-only basis satisfies just as well, so this mixed fixture is the sole
+    // oracle on the sum: revert the implementation to `expected.cashTotal` and a
+    // driver holding $100 cash + a $150 check is told they are $50 over, refused
+    // for want of a variance reason, and — once they invent one — has a phantom
+    // overage persisted to `settlementVariance` and badged on the web card.
+    it("REG-B152: folds CHECKS into the expected figure — a mixed cash/check run reconciles at variance 0", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 100, method: "CASH" },
+        { amount: 50, method: "CHECK" },
+      ]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 150 },
+        operatorPayload,
+      );
+
+      expect(result.expectedCash).toBe(150);
+      expect(result.variance).toBe(0);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({
+            settlementVariance: 0,
+            settlementNote: expect.stringContaining("$150.00"),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B152: a mismatch without a varianceReason is refused", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 50 }, operatorPayload),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("REG-B152: a reasoned mismatch settles with the signed variance and the reason in the note", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 50, varianceReason: "Register short" },
+        operatorPayload,
+      );
+
+      // 50 - 70 = -20 (sign per mobile computeVariance: counted minus expected).
+      expect(result.variance).toBe(-20);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            settlementVariance: -20,
+            settlementNote: expect.stringContaining("Register short"),
+          }),
+        }),
+      );
+    });
+
+    it("REG-B152: a DRIVER who does not own the run is forbidden", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue(SETTLE_RUN);
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-999", userId: "user-drv" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 70 }, driverPayload),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it("REG-B152: a DRIVER cannot re-settle a run that already carries a settlementNote", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, settlementNote: "existing" });
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 70 }, driverPayload),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("REG-B152: an OPERATOR may overwrite an existing settlementNote", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, settlementNote: "existing" });
+      prisma.invoicePayment.findMany.mockResolvedValue([{ amount: 70, method: "CASH" }]);
+
+      const result: any = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 70 },
+        operatorPayload,
+      );
+
+      expect(result.variance).toBe(0);
+      // `variance === 0` alone would pass an implementation that refused the
+      // overwrite and returned the run untouched — the overwrite itself is the
+      // claim, so pin that a replacement note was actually written.
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ settlementNote: expect.any(String) }),
+        }),
+      );
+    });
+
+    // A run cancelled mid-route still has the driver's cash in the truck, and
+    // nothing blocks the cancel itself (R7 gates only COMPLETED). Refusing to
+    // settle afterwards would strand that money as unreconcilable — so CANCELLED
+    // settles post-hoc, and the web card renders it for every status.
+    it("REG-B152: a CANCELLED run still settles post-hoc so its cash is not stranded", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, status: "CANCELLED" });
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        { amount: 300, method: "CASH", paidAt: new Date("2026-08-31T12:00:00Z") },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([]);
+
+      const res = await (service as any).settleRun(
+        "run-1",
+        { countedCash: 275, varianceReason: "Breakdown — $25 fuel paid from the bag" },
+        operatorPayload,
+      );
+
+      expect(res.expectedCash).toBe(300);
+      expect(res.variance).toBe(-25);
+      expect(prisma.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ settlementVariance: -25 }),
+        }),
+      );
+    });
+
+    // A SCHEDULED run settles to $0 with no reason required, and the resulting
+    // settlementNote would disarm all three R7 gates for every collection the
+    // driver makes afterwards — R6 accepts IN_PROGRESS and COMPLETED only.
+    it("REG-B152: a run that never started refuses settlement", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({ ...SETTLE_RUN, status: "SCHEDULED" });
+
+      await expect(
+        (service as any).settleRun("run-1", { countedCash: 0 }, driverPayload),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.routeRun.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── F05: reopening a stop invalidates the run's settlement ──────────────
+
+  // Every R7 gate keys on `settlementNote == null`. reopenStop puts a run back
+  // in a state where it can collect money again, so a note describing the
+  // earlier (smaller) count must not survive the reopen — otherwise the
+  // re-collected cash closes the run with no settlement covering it.
+  describe("reopenStop — settlement reset (R7 / REG-B152)", () => {
+    it("REG-B152: clears settlementNote/settlementVariance when a settled run is reopened", async () => {
+      prisma.routeRun.findUnique.mockResolvedValue({
+        ...MOCK_RUN,
+        status: "COMPLETED",
+        settlementNote: "Expected: $200.00\nCounted: $200.00",
+        settlementVariance: 0,
+        stops: [{ id: "stop-1", status: "COMPLETED", orders: [] }],
+      });
+      prisma.deliveryMutation.findMany.mockResolvedValue([]);
+      const txMock = {
+        ...prisma,
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+      };
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(txMock.routeRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "run-1" },
+          data: expect.objectContaining({
+            status: "IN_PROGRESS",
+            settlementNote: null,
+            settlementVariance: null,
+          }),
+        }),
+      );
+    });
+  });
+
+  // ─── B306: at-door over-collection advance has no reversal ──────────────
+  // recordDeliveryPaymentInTx books a driver's at-door excess as an
+  // AdvancePayment tagged `RUN:<runId>:STOP:<stopId>`. getRunCashCollections
+  // and enrichRunsWithCollectedPayments sum every such advance unconditionally
+  // (no filter for one whose originating door payment was later voided), and
+  // reopenStop never looks at advancePayment at all. See
+  // invoices.service.spec.ts's "voidPayment — reverses a RUN-tagged at-door
+  // advance (REG-B306)" for the reversal side of this bug.
+  describe("run cash + reopenStop ignore a reversed at-door advance (REG-B306)", () => {
+    it("REG-B306 run cash reconciliation ignores a reversed advance", async () => {
+      const startedAt = new Date("2026-08-01T00:00:00.000Z");
+      prisma.routeRun.findUnique.mockResolvedValue({ ...MOCK_RUN, startedAt, stops: [] });
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findOneRun("run-1");
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            reference: expect.objectContaining({ startsWith: "RUN:run-1" }),
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 the runs list's collected-cash enrichment ignores a reversed advance", async () => {
+      prisma.driver.findFirst.mockResolvedValue({ id: "drv-1", userId: "user-drv" });
+      prisma.routeRun.findMany.mockResolvedValue([
+        { ...MOCK_RUN, id: "run-1", status: "IN_PROGRESS" as const, stops: [] },
+      ]);
+      prisma.advancePayment.findMany.mockResolvedValue([
+        { amount: 5, method: "CASH", reference: "RUN:run-1:STOP:stop-1" },
+      ]);
+
+      await service.findMyRuns(driverPayload);
+
+      expect(prisma.advancePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            NOT: { reference: { endsWith: ":REVERSED" } },
+          }),
+        }),
+      );
+    });
+
+    it("REG-B306 a stop with an unreversed over-collection advance is reopened only after the advance is reversed inside the transaction", async () => {
+      const arrangeReopen = () => {
+        prisma.routeRun.findUnique.mockResolvedValue({
+          ...MOCK_RUN,
+          id: "run-1",
+          status: "COMPLETED" as const,
+          stops: [
+            {
+              id: "stop-1",
+              status: "COMPLETED",
+              orders: [{ id: "ord-1", status: "DELIVERED", lineItems: [] }],
+            },
+          ],
+        });
+        // No confirmed money on the delivery — the "Payment already recorded"
+        // guard above the reversal call must let this through.
+        prisma.invoice.findFirst.mockResolvedValue(null);
+      };
+      const buildTxMock = () => ({
+        ...prisma,
+        deliveryMutation: {
+          ...prisma.deliveryMutation,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        orderItem: { ...prisma.orderItem, updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        order: { ...prisma.order, update: jest.fn().mockResolvedValue({}) },
+        transaction: {
+          ...prisma.transaction,
+          deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
+        routeRunStop: { ...prisma.routeRunStop, update: jest.fn().mockResolvedValue({}) },
+        routeRun: { ...prisma.routeRun, update: jest.fn().mockResolvedValue({}) },
+        auditLog: { ...prisma.auditLog, create: jest.fn().mockResolvedValue({}) },
+      });
+
+      // Case 1: a zero-payable advance is reversed inside the transaction and
+      // the reopen proceeds.
+      arrangeReopen();
+      let txMock = buildTxMock();
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+
+      await service.reopenStop("run-1", "stop-1", operatorPayload);
+
+      expect(invoicesService.reverseRunAdvancesInTx).toHaveBeenCalledWith(expect.anything(), {
+        runId: "run-1",
+        stopId: "stop-1",
+        reason: "stop reopened",
+      });
+
+      // Case 2: an already-applied advance makes the helper throw — reopenStop
+      // must propagate that rejection, and none of the reopen's other writes
+      // (all inside the same transaction) should have run.
+      arrangeReopen();
+      txMock = buildTxMock();
+      (prisma.tenantTransaction as jest.Mock).mockImplementation((fn: any) => fn(txMock));
+      invoicesService.reverseRunAdvancesInTx.mockRejectedValueOnce(
+        new BadRequestException(
+          "The at-door over-collection advance adv-1 has already been applied — release its applications before voiding this payment",
+        ),
+      );
+
+      await expect(service.reopenStop("run-1", "stop-1", operatorPayload)).rejects.toThrow(
+        /advance.*applied/i,
+      );
+      expect(txMock.deliveryMutation.deleteMany).not.toHaveBeenCalled();
     });
   });
 });

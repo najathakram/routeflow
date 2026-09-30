@@ -1,5 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type {
+  ReportTemplateDef,
+  TemplateColumn,
+  TemplateItemType,
+  TemplateUomOption,
+} from "@routeflow/types";
+export type {
+  ReportTemplateDef,
+  TemplateColumn,
+  TemplateItemType,
+  TemplateUomOption,
+} from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/tracked-categories.ts) ──────────────────────
 
@@ -41,6 +53,8 @@ export interface TrackedCategory {
   txUom?: string | null;
   /** Saved custom report column layout, keyed by template code. */
   reportColumnPrefs?: Record<string, string[]> | null;
+  /** Computed server-side: name is "Tobacco" (ci) — the compliance-pack anchor. Mirrors web. */
+  isTobaccoCategory?: boolean;
   productCount: number;
   createdAt: string;
   updatedAt: string;
@@ -84,32 +98,8 @@ export interface TrackedSubcategory {
 
 // ─── Report templates (mirrors apps/api/src/regulated/template-registry.ts /
 // apps/web/lib/api/tracked-categories.ts) — per-product regulatory vocabulary
-// (item types → their legal UoM codes) and each template's column superset. ────
-
-export interface TemplateUomOption {
-  code: string;
-  label: string;
-}
-export interface TemplateItemType {
-  code: string;
-  label: string;
-  uoms: TemplateUomOption[];
-}
-export interface TemplateColumn {
-  key: string;
-  label: string;
-  align?: "right";
-  /** In the template's official/default layout. Non-default columns make a report "custom". */
-  default: boolean;
-}
-export interface ReportTemplateDef {
-  key: string;
-  label: string;
-  kind: "per-sale" | "aggregate";
-  /** null ⇒ this template needs no per-product config. */
-  productConfig: { itemTypes: TemplateItemType[]; caseUomSupported: boolean } | null;
-  columns: TemplateColumn[];
-}
+// (item types → their legal UoM codes) and each template's column superset.
+// Types imported from @routeflow/types (wave E / imp-10b) — see top of file. ────
 
 /** Report-template metadata; static per deploy, so cache it for the session. */
 export function useRegulatedTemplates() {

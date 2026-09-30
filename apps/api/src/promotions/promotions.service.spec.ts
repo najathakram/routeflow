@@ -56,6 +56,55 @@ describe("PromotionsService", () => {
     );
   });
 
+  // BUY_N_GET_M ("buy 5, get the 6th free") reuses minQty=N, value=M — both required
+  // as positive integers for this type (owner misconfiguration that started this
+  // feature was exactly a missing guard here: a promo that can't express N/M got
+  // shoehorned into FIXED $off, $0-ing 40% of the catalog).
+  it("creates a BUY_N_GET_M promotion with integer minQty (N) + value (M)", async () => {
+    await service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 1 });
+    expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+    const data = prisma.promotion.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({ type: "BUY_N_GET_M", minQty: 5, value: 1 });
+  });
+
+  it("rejects a BUY_N_GET_M without a minQty (N)", async () => {
+    await expect(service.create({ ...base, type: "BUY_N_GET_M", value: 1 })).rejects.toThrow(
+      /buy quantity \(minQty\)/,
+    );
+  });
+
+  it("rejects a BUY_N_GET_M with a fractional minQty (N)", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5.5, value: 1 }),
+    ).rejects.toThrow(/buy quantity \(minQty\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with minQty (N) < 1", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 0, value: 1 }),
+    ).rejects.toThrow(/buy quantity \(minQty\)/);
+  });
+
+  it("rejects a BUY_N_GET_M without a value (M)", async () => {
+    // `base.value` (8) would otherwise satisfy the integer>=1 check — explicitly
+    // blank it so this pins the "missing M" case, not "M present from base".
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: undefined as any }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with a fractional value (M)", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 1.5 }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
+  it("rejects a BUY_N_GET_M with value (M) < 1", async () => {
+    await expect(
+      service.create({ ...base, type: "BUY_N_GET_M", minQty: 5, value: 0 }),
+    ).rejects.toThrow(/free quantity \(value\)/);
+  });
+
   it("rejects a CATEGORY scope without a category", async () => {
     await expect(service.create({ ...base, scope: "CATEGORY" })).rejects.toThrow(
       /require a category/,
@@ -72,6 +121,102 @@ describe("PromotionsService", () => {
     await expect(service.create({ ...base, endsAt: "2026-07-01T00:00:00Z" })).rejects.toThrow(
       /endsAt must be after startsAt/,
     );
+  });
+
+  // ─── Zero-price guard (2026-08-20 incident) ────────────────────────────────
+  // A FIXED amount larger than a product's selling-unit price bills that product
+  // at $0.00 (pricing.ts floors the net at 0). The write is refused unless the
+  // operator explicitly confirms it.
+  describe("zero-price guard", () => {
+    const catalog = [
+      { id: "p1", name: "Lighter 5-pack", category: "Novelty", pricePerUnit: "4.50" },
+      { id: "p2", name: "Soda 24-case", category: "Beverages", pricePerUnit: "35.00" },
+      { id: "p3", name: "Cigar box", category: "Tobacco", pricePerUnit: "120.00" },
+    ];
+    const fixed = { ...base, type: "FIXED" as const, value: 35 };
+
+    beforeEach(() => {
+      prisma.product.findMany.mockResolvedValue(catalog);
+    });
+
+    it("refuses a FIXED promotion that would sell in-scope products for $0.00", async () => {
+      await expect(service.create({ ...fixed })).rejects.toThrow(BadRequestException);
+      expect(prisma.promotion.create).not.toHaveBeenCalled();
+    });
+
+    it("names the count, the denominator and examples on the 400", async () => {
+      const err = await service.create({ ...fixed }).catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      const body = err.getResponse();
+      expect(body).toMatchObject({
+        code: "PROMOTION_ZERO_PRICE",
+        zeroPriceCount: 2, // $4.50 and $35.00 — the $120 box survives
+        inScopeCount: 3,
+        examples: ["Lighter 5-pack", "Soda 24-case"],
+      });
+      expect(body.message).toContain("2 products in scope");
+      // Only ACTIVE products are scanned — an archived product cannot be sold.
+      expect(prisma.product.findMany.mock.calls[0][0].where).toMatchObject({ isActive: true });
+    });
+
+    it("allows the same rule once the operator confirms with allowZeroPrice", async () => {
+      await service.create({ ...fixed, allowZeroPrice: true });
+      expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+      // The confirmation is NOT persisted — it is a guard flag, not a rule field.
+      expect(prisma.promotion.create.mock.calls[0][0].data).not.toHaveProperty("allowZeroPrice");
+      // Confirmed writes skip the catalogue scan entirely.
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+    });
+
+    it("allows a FIXED promotion scoped away from the cheap products", async () => {
+      prisma.product.findMany.mockResolvedValue([catalog[2]]);
+      await service.create({ ...fixed, scope: "PRODUCTS", productIds: ["p3"] });
+      expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+      // The scope is pushed into SQL so a big catalogue is not read whole.
+      expect(prisma.product.findMany.mock.calls[0][0].where).toMatchObject({ id: { in: ["p3"] } });
+    });
+
+    it("never scans the catalogue for an ordinary percentage rule", async () => {
+      await service.create({ ...base, type: "PERCENT", value: 15 });
+      expect(prisma.product.findMany).not.toHaveBeenCalled();
+      expect(prisma.promotion.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("catches a 100%-off rule as well (the other route to $0.00)", async () => {
+      await expect(service.create({ ...base, type: "PERCENT", value: 100 })).rejects.toThrow(
+        /sell for \$0\.00/,
+      );
+    });
+
+    it("CRITICAL: judges an UPDATE on the MERGED rule, not the patch alone", async () => {
+      // A live ALL-scoped PERCENT promo flipped to "$35 off" arrives with no
+      // scope in the body — the inherited ALL scope is what makes it dangerous.
+      prisma.promotion.findUnique.mockResolvedValue({
+        id: "promo-1",
+        ...base,
+        value: 8,
+        products: [],
+      });
+      await expect(service.update("promo-1", { type: "FIXED", value: 35 })).rejects.toThrow(
+        /sell for \$0\.00/,
+      );
+      expect(prisma.promotion.update).not.toHaveBeenCalled();
+      // The inherited ALL scope means an unfiltered (active-only) scan.
+      expect(prisma.product.findMany.mock.calls[0][0].where).toEqual({ isActive: true });
+    });
+
+    it("re-scopes an existing FIXED promo without re-confirming when nothing zeroes", async () => {
+      prisma.promotion.findUnique.mockResolvedValue({
+        id: "promo-1",
+        ...base,
+        type: "FIXED",
+        value: 35,
+        products: [{ productId: "p1" }],
+      });
+      prisma.product.findMany.mockResolvedValue([catalog[2]]);
+      await service.update("promo-1", { productIds: ["p3"], scope: "PRODUCTS" });
+      expect(prisma.promotion.update).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("findOne 404s a missing promotion", async () => {

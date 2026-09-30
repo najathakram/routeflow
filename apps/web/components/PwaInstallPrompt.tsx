@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Download, X } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
+import { BRAND_MARK_SRC } from "./brand";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -15,7 +16,7 @@ interface BeforeInstallPromptEvent extends Event {
  */
 export function PwaInstallPrompt({
   appName = "RouteFlow",
-  logoSrc = "/logo-buyer.svg",
+  logoSrc = BRAND_MARK_SRC,
   accentClass = "bg-buyer-600 hover:bg-buyer-700",
 }: {
   appName?: string;

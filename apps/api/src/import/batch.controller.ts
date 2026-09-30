@@ -18,9 +18,12 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { BatchImportService } from "./batch-import.service";
 import { CreateBatchDto } from "./dto/create-batch.dto";
 import { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 /**
  * Batch invoice import queue (spec §4). TENANT_ADMIN satisfies @Roles(OPERATOR).
@@ -42,9 +45,15 @@ export class BatchController {
     return this.batch.listBatches();
   }
 
-  /** Scan one invoice (its page files) into the batch queue. */
+  /**
+   * Scan one invoice (its page files) into the batch queue. AI OCR is
+   * entitlement-gated (owner decision 2026-08-28) — OCR_ADDON in
+   * packages/types is the client-side mirror of this key.
+   */
   @Post(":id/scan")
-  @UseInterceptors(FilesInterceptor("files", 20, { limits: { fileSize: 25 * 1024 * 1024 } }))
+  @UseGuards(AddonGuard)
+  @RequireAddon("ocr")
+  @UseInterceptors(FilesInterceptor("files", 20, { limits: uploadLimits(MB(25)) }))
   scan(@Param("id") id: string, @UploadedFiles() files: Express.Multer.File[]) {
     if (!files?.length) throw new BadRequestException("No files uploaded");
     return this.batch.scanAndRecord(

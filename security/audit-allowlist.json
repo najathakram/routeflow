@@ -1,0 +1,4 @@
+{
+  "$schema-note": "Expiring npm-audit allowlist for CI's critical-advisory gate (scripts/ci-audit-critical.mjs). Each entry suppresses ONE GHSA id for ONE package until `expires` (UTC, YYYY-MM-DD) — an entry whose `expires` has passed FAILS the gate even if the advisory no longer appears in that run's audit output, so the list can never rot silently. Every field is required; edit only with owner sign-off.",
+  "entries": []
+}

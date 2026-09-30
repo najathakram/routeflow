@@ -1,0 +1,1650 @@
+{
+  "plan": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+  "mode": "feature",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+    "discovery": ".claude/pipeline/2026-09-10-next-15/discovery.md",
+    "spec": ".claude/pipeline/2026-09-10-next-15/spec.md",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "major",
+  "startedAt": "2026-09-10T05:28:30Z",
+  "estimatedCostUsd": 15.8,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": true,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": true,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 16,
+    "dropped": 2,
+    "votesCast": 18,
+    "firstVoteRefuted": 2,
+    "firstVoteRefutedRate": 0.125,
+    "tieBreaks": 0,
+    "locationChecked": 16,
+    "locationInvalid": 0,
+    "preRefuted": 16,
+    "deferredToFixer": 0,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 0,
+    "corroboratedSkipped": 0
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "npm run check-types -w apps/web",
+      "npm run lint -w apps/web",
+      "npm run check-types -w apps/api",
+      "npm test -w apps/web",
+      "npm test -w apps/api"
+    ],
+    "badCommands": [],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": true,
+      "results": [
+        {
+          "command": "npm run check-types -w apps/web",
+          "pass": true,
+          "summary": "TypeScript type checking completed successfully",
+          "executed": -1
+        },
+        {
+          "command": "npm run lint -w apps/web",
+          "pass": true,
+          "summary": "ESLint completed with warnings (react-hooks/exhaustive-deps, @next/next/no-img-element, jsx-a11y/role-has-required-aria-props), exit code 0",
+          "executed": -1
+        },
+        {
+          "command": "npm run check-types -w apps/api",
+          "pass": true,
+          "summary": "TypeScript type checking completed successfully",
+          "executed": -1
+        },
+        {
+          "command": "npm test -w apps/web",
+          "pass": true,
+          "summary": "All tests passed: 54 test suites, 485 tests",
+          "executed": 485
+        },
+        {
+          "command": "npm test -w apps/api",
+          "pass": true,
+          "summary": "All tests passed: 263 test suites, 4409 tests",
+          "executed": 4409
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+        ".claude/pipeline/2026-09-10-next-15/discovery.md",
+        ".claude/pipeline/2026-09-10-next-15/spec.md",
+        ".claude/pipeline/2026-09-10-next-15/test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "line": 1,
+          "severity": "minor",
+          "summary": "next.config.mjs file line count is incorrect",
+          "detail": "In (artifact) discovery.md: Artifact claims '118 lines, full read' but apps/web/next.config.mjs actually contains 123 lines",
+          "fixComplexity": "mechanical",
+          "phase": "Baseline"
+        },
+        {
+          "file": "(artifact)",
+          "line": 25,
+          "severity": "major",
+          "summary": "jest.config.js React skew hack line range is severely understated",
+          "detail": "In (artifact) discovery.md: Artifact claims the hack exists at 'lines 16-33' but the moduleNameMapper block containing the `^react$` entry starts at line 28 and extends through line 60, with the React skew hack comment at lines 30-54 and the actual `^react$` entry at line 55. The claimed range 16-33 is far too narrow to include the actual hack that needs deletion.",
+          "fixComplexity": "mechanical",
+          "phase": "Baseline"
+        },
+        {
+          "file": "(artifact)",
+          "line": 115,
+          "severity": "major",
+          "summary": "jest.config.js moduleNameMapper deletion line range is incorrect",
+          "detail": "In (artifact) build-plan.md: Artifact claims to delete 'lines ~28-40' for the React skew hack, but the `^react$` entry that needs deletion is on line 55, and the entire React skew hack block (comment + mappings) extends from line 30 to line 60. The range ~28-40 would not capture the actual entry to be deleted.",
+          "fixComplexity": "mechanical",
+          "phase": "Baseline"
+        },
+        {
+          "file": "(artifact)",
+          "line": 156,
+          "severity": "minor",
+          "summary": "Web Jest test file count is outdated",
+          "detail": "In (artifact) build-plan.md: Artifact claims 'web Jest (50 files)' but apps/web actually contains 54 Jest test files (.test.ts and .test.tsx). This count is corrected in test-plan.md §0.",
+          "fixComplexity": "mechanical",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-next-15/discovery.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-next-15/spec.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/next-version.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/no-react-skew-hacks.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/client-page-params.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/audit-allowlist-retired.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/package.json",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "package-lock.json",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/Dockerfile",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/jest.config.js",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/next.config.mjs",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/invoices/[id]/edit/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/credit-notes/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/estimates/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/orders/[id]/page.tsx",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/drivers/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/products/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/web/app/(dashboard)/finance/expenses/page.tsx",
+        "status": "planned",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "security/audit-allowlist.json",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/common/ci-audit-script.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "npm run check-types -w apps/web",
+      "npm run lint -w apps/web",
+      "npm run check-types -w apps/api",
+      "npm test -w apps/web",
+      "npm test -w apps/api"
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+      ".claude/pipeline/2026-09-10-next-15/discovery.md",
+      ".claude/pipeline/2026-09-10-next-15/spec.md",
+      ".claude/pipeline/2026-09-10-next-15/test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 16,
+    "low": 17
+  },
+  "fixRouting": {
+    "mechanical": 1,
+    "sonnetDesigned": 0,
+    "judgment": 12
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-opus-5",
+        "fallback": true,
+        "actions": {
+          "fix": 20,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 5,
+          "sonnet": 7,
+          "opus": 8
+        },
+        "waves": [
+          [4, 7, 9, 12, 8, 10, 11, 16, 17],
+          [5, 6, 13, 14, 15, 18],
+          [0, 1, 2, 3, 19]
+        ],
+        "note": "Round 1 fixes all 20 findings: none disputed, none deferred. Wave 1 covers code and tests. #4 clears the red-gate blocker by removing the always-green no-dead-deps React pin, and also makes the Dockerfile check scan backslash-joined logical lines. #7 and #9 harden T3 with a tree-wide server-page Promise rule, a real next/navigation import check, and widened client destructure patterns; the matcher fixtures sit inside the red-at-base it-block, so the blocker class does not recur. #12 moves the four cross-workspace specs into the repo-truth lane with hashed turbo inputs, per L-062. #10 makes the bookkeeping page test prove the useParams id reaches useTransaction. #11 ties T6's exit 1 to the gate's own ::error:: line. #8 rewords the images pin as defence in depth. #16 deletes the dead .eslintrc.json after a grep precondition. #17 documents Next 15's auto-written tsconfig target. Wave 2 holds the apps/web/package.json cluster. On ESLint (#5, #6, #14, #15), the ESLint 9 move is kept but formalised: R6 rested on a false premise, the live rule set equals master's, and lint is green, so the spec, plan, rollback list and PR-body deviations are amended instead of deleting the repo-convention flat config. On #13, the hoisted react goes back to master's 19.2.5, which satisfies ^19.2.0 so T2 is unaffected. That way apps/api's PDF rendering and mobile's react-test-renderer pairing do not move, and the executor must report designMismatch rather than hand-edit the lockfile. #18 only verifies #4's deletion. Wave 3 fixes the stale planning-doc text (#0 to #3, #19). Doc edits are ordered across waves so no two executors write build-plan.md or test-plan.md at the same time."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-opus-5",
+        "fallback": true,
+        "actions": {
+          "fix": 2,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 0,
+          "opus": 2
+        },
+        "waves": [[1], [0]],
+        "note": "Round 2 fixes both findings in two waves. Wave 1 (#1) repairs the verification environment without touching source. The identical `@routeflow/pricing` resolution failure in web and api points to an unbuilt pricing dist or a workspace symlink lost in round 1's install/restore churn. The fix is a diagnostic ladder: turbo-build pricing, restore the workspace link, fall back to `npm ci` (never `npm install`), then re-run both check-types gates. Any genuine Next 15 / React 19 type errors that appear get reported, not patched. Wave 2 (#0) runs only once the tree is healthy. It re-decides the react-hoist finding with the executor's report in hand. The root move to 19.3.0 is accepted, because npm cannot hold 19.2.5 without breaking T2, splitting react placement, or reaching mobile through overrides. In return, the api's PDF path must be proven by an unmocked invoice and statement render (Jest spec, or a dist-based `smoke:pdf` script if the ESM package won't load under Jest). build-plan.md and the PR body must also state the api runtime effect, the fresh api build needed in the landing window (a plain redeploy is not enough), and the api-specific rollback step. package-lock.json and web's ^19.2.0 ranges do not change this round."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": [
+    "correctness",
+    "spec-compliance",
+    "test-quality",
+    "edge-cases-and-security",
+    "operability",
+    "scope-coverage"
+  ],
+  "radiusPack": {
+    "built": false,
+    "truncated": false,
+    "files": [],
+    "skipped": "feature-mode"
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": false,
+    "issues": [],
+    "skipped": "feature-mode",
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": [
+          "apps/api/src/common/next-version.spec.ts",
+          "apps/api/src/common/no-react-skew-hacks.spec.ts",
+          "apps/api/src/common/client-page-params.spec.ts"
+        ],
+        "deviations": "None. All three files in the package brief (T1/T2/T3) were authored exactly at the specified paths; no other files were touched (a fourth untracked file, apps/api/src/common/audit-allowlist-retired.spec.ts, already existed from a sibling package — T6 — and was left untouched)."
+      },
+      {
+        "package": "TP2",
+        "status": "done",
+        "filesChanged": ["apps/api/src/common/audit-allowlist-retired.spec.ts"],
+        "deviations": "None. Wrote exactly one test (single `it`, matching the plan's single \"Then:\"/\"Oracle:\"/\"Red today:\" bundle for T6) covering both halves: (1) security/audit-allowlist.json's `entries` deep-equals `[]`, and (2) running the real scripts/ci-audit-critical.mjs gate with CI_AUDIT_CMD stubbed to a self-created clean-audit fixture (no network) exits 0, stdout contains \"advisories: critical=0\", and stdout contains neither \"ALLOWLISTED\" nor \"all critical advisories are allowlisted\". did not touch apps/api/src/common/ci-audit-script.spec.ts (P7's file) or security/audit-allowlist.json (implementation's file) — confirmed via git status only the new spec file is untracked/changed."
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "structural",
+    "properlyRed": false,
+    "structurallyRed": false,
+    "behaviorallyRed": false,
+    "attempts": 2,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "dependencies.next is exactly \"15.5.25\" — apps/api/src/common/next-version.spec.ts:35",
+            "outcome": "assertion-failure",
+            "note": "Failed on its own T1 oracle: Expected \"15.5.25\", Received \"14.2.35\" (confirmed against apps/web/package.json:44)."
+          },
+          {
+            "test": "devDependencies[\"eslint-config-next\"] is exactly \"15.5.25\" — next-version.spec.ts:40",
+            "outcome": "assertion-failure",
+            "note": "Expected \"15.5.25\", Received \"14.2.35\" (apps/web/package.json:69). Own oracle."
+          },
+          {
+            "test": "optionalDependencies[\"@next/swc-win32-x64-msvc\"] major version is 15 — next-version.spec.ts:45",
+            "outcome": "assertion-failure",
+            "note": "Expected 15, Received 14 (\"^14.2.33\", apps/web/package.json:56). Oracle is looser than spec R1 (^15.5.25): any major-15 range would satisfy it, but it does fail on its own value today."
+          },
+          {
+            "test": "majorOf() parses a caret range and a bare version identically (fixture sanity) — next-version.spec.ts:51",
+            "outcome": "passed",
+            "note": "STRUCTURAL: vacuous/tautological — it asserts only the spec file's own helper against inline literals, touches no repo state, and passes before and after implementation."
+          },
+          {
+            "test": "apps/web/Dockerfile no longer force-installs react@18 — no-react-skew-hacks.spec.ts:25",
+            "outcome": "assertion-failure",
+            "note": "Offender list vs []: [\"apps/web/Dockerfile:48: RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1\"]. Its own concrete value."
+          },
+          {
+            "test": "apps/web/jest.config.js moduleNameMapper has no \"^react$\" key — no-react-skew-hacks.spec.ts:37",
+            "outcome": "assertion-failure",
+            "note": "Offender list vs []: [\"apps/web/jest.config.js:55: \\\"^react$\\\": \\\"<rootDir>/node_modules/react\\\",\"]. Distinct value from the Dockerfile test."
+          },
+          {
+            "test": "apps/web/package.json dependencies.react satisfies \"^19.2.0\" — no-react-skew-hacks.spec.ts:49",
+            "outcome": "assertion-failure",
+            "note": "Expected \"^19.2.0\", Received \"^18\" (apps/web/package.json:45)."
+          },
+          {
+            "test": "apps/web/package.json dependencies[\"react-dom\"] satisfies \"^19.2.0\" — no-react-skew-hacks.spec.ts:54",
+            "outcome": "assertion-failure",
+            "note": "Expected \"^19.2.0\", Received \"^18\" (apps/web/package.json:47)."
+          },
+          {
+            "test": "regression guard: apps/mobile's own React 19 pin is untouched — no-react-skew-hacks.spec.ts:59",
+            "outcome": "passed",
+            "note": "STRUCTURAL: the behavior already exists — apps/mobile/package.json:60 pins \"react\": \"19.2.0\". A legitimate regression guard, but it does not belong in red-gate scope."
+          },
+          {
+            "test": "sanity: the walk actually found page.tsx files to scan — client-page-params.spec.ts:82",
+            "outcome": "passed",
+            "note": "STRUCTURAL: vacuous scaffolding assertion (pageFiles.length > 0); passes before and after implementation."
+          },
+          {
+            "test": "baseline oracle: today there are exactly 18 stale prop-destructure sites across 17 Client Component files — client-page-params.spec.ts:86",
+            "outcome": "passed",
+            "note": "STRUCTURAL and INVERTED: it pins the pre-fix defect count (18/17) and therefore MUST go red the moment R3 is implemented (clientSites.length becomes 0). It makes the later green gate unreachable."
+          },
+          {
+            "test": "no Client Component page.tsx destructures the params/searchParams prop directly — client-page-params.spec.ts:99",
+            "outcome": "assertion-failure",
+            "note": "Offender list vs []: 18 real file:line sites across 17 files, including customers/[id]:1902 and :4286 — matches the test plan's §0 site-count correction."
+          },
+          {
+            "test": "every Client Component page.tsx under a dynamic route segment imports useParams from next/navigation — client-page-params.spec.ts:108",
+            "outcome": "assertion-failure",
+            "note": "Offender list vs []: 17 files. Distinct oracle from the destructure test (import presence, file-level)."
+          },
+          {
+            "test": "regression guard: already-converted dynamic-route client pages keep their useParams import (suppliers/[id]) — client-page-params.spec.ts:121",
+            "outcome": "passed",
+            "note": "STRUCTURAL: the behavior already exists — suppliers/[id] already uses useParams and has no destructure site. Valid guard, wrong scope for a red gate."
+          },
+          {
+            "test": "the Server Component reading searchParams (finance/expenses redirect) awaits it before use — client-page-params.spec.ts:131",
+            "outcome": "assertion-failure",
+            "note": "Fails at line 144 (PROMISE_WRAPPED false vs true) — but the oracle is BROKEN: I probed both regexes with node against candidate conversions. Idiomatic inline `{ searchParams }: { searchParams: Promise<...> }` gives PROP sites=1 but PROMISE_WRAPPED=false (still red); a `type Props = { searchParams: Promise<...> }` conversion gives sites=0, so line 143 (toBeGreaterThan(0)) goes red instead. Only the incorrect annotation `({ searchParams }: Promise<...>)` satisfies both. No correct implementation turns this test green."
+          },
+          {
+            "test": "next.config.mjs no longer declares experimental.serverComponentsExternalPackages (R4) — client-page-params.spec.ts:148",
+            "outcome": "assertion-failure",
+            "note": "Expected false, Received true; confirmed apps/web/next.config.mjs:43-46 still declares experimental.serverComponentsExternalPackages: []."
+          },
+          {
+            "test": "findDestructureSites() flags a params-prop fixture and ignores an unrelated destructure — client-page-params.spec.ts:155",
+            "outcome": "passed",
+            "note": "STRUCTURAL: tautological — asserts the spec file's own detector against three inline strings; passes independently of any implementation."
+          },
+          {
+            "test": "T6 (R7): the allowlist is retired to empty, and a clean audit run through the real gate exits 0 without ever suppressing anything — audit-allowlist-retired.spec.ts:46",
+            "outcome": "assertion-failure",
+            "note": "Fails on its own value at line 50: parsed.entries vs [] with the two real GHSA entries (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4). The three behavioural assertions after it never execute today, and I verified they are non-discriminating: running scripts/ci-audit-critical.mjs with the same clean stub while the allowlist is STILL populated already gives exit 0, stdout \"advisories: critical=0 (level=critical) — no critical production advisories\", and no ALLOWLISTED line."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: 6 of the 18 new tests PASS, so the suite is not structurally red — next-version.spec.ts:51, no-react-skew-hacks.spec.ts:59, client-page-params.spec.ts:82, :86, :121, :155.",
+          "STRUCTURAL: client-page-params.spec.ts:86 'baseline oracle' pins the PRE-FIX defect count (expect(clientSites.length).toBe(18) / filesTouched.size 17). It passes today and is guaranteed to FAIL after R3 is implemented — an inverted test that makes the later green gate unreachable.",
+          "STRUCTURAL: three passing tests are vacuous/tautological rather than statements about the repo — next-version.spec.ts:51 (majorOf on inline literals), client-page-params.spec.ts:82 (pageFiles.length > 0), client-page-params.spec.ts:155 (the detector against inline fixture strings). They can never fail for any implementation.",
+          "STRUCTURAL: two passing tests assert behavior that ALREADY exists, so they carry no red signal — no-react-skew-hacks.spec.ts:59 (apps/mobile already pins react 19.2.0) and client-page-params.spec.ts:121 (suppliers/[id] already uses useParams). Both are legitimate regression guards in the wrong file for a red gate.",
+          "BEHAVIORAL: client-page-params.spec.ts:131 (finance/expenses Server Component) has an unsatisfiable oracle. Verified by node probe: PROMISE_WRAPPED (/\\{\\s*(?:params|searchParams)\\s*,?\\s*\\}\\s*:\\s*Promise</) does not match the idiomatic `{ searchParams }: { searchParams: Promise<...> }` shape (line 144 stays red), while a `type Props` conversion drops PROP_DESTRUCTURE to 0 sites (line 143 goes red). Only a wrong annotation `({ searchParams }: Promise<...>)` satisfies both, so this test will either block a correct fix or push the implementer to a bogus signature.",
+          "BEHAVIORAL: audit-allowlist-retired.spec.ts:46 — only its first assertion (parsed.entries === []) is discriminating for R7. I ran the real gate with the same clean stub while the allowlist is still populated: exit 0, stdout contains 'advisories: critical=0', no 'ALLOWLISTED'. All three behavioural assertions therefore already hold with a FULL allowlist, so they will pass for the wrong reason and prove nothing about retirement.",
+          "BEHAVIORAL: next-version.spec.ts:45 asserts only major === 15 for @next/swc-win32-x64-msvc, weaker than spec R1's ^15.5.25 — a stale ^15.0.0 pin would satisfy it (it does still fail today on 14 vs 15).",
+          "BEHAVIORAL: four of the twelve assertion failures share the same shape 'offender list vs []' (no-react-skew-hacks Dockerfile/jest.config, client-page-params destructure/useParams). Each printed a DIFFERENT concrete offender list, so they are not one wiring failure repeated — recorded here only so the mutation probe confirms each turns red independently (test plan §6 covers T1/T2/T3/T6, but not the Dockerfile-vs-jest.config split within T2 or next.config.mjs within T3)."
+        ]
+      },
+      {
+        "attempt": 2,
+        "ran": true,
+        "structurallyRed": false,
+        "behaviorallyRed": false,
+        "properlyRed": false,
+        "tests": [
+          {
+            "test": "dependencies.next is exactly \"15.5.25\" — apps/api/src/common/next-version.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Own oracle: Expected \"15.5.25\" / Received \"14.2.35\". NOTE: the runner output I was handed (attempt 2) does NOT match the files on disk — its client-page-params failures name tests (\"operator/routes/page.tsx uses searchParams from props\") that do not exist in the current file, so the specs were rewritten after that run. Every outcome below comes from my own re-run: `npm test -w apps/api -- next-version no-react-skew-hacks client-page-params audit-allowlist-retired --verbose` → Test Suites 4 failed / 4 total, Tests 13 failed / 13 total."
+          },
+          {
+            "test": "devDependencies[\"eslint-config-next\"] is exactly \"15.5.25\" — next-version.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected \"15.5.25\" / Received \"14.2.35\". Reads apps/web/package.json via fs; no imports to break."
+          },
+          {
+            "test": "optionalDependencies[\"@next/swc-win32-x64-msvc\"] is exactly \"^15.5.25\" — next-version.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected \"^15.5.25\" / Received \"^14.2.33\". Stricter than the plan's stated oracle (plan §2 T1 says \"major 15\" for the SWC binary); the test's own comment justifies the tightening. Red either way, but brittle: a later patch bump to 15.5.26 would fail it."
+          },
+          {
+            "test": "apps/web/Dockerfile no longer force-installs react@18 for the production build — no-react-skew-hacks.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected [] / Received [\"apps/web/Dockerfile:48: RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1\"] — a concrete, file:line-specific offender list."
+          },
+          {
+            "test": "apps/web/jest.config.js moduleNameMapper has no \"^react$\" key — no-react-skew-hacks.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected [] / Received [\"apps/web/jest.config.js:55: \\\"^react$\\\": \\\"<rootDir>/node_modules/react\\\",\"]. (Plan §2 T2 says \"today lines 28-40\"; actual is line 55 — plan text is stale, the test is right.)"
+          },
+          {
+            "test": "apps/web/package.json dependencies.react satisfies \"^19.2.0\" — no-react-skew-hacks.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected \"^19.2.0\" / Received \"^18\"."
+          },
+          {
+            "test": "apps/web/package.json dependencies[\"react-dom\"] satisfies \"^19.2.0\" — no-react-skew-hacks.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected \"^19.2.0\" / Received \"^18\"."
+          },
+          {
+            "test": "no Client Component page.tsx destructures the params/searchParams prop directly — client-page-params.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected [] / Received 18 concrete file:line sites across 17 files, exactly matching the plan §0 correction (customers/[id] contributes both :1902 and :4286). Carries an anti-vacuity guard (`expect(pageFiles.length).toBeGreaterThan(0)`) so an empty walk cannot read as \"no offenders\"."
+          },
+          {
+            "test": "every Client Component page.tsx under a dynamic route segment imports useParams from next/navigation — client-page-params.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected [] / Received 17 concrete file paths. Has the same walk guard. Weak predicate though: it tests `/\\buseParams\\b/` anywhere in the source, not an import from next/navigation as the test name claims."
+          },
+          {
+            "test": "the Server Component reading searchParams (finance/expenses redirect) awaits it before use — client-page-params.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Fails at :124 on `PROMISE_WRAPPED.test(source)` — Expected true / Received false. The preceding `toBeDefined()` and `isClientComponent(...) === false` assertions pass, so the failure is on the meaningful predicate, but the printed oracle is a bare boolean rather than a value."
+          },
+          {
+            "test": "next.config.mjs no longer declares experimental.serverComponentsExternalPackages (R4) — client-page-params.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected false / Received true. I confirmed next.config.mjs still contains the string. Boolean oracle, but it is precisely the plan's T3(b) oracle."
+          },
+          {
+            "test": "T6 (R7): security/audit-allowlist.json is retired to an empty entries list — audit-allowlist-retired.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected [] / Received the 2 real entries (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4, expires 2026-09-30). Reads the REAL security/audit-allowlist.json, not a fixture copy."
+          },
+          {
+            "test": "T6 (R7): the retired allowlist no longer suppresses a critical next advisory, and a clean audit still exits 0 — audit-allowlist-retired.spec.ts",
+            "outcome": "assertion-failure",
+            "note": "Expected status 1 / Received 0. I verified the exit-0 is caused by real suppression, not by an ignored stub: running the same env by hand (CI_AUDIT_ALLOWLIST + CI_AUDIT_CMD + CI_AUDIT_BACKOFF_MS) printed `npm metadata: critical=1`, `::warning::ALLOWLISTED GHSA-p293-qw3h-jr36 (next) until 2026-09-30 …`, `all critical advisories are allowlisted (expiring)`, EXIT=0. Both env hooks are real (ci-audit-critical.mjs:117, :197). This test is STRONGER than the plan's T6 oracle, which specified only a clean-audit stub — the author added the critical-advisory fixture precisely because a clean stub already exits 0 today and would prove nothing. Documented deviation, and the right one."
+          },
+          {
+            "test": "regression guard: mobile's own React 19 pin is untouched by the apps/web React 19 move — apps/api/src/common/no-dead-deps.spec.ts:114-120",
+            "outcome": "passed",
+            "note": "A FIFTH test file was changed by this stage (` M apps/api/src/common/no-dead-deps.spec.ts` in git status) that is absent from both the brief's \"New/changed test files\" list and the context manifest. This spec is excluded from the default api lane by testPathIgnorePatterns and runs only via `npm run test:repo-truth -w apps/api`, where I confirmed 3 suites / 30 tests PASS — including this new one. Reason it passes: the behavior already exists (apps/mobile pins react ^19), which the author states in the test's own comment (\"the behaviour already holds on master, so it carries no red signal\"). Not vacuous, and not a requirement that needs rewriting — it is an intentional always-green REG pin, and it carries no T#/R# id. It cannot ever be red, so under the gate's rule it is a structural blocker."
+          }
+        ],
+        "blockers": [
+          "STRUCTURAL: apps/api/src/common/no-dead-deps.spec.ts adds one new test (lines 114-120, \"mobile's own React 19 pin is untouched…\") that PASSES today — verified green in the repo-truth lane (30/30). Cause is category two-ish but benign: the behavior already exists on master, so the test carries no red signal by design. It is also an undeclared fifth changed test file (not in the brief's list, not in the context manifest) and carries no T#/R# requirement id. This single passing test is the ONLY reason structurallyRed is false.",
+          "BEHAVIORAL: no behavioral shortfall was found in the 13 red-gate assertions — every one failed on its own distinct expected value (\"14.2.35\" vs \"15.5.25\", \"^18\" vs \"^19.2.0\", 18 named file:line offender sites, the 2 real GHSA entries, gate exit 0 vs 1). There is no stub-undefined uniformity to worry about; behaviorallyRed is reported false only because the schema conditions it on structurallyRed, which the item above fails.",
+          "BEHAVIORAL: wrong-reason risk, client-page-params.spec.ts:96-108 — the test is named \"imports useParams from next/navigation\" but only asserts `/\\buseParams\\b/` appears somewhere in the file. It would go green on a comment mentioning useParams, or a local identifier of that name, with the sync prop still in place.",
+          "BEHAVIORAL: wrong-reason risk, client-page-params.spec.ts PROP_DESTRUCTURE regex (`\\{\\s*(params|searchParams)\\s*,?\\s*\\}\\s*:\\s*\\{\\s*\\1\\b`) — it only matches a destructure that closes immediately after the key. `({ params, ...rest }: { params: {...} })` or `(props: { params: {...} })` + `props.params.id` keep the pre-15 sync prop while the offender list goes empty. The mutation probe in plan §6 (restore the sync prop in returns/[id]/page.tsx) will only catch the exact idiomatic form.",
+          "BEHAVIORAL: wrong-reason risk, no-react-skew-hacks.spec.ts:29 — the Dockerfile check is line-scoped (`/npm install[^\\n]*react@18/`), so splitting the force-install across a backslash continuation satisfies it while the react@18 install survives.",
+          "BEHAVIORAL: brittleness, next-version.spec.ts:41 — asserts the literal `\"^15.5.25\"` for @next/swc-win32-x64-msvc where plan §2 T1's oracle says \"major 15\". Deliberate (the comment explains it rejects a stale ^15.0.0) but it will false-fail on any later 15.5.x patch bump.",
+          "NOTE (not a blocker): the runner output supplied to me as \"attempt 2\" is stale — its client-page-params failures name tests that do not exist on disk, and it omits the two react/react-dom failures. The specs were rewritten after that run. All outcomes above come from my own re-runs in the rf-F25 worktree.",
+          "NOTE (not a blocker): T6 requires `entries: []`, which directly contradicts the currently-GREEN apps/api/src/common/ci-audit-script.spec.ts:740 (`expect(ids).toEqual([\"GHSA-2xp9-vwfh-vxw4\", \"GHSA-p293-qw3h-jr36\"])`) — I confirmed that file passes 30/30 today. Plan §3 and the context manifest both anticipate this as implementation work (package P6), so it is expected, not a defect; but the implementer must edit it or `npm run verify` will be red after the allowlist is emptied."
+        ]
+      }
+    ],
+    "remediation": {
+      "fixed": [
+        "STRUCTURAL blocker 1+3 (next-version.spec.ts:51): deleted the vacuous `majorOf() parses a caret range and a bare version identically (fixture sanity)` block, which asserted the spec file's own helper against inline literals and could never go red. Also resolved the R1-looseness behavioural blocker in the same edit: the `@next/swc-win32-x64-msvc` test now asserts the literal `expect(...).toBe(\"^15.5.25\")` from spec R1 instead of `majorOf(...) === 15` (a stale `^15.0.0` would have satisfied the old oracle), which removed the last use of `majorOf` so the helper is gone entirely. Verified red: Expected \"^15.5.25\", Received \"^14.2.33\".",
+        "STRUCTURAL blocker 4a (no-react-skew-hacks.spec.ts:59): removed `regression guard: apps/mobile's own React 19 pin is untouched by this change` from red-gate scope and re-homed it verbatim in apps/api/src/common/no-dead-deps.spec.ts, directly beside its existing sibling `regression guard: mobile's react-test-renderer pin is untouched by this change`. That file is excluded from the main api jest config and runs in the always-green `test:repo-truth` lane; verified green there (13 passed, including the new `regression guard: mobile's own React 19 pin is untouched by the apps/web React 19 move`). No coverage was lost.",
+        "STRUCTURAL blocker 3 (client-page-params.spec.ts:82): deleted the standalone `sanity: the walk actually found page.tsx files to scan` test and folded `expect(pageFiles.length).toBeGreaterThan(0);` in as the first line of the two offender tests (the destructure test and the useParams-import test), so an empty walk still cannot read as \"no offenders\" without a permanently-green test in the gate.",
+        "STRUCTURAL blocker 2 (client-page-params.spec.ts:86): deleted the inverted `baseline oracle: today there are exactly 18 stale prop-destructure sites across 17 Client Component files` block outright (not inverted to 0 — the offender test already asserts that). It pinned the PRE-FIX defect count and was guaranteed to fail the moment R3 landed, making the later green gate unreachable.",
+        "STRUCTURAL blocker 4b (client-page-params.spec.ts:121): deleted the `regression guard: already-converted dynamic-route client pages keep their useParams import (suppliers/[id])` test. It is fully redundant inside this file rather than merely out of scope: suppliers/[id] is a dynamic-route Client Component, so a regression there would be caught by the useParams-import offender test, and a re-introduced destructure by the destructure offender test.",
+        "STRUCTURAL blocker 3 (client-page-params.spec.ts:155): deleted the `findDestructureSites() flags a params-prop fixture and ignores an unrelated destructure` self-test — a tautology over three inline strings that passes for any implementation.",
+        "BEHAVIORAL blocker 5 (client-page-params.spec.ts:131, the finance/expenses Server Component): fixed the unsatisfiable oracle. `PROMISE_WRAPPED` now matches the ANNOTATION key rather than the destructure — `/\\b(?:params|searchParams)\\s*:\\s*Promise</` — and the `const sites = findDestructureSites(...)` / `expect(sites.length).toBeGreaterThan(0)` pair is gone (it punished a correct hoisted `type Props = { searchParams: Promise<...> }` conversion). Probed with node against three inputs: today's file (PROMISE=false, AWAIT=false → red), the inline `({ searchParams }: { searchParams: Promise<...> })` conversion (true/true) and the `type Props` conversion (true/true). Both idiomatic fixes now turn it green; the bogus `({ searchParams }: Promise<...>)` shape is no longer the only satisfying one. Retained `expect(isClientComponent(source)).toBe(false)` and the `await searchParams` assertion.",
+        "BEHAVIORAL blocker 6 (audit-allowlist-retired.spec.ts): replaced the non-discriminating clean-stub half with a real oracle for R7. The file is now two tests: (a) `security/audit-allowlist.json is retired to an empty entries list` keeping the load-bearing `expect(parsed.entries).toEqual([])`; (b) a new test that runs the REAL gate (`scripts/ci-audit-critical.mjs`, `CI_AUDIT_ALLOWLIST` pointed at the real allowlist, `CI_AUDIT_CMD` at a stub — no network) against a fixture audit reporting one CRITICAL advisory on `next` carrying GHSA-p293-qw3h-jr36, and asserts exit status 1 with no `ALLOWLISTED` / `all critical advisories are allowlisted` text. I probed the gate both ways before writing it: with the allowlist as it stands today the run exits 0 and prints `::warning::ALLOWLISTED GHSA-p293-qw3h-jr36 (next) until 2026-09-30 …`; with `entries: []` the same run exits 1 with `::error::1 critical production advisory(ies) found` and no suppression line. The clean-stub exit-0 assertions are kept as a trailing supplement inside (b) (they run only after the discriminating assertions pass), so R7's literal \"exits 0 with no ALLOWLISTED line\" is still covered without a permanently-green test.",
+        "Re-ran the four specs: `npm test -w apps/api -- --verbose next-version no-react-skew-hacks client-page-params audit-allowlist-retired` → Test Suites 4 failed / 4 total, Tests 13 failed / 13 total, ZERO passed. Every one of the 13 fails on an assertion (no import/setup errors): the three version literals, the two offender-list-vs-[] hack tests, the two react `^19.2.0` pins, the two offender-list-vs-[] page tests, the Server Component PROMISE_WRAPPED (Expected true / Received false), next.config.mjs `serverComponentsExternalPackages` (Expected false / Received true), and the two allowlist tests (entries array vs [], and status Expected 1 / Received 0).",
+        "Confirmed nothing else regressed: full `npm test -w apps/api` → Test Suites 4 failed / 263 passed / 267 total, Tests 13 failed / 4409 passed / 4422 total — the 13 failures are exactly the 13 new red-gate tests. `npm run check-types -w apps/api` clean (tsc --noEmit, no output). `npm run lint -w apps/api` → 0 errors (7477 pre-existing warnings, baseline unchanged); grepping that output for all five touched filenames returns nothing, so my edits introduced no finding. `npx prettier --check` on all five touched files: \"All matched files use Prettier code style!\" (repo formatter is Prettier via the root `prettier.config.js`; no rewrite was needed)."
+      ],
+      "skipped": [
+        {
+          "index": 8,
+          "summary": "BEHAVIORAL: four of the twelve assertion failures share the same shape 'offender list vs []' ... recorded here only so the mutation probe confirms each turns red independently (test plan §6 covers T1/T2/T3/T6, but not the Dockerfile-vs-jest.config split within T2 or next.config.mjs within T3).",
+          "reason": "Not a test-file defect, so there was nothing to edit: the auditor recorded it as coverage bookkeeping for the test plan's §6 mutation-probe matrix, and editing .claude/pipeline/2026-09-10-next-15/test-plan.md is outside this round's remit (test files only). The underlying independence is already evidenced in my run output: the four offender-shaped tests each printed a DIFFERENT concrete list — apps/web/Dockerfile:48 (react@18 install), apps/web/jest.config.js:55 (\"^react$\" mapper), the 18-site params/searchParams destructure list, and the 17-file missing-useParams list — plus next.config.mjs failing separately on Expected false / Received true. The test-plan §6 matrix still needs the T2 Dockerfile-vs-jest.config split and the next.config.mjs (R4) row added by whoever owns that artifact."
+        }
+      ],
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/next-version.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/no-react-skew-hacks.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/client-page-params.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/audit-allowlist-retired.spec.ts",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/no-dead-deps.spec.ts"
+      ]
+    }
+  },
+  "implementation": [
+    {
+      "package": "P1",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/package.json",
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/package-lock.json"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P2",
+      "status": "done",
+      "filesChanged": [
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\web\\Dockerfile",
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\web\\jest.config.js"
+      ],
+      "deviations": "None. Removed the Dockerfile's comment block + `RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1` line (was lines 34-48) and jest.config.js's `^react$`/`^react-dom$`/`^react-dom/(.*)$`/`^react/jsx-runtime$`/`^react/jsx-dev-runtime$` moduleNameMapper entries plus their comment block, exactly as build-plan.md's P2 detail specifies. Kept `\"^@/(.*)$\"`, the campaign reporter, and `testTimeout: 30_000` untouched."
+    },
+    {
+      "package": "P3",
+      "status": "done",
+      "filesChanged": ["apps/web/next.config.mjs"],
+      "deviations": ""
+    },
+    {
+      "package": "P4",
+      "status": "done",
+      "filesChanged": [
+        "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
+        "apps/web/app/(dashboard)/invoices/[id]/edit/page.tsx",
+        "apps/web/app/(dashboard)/credit-notes/[id]/page.tsx",
+        "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx",
+        "apps/web/app/(dashboard)/estimates/[id]/page.tsx",
+        "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
+        "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx",
+        "apps/web/app/(dashboard)/orders/[id]/page.tsx"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P5",
+      "status": "done",
+      "filesChanged": [
+        "apps/web/app/(dashboard)/customers/[id]/page.tsx",
+        "apps/web/app/(dashboard)/drivers/[id]/page.tsx",
+        "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx",
+        "apps/web/app/(dashboard)/products/[id]/page.tsx",
+        "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+        "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P6",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/finance/expenses/page.tsx"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "P7",
+      "status": "done",
+      "filesChanged": [
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\security\\audit-allowlist.json",
+        "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F25\\apps\\api\\src\\common\\ci-audit-script.spec.ts"
+      ],
+      "deviations": ""
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "npm run check-types -w apps/web",
+        "pass": true,
+        "summary": "TypeScript compilation succeeded with no errors",
+        "executed": -1
+      },
+      {
+        "command": "npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint ran with warnings only (no errors); next lint deprecated but functional",
+        "executed": -1
+      },
+      {
+        "command": "npm test -w apps/web",
+        "pass": true,
+        "summary": "Test Suites: 54 passed, 54 total; Tests: 486 passed, 486 total",
+        "executed": 486
+      },
+      {
+        "command": "npm test -w apps/api",
+        "pass": true,
+        "summary": "Test Suites: 263 passed, 263 total; Tests: 4417 passed, 4417 total",
+        "executed": 4417
+      }
+    ]
+  },
+  "buildFix": {
+    "fixed": [
+      "check-types (apps/web) TS2322 x2: apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx still passed a `params` prop to TransactionDetailPage, which now reads its id from `useParams()`. I added the same `jest.mock(\"next/navigation\", () => ({ useParams: () => ({ transactionId: \"txn-1\" }) }))` that finance/payments/[id]/payment-receipt.test.tsx uses, and both renders are now `<TransactionDetailPage />`. Every assertion is unchanged.",
+      "lint (apps/web) 'Invalid Options: Unknown options: useEslintrc, extensions, ...'. Cause, from reading node_modules/next/dist/lib/eslint/runLintCheck.js: Next 15 looks for `eslint.config.*` before `.eslintrc.*`, so it picked the flat config and set useFlatConfig=true, then loaded eslint 8.57.1's FlatESLint. It only removes the legacy options when eslint is 9 or newer. Next 14.2.35 has no flat-config branch at all, so this flat config was never used and `.eslintrc.json` is what was actually enforced. Passing `--config` does not help, because useFlatConfig comes from the discovered filename. Fix: apps/web devDependencies eslint `^8` -> `^9` (same major as api/mobile/ui), and apps/web/eslint.config.mjs cut back to `next/core-web-vitals` (+ the existing no-console warn), which is the rule set actually enforced before. I measured keeping `next/typescript`: 368 new errors. That belongs in its own diff. Deleting the unused flat config would have been the other minimal fix, but it was refused (auto-mode classifier, and the no-delete instruction).",
+      "lint (apps/web) then showed 3 real error sites from `@next/next/no-html-link-for-pages`: app/(auth)/login/page.tsx `<a href=\"/buyer/portal\">`, app/buyer/invite/[token]/page.tsx `<a href=\"/buyer/portal\">`, and app/(dashboard)/inventory/page.tsx `<a href=\"/vendor-bills\">`. They are new with this upgrade: I unpacked @next/eslint-plugin-next@14.2.35, and its rule only matches pages-dir URLs, while 15.5.25 also matches app-router URLs (apps/web has no pages/ dir). Each got a narrow `eslint-disable-next-line @next/next/no-html-link-for-pages` with a comment giving the reason. Runtime behavior is unchanged. Switching to <Link /> would turn these into client-side navigations; the two /buyer/portal links cross into the buyer auth context. The reviewer may want to convert the inventory link in a separate diff.",
+      "npm test -w apps/web: 54/54 suites failed to run with `TypeError: Cannot read properties of undefined (reading 'ReactCurrentDispatcher')` from jest.setup.ts. The hoisted @testing-library/react resolved root node_modules/react-dom@18.3.1, a leftover lockfile entry kept because only open peer ranges (prisma studio-core radix, @expo/metro-runtime) point at it. Meanwhile apps/web had nested react/react-dom 19.3.0. Fixed at the dependency layer with `npx npm@10.8.2 update react react-dom`, using CI's npm; the host npm is 11.9.0, which the earlier installs had used. Root now has a matched react/react-dom 19.3.0 pair, and apps/web's nested copies are gone, so there is one React instance. Mobile keeps its exact nested 19.2.0 pins. I did not bring back a moduleNameMapper, so the T2 no-react-skew-hacks spec still passes, and I added no root overrides.",
+      "Side effects to know about: (1) the `npm install` after the eslint range change moved root eslint 9.39.4 -> 9.39.5 and removed the 19-package eslint-8 subtree; all 9 workspace lint tasks still pass. (2) Next 15 automatically added `\"target\": \"ES2017\"` to apps/web/tsconfig.json and expanded its formatting (this file was already modified before this round). I ran Prettier on it so format:check stays green, and the only diff left is the added target line.",
+      "Evidence, all run by me after the last change: `npm run check-types -w apps/web` exit 0; `npm run lint -w apps/web` exit 0 (0 errors, warnings only); `npm run check-types -w apps/api` exit 0; `npm test -w apps/web` 54/54 suites, 485/485 tests; `npm test -w apps/api` 267/267 suites, 4422/4422 tests. Extra checks: root `npm run check-types` 10/10, root `npm run lint` 9/9, root `npm run test` 5/5 (the last Jest run was the full suite, so the campaign artifacts are fresh), `npm run validate-lock` passed (missing 0, skew 0 new), and `npx npm@10.8.2 ci --dry-run` showed 0 invalid/missing. `npx prettier --check` passes on every file I changed. Not fixed, out of scope: the design hook flagged `broken-image` at login/page.tsx L172 and buyer/invite/[token]/page.tsx L187. Both are existing tenant-logo <img> tags with a runtime-computed src and a documented reason; I judge them false positives and did not touch them."
+    ],
+    "skipped": [],
+    "filesChanged": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/eslint.config.mjs",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/package.json",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/package-lock.json",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(auth)/login/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/buyer/invite/[token]/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/inventory/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/tsconfig.json"
+    ]
+  },
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": true,
+    "targets": 4,
+    "probed": 4,
+    "skippedTargets": [],
+    "results": [
+      {
+        "file": "apps/web/package.json",
+        "kind": "mutation",
+        "defect": "Changed dependencies.next from \"15.5.25\" to \"14.2.35\" in apps/web/package.json (line 44)",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-web-package.json",
+        "preHash": "0ed1a0bc41434c5bc82a88e83e9f37f1617f5a37734614fe7cdf5dd9fb89b5d7",
+        "postHash": "0ed1a0bc41434c5bc82a88e83e9f37f1617f5a37734614fe7cdf5dd9fb89b5d7",
+        "evidence": "FAIL src/common/next-version.spec.ts: \"dependencies.next is exactly \\\"15.5.25\\\"\" failed with expect(received).toBe(expected), Expected: \"15.5.25\", Received: \"14.2.35\" (next-version.spec.ts:30). The other 2 tests passed, so the suite result was 1 failed, 2 passed. After restoring from the temp backup, cmp -s reported the file IDENTICAL to the backup and the sha256 matched the pre-mutation hash. The backup was then deleted. The file still shows as modified (M) in git status, which is the uncommitted work from this pipeline run and was there before the probe.",
+        "fallback": "",
+        "target": "apps/api/src/common/next-version.spec.ts"
+      },
+      {
+        "file": "apps/web/Dockerfile",
+        "kind": "mutation",
+        "defect": "Re-inserted `RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1` at line 52 (just before the `npm run build` step)",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-web-Dockerfile",
+        "preHash": "fcd5f3816cc7cd4dc1990a217420f9c56d467988f601184d6bd2e49157ddc3e9",
+        "postHash": "fcd5f3816cc7cd4dc1990a217420f9c56d467988f601184d6bd2e49157ddc3e9",
+        "evidence": "no-react-skew-hacks.spec.ts: the test \"apps/web/Dockerfile no longer force-installs react@18 for the production build\" failed with expect(received).toEqual(expected). It expected [] and received [\"apps/web/Dockerfile:52: RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1\"] (spec line 34). Result: 1 failed, 3 passed. For the restore, I copied the backup back over the file, the hashes match, `cmp -s` reported IDENTICAL, and then I deleted the backup.",
+        "fallback": "",
+        "target": "apps/api/src/common/no-react-skew-hacks.spec.ts"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/returns/[id]/page.tsx",
+        "kind": "mutation",
+        "defect": "Put back the pre-Next-15 sync prop destructure: `export default function ReturnDetailPage({ params }: { params: { id: string } })` and replaced `const params = useParams();` with `void useParams;` (the import stays, so the file still parses)",
+        "caught": true,
+        "restored": true,
+        "backupPath": "/tmp/mutprobe-returns-id-page.tsx",
+        "preHash": "e59c98ea0e5195e0f6f1387ad4e4c55d696c32ece946a34d5af65a5647a4f406",
+        "postHash": "e59c98ea0e5195e0f6f1387ad4e4c55d696c32ece946a34d5af65a5647a4f406",
+        "evidence": "From apps/api, `npx jest src/common/client-page-params.spec.ts` gave 1 failed and 3 passed. The failing test is \"no Client Component page.tsx destructures the params/searchParams prop directly\". It hit the assertion `expect(labelSites(offenders)).toEqual([])`: expected [] but got [\"apps/web/app/(dashboard)/returns/[id]/page.tsx:316 (params)\"]. My first run from the repo root was not a valid result. It failed with a Babel parse error (collection error, 0 tests) because it did not use the api jest config, so I discarded it and re-ran in the api workspace. The restore was checked with cmp -s against the backup and the result was IDENTICAL. The post-restore hash matches the pre-hash. The backup was then deleted. git status still shows ' M' for this file. That is the pipeline's own uncommitted edit, which was already there when I took the baseline, not something left over from the probe.",
+        "fallback": "",
+        "target": "apps/api/src/common/client-page-params.spec.ts"
+      },
+      {
+        "file": "security/audit-allowlist.json",
+        "kind": "mutation",
+        "defect": "Re-added one valid, unexpired allowlist entry {id: GHSA-p293-qw3h-jr36, package: next, expires 2026-09-30, all required fields present} to the otherwise-empty entries array",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-security-audit-allowlist.json",
+        "preHash": "e4efcc5cd62655f88ab4494bc5062924792d33fda9c1461b20d0fb855293bd6e",
+        "postHash": "e4efcc5cd62655f88ab4494bc5062924792d33fda9c1461b20d0fb855293bd6e",
+        "evidence": "npx jest src/common/audit-allowlist-retired.spec.ts: Tests: 2 failed, 2 total. (1) \"security/audit-allowlist.json is retired to an empty entries list\": expect(parsed.entries).toEqual([]) failed, Expected Array [] / Received Array [ Object { id: \"GHSA-p293-qw3h-jr36\", package: \"next\", ... } ] (spec line 98). (2) \"the retired allowlist no longer suppresses a critical next advisory...\": expect(suppressible.status).toBe(1) failed, Expected: 1 / Received: 0 (spec line 106), meaning the gate really did suppress the advisory. Restore: cp from backup, sha256 matched preHash, and cmp -s reported IDENTICAL, so the backup was deleted. git status still shows ' M security/audit-allowlist.json'. That is this run's uncommitted retirement change (entries: []), which the probe found in place and put back unchanged.",
+        "fallback": "",
+        "target": "apps/api/src/common/audit-allowlist-retired.spec.ts"
+      }
+    ],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": true,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "note": ""
+  },
+  "finalPass": {
+    "ran": true,
+    "completed": true,
+    "skipped": null,
+    "reader": "claude-opus-5",
+    "model": "claude-opus-5",
+    "effort": "xhigh",
+    "fallback": true,
+    "files": [
+      "apps/api/src/common/next-version.spec.ts",
+      "apps/api/src/common/no-react-skew-hacks.spec.ts",
+      "apps/api/src/common/client-page-params.spec.ts",
+      "apps/api/src/common/audit-allowlist-retired.spec.ts",
+      "apps/web/package.json",
+      "package-lock.json",
+      "apps/web/app/(dashboard)/invoices/[id]/page.tsx",
+      "apps/web/app/(dashboard)/invoices/[id]/edit/page.tsx",
+      "apps/web/app/(dashboard)/credit-notes/[id]/page.tsx",
+      "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx",
+      "apps/web/app/(dashboard)/estimates/[id]/page.tsx",
+      "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.tsx",
+      "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx",
+      "apps/web/app/(dashboard)/orders/[id]/page.tsx",
+      "security/audit-allowlist.json",
+      "apps/api/src/common/ci-audit-script.spec.ts"
+    ],
+    "candidates": 6,
+    "gaps": [
+      "Wiring of the repo-truth Jest lane: check whether root `npm run verify`, the turbo `test` pipeline, the pre-push hook and the CI workflow (.github/workflows/*) actually invoke apps/api's `test:repo-truth` / jest.repo-truth.config.js. If none does, the four relocated upgrade guards (client-page-params, no-react-skew-hacks, next-version, audit-allowlist-retired) never run anywhere. Also check whether the recorded 4/4 mutation probe went through that lane or the main one.",
+      "Sibling surfaces of the Next 15 async request APIs that the 8 read [id] pages do not cover: app/**/route.ts handlers (`context.params` is now a Promise), layout.tsx and generateMetadata files that take params, server pages that read the `searchParams` prop, and server components or actions that call `cookies()`/`headers()` from next/headers synchronously.",
+      "The production build path: apps/web/Dockerfile (the `--no-save` react override that no-react-skew-hacks targets) and apps/web/next.config.mjs, checked against Next 15 config-key renames (for example serverComponentsExternalPackages -> serverExternalPackages). The green gate ran only tsc, lint and Jest, and per project memory a host `next build` is not a valid proof; only the compose web image is."
+    ],
+    "secondRead": true,
+    "decision": "All three candidates are kept. #2 is major: after the fix round moved T1/T2/T3/T6 into the repo-truth lane, the recorded final gate (`npm test -w apps/api`) runs none of them. The reader reproduced 'No tests found, exit 1', so a green gate says nothing about the upgrade guards, and the 4/4 mutation-probe result is suspect until it is re-run through jest.repo-truth.config.js. The gate commands in the build-plan and manifest must add `test:repo-truth`. #0 is minor: the policy guard now requires an empty allowlist where R7 asked it to accept one. That leaves the entry-shape and 60-day-window loop dead and the test title stale. The fix is to relax ci-audit-script.spec.ts to \"no next.js GHSA ids\" and let the shape loop run. #1 is minor: untyped `useParams()` removed the type-level check on param keys, so test-plan §4.2(ii)'s check-types premise is false. All 17 current keys are correct, but T3 should pin each key read to its `[segment]` name, and the test plan should drop the claim. These sit on top of the open majors already on file (the web ESLint 8->9 deviation from R6, and the root react 19.3.0 hoist reaching apps/api's PDF runtime), which still need resolving before landing. Coverage has three gaps worth one more read each. First, whether verify, turbo, the pre-push hook and CI actually invoke the repo-truth lane. Second, the Next 15 async-API sibling surfaces: route handlers, layouts and generateMetadata, `searchParams`, and `cookies()`/`headers()`. Third, the production Dockerfile and next.config.mjs build path, which no gate in this run exercised.\nSecond read: All three candidates are real and stay open. #2 is a blocker: spec R8 has never been run. No compose web image was built under Next 15.5.25 / React 19, and neither `/login` nor `local:validate` was checked. Because build-time type and lint errors are ignored and master deploys straight to prod, a green tsc/lint/Jest gate says nothing about whether the production image builds or serves. The PR must not be pushed until `npm run local:up` (compose web build), `local:seed`, `local:validate` and `local:e2e` are green. #0 is major and belongs to the already-open red-gate blocker. The guards run correctly in verify, pre-push and CI, but the pipeline's red-gate and final commands still target the main api lane, which now ignores them, so a re-run red gate there would go falsely RED on \"No tests found\". Point `redGate.commands` and `verifyCommands.final` at `test:repo-truth`, then re-run the red gate and the 4/4 mutation probe against the final guard text before recording that blocker as fixed. #1 is minor doc drift: update docs/testing/lockfile-edges.md §\"Unsatisfied peer ranges\" so it no longer describes the removed React swap and the resolved peer mismatches as load-bearing. The reader produced no findings on the async request-API sibling surfaces or the next.config key renames. Some residual risk remains there, and the compose build plus E2E from #2 is what covers it. This is the final read, so no further gaps are named.",
+    "findings": [
+      {
+        "file": "apps/api/src/common/ci-audit-script.spec.ts",
+        "line": 739,
+        "severity": "minor",
+        "summary": "R7 asked the policy guard to accept an empty allowlist. The change makes it require one, twice: ci-audit-script.spec.ts:739 and audit-allowlist-retired.spec.ts:98. That leaves the per-entry shape and 60-day-window loop at :741 unreachable for any non-empty list, and the test title is stale.",
+        "detail": "Evidence: ci-audit-script.spec.ts:735 is still titled \"parses, carries exactly the two current next.js GHSA ids, and keeps expires within 60 days of ackedOn\". Line 739 is now `expect(parsed.entries).toEqual([])`. The `for (const entry of parsed.entries)` shape and window loop at :741 comes after that assertion. audit-allowlist-retired.spec.ts:98 repeats `expect(parsed.entries).toEqual([])`. Spec R7 says \"update the policy-guard test to accept an empty list\". build-plan P7 claims the loop \"remains the guard against re-adding a malformed entry\". It cannot do that: any non-empty `entries` fails at :739 before the loop runs. The allowlist is the owner-approved safety valve its own $schema-note describes (\"edit only with owner sign-off\"). Failure scenario: a new critical transitive advisory arrives with no upstream fix, and the owner approves a well-formed entry (id, package, reason, expires 30 days out, ackedBy, ackedOn, followUp). Both specs go red with \"Expected [] / Received [ {…} ]\", so the approved change cannot pass `npm run verify` or CI unless two test files are edited too. A malformed entry, such as a 90-day window or a bad date, fails at the same :739 line with the same message, so the shape and window loop never tells a good entry from a bad one. The mutation probe confirms this: it re-added a valid, unexpired entry and got the same failure as a malformed one would. Suggested fix: the policy guard asserts `Array.isArray(parsed.entries)` and keeps the loop (it accepts empty); T6 narrows its permanence check to \"no entry names GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 or package next\" instead of `[]`; the :735 title is renamed.",
+        "fixComplexity": "judgment",
+        "fixHint": "Accept an empty list rather than requiring one: drop the toEqual([]) at :739 (keep Array.isArray and the shape/window loop), make T6 forbid only the two retired next GHSA ids, and fix the stale test title.",
+        "phase": "Final pass",
+        "decision": "Spec R7 asked the policy guard to accept an empty allowlist, but both ci-audit-script.spec.ts:739 and audit-allowlist-retired.spec.ts:98 now require one. That makes the per-entry shape and 60-day-window loop at :741 unreachable for any non-empty list, so it no longer guards a malformed re-add as build-plan P7 claims, and the test title still names the two next.js GHSA ids. Only the first file's assertion needs relaxing (for example, no next.js GHSA ids, then the shape loop). The retired-spec check can stay specific to the next.js ids.",
+        "unadjudicated": false
+      },
+      {
+        "file": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+        "line": 109,
+        "severity": "minor",
+        "summary": "Test-plan §4.2(ii) relies on check-types as \"the real behavioural gate, because a mis-read `params` is a type error\". The claim is false after the conversion: untyped `useParams()` accepts any key. No guard ties the key a page reads to its folder segment, except the bookkeeping render test.",
+        "detail": "This is separate from the known §4.2 render-coverage finding. That one is about which pages have render tests; this one is the type-check premise of item (ii). Evidence: in the installed next 15.5.25, `export declare function useParams<T extends Params = Params>(): T;` (node_modules/next/dist/client/components/navigation.d.ts:80) with `export type Params = Record<string, ParamValue>;` (server/request/params.d.ts:3). The conversion pattern is `const params = useParams(); const id = params.id as string;`, so `params.<anything> as string` compiles. Before the change, the page's own prop annotation (`{ params: { categoryId: string } }`) at least made an undeclared key a type error. T3 (client-page-params.spec.ts) only checks for the sync prop and a `useParams` import; it never compares the key read with the `[segment]` name. I grepped all 17 converted pages, and every key matches its folder today (compliance/[categoryId] reads `params.categoryId`, bookkeeping/[transactionId] reads `params.transactionId`, the rest read `params.id`), so there is no live defect. Failure scenario: a later edit on a money page (orders/[id], invoices/[id], credit-notes/[id], vendor-bills/[id], estimates/[id], finance/commissions/[id]), or a folder rename such as `[id]` to `[orderId]`, leaves the page calling `useOrder(undefined)` / `useInvoice(undefined)`. check-types, lint, T3 and web Jest all stay green, because only bookkeeping/[transactionId]/page.test.tsx asserts the route key reaches the data hook. The typecheck mitigation the test plan describes does not exist for 16 of the 17 pages.",
+        "fixComplexity": "judgment",
+        "fixHint": "Either correct the §4.2(ii) claim, or extend T3: for each dynamic-segment client page, require a `params.<seg>` (or `params[\"<seg>\"]`) read for the innermost `[seg]` in its path, and forbid reads of keys that are not in the path's segments.",
+        "phase": "Final pass",
+        "decision": "Next 15.5.25 types `useParams()` as `Record<string, ParamValue>`, so `params.<anyKey> as string` compiles. The page-prop annotation that used to turn a wrong key into a type error is gone, which makes test-plan §4.2(ii)'s premise that check-types catches a mis-read param false. The reader's grep shows all 17 current keys match their folder segments, so nothing is broken today. The defect is a lost guard on money pages plus a false coverage claim. It is separate from the render-coverage finding already filed. T3 could close it by comparing the key read against the `[segment]` name.",
+        "unadjudicated": false
+      },
+      {
+        "file": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+        "line": 163,
+        "severity": "major",
+        "summary": "The Verification `final` gate is `npm test -w apps/api`. After the fix round moved the four new guards into the repo-truth lane, that command runs none of T1/T2/T3/T6, so the engine's gate record cannot show the red-gate tests passing.",
+        "detail": "Evidence: apps/api/package.json `jest.testPathIgnorePatterns` now lists `client-page-params\\.spec\\.ts$`, `no-react-skew-hacks\\.spec\\.ts$`, `next-version\\.spec\\.ts$` and `audit-allowlist-retired\\.spec\\.ts$`. Only apps/api/jest.repo-truth.config.js's testRegex includes them. Running `npx jest next-version client-page-params` in apps/api (the main-lane config that `npm test -w apps/api` uses) printed \"No tests found, exiting with code 1 … testPathIgnorePatterns … 744 matches … Pattern: next-version|client-page-params - 0 matches\". build-plan.md:162-163 still lists perRound/final as check-types, lint, `npm test -w apps/web` and `npm test -w apps/api`, with no `test:repo-truth`, and the manifest's verification commands have the same gap. So a green final gate from this run says nothing about the upgrade guards. A repeat mutation probe driven through `npm test -w apps/api -- <pattern>` would also count the \"No tests found\" exit 1 as a killed mutant. The original probes (journal entries 77-83) ran `npx jest src/common/<spec>` before the lane move and were genuine. Mitigation already in place: CI runs `npm run verify` (.github/workflows/ci.yml:283), which includes `turbo run … test:repo-truth`. I ran `npx jest -c jest.repo-truth.config.js` in apps/api: 7 suites, 43 tests, all passed. The guards are green now; only the pipeline's own gate list is stale.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Add `npm run test:repo-truth -w apps/api` to the build-plan's perRound/final verification (and to the engine's gate commands for any re-run), and note that the main api lane deliberately excludes these four specs.",
+        "phase": "Final pass",
+        "decision": "The reader ran the main-lane config that `npm test -w apps/api` uses and got 'No tests found … exit 1' for the guard patterns. The fix round had moved T1/T2/T3/T6 into testPathIgnorePatterns and into jest.repo-truth.config.js only, yet the build-plan and manifest final gate never runs test:repo-truth. A green final gate therefore proves nothing about the upgrade guards. Worse, any mutation probe driven through the main lane would read the 'no tests found' exit 1 as a catch, so the '4/4 caught' oracle must be re-run through the repo-truth lane before it is trusted.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/package.json",
+        "line": 147,
+        "severity": "major",
+        "summary": "After the four upgrade guards moved into the repo-truth lane, the pipeline's own red-gate command, its `final` api gate and the recorded mutation-probe command all still use the main api Jest lane, which now skips those specs. Jest then exits 1 with \"No tests found\". The 4/4 mutation evidence also predates the final text of two of the guards.",
+        "detail": "The wiring itself is sound. Root `verify` (package.json:13) runs `turbo run check-types lint test test:repo-truth`, `.husky/pre-push` runs `npm run verify`, and `.github/workflows/ci.yml:283` runs `npm run verify`. I ran `npx jest -c jest.repo-truth.config.js` in apps/api this session: 7 suites and 43 tests passed, including client-page-params, no-react-skew-hacks, next-version and audit-allowlist-retired. So the guards do run pre-push and in CI.\n\nThe gap is in the proof. apps/api/package.json jest.testPathIgnorePatterns (the new entries at about lines 147-150) now excludes all four specs from the main lane. `.claude/pipeline/2026-09-10-next-15/pipeline-args.json` still sets `redGate.commands = [\"npm test -w apps/api -- next-version no-react-skew-hacks client-page-params audit-allowlist-retired\"]` with `expect: \"fail\"`, and `verifyCommands.final` lists only `npm test -w apps/api` for the api (no `test:repo-truth`).\n\nI re-ran the probe agent's recorded command from apps/api this session: `npx jest src/common/next-version.spec.ts` gives `No tests found, exiting with code 1 ... testPathIgnorePatterns ... next-version\\.spec\\.ts$ ... Pattern: src/common/next-version.spec.ts - 0 matches`, exit=1. That leads to three problems:\n(1) The run's recorded `final` green never executed the four guards once they were relocated.\n(2) Any resume or re-run of the red gate (`expect: fail`), or a re-probe through the main lane, reports RED or \"caught\" whatever the source says. A vacuous kill looks exactly like a real one.\n(3) The 4/4 mutation probe (journal wf_815eecf6-fc9 entries 77/79/81/83) ran through the main lane before the relocation. It then collected client-page-params with 4 tests (entry 81: \"1 failed and 3 passed\"). That spec now has 5 tests, including a later tree-wide server-page test. no-react-skew-hacks' Dockerfile check was rewritten to logical-line scanning afterwards (entry 113), and the only proof of the rewrite is \"a JS copy of the logic run by hand, not the Jest spec run against base\". So no Jest run has ever shown the final text of those two guards failing on a mutant.",
+        "fixComplexity": "judgment",
+        "fixHint": "Re-run the four §6 mutation probes through `npm run test:repo-truth -w apps/api` against the current spec text, and record the output. In pipeline-args.json, point redGate/final at the repo-truth lane (for example `npm run test:repo-truth -w apps/api`) so no re-run can pass on \"No tests found\".",
+        "phase": "Final pass",
+        "decision": "The four guards do run in root `verify`, pre-push and CI (43/43 passed in the repo-truth lane), so the shipped wiring is sound. The problem is the run's proof. `redGate.commands` (expect: fail) and `verifyCommands.final` still point at the main api lane, which now ignores these specs. That lane exits 1 with \"No tests found\", which counts as a trivial false RED, and the 4/4 mutation probe predates the final text of two guards. Whoever fixes the open red-gate blocker has to re-run the red gate and the mutation probe through `test:repo-truth` and update pipeline-args, or the blocker will be closed on evidence that proves nothing.",
+        "unadjudicated": false
+      },
+      {
+        "file": "docs/testing/lockfile-edges.md",
+        "line": 156,
+        "severity": "minor",
+        "summary": "The lock-edge runbook still says the removed Dockerfile `npm install --force --no-save react@18.3.1 react-dom@18.3.1` swap is load-bearing, and lists peer mismatches that this change resolves.",
+        "detail": "docs/testing/lockfile-edges.md:156-162 (section \"Unsatisfied peer ranges (4, informational)\") says: `react@19.2.5` against `next`'s `^18.2.0` is \"expected and load-bearing\" because `apps/web/Dockerfile` swaps React at build time with that exact install line, and \"If these two lines ever vanish, check whether that swap is still doing what it should\". It also lists `eslint@9.39.4` against `eslint-config-next`'s `^7 || ^8`.\n\nAll of that is now false in this tree. The Dockerfile diff deletes the swap (old lines 34-48). The lock now has root `node_modules/react` 19.3.0 and `node_modules/react-dom` 19.3.0 with no nested apps/web copy, and next 15.5.25's peer is `^18.2.0 || ... || ^19.0.0`. Root eslint is 9.39.5 against eslint-config-next 15.5.25.\n\n`git grep \"react@18\\|react-dom@18\"` outside node_modules, .claude and the lock finds only this doc (plus unrelated docs/design-package HTML), so this is the one live reference left. The next reader of the validator's peer output will be told to go looking for a Docker swap that no longer exists, and the stated peer count is stale.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Rewrite the two bullets: the React 18/19 skew and the Docker swap were retired by the Next 15 upgrade, and the eslint-config-next peer is now satisfied. Update the count from a fresh `node scripts/validate-lock-edges.mjs` run.",
+        "phase": "Final pass",
+        "decision": "docs/testing/lockfile-edges.md:156-162 still calls the deleted Dockerfile `--no-save react@18.3.1` swap load-bearing. It also lists peer mismatches (react 19 vs next ^18.2.0, eslint 9 vs eslint-config-next ^7||^8) that this change resolves, and it tells readers to check the swap if it vanishes. That could send someone to restore the hack. It is doc drift only, and no-react-skew-hacks would catch a restored swap.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/web/Dockerfile",
+        "line": 32,
+        "severity": "blocker",
+        "summary": "Nothing in this run built the production web image under Next 15.5.25 and React 19. The spec's required R8 proof (the compose web image build, then `/login` returning 200) was not run. The green gate (tsc, lint, Jest) never invokes `next build`.",
+        "detail": "Evidence that the proof has not run: the run journal (`subagents/workflows/wf_815eecf6-fc9/journal.jsonl`) has zero `docker compose` matches. Its five `next build` matches are package.json text and the tsconfig `target` note, not a build run. pipeline-args `verifyCommands` has no build step. Project memory says a host `next build` is not valid evidence.\n\nFailure scenario: the PR lands on tsc/lint/Jest green, Railway builds the web image, and something only `next build` or the standalone server exercises fails. Examples are prerendering static client pages under React 19 SSR, Next 15's bundling of its own React, or standalone tracing. The result is a FAILED web deploy during the public-visibility window, or a broken runtime. `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` are on, so type or lint errors would not stop that build either.\n\nWhat I checked statically, with no concrete breaker found:\n- next.config.mjs has no leftover Next 15 renamed or removed keys: `serverComponentsExternalPackages` is gone, and there are no `outputFileTracing*`, `swcMinify` or `bundlePagesExternals` keys. `turbopack` is a valid top-level key in 15.5.\n- node_modules/next/dist/server/config.js:611-626 sets `outputFileTracingRoot = tracingRoot || turbopack.root || findRootDir`. That gives `/app` in the image, so `.next/standalone/apps/web/server.js` matches the `CMD [\"node\",\"apps/web/server.js\"]`.\n- The lock carries `@next/swc-linux-x64-musl` 15.5.25 for node:20-alpine, and root react/react-dom are both 19.3.0 with no nested web copies.\n- All of apps/web's direct dependencies declare react peer ranges that admit 19.\n\nScope note for the decider (area 2, checked clean): the only route handler, app/api/health/route.ts, is `GET()` with no context argument. None of the 6 layout.tsx files takes `params`. There is no generateMetadata or generateStaticParams, and no `next/headers` import anywhere in apps/web. Of the 18 server page.tsx files, only finance/expenses reads a request prop, and it awaits a `Promise<>` searchParams. sitemap.ts and robots.ts take no arguments. middleware.ts uses only `request.cookies` and `request.headers`, which are unchanged in 15.",
+        "fixComplexity": "judgment",
+        "fixHint": "Before landing, run `docker compose -p routeflow --profile app up -d --build web` in this worktree, then confirm `/login` returns 200 and `/api/health` answers, and attach the output to the PR. Treat that as the landing precondition, not the tsc/lint/Jest green.",
+        "phase": "Final pass",
+        "decision": "Spec R8 (build the compose web image, then `/login` returns 200) is a hard acceptance criterion. The journal has zero `docker compose` runs, and no gate ever invoked `next build`. With `ignoreBuildErrors` and `ignoreDuringBuilds` on, the build is the only proof that Next 15.5.25 + React 19 prerender and standalone tracing work. Master deploys straight to prod with no staging, so a failed web deploy would land during the public-visibility window. Per project memory a host `next build` is not valid evidence, so R8 must run on the compose image, together with `local:validate` and `local:e2e` because this is a UI change.",
+        "unadjudicated": false
+      }
+    ]
+  },
+  "confirmedFindings": [
+    {
+      "file": "(artifact)",
+      "line": 1,
+      "severity": "minor",
+      "summary": "next.config.mjs file line count is incorrect",
+      "detail": "In (artifact) discovery.md: Artifact claims '118 lines, full read' but apps/web/next.config.mjs actually contains 123 lines",
+      "fixComplexity": "mechanical",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(artifact)",
+      "line": 25,
+      "severity": "major",
+      "summary": "jest.config.js React skew hack line range is severely understated",
+      "detail": "In (artifact) discovery.md: Artifact claims the hack exists at 'lines 16-33' but the moduleNameMapper block containing the `^react$` entry starts at line 28 and extends through line 60, with the React skew hack comment at lines 30-54 and the actual `^react$` entry at line 55. The claimed range 16-33 is far too narrow to include the actual hack that needs deletion.",
+      "fixComplexity": "mechanical",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(artifact)",
+      "line": 115,
+      "severity": "major",
+      "summary": "jest.config.js moduleNameMapper deletion line range is incorrect",
+      "detail": "In (artifact) build-plan.md: Artifact claims to delete 'lines ~28-40' for the React skew hack, but the `^react$` entry that needs deletion is on line 55, and the entire React skew hack block (comment + mappings) extends from line 30 to line 60. The range ~28-40 would not capture the actual entry to be deleted.",
+      "fixComplexity": "mechanical",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(artifact)",
+      "line": 156,
+      "severity": "minor",
+      "summary": "Web Jest test file count is outdated",
+      "detail": "In (artifact) build-plan.md: Artifact claims 'web Jest (50 files)' but apps/web actually contains 54 Jest test files (.test.ts and .test.tsx). This count is corrected in test-plan.md §0.",
+      "fixComplexity": "mechanical",
+      "phase": "Baseline"
+    },
+    {
+      "file": "(red-gate)",
+      "severity": "blocker",
+      "phase": "Red gate",
+      "summary": "Red gate never went structurally RED — the new tests are not proven able to fail",
+      "detail": "A test that has never failed proves nothing. Auditor notes: [\"STRUCTURAL: apps/api/src/common/no-dead-deps.spec.ts adds one new test (lines 114-120, \\\"mobile's own React 19 pin is untouched…\\\") that PASSES today — verified green in the repo-truth lane (30/30). Cause is category two-ish but benign: the behavior already exists on master, so the test carries no red signal by design. It is also an undeclared fifth changed test file (not in the brief's list, not in the context manifest) and carries no T#/R# requirement id. This single passing test is the ONLY reason structurallyRed is false.\",\"BEHAVIORAL: no behavioral shortfall was found in the 13 red-gate assertions — every one failed on its own distinct expected value (\\\"14.2.35\\\" vs \\\"15.5.25\\\", \\\"^18\\\" vs \\\"^19.2.0\\\", 18 named file:line offender sites, the 2 real GHSA entries, gate exit 0 vs 1). There is no stub-undefined uniformity to worry about; behaviorallyRed is reported false only because the schema conditions it on structurallyRed, which the item above fails.\",\"BEHAVIORAL: wrong-reason risk, client-page-params.spec.ts:96-108 — the test is named \\\"imports useParams from next/navigation\\\" but only asserts `/\\\\buseParams\\\\b/` appears somewhere in the file. It would go green on a comment mentioning useParams, or a local identifier of that name, with the sync prop still in place.\",\"BEHAVIORAL: wrong-reason risk, client-page-params.spec.ts PROP_DESTRUCTURE regex (`\\\\{\\\\s*(params|searchParams)\\\\s*,?\\\\s*\\\\}\\\\s*:\\\\s*\\\\{\\\\s*\\\\1\\\\b`) — it only matches a destructure that closes immediately after the key. `({ params, ...rest }: { params: {...} })` or `(props: { params: {...} })` + `props.params.id` keep the pre-15 sync prop while the offender list goes empty. The mutation probe in plan §6 (restore the sync prop in returns/[id]/page.tsx) will only catch the exact idiomatic form.\",\"BEHAVIORAL: wrong-reason risk, no-react-skew-hacks.spec.ts:29 — the Dockerfile check is line-scoped (`/npm install[^\\\\n]*react@18/`), so splitting the force-install across a backslash continuation satisfies it while the react@18 install survives.\",\"BEHAVIORAL: brittleness, next-version.spec.ts:41 — asserts the literal `\\\"^15.5.25\\\"` for @next/swc-win32-x64-msvc where plan §2 T1's oracle says \\\"major 15\\\". Deliberate (the comment explains it rejects a stale ^15.0.0) but it will false-fail on any later 15.5.x patch bump.\",\"NOTE (not a blocker): the runner output supplied to me as \\\"attempt 2\\\" is stale — its client-page-params failures name tests that do not exist on disk, and it omits the two react/react-dom failures. The specs were rewritten after that run. All outcomes above come from my own re-runs in the rf-F25 worktree.\",\"NOTE (not a blocker): T6 requires `entries: []`, which directly contradicts the currently-GREEN apps/api/src/common/ci-audit-script.spec.ts:740 (`expect(ids).toEqual([\\\"GHSA-2xp9-vwfh-vxw4\\\", \\\"GHSA-p293-qw3h-jr36\\\"])`) — I confirmed that file passes 30/30 today. Plan §3 and the context manifest both anticipate this as implementation work (package P6), so it is expected, not a defect; but the implementer must edit it or `npm run verify` will be red after the allowlist is emptied.\"]. Per-test outcomes: [{\"test\":\"dependencies.next is exactly \\\"15.5.25\\\" — apps/api/src/common/next-version.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Own oracle: Expected \\\"15.5.25\\\" / Received \\\"14.2.35\\\". NOTE: the runner output I was handed (attempt 2) does NOT match the files on disk — its client-page-params failures name tests (\\\"operator/routes/page.tsx uses searchParams from props\\\") that do not exist in the current file, so the specs were rewritten after that run. Every outcome below comes from my own re-run: `npm test -w apps/api -- next-version no-react-skew-hacks client-page-params audit-allowlist-retired --verbose` → Test Suites 4 failed / 4 total, Tests 13 failed / 13 total.\"},{\"test\":\"devDependencies[\\\"eslint-config-next\\\"] is exactly \\\"15.5.25\\\" — next-version.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected \\\"15.5.25\\\" / Received \\\"14.2.35\\\". Reads apps/web/package.json via fs; no imports to break.\"},{\"test\":\"optionalDependencies[\\\"@next/swc-win32-x64-msvc\\\"] is exactly \\\"^15.5.25\\\" — next-version.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected \\\"^15.5.25\\\" / Received \\\"^14.2.33\\\". Stricter than the plan's stated oracle (plan §2 T1 says \\\"major 15\\\" for the SWC binary); the test's own comment justifies the tightening. Red either way, but brittle: a later patch bump to 15.5.26 would fail it.\"},{\"test\":\"apps/web/Dockerfile no longer force-installs react@18 for the production build — no-react-skew-hacks.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected [] / Received [\\\"apps/web/Dockerfile:48: RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1\\\"] — a concrete, file:line-specific offender list.\"},{\"test\":\"apps/web/jest.config.js moduleNameMapper has no \\\"^react$\\\" key — no-react-skew-hacks.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected [] / Received [\\\"apps/web/jest.config.js:55: \\\\\\\"^react$\\\\\\\": \\\\\\\"<rootDir>/node_modules/react\\\\\\\",\\\"]. (Plan §2 T2 says \\\"today lines 28-40\\\"; actual is line 55 — plan text is stale, the test is right.)\"},{\"test\":\"apps/web/package.json dependencies.react satisfies \\\"^19.2.0\\\" — no-react-skew-hacks.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected \\\"^19.2.0\\\" / Received \\\"^18\\\".\"},{\"test\":\"apps/web/package.json dependencies[\\\"react-dom\\\"] satisfies \\\"^19.2.0\\\" — no-react-skew-hacks.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected \\\"^19.2.0\\\" / Received \\\"^18\\\".\"},{\"test\":\"no Client Component page.tsx destructures the params/searchParams prop directly — client-page-params.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected [] / Received 18 concrete file:line sites across 17 files, exactly matching the plan §0 correction (customers/[id] contributes both :1902 and :4286). Carries an anti-vacuity guard (`expect(pageFiles.length).toBeGreaterThan(0)`) so an empty walk cannot read as \\\"no offenders\\\".\"},{\"test\":\"every Client Component page.tsx under a dynamic route segment imports useParams from next/navigation — client-page-params.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected [] / Received 17 concrete file paths. Has the same walk guard. Weak predicate though: it tests `/\\\\buseParams\\\\b/` anywhere in the source, not an import from next/navigation as the test name claims.\"},{\"test\":\"the Server Component reading searchParams (finance/expenses redirect) awaits it before use — client-page-params.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Fails at :124 on `PROMISE_WRAPPED.test(source)` — Expected true / Received false. The preceding `toBeDefined()` and `isClientComponent(...) === false` assertions pass, so the failure is on the meaningful predicate, but the printed oracle is a bare boolean rather than a value.\"},{\"test\":\"next.config.mjs no longer declares experimental.serverComponentsExternalPackages (R4) — client-page-params.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected false / Received true. I confirmed next.config.mjs still contains the string. Boolean oracle, but it is precisely the plan's T3(b) oracle.\"},{\"test\":\"T6 (R7): security/audit-allowlist.json is retired to an empty entries list — audit-allowlist-retired.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected [] / Received the 2 real entries (GHSA-p293-qw3h-jr36, GHSA-2xp9-vwfh-vxw4, expires 2026-09-30). Reads the REAL security/audit-allowlist.json, not a fixture copy.\"},{\"test\":\"T6 (R7): the retired allowlist no longer suppresses a critical next advisory, and a clean audit still exits 0 — audit-allowlist-retired.spec.ts\",\"outcome\":\"assertion-failure\",\"note\":\"Expected status 1 / Received 0. I verified the exit-0 is caused by real suppression, not by an ignored stub: running the same env by hand (CI_AUDIT_ALLOWLIST + CI_AUDIT_CMD + CI_AUDIT_BACKOFF_MS) printed `npm metadata: critical=1`, `::warning::ALLOWLISTED GHSA-p293-qw3h-jr36 (next) until 2026-09-30 …`, `all critical advisories are allowlisted (expiring)`, EXIT=0. Both env hooks are real (ci-audit-critical.mjs:117, :197). This test is STRONGER than the plan's T6 oracle, which specified only a clean-audit stub — the author added the critical-advisory fixture precisely because a clean stub already exits 0 today and would prove nothing. Documented deviation, and the right one.\"},{\"test\":\"regression guard: mobile's own React 19 pin is untouched by the apps/web React 19 move — apps/api/src/common/no-dead-deps.spec.ts:114-120\",\"outcome\":\"passed\",\"note\":\"A FIFTH test file was changed by this stage (` M apps/api/src/common/no-dead-deps.spec.ts` in git status) that is absent from both the brief's \\\"New/changed test files\\\" list and the context manifest. This spec is excluded from the default api lane by testPathIgnorePatterns and runs only via `npm run test:repo-truth -w apps/api`, where I confirmed 3 suites / 30 tests PASS — including this new one. Reason it passes: the behavior already exists (apps/mobile pins react ^19), which the author states in the test's own comment (\\\"the behaviour already holds on master, so it carries no red signal\\\"). Not vacuous, and not a requirement that needs rewriting — it is an intentional always-green REG pin, and it carries no T#/R# id. It cannot ever be red, so under the gate's rule it is a structural blocker.\"}]. Remediation asked for: One structural edit, in apps/api/src/common/no-dead-deps.spec.ts: delete the whole new `it(...)` block at lines 114-120 (`it(\"regression guard: mobile's own React 19 pin is untouched by the apps/web React 19 move\", ...)`) plus its trailing blank line, restoring the file to its committed state — `git -C C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25 checkout -- apps/api/src/common/no-dead-deps.spec.ts` does it exactly, since that block is the file's only uncommitted change (verified with `git diff`). If the mobile React 19 pin guard is wanted, it lands as a separate always-green REG-pin commit after the upgrade PR, not inside a red-gate change set. Nothing else needs editing for structure: the four T-specs are collected by the default `npm test -w apps/api` lane, all 13 assertions ran, and all 13 failed on assertions with distinct concrete oracles. Optional hardening a test author may apply while in there (none required for RED, all from the blockers list): tighten client-page-params.spec.ts:104 from `/\\buseParams\\b/` to a real import check such as `/import\\s*\\{[^}]*\\buseParams\\b[^}]*\\}\\s*from\\s*[\"']next\\/navigation[\"']/`; widen PROP_DESTRUCTURE to also flag `{ params, ...rest }` and a whole-props parameter typed with a non-Promise `params`/`searchParams` key; make the Dockerfile check operate on backslash-joined logical lines; and relax next-version.spec.ts:41 to a `>=15.5.24` semver satisfies check so a patch bump does not false-fail.",
+      "fixHint": "Strengthen the vacuous tests, or rewrite the requirement if the behavior already exists.",
+      "fixComplexity": "judgment"
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 68,
+      "severity": "major",
+      "summary": "`devDependencies.eslint` was bumped from `^8` to `^9`. That contradicts build-plan P1 (\"Leave `eslint` at `^8`\"), spec R6 (\"ESLint stays 8 in web\") and the spec's non-goal \"ESLint 9 for web\", and P1 reported no deviation.",
+      "detail": "Evidence:\n- The diff shows `-\"eslint\": \"^8\"` / `+\"eslint\": \"^9\"`.\n- In the lockfile, `apps/web/node_modules/eslint` 8.57.1 (the nested copy at base) is gone, so apps/web now resolves the root `node_modules/eslint` 9.39.5.\n- The bump was not forced: the lockfile's `eslint-config-next` 15.5.25 declares peer `eslint: \"^7.23.0 || ^8.0.0 || ^9.0.0\"`, so `^8` still satisfies it, as the plan says.\n\nConsequences:\n- apps/web's lint moves from ESLint 8 to ESLint 9 inside a deadline security PR. `apps/web/.eslintrc.json` is still on disk and was apps/web's only live lint config before, but ESLint 9 ignores it.\n- `apps/web/eslint.config.mjs` was rewritten to drop `next/typescript`. That rule-set change is outside the plan and outside its rollback list (the plan's rollback covers package.json, lockfile, next.config, Dockerfile, jest.config, the pages and the allowlist pair only).\n- Devs who read the spec expect web on ESLint 8.\n\n`npm run lint -w apps/web` does pass (exit 0, warnings only), so nothing is broken today. The defect is an unreported change of scope against a stated requirement.",
+      "fixComplexity": "judgment",
+      "fixHint": "Restore `\"eslint\": \"^8\"` in apps/web/package.json, re-run `npm install` in the worktree, then re-check `npm run lint -w apps/web`. The eslint.config.mjs change (which drops `next/typescript`) is only needed if flat config is live under ESLint 8 + Next 15, so either confirm that and keep it with a note, or revert it. If ESLint 9 turns out to be required, get an explicit spec amendment to R6 rather than letting it land silently.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 68,
+      "severity": "major",
+      "summary": "R6 (\"ESLint stays 8 in web\") and the spec's \"ESLint 9 for web\" non-goal are not met: apps/web `eslint` went from `^8` to `^9`, the live lint rule set was edited, and none of the plan documents were amended.",
+      "detail": "`git diff apps/web/package.json` shows `\"eslint\": \"^8\"` → `\"^9\"`. The lockfile drops the nested `apps/web/node_modules/eslint` 8.57.1 (it was present on master) and web now resolves the hoisted 9.39.5. The same fix round also: rewrote `apps/web/eslint.config.mjs` to extend only `next/core-web-vitals` (removing `next/typescript`); added `eslint-disable-next-line @next/next/no-html-link-for-pages` to `(auth)/login/page.tsx`, `inventory/page.tsx` and `buyer/invite/[token]/page.tsx`; and let Next add `\"target\": \"ES2017\"` to `apps/web/tsconfig.json`.\n\nWhere the change came from: P1 did NOT do this. Its report says eslint was left at `^8`. The run journal's gate-fix entry made the change after the perRound lint gate failed with `Invalid Options: Unknown options: useEslintrc, extensions, ...`. That entry explains the cause: Next 15's `next lint` finds `eslint.config.mjs` before `.eslintrc.json`, sets useFlatConfig=true, and only removes the legacy options when ESLint is 9 or newer.\n\nSo R6 as written cannot be delivered unless the flat config is deleted (the fixer says that deletion was refused). But the spec still says R6 \"stays 8\", the non-goals still exclude ESLint 9, the test plan still records R6 as \"no change, no test\", and the build plan still says \"Leave `eslint` at `^8`\". The implementation report handed to review lists only P1–P7, all with no deviations, so anyone reading the plan and the reports would think web is still on ESLint 8.\n\nI confirmed the current state works: `npm run lint -w apps/web` exits 0 (warnings only) under ESLint 9. The legacy `apps/web/.eslintrc.json` is still on disk and is now dead.",
+      "fixComplexity": "judgment",
+      "fixHint": "Pick one. (a) Owner amends R6 and the non-goals so the ESLint 9 move, the eslint.config.mjs rule-set change, the three eslint-disable lines and the tsconfig target become a documented, planned deviation; carry them into the PR body and the rollback list, and delete the dead `.eslintrc.json`. (b) Keep `eslint` at `^8` and instead delete `apps/web/eslint.config.mjs`, so Next 15 falls back to `.eslintrc.json`; then re-run the lint gate to see whether the eslint-disable edits are still needed.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/client-page-params.spec.ts",
+      "line": 120,
+      "severity": "minor",
+      "summary": "T3 claims general R3 coverage for server pages, but its server-side check is hard-coded to finance/expenses/page.tsx, and its \"imports useParams from next/navigation\" check only looks for the bare word.",
+      "detail": "Spec R3 says the static test \"for server pages requires `await` on those props if they are read\", and test-plan T3 says \"a Server Component reading those props must `await` them\". In the spec, the only offender test that walks the tree filters with `isClientComponent(source)`. The server case is a single `filesWithSource.find(... endsWith(\"finance/expenses/page.tsx\"))`.\n\nI walked `apps/web/app/**/page.tsx`: finance/expenses is today's only server page that reads params or searchParams, so nothing is missed now. But a new or regressed Server Component page written as `({ params }: { params: { id: string } })` would pass T3, even though Next 15 hands it a Promise.\n\nSeparately, the plan says a client page must \"import `useParams` from `next/navigation`\", but the test checks `/\\buseParams\\b/.test(source)`. A comment or an import from another module would satisfy it.",
+      "fixComplexity": "judgment",
+      "fixHint": "Apply the sync-prop rule to every non-client page.tsx: any `params`/`searchParams` prop annotation must be `Promise<` and the prop must be awaited. For client pages, match an actual `import { ... useParams ... } from \"next/navigation\"`.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/components/next-config-images.static.test.ts",
+      "line": 4,
+      "severity": "minor",
+      "summary": "Two cross-references still justify the `images.unoptimized` pin by the allowlist entry that R7 just deleted.",
+      "detail": "The header at lines 4-8 says the pin exists because \"the allowlist entry's 'reason' depends on it\". The describe title is \"GHSA-2xp9-vwfh-vxw4 allowlist basis\". `apps/web/next.config.mjs:37-38` tags the `images` block with the same GHSA as its reason.\n\nAfter this diff, `security/audit-allowlist.json` has `\"entries\": []`, so no allowlist entry depends on this config any more. Next 15.5.25 fixes the advisory: I ran `node scripts/ci-audit-critical.mjs` and it exited 0 with `advisories: critical=0`. The pin itself is still reasonable defence in depth. But its stated reason now points to something that no longer exists, so a later reader may either delete the test as obsolete or re-add an allowlist entry to \"restore\" the basis.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Reword the test header, the describe title and the next.config.mjs comment to say the pin is defence in depth now that Next 15.5.25 fixes GHSA-2xp9-vwfh-vxw4 (which retired the allowlist entry), not an allowlist basis.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/client-page-params.spec.ts",
+      "line": 25,
+      "severity": "minor",
+      "summary": "T3's destructure regex only matches the exact single-name `{ params }: { params` shape, and the sync-prop check covers only client pages. Several equivalent stale forms, or a new server page, pass green.",
+      "detail": "I checked PROP_DESTRUCTURE against sample inputs in node. `({ params }: { params: {...} })` matched (true), but these all returned false: `({ params, searchParams }: {...})`, `({ params: { id } }: {...})`, `type Props = { params: { id: string } }; ({ params }: Props)`, and `(props: { params: {...} })`. Offender test (a) also filters to `isClientComponent`, and the server-side check is hard-coded to finance/expenses/page.tsx. So a new or regressed Server Component page using a sync `{ params }: { params: {...} }` prop is never flagged. The §6 mutation probe (restoring the sync `{ params }` on returns/[id]) is caught, but any of the other forms reintroduces the Next 15 sync-param bug with T3 still green. I confirmed no such forms exist in apps/web/app today, so this is a gap in the guard, not a current miss.",
+      "fixComplexity": "judgment",
+      "fixHint": "Match any destructure whose name list contains params/searchParams (including nested destructures), and flag type-alias or `props.params` reads. Also apply the no-sync-prop rule to non-client pages: require `Promise<` on the annotation plus an `await`, rather than hard-coding one server file.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx",
+      "line": 20,
+      "severity": "minor",
+      "summary": "The updated test mocks `useParams` but never checks that the route id reaches the data hook, so a wrong param key on this money page would still pass.",
+      "detail": "The `useTransaction` mock is `() => ({ data: txn, ... })` and ignores its argument. The page does `const transactionId = params.transactionId as string; useTransaction(transactionId)` (page.tsx:134-137). If the P4 conversion read the wrong key (e.g. `params.id`, which gives undefined), `useTransaction(undefined)` would still return the txn fixture and both tests stay green. The build plan flags exactly this for P4 ('A wrong id on these pages shows one tenant's money document in place of another's'), and this is the only co-located test on a converted money page, yet nothing checks that the plumbing works.",
+      "fixComplexity": "judgment",
+      "fixHint": "Make useTransaction a jest.fn and assert it was called with 'txn-1' (the mocked useParams value), or render with a mocked id that differs from txn.id and assert on it.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/audit-allowlist-retired.spec.ts",
+      "line": 106,
+      "severity": "minor",
+      "summary": "T6's critical-advisory case asserts only exit status 1 plus the absence of ALLOWLISTED text, which a crashed or misconfigured gate run would also satisfy.",
+      "detail": "scripts/ci-audit-critical.mjs:589 prints `::error::${criticalRowCount} critical production advisory(ies) found` on a genuine unsuppressed critical. The test never asserts that line, or the GHSA id in the row output. A spawn that dies with a thrown error (node exits 1) or fails at an unrelated ::error:: path (e.g. allowlist parse at :205-250) also gives status 1 and no ALLOWLISTED text, so the 'no longer suppresses' half of R7 can pass for the wrong reason. This is the same false-pass pattern the file's own header comment warns about for the clean stub.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Add `expect(suppressible.stdout).toContain(\"::error::1 critical production advisory(ies) found\")` (and optionally toContain('GHSA-p293-qw3h-jr36')).",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/client-page-params.spec.ts",
+      "line": 1,
+      "severity": "minor",
+      "summary": "The four new upgrade guards (client-page-params, no-react-skew-hacks, next-version, audit-allowlist-retired) sit in apps/api's main Jest lane but read files outside apps/api that the turbo cache key for `@routeflow/api#test` never includes. Under local turbo caching they replay a cached pass instead of re-running when those files regress, which is the failure lesson L-062 already records.",
+      "detail": "Evidence: apps/api/package.json `jest.testPathIgnorePatterns` excludes only docs-truth, no-dead-deps and no-single-schema-path, so the new specs run in the plain `test` task (my `npx jest` run from apps/api picked all four up and passed them). turbo.json's `test` task hashes only `$TURBO_DEFAULT$`, meaning apps/api/** plus `globalDependencies`, which covers package-lock.json and the package.json files. The specs also read apps/web/app/**/page.tsx, apps/web/Dockerfile, apps/web/jest.config.js, apps/web/next.config.mjs, security/audit-allowlist.json and scripts/ci-audit-critical.mjs. None of these are inputs to any task that runs these specs. Nothing under `security/` is hashed anywhere in turbo.json. The root `verify` script (`turbo run check-types lint test test:repo-truth ...`) is what the pre-push hook runs. Failure scenario: a later PR edits only `apps/web/app/(dashboard)/returns/[id]/page.tsx` and brings back `({ params }: { params: { id: string } })`, for example through a merge-conflict resolution. It could equally re-add `RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1` to apps/web/Dockerfile, re-add the `^react$` mapper, re-add `serverComponentsExternalPackages`, or add a new suppression entry to security/audit-allowlist.json. The `@routeflow/api#test` hash does not change, so turbo replays FULL TURBO. client-page-params.spec.ts, no-react-skew-hacks.spec.ts and audit-allowlist-retired.spec.ts report green without running, and the local pre-push gate passes the regression. Only the manifest pins in next-version.spec.ts and the react/react-dom assertions are safe, because apps/*/package.json is in globalDependencies. CI runs cold with no turbo cache, so it still catches the regression; the hole is in the local verify / pre-push gate. The build plan says to model these specs on no-dead-deps.spec.ts, and that model lives in the repo-truth lane for exactly this reason (turbo.json's `test:repo-truth` comment; L-062: \"a tripwire spec reaching outside its own workspace must own a turbo task whose inputs name those files\"). The pre-existing ci-audit-script.spec.ts has the same unhashed read of security/audit-allowlist.json, and this change adds to it.",
+      "fixComplexity": "judgment",
+      "fixHint": "Move the four specs into the repo-truth lane: add them to `jest.repo-truth.config.js`'s `testRegex` and to the main lane's `testPathIgnorePatterns`. Add the paths they read to turbo.json `test:repo-truth.inputs`: `$TURBO_ROOT$/apps/web/Dockerfile`, `$TURBO_ROOT$/apps/web/jest.config.js`, `$TURBO_ROOT$/apps/web/next.config.mjs` and `$TURBO_ROOT$/security/**`; apps/web/app/**, apps/web/package.json and scripts/** are already there. Pin the new inputs in `turbo-inputs.spec.ts` `OUTSIDE_API_PATHS`, and extend its jest-config-split assertions to cover the new specs.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 45,
+      "severity": "major",
+      "summary": "Moving web's react to ^19.2.0 also moves the hoisted root react from 19.2.5 to 19.3.0, which apps/api uses at runtime for its money-document PDFs. The change is not proven by any gate, does not ship with this PR's deploy, and is not covered by the plan's rollback.",
+      "detail": "Lockfile diff against master: node_modules/react 19.2.5 -> 19.3.0. apps/api declares react ^19.2.4 and has no nested copy, so it resolves the root one. apps/api/Dockerfile runs a full `npm ci`, and @react-pdf/renderer 4.9.0 (an apps/api dependency) renders invoice, statement, bookkeeping-invoice and tobacco-report PDFs server-side (invoice-pdf.service.ts, statement-pdf.service.ts, bookkeeping/invoice.service.ts, tobacco-report.service.ts).\n\nNo gate exercises that path. The only spec that touches it, invoice-pdf.service.spec.ts, mocks renderToBuffer to return an empty Buffer; I ran it and it passes 4/4 without rendering anything.\n\nThe api service's railway.toml watchPatterns are [\"apps/api/**\",\"packages/**\"] and package-lock.json is outside them. So merging this PR does not redeploy the API. React 19.3.0 reaches the API image on the next unrelated api deploy.\n\nFailure scenario: an api-only PR weeks later deploys and PDF downloads break or change. At 2am nothing in that PR's diff points at React, and reverting it does not help. The build plan's rollback line (\"Railway redeploys the reverted commit automatically\") is wrong for the API: neither this PR nor its revert triggers an api build.",
+      "fixComplexity": "judgment",
+      "fixHint": "Pick one:\n(a) Keep the root react at 19.2.x so the API runtime does not move. This conflicts with T2's literal \"^19.2.0\" check.\n(b) Force an api redeploy in the same landing window, then run a real (unmocked) renderToBuffer smoke against an invoice and a statement template, locally in the compose api image or post-deploy.\nEither way, state the api-side effect and the api rollback step in the PR and in build-plan.md's Rollback section.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 68,
+      "severity": "major",
+      "summary": "apps/web's eslint was moved from ^8 to ^9. That contradicts R6 (\"ESLint stays 8 in web\") and the spec's non-goal \"ESLint 9 for web\", and P1 reported no deviation.",
+      "detail": "The diff changes devDependencies.eslint from \"^8\" to \"^9\". build-plan.md P1 says \"Leave `eslint` at `^8`\", and eslint-config-next 15.5.25's peer range (\"^7.23.0 || ^8.0.0 || ^9.0.0\") still accepts 8.\n\nThe lockfile side reaches beyond web: it removes apps/web/node_modules/eslint@8.57.1 and its eslintrc-era subtree, bumps the shared root eslint and @eslint/js 9.39.4 -> 9.39.5, and drops the nested @eslint/js from apps/api and packages/eslint-config. The api and packages lint toolchain moves in a web-only security PR.\n\nIt also brought unplanned edits to files outside every package's list:\n- eslint.config.mjs drops next/typescript and is now the live config.\n- apps/web/.eslintrc.json is now dead under ESLint 9 but still present. Anyone who adds a rule there gets silently nothing.\n- New eslint-disable lines in login/page.tsx, inventory/page.tsx and buyer/invite/[token]/page.tsx.\n\nI verified that `npm run lint -w apps/web` and `npm run lint -w apps/api` both exit 0 on this tree, so nothing is red today. The defect is undeclared scope growth in a deadline security PR, against the plan's explicit acceptance line.",
+      "fixComplexity": "judgment",
+      "fixHint": "Either revert to \"eslint\": \"^8\" (re-run npm install in the worktree and re-check web lint), or get an explicit plan amendment for ESLint 9. If 9 stays, delete the dead apps/web/.eslintrc.json and record the root eslint 9.39.5 bump plus the eslint.config.mjs change in the PR body.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/package.json",
+      "line": 68,
+      "severity": "major",
+      "summary": "P1 bumped apps/web `eslint` from `^8` to `^9`, which R6, the non-goals and P1's instructions all forbid, and P1 reported no deviation.",
+      "detail": "`git diff apps/web/package.json` shows `\"eslint\": \"^8\"` → `\"^9\"`. The build plan says \"Leave `eslint` at `^8`\", the spec's R6 and non-goals keep web on ESLint 8, and the test plan records R6 as \"no change, no test\". The lockfile shows the effect: on master apps/web had its own nested `apps/web/node_modules/eslint 8.57.1`; after the change it resolves to the hoisted `node_modules/eslint 9.39.5`. That forced changes in files outside every work package: `eslint.config.mjs` (which Next 15's `next lint` now reads) was edited to drop `next/typescript`, and eslint-disable comments were added to `(auth)/login/page.tsx`, `inventory/page.tsx` and `buyer/invite/[token]/page.tsx`. No test pins R6, so nothing catches this, and the plan's rollback list does not cover these files.",
+      "fixComplexity": "judgment",
+      "fixHint": "Either revert to `\"eslint\": \"^8\"` and regenerate the lockfile (and re-check whether the eslint.config.mjs and eslint-disable edits are still needed), or have the owner amend R6 and the non-goals so the ESLint 9 move and its follow-on edits are a documented, planned part of this PR.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/.eslintrc.json",
+      "line": 1,
+      "severity": "minor",
+      "summary": "Legacy `.eslintrc.json` is left behind as a dead, misleading second lint config now that the flat `eslint.config.mjs` is the live one.",
+      "detail": "The comment added in `apps/web/eslint.config.mjs` says Next 14's `next lint` read `.eslintrc.json`, and that Next 15 picks up the flat config first, so the flat file is now live. `apps/web/.eslintrc.json` (`{\"extends\": \"next/core-web-vitals\"}`) still exists and no package deletes it. A developer who edits it will see no effect, and the two files can drift.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Delete apps/web/.eslintrc.json in this PR, or note it in a planned package alongside the ESLint decision above.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/web/tsconfig.json",
+      "line": 23,
+      "severity": "minor",
+      "summary": "`compilerOptions.target: \"ES2017\"` was added to apps/web/tsconfig.json; no work package or requirement covers it.",
+      "detail": "The diff adds `\"target\": \"ES2017\"`, most likely auto-written by Next 15 tooling during a build or lint. None of P1–P7 lists tsconfig.json, no R# asks for it, and the plan's rollback list leaves it out. It changes what `npm run check-types -w apps/web` type-checks against without anyone having reviewed it.",
+      "fixComplexity": "judgment",
+      "fixHint": "Decide whether to keep it (and add it to a package and the rollback list) or revert it.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/common/no-dead-deps.spec.ts",
+      "line": 114,
+      "severity": "minor",
+      "summary": "A new test was added to no-dead-deps.spec.ts even though no work package or test package lists this file.",
+      "detail": "The diff adds an `it(\"regression guard: mobile's own React 19 pin...\")` block. TP1 and TP2 list only the four new spec files, and P7 lists only ci-audit-script.spec.ts. The test passes today and does no harm, but it is untracked scope: the plan's rollback list and the reviewers' file set don't include it.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Add it to TP1's file list (or drop it if unwanted).",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+      "line": 96,
+      "severity": "minor",
+      "summary": "Test-plan §4.2 overstates direct coverage: of the 17 converted client pages, only bookkeeping/[transactionId] has a Jest test that renders the page. The co-located tests for customers/[id] and products/[id] render sub-components only.",
+      "detail": "§4.2 says \"Only `customers/[id]`, `bookkeeping/[transactionId]` and `products/[id]` have a co-located Jest test\" and counts the gap as \"15 of the 18 touched pages\", which implies 3 pages have direct coverage. In fact:\n- `customers/[id]/ledger-truncation-note.test.tsx` renders only `<LedgerTruncationNote />`.\n- `products/[id]/SalesHistoryCard.test.tsx` renders only `<SalesHistoryCard />`.\n- Neither imports the page, so neither exercises the `useParams()` conversion or customers' two-site wrapper-to-Inner `id` plumbing.\n\nThat leaves `bookkeeping/[transactionId]/page.test.tsx` as the only render-level signal on any conversion. Its `useTransaction` mock ignores its argument, so a wrong param key such as `params.id` would still pass.\n\nThe real coverage of the conversions is T3 (structural) plus check-types. check-types passes: I ran `npm run check-types -w apps/web` and it exited 0.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Correct §4.2 to \"1 of 17 conversions has a render-level test\" and say the customers and products tests do not touch the page component. Optionally make the bookkeeping test assert `useTransaction` was called with the mocked `txn-1` id.",
+      "phase": "Gate & Review"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 4,
+    "Author tests": 0,
+    "Red gate": 1,
+    "Implement": 0,
+    "Gate & Review": 15,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 4,
+      "tokens": 22171,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+      "effort": "low",
+      "estUsd": 0.11,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 42954,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.43,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 1,
+      "tokens": 73177,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 1.83,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 7,
+      "rawFindings": 0,
+      "tokens": 45843,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.46,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 9,
+      "rawFindings": 17,
+      "tokens": 209633,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium",
+      "estUsd": 5.24,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 11,
+      "rawFindings": 0,
+      "tokens": 26929,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 0.67,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 0,
+      "tokens": 8406,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0.21,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 23,
+      "rawFindings": 1,
+      "tokens": 180555,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 4.51,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 7,
+      "rawFindings": 6,
+      "tokens": 93695,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 2.34,
+      "overlappedWith": null,
+      "note": "includes the final full gate (Haiku), which ran beside the final pass"
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-opus-5",
+        "fallback": true,
+        "actions": {
+          "fix": 20,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 5,
+          "sonnet": 7,
+          "opus": 8
+        },
+        "waves": [
+          [4, 7, 9, 12, 8, 10, 11, 16, 17],
+          [5, 6, 13, 14, 15, 18],
+          [0, 1, 2, 3, 19]
+        ],
+        "note": "Round 1 fixes all 20 findings: none disputed, none deferred. Wave 1 covers code and tests. #4 clears the red-gate blocker by removing the always-green no-dead-deps React pin, and also makes the Dockerfile check scan backslash-joined logical lines. #7 and #9 harden T3 with a tree-wide server-page Promise rule, a real next/navigation import check, and widened client destructure patterns; the matcher fixtures sit inside the red-at-base it-block, so the blocker class does not recur. #12 moves the four cross-workspace specs into the repo-truth lane with hashed turbo inputs, per L-062. #10 makes the bookkeeping page test prove the useParams id reaches useTransaction. #11 ties T6's exit 1 to the gate's own ::error:: line. #8 rewords the images pin as defence in depth. #16 deletes the dead .eslintrc.json after a grep precondition. #17 documents Next 15's auto-written tsconfig target. Wave 2 holds the apps/web/package.json cluster. On ESLint (#5, #6, #14, #15), the ESLint 9 move is kept but formalised: R6 rested on a false premise, the live rule set equals master's, and lint is green, so the spec, plan, rollback list and PR-body deviations are amended instead of deleting the repo-convention flat config. On #13, the hoisted react goes back to master's 19.2.5, which satisfies ^19.2.0 so T2 is unaffected. That way apps/api's PDF rendering and mobile's react-test-renderer pairing do not move, and the executor must report designMismatch rather than hand-edit the lockfile. #18 only verifies #4's deletion. Wave 3 fixes the stale planning-doc text (#0 to #3, #19). Doc edits are ordered across waves so no two executors write build-plan.md or test-plan.md at the same time."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/common/client-page-params.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] T3 claims general R3 coverage for server pages, but its server-side check is hard-coded to finance/expenses/page.tsx, and its \"imports useParams from next/navigation\" check only looks for the bare word. -- Fixed per design. The client import check now uses /import\\s*\\{[^}]*\\buseParams\\b[^}]*\\}\\s*from\\s*[\"']next\\/navigation[\"']/. A new it-block, 'no Server Component page.tsx reads params/searchParams without the Next 15 Promise shape', walks every non-client page.tsx that mentions params/searchParams. It flags each non-Promise annotation via SERVER_SYNC_ANNOTATION, and flags the file as file:1 when there is no await/use() of the prop. It has the pageFiles.length > 0 guard. The existing finance/expenses block is unchanged. Verified against HEAD by a scratch script using git show on every HEAD page.tsx: the server block flags only finance/expenses/page.tsx:11 and finance/expenses/page.tsx:1 (never awaited), and the tightened import check flags 17 files. On the current tree, the repo-truth lane has client-page-params.spec.ts PASS.",
+            "[#1] T3's destructure regex only matches the exact single-name `{ params }: { params` shape, and the sync-prop check covers only client pages. Several equivalent stale forms, or a new server page, pass green. -- Fixed per design. PROP_DESTRUCTURE is removed and replaced by the union SYNC_PROP_PATTERNS = [DESTRUCTURE_PARAM, PROPS_READ, PROPS_DESTRUCTURE], using the exact regexes from the design, with per-site file:line counting through findSyncPropMatches/findDestructureSites. At the top of the same it-block, assertions check that the 6 stale forms are flagged and the 3 hook forms are not. The anti-vacuity guard is kept. At HEAD the old pattern found 18 client sites and the new union finds 18, with 0 old sites missing, so the block stays red at base. No current-tree site is flagged, so there is no design mismatch, and the suite is green.",
+            "[#2] The four new upgrade guards (client-page-params, no-react-skew-hacks, next-version, audit-allowlist-retired) sit in apps/api's main Jest lane but read files outside apps/api that the turbo cache key for `@routeflow/api#test` never includes. Under local turbo caching they replay a cached pass instead of re-running when those files regress, which is the failure lesson L-062 already records. -- Fixed per design (L-062). The precondition was confirmed: .github/workflows/ci.yml:283 runs `npm run verify`, and the root verify script includes `turbo run ... test:repo-truth`. Changes: (1) jest.repo-truth.config.js testRegex now lists the 7 specs. (2) apps/api/package.json jest.testPathIgnorePatterns gains the four entries. (3) turbo.json test:repo-truth.inputs gains apps/web/Dockerfile, apps/web/jest.config.js, apps/web/next.config.mjs and security/**. apps/web/app/**, apps/web/package.json and scripts/** were already present, and the `test` task is untouched. (4) turbo-inputs.spec.ts gets the 4 new OUTSIDE_API_PATHS pins, a REPO_TRUTH_SPECS list that the testRegex assertion now iterates over, and an it.each that requires each of the four in the main-lane ignore patterns. (5) test-plan.md needed no change: its only `npm test -w apps/api` command, at line 19, is a generic correction row that names none of the four specs. Results: the repo-truth lane (`npx jest -c jest.repo-truth.config.js`, the same command as `npm run test:repo-truth`) runs 7 suites and 44 tests, all passing. A main-lane `npx jest --listTests` lists none of the four. turbo-inputs.spec.ts passes 33 of 33. The four specs' own content was not edited."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/client-page-params.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/turbo-inputs.spec.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/jest.repo-truth.config.js",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/package.json",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/turbo.json"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/components/next-config-images.static.test.ts",
+          "route": "opus",
+          "fixed": [
+            "Two cross-references still justify the `images.unoptimized` pin by the allowlist entry that R7 just deleted."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/components/next-config-images.static.test.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/next.config.mjs"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx",
+          "route": "opus",
+          "fixed": [
+            "[#0] The updated test mocks `useParams` but never checks that the route id reaches the data hook, so a wrong param key on this money page would still pass. Fixed in C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx using Fable's design. A hoisted `mockUseTransaction` jest.fn now backs `useTransaction` in the `@/lib/api/bookkeeping` factory via `(...args: unknown[]) => mockUseTransaction(...args)`. A new it-block, \"passes the route's transactionId from useParams to useTransaction\", renders the page, asserts the mock was called, and checks that every call's first argument is \"txn-1\". The useParams mock, the fixtures and the two existing tests are unchanged. One typing change was needed: the mock is `jest.fn((..._args: unknown[]) => ({...}))` rather than `jest.fn(() => ...)`, because `tsc --noEmit` on apps/web rejected the design's zero-parameter mock (TS2556 on the spread call, TS2493 on `call[0]`). Behaviour is the same. Evidence: `npx jest bookkeeping/[transactionId]` gives 3 passed. `tsc --noEmit -p apps/web` reports no errors. eslint on the file exits 0, and `prettier --check` passes. Mutation check: with page.tsx line 134 changed to `params.id`, the new test failed (Expected \"txn-1\", Received undefined) and the other two stayed green. page.tsx was then restored byte-identical from a backup (cmp OK) and all 3 tests pass again."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx"
+          ]
+        },
+        {
+          "target": "apps/api/src/common/audit-allowlist-retired.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] T6's critical-advisory case asserts only exit status 1 plus the absence of ALLOWLISTED text, which a crashed or misconfigured gate run would also satisfy. Fixed as the design specified: added `expect(suppressible.stdout).toContain(\"::error::1 critical production advisory(ies) found\");` directly after `expect(suppressible.status).toBe(1);` in C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/audit-allowlist-retired.spec.ts. The string matches scripts/ci-audit-critical.mjs:589 (`::error::${criticalRowCount} critical production advisory(ies) found`). Prettier reported the file unchanged. `npx jest src/common/audit-allowlist-retired.spec.ts` (run from apps/api): 2/2 passed. I did not run the test at base."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/audit-allowlist-retired.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/web/.eslintrc.json",
+          "route": "opus",
+          "fixed": [
+            "[#0] Legacy `.eslintrc.json` is left behind as a dead, misleading second lint config now that the flat `eslint.config.mjs` is the live one. Removed apps/web/.eslintrc.json with `git rm`, as the design specified. Precondition check: a repo-wide Grep for `\\.eslintrc` (excluding node_modules and .next) turned up only the explanatory comment at apps/web/eslint.config.mjs:16 and prose in .claude/pipeline/2026-09-07-marketing-port/*. No config or code references the file. Invariant check: `npm run lint -w apps/web` exited 0 both before and after the deletion. The before and after lint output was diffed with `>` npm banner lines removed and came out identical (the only finding is the existing no-console warning in lib/hooks/useRealtimeUpdates.ts). No other file was edited and no new spec was added. The formatter step does not apply because a deletion has nothing to format."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/.eslintrc.json (deleted, staged via git rm)"
+          ]
+        },
+        {
+          "target": "apps/web/tsconfig.json",
+          "route": "opus",
+          "fixed": [
+            "[#0] `compilerOptions.target: \"ES2017\"` was added to apps/web/tsconfig.json; no work package or requirement covers it. — Implemented Fable's design exactly. apps/web/tsconfig.json is unchanged and keeps `\"target\": \"ES2017\"` (its mtime is 02:05, before this round). In .claude/pipeline/2026-09-10-next-15/build-plan.md I made three edits. (1) Added `apps/web/tsconfig.json` to P1's files cell in the Packages table (line 92). (2) Added a P1-detail bullet (line 110): \"apps/web/tsconfig.json — `\"target\": \"ES2017\"`, written by Next 15's TypeScript setup on first build/lint; kept, since removing it is re-added on the next build (with noEmit it only affects type-checking)\". (3) Added `apps/web/tsconfig.json` to the Rollback list (line 172). tsconfig has `\"noEmit\": true` (line 7) and an explicit `\"lib\"` (line 3), which matches the note's claim that target only affects type-checking. Verification: `npm run check-types -w apps/web` exits 0 with 0 errors. A first run exited 2 with two TS2556/TS2493 errors in `app/(dashboard)/bookkeeping/[transactionId]/page.test.tsx`. That file was rewritten at 02:44:39 while the run was in progress (another agent editing it concurrently), and the reported line/col (29,62) no longer matched its contents. `tsc --noEmit -p apps/web` then gave 0 errors with both `--target ES5` (the implicit value before this change) and `--target ES2017`, so the target does not change the type-check result. Formatting: `npx prettier --check` warns on build-plan.md, but a copy with my three edits reverted fails the same way, so the warning predates this round. I did not run `prettier --write`, because it would rewrite the whole untracked planning artifact rather than the three lines I edited."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/build-plan.md"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "apps/web/package.json",
+          "route": "opus",
+          "fixed": [
+            "[#0] `devDependencies.eslint` was bumped from `^8` to `^9`. That contradicts build-plan P1 (\"Leave `eslint` at `^8`\"), spec R6 (\"ESLint stays 8 in web\") and the spec's non-goal \"ESLint 9 for web\", and P1 reported no deviation. Fixed per Fable's design: the ESLint 9 move stays and is now a documented, planned deviation. spec.md R6 now has the ESLint ^9 + flat-config text. \"ESLint 9 for web\" is gone from the non-goals. build-plan.md P1 now reads \"Move `eslint` to `^9` (see spec R6).\" The Rollback list names eslint.config.mjs, .eslintrc.json (deleted) and the three pages' disable lines. A \"Deviations for the PR body\" subsection is added. The test-plan.md R6 row names the two lint exit-0 oracles. apps/web/package.json, the lockfile's eslint entries, eslint.config.mjs and the disable lines are untouched. `npm run lint -w apps/web` exits 0 (warnings only). `npm run lint -w apps/api` exits 0 (0 errors, 7477 warnings).",
+            "[#1] R6 (\"ESLint stays 8 in web\") and the spec's \"ESLint 9 for web\" non-goal are not met: apps/web `eslint` went from `^8` to `^9`, the live lint rule set was edited, and none of the plan documents were amended. Fixed with #1's exact wording across spec.md (R6 rewritten, non-goal removed), build-plan.md (P1 line, Rollback list, a new four-item \"Deviations for the PR body\" subsection) and test-plan.md (R6 row). apps/web/.eslintrc.json is already deleted in the tree (git status shows `D`), so no action was needed there.",
+            "[#3] apps/web's eslint was moved from ^8 to ^9. That contradicts R6 (\"ESLint stays 8 in web\") and the spec's non-goal \"ESLint 9 for web\", and P1 reported no deviation. Fixed idempotently with the same doc edits. The Deviations subsection records the root eslint and @eslint/js bump from 9.39.4 to 9.39.5 and the nested @eslint/js copies dropped from apps/api and packages/eslint-config. I checked these against `git show master:package-lock.json`: node_modules/eslint and @eslint/js go 9.39.4 -> 9.39.5, and apps/api/node_modules/@eslint/js and packages/eslint-config/node_modules/@eslint/js (both 9.39.5 on master) are gone. It also records the next/typescript drop and the three disable lines.",
+            "[#4] P1 bumped apps/web `eslint` from `^8` to `^9`, which R6, the non-goals and P1's instructions all forbid, and P1 reported no deviation. Fixed idempotently with the same spec, build-plan (P1, Rollback, Deviations) and test-plan R6 amendments. No code or lockfile change."
+          ],
+          "skipped": [
+            {
+              "index": 2,
+              "summary": "Moving web's react to ^19.2.0 also moves the hoisted root react from 19.2.5 to 19.3.0, which apps/api uses at runtime for its money-document PDFs. The change is not proven by any gate, does not ship with this PR's deploy, and is not covered by the plan's rollback.",
+              "reason": "design mismatch: I ran the design's steps: `npm install react@19.2.5 react-dom@19.2.5 -w apps/web --save-exact`, then set the ranges back to \"^19.2.0\" and ran `npm install`. npm did NOT move the root react. It added nested `apps/web/node_modules/react` and `apps/web/node_modules/react-dom` at 19.2.5 and left `node_modules/react` and `node_modules/react-dom` at 19.3.0. Result: 'root react identical to master: false', and apps/api still printed react=19.3.0. `npm ls react` shows `@routeflow/api -> react@19.3.0`, so apps/api's own ^19.2.4 range is what holds 19.3.0 at the root. Any plain `npm install` in this tree also rewrites about 180 unrelated lock entries (the `dev: true` / `devOptional: true` and `peer` flags on jest, ts-node, @unrs/*, @tsconfig/*, etc.). So npm cannot reach the design's end state without changing lock entries other than react, react-dom and scheduler. As the design instructs, I did not hand-edit the lockfile. I restored package-lock.json byte-for-byte from my pre-attempt backup (cmp confirmed identical). apps/web/package.json is byte-identical to its pre-attempt state, and the nested web copies are gone from node_modules. The tree's react state is therefore exactly as the finding describes: root react and react-dom 19.3.0 vs master's 19.2.5 and 18.3.1. I did not add the design's react rollback line to build-plan.md, because it would state a false fact. Reaching the target would need something like a root- or apps/api-scoped react@19.2.5 pin, or accepting the dev/devOptional flag churn. That is a planner decision."
+            }
+          ],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/spec.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/build-plan.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/test-plan.md"
+          ]
+        },
+        {
+          "target": "apps/api/src/common/no-dead-deps.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] A new test was added to no-dead-deps.spec.ts even though no work package or test package lists this file. -- I followed Fable's fallback branch. The block was still there, since `git diff HEAD --stat` showed 8 insertions and grep found line 114, `it(\"regression guard: mobile's own React 19 pin is untouched by the apps/web React 19 move\"`. I deleted exactly that it-block and its trailing blank line (lines 114-121) and nothing else. After the edit, `git diff HEAD --stat` and `git status --short` on apps/api/src/common/no-dead-deps.spec.ts both print nothing, so the file matches its committed content. `npm run test:repo-truth -w apps/api` passed: 7 suites and 43 tests, no-dead-deps.spec.ts included. I didn't run a formatter because the file is now byte-identical to HEAD."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/no-dead-deps.spec.ts"
+          ]
+        },
+        {
+          "target": "(artifact)",
+          "route": "opus",
+          "fixed": [
+            "next.config.mjs file line count is incorrect",
+            "jest.config.js React skew hack line range is severely understated",
+            "jest.config.js moduleNameMapper deletion line range is incorrect"
+          ],
+          "disputed": [
+            {
+              "index": 3,
+              "summary": "Web Jest test file count is outdated",
+              "reason": "build-plan.md's Verification section (line 156) already reads: \"- `final`: the above plus `npm test -w apps/web` (54 files) and `npm test -w apps/api`\". grep -c \"(50 files)\" build-plan.md returns 0, and grep -n \"50\" build-plan.md finds no '50 files' text anywhere. The count already agrees with test-plan.md §0 line 18 (\"50 web Jest files\" -> **54**). The finding's premise and Fable's replacement target (\"web Jest (50 files)\") don't exist in the artifact, so I made no edit."
+            }
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/discovery.md",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/build-plan.md"
+          ]
+        },
+        {
+          "target": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+          "route": "mechanical",
+          "fixed": [
+            "Test-plan §4.2 overstates direct coverage: of the 17 converted client pages, only bookkeeping/[transactionId] has a Jest test that renders the page. The co-located tests for customers/[id] and products/[id] render sub-components only."
+          ],
+          "skipped": [],
+          "filesChanged": [".claude/pipeline/2026-09-10-next-15/test-plan.md"]
+        },
+        {
+          "target": "(red-gate)",
+          "route": "opus",
+          "fixed": [
+            "[#0] Red gate never went structurally RED — the new tests are not proven able to fail. (1) apps/api/src/common/no-dead-deps.spec.ts: the always-green mobile React 19 guard is gone. It no longer appears in `git status --short`, and `git diff HEAD -- apps/api/src/common/no-dead-deps.spec.ts` prints nothing, so the file matches its committed content. No edit was needed; the block had already been removed before this round. (2) apps/api/src/common/no-react-skew-hacks.spec.ts: the Dockerfile check now scans logical lines. A physical line whose trimEnd() ends in a backslash has that backslash dropped and is joined to the next line with a single space. Each logical line is reported at its first physical line number, the existing `/npm install[^\\n]*react@18/` regex runs on the joined text, and the offender format `apps/web/Dockerfile:<startLine>: <trimmed text>` is unchanged. No other spec was edited. Evidence: I ran a scratch probe that copies the new logic. On the committed base Dockerfile (`git show HEAD:apps/web/Dockerfile`) it reports `apps/web/Dockerfile:48: RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1`, so the test is still RED at base. On a base variant with the install split across a backslash continuation, it still reports line 48, while the old line-scoped check returns [] on that same variant, which is the bypass the finding described. On the current tree's Dockerfile it reports []. That probe is a JS copy of the logic run by hand, not the Jest spec run against base. Other checks: `npm run test:repo-truth -w apps/api` (the no-react-skew-hacks spec now runs in that lane, not the default api lane) gave 7 suites and 43 tests passed, including no-react-skew-hacks.spec.ts and no-dead-deps.spec.ts. `npm run check-types -w apps/api` exited 0. `npx prettier --check` on the edited spec passed."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/common/no-react-skew-hacks.spec.ts"
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-opus-5",
+        "fallback": true,
+        "actions": {
+          "fix": 2,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 0,
+          "opus": 2
+        },
+        "waves": [[1], [0]],
+        "note": "Round 2 fixes both findings in two waves. Wave 1 (#1) repairs the verification environment without touching source. The identical `@routeflow/pricing` resolution failure in web and api points to an unbuilt pricing dist or a workspace symlink lost in round 1's install/restore churn. The fix is a diagnostic ladder: turbo-build pricing, restore the workspace link, fall back to `npm ci` (never `npm install`), then re-run both check-types gates. Any genuine Next 15 / React 19 type errors that appear get reported, not patched. Wave 2 (#0) runs only once the tree is healthy. It re-decides the react-hoist finding with the executor's report in hand. The root move to 19.3.0 is accepted, because npm cannot hold 19.2.5 without breaking T2, splitting react placement, or reaching mobile through overrides. In return, the api's PDF path must be proven by an unmocked invoice and statement render (Jest spec, or a dist-based `smoke:pdf` script if the ESM package won't load under Jest). build-plan.md and the PR body must also state the api runtime effect, the fresh api build needed in the landing window (a plain redeploy is not enough), and the api-specific rollback step. package-lock.json and web's ^19.2.0 ranges do not change this round."
+      },
+      "reports": [
+        {
+          "target": "apps/web/package.json",
+          "route": "opus",
+          "fixed": [
+            "[#0] Moving web's react to ^19.2.0 also moves the hoisted root react from 19.2.5 to 19.3.0, which apps/api uses at runtime for its money-document PDFs. The change is not proven by any gate, does not ship with this PR's deploy, and is not covered by the plan's rollback. Fixed per Fable's design, using its fallback path. package-lock.json and web's react/react-dom ranges (\"^19.2.0\") were not touched.\n(1) Why the fallback: the api Jest config (apps/api/package.json `jest.moduleNameMapper`) maps `@react-pdf/renderer`, `./invoice-pdf-template` and `../buyer/statement-pdf-template` to stubs in test/__mocks__. No spec can render for real without changing the shared config, which the design forbids. So I added apps/api/scripts/pdf-render-smoke.mjs, plus one package.json line: `\"smoke:pdf\": \"node scripts/pdf-render-smoke.mjs\"`. The script loads the compiled InvoicePdfTemplate (dist/invoices) and StatementPdfTemplate (dist/buyer), and calls the real renderToBuffer with minimal acme fixtures. It asserts each buffer starts with \"%PDF-\" and is longer than 1000 bytes, exits 1 on a throw or a bad buffer (2 if dist is missing), and prints the react version resolved from apps/api.\n(2) build-plan.md: the Rollback section now says a revert redeploys web only. After reverting, you need a fresh api build ('Deploy latest commit' for @routeflow/api, or `railway up --service @routeflow/api --ci` from a clean checkout) plus the invoice and statement PDF download check. I added an 'API runtime effect' paragraph there and the same paragraph as the first bullet of 'Deviations for the PR body'. No separate PR-body draft file exists in the run dir.\nEvidence:\n- After `npm run build -w apps/api`, `npm run smoke:pdf -w apps/api` printed `react resolved from apps/api: 19.3.0 (...rf-F25\\node_modules\\react\\package.json)`, `ok invoice: 3557 bytes`, `ok statement: 3613 bytes`, and exited 0.\n- Mutation probe: I injected `throw new Error(\"MUTATION PROBE\")` into dist/invoices/invoice-pdf-template.js. The run printed `FAIL invoice: render threw` and exited 1. I restored from a scratchpad backup, `cmp` confirmed it identical, and the smoke exited 0 again.\n- Lock facts in the note match the files: master has react 19.2.5 and react-dom 18.3.1; this tree has 19.3.0 and 19.3.0; there is no apps/api/node_modules/react; apps/api declares react ^19.2.4.\n- `npm run check-types -w apps/api` exited 0. `npx jest -c jest.repo-truth.config.js no-dead-deps` passed 12/12; that spec walks apps/api/scripts.\n- Prettier ran on all three touched files.\nNot run: the full `npm test -w apps/api` and `npm test -w apps/web` suites. The post-deploy PDF download check can only happen in the landing window."
+          ],
+          "skipped": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/scripts/pdf-render-smoke.mjs",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/package.json",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-10-next-15/build-plan.md"
+          ],
+          "disputed": []
+        },
+        {
+          "target": "(gate)",
+          "route": "opus",
+          "fixed": [
+            "[#0] Verification gate still failing after fixes: this was an environment problem, and the gate now passes. Evidence from this session: node_modules/@routeflow/pricing links to packages/pricing, and packages/pricing/dist/index.d.ts exists (mtime 2026-09-10 02:51:25; dist/ is gitignored). Re-running the gate commands exactly as the gate runs them gave `npm run check-types -w apps/web` exit 0 and `npm run check-types -w apps/api` exit 0, with 0 occurrences of \"Cannot find module '@routeflow/pricing'\" in either log. Neither command reported any other errors, so there are no new defects to list. Design step 1 found the link present and the types target present, so steps 2 and 3 were not needed. I did not run turbo build, npm ci or prisma generate. The pricing dist was apparently built after the failing gate ran; this session did not build it. package-lock.json sha256 is 82e3e737a4b73bde34dab450c10002382c676141f5bb6a9aaff0e16e44460898 both before and after, so it is byte-identical. The pre-step copy is saved at C:/Users/nakram/AppData/Local/Temp/claude/C--ClaudeCode-routeflow/437c7c36-25d1-4f92-af0d-384aa6616845/scratchpad/package-lock.pre.json. I changed no tracked source, tsconfig or package.json files. Formatting was not applicable because no files were changed."
+          ],
+          "skipped": [],
+          "filesChanged": [],
+          "disputed": []
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [
+    {
+      "file": "apps/api/src/common/ci-audit-script.spec.ts",
+      "line": 739,
+      "severity": "minor",
+      "summary": "R7 asked the policy guard to accept an empty allowlist. The change makes it require one, twice: ci-audit-script.spec.ts:739 and audit-allowlist-retired.spec.ts:98. That leaves the per-entry shape and 60-day-window loop at :741 unreachable for any non-empty list, and the test title is stale.",
+      "detail": "Evidence: ci-audit-script.spec.ts:735 is still titled \"parses, carries exactly the two current next.js GHSA ids, and keeps expires within 60 days of ackedOn\". Line 739 is now `expect(parsed.entries).toEqual([])`. The `for (const entry of parsed.entries)` shape and window loop at :741 comes after that assertion. audit-allowlist-retired.spec.ts:98 repeats `expect(parsed.entries).toEqual([])`. Spec R7 says \"update the policy-guard test to accept an empty list\". build-plan P7 claims the loop \"remains the guard against re-adding a malformed entry\". It cannot do that: any non-empty `entries` fails at :739 before the loop runs. The allowlist is the owner-approved safety valve its own $schema-note describes (\"edit only with owner sign-off\"). Failure scenario: a new critical transitive advisory arrives with no upstream fix, and the owner approves a well-formed entry (id, package, reason, expires 30 days out, ackedBy, ackedOn, followUp). Both specs go red with \"Expected [] / Received [ {…} ]\", so the approved change cannot pass `npm run verify` or CI unless two test files are edited too. A malformed entry, such as a 90-day window or a bad date, fails at the same :739 line with the same message, so the shape and window loop never tells a good entry from a bad one. The mutation probe confirms this: it re-added a valid, unexpired entry and got the same failure as a malformed one would. Suggested fix: the policy guard asserts `Array.isArray(parsed.entries)` and keeps the loop (it accepts empty); T6 narrows its permanence check to \"no entry names GHSA-p293-qw3h-jr36 / GHSA-2xp9-vwfh-vxw4 or package next\" instead of `[]`; the :735 title is renamed.",
+      "fixComplexity": "judgment",
+      "fixHint": "Accept an empty list rather than requiring one: drop the toEqual([]) at :739 (keep Array.isArray and the shape/window loop), make T6 forbid only the two retired next GHSA ids, and fix the stale test title.",
+      "phase": "Final pass",
+      "decision": "Spec R7 asked the policy guard to accept an empty allowlist, but both ci-audit-script.spec.ts:739 and audit-allowlist-retired.spec.ts:98 now require one. That makes the per-entry shape and 60-day-window loop at :741 unreachable for any non-empty list, so it no longer guards a malformed re-add as build-plan P7 claims, and the test title still names the two next.js GHSA ids. Only the first file's assertion needs relaxing (for example, no next.js GHSA ids, then the shape loop). The retired-spec check can stay specific to the next.js ids.",
+      "unadjudicated": false
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-next-15/test-plan.md",
+      "line": 109,
+      "severity": "minor",
+      "summary": "Test-plan §4.2(ii) relies on check-types as \"the real behavioural gate, because a mis-read `params` is a type error\". The claim is false after the conversion: untyped `useParams()` accepts any key. No guard ties the key a page reads to its folder segment, except the bookkeeping render test.",
+      "detail": "This is separate from the known §4.2 render-coverage finding. That one is about which pages have render tests; this one is the type-check premise of item (ii). Evidence: in the installed next 15.5.25, `export declare function useParams<T extends Params = Params>(): T;` (node_modules/next/dist/client/components/navigation.d.ts:80) with `export type Params = Record<string, ParamValue>;` (server/request/params.d.ts:3). The conversion pattern is `const params = useParams(); const id = params.id as string;`, so `params.<anything> as string` compiles. Before the change, the page's own prop annotation (`{ params: { categoryId: string } }`) at least made an undeclared key a type error. T3 (client-page-params.spec.ts) only checks for the sync prop and a `useParams` import; it never compares the key read with the `[segment]` name. I grepped all 17 converted pages, and every key matches its folder today (compliance/[categoryId] reads `params.categoryId`, bookkeeping/[transactionId] reads `params.transactionId`, the rest read `params.id`), so there is no live defect. Failure scenario: a later edit on a money page (orders/[id], invoices/[id], credit-notes/[id], vendor-bills/[id], estimates/[id], finance/commissions/[id]), or a folder rename such as `[id]` to `[orderId]`, leaves the page calling `useOrder(undefined)` / `useInvoice(undefined)`. check-types, lint, T3 and web Jest all stay green, because only bookkeeping/[transactionId]/page.test.tsx asserts the route key reaches the data hook. The typecheck mitigation the test plan describes does not exist for 16 of the 17 pages.",
+      "fixComplexity": "judgment",
+      "fixHint": "Either correct the §4.2(ii) claim, or extend T3: for each dynamic-segment client page, require a `params.<seg>` (or `params[\"<seg>\"]`) read for the innermost `[seg]` in its path, and forbid reads of keys that are not in the path's segments.",
+      "phase": "Final pass",
+      "decision": "Next 15.5.25 types `useParams()` as `Record<string, ParamValue>`, so `params.<anyKey> as string` compiles. The page-prop annotation that used to turn a wrong key into a type error is gone, which makes test-plan §4.2(ii)'s premise that check-types catches a mis-read param false. The reader's grep shows all 17 current keys match their folder segments, so nothing is broken today. The defect is a lost guard on money pages plus a false coverage claim. It is separate from the render-coverage finding already filed. T3 could close it by comparing the key read against the `[segment]` name.",
+      "unadjudicated": false
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-next-15/build-plan.md",
+      "line": 163,
+      "severity": "major",
+      "summary": "The Verification `final` gate is `npm test -w apps/api`. After the fix round moved the four new guards into the repo-truth lane, that command runs none of T1/T2/T3/T6, so the engine's gate record cannot show the red-gate tests passing.",
+      "detail": "Evidence: apps/api/package.json `jest.testPathIgnorePatterns` now lists `client-page-params\\.spec\\.ts$`, `no-react-skew-hacks\\.spec\\.ts$`, `next-version\\.spec\\.ts$` and `audit-allowlist-retired\\.spec\\.ts$`. Only apps/api/jest.repo-truth.config.js's testRegex includes them. Running `npx jest next-version client-page-params` in apps/api (the main-lane config that `npm test -w apps/api` uses) printed \"No tests found, exiting with code 1 … testPathIgnorePatterns … 744 matches … Pattern: next-version|client-page-params - 0 matches\". build-plan.md:162-163 still lists perRound/final as check-types, lint, `npm test -w apps/web` and `npm test -w apps/api`, with no `test:repo-truth`, and the manifest's verification commands have the same gap. So a green final gate from this run says nothing about the upgrade guards. A repeat mutation probe driven through `npm test -w apps/api -- <pattern>` would also count the \"No tests found\" exit 1 as a killed mutant. The original probes (journal entries 77-83) ran `npx jest src/common/<spec>` before the lane move and were genuine. Mitigation already in place: CI runs `npm run verify` (.github/workflows/ci.yml:283), which includes `turbo run … test:repo-truth`. I ran `npx jest -c jest.repo-truth.config.js` in apps/api: 7 suites, 43 tests, all passed. The guards are green now; only the pipeline's own gate list is stale.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Add `npm run test:repo-truth -w apps/api` to the build-plan's perRound/final verification (and to the engine's gate commands for any re-run), and note that the main api lane deliberately excludes these four specs.",
+      "phase": "Final pass",
+      "decision": "The reader ran the main-lane config that `npm test -w apps/api` uses and got 'No tests found … exit 1' for the guard patterns. The fix round had moved T1/T2/T3/T6 into testPathIgnorePatterns and into jest.repo-truth.config.js only, yet the build-plan and manifest final gate never runs test:repo-truth. A green final gate therefore proves nothing about the upgrade guards. Worse, any mutation probe driven through the main lane would read the 'no tests found' exit 1 as a catch, so the '4/4 caught' oracle must be re-run through the repo-truth lane before it is trusted.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/package.json",
+      "line": 147,
+      "severity": "major",
+      "summary": "After the four upgrade guards moved into the repo-truth lane, the pipeline's own red-gate command, its `final` api gate and the recorded mutation-probe command all still use the main api Jest lane, which now skips those specs. Jest then exits 1 with \"No tests found\". The 4/4 mutation evidence also predates the final text of two of the guards.",
+      "detail": "The wiring itself is sound. Root `verify` (package.json:13) runs `turbo run check-types lint test test:repo-truth`, `.husky/pre-push` runs `npm run verify`, and `.github/workflows/ci.yml:283` runs `npm run verify`. I ran `npx jest -c jest.repo-truth.config.js` in apps/api this session: 7 suites and 43 tests passed, including client-page-params, no-react-skew-hacks, next-version and audit-allowlist-retired. So the guards do run pre-push and in CI.\n\nThe gap is in the proof. apps/api/package.json jest.testPathIgnorePatterns (the new entries at about lines 147-150) now excludes all four specs from the main lane. `.claude/pipeline/2026-09-10-next-15/pipeline-args.json` still sets `redGate.commands = [\"npm test -w apps/api -- next-version no-react-skew-hacks client-page-params audit-allowlist-retired\"]` with `expect: \"fail\"`, and `verifyCommands.final` lists only `npm test -w apps/api` for the api (no `test:repo-truth`).\n\nI re-ran the probe agent's recorded command from apps/api this session: `npx jest src/common/next-version.spec.ts` gives `No tests found, exiting with code 1 ... testPathIgnorePatterns ... next-version\\.spec\\.ts$ ... Pattern: src/common/next-version.spec.ts - 0 matches`, exit=1. That leads to three problems:\n(1) The run's recorded `final` green never executed the four guards once they were relocated.\n(2) Any resume or re-run of the red gate (`expect: fail`), or a re-probe through the main lane, reports RED or \"caught\" whatever the source says. A vacuous kill looks exactly like a real one.\n(3) The 4/4 mutation probe (journal wf_815eecf6-fc9 entries 77/79/81/83) ran through the main lane before the relocation. It then collected client-page-params with 4 tests (entry 81: \"1 failed and 3 passed\"). That spec now has 5 tests, including a later tree-wide server-page test. no-react-skew-hacks' Dockerfile check was rewritten to logical-line scanning afterwards (entry 113), and the only proof of the rewrite is \"a JS copy of the logic run by hand, not the Jest spec run against base\". So no Jest run has ever shown the final text of those two guards failing on a mutant.",
+      "fixComplexity": "judgment",
+      "fixHint": "Re-run the four §6 mutation probes through `npm run test:repo-truth -w apps/api` against the current spec text, and record the output. In pipeline-args.json, point redGate/final at the repo-truth lane (for example `npm run test:repo-truth -w apps/api`) so no re-run can pass on \"No tests found\".",
+      "phase": "Final pass",
+      "decision": "The four guards do run in root `verify`, pre-push and CI (43/43 passed in the repo-truth lane), so the shipped wiring is sound. The problem is the run's proof. `redGate.commands` (expect: fail) and `verifyCommands.final` still point at the main api lane, which now ignores these specs. That lane exits 1 with \"No tests found\", which counts as a trivial false RED, and the 4/4 mutation probe predates the final text of two guards. Whoever fixes the open red-gate blocker has to re-run the red gate and the mutation probe through `test:repo-truth` and update pipeline-args, or the blocker will be closed on evidence that proves nothing.",
+      "unadjudicated": false
+    },
+    {
+      "file": "docs/testing/lockfile-edges.md",
+      "line": 156,
+      "severity": "minor",
+      "summary": "The lock-edge runbook still says the removed Dockerfile `npm install --force --no-save react@18.3.1 react-dom@18.3.1` swap is load-bearing, and lists peer mismatches that this change resolves.",
+      "detail": "docs/testing/lockfile-edges.md:156-162 (section \"Unsatisfied peer ranges (4, informational)\") says: `react@19.2.5` against `next`'s `^18.2.0` is \"expected and load-bearing\" because `apps/web/Dockerfile` swaps React at build time with that exact install line, and \"If these two lines ever vanish, check whether that swap is still doing what it should\". It also lists `eslint@9.39.4` against `eslint-config-next`'s `^7 || ^8`.\n\nAll of that is now false in this tree. The Dockerfile diff deletes the swap (old lines 34-48). The lock now has root `node_modules/react` 19.3.0 and `node_modules/react-dom` 19.3.0 with no nested apps/web copy, and next 15.5.25's peer is `^18.2.0 || ... || ^19.0.0`. Root eslint is 9.39.5 against eslint-config-next 15.5.25.\n\n`git grep \"react@18\\|react-dom@18\"` outside node_modules, .claude and the lock finds only this doc (plus unrelated docs/design-package HTML), so this is the one live reference left. The next reader of the validator's peer output will be told to go looking for a Docker swap that no longer exists, and the stated peer count is stale.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Rewrite the two bullets: the React 18/19 skew and the Docker swap were retired by the Next 15 upgrade, and the eslint-config-next peer is now satisfied. Update the count from a fresh `node scripts/validate-lock-edges.mjs` run.",
+      "phase": "Final pass",
+      "decision": "docs/testing/lockfile-edges.md:156-162 still calls the deleted Dockerfile `--no-save react@18.3.1` swap load-bearing. It also lists peer mismatches (react 19 vs next ^18.2.0, eslint 9 vs eslint-config-next ^7||^8) that this change resolves, and it tells readers to check the swap if it vanishes. That could send someone to restore the hack. It is doc drift only, and no-react-skew-hacks would catch a restored swap.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/web/Dockerfile",
+      "line": 32,
+      "severity": "blocker",
+      "summary": "Nothing in this run built the production web image under Next 15.5.25 and React 19. The spec's required R8 proof (the compose web image build, then `/login` returning 200) was not run. The green gate (tsc, lint, Jest) never invokes `next build`.",
+      "detail": "Evidence that the proof has not run: the run journal (`subagents/workflows/wf_815eecf6-fc9/journal.jsonl`) has zero `docker compose` matches. Its five `next build` matches are package.json text and the tsconfig `target` note, not a build run. pipeline-args `verifyCommands` has no build step. Project memory says a host `next build` is not valid evidence.\n\nFailure scenario: the PR lands on tsc/lint/Jest green, Railway builds the web image, and something only `next build` or the standalone server exercises fails. Examples are prerendering static client pages under React 19 SSR, Next 15's bundling of its own React, or standalone tracing. The result is a FAILED web deploy during the public-visibility window, or a broken runtime. `typescript.ignoreBuildErrors` and `eslint.ignoreDuringBuilds` are on, so type or lint errors would not stop that build either.\n\nWhat I checked statically, with no concrete breaker found:\n- next.config.mjs has no leftover Next 15 renamed or removed keys: `serverComponentsExternalPackages` is gone, and there are no `outputFileTracing*`, `swcMinify` or `bundlePagesExternals` keys. `turbopack` is a valid top-level key in 15.5.\n- node_modules/next/dist/server/config.js:611-626 sets `outputFileTracingRoot = tracingRoot || turbopack.root || findRootDir`. That gives `/app` in the image, so `.next/standalone/apps/web/server.js` matches the `CMD [\"node\",\"apps/web/server.js\"]`.\n- The lock carries `@next/swc-linux-x64-musl` 15.5.25 for node:20-alpine, and root react/react-dom are both 19.3.0 with no nested web copies.\n- All of apps/web's direct dependencies declare react peer ranges that admit 19.\n\nScope note for the decider (area 2, checked clean): the only route handler, app/api/health/route.ts, is `GET()` with no context argument. None of the 6 layout.tsx files takes `params`. There is no generateMetadata or generateStaticParams, and no `next/headers` import anywhere in apps/web. Of the 18 server page.tsx files, only finance/expenses reads a request prop, and it awaits a `Promise<>` searchParams. sitemap.ts and robots.ts take no arguments. middleware.ts uses only `request.cookies` and `request.headers`, which are unchanged in 15.",
+      "fixComplexity": "judgment",
+      "fixHint": "Before landing, run `docker compose -p routeflow --profile app up -d --build web` in this worktree, then confirm `/login` returns 200 and `/api/health` answers, and attach the output to the PR. Treat that as the landing precondition, not the tsc/lint/Jest green.",
+      "phase": "Final pass",
+      "decision": "Spec R8 (build the compose web image, then `/login` returns 200) is a hard acceptance criterion. The journal has zero `docker compose` runs, and no gate ever invoked `next build`. With `ignoreBuildErrors` and `ignoreDuringBuilds` on, the build is the only proof that Next 15.5.25 + React 19 prerender and standalone tracing work. Master deploys straight to prod with no staging, so a failed web deploy would land during the public-visibility window. Per project memory a host `next build` is not valid evidence, so R8 must run on the compose image, together with `local:validate` and `local:e2e` because this is a UI change.",
+      "unadjudicated": false
+    }
+  ],
+  "clean": false
+}

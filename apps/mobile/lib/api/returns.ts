@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { CreateReturnItemDto } from "@routeflow/types";
+export type { CreateReturnItemDto } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -89,27 +91,37 @@ export const useReturn = useMyReturn;
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-export interface CreateReturnItemDto {
-  productId: string;
-  qty: number;
-  /** Optional per-item reason (defaults to the return's top-level reason server-side). */
-  reason?: ReturnReason;
-  /** Whether to add the returned qty back to stock on receive (default true). */
-  restock?: boolean;
-}
-
 export interface CreateReturnDto {
   orderId: string;
   reason: ReturnReason;
   notes?: string;
   items: CreateReturnItemDto[];
   photoUrls?: string[];
+  /**
+   * Sent as the `Idempotency-Key` HEADER (never in the body — the server reads it off the
+   * header only, `returns.controller.ts`). A duplicate POST under the same key — a remounted
+   * screen, a deliberate re-issue, an offline-queue replay — returns the ORIGINAL return
+   * instead of creating a second one, which is what keeps a retry from double-crediting the
+   * customer. Derive it with `lib/return-submit-key#returnSubmitKey`.
+   */
+  idempotencyKey?: string;
 }
 
 export function useCreateReturn() {
   const qc = useQueryClient();
   return useMutation<Return, Error, CreateReturnDto>({
-    mutationFn: (dto) => apiClient.post("/returns", dto).then((r) => r.data),
+    // `idempotencyKey` travels as a HEADER, never in the body (the same idiom as
+    // `useCreateOrderAsDriver` in lib/api/orders.ts) — api-client also preserves that header
+    // across an offline-queue replay, so a replayed return collapses onto the original
+    // instead of minting a second credit.
+    mutationFn: ({ idempotencyKey, ...body }) =>
+      apiClient
+        .post(
+          "/returns",
+          body,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["returns"] }),
   });
 }
@@ -128,6 +140,12 @@ function useReturnTransition(action: Parameters<typeof returnTransition>[0]) {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
       qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+      // #1528 (B86): only cancel moves stock (it undoes receive's restock) — refresh the stock views.
+      if (action === "cancel") {
+        qc.invalidateQueries({ queryKey: ["products"] });
+        qc.invalidateQueries({ queryKey: ["inventory"] });
+        qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
+      }
     },
   });
 }
@@ -161,6 +179,10 @@ export function useReceiveReturn() {
       qc.invalidateQueries({ queryKey: ["returns"] });
       qc.invalidateQueries({ queryKey: ["returns", id] });
       qc.invalidateQueries({ queryKey: ["admin", "returns"] });
+      // #1528 (B86): receive restocks server-side — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }

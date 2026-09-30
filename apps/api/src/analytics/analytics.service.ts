@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import { endOfCalendarDay } from "../common/calendar-date";
 import {
   REAL_INVOICE_STATUSES,
   estimateCogs,
@@ -12,41 +13,45 @@ import {
 } from "../common/invoiced-sales";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import {
-  type DemandGranularity,
-  type DemandRange,
-  bucketIndexOf,
-  demandWindow,
-} from "./demand-range";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import type {
+  ProductDemandSeries,
+  ProductSalesHistory,
+} from "../sales-facts/legacy-product-shapes";
+import type { DemandRange } from "./demand-range";
 
 export const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
 
-/** One bucket of the per-product demand series. Both metrics ship together. */
-export interface ProductDemandBucket {
-  /** Bucket START, "YYYY-MM-DD". Never an ISO timestamp — see demand-range.ts. */
-  date: string;
-  /** Total base units (pieces) invoiced in this bucket. */
-  units: number;
-  /** Net invoiced sales in this bucket (line subtotals, pre-tax). */
-  revenue: number;
+// #2118: the per-product read shapes moved with their producer (the sales-facts layer).
+export type {
+  ProductDemandBucket,
+  ProductDemandSeries,
+  ProductSaleLine,
+  ProductSalesHistory,
+} from "../sales-facts/legacy-product-shapes";
+
+/**
+ * Per-group (route or driver) accumulator for the stop-level operational
+ * metrics shared by getRoutePerformance / getDriverPerformance. "Valid" runs
+ * are those with a positive startedAt→completedAt span — the only ones that
+ * may enter the duration / stops-per-hour math.
+ */
+interface RunMetricAgg {
+  completedStops: number;
+  onTimeStops: number;
+  validRunCount: number;
+  validRunMs: number;
+  /** Completed stops belonging to valid-duration runs only. */
+  validRunStops: number;
 }
 
-export interface ProductDemandSeries {
-  productId: string;
-  range: DemandRange;
-  granularity: DemandGranularity;
-  /** ISO, inclusive. */
-  from: string;
-  /** ISO, EXCLUSIVE. */
-  to: string;
-  buckets: ProductDemandBucket[];
-  totals: { units: number; revenue: number };
-  /** False ⇒ never invoiced at any date: "never sold", not "zero this window". */
-  hasAnySales: boolean;
-  /** "YYYY-MM-DD" of this product's first / most recent invoiced sale. */
-  firstSaleAt: string | null;
-  lastSaleAt: string | null;
+/** The run slice the shared stop-metric accumulator needs. */
+interface RunMetricSource {
+  scheduledDate: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  stops: { completedAt: Date | null }[];
 }
 
 /** Invoice line slice needed to subtract tobacco revenue from an invoice total. */
@@ -66,6 +71,7 @@ export class AnalyticsService {
     private readonly prisma: PrismaService,
     private readonly addonService: AddonService,
     private readonly systemConfig: SystemConfigService,
+    private readonly productInsights: ProductInsightsService,
   ) {}
 
   /**
@@ -96,8 +102,17 @@ export class AnalyticsService {
     return portion;
   }
 
+  /**
+   * The default `fromDate` is UTC-anchored (`Date.UTC(...getUTCFullYear(), 0, 1)`),
+   * NOT `new Date(year, 0, 1)` — the two-argument constructor reads HOST-LOCAL
+   * calendar components, so on any host west of UTC the window opened hours
+   * after UTC midnight of January 1 and the `gte` filter silently dropped every
+   * invoice dated January 1 (they are stored at UTC midnight — see
+   * `common/calendar-date.ts`). Same defect class as the `getRevenueTrend`
+   * month key below; pinned in `analytics.service.calendar.spec.ts`.
+   */
   private dateRange(from?: string, to?: string) {
-    const fromDate = from ? new Date(from) : new Date(new Date().getFullYear(), 0, 1);
+    const fromDate = from ? new Date(from) : new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
     const toDate = to
       ? (() => {
           const d = new Date(to);
@@ -106,6 +121,19 @@ export class AnalyticsService {
         })()
       : new Date();
     return { fromDate, toDate };
+  }
+
+  /**
+   * Prisma where-fragment windowing invoices on their business date
+   * (Invoice.issueDate). No bounds ⇒ no filter, preserving the endpoints'
+   * historical all-time behavior for parameterless callers (mobile). With
+   * either bound present the shared dateRange defaults fill the other side
+   * (from → Jan 1 of the current year, to → now; `to` is end-of-day inclusive).
+   */
+  private issueDateFilter(from?: string, to?: string) {
+    if (!from && !to) return {};
+    const { fromDate, toDate } = this.dateRange(from, to);
+    return { issueDate: { gte: fromDate, lte: toDate } };
   }
 
   async getRevenueTrend(from?: string, to?: string, groupBy = "month") {
@@ -123,7 +151,7 @@ export class AnalyticsService {
     for (const inv of invoices) {
       const key =
         groupBy === "month"
-          ? `${inv.issueDate.getFullYear()}-${String(inv.issueDate.getMonth() + 1).padStart(2, "0")}`
+          ? inv.issueDate.toISOString().slice(0, 7)
           : inv.issueDate.toISOString().split("T")[0];
       // Invoice-level discount/shippingFee stay attributed to the remainder
       const total = excludeTobacco
@@ -213,19 +241,127 @@ export class AnalyticsService {
       .slice(0, limit);
   }
 
-  async getRoutePerformance() {
+  /**
+   * Prisma where-fragment windowing route runs on their business date
+   * (RouteRun.scheduledDate). No bounds ⇒ no filter, preserving the endpoints'
+   * historical all-time behavior for parameterless callers (mobile). With
+   * either bound present the shared dateRange defaults fill the other side
+   * (from → Jan 1 of the current year, to → now; `to` is end-of-day inclusive).
+   */
+  private runDateFilter(from?: string, to?: string) {
+    if (!from && !to) return {};
+    const { fromDate, toDate } = this.dateRange(from, to);
+    return { scheduledDate: { gte: fromDate, lte: toDate } };
+  }
+
+  private newRunMetricAgg(): RunMetricAgg {
+    return { completedStops: 0, onTimeStops: 0, validRunCount: 0, validRunMs: 0, validRunStops: 0 };
+  }
+
+  /**
+   * Folds one run's stop timings into the group accumulator.
+   *
+   * "On-time" definition: RouteRunStop carries no promised ETA (the schema has
+   * no eta / time-window field anywhere), so a completed stop counts as
+   * on-time when its completedAt falls on or before the END of its run's
+   * scheduledDate calendar day, in the tenant's configured timezone (falling
+   * back to UTC when unset). Completing early is on-time; anything after the
+   * scheduled day is late. Stops never completed are not "late" — they're
+   * incomplete, which completionRate already captures — so they stay out of
+   * the on-time denominator entirely.
+   *
+   * Duration metrics admit only runs with a positive startedAt→completedAt
+   * span; runs missing either stamp (or with a non-positive span) are excluded
+   * from BOTH the stops-per-hour numerator and denominator so they can't
+   * poison the averages.
+   */
+  private accumulateRunMetrics(
+    agg: RunMetricAgg,
+    run: RunMetricSource,
+    tenantTimezone: string | null,
+  ) {
+    const dayEnd = endOfCalendarDay(run.scheduledDate, tenantTimezone);
+    let runCompletedStops = 0;
+    for (const stop of run.stops) {
+      if (!stop.completedAt) continue;
+      runCompletedStops += 1;
+      if (stop.completedAt <= dayEnd) agg.onTimeStops += 1;
+    }
+    agg.completedStops += runCompletedStops;
+    if (run.startedAt && run.completedAt) {
+      const ms = run.completedAt.getTime() - run.startedAt.getTime();
+      if (ms > 0) {
+        agg.validRunCount += 1;
+        agg.validRunMs += ms;
+        agg.validRunStops += runCompletedStops;
+      }
+    }
+  }
+
+  /**
+   * Resolves the current tenant's configured timezone ONCE per call (not per
+   * row) for the on-time day-end check above. It passes `cfg?.timezone ?? null`
+   * straight through and relies on `endOfCalendarDay`'s own UTC fallback: an
+   * unconfigured tenant (no `TenantConfig` row) must keep today's exact UTC
+   * day-end boundary, never a silently-substituted America/New_York default.
+   */
+  private async resolveCurrentTenantTimezone(): Promise<string | null> {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) return null;
+    const cfg = await this.prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { timezone: true },
+    });
+    return cfg?.timezone ?? null;
+  }
+
+  /** Ratios from the accumulator — null (never 0 or NaN) when a window has no data. */
+  private finalizeRunMetrics(agg: RunMetricAgg): {
+    onTimeRate: number | null;
+    stopsPerHour: number | null;
+    avgRunDurationMinutes: number | null;
+  } {
+    const hours = agg.validRunMs / 3_600_000;
+    return {
+      onTimeRate: agg.completedStops > 0 ? (agg.onTimeStops / agg.completedStops) * 100 : null,
+      stopsPerHour: hours > 0 ? agg.validRunStops / hours : null,
+      avgRunDurationMinutes:
+        agg.validRunCount > 0 ? agg.validRunMs / agg.validRunCount / 60_000 : null,
+    };
+  }
+
+  /**
+   * Per-route run counts, completion rate, and the stop-level operational
+   * metrics (see accumulateRunMetrics for the on-time definition and the
+   * valid-duration rule). from/to window on RouteRun.scheduledDate via
+   * runDateFilter; omitted ⇒ all history.
+   */
+  async getRoutePerformance(from?: string, to?: string) {
+    const tenantTimezone = await this.resolveCurrentTenantTimezone();
     const runs = await this.prisma.forTenant().routeRun.findMany({
+      where: this.runDateFilter(from, to),
       include: {
         route: { select: { id: true, name: true } },
         orders: { select: { id: true } },
+        stops: { select: { completedAt: true } },
       },
     });
-    const map: Record<string, { name: string; totalRuns: number; completedRuns: number }> = {};
+    const map: Record<
+      string,
+      { name: string; totalRuns: number; completedRuns: number; metrics: RunMetricAgg }
+    > = {};
     for (const run of runs) {
       const id = run.routeId;
-      if (!map[id]) map[id] = { name: run.route.name, totalRuns: 0, completedRuns: 0 };
+      if (!map[id])
+        map[id] = {
+          name: run.route.name,
+          totalRuns: 0,
+          completedRuns: 0,
+          metrics: this.newRunMetricAgg(),
+        };
       map[id].totalRuns += 1;
       if (run.status === "COMPLETED") map[id].completedRuns += 1;
+      this.accumulateRunMetrics(map[id].metrics, run, tenantTimezone);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,
@@ -233,20 +369,33 @@ export class AnalyticsService {
       totalRuns: v.totalRuns,
       completedRuns: v.completedRuns,
       completionRate: v.totalRuns > 0 ? (v.completedRuns / v.totalRuns) * 100 : 0,
+      ...this.finalizeRunMetrics(v.metrics),
     }));
   }
 
-  async getDriverPerformance() {
+  /**
+   * Per-driver delivery counts (orders on the run, as before) plus the same
+   * stop-level operational metrics as getRoutePerformance. from/to window on
+   * RouteRun.scheduledDate via runDateFilter; omitted ⇒ all history.
+   */
+  async getDriverPerformance(from?: string, to?: string) {
+    const tenantTimezone = await this.resolveCurrentTenantTimezone();
     const runs = await this.prisma.forTenant().routeRun.findMany({
-      where: { driverId: { not: null } },
+      where: { driverId: { not: null }, ...this.runDateFilter(from, to) },
       include: {
         driver: { include: { user: { select: { username: true } } } },
         orders: { select: { id: true } },
+        stops: { select: { completedAt: true } },
       },
     });
     const map: Record<
       string,
-      { name: string; totalDeliveries: number; completedDeliveries: number }
+      {
+        name: string;
+        totalDeliveries: number;
+        completedDeliveries: number;
+        metrics: RunMetricAgg;
+      }
     > = {};
     for (const run of runs) {
       if (!run.driver) continue;
@@ -256,9 +405,11 @@ export class AnalyticsService {
           name: run.driver.contactName ?? run.driver.user.username,
           totalDeliveries: 0,
           completedDeliveries: 0,
+          metrics: this.newRunMetricAgg(),
         };
       map[id].totalDeliveries += run.orders.length;
       if (run.status === "COMPLETED") map[id].completedDeliveries += run.orders.length;
+      this.accumulateRunMetrics(map[id].metrics, run, tenantTimezone);
     }
     return Object.entries(map).map(([id, v]) => ({
       id,
@@ -266,6 +417,7 @@ export class AnalyticsService {
       totalDeliveries: v.totalDeliveries,
       completedDeliveries: v.completedDeliveries,
       completionRate: v.totalDeliveries > 0 ? (v.completedDeliveries / v.totalDeliveries) * 100 : 0,
+      ...this.finalizeRunMetrics(v.metrics),
     }));
   }
 
@@ -304,11 +456,24 @@ export class AnalyticsService {
    * OR an invoiced sale — movement recency alone is wrong now that SALE
    * movements are dead (a daily-selling but rarely-restocked product would
    * read as dead stock; see common/invoiced-sales.ts). `lastMovement` /
-   * `daysInactive` report the most recent of the two signals.
+   * `daysInactive` report the most recent of the two signals (relative to
+   * now, whatever the window).
+   *
+   * Windowing: with from/to the analytics-page picker range REPLACES the
+   * rolling window — dead ⇔ no activity anywhere inside [from, to] — so
+   * "last 7 days" means exactly that, and daysInactive is ignored. Without
+   * bounds the historical rolling behavior stands: no activity in the
+   * daysInactive days up to now (mobile's parameterless call). Stock levels
+   * are always CURRENT state — a past-dated range asks "which of today's
+   * stocked products didn't move back then", not a point-in-time snapshot.
    */
-  async getDeadStock(daysInactive = 30) {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - daysInactive);
+  async getDeadStock(daysInactive = 30, from?: string, to?: string) {
+    const ranged = Boolean(from || to);
+    const rollingCutoff = new Date();
+    rollingCutoff.setDate(rollingCutoff.getDate() - daysInactive);
+    const { fromDate, toDate } = this.dateRange(from, to);
+    const windowStart = ranged ? fromDate : rollingCutoff;
+    const windowEnd = ranged ? toDate : null; // rolling mode stays open-ended
     const excludeTobacco = await this.tobaccoExclusionActive();
     const activeProducts = await this.prisma.forTenant().product.findMany({
       where: {
@@ -327,38 +492,44 @@ export class AnalyticsService {
       select: { issueDate: true, items: { select: { productId: true } } },
     });
     const lastSaleAt = new Map<string, Date>();
+    const soldInWindow = new Set<string>();
     for (const inv of invoices) {
+      const inWindow = inv.issueDate >= windowStart && (!windowEnd || inv.issueDate <= windowEnd);
       for (const item of inv.items ?? []) {
         if (!item.productId) continue;
+        if (inWindow) soldInWindow.add(item.productId);
         const prev = lastSaleAt.get(item.productId);
         if (!prev || inv.issueDate > prev) lastSaleAt.set(item.productId, inv.issueDate);
       }
     }
 
-    // Products with any stock movement since the cutoff are active.
+    // Products with any stock movement inside the window are active.
     const recentMovements = await this.prisma.forTenant().stockMovement.findMany({
-      where: { productId: { in: productIds }, createdAt: { gte: cutoff } },
+      where: {
+        productId: { in: productIds },
+        // B562: the movement's accounting date (effectiveAt), not its insertion time.
+        effectiveAt: windowEnd ? { gte: windowStart, lte: windowEnd } : { gte: windowStart },
+      },
       select: { productId: true },
       distinct: ["productId"],
     });
     const recentlyMoved = new Set(recentMovements.map((m: { productId: string }) => m.productId));
 
-    const deadCandidates = activeProducts.filter((p) => {
-      const sale = lastSaleAt.get(p.id);
-      return !recentlyMoved.has(p.id) && (!sale || sale < cutoff);
-    });
+    const deadCandidates = activeProducts.filter(
+      (p) => !recentlyMoved.has(p.id) && !soldInWindow.has(p.id),
+    );
     if (deadCandidates.length === 0) return [];
 
     // Last movement dates only for the dead candidates — a small set, which
     // replaces the old per-product findFirst over EVERY stocked product.
     const movementRows = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId: { in: deadCandidates.map((p) => p.id) } },
-      orderBy: { createdAt: "desc" },
-      select: { productId: true, createdAt: true },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      select: { productId: true, effectiveAt: true },
     });
     const lastMovementAt = new Map<string, Date>();
     for (const m of movementRows) {
-      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.createdAt);
+      if (!lastMovementAt.has(m.productId)) lastMovementAt.set(m.productId, m.effectiveAt);
     }
 
     return deadCandidates.map((p) => {
@@ -375,6 +546,12 @@ export class AnalyticsService {
     });
   }
 
+  /**
+   * Products currently priced under a 20% margin. Deliberately takes NO
+   * from/to: it compares today's pricePerUnit to today's averageCost — pure
+   * current state with no history to window (B40 decision: the web card
+   * says so instead of pretending to filter).
+   */
   async getMarginAlerts() {
     const excludeTobacco = await this.tobaccoExclusionActive();
     const products = await this.prisma.forTenant().product.findMany({
@@ -399,9 +576,16 @@ export class AnalyticsService {
     return alerts;
   }
 
-  async getDso() {
+  /**
+   * Average days from issue to payment across PAID invoices. from/to window
+   * on Invoice.issueDate via issueDateFilter — the range selects WHICH
+   * invoices count (by when they were raised); the payment itself may land
+   * after `to` and still be measured. Omitted ⇒ all history (mobile's
+   * parameterless call).
+   */
+  async getDso(from?: string, to?: string) {
     const paidInvoices = await this.prisma.forTenant().invoice.findMany({
-      where: { status: "PAID", paidAt: { not: null } },
+      where: { status: "PAID", paidAt: { not: null }, ...this.issueDateFilter(from, to) },
       select: { issueDate: true, paidAt: true },
     });
     if (paidInvoices.length === 0) return { dso: 0, count: 0 };
@@ -428,11 +612,12 @@ export class AnalyticsService {
   async getCostHistory(productId: string) {
     const movements = await this.prisma.forTenant().stockMovement.findMany({
       where: { productId, type: { in: ["PURCHASE", "COST_BASIS"] } },
-      orderBy: { createdAt: "asc" },
+      // B562: accounting order (effectiveAt), insertion time and id break ties.
+      orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
       take: 100,
     });
     return movements.map((m) => ({
-      date: m.createdAt,
+      date: m.effectiveAt,
       unitCost: Number(m.unitCost ?? 0),
       avgCostAfter: m.avgCostAfter != null ? Number(m.avgCostAfter) : null,
       type: m.type,
@@ -440,94 +625,32 @@ export class AnalyticsService {
   }
 
   /**
-   * Per-product demand series for the product-detail chart. Units AND revenue ship in
-   * one payload so the card's metric toggle never refetches.
+   * PR-B: "who bought this, when, and at what price" — the per-buyer sales history behind
+   * the product Sales tab: the newest `limit` invoiced LINES, and their summary.
    *
-   * Source is invoiced sales: `InvoiceItem` has no business date of its own, so the
-   * window filters `Invoice.issueDate`. `StockMovement type:"SALE"` — the source the
-   * inventory forecasting tab uses — is not viable here: it is only written on the
-   * route-delivery path, so a tenant that invoices directly has none at all.
+   * #2118: one-line delegate into the sales-facts layer (`ProductInsightsService`), which
+   * reads THROUGH `Invoice` on the accrual basis (plan A2: a written-off invoice's lines are
+   * sales, badged `writtenOff`) and pages by line. Callers and the response shape are
+   * unchanged. The tobacco-exclusion toggle deliberately does NOT apply: the operator reached
+   * this by opening that exact product.
+   */
+  async getProductSales(productId: string, limit = 200): Promise<ProductSalesHistory> {
+    return this.productInsights.getSalesHistory(productId, limit);
+  }
+
+  /**
+   * Per-product demand series for the product-detail chart — units AND revenue in one
+   * payload so the card's metric toggle never refetches.
    *
-   * ⚠️ Queried THROUGH Invoice, never `invoiceItem.findMany`. Invoice lines are created
-   * as NESTED writes, which bypass the tenant extension's `data.tenantId` injection, so
-   * historical/imported lines can carry `tenantId = null` — and `forTenant()` injects
-   * `where.tenantId`, which would silently drop every one of them. On this dataset that
-   * is the large majority of the history the 6m/1y/5y ranges exist to show. Same guard
-   * and rationale as `bookkeeping.service.ts getSalesByItem`. A spec pins it.
-   *
-   * The tobacco exclusion toggle is deliberately NOT applied: this is a per-product
-   * drill-down the operator reached by opening that exact product, same carve-out as
-   * price/cost history (see the `tobaccoExclusionActive` doc comment above).
+   * #2118: one-line delegate into `ProductInsightsService` (same through-Invoice read,
+   * accrual basis, UTC-anchored `demandWindow`). Callers and the response shape are
+   * unchanged; the tobacco toggle does not apply (per-product drill-down).
    */
   async getProductDemand(
     productId: string,
     range: DemandRange = "30d",
   ): Promise<ProductDemandSeries> {
-    const win = demandWindow(new Date(), range);
-    // Equality on productId can never match NULL, so ad-hoc "unlisted" lines
-    // (productId = null) are excluded by this filter for free.
-    const soldWhere = { status: REAL_INVOICE_STATUSES, items: { some: { productId } } };
-
-    const [invoices, firstSale, lastSale] = await Promise.all([
-      this.prisma.forTenant().invoice.findMany({
-        where: { ...soldWhere, issueDate: { gte: win.from, lt: win.to } },
-        select: {
-          issueDate: true,
-          items: { where: { productId }, select: { qty: true, subtotal: true } },
-        },
-      }),
-      this.prisma.forTenant().invoice.findFirst({
-        where: soldWhere,
-        orderBy: { issueDate: "asc" },
-        select: { issueDate: true },
-      }),
-      this.prisma.forTenant().invoice.findFirst({
-        where: soldWhere,
-        orderBy: { issueDate: "desc" },
-        select: { issueDate: true },
-      }),
-    ]);
-
-    // Buckets are materialized up front and indexed into, so empty periods stay in the
-    // series as explicit zeros (getRevenueTrend's Record+Object.entries approach drops
-    // them and hands the client a chart with holes).
-    const units = new Array<number>(win.buckets.length).fill(0);
-    const revenue = new Array<number>(win.buckets.length).fill(0);
-
-    for (const inv of invoices) {
-      const idx = bucketIndexOf(win, inv.issueDate);
-      if (idx < 0) continue; // defensive — the half-open filter already excludes these
-      for (const item of inv.items) {
-        // qty is ALREADY the normalized base-unit total (a "2 cases + 3 packs" line
-        // with unitsPerBox 12 stores qty 27) — never re-derive it from boxes/pieces.
-        units[idx] += Number(item.qty);
-        // subtotal is authoritative. NEVER qty × unitPrice: that re-introduces the
-        // boxed-line overcharge by unitsPerBox that common/pricing.ts exists to prevent.
-        revenue[idx] += Number(item.subtotal);
-      }
-    }
-
-    const day = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
-
-    return {
-      productId,
-      range,
-      granularity: win.granularity,
-      from: win.from.toISOString(),
-      to: win.to.toISOString(),
-      buckets: win.buckets.map((b, i) => ({
-        date: b.date,
-        units: roundQty(units[i]),
-        revenue: roundMoney(revenue[i]),
-      })),
-      totals: {
-        units: roundQty(units.reduce((s, v) => s + v, 0)),
-        revenue: roundMoney(revenue.reduce((s, v) => s + v, 0)),
-      },
-      hasAnySales: firstSale != null,
-      firstSaleAt: day(firstSale?.issueDate),
-      lastSaleAt: day(lastSale?.issueDate),
-    };
+    return this.productInsights.getDemandSeries(productId, range);
   }
 
   async getSalesByCategory(from?: string, to?: string) {

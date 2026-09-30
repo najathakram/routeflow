@@ -19,7 +19,9 @@ const request = require("supertest");
 
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
+import { PrismaService } from "../prisma/prisma.service";
 import { signLocalUrl, verifyLocalUrlSignature, StorageService } from "../storage/storage.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("Local URL signing primitives", () => {
   const SECRET = "test-secret-deadbeef";
@@ -127,7 +129,13 @@ describe("UploadsAccessGuard — end-to-end via supertest", () => {
     // access without ever touching JWT.
     const module: TestingModule = await Test.createTestingModule({
       controllers: [UploadsController],
-      providers: [{ provide: ConfigService, useValue: mockConfig }],
+      providers: [
+        { provide: ConfigService, useValue: mockConfig },
+        // The controller's B12 owner lookups never fire on the signed-URL path
+        // (a signature is a per-key capability), but the constructor dependency
+        // must still resolve.
+        { provide: PrismaService, useValue: {} },
+      ],
     })
       // The real guard tries to fall back to passport JWT when the signed
       // path fails, but passport isn't wired up in this isolated unit test.
@@ -151,7 +159,7 @@ describe("UploadsAccessGuard — end-to-end via supertest", () => {
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

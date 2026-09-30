@@ -1,8 +1,10 @@
 import {
   summarizeCollections,
   computeVariance,
+  expectedPhysicalCash,
   isReconciled,
   buildSettlementNote,
+  shouldForceSettlement,
 } from "../lib/run-settlement";
 
 const entries = [
@@ -72,5 +74,66 @@ describe("buildSettlementNote", () => {
     });
     expect(note).toContain("variance -$10.00");
     expect(note).toContain("(override)");
+  });
+});
+
+// REG-B152: the settlement screen's expected figure and the gate share ONE basis —
+// physical money = CASH + CHECK. The server payload splits the two, so a consumer
+// reading `cashTotal` alone reconciles a check-carrying run against the wrong figure
+// and manufactures a variance the driver is then forced to explain.
+describe("expectedPhysicalCash (REG-B152)", () => {
+  it("folds checks into the expected figure", () => {
+    expect(expectedPhysicalCash({ cashTotal: 100, checkTotal: 50 })).toBe(150);
+  });
+
+  it("treats a missing checkTotal as zero", () => {
+    expect(expectedPhysicalCash({ cashTotal: 100 })).toBe(100);
+  });
+
+  it("is null when the payload has not loaded, so callers can fall back", () => {
+    expect(expectedPhysicalCash(undefined)).toBeNull();
+    expect(expectedPhysicalCash(null)).toBeNull();
+  });
+});
+
+// REG-B152: server-truth settlement gate (spec R8, test-plan T-B152m). `run.notes` /
+// `runSettlementStore` staleness is why the store-signal OR fallback exists — see the
+// fourth case below.
+describe("shouldForceSettlement (REG-B152)", () => {
+  it("forces settlement when cash was collected and no settlement note exists yet", () => {
+    expect(
+      shouldForceSettlement({
+        collectedPayments: { cashTotal: 40, checkTotal: 0, count: 1 },
+        settlementNote: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("forces settlement on check-only collections too (cash+check basis)", () => {
+    expect(
+      shouldForceSettlement({
+        collectedPayments: { cashTotal: 0, checkTotal: 25, count: 1 },
+        settlementNote: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not force settlement once a settlementNote is already on record", () => {
+    expect(
+      shouldForceSettlement({
+        collectedPayments: { cashTotal: 40, checkTotal: 0, count: 1 },
+        settlementNote: "already settled",
+      }),
+    ).toBe(false);
+  });
+
+  it("ORs in the store signal when the run payload has no collectedPayments yet", () => {
+    // Missing collectedPayments (query staleness right after a collection) + a true
+    // store signal must still force settlement — an AND here would strand this case.
+    expect(shouldForceSettlement({ settlementNote: null }, true)).toBe(true);
+  });
+
+  it("is false when there is neither a cash/check total nor a store signal", () => {
+    expect(shouldForceSettlement({ settlementNote: null }, false)).toBe(false);
   });
 });

@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 /**
  * Pure weighted-average / lot-costing helpers.
  *
- * COST DISCIPLINE (mirror of the money discipline in `common/pricing.ts`):
+ * COST DISCIPLINE (mirror of the money discipline in `@routeflow/pricing`):
  * unit costs live in Decimal(10, 4) columns, so every cost produced here is
  * `Prisma.Decimal` math clamped to 4dp via {@link costDecimal} — never `Number`
  * float arithmetic. Convert to a 2dp money value (valuation totals, COGS in

@@ -30,6 +30,9 @@ import {
 } from "../../../lib/api/routes";
 import { startLocationTracking } from "../../../lib/location-tracker";
 import { useAuthStore } from "../../../lib/auth-store";
+import { useTenantOnboarding } from "../../../lib/api/onboarding";
+import { ONBOARDING_STAGE_CUSTOMER_LABEL, tenantOnboardingSummary } from "@routeflow/types";
+import { useDeliveryAccess, useDeveloperMode, useRoutesAccess } from "../../../lib/api/addons";
 
 function routeStatusLabel(r: AdminRoute): {
   label: string;
@@ -54,10 +57,39 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 export default function OperatorHomeScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
+  // #2159 S4: while this workspace is being onboarded, point staff at "Getting started".
+  const onboardingQ = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
+  const onboarding = onboardingQ.data?.onboarding ?? null;
+  const onboardingSummary = tenantOnboardingSummary(onboarding);
+  // Owner split 2026-08-25: the dispatch-readiness hero and "Routes today" are
+  // recurring-routes surfaces (useAdminRoutes keeps the SCHEDULED default), so
+  // they follow the routes addon; drivers is shared by both features, matching
+  // (operator)/_layout.tsx's EITHER_SECTIONS. Owner decision 2026-08-28: the
+  // helpers no longer fold in developer_mode — these operator dispatch
+  // surfaces follow the feature addons alone.
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
+  // Drive mode keeps the RAW dev switch: the (driver) app is still gated on
+  // developer_mode in app/_layout.tsx, so an addon-only operator has no driver
+  // UI to switch into.
+  const { enabled: devMode } = useDeveloperMode();
   const [viewMode, setViewMode] = useState<"operator" | "driver">("operator");
+  // Non-dev tenants have no driver UI to switch into — force operator
+  // regardless of any stale local state, so DriverInlineView can never render.
+  const effectiveViewMode = devMode ? viewMode : "operator";
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
-  const { data: routesData, isLoading: routesLoading } = useAdminRoutes({ limit: 10 });
-  const { data: driversData } = useAdminDrivers();
+  // `/routes`, `/drivers` and `/route-runs` are addon-gated server-side (403
+  // without a dispatch addon), so each query is disabled on the same gate that
+  // hides what it feeds — a tenant with neither addon polls nothing. Runs use
+  // the either-gate (an ad-hoc delivery materializes a route + run).
+  const { data: routesData, isLoading: routesLoading } = useAdminRoutes(
+    { limit: 10 },
+    { enabled: routesAccess.enabled },
+  );
+  const { data: driversData } = useAdminDrivers(undefined, { enabled: driversAccess });
   const routes = routesData?.data ?? [];
   const driversById = useMemo(() => {
     const map = new Map<string, AdminDriver>();
@@ -67,8 +99,14 @@ export default function OperatorHomeScreen() {
 
   // Active runs: today's scheduled runs PLUS any run still IN_PROGRESS from a prior day
   const today = new Date().toISOString().slice(0, 10);
-  const { data: runsData } = useOperatorRouteRuns({ date: today, limit: 50 });
-  const { data: inProgressData } = useOperatorRouteRuns({ status: "IN_PROGRESS", limit: 50 });
+  const { data: runsData } = useOperatorRouteRuns(
+    { date: today, limit: 50 },
+    { enabled: routesAccess.enabled || deliveryAccess.enabled },
+  );
+  const { data: inProgressData } = useOperatorRouteRuns(
+    { status: "IN_PROGRESS", limit: 50 },
+    { enabled: routesAccess.enabled || deliveryAccess.enabled },
+  );
   const todayRuns = useMemo(() => {
     const seen = new Set<string>();
     const merged: RouteRun[] = [];
@@ -137,32 +175,39 @@ export default function OperatorHomeScreen() {
       />
 
       {/* Mode switcher — local state only, no navigation, header stays fixed */}
-      {user?.canActAsDriver ? (
+      {devMode && user?.canActAsDriver ? (
         <View style={styles.modeBar}>
           <View style={styles.modeTrack}>
             <Pressable
-              style={[styles.modeSeg, viewMode === "operator" && styles.modeSegActive]}
+              style={[styles.modeSeg, effectiveViewMode === "operator" && styles.modeSegActive]}
               onPress={() => setViewMode("operator")}
             >
               <Ionicons
                 name="briefcase-outline"
                 size={14}
-                color={viewMode === "operator" ? ios.brand : ios.label2}
+                color={effectiveViewMode === "operator" ? ios.brand : ios.label2}
               />
-              <Text style={[styles.modeLabel, viewMode === "operator" && styles.modeLabelActive]}>
+              <Text
+                style={[
+                  styles.modeLabel,
+                  effectiveViewMode === "operator" && styles.modeLabelActive,
+                ]}
+              >
                 Operator
               </Text>
             </Pressable>
             <Pressable
-              style={[styles.modeSeg, viewMode === "driver" && styles.modeSegActive]}
+              style={[styles.modeSeg, effectiveViewMode === "driver" && styles.modeSegActive]}
               onPress={() => setViewMode("driver")}
             >
               <Ionicons
                 name="car-outline"
                 size={14}
-                color={viewMode === "driver" ? ios.brand : ios.label2}
+                color={effectiveViewMode === "driver" ? ios.brand : ios.label2}
               />
-              <Text style={[styles.modeLabel, viewMode === "driver" && styles.modeLabelActive]}>
+              <Text
+                style={[styles.modeLabel, effectiveViewMode === "driver" && styles.modeLabelActive]}
+              >
                 Driver
               </Text>
             </Pressable>
@@ -170,51 +215,74 @@ export default function OperatorHomeScreen() {
         </View>
       ) : null}
 
-      {viewMode === "driver" ? (
+      {effectiveViewMode === "driver" ? (
         <DriverInlineView />
       ) : (
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* Onboarding in progress (#2159 S4) */}
+          {onboarding && onboardingSummary ? (
+            <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+              <Pressable
+                testID="getting-started-card"
+                accessibilityRole="button"
+                style={styles.onboardingCard}
+                onPress={() => router.push("/(operator)/getting-started")}
+              >
+                <Ionicons name="flag-outline" size={20} color={ios.brand} />
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.onboardingTitle}>
+                    Onboarding: {ONBOARDING_STAGE_CUSTOMER_LABEL[onboarding.stage]}
+                  </Text>
+                  <Text style={styles.onboardingSub}>{onboardingSummary}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color={ios.gray[1]} />
+              </Pressable>
+            </View>
+          ) : null}
+
           {/* Readiness hero */}
-          <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
-            <LinearGradient
-              colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.hero}
-            >
-              <Text style={styles.heroEyebrow}>DISPATCH READINESS</Text>
-              <View style={styles.heroRow}>
-                <Text style={styles.heroValue}>{readiness.pct}%</Text>
-                <Text style={styles.heroSub}>
-                  {readiness.loaded} of {readiness.total} runs rolling
-                </Text>
-              </View>
-              <View style={styles.heroTrack}>
-                <View style={[styles.heroTrackFill, { width: `${readiness.pct}%` }]} />
-              </View>
-              <View style={styles.heroActions}>
-                <Pressable
-                  style={styles.heroBtnFilled}
-                  onPress={() => router.push("/(operator)/new-order")}
-                >
-                  <Ionicons name="add" size={14} color={ios.brandInk} />
-                  <Text style={styles.heroBtnFilledText}>New order</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.heroBtnGhost}
-                  onPress={() => router.push("/(operator)/dispatch")}
-                >
-                  <Text style={styles.heroBtnGhostText}>Dispatch</Text>
-                </Pressable>
-                <Pressable
-                  style={styles.heroBtnGhost}
-                  onPress={() => router.push("/(operator)/fleet")}
-                >
-                  <Text style={styles.heroBtnGhostText}>Fleet</Text>
-                </Pressable>
-              </View>
-            </LinearGradient>
-          </View>
+          {routesAccess.enabled ? (
+            <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
+              <LinearGradient
+                colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.hero}
+              >
+                <Text style={styles.heroEyebrow}>DISPATCH READINESS</Text>
+                <View style={styles.heroRow}>
+                  <Text style={styles.heroValue}>{readiness.pct}%</Text>
+                  <Text style={styles.heroSub}>
+                    {readiness.loaded} of {readiness.total} runs rolling
+                  </Text>
+                </View>
+                <View style={styles.heroTrack}>
+                  <View style={[styles.heroTrackFill, { width: `${readiness.pct}%` }]} />
+                </View>
+                <View style={styles.heroActions}>
+                  <Pressable
+                    style={styles.heroBtnFilled}
+                    onPress={() => router.push("/(operator)/new-order")}
+                  >
+                    <Ionicons name="add" size={14} color={ios.brandInk} />
+                    <Text style={styles.heroBtnFilledText}>New order</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.heroBtnGhost}
+                    onPress={() => router.push("/(operator)/dispatch")}
+                  >
+                    <Text style={styles.heroBtnGhostText}>Dispatch</Text>
+                  </Pressable>
+                  <Pressable
+                    style={styles.heroBtnGhost}
+                    onPress={() => router.push("/(operator)/fleet")}
+                  >
+                    <Text style={styles.heroBtnGhostText}>Fleet</Text>
+                  </Pressable>
+                </View>
+              </LinearGradient>
+            </View>
+          ) : null}
 
           {/* KPIs */}
           {statsLoading || !stats ? (
@@ -235,12 +303,20 @@ export default function OperatorHomeScreen() {
                     label="Pending orders"
                   />
                 </Pressable>
-                <Pressable style={{ flex: 1 }} onPress={() => router.push("/(operator)/drivers")}>
+                {/* Tenants with neither delivery addon have no drivers surface —
+                    the grid keeps two cells per row by swapping in a
+                    non-dispatch KPI. */}
+                <Pressable
+                  style={{ flex: 1 }}
+                  onPress={() =>
+                    router.push(driversAccess ? "/(operator)/drivers" : "/(operator)/customers")
+                  }
+                >
                   <KpiCard
                     icon={<Ionicons name="people-outline" size={18} color={ios.system.greenInk} />}
                     iconBg={ios.system.greenWash}
-                    value={String(stats.activeDrivers)}
-                    label="Active drivers"
+                    value={String(driversAccess ? stats.activeDrivers : stats.totalCustomers)}
+                    label={driversAccess ? "Active drivers" : "Customers"}
                   />
                 </Pressable>
               </View>
@@ -274,89 +350,93 @@ export default function OperatorHomeScreen() {
             </>
           )}
 
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Routes today</Text>
-            <Pressable onPress={() => router.push("/(operator)/dispatch")}>
-              <Text style={styles.sectionLink}>All</Text>
-            </Pressable>
-          </View>
+          {routesAccess.enabled ? (
+            <>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Routes today</Text>
+                <Pressable onPress={() => router.push("/(operator)/dispatch")}>
+                  <Text style={styles.sectionLink}>All</Text>
+                </Pressable>
+              </View>
 
-          {routesLoading ? (
-            <View style={styles.center}>
-              <ActivityIndicator color={ios.brand} />
-            </View>
-          ) : routes.length === 0 ? (
-            <View style={styles.center}>
-              <Text style={styles.emptyTitle}>No routes scheduled</Text>
-            </View>
-          ) : (
-            <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
-              {routes.slice(0, 6).map((r) => {
-                const driverName = driverDisplayName(
-                  r.driverId ? driversById.get(r.driverId) : undefined,
-                );
-                const status = routeStatusLabel(r);
-                const badgeColor =
-                  status.variant === "green"
-                    ? ios.system.green
-                    : status.variant === "brand"
-                      ? ios.brand
-                      : status.variant === "orange"
-                        ? ios.system.orange
-                        : status.variant === "red"
-                          ? ios.system.red
-                          : ios.gray[3];
-                const stopCount = r._count?.stops ?? 0;
-                const activeRun = r.runs?.[0];
-                const cardDest = activeRun
-                  ? (`/(operator)/route-runs/${activeRun.id}` as any)
-                  : (`/(operator)/routes/${r.id}` as any);
-                return (
-                  <Pressable
-                    key={r.id}
-                    style={styles.routeCard}
-                    onPress={() => router.push(cardDest)}
-                  >
-                    <View style={styles.routeHead}>
-                      <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
-                        <Text style={styles.routeBadgeText}>
-                          {r.name?.slice(0, 2)?.toUpperCase() ?? "R"}
-                        </Text>
-                      </View>
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.routeName} numberOfLines={1}>
-                          {r.name} · {driverName}
-                        </Text>
-                        <Text style={styles.routeMeta}>
-                          {stopCount} stop{stopCount === 1 ? "" : "s"}
-                        </Text>
-                      </View>
-                      <Pill variant={status.variant} dot>
-                        {status.label}
-                      </Pill>
-                    </View>
-                    <View style={styles.routeProgress}>
-                      <View style={{ flex: 1 }}>
-                        <ProgressTrack
-                          percent={status.pct}
-                          fill={
-                            status.variant === "brand"
-                              ? "brand"
-                              : status.variant === "green"
-                                ? "green"
-                                : status.variant === "red"
-                                  ? "red"
-                                  : "orange"
-                          }
-                        />
-                      </View>
-                      <Text style={styles.routePct}>{status.pct}%</Text>
-                    </View>
-                  </Pressable>
-                );
-              })}
-            </View>
-          )}
+              {routesLoading ? (
+                <View style={styles.center}>
+                  <ActivityIndicator color={ios.brand} />
+                </View>
+              ) : routes.length === 0 ? (
+                <View style={styles.center}>
+                  <Text style={styles.emptyTitle}>No routes scheduled</Text>
+                </View>
+              ) : (
+                <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 20 }}>
+                  {routes.slice(0, 6).map((r) => {
+                    const driverName = driverDisplayName(
+                      r.driverId ? driversById.get(r.driverId) : undefined,
+                    );
+                    const status = routeStatusLabel(r);
+                    const badgeColor =
+                      status.variant === "green"
+                        ? ios.system.green
+                        : status.variant === "brand"
+                          ? ios.brand
+                          : status.variant === "orange"
+                            ? ios.system.orange
+                            : status.variant === "red"
+                              ? ios.system.red
+                              : ios.gray[3];
+                    const stopCount = r._count?.stops ?? 0;
+                    const activeRun = r.runs?.[0];
+                    const cardDest = activeRun
+                      ? (`/(operator)/route-runs/${activeRun.id}` as any)
+                      : (`/(operator)/routes/${r.id}` as any);
+                    return (
+                      <Pressable
+                        key={r.id}
+                        style={styles.routeCard}
+                        onPress={() => router.push(cardDest)}
+                      >
+                        <View style={styles.routeHead}>
+                          <View style={[styles.routeBadge, { backgroundColor: badgeColor }]}>
+                            <Text style={styles.routeBadgeText}>
+                              {r.name?.slice(0, 2)?.toUpperCase() ?? "R"}
+                            </Text>
+                          </View>
+                          <View style={{ flex: 1, minWidth: 0 }}>
+                            <Text style={styles.routeName} numberOfLines={1}>
+                              {r.name} · {driverName}
+                            </Text>
+                            <Text style={styles.routeMeta}>
+                              {stopCount} stop{stopCount === 1 ? "" : "s"}
+                            </Text>
+                          </View>
+                          <Pill variant={status.variant} dot>
+                            {status.label}
+                          </Pill>
+                        </View>
+                        <View style={styles.routeProgress}>
+                          <View style={{ flex: 1 }}>
+                            <ProgressTrack
+                              percent={status.pct}
+                              fill={
+                                status.variant === "brand"
+                                  ? "brand"
+                                  : status.variant === "green"
+                                    ? "green"
+                                    : status.variant === "red"
+                                      ? "red"
+                                      : "orange"
+                              }
+                            />
+                          </View>
+                          <Text style={styles.routePct}>{status.pct}%</Text>
+                        </View>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              )}
+            </>
+          ) : null}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -555,6 +635,17 @@ function DriverInlineView() {
 }
 
 const styles = StyleSheet.create({
+  onboardingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 44,
+    backgroundColor: ios.bgElev,
+    borderRadius: 14,
+    padding: 14,
+  },
+  onboardingTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
+  onboardingSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { alignItems: "center", justifyContent: "center", padding: 24, gap: 6 },
   // ── Mode switcher ─────────────────────────────────────────────────────────

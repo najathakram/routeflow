@@ -1,0 +1,57 @@
+# ─── Google Sign-In Monitor ──────────────────────────────────────────────────
+# OPS-23/DECIDE-29: on 2026-09-11 every Google sign-in door (super admin, operators,
+# buyers, mobile) was DISCOVERED dead - the OAuth client was gone and Google's consent page
+# returned deleted_client. Nothing tested it, so nobody knows how long it had been broken.
+# This workflow runs scripts/google-signin-monitor.mjs every 6 hours against production so
+# the next deleted/misconfigured client is caught automatically instead.
+#
+# NOTE: GitHub disables `schedule:` triggers after 60 days with no repository activity. If
+# this monitor goes quiet, check whether the schedule was auto-disabled before assuming green.
+#
+# scripts/google-signin-monitor.mjs has zero dependencies (uses global fetch + node:dns),
+# so this job runs it with plain `node` — no `npm ci`.
+#
+# Required GitHub secrets:
+#   SMOKE_BASE_URL     — API URL (e.g. https://routeflowapi-production.up.railway.app)
+#   PLAYWRIGHT_TENANT_SLUG — approved test-tenant slug (e.g. e2e-routeflow)
+#
+# WHAT THE SCHEDULE COSTS (recorded here so the next minutes audit needs no archaeology).
+# The cron below is 4 runs/day, ~120 runs/month. The job finishes well inside a minute, but
+# GitHub bills a 1-minute minimum per job — so budget ~120 billed min/month, up to ~240 if
+# checkout ever pushes a run past that first minute. Against the GitHub Free
+# 2,000 min/mo allowance this private repo draws on, that is roughly 6-12%. (nightly.yml's
+# header records the same arithmetic for its ~330 min/mo, which is why its schedule is
+# commented out.) The 6-hourly cadence is the owner's DECIDE-29 ruling — a dead Google door
+# must go red within 6 h, not overnight — so it is a priced decision, not a default;
+# lowering or disabling it is likewise an owner call, and it gets recorded here.
+
+name: Google Sign-In Monitor
+
+on:
+  schedule:
+    - cron: "17 */6 * * *" # every 6 hours, offset off the hour
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "API base URL (overrides secret)"
+        required: false
+
+concurrency:
+  group: google-signin-monitor
+  cancel-in-progress: false # a manual dispatch queues behind a scheduled run, never double-bills
+
+jobs:
+  google-signin:
+    name: Google sign-in reachability
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v7
+
+      # ubuntu-latest ships Node 20 and the monitor has zero dependencies, so no Node-setup
+      # step is needed here.
+      - name: Run Google sign-in monitor
+        run: node scripts/google-signin-monitor.mjs
+        env:
+          SMOKE_BASE_URL: ${{ inputs.api_url || secrets.SMOKE_BASE_URL || 'https://routeflowapi-production.up.railway.app' }}
+          SMOKE_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}

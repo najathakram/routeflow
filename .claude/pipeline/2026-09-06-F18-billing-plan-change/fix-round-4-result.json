@@ -1,0 +1,192 @@
+{
+  "api": {
+    "filesTouched": [
+      "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-watchdog\\apps\\api\\src\\billing\\subscription-mutation.service.ts",
+      "C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-watchdog\\apps\\api\\src\\billing\\subscription-mutation.service.spec.ts"
+    ],
+    "perHazard": [
+      {
+        "id": 1,
+        "status": "fixed",
+        "what": "PlanChangePreview gains `seatAckRequired: boolean` (interface line ~75, docblock states it is ALWAYS present and is the ONLY signal the chooser may gate its deactivation acknowledgement on). It is emitted on all 7 return sites of planChangePreview: false on the early SUBSCRIBE, KEEP_CURRENT, NOOP, CONTACT_SALES, cycle-switch SUBSCRIBE and UPGRADE; on the DOWNGRADE branch a local `let seatAckRequired = false` is set true ONLY inside `if (activeTeam > seatsIncluded)` — the same condition that pushes the seat warning, i.e. exactly when billing-cron would deactivate staff. The composed `warning` text is unchanged, so a cancellation-only DOWNGRADE still warns but now reports seatAckRequired:false.",
+        "pin": "4 spec pins in describe \"planChangePreview — seatAckRequired (round 4, hazard 1)\": (a) DOWNGRADE with cancellation armed + activeTeam 2 (under STARTER's 3) → warning matches /cancellation is pending/, seatAckRequired === false, warning does NOT match /deactivated/; (b) DOWNGRADE with activeTeam 8 (over cap) → seatAckRequired === true and warning matches /8 active users/; (c) DOWNGRADE within cap, nothing armed → false, not undefined; (d) a table pin asserting seatAckRequired === false on EVERY non-DOWNGRADE action (SUBSCRIBE trial, NOOP, KEEP_CURRENT, cycle-switch SUBSCRIBE, UPGRADE, CONTACT_SALES) so the web mirror can require the field."
+      },
+      {
+        "id": 2,
+        "status": "fixed",
+        "what": "The cycle-switch SUBSCRIBE branch now composes a `cycleWarnings` list instead of a single string: the existing \"Switching billing cycle takes effect immediately and is not prorated.\" line, plus CANCELLATION_REVOKED_WARNING when `priorSub.cancelAtPeriodEnd`, plus \"A scheduled downgrade is pending — switching cycle cancels it.\" when `priorSub.downgradeToPlanKey != null`; joined with \" \" exactly like the DOWNGRADE branch's `warnings`. A comment records why (subscribe()'s upsert `update` branch writes cancelAtPeriodEnd:false / downgradeToPlanKey:null / downgradeEffectiveAt:null). `downgradeToPlanKey` was already in the priorSub select, so no query change.",
+        "pin": "4 spec pins in describe \"a cycle switch says what it disarms (round 4, hazard 2)\": cancellation armed → warning matches both /not prorated/ and /cancellation is pending/; downgrade armed → /not prorated/ and /scheduled downgrade is pending/; both armed → both lines present (composed, never traded); nothing armed → warning is EXACTLY the proration sentence. The pre-existing \"ACTIVE cycle switch previews SUBSCRIBE with a warning\" test stays green."
+      },
+      {
+        "id": 6,
+        "status": "fixed",
+        "what": "`const toKey = normalizePlanKey(planKey)` still runs first (it is needed for the samePlan compare), but the `throw new BadRequestException(`Unknown plan \"${planKey}\"`)` moved from above the tenant/subscription fetch to immediately AFTER the no-subscription / non-ACTIVE / no-periodEnd SUBSCRIBE return — i.e. onto the ranking paths only. The explanatory comment moved with it and now records that refusing above the branch 400'd the whole /billing/quote for every tenant on that card including the fresh-subscribe path. downgrade()'s own refusal is untouched.",
+        "pin": "2 spec pins in describe \"the off-list refusal is scoped to the ranking paths (round 4, hazard 6)\", both against a published catalog carrying an off-list `PRO` definition: a TRIAL tenant with no subscription quoting \"PRO\" previews SUBSCRIBE (and seatAckRequired false); an ACTIVE tenant on STARTER quoting \"PRO\" still rejects with BadRequestException. The pre-existing round-3 test \"planChangePreview throws instead of ranking an off-list key\" (ACTIVE tenant) remains green unchanged."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no output. Note: tsconfig.build.json excludes **/*spec.ts, so this gate covers the service only; the spec's types are checked by ts-jest (package.json transform is ts-jest, no isolatedModules), which passed below."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest src/billing --runInBand",
+        "pass": true,
+        "summary": "Exit 0. Test Suites: 16 passed / 16 total. Tests: 260 passed / 260 total, 0 failed. 9.9 s. subscription-mutation.service.spec.ts PASS. The ERROR/WARN lines in the log are deliberate negative-path logging from plan-flag.guard.spec.ts and meter.service.spec.ts (\"db down\") and the B58 subscribe guard — both suites PASS."
+      }
+    ],
+    "notes": "Both gates green on iteration 1 — nothing had to be repaired. Only the two allowed files were touched; no git write commands, no installs, no full `npx jest`.\n\nSeam contract for the web exec: `seatAckRequired` is a REQUIRED (non-optional) boolean on `PlanChangePreview` and is emitted on all 7 return sites, so `preview.change.seatAckRequired === true` is safe to key the acknowledgement on with no undefined case. It is true on the DOWNGRADE branch alone, and only when `activeTeam > seatsIncluded` against the tenant's PINNED catalog version (`getVersionForTenant`) — the same source billing-cron's `applyScheduledDowngrades` reads, so the flag fires exactly when the sweep would deactivate staff. `warning` semantics are unchanged and still composed (cancellation + seat, or the cycle-switch triple), which is precisely why the boolean now exists.\n\nBehaviour deltas a reviewer should look for beyond the three rulings:\n- Hazard 2 changes the cycle-switch `warning` from a fixed string to a joined list. The nothing-armed case is byte-identical to before (pinned), so no existing consumer or assertion moves.\n- Hazard 6 narrows a 400 into a non-throwing path. The only newly-reachable outcome is: non-ACTIVE / no-subscription / null-periodEnd tenant + unrankable key → SUBSCRIBE (previously 400). Nothing downstream ranks on that path; `downgrade()`'s hard refusal at its own seam is untouched, and the ACTIVE-tenant 400 is still pinned twice (round 3's test plus the new one).\n- No new prisma query, no extra catalog fetch: the \"SUBSCRIBE / NOOP paths never fetch the published catalog\" pin (spec line ~1128) still passes.\n\nHazards 3, 4 and 5 were not touched — 3 and 4 are the web exec's, 5 is the lead's deferred residual. `warning` line-length overflows introduced in the spec are `describe(`/`it(` titles only (single string arguments prettier cannot wrap), matching the file's existing style; no code line exceeds printWidth 100."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/lib/api/billing.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/lib/api/billing.test.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(dashboard)/choose-plan/page.tsx"
+    ],
+    "perHazard": [
+      {
+        "id": 1,
+        "status": "fixed",
+        "what": "Web half of the seam. billing.ts: PlanChange gains `seatAckRequired: boolean` (required, not optional — the API sends it on every quote with a change), with a docblock stating it is TRUE only when the DOWNGRADE seat-cap check found users over the target cap and that the consequence must never be inferred from `warning` being non-empty. page.tsx: the ack is rekeyed off the string to the signal — `needsDowngradeAck = changeAction === \"DOWNGRADE\" && preview?.change?.seatAckRequired === true` (strict === true, so a mirror-drift undefined fails closed to no false ack). The commit-disabled guard at the Button and the checkbox render both read that same const, so the cancellation-only case (warning present, seatAckRequired false) now renders no checkbox and blocks nothing. billing.test.ts's `change()` factory gained the field (defaulted false, with an optional override param) so the mirror stays constructible.",
+        "pin": "No new web unit pin: the design's pins for hazard 1 are API-side (cancellation armed + under cap -> seatAckRequired:false; over cap -> true), and this file's suite only exercises `dispatchPlanChange`, a pure router that never reads seatAckRequired. The web consumer is covered post-deploy by the Playwright project `change-plan-routing` (apps/web/e2e/33-change-plan-routing.spec.ts). Compile-level pin: the field is REQUIRED on the interface, so any construction that omits it is a red tsc."
+      },
+      {
+        "id": 3,
+        "status": "fixed",
+        "what": "`message?: string` and its docblock deleted from the web PlanChange mirror in billing.ts; the render block that could never appear (`{preview.change?.message && <p className=\"text-xs text-slate-500\">…}`, page.tsx ~298-300) deleted with it. The CONTACT_SALES sales copy continues to render through the existing amber `warning` line, which is where the API actually puts it. Verified by grep: no `change.message` / `change?.message` reference remains in either file.",
+        "pin": "Pinned by the type system rather than a test: `message` no longer exists on PlanChange, so any re-introduced reader is a tsc error (gate 1, exit 0)."
+      },
+      {
+        "id": 4,
+        "status": "fixed",
+        "what": "Added `const clearPreview = React.useCallback(() => setPreview(null), []);` next to `applyPreview`, and passed `onError: clearPreview` on BOTH quote calls — `pick()` (page.tsx ~77) and the cycle-toggle effect (~82-86). A failed quote now drops the preview entirely, so the stale {planKey, action} can no longer be committed against the newly-toggled live cycle. Nulling `preview` also removes the whole preview card (the commit Button lives inside the `preview &&` block), which is the stronger form of \"commit stays disabled while preview is null\". `ackDowngrade` is deliberately left to `applyPreview`'s existing reset on the next successful quote — I kept the change to exactly what the ruling specified.",
+        "pin": "No unit pin added: this is page-level React state with no DOM test in the one test file I was allowed to touch (billing.test.ts covers only the pure `dispatchPlanChange`); adding an RTL suite for choose-plan/page.tsx would be outside the file allow-list. Behaviour is reachable only via a failed re-quote, which the post-deploy `change-plan-routing` project drives."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no output. Clean on the first iteration — the only construction site of the mirror that the new required `seatAckRequired` broke was billing.test.ts's `change()` factory, which was updated in the same pass."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --runInBand lib/api/billing.test.ts",
+        "pass": true,
+        "summary": "Exit 0. 1 suite passed, 10/10 tests passed (2.354 s), 0 failures, 0 skipped. All ten REG-B58 routing cases green, including the two live-cycle pins and the onSuccess/onError pass-through."
+      }
+    ],
+    "notes": "Zero fix iterations needed — both gates green on the first run; no third command was run and no file outside the three-file allow-list was touched, read-only reads aside. No git write commands, no installs, no docker/playwright, no full `npx jest`.\n\nScope notes for the reviewer:\n\n1. `seatAckRequired` is declared REQUIRED (`seatAckRequired: boolean`), not optional. This matches the ruling's wording (\"`PlanChangePreview` gains `seatAckRequired: boolean`\") and makes an API/web mirror drift a compile error rather than a silent `undefined`. It does mean the web mirror is now hard-coupled to the API exec landing the field in the same round — if the API half regresses to optional, tsc here stays green (a `boolean` reader accepts a `boolean` producer) but a runtime `undefined` would fail closed at the page thanks to the `=== true` comparison, i.e. no false ack, and the true over-cap case would under-warn. Worth one line of the reviewer's attention as the seam's residual risk; per L-072 the durable answer is a shared type in `packages/types/api/*`, which this round was not scoped to do.\n\n2. The ack now fails closed in the safe direction (missing/false signal = no checkbox, no block) rather than the alarming one. The old `!!warning` key failed open into a false claim; that inversion is the whole point of the ruling.\n\n3. The cycle-toggle `quote.mutate` call is now wrapped across three lines because the single-line form with both handlers is 101 chars (printWidth 100). Style otherwise unchanged: semicolons, double quotes, trailing commas.\n\n4. Hazard 5 was explicitly deferred by the design and is untouched. Hazards 2 and 6 are API-exec-owned and untouched — I edited no file under apps/api.\n\n5. Nothing in the diff carries a client identifier, credential, or connection string."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript type check passed (no compilation errors)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest src/billing src/sales-agents src/platform-admin --runInBand",
+        "pass": true,
+        "summary": "Jest tests passed: 24 test suites, 372 tests, all passed (11.015s)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript type check passed (no compilation errors)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --runInBand lib/api/billing.test.ts",
+        "pass": true,
+        "summary": "Jest test passed: 1 test suite, 10 tests, all passed (1.62s)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "review": {
+    "perHazard": [
+      {
+        "id": 1,
+        "verdict": "fixed",
+        "evidence": "Refutation attempted and failed. API: `PlanChangePreview.seatAckRequired: boolean` is REQUIRED (subscription-mutation.service.ts:75) and emitted on all 7 return sites of planChangePreview — :434 early SUBSCRIBE, :466 KEEP_CURRENT, :476 NOOP, :498 CONTACT_SALES, :525 cycle-switch SUBSCRIBE, :546 UPGRADE, :594 DOWNGRADE — with no eighth return (grep of every `return {` in the method). It is set true ONLY inside `if (activeTeam > seatsIncluded)` at :578-579, the same block that pushes the seat warning; the cancellation push at :568 leaves it false. Parity with the sweep verified line by line: billing-cron.service.ts:167 `getVersionForTenant(s.planVersionId)`, :156 `targetDef?.seatsIncluded`, :180-187 the identical user.count where-clause (TENANT_ADMIN/OPERATOR/DRIVER, ACTIVE, deletedAt null) and the identical `activeTeam > seatCap` comparison — so the flag fires exactly when the cron would deactivate, and never otherwise (seatsIncluded null = unlimited = false on both sides). Web: billing.ts declares `seatAckRequired: boolean` required on PlanChange, `message` is gone, and page.tsx:96-97 keys `needsDowngradeAck = changeAction === \"DOWNGRADE\" && preview?.change?.seatAckRequired === true` — strict `=== true`, so a runtime undefined fails closed to no checkbox rather than to a false claim. The same const drives both the checkbox render (:310) and the `needsDowngradeAck && !ackDowngrade` disable at :331. The headline scenario (cancellation armed, team 2 under STARTER's 3) now renders the amber cancellation line and NO acknowledgement. Wire path intact: settings-billing.controller.ts:85-88 returns the preview object whole (`{ ...quote, change }`), no field whitelist. Pins are real and load-bearing: spec.ts:1138-1237, including the table pin asserting false on all six non-DOWNGRADE actions."
+      },
+      {
+        "id": 2,
+        "verdict": "fixed",
+        "evidence": "subscription-mutation.service.ts:508-528: the cycle-switch branch builds `cycleWarnings` seeded with the proration sentence, pushes CANCELLATION_REVOKED_WARNING when `priorSub.cancelAtPeriodEnd` (:515) and \"A scheduled downgrade is pending — switching cycle cancels it.\" when `downgradeToPlanKey != null` (:516-518), then joins with \" \" — composed, never traded, matching the DOWNGRADE branch's shape. `downgradeToPlanKey` and `cancelAtPeriodEnd` are both already in the priorSub select (:410-411), so no query changed. The disarm it warns about is real: subscribe()'s upsert `update` branch writes cancelAtPeriodEnd:false / downgradeToPlanKey:null / downgradeEffectiveAt:null (:294-296). Attempted refutation on the nothing-armed case: spec.ts:1284-1289 pins `warning` to the exact old byte-identical sentence with toBe, so no existing consumer or assertion moved. No consumer parses or prefix-matches `warning` (grep: only the amber <p> render at page.tsx:307-309)."
+      },
+      {
+        "id": 3,
+        "verdict": "fixed",
+        "evidence": "`message` is gone from the web PlanChange mirror (billing.ts:88-103 now lists action/proratedNow/effectiveAt/keepsRenewalAt/warning/seatAckRequired/fromPlanKey only) and the dead render block is gone from page.tsx — grep for `message` across both files returns only the unrelated axios error-body reader at page.tsx:141-142 and the docblock at billing.ts:258. The CONTACT_SALES sales copy still reaches the user: the API puts CUSTOM_PLAN_MESSAGE in `warning` (:499) and page.tsx:307-309 renders it. Type-enforced against reintroduction (web tsc exit 0)."
+      },
+      {
+        "id": 4,
+        "verdict": "fixed",
+        "evidence": "page.tsx:67 adds `clearPreview = useCallback(() => setPreview(null), [])` and BOTH quote call sites pass it: `pick()` at :78 and the cycle-toggle effect at :83-87. These are the only two `quote.mutate` calls in the file. With `preview` null the whole summary card unmounts (`{preview && !preview.isCustom && (` at :264), so the commit Button — and the stale {planKey, action} it would have dispatched against the live `cycle` at :157-166 — is not merely disabled but absent. Refutation attempt on ackDowngrade staleness fails: `setPreview` is called in exactly two places, and the only one that sets a non-null value is `applyPreview` (:58-61), which resets `ackDowngrade` to false — so a preview can never be paired with an acknowledgement ticked for an earlier quote. Refutation attempt on an uncovered path fails too: no other code path sets `preview`, and the in-flight window is still covered by the `quote.isPending` disable at :326."
+      },
+      {
+        "id": 5,
+        "verdict": "deferred-ok",
+        "evidence": "Confirmed untouched, as the design required. billing.service.ts `onCheckoutCompleted` (:493-553) and `onPaymentSucceeded` (:555-600) still write only stripeSubId/stripeCustomerId/periodStart/periodEnd + the transitionAndEmit non-ACTIVE→ACTIVE flip; neither mentions downgradeToPlanKey or downgradeEffectiveAt (grep of those two identifiers in the file hits only :683-684 in the cancellation handler and :714 in onSubscriptionUpdated's cancel-armed branch, both pre-existing and both correct-by-rule). No round-4 edit landed in this file's reinstatement paths."
+      },
+      {
+        "id": 6,
+        "verdict": "fixed",
+        "evidence": "The `if (!toKey) throw new BadRequestException(...)` now sits at subscription-mutation.service.ts:445, i.e. AFTER the non-ACTIVE / no-subscription / null-periodEnd SUBSCRIBE return at :427-436 and BEFORE every other branch — samePlan (:452), the catalog fetch (:481), CONTACT_SALES, the cycle switch, and both rank comparisons at :554-555. Refutation attempt: I traced for a ranking path that could now be reached with a null `toKey` and found none — `toKey` is consumed only at :452 (samePlan), :482/:483 (findPlanDefinition) and :555 (planRank), all downstream of :445. The early SUBSCRIBE return uses `fromKey` alone. `downgrade()`'s own two refusals (:687 catalog miss, :690-692 rank < 0) are unchanged. Pins are honest: spec.ts:1309 (TRIAL + off-list published key → SUBSCRIBE) and :1319 (ACTIVE + same key → BadRequestException), with round 3's :920 test still present and green (regate: 24 suites / 372 tests)."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/api/src/billing/subscription-mutation.service.ts",
+        "line": 445,
+        "severity": "minor",
+        "summary": "Narrowing the off-list refusal opens a UI route to subscribe() with an unrankable key, which writes the plan enum shadow as STARTER and leaves the row ranking as STARTER",
+        "detail": "Newly reachable consequence of hazard 6's fix, one step past the pin. With an off-list definition published (planKey \"PRO\"), a TRIAL/non-ACTIVE tenant now gets action SUBSCRIBE instead of a 400, so the chooser renders a working commit control that posts /billing/subscribe. subscribe() accepts it — the catalog check at :173 passes because the definition exists — and writes planKey:\"PRO\" with basePriceSnapshot 199 (correct, as the design assumed) but ALSO currentPlan: planKeyToEnum(\"PRO\"), which falls through normalizePlanKey→null to the `default: return \"STARTER\"` at plan-catalog.constants.ts:199-209, and the same value onto Tenant.plan. From then on resolveFromPlanKey(\"PRO\", \"STARTER\") returns \"STARTER\" (normalizePlanKey null, then planKeyFromEnum), so the tenant ranks as STARTER while paying 199: a later upgrade() nets amountDelta against planMonthly(version, \"STARTER\") rather than 199, booking an inflated MRR delta, and planChangePreview will classify moves off it against STARTER's rank. Scored minor because it requires an operational publishing error (a definition whose key is outside PLAN_KEYS), and the POST /billing/subscribe endpoint was already directly callable with such a key before this round — what round 4 adds is the UI door. If the owner wants it closed without reinstating the blanket 400, the narrow move is a `planRank(input.planKey) < 0` refusal inside subscribe(), mirroring downgrade():690-692."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/choose-plan/page.tsx",
+        "line": 67,
+        "severity": "minor",
+        "summary": "A failed re-quote now makes the summary card vanish with no message — useQuote has no error toast and the page passes only clearPreview",
+        "detail": "Introduced by hazard 4's fix. useQuote (lib/api/billing.ts:198-202) is a bare useMutation with no onError, and the page's only handler for a failed quote is `clearPreview` (:78, :86), which sets preview to null. Because the summary card is gated on `preview &&` at :264, a tenant who has a quote on screen and then toggles MONTHLY↔ANNUAL into a failing request sees the entire Summary block — figures, warning line, commit button — disappear with no toast and no error text, while the plan card still reads \"Selected\". The money behaviour is right (fail-closed: nothing stale is committable, which is the point of the ruling) and the first-pick failure was already silent before this round, so this is a UX residual, not a correctness defect. Closing it is one line: pass an onError that both clears and toasts (the page already has `toast` in scope and uses the same server-message extraction at :137-145 for commit failures)."
+      },
+      {
+        "file": "apps/web/e2e/33-change-plan-routing.spec.ts",
+        "line": 124,
+        "severity": "minor",
+        "summary": "The Playwright quote fixture builds `change` without the new required seatAckRequired, so the only end-to-end consumer never exercises the ack path",
+        "detail": "L-072-class test-fidelity drift left by this round. quoteBody() at :103-129 fulfils /billing/quote with a hand-written `change` object — `{action:\"DOWNGRADE\", effectiveAt, proratedNow:null}` — that omits seatAckRequired, which the web mirror now declares REQUIRED. It is raw JSON inside route.fulfill, so neither tsc nor the web Jest suite catches the omission. Consequence: the DOWNGRADE routing test at :239-268 passes precisely because seatAckRequired is absent (=== true is false, so no checkbox blocks the click), and it would keep passing unchanged if the API regressed the field to optional or dropped it entirely — the exact regression the seam was built to prevent. The e2e also cannot cover the over-cap case at all. Not a product defect and not a gate failure (the design's pins for hazard 1 are API-side), but the fixture should gain `seatAckRequired: false` on both branches, and ideally a third case with `seatAckRequired: true` asserting the commit stays disabled until the checkbox is ticked."
+      }
+    ],
+    "recommendation": "land",
+    "reasoning": "All five in-scope hazards survive refutation as genuinely fixed, and the deferred one was left untouched exactly as the design required. The seam that the round existed to build is consistent in both directions and I checked it both ways rather than taking the executors' word: seatAckRequired is required on the API interface and present on all seven return sites of planChangePreview (no eighth return exists), it passes through settings-billing.controller.ts's quote handler unfiltered, it is required on the web mirror, and the page reads it with a strict === true so mirror drift fails closed to no acknowledgement rather than to a false one. I traced the flag against billing-cron's applyScheduledDowngrades line by line — same pinned catalog version, same seat cap, same user.count where-clause, same > comparison — so it fires exactly when the sweep deactivates staff, which is the property the whole ruling rests on. The L-072 sweep found no remaining web-only field: message is gone from both the interface and the render, and the only asymmetry left (fromPlanKey optional on web, required on the API) is pre-existing and in the safe direction. The three specific new-hazard shapes the brief asked me to hunt all came back clean: no stale-preview path escapes the two onError handlers (setPreview has exactly two callers and the only non-null one resets ackDowngrade), the warning-composition change is byte-identical in the nothing-armed case and pinned with toBe, and the moved unknown-key guard leaves no ranking path unguarded since every consumer of toKey is downstream of line 445. The three new hazards I did find are all minor and none blocks landing: one needs an operational publishing error to reach and was already reachable at the API before this round, one is a UX silence rather than a money defect, and one is test-fixture fidelity in a post-deploy Playwright project. Round 4 fixed four real defects, the gates are green on both apps, and another round would buy three minor residuals that are better carried as close-out rows than paid for with a fifth cycle on a working tree that has been open three rounds. Land, and record the off-list subscribe() ranking residual and the e2e fixture gap where the deferred hazard 5 row goes."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "255 test suites passed, 4190 tests passed (89.078s)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "31 test suites passed, 171 tests passed (21.331s)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register validated: 40/40 entries, 40.0/40.0 KB, self-consistent, at capacity binding",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  }
+}

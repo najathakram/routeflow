@@ -16,9 +16,30 @@ const editDriverSchema = z.object({
   vehicleModel: z.string().optional(),
   vehicleColour: z.string().optional(),
   vehiclePlate: z.string().optional(),
+  // Lengths mirror UpdateDriverDto's @MaxLength so the API can't reject a save
+  // the form accepted.
+  homeLine1: z.string().max(200, "Too long").optional(),
+  homeCity: z.string().max(100, "Too long").optional(),
+  homeState: z.string().max(50, "Too long").optional(),
+  homeZip: z.string().max(20, "Too long").optional(),
 });
 
 type EditDriverFormValues = z.infer<typeof editDriverSchema>;
+
+/**
+ * The API stores the home base as ONE composed string (`Driver.homeAddress`,
+ * the non-empty parts joined with ", " — see DriversService.update) plus its
+ * geocoded coords, so split it back apart for the form. A 4-part string maps
+ * straight back onto the four inputs; anything else goes into line 1 whole, so
+ * re-saving an untouched form recomposes byte-identical to what's stored.
+ */
+function splitHomeAddress(homeAddress?: string | null) {
+  const parts = (homeAddress ?? "").split(", ");
+  if (parts.length === 4) {
+    return { homeLine1: parts[0], homeCity: parts[1], homeState: parts[2], homeZip: parts[3] };
+  }
+  return { homeLine1: homeAddress ?? "", homeCity: "", homeState: "", homeZip: "" };
+}
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -46,6 +67,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
       vehicleModel: driver.vehicleModel ?? "",
       vehicleColour: driver.vehicleColour ?? "",
       vehiclePlate: driver.vehiclePlate ?? "",
+      ...splitHomeAddress(driver.homeAddress),
     },
   });
 
@@ -58,6 +80,7 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
       vehicleModel: driver.vehicleModel ?? "",
       vehicleColour: driver.vehicleColour ?? "",
       vehiclePlate: driver.vehiclePlate ?? "",
+      ...splitHomeAddress(driver.homeAddress),
     });
     setApiError(null);
   }, [driver, reset]);
@@ -70,7 +93,17 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
   const onSubmit = async (data: EditDriverFormValues) => {
     setApiError(null);
     try {
-      await onSave(data);
+      // Sending any home field makes the API recompose + re-geocode the home
+      // base. Omit them entirely when there's nothing set and nothing typed, so
+      // an unrelated edit (phone, vehicle) doesn't burn a geocode call; keep
+      // them when the driver HAS a home base so blanking the fields clears it.
+      const { homeLine1, homeCity, homeState, homeZip, ...rest } = data;
+      const homeTouched = [homeLine1, homeCity, homeState, homeZip].some((v) => !!v?.trim());
+      const payload =
+        homeTouched || driver.homeAddress
+          ? { ...rest, homeLine1, homeCity, homeState, homeZip }
+          : rest;
+      await onSave(payload);
       handleClose();
     } catch (err: unknown) {
       const apiMsg = (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -145,6 +178,42 @@ export function EditDriverModal({ driver, isOpen, onClose, onSave }: EditDriverM
           register={register("vehiclePlate")}
           error={errors.vehiclePlate?.message}
         />
+
+        <div className="space-y-4 border-t border-gray-200 pt-4">
+          <div>
+            <p className="text-sm font-medium text-navy">Home Base</p>
+            <p className="text-xs text-gray-500">
+              Optional. Lets a trip start from this driver&apos;s home instead of the depot. Leave
+              blank to clear it.
+            </p>
+          </div>
+          <Input
+            label="Home Address"
+            placeholder="42 Home Way"
+            register={register("homeLine1")}
+            error={errors.homeLine1?.message}
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Input
+              label="City"
+              placeholder="Austin"
+              register={register("homeCity")}
+              error={errors.homeCity?.message}
+            />
+            <Input
+              label="State"
+              placeholder="TX"
+              register={register("homeState")}
+              error={errors.homeState?.message}
+            />
+            <Input
+              label="ZIP"
+              placeholder="78701"
+              register={register("homeZip")}
+              error={errors.homeZip?.message}
+            />
+          </div>
+        </div>
       </form>
     </Modal>
   );

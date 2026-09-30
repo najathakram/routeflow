@@ -48,7 +48,7 @@ export function useProducts(
  * Key stays under ["products"] so the existing mutation invalidations reach it.
  */
 export function useProductsInfinite(
-  params?: { search?: string; category?: string; limit?: number },
+  params?: { search?: string; scanCode?: string; category?: string; limit?: number },
   options?: { enabled?: boolean },
 ) {
   const limit = params?.limit ?? PRODUCT_PAGE_SIZE;

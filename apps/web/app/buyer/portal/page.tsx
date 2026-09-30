@@ -2,13 +2,27 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Building2, ArrowRight, RefreshCw, CheckCircle, X, Plus, Link2 } from "lucide-react";
+import {
+  Building2,
+  ArrowRight,
+  RefreshCw,
+  CheckCircle,
+  X,
+  Plus,
+  Link2,
+  MailWarning,
+} from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { requestSellerConnection } from "@/lib/buyer-auth";
+import {
+  requestSellerConnection,
+  getBuyerAccessToken,
+  getBuyerProfile,
+  buyerResendVerification,
+} from "@/lib/buyer-auth";
 import type { BuyerSeller } from "@/lib/buyer-auth";
 
 // ─── Status badge variant helper ─────────────────────────────────────────────
@@ -41,36 +55,74 @@ function SellerCard({ seller, onClick }: { seller: BuyerSeller; onClick: () => v
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:3000/api/v1";
 
+  // A pending request isn't a real connection yet — the buyer has no access
+  // to this seller's data until they approve. Rendering it clickable used to
+  // send the buyer straight into a wall of 403s.
+  const isPendingApproval = seller.linkStatus === "PENDING_SELLER_APPROVAL";
+  // Only an ACTIVE link can be opened (mirrors mobile's canOpenSeller and the
+  // portal sidebar). INVITED links carry no customer identity either — the API
+  // redacts it — so making one the active seller only yields a blank, 403-walled
+  // portal.
+  const canOpen = seller.linkStatus === "ACTIVE";
+
+  const logo = (
+    <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
+      {seller.tenant.logoKey ? (
+        /* /uploads/<key> requires a JWT (RF-075) that an <img> tag can never
+           send — broken since 2026-05-01. The public logo endpoint streams the
+           same file inline with no auth, and exists for exactly this. */
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`${apiUrl}/public/tenants/${encodeURIComponent(seller.tenant.slug)}/logo`}
+          alt={seller.tenant.name}
+          className="h-full w-full object-contain"
+        />
+      ) : (
+        <Building2 className="h-6 w-6 text-navy/30" />
+      )}
+    </div>
+  );
+
+  const info = (
+    <div className="flex-1 min-w-0">
+      <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
+      {seller.customer ? (
+        <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
+      ) : null}
+      <div className="mt-1">
+        <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
+          {formatLinkStatus(seller.linkStatus)}
+        </Badge>
+      </div>
+      {isPendingApproval && (
+        <p className="mt-1.5 text-xs text-navy/70">
+          Waiting for {seller.tenant.name} to approve your request.
+        </p>
+      )}
+    </div>
+  );
+
+  if (!canOpen) {
+    return (
+      <div
+        data-testid="seller-card"
+        className="flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm"
+      >
+        {logo}
+        {info}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
+      data-testid="seller-card"
       onClick={onClick}
       className="group flex items-center gap-4 rounded-xl border border-surface-border bg-white p-4 text-left shadow-sm transition-all hover:border-buyer-300 hover:shadow-md"
     >
-      {/* Logo */}
-      <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-xl border border-surface-border bg-surface-raised overflow-hidden">
-        {seller.tenant.logoKey ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`${apiUrl}/uploads/${seller.tenant.logoKey}`}
-            alt={seller.tenant.name}
-            className="h-full w-full object-contain"
-          />
-        ) : (
-          <Building2 className="h-6 w-6 text-navy/30" />
-        )}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <p className="text-base font-semibold text-navy truncate">{seller.tenant.name}</p>
-        <p className="text-sm text-navy/70 truncate">{seller.customer.businessName}</p>
-        <div className="mt-1">
-          <Badge variant={getLinkStatusVariant(seller.linkStatus)}>
-            {formatLinkStatus(seller.linkStatus)}
-          </Badge>
-        </div>
-      </div>
+      {logo}
+      {info}
 
       {/* Arrow */}
       <ArrowRight className="h-5 w-5 flex-shrink-0 text-navy/30 transition-transform group-hover:translate-x-1 group-hover:text-buyer-500" />
@@ -104,6 +156,7 @@ function ConnectSellerModal({
 }) {
   const [apiError, setApiError] = React.useState<string | null>(null);
   const [submitted, setSubmitted] = React.useState(false);
+  const [resultMessage, setResultMessage] = React.useState<string | null>(null);
 
   const {
     register,
@@ -120,19 +173,26 @@ function ConnectSellerModal({
       reset();
       setApiError(null);
       setSubmitted(false);
+      setResultMessage(null);
     }
   }, [open, reset]);
 
   const onSubmit = async (data: ConnectFormValues) => {
     setApiError(null);
-    const accessToken =
-      typeof window !== "undefined" ? localStorage.getItem("buyerAccessToken") : null;
+    const accessToken = getBuyerAccessToken();
     if (!accessToken) {
       setApiError("You are not logged in. Please sign in again.");
       return;
     }
     try {
-      await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      const res = await requestSellerConnection(data.sellerSlug, data.emailAtSeller, accessToken);
+      // Show the server's ACTUAL outcome. The backend auto-approves an exact
+      // email match straight to an ACTIVE link (no seller review since
+      // 0a245e89), but this screen kept hardcoded "your seller will review"
+      // copy from the pre-auto-approve era — so a buyer who was connected
+      // instantly was told they were pending, and the owner heard "it sent a
+      // request without connecting" about a link that was already live.
+      setResultMessage(res.message ?? null);
       setSubmitted(true);
       onSuccess();
     } catch (err: unknown) {
@@ -180,10 +240,12 @@ function ConnectSellerModal({
                 <CheckCircle className="h-6 w-6 text-success" />
               </div>
               <div>
-                <p className="font-semibold text-navy">Request sent!</p>
+                <p className="font-semibold text-navy">
+                  {resultMessage?.startsWith("Connected") ? "Connected!" : "Request sent"}
+                </p>
                 <p className="mt-1 text-sm text-navy/70">
-                  Your seller will review and approve your connection. You&apos;ll see them in your
-                  seller list once approved.
+                  {resultMessage ??
+                    "Your seller will review and approve your connection. You'll see them in your seller list once approved."}
                 </p>
               </div>
               <Button onClick={onClose} variant="secondary" className="w-full mt-2">
@@ -307,6 +369,61 @@ function LinkedBanner({ sellerName }: { sellerName?: string }) {
       >
         <X className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+// ─── Unverified email banner ──────────────────────────────────────────────────
+
+function VerifyEmailBanner() {
+  const [unverified, setUnverified] = React.useState(false);
+  const [sending, setSending] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const token = getBuyerAccessToken();
+    if (!token) return;
+    getBuyerProfile(token)
+      .then((profile) => setUnverified(!profile.emailVerified))
+      .catch(() => {}); // banner is best-effort — never break the portal over it
+  }, []);
+
+  if (!unverified) return null;
+
+  const resend = async () => {
+    const token = getBuyerAccessToken();
+    if (!token) return;
+    setSending(true);
+    try {
+      const res = await buyerResendVerification(token);
+      if (res.alreadyVerified) {
+        setUnverified(false);
+        return;
+      }
+      setNotice(res.message);
+    } catch {
+      setNotice("Could not send the email right now — please try again shortly.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      role="status"
+      className="mb-5 flex items-start gap-3 rounded-xl border border-warning/30 bg-warning/10 px-4 py-3"
+    >
+      <MailWarning className="mt-0.5 h-5 w-5 flex-shrink-0 text-warning" />
+      <div className="flex-1">
+        <p className="text-sm font-medium text-navy">Verify your email address</p>
+        <p className="mt-0.5 text-sm text-navy/70">
+          {notice ??
+            "Sellers who have your email on file connect you instantly once it's verified. Check your inbox for the verification link."}
+        </p>
+      </div>
+      <Button variant="secondary" size="sm" onClick={resend} loading={sending}>
+        Resend email
+      </Button>
     </div>
   );
 }

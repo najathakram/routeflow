@@ -3,13 +3,23 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { InvoicePdfTemplate } from "./invoice-pdf-template";
 import { deriveInvoiceVariant, type InvoicePdfVariant } from "./invoice-pdf-variant";
 import { invoiceItemCode } from "./invoice-item-code";
+import { roundMoney } from "@routeflow/pricing";
+import { splitConfirmed } from "./payment-predicates";
 
 import bwipjs from "bwip-js";
 
 export type { InvoicePdfVariant };
+
+/** Storage key an invoice's rendered PDF is uploaded under — shared with
+ *  `invoices.service.ts` (email-attachment build) so a caller can read back the SAME
+ *  file `getOrGenerate` just rendered instead of rendering a second copy. */
+export function invoicePdfStorageKey(invoiceId: string): string {
+  return `invoice-pdfs/${invoiceId}.pdf`;
+}
 
 @Injectable()
 export class InvoicePdfService {
@@ -18,6 +28,7 @@ export class InvoicePdfService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly systemConfig: SystemConfigService,
   ) {}
 
   async getOrGenerate(
@@ -50,9 +61,15 @@ export class InvoicePdfService {
             product: { select: { id: true, name: true, barcode: true, sku: true, unitSku: true } },
           },
         },
-        // Exclude VOID (bounced) payments (P5-12): the PDF template sums payments
-        // into the headline balance-due, so a reversed payment must not appear as
-        // received on a customer-facing invoice or under-state what they owe.
+        // F03/R1/B97 fix: this is a LISTING read (the Payment History section), so
+        // it keeps the broad not:VOID filter — a DRAFT (unconfirmed) row must stay
+        // VISIBLE on the document under a "Pending confirmation" label rather than
+        // disappear, mirroring the web invoice detail's own draft badge (R2). What
+        // changed is the MONEY: the headline Amount Paid / Balance Due below is
+        // computed from `sumConfirmed(inv.payments)` (CONFIRMED/PAID rows only),
+        // never from a reduce over this listing array — a DRAFT row must never
+        // inflate what the customer is told they've already paid.
+        // scan-ok: draft-payment-not-void — intentional LISTING filter (R2); the money below narrows via sumConfirmed(inv.payments), never this where-clause.
         payments: {
           where: { status: { not: "VOID" } },
           orderBy: { paidAt: "asc" },
@@ -155,12 +172,38 @@ export class InvoicePdfService {
       }),
     );
 
+    // Deposit schedule (Tier 1): the dollar amount is derived from the CURRENT
+    // total, never stored — same convention as invoices.service's
+    // computeDepositFields. Null depositPercent means no deposit lines render.
+    const depositAmount =
+      inv.depositPercent != null
+        ? roundMoney((Number(inv.total) * Number(inv.depositPercent)) / 100)
+        : null;
+
+    // F03/R1/B97: the customer-facing Amount Paid / Balance Due headline is
+    // computed on the CONFIRMED (PAID) basis only — never a reduce over the
+    // broader `inv.payments` listing above, which still carries DRAFT rows so
+    // the template can list them (labeled "Pending confirmation").
+    // B421: totalPaid is cash-only — a credit note or advance applied to this
+    // invoice must not render as money the customer paid.
+    const { cash: totalPaid, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
+
+    // F03/R9: same tenant setting the invoice detail endpoint honors
+    // (invoices.service.ts's findOneOrThrow, `invoice.hideOriginalPrice`) — rides
+    // the PDF payload so a customer-facing document respects it too.
+    const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
+
     const invWithBarcodes = {
       ...inv,
       items: itemsWithBarcodes,
       tenant: tenantInfo,
       variant,
       generatedAt: new Date(),
+      depositAmount,
+      totalPaid,
+      creditApplied,
+      advanceApplied,
+      hideOriginalPrice,
     };
 
     let pdfBuffer: Buffer;
@@ -175,7 +218,7 @@ export class InvoicePdfService {
       throw new Error(`PDF render failed: ${err}`);
     }
 
-    const key = `invoice-pdfs/${invoiceId}.pdf`;
+    const key = invoicePdfStorageKey(invoiceId);
     await this.storage.upload(key, pdfBuffer, "application/pdf");
 
     await this.prisma.invoice.update({

@@ -19,7 +19,14 @@ export function fmtShort(n: number): string {
   return fmt(n);
 }
 
-/** Format an ISO date string as "Mar 30, 2026". Returns "\u2014" for null/invalid. */
+/**
+ * Format a real timestamp (`createdAt`, `paidAt`, `settledAt`, …) as "Mar 30, 2026"
+ * in the VIEWER'S LOCAL timezone. Returns "\u2014" for null/invalid.
+ *
+ * For a calendar date stored at UTC midnight (`issueDate`, `dueDate`, `billDate`,
+ * `expiresAt`, …) use `fmtCalendarDate` instead — local formatting renders UTC
+ * midnight as the PREVIOUS day for any negative-UTC-offset viewer.
+ */
 export function fmtDate(d?: string | null): string {
   if (!d) return "\u2014";
   const dt = new Date(d);
@@ -31,9 +38,78 @@ export function fmtDate(d?: string | null): string {
   });
 }
 
+/**
+ * Format a CALENDAR date as "Mar 30, 2026". Returns "\u2014" for null/invalid.
+ *
+ * Calendar dates (issueDate, dueDate, billDate, expiresAt, …) are stored at UTC
+ * midnight — the meaningful part is the YYYY-MM-DD, not a moment in time. Formatting
+ * them in the viewer's local timezone would render UTC midnight as the PREVIOUS day
+ * for any negative-UTC-offset viewer (all of the Americas), so we format the UTC
+ * calendar components directly via `timeZone: "UTC"`.
+ *
+ * Do NOT use this for real timestamps (`createdAt`, `paidAt`, `settledAt`, `startedAt`,
+ * …) — those carry a meaningful time-of-day and must keep rendering in local time,
+ * otherwise an evening event lands on the next calendar day. Mirrors `fmtCalendarDate`
+ * in apps/mobile/lib/format-date.ts.
+ */
+export function fmtCalendarDate(d?: string | null): string {
+  if (!d) return "\u2014";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "\u2014";
+  return dt.toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/**
+ * Format a CALENDAR date with its weekday, e.g. "Mon, Jun 10" (short) or
+ * "Wednesday, June 10" (long). Returns "—" for null/invalid — same
+ * empty-input handling as `fmtCalendarDate`.
+ *
+ * Same UTC-anchoring rationale as `fmtCalendarDate`: the stored value is a
+ * UTC-midnight calendar date, so its UTC calendar components are rendered
+ * directly rather than the viewer's local timezone. Locale is left to the
+ * viewer's browser (`undefined`), matching `toLocaleDateString`'s prior
+ * behavior before the UTC-anchoring fix.
+ */
+export function fmtCalendarDateWithWeekday(
+  d: string | null | undefined,
+  weekday: "short" | "long",
+): string {
+  if (!d) return "—";
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return "—";
+  return dt.toLocaleDateString(undefined, {
+    timeZone: "UTC",
+    weekday,
+    month: weekday === "long" ? "long" : "short",
+    day: "numeric",
+  });
+}
+
 /** Today's date in YYYY-MM-DD format */
 export function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Whole calendar days from the viewer's LOCAL today until a stored
+ * UTC-midnight calendar date. Negative = that many days overdue. The due
+ * date's day is read in UTC (it is a calendar value — see fmtCalendarDate);
+ * "today" is the viewer's local calendar day. Mixing the two the other way
+ * round is the badge variant of the −1-day bug.
+ */
+export function calendarDaysUntil(d?: string | null): number | null {
+  if (!d) return null;
+  const dt = new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  const dueUTC = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+  const now = new Date();
+  const todayUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((dueUTC - todayUTC) / 86_400_000);
 }
 
 /**

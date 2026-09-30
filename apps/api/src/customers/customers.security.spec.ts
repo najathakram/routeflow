@@ -5,12 +5,21 @@
  * a caller could inject an unknown/relation field name (Prisma throws → 500 DoS)
  * or probe relation ordering. findAll now allowlists scalar sort columns and
  * falls back to a safe default for anything else.
+ *
+ * REG-B169: findAll now emits Prisma's ARRAY orderBy form — the allowlisted (or
+ * default) column followed by an `id` tiebreaker in the same direction — so the
+ * expectations below pin the array. The allowlist oracle is unchanged: an
+ * unknown/injected/prototype key must still never reach the first slot.
  */
 import { Test } from "@nestjs/testing";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { ConfigService } from "@nestjs/config";
 import { CustomersService } from "./customers.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
+import { MeterService } from "../billing/meter.service";
+import { PlanCatalogService } from "../billing/plan-catalog.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ListCustomersDto } from "./dto/list-customers.dto";
 
@@ -22,12 +31,38 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
       providers: [
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn(),
+            syncOrderInvoices: jest.fn(),
+            syncInvoiceCommission: jest.fn(),
+          },
+        },
         CustomersService,
+        // B65-class invariant: CustomersService now reverses a destroyed
+        // invoice's regulated-ledger entries, so the collaborator must be provided.
+        {
+          provide: RegulatedLedgerService,
+          useValue: { reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: EmailService,
+          useValue: { send: jest.fn().mockResolvedValue({ delivered: true, transport: "resend" }) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(null) } },
         {
           provide: StorageService,
           useValue: { upload: jest.fn(), delete: jest.fn(), presignedUrl: jest.fn() },
+        },
+        // Customer soft-cap collaborators — unused by the sort-field tests, but
+        // CustomersService now depends on them.
+        { provide: MeterService, useValue: { read: jest.fn() } },
+        { provide: PlanCatalogService, useValue: { getPublishedVersion: jest.fn() } },
+        {
+          provide: EntitlementAuthority,
+          useValue: { can: jest.fn().mockResolvedValue(false) },
         },
       ],
     }).compile();
@@ -38,12 +73,12 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
 
   it("falls back to the safe default for a NON-scalar column (receivables)", async () => {
     await service.findAll({ sortBy: "receivables", sortDir: "asc" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
   it("falls back to the safe default for an injected/unknown field name", async () => {
     await service.findAll({ sortBy: "id); DROP TABLE customers;--" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 
   it.each(["__proto__", "constructor", "toString", "valueOf", "hasOwnProperty"])(
@@ -52,23 +87,23 @@ describe("CustomersService — F4-002 sort-field allowlist", () => {
       await service.findAll({ sortBy: key } as ListCustomersDto);
       // Without the Object.hasOwn guard, a bare index would resolve the inherited
       // prototype value and reach Prisma as a malformed orderBy → 500.
-      expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+      expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
     },
   );
 
   it("honors an allowlisted scalar column + direction", async () => {
     await service.findAll({ sortBy: "businessName", sortDir: "asc" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ businessName: "asc" });
+    expect(orderByFromCall()).toEqual([{ businessName: "asc" }, { id: "asc" }]);
   });
 
   it("defaults the direction to desc for an allowlisted column with no dir", async () => {
     await service.findAll({ sortBy: "contactName" } as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ contactName: "desc" });
+    expect(orderByFromCall()).toEqual([{ contactName: "desc" }, { id: "desc" }]);
   });
 
   it("uses the default order when no sortBy is supplied", async () => {
     await service.findAll({} as ListCustomersDto);
-    expect(orderByFromCall()).toEqual({ createdAt: "desc" });
+    expect(orderByFromCall()).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
   });
 });
 
@@ -80,6 +115,8 @@ import "reflect-metadata";
 import { UserRole } from "@prisma/client";
 import { CustomersController } from "./customers.controller";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { EmailService } from "../email/email.service";
 
 describe("CustomersController — statement endpoints role guard", () => {
   it.each([["getStatementMonths"], ["getStatementPdf"]] as const)(

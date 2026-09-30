@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQueries } from "@tanstack/react-query";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -12,47 +13,40 @@ import {
   type RouteRunStop,
 } from "../../../../../../lib/api/routes";
 import { useCreateReturn, type ReturnReason } from "../../../../../../lib/api/returns";
+import { orderQueryOptions } from "../../../../../../lib/api/orders";
 import { showToast } from "../../../../../../lib/toast";
+import { sumStopOrders } from "../../../../../../lib/run-money";
+import {
+  pendingReturnPayloads,
+  submittedReturnKey,
+  summarizeSubmissions,
+  toUndeliveredStop,
+  undeliveredReturnLines,
+  undeliveredRowKey,
+  type ReturnSubmissionResult,
+  type UndeliveredReturnPayload,
+  type UndeliveredReturnRow,
+} from "../../../../../../lib/returns-logic";
+import { returnSubmitKey } from "../../../../../../lib/return-submit-key";
+import { useReturnSubmissionStore } from "../../../../../../store/returnSubmissionStore";
 
-function reasonForApi(label: string): ReturnReason {
-  const m: Record<string, ReturnReason> = {
-    Damaged: "DAMAGED",
-    Expired: "QUALITY_ISSUE",
-    "Wrong SKU": "WRONG_ITEM",
-    "Short-dated": "QUALITY_ISSUE",
-    "Customer refused": "CUSTOMER_REFUSED",
-    Quality: "QUALITY_ISSUE",
-    Refused: "CUSTOMER_REFUSED",
-    Partial: "EXCESS_ORDER",
-  };
-  return m[label] ?? "DAMAGED";
-}
+/** Display label for a row's derived reason (REG-B128 assigns the reason from the
+ * mutation type, not a driver-picked chip — see `returns-logic.ts`). */
+const REASON_LABELS: Record<ReturnReason, string> = {
+  DAMAGED: "Damaged",
+  WRONG_ITEM: "Wrong SKU",
+  CUSTOMER_REFUSED: "Refused",
+  QUALITY_ISSUE: "Quality",
+  EXCESS_ORDER: "Partial",
+};
 
-const REASONS = ["Damaged", "Expired", "Wrong SKU", "Short-dated", "Customer refused", "Quality"];
-
-function returnRowsFromStop(stop: RouteRunStop): Array<{
-  id: string;
-  name: string;
-  qty: number;
-  reason: string;
-  amount: number;
-}> {
-  const rows: ReturnType<typeof returnRowsFromStop> = [];
-  for (const m of stop.deliveryMutations ?? []) {
-    if (m.type === "DELIVERED" || m.type === "ADD_ON") continue;
-    const lineItem = (stop.orders ?? [])
-      .flatMap((o) => o.lineItems ?? [])
-      .find((li) => li.id === m.orderItemId);
-    const price = Number(lineItem?.unitPrice ?? 0);
-    rows.push({
-      id: m.id,
-      name: m.product?.name ?? lineItem?.product?.name ?? "Item",
-      qty: Number(m.quantityDelivered ?? 0),
-      reason: m.note ?? (m.type === "REFUSED" ? "Refused" : "Partial"),
-      amount: price * Number(m.quantityDelivered ?? 0),
-    });
+function productNameFor(stop: RouteRunStop, productId: string): string {
+  if (!productId) return "Item";
+  for (const order of stop.orders ?? []) {
+    const li = (order.lineItems ?? []).find((l) => l.productId === productId);
+    if (li?.product?.name) return li.product.name;
   }
-  return rows;
+  return "Item";
 }
 
 export default function ReturnScreen() {
@@ -67,60 +61,167 @@ export default function ReturnScreen() {
       router.replace("/(driver)/route" as any);
     }
   };
-  const [activeReason, setActiveReason] = useState<string | null>(null);
-
   const { data: activeData } = useActiveRouteRun();
   const runId = params.runId ?? activeData?.data?.[0]?.id;
   const { data: run, isLoading } = useRouteRun(runId ?? "");
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
 
-  const rows = stop ? returnRowsFromStop(stop) : [];
+  // REG-B50: the run read path carries no `promoFreeUnits`, so the credit math
+  // would price a boxed BOGO line's free units as if the customer had paid for
+  // them. Source the promo/box facts from the order detail exactly the way
+  // payment.tsx / short-pick.tsx do — same shared query definition, so this is
+  // the SAME cache entry, never a second divergent fetch.
+  const stopOrderIds = useMemo(() => (stop?.orders ?? []).map((o) => o.id), [stop]);
+  const { lineExtras, extrasReady, extrasFailed, retryExtras } = useQueries({
+    queries: stopOrderIds.map((id) => orderQueryOptions(id)),
+    combine: (results) => {
+      const map: Record<string, { promoFreeUnits?: number | null; unitsPerBox?: number | null }> =
+        {};
+      for (const r of results) {
+        for (const li of r.data?.lineItems ?? []) {
+          map[li.id] = {
+            promoFreeUnits: li.promoFreeUnits ?? 0,
+            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+          };
+        }
+      }
+      return {
+        lineExtras: map,
+        extrasReady: results.every((r) => r.isSuccess),
+        // A failed order query is sticky until a refetch — an order attached to
+        // another driver's run 403s outright, not transiently — so the gate needs
+        // a visible error + retry, not a "try again in a moment" toast that never
+        // comes true.
+        extrasFailed: results.some((r) => r.isError),
+        retryExtras: () => {
+          for (const r of results) {
+            if (r.isError) void r.refetch();
+          }
+        },
+      };
+    },
+  });
+
+  // Per-row "damaged in transit" overrides, keyed by `undeliveredRowKey`. A
+  // GLOBAL reason chip is deliberately not offered — it would overwrite every
+  // row's derived reason; this flips one row to DAMAGED / no-restock so refused
+  // goods that came back broken are not put back into sellable stock (B61).
+  const [damagedKeys, setDamagedKeys] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const toggleDamaged = (key: string) =>
+    setDamagedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // REG-B128: ONE call derives the rows, the credit total, and the per-order
+  // create payloads — they can never drift apart the way the old ad hoc
+  // qty * unitPrice / quantityDelivered math did.
+  const {
+    rows,
+    total: creditTotal,
+    payloads,
+    unlistedCount,
+  } = useMemo(() => {
+    if (!stop) {
+      return {
+        rows: [] as UndeliveredReturnRow[],
+        total: 0,
+        payloads: [] as UndeliveredReturnPayload[],
+        unlistedCount: 0,
+      };
+    }
+    return undeliveredReturnLines(toUndeliveredStop(stop, lineExtras), { damagedKeys });
+  }, [stop, lineExtras, damagedKeys]);
   const createReturn = useCreateReturn();
+  // Orders whose return has already landed — a retry must never re-POST one
+  // (the server would either duplicate it or reject the whole batch on its
+  // cumulative over-return guard, hiding the orders that did succeed).
+  // REG-DRIVER-DUR-B: persisted (store/returnSubmissionStore.ts, keyed
+  // `stopId:orderId`) rather than plain useState — an offline-queued return
+  // that reached the queue but whose confirmation the driver never saw must
+  // survive an app kill, or the identical return gets re-derived and
+  // resubmitted on the next launch, double-crediting the customer.
+  const submitted = useReturnSubmissionStore((s) => s.submitted);
 
   const issue = () => {
     if (!stop) return;
-    const orderId = stop.orders?.[0]?.id;
-    if (!orderId) {
-      showToast("This stop has no order to attach the return to.");
+    // The promo/box facts arrive from the order detail, not the run read (REG-B50).
+    // Submitting before they land would price a boxed BOGO line's free units as if
+    // the customer had paid for them — the credit would be wrong, and it is minted
+    // server-side, so wait rather than send.
+    if (!extrasReady) {
+      showToast("Still loading line pricing — try again in a moment.");
       return;
     }
-    if (rows.length === 0) {
+    if (payloads.length === 0) {
       showToast("Mark items as partial or refused first.");
       return;
     }
-    // Map rows back to (productId, qty, reason). Driver mutations carry
-    // productId via DeliveryMutation; we can re-derive that from the stop.
-    const items = (stop.deliveryMutations ?? [])
-      .filter((m) => m.type === "PARTIAL" || m.type === "REFUSED")
-      .map((m) => ({
-        productId: m.productId,
-        qty: Math.round(Number(m.quantityDelivered ?? 0)),
-        reason: reasonForApi(activeReason ?? (m.type === "REFUSED" ? "Refused" : "Partial")),
-      }));
-    createReturn.mutate(
-      {
-        orderId,
-        reason: items[0]?.reason ?? "DAMAGED",
-        items,
-      },
-      {
-        onSuccess: () => {
-          showToast("Return submitted");
-          backToStop();
-        },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
-      },
-    );
+    const pending = pendingReturnPayloads(payloads, submitted, stopId);
+    // REG-RETURNS-IDEM-2: `markSubmitted` writes to a PERSISTED store and nothing ever unmarks
+    // it, so a return that only ever reached the OFFLINE QUEUE and then hard-failed at drain
+    // used to bounce the driver silently back to the stop forever, with no return on record and
+    // no way to re-issue it. Every POST now carries `returnSubmitKey` keyed on a per-attempt
+    // nonce (F1, independent review): a retry of ONE pending attempt (offline-queue drain, an
+    // app kill mid-request, this same "reissue" tap before any of it landed) reuses the SAME
+    // nonce and collapses server-side onto one return — but once an attempt actually lands, its
+    // nonce is cleared (markSubmitted below), so tapping Issue again for the same stop+order
+    // — a genuinely NEW return, not a retry — mints a fresh nonce and creates a genuinely new
+    // return instead of silently replaying the old one.
+    const reissue = pending.length === 0;
+    const toSend = reissue ? payloads : pending;
+    Promise.allSettled(
+      toSend.map((p) => {
+        const nonce = useReturnSubmissionStore
+          .getState()
+          .getOrCreateNonce(submittedReturnKey(stopId, p.orderId));
+        return createReturn.mutateAsync({
+          ...p,
+          idempotencyKey: returnSubmitKey(stopId, p, nonce),
+        });
+      }),
+    ).then((settled) => {
+      const results: ReturnSubmissionResult[] = settled.map((s, i) => {
+        const orderId = toSend[i]!.orderId;
+        if (s.status === "fulfilled") return { orderId, ok: true };
+        const e = s.reason as any;
+        return {
+          orderId,
+          ok: false,
+          // REG-B307: carry the offline-queue flag through to summarizeSubmissions.
+          isOfflineQueued: e?.isOfflineQueued === true,
+          message: e?.response?.data?.message ?? e?.message ?? "",
+        };
+      });
+      // REG-B308: `queued` is always an array now (empty when nothing
+      // queued), so no default is needed here.
+      const { done, failed, queued } = summarizeSubmissions(results);
+      if (done.length > 0 || queued.length > 0) {
+        for (const id of [...done, ...queued]) {
+          useReturnSubmissionStore.getState().markSubmitted(stopId, id);
+        }
+      }
+      if (failed.length === 0) {
+        // REG-B307: a queued return is a pending success, not a failure.
+        showToast(
+          queued.length > 0
+            ? "Offline — return queued and will sync when you reconnect"
+            : reissue
+              ? "Return re-sent"
+              : "Return submitted",
+        );
+        backToStop();
+        return;
+      }
+      showToast(`${failed[0]!.message} (${failed.length} order(s) still to send)`);
+    });
   };
   const customerName = stop?.customer?.businessName ?? "Stop";
   const orderNumber = stop?.orders?.[0]?.orderNumber;
-  const originalTotal = (stop?.orders ?? []).reduce(
-    (sum, o) =>
-      sum +
-      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
-    0,
-  );
-  const creditTotal = rows.reduce((sum, r) => sum + r.amount, 0);
+  // REG-B49 (spec R2): box-aware line money, never qty * unitPrice.
+  const originalTotal = stop ? sumStopOrders(stop) : 0;
 
   if (isLoading) {
     return (
@@ -172,40 +273,46 @@ export default function ReturnScreen() {
           </View>
         ) : (
           <ListGroup>
-            {rows.map((r) => (
-              <View key={r.id} style={styles.returnRow}>
-                <View style={styles.returnIcon}>
-                  <Ionicons name="trash-outline" size={16} color={ios.system.red} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <View style={styles.returnTopRow}>
-                    <Text style={styles.returnName}>{r.name}</Text>
-                    <Text style={styles.returnAmt}>−${r.amount.toFixed(2)}</Text>
+            {rows.map((r) => {
+              const key = undeliveredRowKey(r.orderId, r.lineItemId);
+              const damaged = damagedKeys.has(key);
+              return (
+                <View key={key} style={styles.returnRow}>
+                  <View style={styles.returnIcon}>
+                    <Ionicons name="trash-outline" size={16} color={ios.system.red} />
                   </View>
-                  <Text style={styles.returnSub}>
-                    × {r.qty} · {r.reason}
-                  </Text>
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.returnTopRow}>
+                      <Text style={styles.returnName}>{productNameFor(stop!, r.productId)}</Text>
+                      <Text style={styles.returnAmt}>−${r.amount.toFixed(2)}</Text>
+                    </View>
+                    <Text style={styles.returnSub}>
+                      × {r.qty} · {REASON_LABELS[r.reason]}
+                    </Text>
+                    <View style={styles.rowChips}>
+                      <Pressable
+                        style={[styles.reasonChip, damaged && styles.reasonChipActive]}
+                        onPress={() => toggleDamaged(key)}
+                      >
+                        <Text style={[styles.reasonText, damaged && styles.reasonTextActive]}>
+                          Damaged
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
                 </View>
-              </View>
-            ))}
+              );
+            })}
           </ListGroup>
         )}
 
-        <SectionRow title="Add reason" />
-        <View style={styles.reasons}>
-          {REASONS.map((r) => {
-            const active = r === activeReason;
-            return (
-              <Pressable
-                key={r}
-                onPress={() => setActiveReason(r)}
-                style={[styles.reasonChip, active && styles.reasonChipActive]}
-              >
-                <Text style={[styles.reasonText, active && styles.reasonTextActive]}>{r}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        {unlistedCount > 0 ? (
+          <View style={styles.emptyInline}>
+            <Text style={styles.emptyInlineText}>
+              {unlistedCount} unlisted line(s) cannot be returned here — ask the office.
+            </Text>
+          </View>
+        ) : null}
 
         {creditTotal > 0 ? (
           <View style={{ padding: 16, paddingTop: 20 }}>
@@ -223,12 +330,24 @@ export default function ReturnScreen() {
         ) : null}
 
         <View style={{ padding: 16, gap: 8 }}>
+          {extrasFailed ? (
+            <View style={styles.errorInline}>
+              <Text style={styles.errorInlineText}>
+                Line pricing failed to load for this stop — submitting now could credit the wrong
+                amount.
+              </Text>
+              <Pressable style={styles.retryBtn} onPress={retryExtras}>
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </Pressable>
+            </View>
+          ) : null}
           <Pressable
             style={[
               styles.primaryBtn,
-              (rows.length === 0 || createReturn.isPending) && styles.primaryBtnDisabled,
+              (rows.length === 0 || !extrasReady || createReturn.isPending) &&
+                styles.primaryBtnDisabled,
             ]}
-            disabled={rows.length === 0 || createReturn.isPending}
+            disabled={rows.length === 0 || !extrasReady || createReturn.isPending}
             onPress={issue}
           >
             <Text style={styles.primaryBtnText}>
@@ -301,6 +420,20 @@ const styles = StyleSheet.create({
     color: ios.label2,
     textAlign: "center",
   },
+  errorInline: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: ios.system.redWash,
+    borderRadius: 12,
+    gap: 10,
+  },
+  errorInlineText: {
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    color: ios.system.red,
+  },
+  retryBtn: { alignSelf: "flex-start" },
+  retryBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.brand },
   returnRow: {
     flexDirection: "row",
     gap: 12,
@@ -335,6 +468,8 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
   },
+  /** Per-row override chips (the damaged toggle) — no global reason picker. */
+  rowChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   reasonChip: {
     paddingHorizontal: 14,
     paddingVertical: 6,

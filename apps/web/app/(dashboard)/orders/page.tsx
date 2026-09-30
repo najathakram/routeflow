@@ -17,13 +17,23 @@ import {
   ChevronRight,
   Download,
   History,
+  Package,
+  Truck,
+  Route as RouteIcon,
 } from "lucide-react";
 import { PageHeader, Badge, Select, Button, cn, useToast, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { humanizeEnum } from "@/lib/format";
 import { useOrders, useUpdateOrderStatus, useBulkDeleteOrders, type Order } from "@/lib/api/orders";
+import { useProduct } from "@/lib/api/products";
+import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
+import { useDeliveryAccess } from "@/lib/api/addons";
+import { saveTripDraft } from "@/lib/trip-draft";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
@@ -49,6 +59,21 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: "PARTIALLY_DELIVERED", label: "Partially Delivered" },
   { value: "DELIVERED", label: "Delivered" },
   { value: "CANCELLED", label: "Cancelled" },
+];
+
+// Row status badge label — reuse the filter-pill copy above so the two stay in
+// sync; fall back to humanizeEnum for any status this list doesn't know about
+// yet (never render the raw enum with underscores).
+function orderStatusLabel(status: string): string {
+  return STATUS_OPTIONS.find((o) => o.value === status)?.label ?? humanizeEnum(status);
+}
+
+// ─── Fulfillment filter options ───────────────────────────────────────────────
+
+const FULFILLMENT_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "All Fulfillment" },
+  { value: "ROUTE", label: "Delivery route" },
+  { value: "SHIP", label: "Ship via carrier" },
 ];
 
 // ─── Date column ──────────────────────────────────────────────────────────────
@@ -105,14 +130,30 @@ export default function OrdersPage() {
     urgent: false,
     dateFrom: "",
     dateTo: "",
+    // PR-B: "which orders had this item?" — round-trips through the URL like
+    // every other chip here so a deep link / Back nav preserves it.
+    productId: "",
+    // Ad-hoc trips: ROUTE (dispatched) vs SHIP (supplier/carrier-shipped,
+    // excluded from trip/route dispatch) — same URL-chip treatment as status.
+    fulfillPath: "",
   });
   const statusFilter = (urlFilters.status as string) ?? "";
   const urgentOnly = (urlFilters.urgent as boolean) ?? false;
   const dateFrom = (urlFilters.dateFrom as string) ?? "";
   const dateTo = (urlFilters.dateTo as string) ?? "";
+  const productIdFilter = (urlFilters.productId as string) ?? "";
+  const fulfillPathFilter = (urlFilters.fulfillPath as string) ?? "";
+  // Only fetched to render the chip's label — the filter itself is the id.
+  const { data: filterProduct } = useProduct(productIdFilter);
+  // Hide-only gate for the ad-hoc delivery builder entry point — bulkbar action
+  // stays hidden on `enabled` (never `resolved`; this is a nav affordance, not a
+  // data guard). The `order_delivery` addon alone, via the shared composition
+  // helper (owner decision 2026-08-28: `devMode` no longer unlocks it).
+  const { enabled: deliveryAccessEnabled } = useDeliveryAccess();
 
-  // Customer search stays local (too transient for URL)
-  const [customerSearch, setCustomerSearch] = React.useState("");
+  // Customer search is URL-backed like the chips above, so drilling into an order
+  // and pressing Back returns to the search that found it.
+  const [customerSearch, setCustomerSearch, debouncedCustomerSearch] = useUrlSearch();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   // Draft resume state (pos-cost-roles-spec §2): which parked draft to hydrate and
   // an optional barcode to add on open.
@@ -127,17 +168,23 @@ export default function OrdersPage() {
     const action = searchParams.get("action");
     const resume = searchParams.get("resumeDraft");
     const scan = searchParams.get("scan");
+    if (!resume && action !== "new") return;
     if (resume) {
       setResumeDraftId(resume);
-      setInitialScanCode(scan);
-      setIsCreateOpen(true);
-      router.replace("/orders");
-    } else if (action === "new") {
+    } else {
       setResumeDraftId(null);
-      setInitialScanCode(scan);
-      setIsCreateOpen(true);
-      router.replace("/orders");
     }
+    setInitialScanCode(scan);
+    setIsCreateOpen(true);
+    // Strip ONLY the intent params. This used to replace with a bare "/orders",
+    // which also discarded the status/date chips and the search — so opening the
+    // builder from the draft dock silently cleared the operator's filters.
+    const params = new URLSearchParams(window.location.search);
+    params.delete("action");
+    params.delete("resumeDraft");
+    params.delete("scan");
+    const qs = params.toString();
+    router.replace(qs ? `/orders?${qs}` : "/orders", { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   const [selectMode, setSelectMode] = React.useState(false);
@@ -145,7 +192,7 @@ export default function OrdersPage() {
   const [isCancelling, setIsCancelling] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [deleteConfirm, setDeleteConfirm] = React.useState(false);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortCol, setSortCol] = React.useState<string>("createdAt");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
@@ -209,7 +256,7 @@ export default function OrdersPage() {
       const result = await bulkDelete.mutateAsync(Array.from(selected));
       if (result.errors.length > 0) {
         toast({
-          title: `${result.deleted} deleted, ${result.errors.length} failed (only PENDING/CANCELLED orders can be deleted)`,
+          title: `${result.deleted} deleted, ${result.errors.length} failed (orders whose invoice has recorded payments must be voided first)`,
           variant: "error",
         });
       } else {
@@ -227,10 +274,38 @@ export default function OrdersPage() {
     }
   };
 
-  // Reset page when filters change (page state stays local)
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from an order.
+  useResetPageOnChange(setPage, [
+    statusFilter,
+    urgentOnly,
+    dateFrom,
+    dateTo,
+    productIdFilter,
+    fulfillPathFilter,
+    debouncedCustomerSearch,
+  ]);
+
+  // REG-B154 class fix: selection used to accumulate across page/search/filter
+  // changes with no reset (toggleSelect only ever adds/removes one id — see
+  // below), so a bulk action could silently include ids from a page/filter the
+  // operator is no longer looking at. Reset whenever the visible set changes.
   React.useEffect(() => {
-    setPage(1);
-  }, [statusFilter, urgentOnly, dateFrom, dateTo]);
+    setSelected(new Set());
+    setDeleteConfirm(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    limit,
+    statusFilter,
+    urgentOnly,
+    dateFrom,
+    dateTo,
+    productIdFilter,
+    fulfillPathFilter,
+    customerSearch,
+  ]);
 
   // Active saved view detection
   const activeSavedView = React.useMemo(() => {
@@ -238,7 +313,14 @@ export default function OrdersPage() {
       SAVED_VIEWS.find((v) => {
         const keys = Object.keys(v.filters);
         if (keys.length === 0) {
-          return !statusFilter && !urgentOnly && !dateFrom && !dateTo;
+          return (
+            !statusFilter &&
+            !urgentOnly &&
+            !dateFrom &&
+            !dateTo &&
+            !productIdFilter &&
+            !fulfillPathFilter
+          );
         }
         return keys.every(
           (k) =>
@@ -247,7 +329,7 @@ export default function OrdersPage() {
         );
       })?.id ?? null
     );
-  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo]);
+  }, [urlFilters, statusFilter, urgentOnly, dateFrom, dateTo, productIdFilter, fulfillPathFilter]);
 
   const applyView = (view: (typeof SAVED_VIEWS)[0]) => {
     clearFilters();
@@ -261,25 +343,24 @@ export default function OrdersPage() {
     urgent: urgentOnly || undefined,
     deliveryDateFrom: dateFrom || undefined,
     deliveryDateTo: dateTo || undefined,
+    productId: productIdFilter || undefined,
+    fulfillPath: (fulfillPathFilter as "ROUTE" | "SHIP" | "") || undefined,
+    search: debouncedCustomerSearch || undefined,
     page,
     limit,
   });
 
   const orders = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
+  // B144: `search` is now sent to the server and composes with the other
+  // filters there (role scope, `customerId`) — this page no longer re-filters
+  // the current PAGE's rows client-side (that silently hid matches on every
+  // page but the one the operator happened to be viewing). Only the in-page
+  // sort stays local.
   const filtered = React.useMemo(() => {
-    const q = customerSearch.toLowerCase();
-    const list = orders.filter((o) => {
-      if (
-        q &&
-        !o.customer?.businessName?.toLowerCase().includes(q) &&
-        !o.orderNumber?.toLowerCase().includes(q)
-      )
-        return false;
-      return true;
-    });
-    return [...list].sort((a, b) => {
+    return [...orders].sort((a, b) => {
       // Urgent always floats to top regardless of sort column
       if (a.urgent && !b.urgent) return -1;
       if (!a.urgent && b.urgent) return 1;
@@ -295,7 +376,7 @@ export default function OrdersPage() {
       // default: createdAt
       return dir * (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     });
-  }, [orders, customerSearch, sortCol, sortDir]);
+  }, [orders, sortCol, sortDir]);
 
   const urgentCount = orders.filter((o) => o.urgent).length;
 
@@ -312,31 +393,34 @@ export default function OrdersPage() {
           urgent: urgentOnly || undefined,
           deliveryDateFrom: dateFrom || undefined,
           deliveryDateTo: dateTo || undefined,
+          productId: productIdFilter || undefined,
+          fulfillPath: fulfillPathFilter || undefined,
+          search: debouncedCustomerSearch || undefined,
           page: 1,
           limit: EXPORT_LIMIT,
         },
       });
       const payload = res.data as { data: Order[]; meta?: { total?: number } };
-      const allOrders = payload.data ?? [];
-      const q = customerSearch.toLowerCase();
-      const rows = allOrders.filter((o) => {
-        if (
-          q &&
-          !o.customer?.businessName?.toLowerCase().includes(q) &&
-          !o.orderNumber?.toLowerCase().includes(q)
-        )
-          return false;
-        return true;
-      });
+      const rows = payload.data ?? [];
       downloadCsv(
         `orders-${new Date().toISOString().split("T")[0]}.csv`,
-        ["Order #", "Customer", "Items", "Total", "Status", "Delivery Date", "Created"],
+        [
+          "Order #",
+          "Customer",
+          "Items",
+          "Total",
+          "Status",
+          "Fulfillment",
+          "Delivery Date",
+          "Created",
+        ],
         rows.map((o) => [
           o.orderNumber ?? o.id.slice(0, 8).toUpperCase(),
           o.customer?.businessName ?? "",
           o.lineItems?.length ?? 0,
           Number(o.total ?? 0).toFixed(2),
           o.status,
+          o.fulfillPath ?? "ROUTE",
           csvDate(o.requestedDeliveryDate),
           csvDate(o.createdAt),
         ]),
@@ -368,7 +452,9 @@ export default function OrdersPage() {
         title="Orders"
         subtitle={headerSubtitle}
         action={
-          <div className="flex items-center gap-2">
+          // PageHeader (packages/ui): shrink-0 now pairs with max-w-full, so this row
+          // actually gets a narrow-enough box to wrap into at 390px.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               size="sm"
@@ -419,6 +505,21 @@ export default function OrdersPage() {
             {isCancelling && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             Cancel {selected.size}
           </button>
+          {deliveryAccessEnabled && (
+            <>
+              <span className="h-[18px] w-px bg-white/20" />
+              <button
+                onClick={() => {
+                  saveTripDraft(Array.from(selected));
+                  router.push(`/deliveries/new?n=${selected.size}`);
+                }}
+                className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold text-white/75 hover:text-white transition-colors"
+              >
+                <RouteIcon className="h-3.5 w-3.5" />
+                Plan delivery trip
+              </button>
+            </>
+          )}
           {deleteConfirm ? (
             <div className="flex items-center gap-2.5">
               <span className="text-[12.5px] font-semibold text-[#FCA5A5]">
@@ -449,7 +550,7 @@ export default function OrdersPage() {
             </button>
           )}
           <span className="ml-auto text-[11.5px] text-white/45">
-            Only PENDING / CANCELLED orders can be deleted
+            Orders with recorded payments can&apos;t be deleted
           </span>
         </div>
       )}
@@ -463,6 +564,12 @@ export default function OrdersPage() {
           // gracefully rather than fabricating per-status tallies.
           const count =
             view.id === "all" ? meta?.total : view.id === "urgent" ? urgentCount : undefined;
+          // Urgent is a rare-but-important state — don't clutter the row with an
+          // empty pill when there's nothing urgent to see. Keep it while it's the
+          // ACTIVE view though: `urgentCount` counts the loaded page, so an urgent
+          // filter that returns nothing would otherwise hide the very chip that
+          // explains why the list is empty.
+          if (view.id === "urgent" && urgentCount === 0 && !isActive) return null;
           return (
             <button
               key={view.id}
@@ -526,6 +633,13 @@ export default function OrdersPage() {
             onChange={(e) => setFilter("status", e.target.value)}
           />
         </div>
+        <div className="w-44">
+          <Select
+            options={FULFILLMENT_OPTIONS}
+            value={fulfillPathFilter}
+            onChange={(e) => setFilter("fulfillPath", e.target.value)}
+          />
+        </div>
         {/* Urgent toggle */}
         <button
           onClick={() => setFilter("urgent", !urgentOnly)}
@@ -545,8 +659,37 @@ export default function OrdersPage() {
           )}
         </button>
 
-        {/* Delivery date range filter */}
-        <div className="flex items-center gap-1.5">
+        {/* Product filter — "which orders had this item?" (PR-B). Selecting a
+            product swaps the picker for a removable chip (X clears it back
+            to the picker), mirroring the urgent toggle / date-clear affordances. */}
+        {productIdFilter ? (
+          <button
+            type="button"
+            onClick={() => setFilter("productId", "")}
+            className="flex h-10 items-center gap-2 rounded-ctl border border-brand-200 bg-brand-50 px-3 text-sm font-medium text-brand-700 transition-colors hover:bg-brand-100"
+            title="Remove product filter"
+          >
+            <Package className="h-4 w-4" />
+            {filterProduct?.name ?? "Loading…"}
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <div className="w-56">
+            <SearchableProductPicker
+              async
+              value=""
+              onChange={(id) => setFilter("productId", id)}
+              placeholder="Filter by product…"
+            />
+          </div>
+        )}
+
+        {/* Delivery date range filter. flex-wrap here (not just on the outer
+            filter bar) matters: this whole block is a single flex item in
+            that row, so without its own wrap the "to [date]" half ran past
+            the viewport edge at 390px instead of dropping to a second line
+            the way every other filter control already does (B506). */}
+        <div className="flex flex-wrap items-center gap-1.5">
           <Calendar className="h-4 w-4 text-navy/70" />
           <span className="text-xs text-navy/70 font-medium">Delivery:</span>
           <input
@@ -554,7 +697,7 @@ export default function OrdersPage() {
             value={dateFrom}
             onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
           />
           <span className="text-xs text-navy/40">to</span>
@@ -563,7 +706,7 @@ export default function OrdersPage() {
             value={dateTo}
             onChange={(e) => setFilter("dateTo", e.target.value)}
             min={dateFrom || undefined}
-            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date to"
           />
           {(dateFrom || dateTo) && (
@@ -581,7 +724,13 @@ export default function OrdersPage() {
         </div>
 
         {/* Clear active filters */}
-        {(statusFilter || urgentOnly || dateFrom || dateTo || customerSearch) && (
+        {(statusFilter ||
+          urgentOnly ||
+          dateFrom ||
+          dateTo ||
+          productIdFilter ||
+          fulfillPathFilter ||
+          customerSearch) && (
           <button
             onClick={() => {
               clearFilters();
@@ -664,7 +813,13 @@ export default function OrdersPage() {
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={selectMode ? 10 : 9} className="p-0">
-                    {statusFilter || urgentOnly || dateFrom || dateTo || customerSearch ? (
+                    {statusFilter ||
+                    urgentOnly ||
+                    dateFrom ||
+                    dateTo ||
+                    productIdFilter ||
+                    fulfillPathFilter ||
+                    customerSearch ? (
                       <EmptyState
                         variant="orders"
                         title="No matching orders"
@@ -730,6 +885,10 @@ export default function OrdersPage() {
                           type="checkbox"
                           checked={selected.has(order.id)}
                           onChange={() => toggleSelect(order.id)}
+                          // Without this, a click ON the checkbox toggles twice:
+                          // onChange here, then the bubble reaches the td's
+                          // onClick — net zero, the box appears dead.
+                          onClick={(e) => e.stopPropagation()}
                           className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
                         />
                       </td>
@@ -751,7 +910,16 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
-                        <Badge status={order.status} />
+                        <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                        {order.fulfillPath === "SHIP" && (
+                          <span
+                            title="Shipped by supplier/carrier — won't appear on delivery routes"
+                            className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                          >
+                            <Truck className="h-3 w-3" aria-hidden />
+                            Shipped
+                          </span>
+                        )}
                         {/* P5-11: pending post-dispatch change requests on this order
                             (filtered _count from the list endpoint; absent = no pill). */}
                         {(order._count?.changeRequests ?? 0) > 0 && (
@@ -800,49 +968,39 @@ export default function OrdersPage() {
         {meta && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70">
             <span>
-              {customerSearch ? (
-                filtered.length > 0 ? (
-                  <>
-                    Showing{" "}
-                    <span className="font-mono tabular-nums text-navy">{filtered.length}</span> of{" "}
-                    <span className="font-mono tabular-nums text-navy">{meta.total}</span> order
-                    {meta.total !== 1 ? "s" : ""} (filtered)
-                  </>
-                ) : (
-                  "No orders match your search"
-                )
-              ) : meta.total > 0 ? (
+              {meta.total > 0 ? (
                 <>
                   Showing{" "}
                   <span className="font-mono tabular-nums text-navy">
                     {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
                   </span>{" "}
                   of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+                  {customerSearch ? " (filtered)" : ""}
                 </>
+              ) : customerSearch ? (
+                "No orders match your search"
               ) : (
                 "No orders found"
               )}
             </span>
-            {!customerSearch && (
-              <div className="flex items-center gap-1.5">
-                <span>Per page</span>
-                <select
-                  value={limit}
-                  onChange={(e) => {
-                    setLimit(Number(e.target.value));
-                    setPage(1);
-                  }}
-                  className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-                >
-                  {[10, 20, 50, 100].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {!customerSearch && (meta.totalPages ?? 1) > 1 && (
+            <div className="flex items-center gap-1.5">
+              <span>Per page</span>
+              <select
+                value={limit}
+                onChange={(e) => {
+                  setLimit(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              >
+                {[10, 20, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(meta.totalPages ?? 1) > 1 && (
               <div className="ml-auto flex items-center gap-0.5">
                 <button
                   disabled={page <= 1}
@@ -892,6 +1050,7 @@ export default function OrdersPage() {
         }}
         resumeDraftId={resumeDraftId}
         initialScanCode={initialScanCode}
+        onViewOrder={(orderId) => router.push(`/orders/${orderId}`)}
       />
     </div>
   );

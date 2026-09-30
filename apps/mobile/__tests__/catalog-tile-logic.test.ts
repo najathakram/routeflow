@@ -14,7 +14,7 @@ import {
   tileCta,
 } from "../lib/catalog-tile-logic";
 import { priceCart, type CartLineInput } from "../lib/buyer-cart-pricing";
-import type { PromotionRule, PromoResult } from "../lib/pricing";
+import type { PromotionRule, PromoResult } from "@routeflow/pricing";
 import type { CartItem } from "../store/cartStore";
 import type { BuyerStockAlerts, ReplenishmentEstimate } from "../lib/api/buyer";
 
@@ -80,20 +80,11 @@ describe("deriveTilePrice", () => {
     expect(priced.originalPrice).toBeNull();
   });
 
-  it("falls back buyerPrice → basePrice → price when earlier fields are absent", () => {
-    const base: { id: string; category?: string; unitsPerBox: null } = {
-      id: "a",
-      unitsPerBox: null,
-    };
-    expect(
-      deriveTilePrice({ ...base, buyerPrice: 25, basePrice: 30, price: 35 }, [], undefined)
-        .unitPrice,
-    ).toBe(25);
-    expect(deriveTilePrice({ ...base, basePrice: 30, price: 35 }, [], undefined).unitPrice).toBe(
-      30,
-    );
-    expect(deriveTilePrice({ ...base, price: 35 }, [], undefined).unitPrice).toBe(35);
-    expect(deriveTilePrice({ ...base }, [], undefined).unitPrice).toBe(0);
+  // #2703 (SA-562): the catalog never sends basePrice/price — buyerPrice (the server's effective
+  // price) is the tile base, with no legacy fallback chain.
+  it("prices off buyerPrice, the server's effective price", () => {
+    const base = { id: "a", category: null, unitsPerBox: null };
+    expect(deriveTilePrice({ ...base, buyerPrice: 25 }, [], undefined).unitPrice).toBe(25);
   });
 
   it("PERCENT promo produces a struck original + net box price", () => {
@@ -186,11 +177,17 @@ describe("deriveTilePrice", () => {
 });
 
 describe("computeTileChip", () => {
-  const noPromo: PromoResult = { unitPrice: 10, originalPrice: null, appliedPromoId: null };
+  const noPromo: PromoResult = {
+    unitPrice: 10,
+    originalPrice: null,
+    appliedPromoId: null,
+    freeUnits: 0,
+  };
   const promoted = (unitPrice: number, originalPrice: number): PromoResult => ({
     unitPrice,
     originalPrice,
     appliedPromoId: "p1",
+    freeUnits: 0,
   });
 
   it("Deal (from a promo) takes priority over New and Featured, with a percent label", () => {

@@ -18,16 +18,26 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import { VendorBillsService } from "./vendor-bills.service";
 import { CreateVendorBillDto } from "./dto/create-vendor-bill.dto";
 import { UpdateVendorBillDto } from "./dto/update-vendor-bill.dto";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
+import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
+import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
+// OPERATOR-only end to end. AddonGuard passes handlers without @RequireAddon
+// metadata — only the AI scan endpoint below is addon-gated.
 @Controller("vendor-bills")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard, AddonGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.ap_bills")
 export class VendorBillsController {
   constructor(private readonly vendorBillsService: VendorBillsService) {}
 
@@ -57,11 +67,14 @@ export class VendorBillsController {
     );
   }
 
+  // AI OCR is entitlement-gated (owner decision 2026-08-28) — OCR_ADDON in
+  // packages/types is the client-side mirror of this key.
   @Post("scan-invoice")
+  @RequireAddon("ocr")
   @UseInterceptors(
     // Up to 10 pages, 25MB per file, under the field name `images` (multer
     // matches the field name exactly — clients MUST use "images").
-    FilesInterceptor("images", 10, { limits: { fileSize: 25 * 1024 * 1024 } }),
+    FilesInterceptor("images", 10, { limits: uploadLimits(MB(25)) }),
   )
   scanInvoice(@UploadedFiles() files: Express.Multer.File[], @CurrentUser() user: { id: string }) {
     if (!files || files.length === 0) {
@@ -123,9 +136,7 @@ export class VendorBillsController {
 
   // Product mapping memory — must be before :id routes
   @Post("product-mappings")
-  saveProductMapping(
-    @Body() dto: { supplierName: string; rawDescription: string; productId: string | null },
-  ) {
+  saveProductMapping(@Body() dto: SaveProductMappingDto) {
     return this.vendorBillsService.saveProductMapping(
       dto.supplierName,
       dto.rawDescription,
@@ -137,6 +148,19 @@ export class VendorBillsController {
   getProductMappings(@Query("supplierName") supplierName: string) {
     if (!supplierName) throw new BadRequestException("supplierName is required");
     return this.vendorBillsService.getProductMappings(supplierName);
+  }
+
+  // Supplier-level payment allocation — the AP mirror of
+  // POST /invoices/payments/record. Must be before the :id routes.
+  @Post("payments/record") recordSupplierPayment(@Body() dto: RecordSupplierPaymentDto) {
+    return this.vendorBillsService.recordSupplierPayment(dto);
+  }
+
+  // Running-balance statement for one supplier. Must be before the :id routes.
+  @Get("suppliers/:supplierId/statement") getSupplierStatement(
+    @Param("supplierId") supplierId: string,
+  ) {
+    return this.vendorBillsService.getSupplierStatement(supplierId);
   }
 
   @Get(":id") findOne(@Param("id") id: string) {

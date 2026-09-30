@@ -1,5 +1,9 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { DRIVER_CRITICAL_NETWORK_MODE } from "../live-online";
 import { apiClient } from "../api-client";
+import { invalidateOrderCaches } from "./orders";
+import type { InvoiceStatus, RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
+export type { RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +25,35 @@ export interface RouteRunOrderItem {
   qty: number;
   unitPrice: number;
   status: string;
+  // F05 / R2 / G7: box-aware line money, straight off `RUN_LINE_ITEMS_SELECT`.
+  // Prisma Decimals may arrive as strings — see lib/run-money.ts#lineItemSubtotal.
+  subtotal?: number | string | null;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  // B305 round 2 (RULING 1/3): sale-time regulated-category tax snapshot
+  // (sales.prisma OrderItem.categoryTaxAmount), straight off
+  // `RUN_LINE_ITEMS_SELECT`. Feeds lib/run-money.ts#deliveredCategoryTax's
+  // per-unit proration for the short-pick payment estimate.
+  categoryTaxAmount?: number | string | null;
+  /**
+   * B648: units_v1 — the unit this line is sold by ("Case"…), straight off
+   * `RUN_LINE_ITEMS_SELECT`; null on a plain piece/pack line. Feeds
+   * lib/short-pick.ts#isUnitAwareLine.
+   */
+  unitLabel?: string | null;
+  /**
+   * B785/SA-116: pieces delivered at every OTHER visit (any run/stop), projected per stop by the
+   * run read from evidence rows. DISPLAY-ONLY (SA-367b): it prices the remaining money in
+   * lib/short-pick.ts; it never decides a quantity.
+   */
+  deliveredSoFar?: number | null;
+  /**
+   * SA-366/SA-367a: the server-computed remaining for THIS stop — the same value the completion
+   * bound accepts up to (0 for a cancelled line or a line of a cancelled/draft order). Every
+   * quantity decision in lib/short-pick.ts reads it. Absent (an older api) ⇒ an empty stepper.
+   */
+  remaining?: number | null;
 }
 
 export interface RouteRunOrder {
@@ -31,6 +64,42 @@ export interface RouteRunOrder {
   notes?: string;
   invoiceId?: string;
   lineItems: RouteRunOrderItem[];
+  // REG-B305: tax-inclusive amount due (Prisma Decimals — may arrive as
+  // strings over the wire). See lib/run-money.ts#orderAmountDue.
+  subtotal?: number | string | null;
+  tax?: number | string | null;
+  total?: number | string | null;
+  // REG-B305 round 2: `Order.total` above carries NO discount and, on a
+  // split delivery, the WHOLE shipping fee on every visit — projected but no
+  // longer read by orderAmountDue's money math (RULING 2: no client-side
+  // total-minus-discount guess is ever safe). `invoices` — ALL open drafts
+  // (RULING 1; a regulated split order can have several: base + `-R#`
+  // siblings) — is the real basis. See lib/run-money.ts#orderAmountDue.
+  discountAmount?: number | string | null;
+  shippingFee?: number | string | null;
+  invoices?: Array<{
+    id: string;
+    subtotal: number | string | null;
+    taxAmount: number | string | null;
+    discount: number | string | null;
+    shippingFee: number | string | null;
+    total: number | string | null;
+  }>;
+  // B810/SA-130a: EVERY payable invoice (DRAFT/SENT/PARTIAL/OVERDUE — mirrors
+  // the server's own payment write path), fetched by the server as its OWN
+  // batched query (NOT a nested Order relation — Order has no such relation),
+  // each carrying a server-computed `balanceDue` (total - confirmed
+  // payments) and `isDepositMirror` (SA-102's WP-D1 shape: this invoice IS
+  // the order's own live bill, not a separately-finalized one — see
+  // lib/run-money.ts#reconciledDoorDue for the three-way rule this field
+  // feeds). Never a client total-minus-payments — see run-money.ts#orderAmountDue.
+  payableInvoices?: Array<{
+    id: string;
+    status: InvoiceStatus;
+    total: number | string | null;
+    balanceDue: number | string | null;
+    isDepositMirror?: boolean;
+  }>;
 }
 
 export interface RouteRunStop {
@@ -44,6 +113,11 @@ export interface RouteRunStop {
     phone?: string;
     deliveryWindowStart?: string;
     deliveryWindowEnd?: string;
+    // B305 round 3: mirrors RUN_STOP_INCLUDE.customer.select.isTaxExempt
+    // (sales.prisma Customer.isTaxExempt) — feeds reconciledAmountDue's
+    // isTaxExempt input so a short-picked stop's estimate zeroes tax for an
+    // exempt customer exactly as the server does.
+    isTaxExempt?: boolean;
   };
   customerAddress?: {
     line1: string;
@@ -75,13 +149,30 @@ export interface RouteRunStop {
 
 export interface RouteRun {
   id: string;
-  route?: { id: string; name: string };
+  route?: {
+    id: string;
+    name: string;
+    kind?: "SCHEDULED" | "ADHOC";
+    depotLat?: number | null;
+    depotLng?: number | null;
+    depotAddress?: string | null;
+    endKind?: "NONE" | "RETURN_TO_START" | "DRIVER_HOME" | "ADDRESS";
+    endLat?: number | null;
+    endLng?: number | null;
+  };
   driver?: { id: string; contactName: string };
   status: "SCHEDULED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
   scheduledDate: string;
   startedAt?: string;
   completedAt?: string;
   stops?: RouteRunStop[];
+  notes?: string | null;
+  // F05 / R6 / R8: end-of-run cash/check settlement, server-truth — the
+  // gate `shouldForceSettlement` (lib/run-settlement.ts) reads these.
+  settlementNote?: string | null;
+  settlementVariance?: number | string | null;
+  // F05 / R5: server-computed cash+check collected this run (getRunCashCollections).
+  collectedPayments?: { cashTotal: number; checkTotal: number; count: number };
 }
 
 export interface PackingListItem {
@@ -181,8 +272,36 @@ export function useUpdateRunStatus() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["route-runs"] });
       qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      // F11: a CANCELLED/COMPLETED write releases undelivered orders — refresh order lists so
+      // they reappear as dispatchable. Goes through invalidateOrderCaches so BOTH key families
+      // are hit: the operator route-run screen that issues the cancel reads ["admin", "orders"].
+      invalidateOrderCaches(qc);
     },
   });
+}
+
+/**
+ * F05 / R6 / R8 — POST /route-runs/:id/settlement. Records the driver's (or
+ * operator's) end-of-run cash/check count against the server-computed
+ * expected total; the server derives `expected` itself (never trusts a
+ * client-supplied figure) and returns the updated run plus
+ * expectedCash/countedCash/variance. Same invalidation as useUpdateRunStatus
+ * since both mutate the same run resource.
+ */
+export function useSettleRun() {
+  const qc = useQueryClient();
+  return useMutation<RouteRun, Error, { id: string; countedCash: number; varianceReason?: string }>(
+    {
+      mutationFn: ({ id, countedCash, varianceReason }) =>
+        apiClient
+          .post(`/route-runs/${id}/settlement`, { countedCash, varianceReason })
+          .then((r) => r.data),
+      onSuccess: (_, { id }) => {
+        qc.invalidateQueries({ queryKey: ["route-runs"] });
+        qc.invalidateQueries({ queryKey: ["route-runs", id] });
+      },
+    },
+  );
 }
 
 export type ItemDeliveryType = "DELIVERED" | "PARTIAL" | "REFUSED" | "ADD_ON";
@@ -297,6 +416,33 @@ export function useCompleteWithPayment() {
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
+    // #2265: never PAUSE offline — fail fast so the api-client interceptor queues the completion
+    // and payment.tsx's "queued" branch runs (on web, TanStack's default "online" mode paused it).
+    networkMode: DRIVER_CRITICAL_NETWORK_MODE,
+  });
+}
+
+/**
+ * Durable POD: attach one photo/signature to a run stop as a JSON data URL —
+ * deliberately NOT multipart, so an offline attempt is queued by the offline
+ * interceptor and replays (FIFO, before the queued completion). The server
+ * stores the image and appends its storage key to the stop; `artifactId`
+ * makes replays idempotent. 60s timeout mirrors the other image uploads.
+ */
+export interface AttachPodArtifactDto {
+  runId: string;
+  stopId: string;
+  kind: "photo" | "signature";
+  dataUrl: string;
+  artifactId?: string;
+}
+
+export function useAttachPodArtifact() {
+  return useMutation<{ key: string; url: string }, Error, AttachPodArtifactDto>({
+    mutationFn: ({ runId, stopId, ...body }) =>
+      apiClient
+        .post(`/route-runs/${runId}/stops/${stopId}/pod-artifact`, body, { timeout: 60_000 })
+        .then((r) => r.data),
   });
 }
 
@@ -326,16 +472,13 @@ export function useCreateRun() {
   });
 }
 
-export function useUpdateRun() {
-  const qc = useQueryClient();
-  return useMutation<RouteRun, Error, { id: string; scheduledDate?: string; notes?: string }>({
-    mutationFn: ({ id, ...dto }) => apiClient.patch(`/route-runs/${id}`, dto).then((r) => r.data),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ["route-runs"] });
-      qc.invalidateQueries({ queryKey: ["route-runs", id] });
-    },
-  });
-}
+// F05 removed `useUpdateRun` (PATCH /route-runs/:id with scheduledDate/notes). Its only caller
+// was the settlement screen's notes-append, and appending the settlement into free-text `notes`
+// is exactly B167: the sole renderer of that column is hidden once a run closes. Settlement now
+// posts to /route-runs/:id/settlement (`useSettleRun`), which writes the dedicated
+// settlementNote/settlementVariance columns the web run-detail page reads for every status.
+// The endpoint itself stays — web still uses it, and its inline unvalidated body is why F05
+// added a NEW route rather than retrofitting it.
 
 export function useAllRoutes() {
   return useQuery<{ data: { id: string; name: string; isActive: boolean }[]; meta: any }>({
@@ -482,12 +625,16 @@ export function useRoutesLive() {
   });
 }
 
-export function useOperatorRouteRuns(params?: { status?: string; date?: string; limit?: number }) {
+export function useOperatorRouteRuns(
+  params?: { status?: string; date?: string; limit?: number },
+  options?: { enabled?: boolean },
+) {
   return useQuery<{ data: RouteRun[]; meta: any }>({
     queryKey: ["route-runs", "operator", params],
     queryFn: () =>
       apiClient.get("/route-runs", { params: { limit: 50, ...params } }).then((r) => r.data),
     staleTime: 30_000,
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -538,26 +685,6 @@ export function useOptimizeRouteRun() {
 
 // ─── Route Analysis (ETAs + delivery windows) ────────────────────────────────
 
-export interface StopETA {
-  stopId: string;
-  stopNumber: number;
-  customerName: string;
-  arrivalTime: string;
-  departureTime: string;
-  travelTimeMinutes: number;
-  deliveryWindowStart?: string | null;
-  deliveryWindowEnd?: string | null;
-  withinWindow: boolean | null;
-}
-
-export interface RouteAnalysisResult {
-  configured: boolean;
-  summary?: string;
-  stops?: Array<{ stopNumber: number; status: "ok" | "warning" | "critical"; message: string }>;
-  suggestions?: string[];
-  etas: StopETA[];
-}
-
 export function useAnalyzeRoute() {
   return useMutation<RouteAnalysisResult, Error, { routeId: string; startTime?: string }>({
     mutationFn: ({ routeId, startTime }) =>
@@ -573,15 +700,6 @@ export function useAnalyzeRouteRun() {
 }
 
 // ─── Route Settings (depot + service time) ───────────────────────────────────
-
-export interface RouteSettings {
-  averageSpeedKmh: number;
-  serviceTimeMinutes: number;
-  defaultStartTime: string;
-  depotLat: number | null;
-  depotLng: number | null;
-  depotAddress: string;
-}
 
 export function useRouteSettings() {
   return useQuery<RouteSettings>({

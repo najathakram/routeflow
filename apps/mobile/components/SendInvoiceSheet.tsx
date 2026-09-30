@@ -5,6 +5,8 @@ import { ios } from "@routeflow/ui/tokens";
 
 type IoniconName = ComponentProps<typeof Ionicons>["name"];
 
+type PdfSharePhase = "idle" | "preparing" | "ready";
+
 interface SendInvoiceSheetProps {
   open: boolean;
   onClose: () => void;
@@ -17,13 +19,55 @@ interface SendInvoiceSheetProps {
   email?: string;
   /** True while the server-side email send is in flight. */
   emailSending?: boolean;
-  /** True while the PDF is being fetched/shared — guards against a double-tap
-   * firing two concurrent share sheets (expo-sharing throws on the second). */
-  pdfSending?: boolean;
+  /** Governs the "Share PDF" row's label/enabled state through the
+   * prepare → (maybe) tap-again → share dance (share-pdf.ts's
+   * ACTIVATION_BUDGET_MS contract): "preparing" while the fetch races the
+   * budget (busy, disabled), "ready" when the budget ran out first — the
+   * NEXT tap shares the by-then-cached PDF synchronously. */
+  pdfPhase?: PdfSharePhase;
+  /** Same states, for the WhatsApp row when it's attaching the actual PDF
+   * (file-share mode) instead of opening the wa.me text link. */
+  whatsAppPhase?: PdfSharePhase;
   onWhatsApp: () => void;
   onSms: () => void;
   onEmail: () => void;
   onSharePdf: () => void;
+  /** Opens the PDF directly (window.open on web / Linking on native — see
+   * `share-pdf.ts`'s `openPdfInTab`), independent of whether the OS/browser
+   * share API is available or a share just failed. Always visible — this row
+   * (with Share PDF and Mark as Sent) is the guaranteed floor so the sheet
+   * never dead-ends, even when the share API is unavailable/fails and no
+   * phone or email is on file. */
+  onOpenPdf: () => void;
+  /** True while the "Open PDF" fetch is in flight. */
+  openPdfPending?: boolean;
+  /** Marks the invoice SENT without emailing or sharing it — the SAME
+   * mutation (`useSendInvoice`, called without an email) the invoice-detail
+   * dialog already uses for its "Mark as Sent" action. Always visible: the
+   * operator who delivers the PDF themselves (own phone, printed, etc.) needs
+   * a way to close the loop even when no automated channel applies. */
+  onMarkAsSent: () => void;
+  /** True while the mark-as-sent mutation is in flight. Email rides the same
+   * `useSendInvoice` instance, so the caller must discriminate on the in-flight
+   * variables (`email == null` ⇒ mark-as-sent) rather than passing a bare
+   * `isPending`, which would light up both rows at once. */
+  markingSent?: boolean;
+  /**
+   * #2089: true when `postDeliveryInvoicePrompt` (@routeflow/types) returned
+   * "issue-and-send" — the invoice is still a DRAFT, and sending it issues it
+   * (DRAFT → SENT) in the same action. The sheet says so instead of "Send"/
+   * "Mark as sent", which would misleadingly imply it was already issued.
+   */
+  issuePrompt?: boolean;
+}
+
+/** Turns a phase into the row's label — shared by the WhatsApp (file-share
+ * mode) and Share-PDF rows since both go through the same prepare/tap-again
+ * dance. */
+function pdfPhaseLabel(phase: PdfSharePhase | undefined, idleLabel: string): string {
+  if (phase === "preparing") return "Preparing PDF…";
+  if (phase === "ready") return "PDF ready — tap to share";
+  return idleLabel;
 }
 
 /**
@@ -32,6 +76,11 @@ interface SendInvoiceSheetProps {
  * invoice-send-logic); Email is a real server send; Share PDF pushes the file
  * bytes through the OS share sheet. A bottom sheet so it can auto-open right after
  * an order is marked delivered without leaving the order screen.
+ *
+ * Phone/email rows hide when absent, but Share PDF · Open PDF · Mark as Sent
+ * always render — on a device/browser where the OS share API is unavailable or
+ * a share fails, Open PDF and Mark as Sent are the guaranteed path to
+ * completion (A1, 2026-08-19: the sheet must never dead-end).
  */
 export function SendInvoiceSheet({
   open,
@@ -42,24 +91,36 @@ export function SendInvoiceSheet({
   phone,
   email,
   emailSending,
-  pdfSending,
+  pdfPhase,
+  whatsAppPhase,
   onWhatsApp,
   onSms,
   onEmail,
   onSharePdf,
+  onOpenPdf,
+  openPdfPending,
+  onMarkAsSent,
+  markingSent,
+  issuePrompt,
 }: SendInvoiceSheetProps) {
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
       <View style={styles.sheet}>
         <View style={styles.handle} />
-        <Text style={styles.title}>Send invoice</Text>
+        <Text style={styles.title}>{issuePrompt ? "Issue & send invoice" : "Send invoice"}</Text>
         <Text style={styles.sub} numberOfLines={1}>
           {[invoiceNumber, totalFmt, customerName].filter(Boolean).join(" · ")}
         </Text>
         <View style={styles.rows}>
           {phone ? (
-            <ChannelRow icon="logo-whatsapp" label="WhatsApp" tint="#25D366" onPress={onWhatsApp} />
+            <ChannelRow
+              icon="logo-whatsapp"
+              label={pdfPhaseLabel(whatsAppPhase, "WhatsApp")}
+              tint="#25D366"
+              onPress={onWhatsApp}
+              disabled={whatsAppPhase === "preparing"}
+            />
           ) : null}
           {phone ? (
             <ChannelRow icon="chatbubble-outline" label="Text message" onPress={onSms} />
@@ -74,12 +135,32 @@ export function SendInvoiceSheet({
           ) : null}
           <ChannelRow
             icon="share-outline"
-            label={pdfSending ? "Sharing…" : "Share PDF"}
+            label={pdfPhaseLabel(pdfPhase, "Share PDF")}
             onPress={onSharePdf}
-            disabled={pdfSending}
+            disabled={pdfPhase === "preparing"}
+          />
+          <ChannelRow
+            icon="open-outline"
+            label={openPdfPending ? "Opening…" : "Open PDF"}
+            onPress={onOpenPdf}
+            disabled={openPdfPending}
+          />
+          <ChannelRow
+            icon="checkmark-circle-outline"
+            label={
+              markingSent
+                ? "Marking as sent…"
+                : issuePrompt
+                  ? "Issue & mark as sent — I'll deliver it myself."
+                  : "Mark as sent — I'll deliver it myself."
+            }
+            onPress={onMarkAsSent}
+            disabled={markingSent}
           />
           {!phone && !email ? (
-            <Text style={styles.note}>No phone or email on file — share the PDF instead.</Text>
+            <Text style={styles.note}>
+              No phone or email on file — share or download the PDF, then mark it sent.
+            </Text>
           ) : null}
         </View>
         <Pressable style={styles.doneBtn} onPress={onClose}>

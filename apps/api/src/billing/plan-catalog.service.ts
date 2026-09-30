@@ -6,7 +6,11 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { FLAG_TO_ADDON_SKU } from "./plan-catalog.constants";
+import {
+  FLAG_TO_ADDON_SKU,
+  SELF_SERVICE_ADDON_SKUS,
+  isInviteOnlyPlanKey,
+} from "./plan-catalog.constants";
 import { PlanGateUpgrade } from "./plan-gate";
 
 /** Editable fields on a plan definition (draft only). */
@@ -19,6 +23,7 @@ export interface PlanDefinitionPatch {
   routesConcurrent?: number | null;
   scansIncluded?: number | null;
   msgsIncluded?: number;
+  customersIncluded?: number | null;
   featureFlags?: string[];
   sortOrder?: number;
 }
@@ -106,31 +111,42 @@ export class PlanCatalogService {
     return {
       version: v.version,
       effectiveAt: v.effectiveAt,
-      plans: v.definitions.map((d) => ({
-        planKey: d.planKey,
-        name: d.name,
-        monthlyPrice: d.monthlyPrice,
-        annualPrice: d.annualPrice,
-        isCustom: d.isCustom,
-        seatsIncluded: d.seatsIncluded,
-        routesConcurrent: d.routesConcurrent,
-        scansIncluded: d.scansIncluded,
-        msgsIncluded: d.msgsIncluded,
-        featureFlags: d.featureFlags,
-        sortOrder: d.sortOrder,
-      })),
-      addons: v.addonSkus.map((s) => ({
-        sku: s.sku,
-        name: s.name,
-        monthlyPrice: s.monthlyPrice,
-        unit: s.unit,
-        includedAtPlan: s.includedAtPlan,
-        meteredKey: s.meteredKey,
-        capacityPerUnit: s.capacityPerUnit,
-        stackable: s.stackable,
-        grantsFlags: s.grantsFlags,
-        sortOrder: s.sortOrder,
-      })),
+      // Invite-only plans (LITE) never appear on the public (unauthenticated) pricing/choose-plan
+      // surface — a tenant lands on one only via an explicit platform-admin invite, never public
+      // self-signup. Mirrors the self-service-SKU filter on `addons` below.
+      plans: v.definitions
+        .filter((d) => !isInviteOnlyPlanKey(d.planKey))
+        .map((d) => ({
+          planKey: d.planKey,
+          name: d.name,
+          monthlyPrice: d.monthlyPrice,
+          annualPrice: d.annualPrice,
+          isCustom: d.isCustom,
+          seatsIncluded: d.seatsIncluded,
+          routesConcurrent: d.routesConcurrent,
+          scansIncluded: d.scansIncluded,
+          msgsIncluded: d.msgsIncluded,
+          customersIncluded: d.customersIncluded,
+          featureFlags: d.featureFlags,
+          sortOrder: d.sortOrder,
+        })),
+      // Self-service SKUs only — MSRP/SALES_AGENTS (and any future admin-only SKU) "ship
+      // dark": platform-admin grants them, but this tenant-facing payload must never
+      // advertise them as something a TENANT_ADMIN can pick.
+      addons: v.addonSkus
+        .filter((s) => (SELF_SERVICE_ADDON_SKUS as readonly string[]).includes(s.sku))
+        .map((s) => ({
+          sku: s.sku,
+          name: s.name,
+          monthlyPrice: s.monthlyPrice,
+          unit: s.unit,
+          includedAtPlan: s.includedAtPlan,
+          meteredKey: s.meteredKey,
+          capacityPerUnit: s.capacityPerUnit,
+          stackable: s.stackable,
+          grantsFlags: s.grantsFlags,
+          sortOrder: s.sortOrder,
+        })),
     };
   }
 
@@ -212,6 +228,7 @@ export class PlanCatalogService {
               routesConcurrent: d.routesConcurrent,
               scansIncluded: d.scansIncluded,
               msgsIncluded: d.msgsIncluded,
+              customersIncluded: d.customersIncluded,
               featureFlags: d.featureFlags,
               sortOrder: d.sortOrder,
             })),
@@ -256,6 +273,7 @@ export class PlanCatalogService {
     if (patch.routesConcurrent !== undefined) data.routesConcurrent = patch.routesConcurrent;
     if (patch.scansIncluded !== undefined) data.scansIncluded = patch.scansIncluded;
     if (patch.msgsIncluded !== undefined) data.msgsIncluded = patch.msgsIncluded;
+    if (patch.customersIncluded !== undefined) data.customersIncluded = patch.customersIncluded;
     if (patch.featureFlags !== undefined) data.featureFlags = patch.featureFlags;
     if (patch.sortOrder !== undefined) data.sortOrder = patch.sortOrder;
     if (patch.monthlyPrice !== undefined) {

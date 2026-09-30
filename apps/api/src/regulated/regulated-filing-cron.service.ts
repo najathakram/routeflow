@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { RegulatedFilingService } from "./regulated-filing.service";
@@ -59,19 +59,29 @@ export class RegulatedFilingCronService {
    * Daily at 04:00 UTC — offset from the tobacco (02:00) and auth-expiry (03:00)
    * crons so they don't pile onto the same tick.
    */
-  @Cron("0 4 * * *")
+  @LeaderCron("0 4 * * *", "regulated-filing.autoPrepareClosedFilings")
   async autoPrepareClosedFilings(): Promise<void> {
     const now = new Date();
     // System-level (NO forTenant) → every tenant's active categories; each row
-    // carries its own tenantId, which we set as context per prepare.
-    const categories = await this.prisma.trackedCategory.findMany({
-      where: { active: true },
-      select: { id: true, tenantId: true, reportCadence: true },
-    });
+    // carries its own tenantId, which we set as context per prepare. Compliance
+    // pack: only tenants with the active tobacco_dealer addon get auto-prepared
+    // filings (mirrors the tobacco report cron's addon intersection).
+    const [categories, packAddons] = await Promise.all([
+      this.prisma.trackedCategory.findMany({
+        where: { active: true },
+        select: { id: true, tenantId: true, reportCadence: true },
+      }),
+      this.prisma.tenantAddon.findMany({
+        where: { addonKey: "tobacco_dealer", active: true },
+        select: { tenantId: true },
+      }),
+    ]);
+    const packTenants = new Set(packAddons.map((a) => a.tenantId));
+    const gated = categories.filter((c) => packTenants.has(c.tenantId));
 
     let prepared = 0;
     let skipped = 0;
-    for (const cat of categories) {
+    for (const cat of gated) {
       const cadence = cat.reportCadence as FilingCadence;
       const { year, index } = previousClosedPeriod(cadence, now);
       const { periodKey } = filingPeriod(cadence, year, index);
@@ -105,7 +115,7 @@ export class RegulatedFilingCronService {
     if (prepared || skipped) {
       this.logger.log(
         `Regulated filing auto-prepare: ${prepared} prepared, ${skipped} already present ` +
-          `(${categories.length} active categories)`,
+          `(${gated.length} of ${categories.length} active categories on pack tenants)`,
       );
     }
   }

@@ -1,7 +1,9 @@
 import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
-import { formatQtySplit } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
+import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
+import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
 
@@ -20,12 +22,46 @@ export interface InvoicePdfData {
   generatedAt?: Date | string;
   issueDate: Date | string;
   dueDate?: Date | string | null;
+  /**
+   * Structured "Net 30"-style label, persisted alongside the due date so the
+   * two can never disagree. Null on historical invoices predating this field
+   * — renders nothing (not "Net 30" and not the raw dueDate arithmetic).
+   */
+  paymentTermsLabel?: string | null;
   paidAt?: Date | string | null;
   subtotal: DecimalLike;
   taxAmount: DecimalLike;
   discount: DecimalLike;
   shippingFee: DecimalLike;
   total: DecimalLike;
+  /**
+   * Deposit schedule (Tier 1). Null = no deposit on this invoice — renders
+   * nothing (byte-identical PDF). When set, `depositAmount` is computed
+   * server-side (roundMoney(total*percent/100), same convention as
+   * invoices.service's computeDepositFields) — the template never derives it.
+   */
+  depositPercent?: DecimalLike | null;
+  /** Date the deposit portion is due; only meaningful when depositPercent is set. */
+  depositDueDate?: Date | string | null;
+  depositAmount?: number | null;
+  /**
+   * CONFIRMED (PAID)-basis amount already collected — computed server-side via
+   * `sumConfirmed(payments)` (F03/R1/B97). The `payments` array below still lists
+   * DRAFT rows (a listing read, not a summing one) so they can render with a
+   * "Pending confirmation" label; this field is what the headline Amount Paid /
+   * Balance Due actually uses, never a reduce over that array.
+   */
+  totalPaid?: number | null;
+  /**
+   * CONFIRMED-basis amounts NOT counted in `totalPaid` (B421) — a credit note
+   * or advance applied to this invoice, split out so the headline never shows
+   * either as cash the customer paid. Zero/absent renders no extra line.
+   */
+  creditApplied?: number | null;
+  advanceApplied?: number | null;
+  /** Tenant's "hide original/pre-promo price" setting (F03/R9) — same source as
+   *  the invoice detail endpoint's `hideOriginalPrice` field. */
+  hideOriginalPrice?: boolean | null;
   notes?: string | null;
   terms?: string | null;
   shippingCarrier?: string | null;
@@ -54,8 +90,25 @@ export interface InvoicePdfData {
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1 (B653): the line's own selling unit ("Case") — see `qtyCellText`. */
+    unitLabel?: string | null;
+    /**
+     * Suggested retail price snapshot, per PIECE, taken when this line was
+     * created — display-only, never re-read from the live product. Null/undefined
+     * renders nothing.
+     */
+    msrp?: DecimalLike | null;
     /** Per-line note (buyer-visible) — italic line under the description. */
     notes?: string | null;
+    /**
+     * Pre-promo/pre-adjustment per-unit price, for the strikethrough (F03/R9) —
+     * null renders no strike. See `showOriginalPrice`/`promoNote` in
+     * `./invoice-pdf-item` for the exact display decisions.
+     */
+    originalPrice?: DecimalLike | null;
+    priceType?: string | null;
+    /** BUY_N_GET_M free units on this line — null/0 renders no note. */
+    promoFreeUnits?: number | null;
     product?: { name: string } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
@@ -64,6 +117,9 @@ export interface InvoicePdfData {
     id: string;
     amount: DecimalLike;
     method: string;
+    /** DRAFT (unconfirmed) rows stay listed (R2) but render a "Pending
+     *  confirmation" label instead of counting toward Amount Paid (R1/B97). */
+    status: string;
     reference?: string | null;
     notes?: string | null;
     paidAt: Date | string;
@@ -93,9 +149,13 @@ const toNum = (val: DecimalLike): number => {
   return val.toNumber();
 };
 const fmt = (val: DecimalLike) => `$${toNum(val).toFixed(2)}`;
+// Calendar dates (issueDate/dueDate/paidAt) are stored as UTC-midnight instants.
+// Formatting via local-time components would render them a day early for any
+// negative-UTC-offset viewer, so we read the UTC calendar components directly.
 const fmtDate = (val: Date | string | null | undefined): string => {
   if (!val) return "—";
   return new Date(val).toLocaleDateString("en-US", {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -348,8 +408,44 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
   const discount = toNum(invoice.discount);
   const shippingFee = toNum(invoice.shippingFee);
   const total = toNum(invoice.total);
-  const totalPaid = invoice.payments.reduce((s, p) => s + toNum(p.amount), 0);
-  const balance = total - totalPaid;
+  // F03/R1/B97: prefer the service's CONFIRMED-basis `totalPaid` (splitConfirmed).
+  // The `payments` array is a LISTING read — it still carries DRAFT rows so they
+  // can render below with a "Pending confirmation" label — so a fallback split
+  // over it (for any caller that hasn't been updated to pass `totalPaid`) uses
+  // the same shared predicate, never a bare PAID reduce that would count a
+  // credit note or advance application as cash (B421). All-or-nothing on
+  // `totalPaid`: `resolveConfirmedAmounts` never mixes a caller's own
+  // `totalPaid` with a freshly re-split `creditApplied`/`advanceApplied`,
+  // which would subtract the same credit twice and understate the balance.
+  const {
+    cash: totalPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(invoice, invoice.payments);
+  // B421 (review F3): roundMoney before the > 0 comparison/coloring below —
+  // this subtracts three separately-computed figures, so an invoice fully
+  // settled by a mix of cash/credit/advance can leave a sub-cent float
+  // remnant that would otherwise render a red "Balance Due $0.00".
+  const balance = roundMoney(total - totalPaid - creditApplied - advanceApplied);
+  // B421: customer-facing wording is "Credit issued — CN-…" (brief ruling #3),
+  // never folded into Amount Paid. Dedup + list every confirmed credit note
+  // number applied to this invoice; falls back to the plain label if the
+  // relation didn't resolve one.
+  const creditNoteNumbers = Array.from(
+    new Set(
+      invoice.payments
+        .filter((p) => p.status === "PAID" && p.method === CREDIT_NOTE_METHOD)
+        .map((p) => p.creditNote?.creditNoteNumber)
+        .filter((n): n is string => !!n),
+    ),
+  );
+  const hideOriginalPrice = !!invoice.hideOriginalPrice;
+  // Deposit schedule (Tier 1): depositAmount arrives pre-computed from the
+  // service (roundMoney(total*percent/100)); the remainder is simply what's
+  // left of the total after it — independent of payments actually recorded.
+  const hasDeposit = invoice.depositPercent != null && invoice.depositAmount != null;
+  const depositAmount = invoice.depositAmount ?? 0;
+  const remainderAmount = total - depositAmount;
   const addr =
     invoice.customer.addresses?.find((a) => a.isDefault) ?? invoice.customer.addresses?.[0];
 
@@ -464,6 +560,9 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               {invoice.dueDate ? (
                 <Text style={styles.billSub}>Due Date: {fmtDate(invoice.dueDate)}</Text>
               ) : null}
+              {invoice.paymentTermsLabel ? (
+                <Text style={styles.billSub}>Terms: {invoice.paymentTermsLabel}</Text>
+              ) : null}
               {invoice.paidAt ? (
                 <Text style={[styles.billSub, { color: SUCCESS }]}>
                   Paid: {fmtDate(invoice.paidAt)}
@@ -479,36 +578,93 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
             <Text style={[styles.tableHeaderText, styles.colUnit]}>Unit Price</Text>
             <Text style={[styles.tableHeaderText, styles.colSubtotal]}>Subtotal</Text>
           </View>
-          {invoice.items.map((item, idx) => (
-            <View key={item.id} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
-              <View style={styles.colDescription}>
-                <Text style={styles.cellText}>{item.description}</Text>
-                {item.notes ? (
-                  <Text
-                    style={{ fontSize: 7, color: "#64748b", fontStyle: "italic", marginTop: 2 }}
-                  >
-                    {item.notes}
-                  </Text>
-                ) : null}
-                {item.barcodeDataUri ? (
-                  <View style={{ marginTop: 3 }}>
-                    <Image
-                      src={item.barcodeDataUri}
-                      style={{ height: 18, width: 80, objectFit: "contain" }}
-                    />
-                    <Text style={{ fontSize: 6, color: "#64748b", marginTop: 1 }}>
-                      {item.barcodeText}
+          {invoice.items.map((item, idx) => {
+            // Plain numeric shape for the shared display-decision helpers — item's
+            // own fields are `DecimalLike` (a Prisma Decimal is a valid member),
+            // which InvoicePdfItemLike (a pure-function contract) doesn't accept.
+            const itemForDisplay = {
+              unitPrice: toNum(item.unitPrice),
+              originalPrice: item.originalPrice != null ? toNum(item.originalPrice) : null,
+              priceType: item.priceType ?? null,
+              promoFreeUnits: item.promoFreeUnits ?? null,
+            };
+            const itemPromoNote = promoNote(itemForDisplay);
+            const itemShowOriginal = showOriginalPrice(itemForDisplay, hideOriginalPrice);
+            return (
+              <View
+                key={item.id}
+                style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}
+              >
+                <View style={styles.colDescription}>
+                  <Text style={styles.cellText}>{item.description}</Text>
+                  {item.notes ? (
+                    <Text
+                      style={{ fontSize: 7, color: "#64748b", fontStyle: "italic", marginTop: 2 }}
+                    >
+                      {item.notes}
                     </Text>
-                  </View>
-                ) : null}
+                  ) : null}
+                  {item.barcodeDataUri ? (
+                    <View style={{ marginTop: 3 }}>
+                      <Image
+                        src={item.barcodeDataUri}
+                        style={{ height: 18, width: 80, objectFit: "contain" }}
+                      />
+                      <Text style={{ fontSize: 6, color: "#64748b", marginTop: 1 }}>
+                        {item.barcodeText}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+                <View style={styles.colQty}>
+                  <Text style={styles.cellTextRight}>
+                    {qtyCellText({
+                      qty: item.qty,
+                      boxes: item.boxes,
+                      pieces: item.pieces,
+                      unitLabel: item.unitLabel,
+                    })}
+                  </Text>
+                  {/* BUY_N_GET_M: name the free units, or the reduced subtotal reads
+                    as a pricing error (F03/R9, mirrors the web renderer). */}
+                  {itemPromoNote ? (
+                    <Text
+                      style={{
+                        fontSize: 6.5,
+                        color: WARNING,
+                        textAlign: "right",
+                        fontFamily: "Helvetica-Bold",
+                        marginTop: 1,
+                      }}
+                    >
+                      {itemPromoNote}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.colUnit}>
+                  {itemShowOriginal ? (
+                    <Text
+                      style={{
+                        fontSize: 7.5,
+                        color: GRAY,
+                        textAlign: "right",
+                        textDecoration: "line-through",
+                      }}
+                    >
+                      {fmt(item.originalPrice as DecimalLike)}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.cellTextRight}>{fmt(item.unitPrice)}</Text>
+                  {item.msrp != null ? (
+                    <Text style={{ fontSize: 6.5, color: GRAY, textAlign: "right", marginTop: 1 }}>
+                      MSRP {fmt(item.msrp)}/pc
+                    </Text>
+                  ) : null}
+                </View>
+                <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
               </View>
-              <Text style={[styles.cellTextRight, styles.colQty]}>
-                {formatQtySplit({ qty: toNum(item.qty), boxes: item.boxes, pieces: item.pieces })}
-              </Text>
-              <Text style={[styles.cellTextRight, styles.colUnit]}>{fmt(item.unitPrice)}</Text>
-              <Text style={[styles.cellTextRight, styles.colSubtotal]}>{fmt(item.subtotal)}</Text>
-            </View>
-          ))}
+            );
+          })}
 
           {/* Totals */}
           <View style={styles.totalsWrapper}>
@@ -540,10 +696,41 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                 <Text style={styles.totalBigLabel}>Total</Text>
                 <Text style={styles.totalBigValue}>{fmt(total)}</Text>
               </View>
+              {hasDeposit ? (
+                <View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>
+                      Deposit due {fmtDate(invoice.depositDueDate)}
+                    </Text>
+                    <Text style={styles.totalValue}>{fmt(depositAmount)}</Text>
+                  </View>
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Remainder due {fmtDate(invoice.dueDate)}</Text>
+                    <Text style={styles.totalValue}>{fmt(remainderAmount)}</Text>
+                  </View>
+                </View>
+              ) : null}
               {totalPaid > 0 ? (
                 <View style={styles.totalRow}>
                   <Text style={[styles.totalLabel, { color: SUCCESS }]}>Amount Paid</Text>
                   <Text style={[styles.totalValue, { color: SUCCESS }]}>-{fmt(totalPaid)}</Text>
+                </View>
+              ) : null}
+              {/* B421: a credit note or advance reduces the balance but is never
+                  cash the customer paid — neutral styling, never SUCCESS-green. */}
+              {creditApplied > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>
+                    Credit issued
+                    {creditNoteNumbers.length > 0 ? ` — ${creditNoteNumbers.join(", ")}` : ""}
+                  </Text>
+                  <Text style={styles.totalValue}>-{fmt(creditApplied)}</Text>
+                </View>
+              ) : null}
+              {advanceApplied > 0 ? (
+                <View style={styles.totalRow}>
+                  <Text style={styles.totalLabel}>Advance applied</Text>
+                  <Text style={styles.totalValue}>-{fmt(advanceApplied)}</Text>
                 </View>
               ) : null}
               <View style={styles.totalDivider} />
@@ -562,26 +749,44 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
           {invoice.payments.length > 0 ? (
             <View>
               <Text style={styles.sectionTitle}>Payment History</Text>
-              {invoice.payments.map((pmt) => (
-                <View key={pmt.id} style={styles.paymentRow}>
-                  <View>
-                    <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
-                    {pmt.method === "CREDIT_NOTE" && pmt.creditNote?.reason ? (
-                      <Text style={{ fontSize: 8, color: GRAY }}>
-                        Credit {pmt.creditNote.creditNoteNumber} — {pmt.creditNote.reason}
+              {invoice.payments.map((pmt) => {
+                // F03/R1/R2/B97: a DRAFT (unconfirmed) row stays LISTED — it must
+                // not silently disappear — but is never counted in Amount Paid
+                // above, so it's labeled here instead of shown as confirmed money.
+                const isDraft = pmt.status === "DRAFT";
+                return (
+                  <View key={pmt.id} style={styles.paymentRow}>
+                    <View>
+                      <Text style={{ fontSize: 9, color: navy }}>{pmt.method}</Text>
+                      {isDraft ? (
+                        <Text
+                          style={{ fontSize: 7.5, color: WARNING, fontFamily: "Helvetica-Bold" }}
+                        >
+                          Pending confirmation
+                        </Text>
+                      ) : pmt.method === "CREDIT_NOTE" && pmt.creditNote?.reason ? (
+                        <Text style={{ fontSize: 8, color: GRAY }}>
+                          Credit {pmt.creditNote.creditNoteNumber} — {pmt.creditNote.reason}
+                        </Text>
+                      ) : pmt.reference ? (
+                        <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
+                      ) : null}
+                    </View>
+                    <View style={{ alignItems: "flex-end" }}>
+                      <Text
+                        style={{
+                          fontSize: 9,
+                          fontFamily: "Helvetica-Bold",
+                          color: isDraft ? WARNING : SUCCESS,
+                        }}
+                      >
+                        {fmt(pmt.amount)}
                       </Text>
-                    ) : pmt.reference ? (
-                      <Text style={{ fontSize: 8, color: GRAY }}>Ref: {pmt.reference}</Text>
-                    ) : null}
+                      <Text style={{ fontSize: 8, color: GRAY }}>{fmtDate(pmt.paidAt)}</Text>
+                    </View>
                   </View>
-                  <View style={{ alignItems: "flex-end" }}>
-                    <Text style={{ fontSize: 9, fontFamily: "Helvetica-Bold", color: SUCCESS }}>
-                      {fmt(pmt.amount)}
-                    </Text>
-                    <Text style={{ fontSize: 8, color: GRAY }}>{fmtDate(pmt.paidAt)}</Text>
-                  </View>
-                </View>
-              ))}
+                );
+              })}
             </View>
           ) : null}
 

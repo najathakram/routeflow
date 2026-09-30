@@ -2,15 +2,17 @@ import { Test, TestingModule } from "@nestjs/testing";
 import {
   BadRequestException,
   ConflictException,
+  Logger,
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import { Prisma } from "@prisma/client";
 import { VendorBillsService } from "./vendor-bills.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
+import { ProductAliasService } from "../import/product-alias.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -83,6 +85,7 @@ const storage = {
 const inventory = {
   recomputeProductInTx: jest.fn(),
   fireStockAlerts: jest.fn(),
+  createDraftPurchaseOrderInTx: jest.fn(),
 };
 
 /**
@@ -126,15 +129,30 @@ describe("VendorBillsService", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService (not a jest mock) wired against the same
+        // prisma mock — so the alias tests below exercise its actual
+        // resolve/resolveMany/learn/unlearn logic, not a stub.
+        ProductAliasService,
       ],
     }).compile();
     inventory.recomputeProductInTx.mockReset();
     inventory.fireStockAlerts.mockReset();
+    inventory.createDraftPurchaseOrderInTx.mockReset();
+    inventory.createDraftPurchaseOrderInTx.mockResolvedValue({
+      id: "po-1",
+      poNumber: "PO-2026-0001",
+    });
 
     service = module.get<VendorBillsService>(VendorBillsService);
   });
@@ -186,7 +204,7 @@ describe("VendorBillsService", () => {
           ],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
       await service.receive("bill-1", { acknowledgeUnlinked: true }, "user-1");
 
@@ -197,9 +215,9 @@ describe("VendorBillsService", () => {
 
     it("updates the weighted average, creates a StockLot, and stamps snapshots", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
-      await service.receive("bill-1", undefined, "user-1");
+      const result = await service.receive("bill-1", undefined, "user-1");
 
       // (10×2 + 5×3.5) / 15 = 2.5
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
@@ -216,6 +234,10 @@ describe("VendorBillsService", () => {
 
       const productArgs = prisma.product.update.mock.calls[0][0].data;
       expect(productArgs.averageCost.toString()).toBe("2.5");
+
+      // Pre-merge review gate Q3 substance: a clean receive (no ledger gap)
+      // reports an empty gapsDetected, not undefined/missing.
+      expect((result as any).gapsDetected).toEqual([]);
     });
 
     it("still rejects double-receive (RF-084)", async () => {
@@ -241,7 +263,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(
         bill({ items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })] }),
       );
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         currentStock: D(0),
         averageCost: null,
         costingMethod: "AVCO",
@@ -263,7 +285,7 @@ describe("VendorBillsService", () => {
 
     it("G7: a STANDARD product keeps its cost — averageCost untouched by receive", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({
+      prisma.product.findFirst.mockResolvedValue({
         currentStock: D(10),
         averageCost: D(2),
         costingMethod: "STANDARD",
@@ -279,25 +301,157 @@ describe("VendorBillsService", () => {
 
     it("G7: stamps the PURCHASE movement at the bill date (matching the lot)", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
 
       await service.receive("bill-1", undefined, "user-1");
 
       const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
-      expect(movementArgs.createdAt).toEqual(new Date("2026-06-01"));
+      // B562: the bill date is the accounting date (effectiveAt); createdAt stays write-once.
+      expect(movementArgs.effectiveAt).toEqual(new Date("2026-06-01"));
+      expect(movementArgs.createdAt).toBeUndefined();
       const lotArgs = prisma.stockLot.create.mock.calls[0][0].data;
       expect(lotArgs.purchaseDate).toEqual(new Date("2026-06-01"));
     });
 
     it("G7: a backdated bill with later movements triggers the replay repair", async () => {
       prisma.vendorBill.findUnique.mockResolvedValueOnce(bill());
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(10), averageCost: D(2) });
       prisma.stockMovement.count.mockResolvedValue(3); // newer movements exist
 
       await service.receive("bill-1", undefined, "user-1");
 
-      expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1");
+      // throwOnGap:false — a gap on this line must flag it, never abort the
+      // whole (possibly multi-line) bill transaction. See B562 tests below.
+      // B562 PR-3: the correction a backdated bill causes is referenced RECOMPUTE:BILL:<billId>.
+      expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(expect.anything(), "prod-1", {
+        throwOnGap: false,
+        trigger: "BILL:bill-1",
+        performedById: "user-1",
+      });
       expect(inventory.fireStockAlerts).toHaveBeenCalledWith(["prod-1"]);
+    });
+
+    // ─── B562 follow-up: a gapped line must not abort the whole bill ─────────
+    describe("B562 — gapped product on one line of a multi-line bill", () => {
+      const cleanItem = linkedItem({
+        id: "item-1",
+        productId: "prod-clean",
+        description: "Flour 25lb",
+        qty: D(5),
+        unitCost: D(3.5),
+        product: { id: "prod-clean", name: "Flour 25lb", currentStock: D(10), averageCost: D(2) },
+      });
+      const gappedItem = linkedItem({
+        id: "item-2",
+        productId: "prod-gapped",
+        description: "Sugar 50lb",
+        qty: D(3),
+        unitCost: D(9),
+        product: {
+          id: "prod-gapped",
+          name: "Sugar 50lb",
+          currentStock: D(15),
+          averageCost: D(7),
+        },
+      });
+
+      /** Mirrors the REAL recomputeProductInTx contract: throws on a gap
+       *  unless throwOnGap:false, in which case it resolves with the gap
+       *  report instead (see inventory.service.spec.ts). */
+      function mockReplayContract() {
+        inventory.recomputeProductInTx.mockImplementation(
+          (_tx: unknown, productId: string, opts?: { throwOnGap?: boolean }) => {
+            if (productId === "prod-gapped") {
+              if (opts?.throwOnGap === false) {
+                return Promise.resolve({
+                  gapDetected: true,
+                  stockDrift: 4,
+                  oldAvgCost: 7,
+                  newAvgCost: null,
+                  movementsBackfilled: 0,
+                  hasCostfulHistory: true,
+                });
+              }
+              return Promise.reject(
+                new ConflictException({
+                  code: "INVENTORY_LEDGER_GAP",
+                  message: "gap",
+                  productId,
+                  name: "Sugar 50lb",
+                  stockDrift: 4,
+                }),
+              );
+            }
+            return Promise.resolve({
+              gapDetected: false,
+              stockDrift: 0,
+              oldAvgCost: 2,
+              newAvgCost: 2.5,
+              movementsBackfilled: 2,
+              hasCostfulHistory: true,
+            });
+          },
+        );
+      }
+
+      beforeEach(() => {
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ items: [cleanItem, gappedItem] }),
+        );
+        prisma.product.findFirst.mockImplementation(({ where }: any) => {
+          if (where.id === "prod-gapped") {
+            return Promise.resolve({ currentStock: D(15), averageCost: D(7) });
+          }
+          return Promise.resolve({ currentStock: D(10), averageCost: D(2) });
+        });
+        prisma.stockMovement.count.mockResolvedValue(1); // both lines look backdated
+      });
+
+      it("the bill still succeeds: the clean line is re-costed, the gapped line is received but flagged", async () => {
+        mockReplayContract();
+
+        // Resolves (does NOT throw) despite the gapped line — that alone is
+        // the headline fix: today this rejects and the whole bill aborts.
+        const result = await service.receive("bill-1", undefined, "user-1");
+
+        // Both lines were actually received: movement + lot + product-update
+        // fired for each, so quantity landed for the gapped line too.
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(2);
+        expect(prisma.stockLot.create).toHaveBeenCalledTimes(2);
+        expect(prisma.product.update).toHaveBeenCalledTimes(2);
+
+        // Q3's substance: the gapped line's own immediate weighted-average
+        // bump (real currentStock=15, averageCost=7, +3 @ $9 -> 7.3333) still
+        // lands on product.update — only the backdated ledger REPLAY is
+        // skipped for it, never the cost update from receiving itself.
+        const gappedProductCall = prisma.product.update.mock.calls.find(
+          (call: any) => call[0].where.id === "prod-gapped",
+        );
+        expect(gappedProductCall[0].data.averageCost.toString()).toBe("7.3333");
+
+        // The clean product's replay ran and reported no gap — its cost
+        // history WAS safely recomputed.
+        expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
+          expect.anything(),
+          "prod-clean",
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
+        );
+        // The gapped product's replay was also attempted non-throwing...
+        expect(inventory.recomputeProductInTx).toHaveBeenCalledWith(
+          expect.anything(),
+          "prod-gapped",
+          expect.objectContaining({ throwOnGap: false, trigger: "BILL:bill-1" }),
+        );
+        // ...and it alone is reported, same per-line shape as recomputeCosts's gapsDetected.
+        expect((result as any).gapsDetected).toEqual([
+          { productId: "prod-gapped", name: "Sugar 50lb", stockDrift: 4 },
+        ]);
+
+        // Both products were still restocked (low-stock alerts fire for both).
+        expect(inventory.fireStockAlerts).toHaveBeenCalledWith(
+          expect.arrayContaining(["prod-clean", "prod-gapped"]),
+        );
+      });
     });
 
     it("G3: partial receive applies only the requested quantity and marks PARTIAL", async () => {
@@ -307,7 +461,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(5), unitCost: D(12), packSize: 6, qtyReceived: null })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(0), averageCost: null });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(0), averageCost: null });
 
       await service.receive("bill-1", { items: [{ itemId: "item-1", qty: 2 }] }, "user-1");
 
@@ -333,7 +487,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(4), averageCost: D(3.5) });
 
       await service.receive("bill-1", undefined, "user-1");
 
@@ -373,6 +527,218 @@ describe("VendorBillsService", () => {
 
       await expect(service.receive("bill-1")).rejects.toThrow("Bill already received");
     });
+
+    // ── B743: PACK_SIZE_UNKNOWN gate, DARK by default ──────────────────────────
+    describe("B743 — PACK_SIZE_UNKNOWN (dark by default)", () => {
+      const boxedItem = (overrides: Record<string, unknown> = {}) =>
+        linkedItem({
+          qty: D(2),
+          unitCost: D(125.9),
+          packSize: null,
+          product: {
+            id: "prod-1",
+            name: "Flour 25lb",
+            currentStock: D(0),
+            averageCost: null,
+            unitsPerBox: 10,
+          },
+          ...overrides,
+        });
+
+      afterEach(() => {
+        delete process.env.PACK_SIZE_GATE_ENFORCED;
+      });
+
+      it("repro (dark): qty 2, unitCost 125.90, packSize null, product pack 10 — posts 2 pieces at 125.90 each, TODAY's silent wrong value, on purpose while dark", async () => {
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.quantity.toString()).toBe("2");
+        expect(movementArgs.unitCost.toString()).toBe("125.9");
+      });
+
+      it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses — PACK_SIZE_GATE_READY_FOR_ENFORCEMENT stays false until PR D's reviewed diff flips it", async () => {
+        // Before the code-constant requirement landed, this env var alone
+        // threw PACK_SIZE_UNKNOWN and posted nothing (see pack-size-gate.ts's
+        // review comment: an env-var-only switch is exactly the shape that
+        // caused a PLAN_FLAG_ENFORCEMENT P0 in production). Now it posts
+        // through exactly like dark mode, and still logs the would-deny (see
+        // the Logger.prototype.warn spy test below).
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        const movementArgs = prisma.stockMovement.create.mock.calls[0][0].data;
+        expect(movementArgs.quantity.toString()).toBe("2");
+        expect(movementArgs.unitCost.toString()).toBe("125.9");
+      });
+
+      it("Opus review finding 2: the dark would-deny log fires (Logger.prototype.warn spy) with path, bill, tenant, and the product's own pack hint", async () => {
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+          prisma.product.findFirst.mockResolvedValue({
+            currentStock: D(0),
+            averageCost: null,
+            costingMethod: "AVCO",
+          });
+
+          await service.receive("bill-1", undefined, "user-1");
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          const message = String(call![0]);
+          expect(message).toContain("path=receive");
+          expect(message).toContain("bill=bill-1(BILL-2026-0001)");
+          expect(message).toContain("lines=1");
+          expect(message).toContain("prod-1:pack=10");
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("enforced + acknowledgePackSizeUnknown: posts through exactly like dark mode", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(bill({ items: [boxedItem()] }));
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", { acknowledgePackSizeUnknown: true }, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a stated pack (packSize 10) never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ items: [boxedItem({ packSize: 10 })] }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a product with NO pack ladder never trips the gate — today's loose-piece line is unaffected", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({
+            items: [
+              linkedItem({
+                packSize: null,
+                product: { id: "prod-1", name: "Napkins", currentStock: D(0), averageCost: null },
+              }),
+            ],
+          }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("a units_v1 ProductUnit ladder alone (no unitsPerBox) also trips the gate (dark: logs, still posts)", async () => {
+        // Opus review finding 5: PACK_SIZE_GATE_ENFORCED alone can no longer
+        // throw (see the finding-5 test above) — this now pins that the
+        // SERVICE still correctly wires a ProductUnit-ladder-only ambiguous
+        // line into the gate at all (classification itself is covered
+        // directly in bill-line-pack.spec.ts), observable via the dark log.
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.vendorBill.findUnique.mockResolvedValueOnce(
+            bill({
+              items: [
+                boxedItem({
+                  product: {
+                    id: "prod-1",
+                    name: "Flour 25lb",
+                    currentStock: D(0),
+                    averageCost: null,
+                    unitsPerBox: null,
+                    units: [{ factorToBase: 24 }],
+                  },
+                }),
+              ],
+            }),
+          );
+          prisma.product.findFirst.mockResolvedValue({
+            currentStock: D(0),
+            averageCost: null,
+            costingMethod: "AVCO",
+          });
+
+          await service.receive("bill-1", undefined, "user-1");
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("enforced: a line already partly received (top-up) is never re-asked", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({
+            status: "PARTIAL",
+            receivedDate: new Date("2026-06-02"),
+            items: [boxedItem({ qty: D(10), qtyReceived: D(4) })],
+          }),
+        );
+        prisma.product.findFirst.mockResolvedValue({
+          currentStock: D(0),
+          averageCost: null,
+          costingMethod: "AVCO",
+        });
+
+        await service.receive("bill-1", undefined, "user-1");
+
+        expect(prisma.stockMovement.create).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a PO-linked bill never trips the gate — receive() posts no stock for it at all", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.vendorBill.findUnique.mockResolvedValueOnce(
+          bill({ purchaseOrderId: "po-1", items: [boxedItem()] }),
+        );
+
+        // Guard (e): a PO-linked bill's stock moves through the PO's own
+        // receive, never here — so it must never trip a PACK_SIZE_UNKNOWN 409.
+        await expect(service.receive("bill-1", undefined, "user-1")).resolves.toBeDefined();
+        expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      });
+    });
   });
 
   // ─── revertToDraft ──────────────────────────────────────────────────────────
@@ -383,7 +749,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -397,7 +763,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -411,7 +777,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(15), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([
         { id: "lot-1", qty: D(5), remainingQty: D(5), notes: null },
         { id: "lot-2", qty: D(5), remainingQty: D(2), notes: null },
@@ -447,7 +813,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(2), unitCost: D(12), packSize: 6 })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(12), averageCost: D(2) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -465,7 +831,7 @@ describe("VendorBillsService", () => {
           items: [linkedItem({ qty: D(10), qtyReceived: D(4) })],
         }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(14), averageCost: D(2.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.revertToDraft("bill-1");
@@ -486,7 +852,7 @@ describe("VendorBillsService", () => {
       prisma.vendorBill.findUnique.mockResolvedValue(
         bill({ status: "RECEIVED", receivedDate: new Date("2026-06-02") }),
       );
-      prisma.product.findUnique.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
+      prisma.product.findFirst.mockResolvedValue({ currentStock: D(5), averageCost: D(3.5) });
       prisma.stockLot.findMany.mockResolvedValue([]);
 
       await service.voidBill("bill-1", "user-1");
@@ -634,31 +1000,202 @@ describe("VendorBillsService", () => {
       expect(items[1]).toMatchObject({ sku: null, packSize: null, lineTotal: null });
     });
 
-    it("marks the originating scan POSTED and links it to the new bill", async () => {
-      prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
-
-      await service.create({
-        requireSupplier: false,
-        scanId: "scan-5",
-        items: [{ description: "A", qty: 1, unitCost: 10 }],
-      });
-
-      expect(invoiceScan.updateMany).toHaveBeenCalledWith({
-        where: { id: "scan-5" },
-        data: { status: "POSTED", vendorBillId: "bill-77" },
-      });
-    });
-
-    it("still returns the bill when the scan link fails — the bill is already written", async () => {
-      invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
-
-      await expect(
+    // ── B710: a scan backs at most one live bill; the claim is in the bill's transaction ──
+    describe("create — claiming the originating scan (B710)", () => {
+      const post = () =>
         service.create({
           requireSupplier: false,
           scanId: "scan-5",
           items: [{ description: "A", qty: 1, unitCost: 10 }],
-        }),
-      ).resolves.toMatchObject({ id: "bill-1" });
+        });
+
+      /** Records whether each scan claim ran INSIDE tenantTransaction. */
+      const trackTx = () => {
+        const run = prisma.tenantTransaction.getMockImplementation()!;
+        const inTx: boolean[] = [];
+        let open = false;
+        prisma.tenantTransaction.mockImplementation(async (fn: any) => {
+          open = true;
+          try {
+            return await run(fn);
+          } finally {
+            open = false;
+          }
+        });
+        invoiceScan.updateMany.mockImplementation(async () => {
+          inTx.push(open);
+          return { count: 1 };
+        });
+        return inTx;
+      };
+
+      it("claims a fresh scan with a guarded update inside the bill's transaction", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-77" }));
+        const inTx = trackTx();
+
+        await post();
+
+        expect(invoiceScan.updateMany).toHaveBeenCalledWith({
+          where: { id: "scan-5", OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+          data: { status: "POSTED", vendorBillId: "bill-77" },
+        });
+        expect(inTx).toEqual([true]);
+      });
+
+      it("REG-B710: a second post of a scan whose bill is live is refused, not a second bill", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-1",
+          vendorBill: { billNumber: "BILL-2026-0001", status: "DRAFT" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: {
+            code: "SCAN_ALREADY_POSTED",
+            vendorBillId: "bill-1",
+            billNumber: "BILL-2026-0001",
+          },
+        });
+      });
+
+      it("PIN: a scan whose bill was VOIDed can be posted again (compare-and-swap on the void bill)", async () => {
+        prisma.vendorBill.create.mockResolvedValue(bill({ id: "bill-78" }));
+        invoiceScan.updateMany
+          .mockResolvedValueOnce({ count: 0 })
+          .mockResolvedValueOnce({ count: 1 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-78" });
+        expect(invoiceScan.updateMany).toHaveBeenLastCalledWith({
+          where: { id: "scan-5", status: "POSTED", vendorBillId: "bill-old" },
+          data: { status: "POSTED", vendorBillId: "bill-78" },
+        });
+      });
+
+      it("PIN: the loser of two concurrent re-posts after a void is refused", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue({
+          vendorBillId: "bill-old",
+          vendorBill: { billNumber: "BILL-2026-0003", status: "VOID" },
+        });
+
+        await expect(post()).rejects.toMatchObject({
+          response: { code: "SCAN_ALREADY_POSTED" },
+        });
+      });
+
+      it("PIN: a bad or foreign scanId still never fails the bill (kept, unlinked)", async () => {
+        invoiceScan.updateMany.mockResolvedValue({ count: 0 });
+        invoiceScan.findFirst.mockResolvedValue(null);
+
+        await expect(post()).resolves.toMatchObject({ id: "bill-1" });
+      });
+
+      it("PIN: a claim that errors fails the post; it cannot prove this is not a second one", async () => {
+        invoiceScan.updateMany.mockRejectedValue(new Error("scan gone"));
+
+        await expect(post()).rejects.toThrow("scan gone");
+      });
+    });
+
+    // ── B743: raising a PO from the bill's own lines becomes the stock-mover ──
+    describe("create — raising a PO from the bill (B743 PACK_SIZE_UNKNOWN, dark by default)", () => {
+      const raiseDto = (overrides: Record<string, unknown> = {}) => ({
+        supplierId: "sup-1",
+        createPurchaseOrder: true,
+        items: [{ productId: "prod-1", description: "Flour 25lb", qty: 2, unitCost: 125.9 }],
+        ...overrides,
+      });
+
+      afterEach(() => {
+        delete process.env.PACK_SIZE_GATE_ENFORCED;
+      });
+
+      it("repro (dark): raises the PO with the piece-basis unaffected — TODAY's silent wrong value, on purpose while dark", async () => {
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(raiseDto());
+
+        const lines = inventory.createDraftPurchaseOrderInTx.mock.calls[0][1].lines;
+        expect(lines[0].qtyOrdered.toString()).toBe("2");
+        expect(lines[0].unitCost.toString()).toBe("125.9");
+      });
+
+      it("Opus review finding 5: PACK_SIZE_GATE_ENFORCED=on alone never refuses raising the PO — the code constant stays false until PR D", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        // Raises the PO exactly like dark mode — see the finding-5 receive()
+        // test above for the same code-constant reasoning.
+        await service.create(raiseDto());
+
+        const lines = inventory.createDraftPurchaseOrderInTx.mock.calls[0][1].lines;
+        expect(lines[0].qtyOrdered.toString()).toBe("2");
+      });
+
+      it("Opus review finding 2: the dark would-deny log fires for the raise-PO path (path=raise-po, bill=new before the bill exists)", async () => {
+        const warnSpy = jest.spyOn(Logger.prototype, "warn").mockImplementation(() => undefined);
+        try {
+          prisma.product.findMany.mockResolvedValueOnce([
+            { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+          ]);
+
+          await service.create(raiseDto());
+
+          const call = warnSpy.mock.calls.find(([msg]) =>
+            String(msg).includes("PACK_SIZE_UNKNOWN"),
+          );
+          expect(call).toBeDefined();
+          const message = String(call![0]);
+          expect(message).toContain("path=raise-po");
+          expect(message).toContain("bill=new");
+          expect(message).toContain("prod-1:pack=10");
+        } finally {
+          warnSpy.mockRestore();
+        }
+      });
+
+      it("enforced + acknowledgePackSizeUnknown: raises the PO through exactly like dark mode", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(raiseDto({ acknowledgePackSizeUnknown: true }));
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a stated pack never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Flour 25lb", unitsPerBox: 10, units: [] },
+        ]);
+
+        await service.create(
+          raiseDto({ items: [{ productId: "prod-1", qty: 2, unitCost: 125.9, packSize: 10 }] }),
+        );
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
+
+      it("enforced: a product with no pack ladder never trips the gate", async () => {
+        process.env.PACK_SIZE_GATE_ENFORCED = "on";
+        prisma.product.findMany.mockResolvedValueOnce([
+          { id: "prod-1", name: "Napkins", unitsPerBox: null, units: [] },
+        ]);
+
+        await service.create(raiseDto());
+
+        expect(inventory.createDraftPurchaseOrderInTx).toHaveBeenCalledTimes(1);
+      });
     });
   });
 
@@ -668,7 +1205,7 @@ describe("VendorBillsService", () => {
     beforeEach(() => {
       prisma.vendorBill.findFirst.mockResolvedValue(null); // nextBillNumber
       prisma.vendorBill.create.mockResolvedValue(bill());
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
     });
 
     const scanned = (overrides: Record<string, unknown> = {}) => ({
@@ -744,7 +1281,7 @@ describe("VendorBillsService", () => {
     describe("line-fingerprint match", () => {
       /** A posted scan of the same numbers, and the bill it became. */
       const postedElsewhere = (billOverrides: Record<string, unknown> = {}) => {
-        invoiceScan.findUnique.mockResolvedValue({ lineFingerprint: "fp-abc" });
+        invoiceScan.findFirst.mockResolvedValue({ lineFingerprint: "fp-abc" });
         dupMatch.findScanDuplicate.mockResolvedValue({
           id: "scan-old",
           status: "POSTED",
@@ -754,7 +1291,7 @@ describe("VendorBillsService", () => {
           total: 100,
           matchedBy: "lines",
         });
-        prisma.vendorBill.findUnique.mockResolvedValue({
+        const matchedBill = {
           id: "vb-9",
           billNumber: "BILL-2026-0009",
           status: "RECEIVED",
@@ -764,7 +1301,14 @@ describe("VendorBillsService", () => {
           supplierId: "sup-1",
           _count: { items: 4 },
           ...billOverrides,
-        });
+        };
+        // vendorBill.findFirst now serves BOTH nextBillNumber() (no where.id,
+        // mocked null by the outer beforeEach) AND the converted
+        // vendorBillMatchById lookup (where.id === the matched bill's id) —
+        // dispatch on the where clause so each read gets its own answer.
+        prisma.vendorBill.findFirst.mockImplementation(({ where }: any) =>
+          Promise.resolve(where?.id === matchedBill.id ? matchedBill : null),
+        );
       };
 
       const numberless = (overrides: Record<string, unknown> = {}) => ({
@@ -859,7 +1403,7 @@ describe("VendorBillsService", () => {
           items: [{ description: "A", qty: 2, unitCost: 5 }],
         });
 
-        expect(invoiceScan.findUnique).not.toHaveBeenCalled();
+        expect(invoiceScan.findFirst).not.toHaveBeenCalled();
         const [args] = dupMatch.findScanDuplicate.mock.calls[0];
         expect(args.lineFingerprint).toMatch(/^[0-9a-f]{64}$/);
       });
@@ -933,7 +1477,7 @@ describe("VendorBillsService", () => {
   describe("checkDuplicate", () => {
     it("maps a match to the wire payload, resolving the supplier name", async () => {
       dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ status: "DRAFT" }));
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
 
       await expect(
         service.checkDuplicate({ supplierInvoiceNumber: "inv-1", total: 100 }),
@@ -961,7 +1505,7 @@ describe("VendorBillsService", () => {
 
     it("still reports a fuzzy match so a client can warn before the operator commits", async () => {
       dupMatch.findVendorBillDuplicate.mockResolvedValue(duplicateMatch({ matchedBy: "fuzzy" }));
-      prisma.supplier.findUnique.mockResolvedValue({ name: "Acme Foods" });
+      prisma.supplier.findFirst.mockResolvedValue({ name: "Acme Foods" });
 
       await expect(
         service.checkDuplicate({ supplierId: "sup-1", billDate: "2026-06-01" }),
@@ -977,22 +1521,212 @@ describe("VendorBillsService", () => {
     });
   });
 
+  // ─── saveProductMapping ─────────────────────────────────────────────────────
+  // ProductMapping's compound key (supplierName, rawDescription) has NO tenantId
+  // — it is GLOBAL. These pin the tenant-safe findFirst→update/create rewrite
+  // that replaced the old `upsert` (which could hit another tenant's row).
+
+  describe("saveProductMapping", () => {
+    it("updates the existing row by id for this tenant, without creating", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "old-prod",
+      });
+      prisma.productMapping.update.mockResolvedValue({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "new-prod",
+      });
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "flour 25lb", "new-prod"),
+      ).resolves.toEqual({
+        id: "map-1",
+        supplierName: "Acme Foods",
+        rawDescription: "flour 25lb",
+        productId: "new-prod",
+      });
+      expect(prisma.productMapping.findFirst).toHaveBeenCalledWith({
+        where: { supplierName: "Acme Foods", rawDescription: "flour 25lb" },
+      });
+      expect(prisma.productMapping.update).toHaveBeenCalledWith({
+        where: { id: "map-1" },
+        data: { productId: "new-prod" },
+      });
+      expect(prisma.productMapping.create).not.toHaveBeenCalled();
+    });
+
+    it("creates a new row when this tenant has no existing mapping", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockResolvedValue({
+        id: "map-2",
+        supplierName: "Acme Foods",
+        rawDescription: "sugar 10lb",
+        productId: "prod-9",
+      });
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).resolves.toEqual({
+        id: "map-2",
+        supplierName: "Acme Foods",
+        rawDescription: "sugar 10lb",
+        productId: "prod-9",
+      });
+      expect(prisma.productMapping.create).toHaveBeenCalledWith({
+        data: { supplierName: "Acme Foods", rawDescription: "sugar 10lb", productId: "prod-9" },
+      });
+      expect(prisma.productMapping.update).not.toHaveBeenCalled();
+    });
+
+    it("swallows a P2002 on create — another tenant already holds the global key", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+          code: "P2002",
+          clientVersion: "7.8.0",
+        }),
+      );
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).resolves.toBeNull();
+    });
+
+    it("rejects a missing rawDescription instead of matching an unrelated row", async () => {
+      // Prisma drops `undefined` filter keys — without the guard this would
+      // findFirst on supplierName alone and repoint someone else's mapping.
+      await expect(
+        service.saveProductMapping("Acme Foods", undefined as unknown as string, "prod-9"),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.productMapping.findFirst).not.toHaveBeenCalled();
+      expect(prisma.productMapping.update).not.toHaveBeenCalled();
+      expect(prisma.productMapping.create).not.toHaveBeenCalled();
+    });
+
+    it("rethrows a non-P2002 error from create", async () => {
+      prisma.productMapping.findFirst.mockResolvedValue(null);
+      prisma.productMapping.create.mockRejectedValue(new Error("db is down"));
+
+      await expect(
+        service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9"),
+      ).rejects.toThrow("db is down");
+    });
+
+    // ── alias dual-write (2026-08-18: scanner match memory) ──────────────────
+    describe("alias dual-write", () => {
+      it("does not learn a ProductAlias when the supplier name does not resolve", async () => {
+        prisma.supplier.findMany.mockResolvedValue([]); // no active supplier named "Acme Foods"
+        prisma.productMapping.findFirst.mockResolvedValue(null);
+        prisma.productMapping.create.mockResolvedValue({
+          id: "map-2",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9");
+
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalled();
+        expect(prisma.productAlias.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("learns a supplier-scoped ProductAlias once the supplier name resolves", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productMapping.findFirst.mockResolvedValue(null);
+        prisma.productMapping.create.mockResolvedValue({
+          id: "map-2",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", "prod-9");
+
+        expect(prisma.productAlias.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              tenantId_supplierId_rawText: {
+                tenantId: "test-tenant",
+                supplierId: "sup-1",
+                rawText: "SUGAR 10LB",
+              },
+            },
+            create: expect.objectContaining({
+              supplierId: "sup-1",
+              rawText: "SUGAR 10LB",
+              productId: "prod-9",
+            }),
+          }),
+        );
+        // Never the "" any-supplier scope from this flow.
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              tenantId_supplierId_rawText: expect.objectContaining({ supplierId: "" }),
+            }),
+          }),
+        );
+      });
+
+      it("unlearns BOTH the supplier-scoped and any-supplier alias rows when a match is cleared", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productMapping.findFirst.mockResolvedValue({
+          id: "map-1",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: "prod-9",
+        });
+        prisma.productMapping.update.mockResolvedValue({
+          id: "map-1",
+          supplierName: "Acme Foods",
+          rawDescription: "sugar 10lb",
+          productId: null,
+        });
+        prisma.productAlias.deleteMany.mockResolvedValue({ count: 2 });
+
+        await service.saveProductMapping("Acme Foods", "sugar 10lb", null);
+
+        expect(prisma.productAlias.deleteMany).toHaveBeenCalledWith({
+          where: {
+            tenantId: "test-tenant",
+            rawText: "SUGAR 10LB",
+            supplierId: { in: ["sup-1", ""] },
+          },
+        });
+        expect(prisma.productAlias.upsert).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   // ─── scanInvoice ────────────────────────────────────────────────────────────
 
   describe("scanInvoice", () => {
     const jpegPage = { buffer: Buffer.from("img"), mimeType: "image/jpeg" };
+    let recordAiUsage: jest.Mock;
 
     beforeEach(async () => {
+      recordAiUsage = jest.fn();
       // Provide an API key so the scan reaches the Anthropic call.
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           VendorBillsService,
           { provide: PrismaService, useValue: prisma },
-          { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue("test-key") } },
+          {
+            provide: PlatformConfigService,
+            useValue: {
+              resolveAnthropicKey: jest.fn().mockResolvedValue("test-key"),
+              recordAiUsage,
+            },
+          },
           { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
           { provide: DuplicateMatchService, useValue: dupMatch },
           { provide: StorageService, useValue: storage },
           { provide: InventoryService, useValue: inventory },
+          ProductAliasService,
         ],
       }).compile();
       service = module.get<VendorBillsService>(VendorBillsService);
@@ -1000,6 +1734,8 @@ describe("VendorBillsService", () => {
       mockSharpToBuffer.mockReset();
       prisma.product.findMany.mockResolvedValue([]);
       prisma.productMapping.findMany.mockResolvedValue([]);
+      prisma.productAlias.findMany.mockResolvedValue([]);
+      prisma.supplier.findMany.mockResolvedValue([]);
     });
 
     it("maps an Anthropic auth failure to a typed AI_KEY_INVALID 400 (not an opaque 500)", async () => {
@@ -1047,6 +1783,34 @@ describe("VendorBillsService", () => {
         constructor: UnprocessableEntityException,
         response: expect.objectContaining({ code: "AI_PARSE_FAILED" }),
       });
+    });
+
+    it("records a tenant-tagged AiUsageEvent with the response's token counts on success", async () => {
+      mockAnthropicCreate.mockResolvedValue({
+        content: [{ type: "text", text: JSON.stringify({ supplier: "Acme", items: [] }) }],
+        usage: { input_tokens: 1111, output_tokens: 222 },
+      });
+
+      await service.scanInvoice([jpegPage]);
+
+      expect(recordAiUsage).toHaveBeenCalledWith({
+        tenantId: "test-tenant",
+        feature: "ocr.vendor_bill",
+        model: "claude-haiku-4-5",
+        inputTokens: 1111,
+        outputTokens: 222,
+      });
+    });
+
+    it("records a failed AiUsageEvent when the Anthropic call itself errors", async () => {
+      mockAnthropicCreate.mockRejectedValue({ status: 529 });
+
+      await expect(service.scanInvoice([jpegPage])).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+      expect(recordAiUsage).toHaveBeenCalledWith(
+        expect.objectContaining({ feature: "ocr.vendor_bill", success: false }),
+      );
     });
 
     it("skips an unreadable HEIC page and discloses it in notes instead of failing the scan", async () => {
@@ -1157,6 +1921,116 @@ describe("VendorBillsService", () => {
         confidence: "high",
       });
       expect(result.items[0].candidates).toBeUndefined();
+    });
+
+    // ── matching tiers + supplier resolution (2026-08-18: scanner memory) ────
+    describe("scanner match memory", () => {
+      it("a learned ProductAlias beats a competing legacy mapping AND a competing fuzzy catalog match", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productAlias.findMany.mockResolvedValue([
+          {
+            rawText: "WIDGET",
+            supplierId: "sup-1",
+            productId: "prod-alias",
+            expenseCategoryId: null,
+          },
+        ]);
+        prisma.productMapping.findMany.mockResolvedValue([
+          {
+            supplierName: "Acme Foods",
+            rawDescription: "widget",
+            productId: "prod-mapping",
+            product: {
+              id: "prod-mapping",
+              name: "Mapping Widget",
+              sku: null,
+              barcode: null,
+              parentProductId: null,
+              parent: null,
+            },
+          },
+        ]);
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: "prod-alias",
+            name: "Alias Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+          // Would win an EXACT-name fuzzy match if the alias/mapping tiers didn't run first.
+          {
+            id: "prod-fuzzy",
+            name: "Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+        ]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Acme Foods",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.items[0]).toMatchObject({
+          matchedProductId: "prod-alias",
+          matchedProductName: "Alias Widget",
+          confidence: "high",
+          matchSource: "alias",
+        });
+        expect(result.supplierId).toBe("sup-1");
+      });
+
+      it("resolves supplierId server-side and persists it on InvoiceScan", async () => {
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Acme Foods",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.supplierId).toBe("sup-1");
+        expect(invoiceScan.create.mock.calls[0][0].data.supplierId).toBe("sup-1");
+      });
+
+      it("leaves supplierId null when the extracted supplier name doesn't resolve", async () => {
+        prisma.supplier.findMany.mockResolvedValue([]);
+        mockAnthropicCreate.mockResolvedValue({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                supplier: "Some Unknown Supplier",
+                items: [{ extractedName: "Widget", qty: 1, unitCost: 5 }],
+              }),
+            },
+          ],
+        });
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(result.supplierId).toBeNull();
+        expect(invoiceScan.create.mock.calls[0][0].data.supplierId).toBeNull();
+      });
     });
 
     it("carries the per-line sku through from the OCR JSON to the response", async () => {
@@ -1322,6 +2196,66 @@ describe("VendorBillsService", () => {
           supplierInvoiceNumber: "INV08841",
           total: 108.26,
         });
+      });
+
+      it("re-matches a cache hit — a just-taught alias applies on a rescan of the same file", async () => {
+        // The stored payload's line was unmatched at scan time (no alias existed yet).
+        invoiceScan.findFirst.mockResolvedValue({
+          id: "scan-earlier",
+          createdAt: new Date("2026-08-01T10:00:00Z"),
+          status: "SCANNED",
+          vendorBillId: null,
+          supplierInvoiceNumber: null,
+          total: 5,
+          extractedPayload: {
+            supplier: "Acme Foods",
+            items: [
+              {
+                extractedName: "Widget",
+                qty: 1,
+                unitCost: 5,
+                matchedProductId: null,
+                matchedProductName: null,
+                confidence: "none",
+              },
+            ],
+          },
+          vendorBill: null,
+        });
+        // The operator has since taught an alias — the rescan must pick it up.
+        prisma.supplier.findMany.mockResolvedValue([{ id: "sup-1", name: "Acme Foods" }]);
+        prisma.productAlias.findMany.mockResolvedValue([
+          {
+            rawText: "WIDGET",
+            supplierId: "sup-1",
+            productId: "prod-taught",
+            expenseCategoryId: null,
+          },
+        ]);
+        prisma.product.findMany.mockResolvedValue([
+          {
+            id: "prod-taught",
+            name: "Taught Widget",
+            sku: null,
+            barcode: null,
+            parentProductId: null,
+            parent: null,
+          },
+        ]);
+
+        const result = await service.scanInvoice([jpegPage]);
+
+        expect(mockAnthropicCreate).not.toHaveBeenCalled();
+        // The stored extractedPayload must never be rewritten by a rescan.
+        expect(invoiceScan.create).not.toHaveBeenCalled();
+        expect(invoiceScan.update).not.toHaveBeenCalled();
+        expect(result.items[0]).toMatchObject({
+          matchedProductId: "prod-taught",
+          matchedProductName: "Taught Widget",
+          confidence: "high",
+          matchSource: "alias",
+        });
+        expect(result.supplierId).toBe("sup-1");
       });
 
       it("looks the file up by hash, skipping scans the operator discarded", async () => {

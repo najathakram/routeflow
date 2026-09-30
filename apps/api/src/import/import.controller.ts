@@ -5,6 +5,7 @@ import {
   Get,
   Delete,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
@@ -19,6 +20,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { UserRole } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 @Controller("import")
@@ -29,15 +31,22 @@ export class ImportController {
 
   @Post("contacts")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
-  importContacts(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
+  importContacts(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+    @Query("dryRun") dryRun?: string,
+  ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    return this.importService.importContacts(file.buffer, user.sub);
+    return this.importService.importContacts(file.buffer, user.sub, {
+      dryRun: dryRun === "true",
+      fileName: file.originalname,
+    });
   }
 
   @Post("invoices")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 50 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(50)) }))
   importInvoices(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importInvoices(file.buffer, user.sub);
@@ -45,7 +54,7 @@ export class ImportController {
 
   @Post("payments")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   importPayments(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importPayments(file.buffer, user.sub);
@@ -53,7 +62,7 @@ export class ImportController {
 
   @Post("expenses")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   importExpenses(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importExpenses(file.buffer, user.sub);
@@ -87,15 +96,22 @@ export class ImportController {
 
   @Post("products")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
-  importProducts(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
+  importProducts(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() user: JwtPayload,
+    @Query("dryRun") dryRun?: string,
+  ) {
     if (!file) throw new BadRequestException("No file uploaded");
-    return this.importService.importProducts(file.buffer, user.sub);
+    return this.importService.importProducts(file.buffer, user.sub, {
+      dryRun: dryRun === "true",
+      fileName: file.originalname,
+    });
   }
 
   @Post("inventory")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   importInventory(@UploadedFile() file: Express.Multer.File, @CurrentUser() user: JwtPayload) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importInventory(file.buffer, user.sub);
@@ -103,7 +119,7 @@ export class ImportController {
 
   @Post("expense-suppliers")
   @HttpCode(HttpStatus.OK)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   importExpenseSuppliers(@UploadedFile() file: Express.Multer.File) {
     if (!file) throw new BadRequestException("No file uploaded");
     return this.importService.importExpenseSuppliers(file.buffer);

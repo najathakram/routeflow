@@ -1,45 +1,35 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Instrument_Serif, Spline_Sans, Spline_Sans_Mono } from "next/font/google";
+import { geistSans, geistMono, inter, instrumentSerif, splineSans, splineSansMono } from "./fonts";
 import "./globals.css";
+// Marketing stylesheet. It has to be imported here, not from the segments that
+// use it: the App Router drops the `not-found` segment's own CSS chunk on
+// hydration, so `app/not-found.tsx` rendered completely unstyled (verified in
+// the browser — the <link> is in the server HTML but is removed by the client
+// router and never fetched). Loading it at the root is safe because every rule
+// in the file is scoped under `.rf-marketing` (asserted in
+// `app/(marketing)/marketing-port.static.test.ts`).
+// Accepted cost: the whole marketing stylesheet (214,999 B raw / 35,939 B gzip,
+// against globals.css at 6,433 / 2,328) now ships in the shared root chunk on
+// every route, authenticated ones included. Follow-up condition: once
+// `next build` succeeds on master (it fails today for the pre-existing
+// ReactCurrentDispatcher reason), verify against a PRODUCTION build whether
+// importing marketing.css from `app/(marketing)/layout.tsx` + `app/not-found.tsx`
+// keeps the 404 styled — if it does, move the import back out of the root.
+import "./(marketing)/marketing.css";
+// The glass design system (2026-09-16 study) layers on top of marketing.css:
+// same `.rf-marketing` scope, loaded after so it wins where the two overlap.
+import "./(marketing)/glass.css";
+import "./(marketing)/glass-pages.css";
+// PR-3: the remaining 9 marketing pages, ported onto the same tokens — see
+// glass-site.css's own header for why this is a separate file from
+// glass-pages.css (booking/auth) rather than a merge.
+import "./(marketing)/glass-site.css";
 import { Providers } from "./providers";
 import { TenantProvider } from "@/components/tenant-provider";
 import { ServiceWorkerRegistry } from "@/components/ServiceWorkerRegistry";
+import { SentryInit } from "@/components/SentryInit";
 
-// Ledger UI typeface. Drives `font-sans` app-wide via --font-spline.
-const splineSans = Spline_Sans({
-  subsets: ["latin"],
-  variable: "--font-spline",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-// Ledger monospace — money columns and codes (tabular-nums) via .money / .mono.
-const splineSansMono = Spline_Sans_Mono({
-  subsets: ["latin"],
-  variable: "--font-spline-mono",
-  weight: ["400", "500", "600"],
-  display: "swap",
-});
-
-// Kept as a fallback in the font stack during the Spline Sans migration.
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-  weight: ["400", "500", "600", "700"],
-  display: "swap",
-});
-
-// Marketing site display font. The italic face drives the <em> styling in
-// display headings (`<h1 className="display">…<em>…</em>…`). Loaded once at
-// the root, but the marketing CSS scopes it under `.rf-marketing` so the
-// rest of the app keeps using Inter.
-const instrumentSerif = Instrument_Serif({
-  subsets: ["latin"],
-  weight: "400",
-  style: ["normal", "italic"],
-  variable: "--font-instrument-serif",
-  display: "swap",
-});
+// Fonts are self-hosted in ./fonts.ts (#2397: next/font/google's build-time fetch failed deploys).
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -53,6 +43,7 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://www.routeflow.info"),
   title: { default: "RouteFlow", template: "%s · RouteFlow" },
   description:
     "The all-in-one platform for wholesale distribution. Manage orders, plan routes, track deliveries, and invoice customers.",
@@ -61,22 +52,19 @@ export const metadata: Metadata = {
     capable: true,
     title: "RouteFlow",
     statusBarStyle: "black-translucent",
-    startupImage: "/logo.svg",
+    startupImage: "/brand/routeflow-mark-192.png",
   },
   icons: {
-    icon: [
-      { url: "/logo.svg", type: "image/svg+xml" },
-      { url: "/favicon.png", type: "image/png", sizes: "64x64" },
-    ],
-    apple: [{ url: "/logo-seller.png", sizes: "180x180" }],
-    shortcut: "/favicon.png",
+    icon: [{ url: "/brand/routeflow-mark-64.png", type: "image/png", sizes: "64x64" }],
+    apple: [{ url: "/brand/routeflow-mark-180.png", sizes: "180x180" }],
+    shortcut: "/brand/routeflow-mark-64.png",
   },
   openGraph: {
     title: "RouteFlow",
     description: "Wholesale distribution, simplified.",
     siteName: "RouteFlow",
     type: "website",
-    images: [{ url: "/logo.svg" }],
+    images: [{ url: "/brand/routeflow-mark-512.png" }],
   },
 };
 
@@ -88,11 +76,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${splineSans.variable} ${splineSansMono.variable} ${inter.variable} ${instrumentSerif.variable} font-sans antialiased`}
+        className={`${splineSans.variable} ${splineSansMono.variable} ${inter.variable} ${instrumentSerif.variable} ${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <TenantProvider>
           <Providers>{children}</Providers>
           <ServiceWorkerRegistry />
+          <SentryInit />
         </TenantProvider>
       </body>
     </html>

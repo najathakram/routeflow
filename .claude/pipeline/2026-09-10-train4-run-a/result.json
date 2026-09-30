@@ -1,0 +1,1213 @@
+{
+  "plan": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+  "mode": "bugfix",
+  "artifacts": {
+    "plan": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+    "discovery": "",
+    "spec": "",
+    "uxSpec": "",
+    "testPlan": ".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md",
+    "designSystem": ""
+  },
+  "scale": "major",
+  "startedAt": "2026-09-10T13:37:05Z",
+  "estimatedCostUsd": 25.14,
+  "pricesAsOf": "2026-06-24",
+  "overlap": {
+    "verifyWithUiVerify": false,
+    "finalGateWithFinalPass": true,
+    "redAuditWithImplement": null
+  },
+  "verify": {
+    "ran": true,
+    "mode": "on-dispute",
+    "lazy": true,
+    "judged": 14,
+    "dropped": 1,
+    "votesCast": 15,
+    "firstVoteRefuted": 1,
+    "firstVoteRefutedRate": 0.071,
+    "tieBreaks": 1,
+    "locationChecked": 16,
+    "locationInvalid": 0,
+    "preRefuted": 14,
+    "deferredToFixer": 2,
+    "disputed": 0,
+    "disputesDropped": 0,
+    "disputesUpheld": 0,
+    "corroborated": 1,
+    "corroboratedSkipped": 1
+  },
+  "baseline": {
+    "ran": true,
+    "note": "Baseline = the working tree exactly as the caller left it, uncommitted work included; that tree is what the commands ran against.",
+    "commands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\""
+    ],
+    "badCommands": [
+      "cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\""
+    ],
+    "gate": {
+      "ran": true,
+      "completed": true,
+      "pass": false,
+      "results": [
+        {
+          "command": "npm run check-types -w apps/api",
+          "pass": true,
+          "summary": "Type checking passed successfully with no errors",
+          "executed": -1
+        },
+        {
+          "command": "npm run lint -w apps/api",
+          "pass": true,
+          "summary": "Linting completed successfully (warnings only, no errors)",
+          "executed": -1
+        },
+        {
+          "command": "cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger",
+          "pass": false,
+          "summary": "Error: Could not resolve a module for a custom reporter. Module name: src/orders/ at C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F09\\node_modules\\jest-cli\\node_modules\\jest-config\\build\\index.js:1551:15",
+          "executed": 0
+        },
+        {
+          "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\"",
+          "pass": false,
+          "summary": "No tests found, exiting with code 1. In C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F09\\apps\\api\\src - 759 files checked. testMatch: 0 matches. testPathIgnorePatterns: \\\\node_modules\\\\ - 759 matches. testRegex: .*\\.db\\.spec\\.ts$ - 12 matches. Pattern: invoice-delete-credit - 0 matches",
+          "executed": 0
+        }
+      ]
+    },
+    "grounding": {
+      "ran": true,
+      "completed": true,
+      "artifacts": [
+        ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+        ".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md"
+      ],
+      "findings": [
+        {
+          "file": "(artifact)",
+          "line": 92,
+          "severity": "minor",
+          "summary": "jest.mock shims start at line 44, not line 49 as claimed",
+          "detail": "In (artifact) bug-test-plan.md: The test plan states to copy 'the two jest.mock shims and the imports (~lines 49-72)' from invoice-numbering.db.spec.ts. Verification shows: lines 44-52 contain the jest.mock shims (not starting at 49), and lines 53-72 contain the imports. The discrepancy is 5 lines earlier than claimed.",
+          "fixComplexity": "mechanical",
+          "fixHint": "Update line number reference from '~lines 49-72' to '~lines 44-72' or '~lines 44-53 for jest mocks, lines 54-72 for imports'",
+          "phase": "Baseline"
+        }
+      ]
+    }
+  },
+  "manifest": {
+    "ran": true,
+    "completed": true,
+    "note": "Facts gathered before any agent wrote anything. Unknown or unreadable files are classified HIGH.",
+    "files": [
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/cause-brief.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/cause-refutation.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/cause-ruling.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/pipeline-args.json",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": ".claude/pipeline/2026-09-10-train4-run-a/RESUME.md",
+        "status": "untracked",
+        "risk": "LOW",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/orders.service.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/invoices/invoice-delete-credit.db.spec.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/invoices/invoices.service.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      },
+      {
+        "path": "apps/api/src/orders/orders.service.ts",
+        "status": "planned",
+        "risk": "HIGH",
+        "changedLines": 0
+      }
+    ],
+    "validCommands": [
+      "npm run check-types -w apps/api",
+      "npm run lint -w apps/api",
+      "cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\""
+    ],
+    "artifacts": [
+      ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+      ".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md"
+    ]
+  },
+  "riskSummary": {
+    "high": 5,
+    "low": 7
+  },
+  "fixRouting": {
+    "mechanical": 3,
+    "sonnetDesigned": 0,
+    "judgment": 3
+  },
+  "fixPlanning": {
+    "enabled": true,
+    "rounds": [
+      {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 21,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 7,
+          "sonnet": 3,
+          "opus": 11
+        },
+        "waves": [
+          [3, 10, 13, 4, 11, 15, 5, 9, 12, 14, 16, 17, 18, 19, 20, 2],
+          [6, 7, 8, 0]
+        ],
+        "note": "Round 1 fixes three real code defects in apps/api/src/orders/orders.service.ts, all routed to Opus: (1) the third B214 door — forceConsolidateCustomer's loser-draft delete gets the plan-pre-authorized `assertNoUnspentSourcedCredits(tx, [loserDraft.id])` one-liner (#3/#10/#13); (2) deleteOrder keeps its first-statement guard (so T8's no-write pin holds) and re-asserts it after releaseOrderCreditsInTx/releaseWalletPaymentsInTx and before the invoice-delete loop, closing the revive-then-orphan path (#9/#12/#14/#16, blocker); (3) approveChangeRequestAtStop's ADD_ITEM branch resolves its merge target from the locked heldItems row and re-reads the line through tx (#4/#11/#15), and the tx takes a RouteRunStop FOR UPDATE before the Order lock, matching completeWithPayment's lock order (#5). Each carries a P-titled unit pin (no new REG tokens, so the test plan is untouched). Wave 2 strengthens the spec only: T3 gets a rejection + in-callback oracle (#7), T8 gets the two release-not-called assertions (#8), and the CANCELLED-line half of the B135 guard gets a sibling test to T7 (#6). Plan files: the jest commands are reordered so paths precede `--reporters=default` in build-plan.md and pipeline-args.json (#17-20, #0 verifies); #2 fixes the stale line range in bug-test-plan.md. #1 is disputed — the DB-lane command is correct and failed on the baseline only because invoice-delete-credit.db.spec.ts is a deliverable of this run. Coordinator action: the live run's verifyCommands cannot be changed by a file edit, so re-run the corrected final and red-gate jest commands manually and record the results before close-out."
+      },
+      {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 0,
+          "opus": 1
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single finding: the B135 stop-first FOR UPDATE inverted this tx's lock order against reopenStop and the customers.service merge/purge transactions (order->stop), creating a new 40P01 deadlock path, while a plain order->stop blocking lock would instead deadlock against completeWithPayment/completeStop (stop->order). The plan keeps the B135 guarantee without any blocking wait on the stop: lock the Order first (unchanged), then take the stop with `FOR NO KEY UPDATE NOWAIT` and map Postgres 55P03 to a 409 CHANGE_WINDOW_CLOSED/STOP_BUSY, leaving the live re-read, the three window refusals, the in-tx invoice un-send (B134) and all merge writes untouched; the comment is corrected to the real rule. REG-B135 gains lock-order and NOWAIT-refusal pins (no writes on the busy path, non-55P03 errors rethrown). Executed by Opus on the HIGH-risk orders.service.ts in one wave."
+      }
+    ],
+    "deferred": []
+  },
+  "cascadeAudit": null,
+  "escalation": null,
+  "lensesRun": [
+    "correctness",
+    "spec-compliance",
+    "test-quality",
+    "edge-cases-and-security",
+    "operability",
+    "scope-coverage"
+  ],
+  "radiusPack": {
+    "built": true,
+    "truncated": false,
+    "files": [
+      "apps/api/src/orders/orders.service.ts",
+      "apps/api/src/invoices/invoices.service.ts",
+      "apps/api/src/credit-notes/sourced-credit-guard.ts",
+      "apps/api/src/credit-notes/credit-notes.service.ts",
+      "apps/api/prisma/schema/finance.prisma",
+      "apps/api/src/orders/orders.service.spec.ts",
+      "apps/api/src/invoices/invoice-delete-credit.db.spec.ts",
+      "apps/api/src/credit-notes/credit-notes.wallet-integrity.spec.ts",
+      "apps/api/src/orders/orders-promo-bogo.spec.ts"
+    ],
+    "skipped": null
+  },
+  "siblingSweep": {
+    "ran": false,
+    "patterns": 0,
+    "hits": 0,
+    "findings": 0,
+    "skipped": "no-patterns"
+  },
+  "harnessCheck": {
+    "ran": true,
+    "issues": [],
+    "skipped": null,
+    "note": ""
+  },
+  "testAuthoring": {
+    "ran": true,
+    "packages": [
+      {
+        "package": "TP1",
+        "status": "done",
+        "filesChanged": [
+          "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.spec.ts"
+        ],
+        "deviations": ""
+      },
+      {
+        "package": "TP2",
+        "status": "done",
+        "filesChanged": ["apps/api/src/invoices/invoice-delete-credit.db.spec.ts"],
+        "deviations": ""
+      }
+    ]
+  },
+  "redGate": {
+    "ran": true,
+    "remediateOn": "behavioral",
+    "properlyRed": true,
+    "structurallyRed": true,
+    "behaviorallyRed": true,
+    "attempts": 1,
+    "audits": [
+      {
+        "attempt": 1,
+        "ran": true,
+        "structurallyRed": true,
+        "behaviorallyRed": true,
+        "properlyRed": true,
+        "tests": [
+          {
+            "test": "REG-B134 (T1): the invoice un-send runs inside the merge transaction (receives the tx) — apps/api/src/orders/orders.service.spec.ts:6678",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED by my own run (cd apps/api && npx jest src/orders/orders.service.spec.ts --reporters=default -t \"REG-B134|REG-B135|REG-B214\"). Failed on expect(...).toBe(seenTx): Expected <the captured tx object>, Received: undefined — i.e. revertLinkedInvoicesForOrderEdit is called with a single argument, outside the tx. That is exactly the today-value the test plan's T1 row predicts. Non-vacuous: it reached the assertion, the service ran to completion, and the captured seenTx was genuinely entered (see T2, where seenTx.$executeRaw has a real invocation order of 54)."
+          },
+          {
+            "test": "REG-B134 (T2): the un-send runs after the order row lock, never before it — apps/api/src/orders/orders.service.spec.ts:6689",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: failed on toBeGreaterThan — Expected: > 54, Received: 51. The revert fires at call 51, the in-tx row lock at 54, so the un-send provably precedes the lock. Distinct oracle value from every other test. Watch-item, not a blocker: the comparand seenTx.$executeRaw is a jest.fn the test itself installs, so this measures ordering of two mocks; it still reflects real production call ordering, and if a fix removed the row lock, invocationCallOrder[0] would be undefined and toBeGreaterThan would throw (fail loud), not silently pass."
+          },
+          {
+            "test": "REG-B134 (T3): when the merge fails (lost claim), the un-send went through the rolled-back tx — apps/api/src/orders/orders.service.spec.ts:6699",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: failed on toBe(seenTx), Received: undefined — the plan's stated today-value for T3. Shares its failure text with T1 but is NOT redundant: it forces changeRequest.updateMany -> {count: 0}, so it discriminates an implementation that moves the revert inside the tx but AFTER the claim (T1 would pass, T3 would fail with revert never called)."
+          },
+          {
+            "test": "REG-B135 (T4): a stop completed between the snapshot and the lock refuses with STOP_ALREADY_COMPLETED — apps/api/src/orders/orders.service.spec.ts:6714",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: 'Received promise resolved instead of rejected. Resolved to value: {\"merged\": true, \"subtotal\": 36, \"tax\": 0, \"total\": 36}' — the plan's exact predicted today-value. Not a stub's undefined: real production code ran a full merge and returned real money numbers. Watch-item: T4/T5/T6 discriminate the (not-yet-written) in-tx re-read via prisma.order.findUnique.mockImplementation(args => args?.select?.routeRunStop ? LIVE_ROW : baseOrder(...)), which couples the test to the build-plan's WP3 query shape. If the implementer re-reads with `include` or a select lacking routeRunStop, these go false-RED (not false-green), so it cannot hide a missing guard."
+          },
+          {
+            "test": "REG-B135 (T5): an order that went DELIVERED between the snapshot and the lock refuses (ORDER_STATUS) — apps/api/src/orders/orders.service.spec.ts:6731",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: resolved to {\"merged\": true, \"subtotal\": 36, \"tax\": 0, \"total\": 36} instead of rejecting. Its own oracle (CHANGE_WINDOW_CLOSED + reason ORDER_STATUS) differs from T4's and T6's, and its LIVE_ROW differs (status DELIVERED, stop PENDING), so the shared today-value is a property of the unguarded code path, not of a copy-pasted assertion."
+          },
+          {
+            "test": "REG-B135 (T6): a run that left IN_PROGRESS between the snapshot and the lock refuses (RUN_NOT_ACTIVE) — apps/api/src/orders/orders.service.spec.ts:6750",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: resolved to {\"merged\": true, \"subtotal\": 36, \"tax\": 0, \"total\": 36}. Own oracle: CHANGE_WINDOW_CLOSED + reason RUN_NOT_ACTIVE, driven by LIVE_ROW.routeRun.status = COMPLETED — distinct setup and distinct expected value from T4/T5."
+          },
+          {
+            "test": "REG-B135 (T7): LINE_ALREADY_DELIVERED is judged on the locked in-tx line, not the pre-tx snapshot — apps/api/src/orders/orders.service.spec.ts:6778",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: resolved to {\"merged\": true, \"subtotal\": 48, \"tax\": 0, \"total\": 48} — a value distinct from T4/T5/T6 (48 vs 36), confirming it drove a different path. The plan's explicit anti-vacuity condition is met: the held row returned by orderItem.findMany carries both id: \"li-1\" and deliveredQty: 24, so the post-fix guard has something to match on."
+          },
+          {
+            "test": "REG-B214 (T8): deleteOrder refuses (409) while an invoice it deletes sourced a credit note with unspent balance — apps/api/src/orders/orders.service.spec.ts:2821",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: 'Received promise resolved instead of rejected. Resolved to value: {\"success\": true}' — the plan's T8 today-value. Anti-vacuity checked by reading the fixture: deliveredOrder (orders.service.spec.ts:2734-2739) carries invoices: [{ id: \"d1\" }], and the seeded credit note's invoiceId is \"d1\", so a correctly-scoped post-fix helper will actually see this row. Minor deviation from the plan's one-oracle-per-it rule: this it() carries a second assertion, expect(prisma.order.delete).not.toHaveBeenCalled(); it is unreachable today (the first assertion fails first) and only strengthens the test post-fix."
+          },
+          {
+            "test": "REG-B214 (T9): deleteInvoice refuses (409) while a credit note it sourced has unspent balance (real Postgres) — apps/api/src/invoices/invoice-delete-credit.db.spec.ts:253",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED by my own run against the live compose Postgres (node scripts/local-env.mjs --db --db-specs -- npm run test:db -w apps/api -- invoice-delete-credit; routeflow_postgres confirmed Up/healthy). Failed with 'Resolved to value: {\"id\": \"a69e0118-6f9e-4173-aa80-e4bb56cc9732\", \"message\": \"Invoice deleted successfully\"}' — the plan's T9 today-value. Real service + real PrismaService, no stub; tenants are throwaway qa-b214-* slugs passed through assertTestTenant, per policy."
+          },
+          {
+            "test": "REG-B214 (T10): after the refused delete, the credit note is still linked to its invoice — apps/api/src/invoices/invoice-delete-credit.db.spec.ts:273",
+            "outcome": "assertion-failure",
+            "note": "VERIFIED: 'Expected: \"e4d61396-053d-4381-92c1-eb046aa09894\", Received: null' — the plan's T10 today-value, proving the unlink (invoiceId := null) committed alongside the delete. Its oracle is a re-read of real Postgres state, not a mock, and it is distinct from T9's (row state vs thrown code). Seeds its own tenant, so it does not depend on T9 having run."
+          },
+          {
+            "test": "P1: still deletes when the sourced credit note is fully spent — apps/api/src/orders/orders.service.spec.ts (delete-any describe)",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate. bug-test-plan.md \"Pins (no REG token; outside the red gate; green today AND green after)\" designates P1-P7 as green-today, so this pass is the planned outcome and NOT a red-gate structural problem. Verified green in my full-file run (266 passed / 8 failed / 274 total). Honest caveat: today it passes for a weak reason — no unspent-credit guard exists at all, so every creditNote.findMany shape resolves; its discriminating power (the open-credit predicate: APPLIED/amountUsed==amount must not block) only exists after the fix. That is inherent to a pin and is exactly what the later mutation probe should test."
+          },
+          {
+            "test": "P2: still deletes when the sourced credit note is VOID — apps/api/src/orders/orders.service.spec.ts (delete-any describe)",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my full-file run. Same caveat as P1: vacuous today (no guard exists), discriminating only after the fix."
+          },
+          {
+            "test": "P3: still deletes when the sourced credit note's unspent balance has expired — apps/api/src/orders/orders.service.spec.ts (delete-any describe)",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my full-file run. Uses a relative expiry (Date.now() - 86_400_000) rather than a sleep or a frozen clock, so it is not time-flaky. Same today-vacuity caveat as P1/P2."
+          },
+          {
+            "test": "P4: the at-door approval still aborts before any claim when the un-send throws for recorded payments — apps/api/src/orders/orders.service.spec.ts (B134/B135 describe)",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my full-file run. Real assertion (expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled()) on production behavior after a rejected revert; green today because the revert throws before the tx, and intended to stay green because WP3 places the revert before the claim. This is the pin that stops a fix from silently claiming the change request when the un-send fails."
+          },
+          {
+            "test": "deleteInvoice with a fully spent sourced note (P5) resolves and unlinks the note — apps/api/src/invoices/invoice-delete-credit.db.spec.ts:277",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my DB-lane run (3 passed / 2 failed / 5 total). Strongest of the pins: it also re-reads the row and asserts noteAfter.invoiceId is null, so it pins the preserved unlink of spent notes, not just the 200."
+          },
+          {
+            "test": "deleteInvoice with an expired unspent sourced note (P6) resolves — apps/api/src/invoices/invoice-delete-credit.db.spec.ts:295",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my DB-lane run. Today-vacuity caveat as with P1-P3: no guard exists yet, so the resolve proves nothing until the fix lands."
+          },
+          {
+            "test": "deleteInvoice with a VOID sourced note (P7) resolves — apps/api/src/invoices/invoice-delete-credit.db.spec.ts:310",
+            "outcome": "passed",
+            "note": "PLANNED PIN, outside the red gate; verified green in my DB-lane run. Same today-vacuity caveat. Housekeeping note (pre-existing, not caused by this file): the DB lane prints 'Jest did not exit one second after the test run has completed' — I reproduced the identical warning on the untouched sibling invoice-numbering.db.spec.ts, so it is a lane-wide open-handle issue (the TestingModule is never closed), not a defect introduced here."
+          }
+        ],
+        "blockers": []
+      }
+    ],
+    "remediation": null
+  },
+  "implementation": [
+    {
+      "package": "WP1",
+      "status": "done",
+      "filesChanged": ["apps/api/src/credit-notes/sourced-credit-guard.ts"],
+      "deviations": ""
+    },
+    {
+      "package": "WP2",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/invoices/invoices.service.ts"
+      ],
+      "deviations": ""
+    },
+    {
+      "package": "WP3",
+      "status": "done",
+      "filesChanged": [
+        "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.ts"
+      ],
+      "deviations": ""
+    }
+  ],
+  "gate": {
+    "pass": true,
+    "skipped": false,
+    "results": [
+      {
+        "command": "cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger",
+        "pass": true,
+        "summary": "Test Suites: 20 passed, 20 total | Tests: 778 passed, 778 total",
+        "executed": 778
+      },
+      {
+        "command": "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\"",
+        "pass": true,
+        "summary": "Test Suites: 1 passed, 1 total | Tests: 5 passed, 5 total",
+        "executed": 5
+      }
+    ]
+  },
+  "buildFix": null,
+  "uiVerify": {
+    "ran": false,
+    "completed": false,
+    "viewports": [],
+    "findings": []
+  },
+  "mutationProbe": {
+    "ran": true,
+    "targets": 3,
+    "probed": 3,
+    "skippedTargets": [],
+    "results": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "kind": "mutation",
+        "defect": "Line 4973: passed the non-transactional client instead of the merge tx — `revertLinkedInvoicesForOrderEdit(order.id, this.prisma.forTenant())` instead of `(order.id, tx)`, so the invoice un-send runs outside the merge transaction.",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-api-orders.service.ts",
+        "preHash": "a12515821ddd47746cc37603b9a112b18408ad2b78fa8d0fb08a5e50dc9ad9f5",
+        "postHash": "a12515821ddd47746cc37603b9a112b18408ad2b78fa8d0fb08a5e50dc9ad9f5",
+        "fallback": "untracked",
+        "evidence": "REG-B134 (T1) failed on its behavioral assertion: \"OrdersService > approveChangeRequestAtStop (P5-09) > approveChangeRequestAtStop: tx boundary (B134/B135) > REG-B134 (T1): the invoice un-send runs inside the merge transaction (receives the tx)\" — `expect(received).toBe(expected) // Object.is equality` at orders/orders.service.spec.ts:6678, diff showing the received client lacked the tx-only `$executeRaw` / `$queryRaw` mocks (`- \"$executeRaw\": [Function mockConstructor], - \"$queryRaw\": [Function mockConstructor]`). REG-B134 (T3) failed the same way. Suite result with the mutation in place: `Tests: 2 failed, 472 passed, 474 total`. Note: `npx jest --reporters=default -- src/orders/orders.service.spec.ts -t \"REG-B134 (T1)\"` did not apply the -t name filter (jest treated the args after `--` as path patterns), so the whole orders spec file ran; T1's own assertion failure is nonetheless the direct evidence. Restore verified by `cmp -s` (IDENTICAL) and matching pre/post SHA-256; temp backup then deleted.",
+        "target": "REG-B134 (T1)"
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "kind": "mutation",
+        "defect": "In deleteInvoice, changed the guard call `assertNoUnspentSourcedCredits(tx, [id])` to `assertNoUnspentSourcedCredits(tx, [])`, so the empty-array early return skips the unspent-sourced-credit check.",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:\\Users\\nakram\\AppData\\Local\\Temp\\mutprobe-api-invoices.service.ts",
+        "preHash": "f31992366dce26c739330d2768d03a97e53924f95eb63a129af3f38618afb912",
+        "postHash": "f31992366dce26c739330d2768d03a97e53924f95eb63a129af3f38618afb912",
+        "fallback": "untracked",
+        "evidence": "Baseline (untouched tree, same command) PASSED: \"√ REG-B214 (T9) ... (759 ms) / Tests: 4 skipped, 1 passed\". With the mutation, REG-B214 (T9) FAILED on its behavior assertion: \"expect(received).rejects.toMatchObject() / Received promise resolved instead of rejected / Resolved to value: {\\\"id\\\": \\\"ea0c5116-2160-4f6a-bea9-3ab2151f60ac\\\", \\\"message\\\": \\\"Invoice deleted successfully\\\"}\" at invoices/invoice-delete-credit.db.spec.ts:253 — Test Suites: 1 failed, Tests: 1 failed, 4 skipped. Command: `node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit -t T9\"` against the running routeflow_postgres compose container (the -t filter \"REG-B214 (T9)\" matched nothing due to shell/parens mangling, so the equivalent -t T9 filter was used; it selects exactly the T9 case and skips the other 4). Restore was done with `cp` from the temp backup (no git), verified byte-identical via `cmp -s` and matching SHA-256; backup then deleted.",
+        "target": "REG-B214 (T9)"
+      },
+      {
+        "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+        "kind": "mutation",
+        "defect": "In isOpenCreditNote, flipped the remaining-balance comparison from `> OPEN_CREDIT_EPSILON` to `< OPEN_CREDIT_EPSILON` (line 30), inverting \"open\" to mean fully-spent.",
+        "caught": true,
+        "restored": true,
+        "backupPath": "C:/Users/nakram/AppData/Local/Temp/mutprobe-api-sourced-credit-guard.ts",
+        "preHash": "6bc78e1495c342edea84cacd0abbf53d8c0b4ab8d571842ad0e96a313c01bcc3",
+        "postHash": "6bc78e1495c342edea84cacd0abbf53d8c0b4ab8d571842ad0e96a313c01bcc3",
+        "fallback": "",
+        "evidence": "REG-B214 (T8) failed on its behavior assertion: \"OrdersService > deleteOrder — delete-any > REG-B214 (T8): deleteOrder refuses (409) while an invoice it deletes sourced a credit note with unspent balance — expect(received).rejects.toMatchObject() / Received promise resolved instead of rejected / Resolved to value: {\\\"success\\\": true}\" at orders/orders.service.spec.ts:2821. The sibling positive case P1 (\"still deletes when the sourced credit note is fully spent\") also failed with the inverse symptom (ConflictException \"...with 0.00 still unspent\"), confirming the flip. Note: the `-t \"REG-B214 (T8)\"` filter was not honoured by the CLI invocation (it was consumed as a path pattern after `--`), so the whole orders spec file ran: Tests 2 failed, 472 passed, 474 total. Restore verified by cmp -s (IDENTICAL) and matching SHA-256; temp backup deleted; `git status --short` shows the file only as untracked (?? — it is new work from this run, not modified).",
+        "target": "REG-B214 (T8)"
+      }
+    ],
+    "allCaught": true,
+    "allRestored": true,
+    "restoredVerified": true,
+    "checksumMismatches": [],
+    "baselineDisturbed": [],
+    "note": ""
+  },
+  "finalPass": {
+    "ran": true,
+    "completed": true,
+    "skipped": null,
+    "reader": "claude-opus-5",
+    "model": "claude-fable-5-1",
+    "effort": "high",
+    "fallback": false,
+    "files": [
+      "apps/api/src/orders/orders.service.spec.ts",
+      "apps/api/src/invoices/invoice-delete-credit.db.spec.ts",
+      "apps/api/src/credit-notes/sourced-credit-guard.ts",
+      "apps/api/src/invoices/invoices.service.ts",
+      "apps/api/src/orders/orders.service.ts"
+    ],
+    "candidates": 7,
+    "gaps": [
+      "The route-run completion path (routes service completeStop / completeWithPayment) was not read: verify it actually takes or updates the RouteRunStop row early in its transaction, otherwise the new SELECT ... FOR NO KEY UPDATE NOWAIT in approveChangeRequestAtStop serialises against nothing and the in-tx window re-check remains a no-op against a mid-flight completion (the premise of the B135 fix and of candidate #0).",
+      "The B134 in-tx un-send helper in invoices.service.ts and its interaction with invoices that already carry payments or credit applications (recordPayment / applyCredit on a SENT invoice): confirm the un-send inside the merge tx refuses or preserves those rows rather than flipping a partially-paid invoice back to DRAFT."
+    ],
+    "secondRead": true,
+    "decision": "All four candidates stand. #0 and #2 are major: the NOWAIT lock introduced for B135 now reports a retryable stop-row contention as the terminal CHANGE_WINDOW_CLOSED code both clients act on, and the at-door total still reads shippingFee from the pre-lock snapshot while the rest of the money inputs were moved in-tx — the same stale-snapshot class already confirmed for ADD_ITEM and fixable in the same re-read. #1 (unlocked guard read, narrow orphan race on concurrent credit-note issuance) and #3 (post-release guard refuses correctly but with a misleading, invoice-less message, untested) are real but minor. Two reads remain owed before close-out: the route-run completion path, to prove the new stop-row lock actually serialises against completeStop/completeWithPayment (the whole B135 premise), and the B134 in-tx un-send against invoices carrying payments or credit applications. The change is not shippable until the confirmed blocker/major set plus #0 and #2 are fixed and those two reads come back clean.\nSecond read: All three second-read candidates stand. #1 is the material one: the B134 in-tx un-send counts payments and flips SENT to DRAFT without the Invoice FOR UPDATE that recordPayment takes, so the un-send race the fix was meant to close survives in a narrower form (credit applications are safe because they are counted as CREDIT_NOTE InvoicePayment rows). #2 is the mirror of the already-confirmed ADD_ITEM stale-snapshot finding: CHANGE_QTY/REMOVE_ITEM guards on the locked row but prices from the pre-tx snapshot, wrong money on a concurrent edit; fix by deriving priced fields from the locked row. #0 is a real but narrow READ COMMITTED TOCTOU on the B214 guard (unlocked findMany, no re-check before the invoiceId detach); it is subsumed operationally by the open blocker about the guard running before the wallet releases and closes with the same lock-then-re-check pattern, so minor. The route-run completion locking question from gap 1 was not answered by this read, but the run ends here; the fixer should treat the B135 window re-check as unproven against a mid-flight completion and lean on the already-open findings rather than a third read. No further gaps.",
+    "findings": [
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 4965,
+        "severity": "major",
+        "summary": "The new transient stop-lock failure is reported as `CHANGE_WINDOW_CLOSED`, a code both the web and mobile clients already treat as a terminal \"the run has ended\" verdict, so a retryable 55P03 tells the operator to decline the change request and aborts the driver's whole batch.",
+        "detail": "Failure path, end to end.\n\n1. `orders.service.ts:4959` adds `SELECT id FROM \"RouteRunStop\" ... FOR NO KEY UPDATE NOWAIT`. When a driver's `completeStop`/`completeWithPayment` transaction is mid-flight and already holds that stop row, Postgres raises 55P03 immediately. `orders.service.ts:4960-4966` catches it and throws `new ConflictException({ code: \"CHANGE_WINDOW_CLOSED\", reason: \"STOP_BUSY\" })` — note the body has a `code` and a `reason` and NO `message` key.\n\n2. This is a *transient* condition: the run is still IN_PROGRESS, the stop is still PENDING, and the same approval would succeed a second later. Every other producer of `CHANGE_WINDOW_CLOSED` in this method (`orders.service.ts:4977-4983`, `ORDER_STATUS` / `RUN_NOT_ACTIVE`, and the identical pre-tx guards at `orders.service.ts:4868-4873`) is *terminal*.\n\n3. No client reads `reason`. Grep over `apps/web`, `apps/mobile`, `packages` for `CHANGE_WINDOW_CLOSED|STOP_BUSY|RUN_NOT_ACTIVE` returns only code-level matches; `STOP_BUSY` appears nowhere outside `orders.service.ts`.\n\n4. Operator (web) — `apps/web/app/(dashboard)/orders/[id]/page.tsx:1828-1832`, the `onError` of the APPROVE_AT_STOP resolve mutation (`page.tsx:3072-3073` is the button):\n   `} else if (code === \"CHANGE_WINDOW_CLOSED\") { toast({ title: \"Delivery run no longer active\", description: \"The run has ended — this request can only be declined.\", ... }) }`\n   The operator is told, falsely, that the run has ended and that the only remaining action is DECLINE — destroying a legitimate at-door change that a retry would have merged.\n\n5. Driver (mobile) — `apps/mobile/lib/api/change-requests.ts:66` self-resolves with `action: \"APPROVE_AT_STOP\"`; the error lands in `apps/mobile/app/(driver)/route/stop/[stopId]/adjust.tsx:289-303`, whose final branch is `showToast(e?.response?.data?.message ?? e?.message ?? \"Couldn't save that change.\"); return false;`. Because the new exception body carries no `message`, the driver sees axios's raw `\"Request failed with status code 409\"`, and `return false` makes `processDiff` (`adjust.tsx:308-318`) stop the entire remaining diff at that index (\"never a partial silent failure\").\n\n6. `apps/web/app/providers.tsx:33` also lists `CHANGE_WINDOW_CLOSED` in `HANDLED_CODES`, so the generic error toast is suppressed on the assumption that the initiating component renders a guided flow — which, for STOP_BUSY, renders the wrong flow.\n\nConcrete scenario: driver taps Complete on stop-1 (long-running: photo upload + PDF), operator in the office approves a customer's at-door change request in the same second → 409 → office toast \"The run has ended — this request can only be declined\" → operator declines a change the customer will be billed differently for.",
+        "fixHint": "Give the retryable case its own code (e.g. `STOP_BUSY` as the top-level `code`, not a `reason` inside `CHANGE_WINDOW_CLOSED`) and include a user-facing `message`; then add a branch in `apps/web/app/(dashboard)/orders/[id]/page.tsx` (~1828) and in `apps/mobile/.../adjust.tsx` `submitEntry` (~299) that says \"the driver is completing this stop right now — try again in a moment\" and does not stop the driver's batch. Alternatively keep the code and have both clients branch on `reason === \"STOP_BUSY\"`.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The new NOWAIT lock on RouteRunStop turns a transient 55P03 (any concurrent stop write, not only a completion) into CHANGE_WINDOW_CLOSED, a code the web and mobile clients already treat as terminal, so the operator is told to decline a request that would succeed on retry and the driver's batch aborts. The reason:STOP_BUSY discriminator is dead because no client reads it; this needs its own retryable code.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+        "line": 37,
+        "severity": "minor",
+        "summary": "`assertNoUnspentSourcedCredits` reads the sourced credit notes with a plain `findMany` and takes no row lock on the invoices or the notes, so under READ COMMITTED a credit note issued and committed between the guard and `tx.invoice.delete` is orphaned exactly as B214 describes.",
+        "detail": "The guard (`sourced-credit-guard.ts:37-72`) issues `tx.creditNote.findMany({ where: { invoiceId: { in: invoiceIds }, status: { not: VOID } }, select: {...} })` and nothing else. No `SELECT ... FOR UPDATE`/`FOR SHARE` is taken on the `Invoice` rows and no lock is taken on the `CreditNote` rows, at any of the three call sites (`invoices.service.ts:5341`, `orders.service.ts:1436`, `orders.service.ts:5642`/`5653`).\n\nThe writer side is equally unlocked: `credit-notes.service.ts:113-150` reads the invoice with `db.invoice.findFirst` and then creates the note with `invoiceId: dto.invoiceId`. `CREDIT_SOURCE_EXCLUDED` there is VOID/WRITTEN_OFF only — DRAFT and SENT are explicitly allowed sources (`credit-notes.service.ts:132-138`).\n\nInterleaving that still orphans an open note (`deleteInvoice`, the primary door):\n- tx A (`InvoicesService.deleteInvoice`, `invoices.service.ts:5324`): reads the invoice, sees `payments.length === 0`, runs `assertNoUnspentSourcedCredits(tx, [id])` at 5341 → zero sourced notes → passes.\n- tx B (`CreditNotesService.create`, another operator issuing a credit against that same invoice): reads the invoice (still visible under READ COMMITTED), inserts `CreditNote { invoiceId: id, amount: 50, amountUsed: 0, status: ISSUED }`, COMMITS. The insert holds only a `FOR KEY SHARE` on the Invoice row, which nothing in tx A conflicts with yet.\n- tx A continues through `adjustInvoicedQtyForInvoice` (5347), `reverseInvoiceEntries` (5351), the unlink `tx.creditNote.updateMany({ where: { invoiceId: id }, data: { invoiceId: null } })` (5356-5359 — its snapshot may or may not include B's row depending on statement start time), and finally `tx.invoice.delete({ where: { id } })` at 5370. That DELETE waits for B's key-share lock, then proceeds; the FK on `CreditNote.invoiceId` is an optional Prisma relation (`finance.prisma`, `invoice Invoice? @relation(fields: [invoiceId], references: [id])` → default `SetNull`, confirmed by the plan's citation of `0_init/migration.sql:3783`).\n- Result: an ISSUED, fully unspent, spendable credit note with `invoiceId = NULL` — the exact provenance-less wallet money B214 exists to prevent, produced through the new guard.\n\nThe same interleaving applies to `orders.service.ts:5642/5653` (both guards precede a long run of statements before `tx.invoice.delete` at 5673) and to `orders.service.ts:1436` (guard, then `invoiceItem.deleteMany`, then `invoice.delete` at 1438).\n\nThis is not a hypothetical asymmetry: the B135 half of this very diff adds `tx.$executeRaw`SELECT id FROM \"Order\" ... FOR UPDATE`` (orders.service.ts, unchanged context above 4959) and the new NOWAIT stop lock precisely because a guard evaluated on unlocked rows is worthless. The B214 half never took the equivalent lock.",
+        "fixHint": "At the top of `assertNoUnspentSourcedCredits`, lock the invoice rows through the same tx before the read — e.g. `await tx.$executeRaw`SELECT id FROM \"Invoice\" WHERE id = ANY(${invoiceIds}) FOR UPDATE``. `FOR UPDATE` conflicts with the `FOR KEY SHARE` a concurrent CreditNote insert must take on the referenced Invoice, so the writer serialises behind (or ahead of) the delete and the guard's read becomes authoritative. Add a DB-lane test in `invoice-delete-credit.db.spec.ts` that issues the note from a second connection after the guard would have run.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "assertNoUnspentSourcedCredits is a plain findMany with no FOR UPDATE on the invoice rows, so under READ COMMITTED a credit note issued and committed between the guard and tx.invoice.delete is orphaned exactly as B214 describes; a FOR UPDATE on the invoice rows would make the writer's FK KEY SHARE block until the delete commits. The window is narrow (a note must be issued against an invoice mid-delete), hence minor rather than major.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 5296,
+        "severity": "major",
+        "summary": "The at-door merge recomputes `order.total` with `shippingFee` taken from the pre-transaction snapshot while re-reading everything else under the new lock, so a staff shipping-fee edit committed in between is silently dropped from the order total and from the audit revision.",
+        "detail": "The B135 fix's stated premise (orders.service.ts:4968-4972) is: \"the window guards above ran on a pre-tx snapshot. Re-assert them on the row we now hold locked\". The new in-tx re-read at `orders.service.ts:4973-4980` selects exactly four things — `tenantId`, `status`, `routeRun.status`, `routeRunStop.status`. Every money input is re-read from the tx as well: `activeItems` at 5281-5283 (`tx.orderItem.findMany`), `categoryTax` at 5290 (`recomputeLineCategoryTaxes(tx, activeItems)`).\n\nOne money input is NOT: `orders.service.ts:5294-5297`\n  `const total = roundMoney(subtotal + tax + categoryTax + Number((order as any).shippingFee ?? 0));`\nwhere `order` is the pre-tx snapshot fetched at `orders.service.ts:4858` — before the `SELECT ... FOR UPDATE` on the Order row.\n\nThe concurrent writer is the very path this lock exists to serialise against — `updateOrderItems`, `orders.service.ts:4220-4224`:\n  `const isStaffFeeEdit = ... dto.shippingFee !== undefined; const shippingFee = isStaffFeeEdit ? roundMoney(Math.max(0, dto.shippingFee!)) : ...` and it persists that column at `orders.service.ts:4273` (`...(isStaffFeeEdit ? { shippingFee } : {})`). `shippingFee` is a staff-settable DTO field (`apps/api/src/orders/dto/update-order-items.dto.ts:126`).\n\nFailure scenario: order ORD-1 is OUT_FOR_DELIVERY with `shippingFee = 0`. (a) The driver's APPROVE_AT_STOP begins; the pre-tx snapshot at 4858 reads `shippingFee: 0`. (b) The office PATCHes the order adding a $25 shipping fee; `updateOrderItems` takes the Order lock, writes `shippingFee: 25` and a matching `total`, commits. (c) The at-door tx now acquires the lock, re-reads `live` (status/run/stop only — 4973), recomputes `subtotal`/`tax`/`categoryTax` correctly from the tx, and writes at `orders.service.ts:5299-5307` `data: { subtotal, tax, total, hasRegulated }` with `total` computed from the stale `shippingFee: 0`. The `shippingFee` column keeps 25 (it is not in the update).\n\nResulting state: `order.total !== subtotal + tax + categoryTax + order.shippingFee` — the $25 is silently un-billed. It then propagates: `orders.service.ts:5362` writes the immutable revision snapshot with `shippingFee: Number((order as any).shippingFee ?? 0)` = 0 alongside the understated `total` (`appendOrderRevision`, `orders.service.ts:4390-4407`), and `reconcileOrderDraftInvoice(order.id, { basis: \"order\" })` at 5359 re-syncs the mirror invoice from that order state.\n\nNo test covers it: `baseOrder` (orders.service.spec.ts:6213-6227) has no `shippingFee` key at all, so `Number(undefined ?? 0)` is 0 in every existing and new at-door test.\n\nHonest scoping: the stale read predates this diff. What the diff does is introduce the in-tx re-read whose whole purpose is to stop judging the locked row from the snapshot, and then omit the one field on that row that money is computed from.",
+        "fixHint": "Add `shippingFee: true` to the `live` select at orders.service.ts:4973-4980 and use `Number(live.shippingFee ?? 0)` in the total at 5296 and in the revision snapshot at 5362. Add a spec case where `baseOrder` carries `shippingFee: 25` and the in-tx re-read returns a different value from the snapshot.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The total at 5294-5297 still takes shippingFee from the pre-lock snapshot while every other money input is re-read in-tx, so a shipping-fee edit committed between the snapshot and the lock is silently dropped from the order total and revision — the same stale-snapshot class as the confirmed ADD_ITEM finding, and a money write, so it carries the same severity and should be fixed in the same in-tx re-read.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 5653,
+        "severity": "minor",
+        "summary": "The second B214 guard in `deleteOrder` reports a credit balance that exists only inside the transaction it is aborting, so the operator is refused with a message insisting a note has unspent money that the UI shows as fully applied — and the shared message tells them to \"void the invoice\" without saying which of the order's invoices.",
+        "detail": "`orders.service.ts:5653-5656` re-runs `assertNoUnspentSourcedCredits` AFTER `releaseOrderCreditsInTx` (5646) and the per-invoice `releaseWalletPaymentsInTx` loop (5647-5649). Those calls genuinely revive notes: `CreditNotesService.restoreCreditFromPaymentInTx` (`credit-notes.service.ts:788-828`) decrements `amountUsed`, flips APPLIED→ISSUED, and — per the comment at 806-813 — clears a past `expiresAt` and an \"unexpected VOID\".\n\nSo for an order whose invoice X sourced a credit note that was spent on invoice Y of the same order (a wallet-settled order), the sequence is: guard 1 at 5642 sees `amountUsed == amount` → closed → passes; the releases un-spend it; guard 2 at 5653 sees it open → 409.\n\nTwo consequences the change ships untested and un-messaged:\n\n1. The message is built from the revived, in-transaction row (`sourced-credit-guard.ts:60-71`): \"This invoice issued credit CN-0001 with 50.00 still unspent. Void the invoice instead — voiding retires the unspent credit and keeps the audit trail.\" The transaction then rolls back, so when the operator opens CN-0001 it reads APPLIED with 0.00 remaining. The 409 describes a state that does not exist outside the aborted tx, and it names no invoice number, so on a multi-invoice order the operator cannot tell whether to void X or Y (voiding Y, the one the credit was spent on, does nothing for the guard).\n\n2. No test exercises this against a real release. `P5` in `orders.service.spec.ts` (the two-`mockResolvedValueOnce` test) fakes the revival by returning a different `creditNote.findMany` result; `creditNotesService.releaseOrderCreditsInTx` and `invoicesService.releaseWalletPaymentsInTx` are inert jest.fns, so `P1` (\"still deletes when the sourced credit note is fully spent\") passes only because nothing revives the note. The DB lane (`invoice-delete-credit.db.spec.ts`) covers `deleteInvoice`, which cannot reach this path at all — `invoices.service.ts:5331-5335` refuses any invoice with `payments.length > 0`, and a credit application is an `InvoicePayment`. So the one door where a release can revive a sourced note has no real-Postgres coverage of that revival.",
+        "fixHint": "Give `assertNoUnspentSourcedCredits` an optional context so the second call can say which invoice sourced the note and that the balance is one this delete would restore (e.g. \"deleting this order would return 50.00 of credit CN-0001 to the wallet with nothing left pointing at it — void invoice INV-X instead\"), and include `invoiceNumber` in the `creditNotes[]` payload. Then add a `.db.spec.ts` case for `OrdersService.deleteOrder` that seeds invoice X sourcing a note spent on invoice Y of the same order and asserts the 409 plus that the note still reads APPLIED after the rollback.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The post-release guard refuses correctly (the safe outcome), but the 409 message is built from the revived in-tx note row, so it reports an unspent balance the UI shows as fully applied and names no invoice to void; a messaging defect on a correct refusal, plus the path is untested.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+        "line": 40,
+        "severity": "minor",
+        "summary": "The new B214 guard reads the sourced credit notes with an unlocked findMany inside READ COMMITTED transactions, so a concurrent void that re-opens a note between the guard and the invoice delete still orphans it.",
+        "detail": "`assertNoUnspentSourcedCredits` (sourced-credit-guard.ts:37) reads `tx.creditNote.findMany({ where: { invoiceId: { in: invoiceIds }, status: { not: VOID } } })` at line 40 with no `FOR UPDATE` and no re-check after. All three call sites open their transaction WITHOUT an isolation level, so they run at READ COMMITTED: `deleteInvoice` (invoices.service.ts:5324 opens the tx, guard at :5341, `creditNote.updateMany({invoiceId: null})` at :5354, `invoice.delete` at :5370), `deleteOrder` (orders.service.ts:5638 opens the tx, guards at :5642 and :5653, `invoice.delete` at :5673) and `forceConsolidateCustomer` (orders.service.ts:1436, `invoice.delete` at :1438). I confirmed by grep that the only `isolationLevel` uses in these two files are orders.service.ts:2417/2743/2805/4345 and invoices.service.ts:3694/3900/4182 — none of them is a B214 call site.\n\nThe repo already documents this exact race on these exact rows: `voidInvoice` (invoices.service.ts:4171-4182) is deliberately `{ isolationLevel: \"Serializable\", timeout: 15_000 }` with the comment \"the default READ COMMITTED left a window between the cap's findMany/update pair ... where a concurrent applyToInvoice/settleOrderCreditsInTx on a different invoice could raise a note's amountUsed\". The new guard is the mirror-image read/write pair and got none of that protection.\n\nFailure scenario (deleteInvoice, but deleteOrder's second guard has an even wider window — `ledger.reverseInvoiceEntries`, `invoicePayment.deleteMany`, `invoiceItem.deleteMany` and `removeInvoiceCommission` all await between :5653 and the delete at :5673): invoice A sourced credit note cn-1 (amount 50) which was fully spent on a different invoice B (amountUsed 50, status APPLIED). Operator 1 calls `deleteInvoice(A)`; the guard reads cn-1, computes remaining 0, passes, and holds no lock on the cn-1 row. Operator 2 concurrently voids invoice B: `voidInvoice` → `releaseWalletPaymentsInTx` → `releaseInvoiceCreditsInTx` → `restoreCreditFromPaymentInTx` sets cn-1.amountUsed back to 0 / status ISSUED, and commits. Operator 1's tx then runs `tx.creditNote.updateMany({ where: { invoiceId: A }, data: { invoiceId: null } })` — it blocks only until operator 2 commits, then unlinks cn-1 — and deletes A. Result: a fully spendable $50 credit note with `invoiceId: null` and no source document. That is precisely the B214 orphan this change exists to prevent, reproduced against the shipped fix. T9/T10 in invoice-delete-credit.db.spec.ts are single-threaded and cannot see it.",
+        "fixHint": "Either take the same posture as the sibling void door — open these three transactions with `{ isolationLevel: \"Serializable\" }` — or, inside `assertNoUnspentSourcedCredits`, lock the candidate rows first (`SELECT id FROM \"CreditNote\" WHERE \"invoiceId\" = ANY(...) FOR UPDATE`) before the findMany, so a concurrent restore serialises behind the guard rather than after it.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The guard is an unlocked findMany at READ COMMITTED with no Invoice row lock and no re-check before the `updateMany({invoiceId: null})` detach, so a credit note created or revived on the invoice between the guard and the detach is silently orphaned. Real TOCTOU, but the deterministic same-transaction variant (guard before wallet release) is already the open blocker; this concurrent window is narrow and closes with the same fix class (lock the invoice row / re-check after locking).",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "line": 4331,
+        "severity": "major",
+        "summary": "The B134 in-tx un-send checks the invoice's payment count without taking the Invoice row lock that recordPayment takes first, so a payment committed in that window leaves a DRAFT invoice carrying a confirmed payment.",
+        "detail": "Focused-re-read item 2. First, the part that IS safe: a credit application is recorded as an `InvoicePayment` row with `method: PaymentMethod.CREDIT_NOTE` (credit-notes.service.ts:594-602, inside `applyCreditInTx`), so `revertLinkedInvoicesForOrderEdit`'s count at invoices.service.ts:4331 does see credit applications and throws BadRequestException at :4332-4336. A credit-settled SENT mirror is NOT flipped to DRAFT. That half of the decider's concern is refuted.\n\nWhat is not covered: the helper takes no row lock. At invoices.service.ts:4301 it reads the linked SENT/VIEWED/OVERDUE invoices, at :4331 it counts payments, and at :4339 it blindly writes `status: DRAFT, sentAt: null, pdfUrl: null`. `recordPayment` opens its own transaction with `await tx.$executeRaw\\`SELECT id FROM \"Invoice\" WHERE id = ${id} FOR UPDATE\\`` (invoices.service.ts:4721) — a lock the merge transaction never contends for. `tenantTransaction` (prisma.service.ts:48-63) passes options straight through and the at-door merge supplies only `{ timeout: 15_000 }` (orders.service.ts:5352), i.e. READ COMMITTED.\n\nFailure scenario: an order is out for delivery with SENT mirror invoice inv-1 and zero payments. A driver approves an at-door change request; `approveChangeRequestAtStop` locks the Order row (orders.service.ts:4941), locks the stop NOWAIT (:4956), re-reads `live` (:4974) and calls `revertLinkedInvoicesForOrderEdit(order.id, tx)` at :5000. Inside it, :4301 returns inv-1 and :4331 counts 0 payments. In that window the office records a $200 CASH payment on inv-1: `recordPayment` takes `Invoice FOR UPDATE` on inv-1 (free), inserts the InvoicePayment, updates inv-1 to PARTIAL and commits. The merge tx's write at :4339 then blocks only until that commit and overwrites the row: inv-1 is DRAFT, `sentAt: null`, `pdfUrl: null`, with a confirmed $200 payment attached. The post-commit `reconcileOrderDraftInvoice(order.id, { basis: \"order\" })` at orders.service.ts:5357 then rebuilds that DRAFT's lines and total on the merged basis, so the recorded cash now sits against a document whose amount moved under it — the exact outcome the helper's own contract (\"money must never silently detach from a sent document\", :4278-4280) and the B134 comment (\"Throws if it carries payments (money never detaches)\", orders.service.ts:4997-4999) promise to prevent.\n\nHonest scoping: the race predates this change (the call previously ran outside any transaction). What is new is that the fix moved the call inside the merge tx expressly for transactional integrity and stopped one statement short of the lock `recordPayment` already establishes as the house convention for this row — and the fix's own tests (T1-T3, P4) assert only the tx-plumbing, never the payment race.",
+        "fixHint": "Inside `revertLinkedInvoicesForOrderEdit`, when a `tx` is supplied, lock each candidate invoice before the payment count — `SELECT id FROM \"Invoice\" WHERE id = ANY(...) FOR UPDATE` — matching recordPayment's own first statement; then count, then flip. Without a tx keep today's behaviour.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "The credit-application half is refuted by the evidence (CREDIT_NOTE payments are InvoicePayment rows and are counted), but the payment-count check at :4331 and the blind DRAFT write at :4339 contend no lock, while recordPayment serialises on `SELECT ... FOR UPDATE` on Invoice. A payment committed in that window yields a DRAFT invoice with sentAt null carrying a confirmed payment; B134's whole point was closing the un-send race, so a lock gap in the helper is an incomplete fix. Take the same Invoice FOR UPDATE inside the helper before counting.",
+        "unadjudicated": false
+      },
+      {
+        "file": "apps/api/src/orders/orders.service.ts",
+        "line": 5086,
+        "severity": "major",
+        "summary": "The CHANGE_QTY/REMOVE_ITEM branch moves only its two guards onto the locked in-tx row and still computes every priced field from the pre-tx snapshot, while the ADD_ITEM branch in the same fix re-reads the authoritative row.",
+        "detail": "After the fix rounds, the two halves of `approveChangeRequestAtStop` disagree about what the B135 lock is for. ADD_ITEM (orders.service.ts:5150-5158) picks its target from `heldItems` and then re-reads the whole row through the tx — `const existing = heldMatch ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } }) : null` — and derives `unitsPerBox` (:5162), `boxes` (:5163), `qty` (:5164), `unitPrice` (:5169) and `promoFreeUnits` (:5173) from that authoritative row.\n\nCHANGE_QTY/REMOVE_ITEM (:5030-5136) does not. It looks up `held` only to evaluate two guards — `held?.status === \"CANCELLED\"` (:5036) and `Number((held ?? li).deliveredQty ?? 0) > 0` (:5039) — and then computes the money entirely from the pre-tx snapshot `li` (`order.lineItems.find(...)` at :5032): `upb = Number((li as any).unitsPerBox ?? 0)` (:5073), `wasBoxSplit = li.boxes != null` (:5081), `unitPrice = Number(li.unitPrice)` (:5086), `storedFreeUnits = Number((li as any).promoFreeUnits ?? 0)` (:5090), `oldUnits: li.boxes != null ? Number(li.boxes) : Number(li.qty)` (:5099), and `mutationRow.qty = split.qty - Number(li.qty)` (:5133). The fix cannot do otherwise as written: the `heldItems` select at :5004 was widened only by `id` and still omits `unitPrice`, `boxes`, `unitsPerBox` and `promoFreeUnits`.\n\nFailure scenario: line li-1 on a dispatched order is 2 boxes x 12 (unitPrice 24.00). An operator PATCHes the order through `updateOrderItems` and applies a price override to 18.00 and un-boxes the line (boxes -> null). That PATCH takes the same `SELECT ... FROM \"Order\" ... FOR UPDATE` the new comment at :4936-4940 names, so it serialises ahead of the at-door approval and commits. The approve tx then acquires the lock, re-reads `heldItems` (which carries no price or denomination), passes both guards (line is PENDING, deliveredQty 0), and at :5108-5127 writes `unitsPerBox: upb` from the stale snapshot, re-boxes the line via `normalizeBoxesPieces` because `wasBoxSplit` is the stale `true`, and writes `subtotal: computeLineSubtotal({ unitPrice: 24.00, ... })`. The operator's 18.00 override and un-boxing are silently reverted on the money column, the totals recompute at :5284-5290 reads those rows back, and `reconcileOrderDraftInvoice` at :5357 mirrors the wrong subtotal onto the customer's invoice. On REMOVE_ITEM the same staleness only corrupts provenance (`mutationRow.qty = -Number(li.qty)` at :5060 records the pre-edit quantity).\n\nThis is distinct from the ADD_ITEM stale-snapshot item already on the known list — that one was acted on and the ADD_ITEM branch now re-reads; this is the branch the fix DID touch, left half-converted, and no test in the new `approveChangeRequestAtStop: tx boundary (B134/B135)` block pins any priced field against a diverged locked row (T7 and P10 vary only `deliveredQty`/`status`).",
+        "fixHint": "Widen the `heldItems` select at :5004 to carry `unitPrice`, `boxes`, `pieces`, `unitsPerBox` and `promoFreeUnits` (or re-read the target with `tx.orderItem.findUnique` exactly as ADD_ITEM does at :5155-5158), and drive :5073-5133 off that row, keeping `li` only as the absent-row fallback.",
+        "fixComplexity": "judgment",
+        "phase": "Final pass",
+        "decision": "After the fix rounds ADD_ITEM re-reads the authoritative locked row for unitsPerBox/boxes/qty/unitPrice/promoFreeUnits, but CHANGE_QTY/REMOVE_ITEM uses the locked `held` only for the two guards and prices from the pre-tx snapshot `li` (:5073, :5081, unitPrice). A committed edit between snapshot and lock produces wrong money on the merged line; same stale-snapshot class the lens already tagged major on the other branch, and the fix is to derive every priced field from `held ?? li`.",
+        "unadjudicated": false
+      }
+    ]
+  },
+  "confirmedFindings": [
+    {
+      "file": "(gate-command)",
+      "severity": "major",
+      "summary": "`cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger` already fails on the unmodified baseline tree — the command is broken, not the code",
+      "detail": "Baseline output: Error: Could not resolve a module for a custom reporter. Module name: src/orders/ at C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F09\\node_modules\\jest-cli\\node_modules\\jest-config\\build\\index.js:1551:15. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+      "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+      "phase": "Baseline",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "(gate-command)",
+      "severity": "major",
+      "summary": "`node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\"` already fails on the unmodified baseline tree — the command is broken, not the code",
+      "detail": "Baseline output: No tests found, exiting with code 1. In C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-F09\\apps\\api\\src - 759 files checked. testMatch: 0 matches. testPathIgnorePatterns: \\\\node_modules\\\\ - 759 matches. testRegex: .*\\.db\\.spec\\.ts$ - 12 matches. Pattern: invoice-delete-credit - 0 matches. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+      "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+      "phase": "Baseline",
+      "fixComplexity": "mechanical"
+    },
+    {
+      "file": "(artifact)",
+      "line": 92,
+      "severity": "minor",
+      "summary": "jest.mock shims start at line 44, not line 49 as claimed",
+      "detail": "In (artifact) bug-test-plan.md: The test plan states to copy 'the two jest.mock shims and the imports (~lines 49-72)' from invoice-numbering.db.spec.ts. Verification shows: lines 44-52 contain the jest.mock shims (not starting at 49), and lines 53-72 contain the imports. The discrepancy is 5 lines earlier than claimed.",
+      "fixComplexity": "mechanical",
+      "fixHint": "Update line number reference from '~lines 49-72' to '~lines 44-72' or '~lines 44-53 for jest mocks, lines 54-72 for imports'",
+      "phase": "Baseline"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1435,
+      "severity": "major",
+      "summary": "forceConsolidateCustomer hard-deletes the loser order's DRAFT mirror invoice with no sourced-credit guard, and a DRAFT invoice IS an allowed credit-note source - so the same orphaning survives, and it bypasses the new deleteOrder refusal entirely.",
+      "detail": "The build plan's sibling sweep left this door 'unconfirmed' on the premise that 'a never-sent draft is not an observed note source'. That premise is contradicted by the code: CREDIT_SOURCE_EXCLUDED = [VOID, WRITTEN_OFF] only (apps/api/src/invoices/invoice-status-sets.ts:18-22) with the explicit comment 'DRAFT is allowed on purpose', and credit-notes.service.ts:134-138 enforces exactly that set when minting. returns.processRefund sources the credit from the only creditable invoice (returns.service.ts:508, 544), and the operator UI picker can target a DRAFT. Failure scenario: a goodwill/return credit note CN is issued against pending order L's open DRAFT mirror invoice; the operator later force-consolidates that customer's pending orders; findOpenOrderDraft(L) returns that draft, line 1435 deletes it (FK ON DELETE SET NULL nulls CN.invoiceId), and line 1438 deletes order L with tx.order.delete - never through deleteOrder, so the new 409 never fires. The operator ends up with a fully open, provenance-less credit note, and force-consolidate becomes a way around the guard added to deleteOrder.",
+      "fixHint": "The plan pre-authorized exactly one fix for this door: `await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);` immediately before line 1435 (do not restructure the consolidation). If it is deferred instead, record the follow-up row and say so, because the assumption it was deferred on is false.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5120,
+      "severity": "minor",
+      "summary": "The ADD_ITEM branch still resolves its merge target from the pre-tx order.lineItems snapshot, so a line cancelled between the snapshot and the lock is silently updated while the totals ignore it - goods added at the door and never billed.",
+      "detail": "Edit 3 moved the CHANGE_QTY/REMOVE_ITEM cancel/delivered judgement onto the locked heldItems row (5007-5014), but the sibling branch 5 lines later still does `order.lineItems.find(l => l.productId === product.id && l.status !== 'CANCELLED' && Number(l.deliveredQty) === 0)` on the stale snapshot. If a concurrent updateOrderItems cancelled that line (status CANCELLED, qty 0 - the same CANCEL semantics this file uses at 5019-5030) after the pre-tx read at 4856 and committed before the FOR UPDATE at 4945, the branch picks the stale row and issues tx.orderItem.update on a CANCELLED line. The totals recompute at 5253 only sums `status: { not: 'CANCELLED' }` and settleStockForEdit skips CANCELLED held rows, so subtotal/tax/total and currentStock do not move, yet the change request is claimed APPROVED and an ADD_ON DeliveryMutation is written: the driver hands over units that never reach the invoice. heldItems already carries productId/status/deliveredQty, so the locked-row lookup the fix introduced is available here too.",
+      "fixHint": "Resolve the merge target from heldItems (id + productId + status + deliveredQty) exactly as the CHANGE_QTY branch now does, using order.lineItems only for the pricing fields.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 4946,
+      "severity": "minor",
+      "summary": "The B135 in-tx re-read closes only the committed-before-the-lock race: the transaction locks the Order row but not the RouteRunStop, so a completeWithPayment that is mid-transaction is still invisible and the merge lands into a stop that commits COMPLETED moments later.",
+      "detail": "completeWithPayment (apps/api/src/routes/routes.service.ts:2500 stop -> COMPLETED, :2546 deliveredQty, :2570 order -> DELIVERED) writes the stop FIRST and only touches Order at the end. Interleaving: completeWithPayment updates RouteRunStop (uncommitted) -> approveChangeRequestAtStop's `SELECT id FROM \"Order\" ... FOR UPDATE` at 4945 succeeds because no Order row is locked yet -> the `live` re-read at 4946 reads the last COMMITTED stop under READ COMMITTED and sees PENDING -> the merge proceeds and commits -> completeWithPayment's tx.order.updateMany unblocks and marks the order DELIVERED. Net effect is the B135 symptom (an at-door edit merged into a stop being completed), in a much narrower window than before. The change is a strict improvement - it removes the wide window that spanned getTaxRate/loadActivePromotions/getCustomerPriceHistory/isCreditLimitCheckEnabled - but the re-read is not the serialization point the comment implies.",
+      "fixHint": "Take a row lock on the stop as well (e.g. `SELECT id FROM \"RouteRunStop\" WHERE id = ${order.routeRunStopId} FOR UPDATE`) before the `live` re-read, so the approve tx blocks on an in-flight completion and then re-reads COMPLETED.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.spec.ts",
+      "line": 6757,
+      "severity": "minor",
+      "summary": "The new cancelled-line half of the B135 line guard ships untested while acceptance criterion 4 records it as proven by T7.",
+      "detail": "orders.service.ts:5010 adds `|| held?.status === \"CANCELLED\"` so a line cancelled between the pre-tx snapshot and the row lock is refused. T7 (spec line 6757) is the only test the plan cites for acceptance criterion 4, and it exercises only the deliveredQty half: its held row is `{ id: 'li-1', ..., status: 'PENDING', deliveredQty: 24 }` and its oracle is LINE_ALREADY_DELIVERED. No test in apps/api sets a held row (from orderItem.findMany) with id 'li-1' and status 'CANCELLED': scanning the whole approveChangeRequestAtStop describe (spec lines 6090-6860) for CANCELLED yields one hit, line 6328, which is an expected-write assertion in the REMOVE_ITEM test, not a fixture; and grepping every apps/api spec for the refusal string 'already cancelled' returns nothing. So dropping the new clause would leave every T# and pin green, and acceptance criterion 4's cancelled half is asserted by the plan but not exercised by the suite.",
+      "fixHint": "Add one test beside T7 in the same describe: same shared fixture, but the held row is `{ id: 'li-1', productId: 'prod-1', qty: 24, status: 'CANCELLED', deliveredQty: 0 }` while the snapshot line stays PENDING, asserting rejects.toBeInstanceOf(BadRequestException) (message 'Order line not found or already cancelled'). Keep it pin-titled (no REG token) or extend T7's row in the test plan.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.spec.ts",
+      "line": 6692,
+      "severity": "major",
+      "summary": "T3 (\"when the merge fails (lost claim), the un-send went through the rolled-back tx\") asserts nothing about the failure or the rollback — its single expectation is byte-identical to T1's, and it swallows the rejection with no oracle.",
+      "detail": "T3 sets `prisma.changeRequest.updateMany.mockResolvedValue({ count: 0 })`, calls `approveChangeRequestAtStop(...).catch((e) => e)`, then asserts `revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[1]).toBe(seenTx)` — the exact same expectation as T1 at line 6678. It never asserts the call rejected (the `.catch` discards the error), and `prisma.tenantTransaction` is mocked as `(fn) => fn(seenTx)`, so no rollback semantics exist in this lane at all: the un-send could commit and T3 would still be green. Concretely, if the fix regressed so that a lost claim left the invoice in DRAFT — the exact B134 symptom — T3 stays green as long as the tx object was passed. Build-plan acceptance criterion 2 (\"a failed approval leaves every linked invoice's status/sentAt/pdfUrl exactly as before, because the un-send rolls back with the tx. Proven by T3 in the unit lane\") is therefore unproven by any test in the change: the DB lane covers only B214 (invoice-delete-credit.db.spec.ts), never the at-door merge path.",
+      "fixHint": "Either give T3 a distinct oracle (assert the call rejects with CHANGE_REQUEST_ALREADY_RESOLVED and that the revert happened inside the callback that threw), or add a DB-lane test that drives approveChangeRequestAtStop with a lost claim against real Postgres and asserts the linked invoice's status/sentAt are unchanged. Do not leave criterion 2 claimed as proven by T3.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.spec.ts",
+      "line": 2807,
+      "severity": "minor",
+      "summary": "T8 does not pin that the deleteOrder guard runs before any write — moving `assertNoUnspentSourcedCredits` below the wallet/credit release calls would leave T8 green.",
+      "detail": "T8 asserts only `rejects.toMatchObject({ response: { code: \"INVOICE_HAS_UNSPENT_CREDIT\" } })` and `prisma.order.delete` not called. Because `tenantTransaction` is mocked and no rollback occurs, a version of deleteOrder that called `this.creditNotes.releaseOrderCreditsInTx(tx, id)` and `invoicesService.releaseWalletPaymentsInTx(tx, inv.id)` first and only then threw would still satisfy both assertions — yet those are money writes, and build-plan acceptance criterion 5 states \"After a refusal no row changes\". The deleteInvoice door has that ordering proven for real by DB-lane T10 (the note is still linked after the refusal); the deleteOrder door has no equivalent.",
+      "fixHint": "Add to T8: `expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();` and `expect(invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();` (both are already mocked at the module boundary in this suite).",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5609,
+      "severity": "major",
+      "summary": "In deleteOrder the new guard runs before the credit-release steps that re-open the very notes it just judged closed, so the B214 orphan still ships for wallet-settled orders.",
+      "detail": "assertNoUnspentSourcedCredits is the FIRST statement of deleteOrder's tenantTransaction, but the two statements after it hand wallet money back and thereby re-open sourced credit notes before the invoice loop destroys them. Concrete: order O has invoice INV-1 ($100, SENT); an operator issues credit note CN ($40) against INV-1 (allowed — CREDIT_SOURCE_EXCLUDED is only [VOID, WRITTEN_OFF], invoice-status-sets.ts:19); a send/auto-apply run applies CN to INV-1 (autoApplyOldestCreditsInTx excludes only explicitly-selected ids, invoices.service.ts:3668), leaving CN.amountUsed=40, status APPLIED, plus an InvoicePayment{method: CREDIT_NOTE, creditNoteId: CN}. Staff deletes order O: cancelImpact filters out CREDIT_NOTE/ADVANCE, so nothing blocks (orders.service.ts:2930). The guard reads CN, computes remaining 40-40 = 0, isOpenCreditNote -> false, returns without throwing. releaseOrderCreditsInTx (line 5613) -> releaseCreditsInTx({orderId}) -> restoreCreditFromPaymentInTx (credit-notes.service.ts:788) deletes the payment row and writes amountUsed=0, status 'ISSUED', and CLEARS a past expiresAt (the REVIVE branch, :817-826). The loop then hard-deletes INV-1 (line 5633); CreditNote_invoiceId_fkey is ON DELETE SET NULL (0_init/migration.sql:3783), so CN commits as a $40 fully spendable, provenance-less note — exactly the harm B214 exists to stop, and acceptance criterion 5 is not met for this door. The same revive path also resurrects a VOID or expired sourced note (the guard's other two 'closed' categories) whenever it had a wallet payment on this order. Secondary effect of the same placement: the guard's SELECT sits at the top of a long READ COMMITTED transaction, so a credit note minted against one of these invoices after that read is invisible and gets SET NULL too.",
+      "fixHint": "Evaluate the predicate on the rows the delete actually destroys (L-081: gate the money write inside the primitive that performs it, on the row it just read). Move the assertNoUnspentSourcedCredits call to immediately before the invoice-delete loop, after releaseOrderCreditsInTx and the releaseWalletPaymentsInTx loop — or call it in both places (cheap fail-fast plus authoritative re-assert). Add a unit pin for the release-reopens-it case (sourced note fully applied to one of the order's own invoices) since T8/P1-P3 only cover the pre-release state.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1435,
+      "severity": "major",
+      "summary": "forceConsolidateCustomer's loser-draft invoice delete is a confirmed third B214 door and is left unguarded.",
+      "detail": "The build plan (Sibling sweep) asks the judge to rule on this hit; the evidence says it is a defect. forceConsolidateCustomer hard-deletes the merge loser's open pending-mirror DRAFT invoice (`await tx.invoice.delete({ where: { id: loserDraft.id } })`, orders.service.ts:1435, target from findOpenOrderDraft which selects status DRAFT, invoices.service.ts:1334). A DRAFT invoice CAN source a credit note: CreditNotesService.create rejects only CREDIT_SOURCE_EXCLUDED = [VOID, WRITTEN_OFF] and the code comment states 'DRAFT is allowed on purpose (returns.processRefund and the UI picker rely on it)' (credit-notes.service.ts:133-139, invoice-status-sets.ts:19-22); returns.processRefund likewise picks its source from `allInvoices.filter(inv => !CREDIT_SOURCE_EXCLUDED.includes(inv.status))` (returns.service.ts:508-509, then creditNotes.create({ invoiceId: sourceInvoiceId }) at :639-641). Scenario: a return (or the credit-note UI) mints CN against order O1's open DRAFT mirror I1; a later customer-level consolidation makes O1 a loser; this line deletes I1; CreditNote_invoiceId_fkey ON DELETE SET NULL (0_init/migration.sql:3783) nulls CN.invoiceId while CN still has full balance — the same orphaned, provenance-less wallet money B214 describes. No guard runs on this path at all (no payments check, no credit-note check).",
+      "fixHint": "Per the plan's own ruling the only acceptable in-run fix is `await assertNoUnspentSourcedCredits(tx, [loserDraft.id])` immediately before the `tx.invoice.delete` at line 1435 (do not restructure the consolidation). If the coordinator holds the scope fence instead, record the verdict as CONFIRMED and file the follow-up row — but it must not be left as 'unconfirmed'.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5120,
+      "severity": "major",
+      "summary": "The ADD_ITEM branch of approveChangeRequestAtStop still increments quantity from the pre-tx snapshot, so a concurrent order edit is silently reverted — the same stale-snapshot class B135 fixes one branch above.",
+      "detail": "The sibling pattern `order\\.lineItems\\.find\\(` has FIVE hits in this file (3933, 3970, 4052, 5006, 5120); the plan enumerated only four and missed 5120, which is inside the function this change hardens. After the fix, CHANGE_QTY/REMOVE_ITEM judge on the locked `heldItems` row, but ADD_ITEM's merge-into-existing-line branch still reads `const existing = order.lineItems.find(...)` from the snapshot taken BEFORE the transaction (line 4856), then writes `newQty = Number(existing.qty) + addQty` through `tx.orderItem.update` (lines 5123, 5145-ish). The snapshot is separated from the FOR UPDATE by four awaits (getTaxRate, loadActivePromotions, getCustomerPriceHistory, isCreditLimitCheckEnabled, lines 4917-4934), which is exactly the window the WP1/F2 comment says the row lock exists to close. Concrete: snapshot reads line qty 24; an operator PATCH via updateOrderItems (which takes the same Order FOR UPDATE) commits qty 24 -> 12; the driver's ADD_ITEM +6 then writes qty = 24+6 = 30 instead of 18. The totals recompute from in-tx activeItems, so the customer is billed for 30, and settleStockForEdit compares heldItems (12) to activeItems (30) and decrements 18 units of stock. The existing-line lookup also filters on the snapshot's `Number(l.deliveredQty) === 0`, so it can pick a line the locked read shows as delivered — the case T7 pins for the CHANGE_QTY branch.",
+      "fixHint": "Base the increment on the locked in-tx row: `heldItems` is already re-read under the lock and now carries `id` (and qty/deliveredQty/status), so resolve `existing` by id from the snapshot but take qty/deliveredQty from the matching held row (falling back to the snapshot only when no held row exists), mirroring the Edit-3 shape at line 5006-5013. If the coordinator holds the plan's 'everything after Edit 3 is unchanged' fence, record this sweep hit as CONFIRMED and file it as the follow-up row — it must not stay unenumerated.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5609,
+      "severity": "major",
+      "summary": "deleteOrder's INVOICE_HAS_UNSPENT_CREDIT guard is evaluated before the wallet release that re-opens the very notes it just cleared, so a spent sourced credit note is restored to spendable and then orphaned by the same transaction.",
+      "detail": "The guard at orders.service.ts:5609 runs first; releaseOrderCreditsInTx (5613) and releaseWalletPaymentsInTx (5615) then run, and both funnel into CreditNotesService.restoreCreditFromPaymentInTx (credit-notes.service.ts:788-829), which decrements amountUsed, flips status back to ISSUED (even from VOID) and CLEARS a past expiresAt. Concrete scenario: order O has invoice X (SENT). An operator issues CN-0001 for $50 against X (permitted — CREDIT_SOURCE_EXCLUDED is only VOID/WRITTEN_OFF, credit-notes.service.ts:135). CN-0001 is then consumed against an invoice of the SAME order, which is a normal outcome: invoices.service.ts:3656 settleOrderCreditsInTx and :3668 autoApplyOldestCreditsInTx apply the customer's open credits to that order's invoice and neither excludes a note whose own invoiceId is that invoice. CN is now amount 50 / amountUsed 50. Staff deletes order O: cancelImpact does not block (wallet payments never block — pinned by the existing spec 'a wallet-only PAID invoice still deletes and returns the credit'), the guard sees remaining 0.00 and passes, the two release calls restore CN to amountUsed 0 / ISSUED, and the loop then runs tx.invoice.delete for X (5633), which the FK CreditNote_invoiceId_fkey ... ON DELETE SET NULL (apps/api/prisma/migrations/0_init/migration.sql:3783) turns into invoiceId = NULL. End state: a $50 fully spendable, provenance-less credit note — exactly the B214 harm the change exists to close, surviving through the deleteOrder door. The same route re-opens an EXPIRED sourced note (restore clears expiresAt) and a VOID one (restore sets ISSUED), so pins P2/P3's 'closed' cases are also only closed at guard time. deleteInvoice is not affected: any payment row makes it throw earlier at invoices.service.ts:5332.",
+      "fixHint": "Re-assert the guard on post-release state: after releaseOrderCreditsInTx and the releaseWalletPaymentsInTx loop (i.e. after orders.service.ts:5617) and before the invoice-delete loop, call assertNoUnspentSourcedCredits(tx, order.invoices.map(inv => inv.id)) again — the transaction rolls back cleanly, so the refusal is still atomic. Keep the pre-release call as the cheap fast path if desired.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 1435,
+      "severity": "minor",
+      "summary": "forceConsolidateCustomer still hard-deletes a loser order's DRAFT mirror invoice with no sourced-credit guard, and a DRAFT invoice is an allowed credit-note source, so that third door can orphan an open credit note.",
+      "detail": "The build plan lists this door as 'unconfirmed' and asks the reviewer to rule. It is reachable: validateAndBuildCnItems rejects a source invoice only when its status is in CREDIT_SOURCE_EXCLUDED = [VOID, WRITTEN_OFF] (invoice-status-sets.ts:19-22), and the code comment at credit-notes.service.ts:133-134 states DRAFT is allowed on purpose because returns.processRefund and the UI picker rely on it. findOpenOrderDraft (invoices.service.ts:1334-1340) returns exactly a DRAFT, deliveryBatchId-null order mirror. Scenario: a credit note is issued against a pending order's open DRAFT mirror invoice; that order is later the loser of a customer consolidation, so orders.service.ts:1435 runs tx.invoice.delete on that draft with no guard, and CreditNote_invoiceId_fkey ON DELETE SET NULL (0_init/migration.sql:3783) leaves the note with invoiceId NULL and its balance spendable — the same harm the two fixed doors now refuse. L-081's one-door warning applies: two of three doors are gated.",
+      "fixHint": "Either add `await assertNoUnspentSourcedCredits(tx, [loserDraft.id]);` immediately before orders.service.ts:1434 (the plan names this as the only acceptable in-run fix, and the guard is already imported in this file), or record the verdict and file the follow-up row rather than restructuring the consolidation.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5609,
+      "severity": "blocker",
+      "summary": "In deleteOrder the new B214 guard runs BEFORE releaseOrderCreditsInTx/releaseWalletPaymentsInTx, so a sourced credit note that those calls revive (un-spend, un-expire, un-VOID) is still hard-orphaned by the same transaction.",
+      "detail": "Setup: order O has invoices A and B. Invoice A sourced credit note CN (amount 50), and CN was applied as a CREDIT_NOTE payment to A or to B (nothing forbids applying a note to its own source invoice — no such guard exists in credit-notes.service.ts). CN is therefore amountUsed=50, status APPLIED. Operator deletes order O. cancelImpact allows it (wallet-only payments do not block — pinned by the existing test 'a wallet-only PAID invoice still deletes and returns the credit'). Inside the tx: assertNoUnspentSourcedCredits(tx, [A,B]) at :5609 sees CN with remaining 0 → passes. Then :5613 releaseOrderCreditsInTx and :5615 releaseWalletPaymentsInTx call restoreCreditFromPaymentInTx (credit-notes.service.ts), which sets amountUsed back to 0, status ISSUED, and — per its REVIVE branch — even clears a past expiresAt and an unexpected VOID. Then the loop deletes invoice A; the FK CreditNote_invoiceId_fkey ON DELETE SET NULL nulls CN.invoiceId. Result: $50 fully spendable wallet credit with no provenance — exactly the B214 symptom the plan's acceptance criterion 5 says both doors must refuse. It also defeats pins P2/P3 (VOID and expired notes) whenever the note was applied to an invoice of that order, because the release revives them. Note the sibling door already gets the ordering right: cancelOrder (:2784-2788) releases FIRST and then voidInvoiceInTx caps/voids the revived note. deleteInvoice is not affected (it refuses on any recorded payment first).",
+      "severity_note": "",
+      "fixComplexity": "judgment",
+      "fixHint": "Either move assertNoUnspentSourcedCredits after releaseOrderCreditsInTx + the releaseWalletPaymentsInTx loop (re-reading the notes through tx, before any invoice row is deleted), or re-assert it a second time at that point. A no-write-before-the-guard property is preserved either way only if the guard's throw rolls the releases back with the tx — it does, since they are all inside the same tenantTransaction.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5120,
+      "severity": "major",
+      "summary": "B135's 'judge the line on the locked in-tx row' fix covers only the CHANGE_QTY/REMOVE_ITEM branch; the ADD_ITEM merge-into-existing-line branch still picks and bases its arithmetic on the pre-tx order.lineItems snapshot.",
+      "detail": "After the fix, heldItems (now selecting id/status/deliveredQty inside the tx, after FOR UPDATE) is used only in the CHANGE_QTY/REMOVE_ITEM branch (:5009-5015). The ADD_ITEM branch at :5120-5125 still resolves the target line from the stale pre-tx snapshot — `order.lineItems.find(l => l.productId === product.id && l.status !== 'CANCELLED' && Number(l.deliveredQty) === 0)` — and then writes `newQty = Number(existing.qty) + addQty` plus a computeLineSubtotal derived from that same stale `existing.qty`/`boxes`/`unitPrice` (:5127-5158). Failure scenario: an operator's concurrent updateOrderItems (which takes its own FOR UPDATE, ~:3235) raises line X from 24 to 36 and commits between this function's pre-tx read and its lock; the at-door ADD_ITEM for the same product then writes qty = 24 + addQty, silently discarding the committed edit and re-billing the line at the stale quantity. Second scenario: a partial scan/delivery sets X.deliveredQty > 0 without completing the stop (stop stays PENDING, run IN_PROGRESS, order OUT_FOR_DELIVERY), so the new in-tx window re-check at :4950-4966 does not fire, and the door increases an already-partly-delivered line — the very state LINE_ALREADY_DELIVERED exists to refuse. Neither case is on the plan's out-of-scope fence (which lists only the post-delivery exemption, updateOrderItems, forceConsolidateCustomer, and the autoApply predicate refactor), and no work package covers it.",
+      "fixComplexity": "judgment",
+      "fixHint": "Resolve the ADD_ITEM target from heldItems (id/status/deliveredQty read under the lock) the same way the CHANGE_QTY branch now does, and read that line's authoritative qty/boxes/unitPrice through tx before computing newQty — or refuse with LINE_ALREADY_DELIVERED when the held row disagrees with the snapshot.",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5609,
+      "severity": "major",
+      "summary": "deleteOrder's unspent-credit guard runs BEFORE the wallet releases that re-open the very notes it just classified as closed, so a spent-or-expired credit note sourced by one of the order's own invoices is restored to a full balance and then orphaned by the invoice delete.",
+      "detail": "Order of operations inside the deleteOrder tx: assertNoUnspentSourcedCredits (5609) -> releaseOrderCreditsInTx (5613) -> releaseWalletPaymentsInTx per invoice (5615) -> tx.invoice.delete per invoice (5628). restoreCreditFromPaymentInTx (apps/api/src/credit-notes/credit-notes.service.ts:787-830) decrements amountUsed, flips APPLIED->ISSUED, and even CLEARS a past expiresAt (the 'REVIVE' branch). Concrete failure: order O has invoices A and B; a credit note CN was issued against invoice A (CreditNote.invoiceId = A) and later fully applied to A or B (auto-apply on send, invoices.service.ts:3668/3874, or the operator endpoint credit-notes.controller.ts:55). CN's remaining balance is 0, so the new guard classifies it CLOSED and passes (this is exactly what pin P1 freezes). cancelImpact blocks only EXTERNAL payments, so a wallet-paid order reaches the tx. releaseOrderCreditsInTx then restores CN to amountUsed 0 / ISSUED, and the loop deletes invoice A, whose CreditNote_invoiceId_fkey is ON DELETE SET NULL (apps/api/prisma/migrations/0_init/migration.sql:3783). Result: a fully spendable, provenance-less credit note with invoiceId NULL - precisely the B214 orphan, through the door this change was written to close. The same composition applies to an expired sourced note (pin P3), because the release clears the past expiry. The unit pins cannot see this because releaseOrderCreditsInTx/releaseWalletPaymentsInTx are mocked. Reasoned from code (not executed end-to-end).",
+      "fixHint": "Move (or repeat) the guard AFTER releaseOrderCreditsInTx and the releaseWalletPaymentsInTx loop and before the first tx.invoice.delete - a throw there still rolls the releases back because it is the same transaction - or have the guard account for the balance the releases will restore.",
+      "fixComplexity": "judgment",
+      "phase": "Gate & Review",
+      "corroboratedBy": 2,
+      "verifyDeferred": true
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+      "line": 128,
+      "severity": "major",
+      "summary": "The red-gate and final-verify jest commands are unrunnable as written — `--reporters=default` swallows the following positional test paths, so jest aborts before running a single test.",
+      "detail": "Reproduced in this session from the worktree: `cd apps/api && npx jest --reporters=default src/orders/orders.service.spec.ts -t \"REG-B134|REG-B135|REG-B214\"` prints `Error: Could not resolve a module for a custom reporter. Module name: src/orders/orders.service.spec.ts` and runs zero tests. The identical shape appears in the final gate (build-plan.md line 433 and pipeline-args.json redGate.commands / verifyCommands.final line 544 and 557): `npx jest --reporters=default src/orders/ src/invoices/invoices ...` yields `Could not resolve a module for a custom reporter. Module name: src/orders/`. `--reporters` is an array option and consumes every following positional argument. Consequence: the red gate that was supposed to prove T1–T8 fail on the unfixed tree, and the final suite gate, both terminate with a config load error rather than a test result — an error that is easy to score as \"red\" at the red gate and that executes no test at the green gate. Swapping the argument order (`npx jest src/orders/orders.service.spec.ts --reporters=default -t \"...\"`) runs correctly; that is how I obtained the green results above.",
+      "fixHint": "Put the path/pattern arguments before `--reporters=default` (or terminate the reporter list) in build-plan.md's red-gate and final blocks and in pipeline-args.json's `redGate.commands` and `verifyCommands.final`.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review",
+      "verifyDeferred": true
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+      "line": 128,
+      "severity": "minor",
+      "summary": "Every jest command in the plan puts the positional test path AFTER `--reporters=default`, so jest parses the path as a second reporter module and the command dies before running any test - the red gate and the final verification as written could never have executed.",
+      "detail": "Verified in this session: `cd apps/api && npx jest --reporters=default src/orders/orders.service.spec.ts` fails with 'Error: Could not resolve a module for a custom reporter. Module name: src/orders/orders.service.spec.ts' (jest's --reporters is an array option, so the positional argument is appended to it) - zero tests execute, which is why the context manifest lists these commands as 'already broken on the untouched tree'. They are not broken, they are mis-ordered: with the path first, `npx jest src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger --reporters=default` passes 20 suites / 769 tests here, and the DB lane passes 5/5. As written, a red gate would have 'failed' for a CLI error rather than on the bug's own wrong value (L-060/L-063 intent defeated). Same defect at build-plan.md:433, :544, :557 and pipeline-args.json:30, :43.",
+      "fixHint": "Put the test paths before the flag (`npx jest <paths> --reporters=default -t \"...\"`) or separate them with `--`; keep --reporters=default so the campaign report is not clobbered.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+      "line": 128,
+      "severity": "minor",
+      "summary": "The plan's red-gate and final jest commands place the spec path after --reporters=default, so jest parses the path as a reporter module and aborts before running any test.",
+      "detail": "Running the exact line-128 command from apps/api (`npx jest --reporters=default src/orders/orders.service.spec.ts -t \"REG-B134|REG-B135|REG-B214\"`) produces `Error: Could not resolve a module for a custom reporter. Module name: src/orders/orders.service.spec.ts` and executes zero tests — jest's --reporters is an array option and greedily swallows the following positional argument. The same malformed shape appears at build-plan.md line 433 (the final verification command) and in the embedded pipeline-args at lines 544 and 557 (redGate.commands and verifyCommands.final), and it is the reason the preflight manifest lists that command as 'already broken on the untouched tree'. Moving the flag after the path (`npx jest src/orders/orders.service.spec.ts --reporters=default -t \"...\"`) runs the suite: 274/274 in this worktree. As written, the documented red gate and the documented final gate can never produce evidence for anyone who re-runs them.",
+      "fixHint": "Put the path(s) first and the flag last in all four places: `cd apps/api && npx jest src/orders/orders.service.spec.ts -t \"REG-B134|REG-B135|REG-B214\" --reporters=default` and `cd apps/api && npx jest src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger --reporters=default`. L-063's reporter pin is preserved.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    },
+    {
+      "file": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+      "line": 128,
+      "severity": "minor",
+      "summary": "The red-gate and final jest commands put --reporters=default before the spec path, so jest parses the path as a reporter module and dies with a config error instead of running the tests.",
+      "detail": "`cd apps/api && npx jest --reporters=default src/orders/orders.service.spec.ts -t \"REG-B134|REG-B135|REG-B214\"` (build-plan.md:128, repeated at :433 and in pipeline-args.json redGate.commands[0] / verifyCommands.final[0]) fails before collecting anything: jest's `reporters` option is array-typed, so the following positional is swallowed into it. Reproduced in this session verbatim: `Error: Could not resolve a module for a custom reporter. Module name: src/orders/orders.service.spec.ts`. That is almost certainly why the context manifest lists this exact command as 'ALREADY BROKEN on the untouched tree' — which means the run's own regression gate was excluded from the verdict for a config reason, not a test reason. With the argument order corrected (`npx jest src/orders/orders.service.spec.ts --reporters=default -t ...`) the suite runs clean here: 19 passed for -t 'approveChangeRequestAtStop' (incl. T1-T7, P4) and 9 passed for -t 'deleteOrder' (incl. T8, P1-P3), 0 failures, no existing test broken by the new in-tx order.findUnique call.",
+      "fixHint": "Put the path before the flag (or use `--reporters default` with an explicit `--`) in build-plan.md lines 128 and 433, and in pipeline-args.json redGate.commands[0] and verifyCommands.final[0]. Re-classify the command as runnable so the REG tests are back inside the gate.",
+      "fixComplexity": "mechanical",
+      "phase": "Gate & Review"
+    }
+  ],
+  "confirmedByPhase": {
+    "Baseline": 3,
+    "Author tests": 0,
+    "Red gate": 0,
+    "Implement": 0,
+    "Gate & Review": 18,
+    "Verify": 0,
+    "UI verify": 0,
+    "Mutation probe": 0,
+    "Fix": 0,
+    "Final pass": 0
+  },
+  "phaseReport": [
+    {
+      "phase": "Baseline",
+      "ran": true,
+      "agents": 4,
+      "rawFindings": 3,
+      "tokens": 66015,
+      "model": "claude-haiku-4-5 (gate/grounding/manifest) + claude-sonnet-5 (harness check)",
+      "effort": "low / low harness check",
+      "estUsd": 0.33,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Author tests",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 69874,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.7,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Red gate",
+      "ran": true,
+      "agents": 2,
+      "rawFindings": 0,
+      "tokens": 121118,
+      "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+      "effort": "low run / high audit / high remediation",
+      "estUsd": 3.03,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Implement",
+      "ran": true,
+      "agents": 3,
+      "rawFindings": 0,
+      "tokens": 50058,
+      "model": "claude-sonnet-5",
+      "effort": "medium (a package's own effort wins)",
+      "estUsd": 0.5,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Gate & Review",
+      "ran": true,
+      "agents": 8,
+      "rawFindings": 20,
+      "tokens": 319153,
+      "model": "claude-haiku-4-5 (gate/regate) + claude-opus-5 (build-fix, lenses) + claude-sonnet-5 (radius pack)",
+      "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses medium / low radius pack",
+      "estUsd": 7.98,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Verify",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 0,
+      "tokens": 86386,
+      "model": "claude-sonnet-5 (location check) + claude-opus-5 (refuters, per file) + claude-fable-5-1 (split-vote tie-break)",
+      "effort": "location check low / refuters medium (high on HIGH-risk findings) / tie-break high",
+      "estUsd": 2.16,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "UI verify",
+      "ran": false,
+      "agents": 0,
+      "rawFindings": 0,
+      "tokens": 0,
+      "model": "claude-sonnet-5 (driver) + claude-opus-5 (judge)",
+      "effort": "medium driver / high judge",
+      "estUsd": 0,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Mutation probe",
+      "ran": true,
+      "agents": 5,
+      "rawFindings": 0,
+      "tokens": 22312,
+      "model": "claude-haiku-4-5 (checksums) + claude-opus-5 (probes)",
+      "effort": "low checksums / medium probes",
+      "estUsd": 0.56,
+      "overlappedWith": null,
+      "note": ""
+    },
+    {
+      "phase": "Fix",
+      "ran": true,
+      "agents": 14,
+      "rawFindings": 0,
+      "tokens": 185657,
+      "model": "claude-sonnet-5 (brief) + claude-fable-5-1 (plans every fix in the round; claude-opus-5 if it declines) + claude-sonnet-5 (mechanical executors) + claude-sonnet-5 (designed LOW-risk executors) + claude-opus-5 (HIGH-risk and broad-key executors, recheck) + claude-haiku-4-5 (regate)",
+      "effort": "low brief / high plan (xhigh on the fallback planner) / low mechanical / medium designed LOW-risk / high HIGH-risk and broad keys / high re-check / low gates",
+      "estUsd": 4.64,
+      "overlappedWith": null,
+      "note": "Fable-planned fixes (Sonnet brief -> Fable plan -> executors implementing the design)"
+    },
+    {
+      "phase": "Final pass",
+      "ran": true,
+      "agents": 6,
+      "rawFindings": 7,
+      "tokens": 104729,
+      "model": "claude-sonnet-5 (diff digest) + claude-opus-5 (adversarial read → candidates) + claude-fable-5-1 (decides; claude-opus-5 if it declines)",
+      "effort": "low digest / xhigh read / high decide (xhigh on the fallback decider)",
+      "estUsd": 5.24,
+      "overlappedWith": null,
+      "note": "includes the final full gate (Haiku), which ran beside the final pass"
+    }
+  ],
+  "fixRounds": 2,
+  "fixReports": [
+    {
+      "round": 1,
+      "plan": {
+        "round": 1,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 21,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 7,
+          "sonnet": 3,
+          "opus": 11
+        },
+        "waves": [
+          [3, 10, 13, 4, 11, 15, 5, 9, 12, 14, 16, 17, 18, 19, 20, 2],
+          [6, 7, 8, 0]
+        ],
+        "note": "Round 1 fixes three real code defects in apps/api/src/orders/orders.service.ts, all routed to Opus: (1) the third B214 door — forceConsolidateCustomer's loser-draft delete gets the plan-pre-authorized `assertNoUnspentSourcedCredits(tx, [loserDraft.id])` one-liner (#3/#10/#13); (2) deleteOrder keeps its first-statement guard (so T8's no-write pin holds) and re-asserts it after releaseOrderCreditsInTx/releaseWalletPaymentsInTx and before the invoice-delete loop, closing the revive-then-orphan path (#9/#12/#14/#16, blocker); (3) approveChangeRequestAtStop's ADD_ITEM branch resolves its merge target from the locked heldItems row and re-reads the line through tx (#4/#11/#15), and the tx takes a RouteRunStop FOR UPDATE before the Order lock, matching completeWithPayment's lock order (#5). Each carries a P-titled unit pin (no new REG tokens, so the test plan is untouched). Wave 2 strengthens the spec only: T3 gets a rejection + in-callback oracle (#7), T8 gets the two release-not-called assertions (#8), and the CANCELLED-line half of the B135 guard gets a sibling test to T7 (#6). Plan files: the jest commands are reordered so paths precede `--reporters=default` in build-plan.md and pipeline-args.json (#17-20, #0 verifies); #2 fixes the stale line range in bug-test-plan.md. #1 is disputed — the DB-lane command is correct and failed on the baseline only because invoice-delete-credit.db.spec.ts is a deliverable of this run. Coordinator action: the live run's verifyCommands cannot be changed by a file edit, so re-run the corrected final and red-gate jest commands manually and record the results before close-out."
+      },
+      "reports": [
+        {
+          "target": "(artifact)",
+          "route": "mechanical",
+          "fixed": ["jest.mock shims start at line 44, not line 49 as claimed"],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [".claude/pipeline/2026-09-10-train4-run-a/bug-test-plan.md"]
+        },
+        {
+          "target": "apps/api/src/orders/orders.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] forceConsolidateCustomer hard-deletes the loser order's DRAFT mirror invoice with no sourced-credit guard, and a DRAFT invoice IS an allowed credit-note source - so the same orphaning survives, and it bypasses the new deleteOrder refusal entirely.",
+            "[#4] forceConsolidateCustomer's loser-draft invoice delete is a confirmed third B214 door and is left unguarded.",
+            "[#7] forceConsolidateCustomer still hard-deletes a loser order's DRAFT mirror invoice with no sourced-credit guard, and a DRAFT invoice is an allowed credit-note source, so that third door can orphan an open credit note.",
+            "[#1] The ADD_ITEM branch still resolves its merge target from the pre-tx order.lineItems snapshot, so a line cancelled between the snapshot and the lock is silently updated while the totals ignore it - goods added at the door and never billed.",
+            "[#5] The ADD_ITEM branch of approveChangeRequestAtStop still increments quantity from the pre-tx snapshot, so a concurrent order edit is silently reverted - the same stale-snapshot class B135 fixes one branch above.",
+            "[#9] B135's 'judge the line on the locked in-tx row' fix covers only the CHANGE_QTY/REMOVE_ITEM branch; the ADD_ITEM merge-into-existing-line branch still picks and bases its arithmetic on the pre-tx order.lineItems snapshot.",
+            "[#2] The B135 in-tx re-read closes only the committed-before-the-lock race: the transaction locks the Order row but not the RouteRunStop, so a completeWithPayment that is mid-transaction is still invisible and the merge lands into a stop that commits COMPLETED moments later.",
+            "[#3] In deleteOrder the new guard runs before the credit-release steps that re-open the very notes it just judged closed, so the B214 orphan still ships for wallet-settled orders.",
+            "[#6] deleteOrder's INVOICE_HAS_UNSPENT_CREDIT guard is evaluated before the wallet release that re-opens the very notes it just cleared, so a spent sourced credit note is restored to spendable and then orphaned by the same transaction.",
+            "[#8] In deleteOrder the new B214 guard runs BEFORE releaseOrderCreditsInTx/releaseWalletPaymentsInTx, so a sourced credit note that those calls revive (un-spend, un-expire, un-VOID) is still hard-orphaned by the same transaction.",
+            "[#10] deleteOrder's unspent-credit guard runs BEFORE the wallet releases that re-open the very notes it just classified as closed, so a spent-or-expired credit note sourced by one of the order's own invoices is restored to a full balance and then orphaned by the invoice delete."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.spec.ts"
+          ]
+        },
+        {
+          "target": "apps/api/src/orders/orders.service.spec.ts",
+          "route": "opus",
+          "fixed": [
+            "The new cancelled-line half of the B135 line guard ships untested while acceptance criterion 4 records it as proven by T7. — Added test 'P10: a line cancelled between the snapshot and the lock is refused on the locked row' immediately after T7 in the same describe: same CHANGE_QTY fixture, snapshot line PENDING, held row (orderItem.findMany) { id: 'li-1', productId: 'prod-1', qty: 24, unitPrice: 24, subtotal: 48, status: 'CANCELLED', deliveredQty: 0 }; asserts the rejection is a BadRequestException whose message contains 'already cancelled'. No REG token (pin-titled P10 rather than P8, because a concurrent agent had already taken P8/P9 in this describe). T7 and the test plan untouched. Verified: green as written; with the held status flipped to PENDING it fails ('Received constructor: Object'), so it is driven by the new `held?.status === \"CANCELLED\"` clause.",
+            "T3 (\"when the merge fails (lost claim), the un-send went through the rolled-back tx\") asserts nothing about the failure or the rollback — its single expectation is byte-identical to T1's, and it swallows the rejection with no oracle. — T3 rewritten: removed the `.catch((e) => e)`; it now (a) `await expect(...).rejects.toMatchObject({ response: { code: \"CHANGE_REQUEST_ALREADY_RESOLVED\" } })` (the code the in-tx lost-claim throw site at orders.service.ts:4994 uses), (b) asserts the captured `txError` is that same rejection, proving the throw escaped from INSIDE the tx callback, (c) keeps `revertLinkedInvoicesForOrderEdit.mock.calls[0]?.[1]).toBe(seenTx)`, and (d) asserts `revertLinkedInvoicesForOrderEdit.mock.invocationCallOrder[0] < prisma.changeRequest.updateMany.mock.invocationCallOrder[0]` (the tx's changeRequest delegate is the same mock object, since createMockPrisma's forTenant() returns the spread models). No DB-lane test added; T1/T2 unchanged. DEVIATION from the design, forced by Jest: the error capture is an optional `onError` parameter on the existing `captureMergeTx` helper (whose once-implementation now wraps `fn(seenTx)` in try/catch) rather than a second `prisma.tenantTransaction.mockImplementationOnce` in the test — a second once-implementation queues BEHIND captureMergeTx's and would never see the first tx, so txError would always be undefined. Same seenTx, same oracles; the helper's doc comment records why.",
+            "T8 does not pin that the deleteOrder guard runs before any write — moving `assertNoUnspentSourcedCredits` below the wallet/credit release calls would leave T8 green. — Added to T8, after the existing two assertions: `expect(creditNotesService.releaseOrderCreditsInTx).not.toHaveBeenCalled();` and `expect((service as any).invoicesService.releaseWalletPaymentsInTx).not.toHaveBeenCalled();`. The second uses the suite's existing `(service as any).invoicesService` handle (the spec's typed `invoicesService` local declares only three methods, so `invoicesService.releaseWalletPaymentsInTx` would not type-check; the `(service as any).invoicesService` pattern is already used at spec lines 2258/2289). Nothing else in T8 changed. Verified with a temporary control test that deleteOrder's happy path does call both mocks, so these assertions have teeth."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.spec.ts"
+          ]
+        },
+        {
+          "target": ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+          "route": "mechanical",
+          "fixed": [
+            "The red-gate and final-verify jest commands are unrunnable as written — `--reporters=default` swallows the following positional test paths, so jest aborts before running a single test.",
+            "Duplicate of #0 (same reorder in build-plan.md 128, 433, 544, 557 and pipeline-args.json 30, 43).",
+            "Duplicate of #0 (same reorder).",
+            "Duplicate of #0 (same reorder)."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            ".claude/pipeline/2026-09-10-train4-run-a/build-plan.md",
+            ".claude/pipeline/2026-09-10-train4-run-a/pipeline-args.json"
+          ]
+        },
+        {
+          "target": "(gate-command)",
+          "route": "mechanical",
+          "fixed": [],
+          "skipped": [],
+          "filesChanged": [],
+          "disputed": [
+            {
+              "index": 0,
+              "summary": "`cd apps/api && npx jest --reporters=default src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger` already fails on the unmodified baseline tree — the command is broken, not the code",
+              "reason": "Both plan files already order the paths BEFORE --reporters=default: pipeline-args.json verifyCommands.final[0] = \"cd apps/api && npx jest src/orders/ src/invoices/invoices src/credit-notes/credit-notes.wallet-integrity src/customers/customers.purge-ledger --reporters=default\" and build-plan.md line 433 has the identical ordering. Per Fable's design (\"If #17 already applied both, this is a no-op\"), the plan-file check this finding calls for is already satisfied — there is nothing to edit."
+            },
+            {
+              "index": 1,
+              "summary": "`node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-delete-credit\"` already fails on the unmodified baseline tree — the command is broken, not the code",
+              "reason": "build-plan.md line 116 explicitly documents `apps/api/src/invoices/invoice-delete-credit.db.spec.ts` as \"(NEW, created by this change)\" — it did not exist on the baseline tree, hence the 0 testRegex matches. `git status --short` now shows it present and untracked (`?? apps/api/src/invoices/invoice-delete-credit.db.spec.ts`), so the command's prerequisite is satisfied by the normal build sequence, not by any plan or code repair."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "plan": {
+        "round": 2,
+        "completed": true,
+        "skipped": null,
+        "briefCompleted": true,
+        "model": "claude-fable-5-1",
+        "fallback": false,
+        "actions": {
+          "fix": 1,
+          "dispute": 0,
+          "defer": 0
+        },
+        "routes": {
+          "mechanical": 0,
+          "sonnet": 0,
+          "opus": 1
+        },
+        "waves": [[0]],
+        "note": "Round 2 has a single finding: the B135 stop-first FOR UPDATE inverted this tx's lock order against reopenStop and the customers.service merge/purge transactions (order->stop), creating a new 40P01 deadlock path, while a plain order->stop blocking lock would instead deadlock against completeWithPayment/completeStop (stop->order). The plan keeps the B135 guarantee without any blocking wait on the stop: lock the Order first (unchanged), then take the stop with `FOR NO KEY UPDATE NOWAIT` and map Postgres 55P03 to a 409 CHANGE_WINDOW_CLOSED/STOP_BUSY, leaving the live re-read, the three window refusals, the in-tx invoice un-send (B134) and all merge writes untouched; the comment is corrected to the real rule. REG-B135 gains lock-order and NOWAIT-refusal pins (no writes on the busy path, non-55P03 errors rethrown). Executed by Opus on the HIGH-risk orders.service.ts in one wave."
+      },
+      "reports": [
+        {
+          "target": "apps/api/src/orders/orders.service.ts",
+          "route": "opus",
+          "fixed": [
+            "[#0] Inverted lock order in approveChangeRequestAtStop: the Order row is now locked FIRST (unchanged `SELECT id FROM \"Order\" ... FOR UPDATE`) and the stop row SECOND and non-blocking (`SELECT id FROM \"RouteRunStop\" ... FOR NO KEY UPDATE NOWAIT`), wrapped in try/catch that converts Postgres 55P03 (detected via `meta.code === \"55P03\"` OR /55P03|could not obtain lock/i on the message) into `ConflictException({ code: \"CHANGE_WINDOW_CLOSED\", reason: \"STOP_BUSY\" })` and rethrows anything else. The B135 comment block was replaced: it now states the real repo-wide rule (order->stop, matching reopenStop and the customers.service merge/purge paths) and why NOWAIT removes the only way this tx could close a cycle with the stop->order writers, instead of the previous 'can never deadlock' claim scoped to completeWithPayment. Everything after the locks (the `live` re-read and its select shape, the three window refusals, revertLinkedInvoicesForOrderEdit(order.id, tx), heldItems, claim, stock/credit, deliveryMutation.create) is byte-identical. routes.service.ts and customers.service.ts were not touched.",
+            "[#0] tests: in apps/api/src/orders/orders.service.spec.ts, pin P7 was retitled and rewritten to assert $executeRaw call[0] contains \"Order\", call[1] contains \"RouteRunStop\" AND \"FOR NO KEY UPDATE NOWAIT\", and both locks precede the in-tx `live` re-read; three new pins added: P11 (stop statement rejects with meta.code 55P03 -> 409 CHANGE_WINDOW_CLOSED/STOP_BUSY and revertLinkedInvoicesForOrderEdit, orderItem.update/create, changeRequest.updateMany, deliveryMutation.create, product.update all called zero times), P12 (rejection carrying only a `could not obtain lock` message -> same 409, no claim), P13 (a non-55P03 rejection is rethrown unchanged via rejects.toBe(err))."
+          ],
+          "skipped": [],
+          "disputed": [],
+          "filesChanged": [
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.ts",
+            "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F09/apps/api/src/orders/orders.service.spec.ts"
+          ]
+        }
+      ]
+    }
+  ],
+  "remainingFindings": [
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 4965,
+      "severity": "major",
+      "summary": "The new transient stop-lock failure is reported as `CHANGE_WINDOW_CLOSED`, a code both the web and mobile clients already treat as a terminal \"the run has ended\" verdict, so a retryable 55P03 tells the operator to decline the change request and aborts the driver's whole batch.",
+      "detail": "Failure path, end to end.\n\n1. `orders.service.ts:4959` adds `SELECT id FROM \"RouteRunStop\" ... FOR NO KEY UPDATE NOWAIT`. When a driver's `completeStop`/`completeWithPayment` transaction is mid-flight and already holds that stop row, Postgres raises 55P03 immediately. `orders.service.ts:4960-4966` catches it and throws `new ConflictException({ code: \"CHANGE_WINDOW_CLOSED\", reason: \"STOP_BUSY\" })` — note the body has a `code` and a `reason` and NO `message` key.\n\n2. This is a *transient* condition: the run is still IN_PROGRESS, the stop is still PENDING, and the same approval would succeed a second later. Every other producer of `CHANGE_WINDOW_CLOSED` in this method (`orders.service.ts:4977-4983`, `ORDER_STATUS` / `RUN_NOT_ACTIVE`, and the identical pre-tx guards at `orders.service.ts:4868-4873`) is *terminal*.\n\n3. No client reads `reason`. Grep over `apps/web`, `apps/mobile`, `packages` for `CHANGE_WINDOW_CLOSED|STOP_BUSY|RUN_NOT_ACTIVE` returns only code-level matches; `STOP_BUSY` appears nowhere outside `orders.service.ts`.\n\n4. Operator (web) — `apps/web/app/(dashboard)/orders/[id]/page.tsx:1828-1832`, the `onError` of the APPROVE_AT_STOP resolve mutation (`page.tsx:3072-3073` is the button):\n   `} else if (code === \"CHANGE_WINDOW_CLOSED\") { toast({ title: \"Delivery run no longer active\", description: \"The run has ended — this request can only be declined.\", ... }) }`\n   The operator is told, falsely, that the run has ended and that the only remaining action is DECLINE — destroying a legitimate at-door change that a retry would have merged.\n\n5. Driver (mobile) — `apps/mobile/lib/api/change-requests.ts:66` self-resolves with `action: \"APPROVE_AT_STOP\"`; the error lands in `apps/mobile/app/(driver)/route/stop/[stopId]/adjust.tsx:289-303`, whose final branch is `showToast(e?.response?.data?.message ?? e?.message ?? \"Couldn't save that change.\"); return false;`. Because the new exception body carries no `message`, the driver sees axios's raw `\"Request failed with status code 409\"`, and `return false` makes `processDiff` (`adjust.tsx:308-318`) stop the entire remaining diff at that index (\"never a partial silent failure\").\n\n6. `apps/web/app/providers.tsx:33` also lists `CHANGE_WINDOW_CLOSED` in `HANDLED_CODES`, so the generic error toast is suppressed on the assumption that the initiating component renders a guided flow — which, for STOP_BUSY, renders the wrong flow.\n\nConcrete scenario: driver taps Complete on stop-1 (long-running: photo upload + PDF), operator in the office approves a customer's at-door change request in the same second → 409 → office toast \"The run has ended — this request can only be declined\" → operator declines a change the customer will be billed differently for.",
+      "fixHint": "Give the retryable case its own code (e.g. `STOP_BUSY` as the top-level `code`, not a `reason` inside `CHANGE_WINDOW_CLOSED`) and include a user-facing `message`; then add a branch in `apps/web/app/(dashboard)/orders/[id]/page.tsx` (~1828) and in `apps/mobile/.../adjust.tsx` `submitEntry` (~299) that says \"the driver is completing this stop right now — try again in a moment\" and does not stop the driver's batch. Alternatively keep the code and have both clients branch on `reason === \"STOP_BUSY\"`.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The new NOWAIT lock on RouteRunStop turns a transient 55P03 (any concurrent stop write, not only a completion) into CHANGE_WINDOW_CLOSED, a code the web and mobile clients already treat as terminal, so the operator is told to decline a request that would succeed on retry and the driver's batch aborts. The reason:STOP_BUSY discriminator is dead because no client reads it; this needs its own retryable code.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+      "line": 37,
+      "severity": "minor",
+      "summary": "`assertNoUnspentSourcedCredits` reads the sourced credit notes with a plain `findMany` and takes no row lock on the invoices or the notes, so under READ COMMITTED a credit note issued and committed between the guard and `tx.invoice.delete` is orphaned exactly as B214 describes.",
+      "detail": "The guard (`sourced-credit-guard.ts:37-72`) issues `tx.creditNote.findMany({ where: { invoiceId: { in: invoiceIds }, status: { not: VOID } }, select: {...} })` and nothing else. No `SELECT ... FOR UPDATE`/`FOR SHARE` is taken on the `Invoice` rows and no lock is taken on the `CreditNote` rows, at any of the three call sites (`invoices.service.ts:5341`, `orders.service.ts:1436`, `orders.service.ts:5642`/`5653`).\n\nThe writer side is equally unlocked: `credit-notes.service.ts:113-150` reads the invoice with `db.invoice.findFirst` and then creates the note with `invoiceId: dto.invoiceId`. `CREDIT_SOURCE_EXCLUDED` there is VOID/WRITTEN_OFF only — DRAFT and SENT are explicitly allowed sources (`credit-notes.service.ts:132-138`).\n\nInterleaving that still orphans an open note (`deleteInvoice`, the primary door):\n- tx A (`InvoicesService.deleteInvoice`, `invoices.service.ts:5324`): reads the invoice, sees `payments.length === 0`, runs `assertNoUnspentSourcedCredits(tx, [id])` at 5341 → zero sourced notes → passes.\n- tx B (`CreditNotesService.create`, another operator issuing a credit against that same invoice): reads the invoice (still visible under READ COMMITTED), inserts `CreditNote { invoiceId: id, amount: 50, amountUsed: 0, status: ISSUED }`, COMMITS. The insert holds only a `FOR KEY SHARE` on the Invoice row, which nothing in tx A conflicts with yet.\n- tx A continues through `adjustInvoicedQtyForInvoice` (5347), `reverseInvoiceEntries` (5351), the unlink `tx.creditNote.updateMany({ where: { invoiceId: id }, data: { invoiceId: null } })` (5356-5359 — its snapshot may or may not include B's row depending on statement start time), and finally `tx.invoice.delete({ where: { id } })` at 5370. That DELETE waits for B's key-share lock, then proceeds; the FK on `CreditNote.invoiceId` is an optional Prisma relation (`finance.prisma`, `invoice Invoice? @relation(fields: [invoiceId], references: [id])` → default `SetNull`, confirmed by the plan's citation of `0_init/migration.sql:3783`).\n- Result: an ISSUED, fully unspent, spendable credit note with `invoiceId = NULL` — the exact provenance-less wallet money B214 exists to prevent, produced through the new guard.\n\nThe same interleaving applies to `orders.service.ts:5642/5653` (both guards precede a long run of statements before `tx.invoice.delete` at 5673) and to `orders.service.ts:1436` (guard, then `invoiceItem.deleteMany`, then `invoice.delete` at 1438).\n\nThis is not a hypothetical asymmetry: the B135 half of this very diff adds `tx.$executeRaw`SELECT id FROM \"Order\" ... FOR UPDATE`` (orders.service.ts, unchanged context above 4959) and the new NOWAIT stop lock precisely because a guard evaluated on unlocked rows is worthless. The B214 half never took the equivalent lock.",
+      "fixHint": "At the top of `assertNoUnspentSourcedCredits`, lock the invoice rows through the same tx before the read — e.g. `await tx.$executeRaw`SELECT id FROM \"Invoice\" WHERE id = ANY(${invoiceIds}) FOR UPDATE``. `FOR UPDATE` conflicts with the `FOR KEY SHARE` a concurrent CreditNote insert must take on the referenced Invoice, so the writer serialises behind (or ahead of) the delete and the guard's read becomes authoritative. Add a DB-lane test in `invoice-delete-credit.db.spec.ts` that issues the note from a second connection after the guard would have run.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "assertNoUnspentSourcedCredits is a plain findMany with no FOR UPDATE on the invoice rows, so under READ COMMITTED a credit note issued and committed between the guard and tx.invoice.delete is orphaned exactly as B214 describes; a FOR UPDATE on the invoice rows would make the writer's FK KEY SHARE block until the delete commits. The window is narrow (a note must be issued against an invoice mid-delete), hence minor rather than major.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5296,
+      "severity": "major",
+      "summary": "The at-door merge recomputes `order.total` with `shippingFee` taken from the pre-transaction snapshot while re-reading everything else under the new lock, so a staff shipping-fee edit committed in between is silently dropped from the order total and from the audit revision.",
+      "detail": "The B135 fix's stated premise (orders.service.ts:4968-4972) is: \"the window guards above ran on a pre-tx snapshot. Re-assert them on the row we now hold locked\". The new in-tx re-read at `orders.service.ts:4973-4980` selects exactly four things — `tenantId`, `status`, `routeRun.status`, `routeRunStop.status`. Every money input is re-read from the tx as well: `activeItems` at 5281-5283 (`tx.orderItem.findMany`), `categoryTax` at 5290 (`recomputeLineCategoryTaxes(tx, activeItems)`).\n\nOne money input is NOT: `orders.service.ts:5294-5297`\n  `const total = roundMoney(subtotal + tax + categoryTax + Number((order as any).shippingFee ?? 0));`\nwhere `order` is the pre-tx snapshot fetched at `orders.service.ts:4858` — before the `SELECT ... FOR UPDATE` on the Order row.\n\nThe concurrent writer is the very path this lock exists to serialise against — `updateOrderItems`, `orders.service.ts:4220-4224`:\n  `const isStaffFeeEdit = ... dto.shippingFee !== undefined; const shippingFee = isStaffFeeEdit ? roundMoney(Math.max(0, dto.shippingFee!)) : ...` and it persists that column at `orders.service.ts:4273` (`...(isStaffFeeEdit ? { shippingFee } : {})`). `shippingFee` is a staff-settable DTO field (`apps/api/src/orders/dto/update-order-items.dto.ts:126`).\n\nFailure scenario: order ORD-1 is OUT_FOR_DELIVERY with `shippingFee = 0`. (a) The driver's APPROVE_AT_STOP begins; the pre-tx snapshot at 4858 reads `shippingFee: 0`. (b) The office PATCHes the order adding a $25 shipping fee; `updateOrderItems` takes the Order lock, writes `shippingFee: 25` and a matching `total`, commits. (c) The at-door tx now acquires the lock, re-reads `live` (status/run/stop only — 4973), recomputes `subtotal`/`tax`/`categoryTax` correctly from the tx, and writes at `orders.service.ts:5299-5307` `data: { subtotal, tax, total, hasRegulated }` with `total` computed from the stale `shippingFee: 0`. The `shippingFee` column keeps 25 (it is not in the update).\n\nResulting state: `order.total !== subtotal + tax + categoryTax + order.shippingFee` — the $25 is silently un-billed. It then propagates: `orders.service.ts:5362` writes the immutable revision snapshot with `shippingFee: Number((order as any).shippingFee ?? 0)` = 0 alongside the understated `total` (`appendOrderRevision`, `orders.service.ts:4390-4407`), and `reconcileOrderDraftInvoice(order.id, { basis: \"order\" })` at 5359 re-syncs the mirror invoice from that order state.\n\nNo test covers it: `baseOrder` (orders.service.spec.ts:6213-6227) has no `shippingFee` key at all, so `Number(undefined ?? 0)` is 0 in every existing and new at-door test.\n\nHonest scoping: the stale read predates this diff. What the diff does is introduce the in-tx re-read whose whole purpose is to stop judging the locked row from the snapshot, and then omit the one field on that row that money is computed from.",
+      "fixHint": "Add `shippingFee: true` to the `live` select at orders.service.ts:4973-4980 and use `Number(live.shippingFee ?? 0)` in the total at 5296 and in the revision snapshot at 5362. Add a spec case where `baseOrder` carries `shippingFee: 25` and the in-tx re-read returns a different value from the snapshot.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The total at 5294-5297 still takes shippingFee from the pre-lock snapshot while every other money input is re-read in-tx, so a shipping-fee edit committed between the snapshot and the lock is silently dropped from the order total and revision — the same stale-snapshot class as the confirmed ADD_ITEM finding, and a money write, so it carries the same severity and should be fixed in the same in-tx re-read.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5653,
+      "severity": "minor",
+      "summary": "The second B214 guard in `deleteOrder` reports a credit balance that exists only inside the transaction it is aborting, so the operator is refused with a message insisting a note has unspent money that the UI shows as fully applied — and the shared message tells them to \"void the invoice\" without saying which of the order's invoices.",
+      "detail": "`orders.service.ts:5653-5656` re-runs `assertNoUnspentSourcedCredits` AFTER `releaseOrderCreditsInTx` (5646) and the per-invoice `releaseWalletPaymentsInTx` loop (5647-5649). Those calls genuinely revive notes: `CreditNotesService.restoreCreditFromPaymentInTx` (`credit-notes.service.ts:788-828`) decrements `amountUsed`, flips APPLIED→ISSUED, and — per the comment at 806-813 — clears a past `expiresAt` and an \"unexpected VOID\".\n\nSo for an order whose invoice X sourced a credit note that was spent on invoice Y of the same order (a wallet-settled order), the sequence is: guard 1 at 5642 sees `amountUsed == amount` → closed → passes; the releases un-spend it; guard 2 at 5653 sees it open → 409.\n\nTwo consequences the change ships untested and un-messaged:\n\n1. The message is built from the revived, in-transaction row (`sourced-credit-guard.ts:60-71`): \"This invoice issued credit CN-0001 with 50.00 still unspent. Void the invoice instead — voiding retires the unspent credit and keeps the audit trail.\" The transaction then rolls back, so when the operator opens CN-0001 it reads APPLIED with 0.00 remaining. The 409 describes a state that does not exist outside the aborted tx, and it names no invoice number, so on a multi-invoice order the operator cannot tell whether to void X or Y (voiding Y, the one the credit was spent on, does nothing for the guard).\n\n2. No test exercises this against a real release. `P5` in `orders.service.spec.ts` (the two-`mockResolvedValueOnce` test) fakes the revival by returning a different `creditNote.findMany` result; `creditNotesService.releaseOrderCreditsInTx` and `invoicesService.releaseWalletPaymentsInTx` are inert jest.fns, so `P1` (\"still deletes when the sourced credit note is fully spent\") passes only because nothing revives the note. The DB lane (`invoice-delete-credit.db.spec.ts`) covers `deleteInvoice`, which cannot reach this path at all — `invoices.service.ts:5331-5335` refuses any invoice with `payments.length > 0`, and a credit application is an `InvoicePayment`. So the one door where a release can revive a sourced note has no real-Postgres coverage of that revival.",
+      "fixHint": "Give `assertNoUnspentSourcedCredits` an optional context so the second call can say which invoice sourced the note and that the balance is one this delete would restore (e.g. \"deleting this order would return 50.00 of credit CN-0001 to the wallet with nothing left pointing at it — void invoice INV-X instead\"), and include `invoiceNumber` in the `creditNotes[]` payload. Then add a `.db.spec.ts` case for `OrdersService.deleteOrder` that seeds invoice X sourcing a note spent on invoice Y of the same order and asserts the 409 plus that the note still reads APPLIED after the rollback.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The post-release guard refuses correctly (the safe outcome), but the 409 message is built from the revived in-tx note row, so it reports an unspent balance the UI shows as fully applied and names no invoice to void; a messaging defect on a correct refusal, plus the path is untested.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/credit-notes/sourced-credit-guard.ts",
+      "line": 40,
+      "severity": "minor",
+      "summary": "The new B214 guard reads the sourced credit notes with an unlocked findMany inside READ COMMITTED transactions, so a concurrent void that re-opens a note between the guard and the invoice delete still orphans it.",
+      "detail": "`assertNoUnspentSourcedCredits` (sourced-credit-guard.ts:37) reads `tx.creditNote.findMany({ where: { invoiceId: { in: invoiceIds }, status: { not: VOID } } })` at line 40 with no `FOR UPDATE` and no re-check after. All three call sites open their transaction WITHOUT an isolation level, so they run at READ COMMITTED: `deleteInvoice` (invoices.service.ts:5324 opens the tx, guard at :5341, `creditNote.updateMany({invoiceId: null})` at :5354, `invoice.delete` at :5370), `deleteOrder` (orders.service.ts:5638 opens the tx, guards at :5642 and :5653, `invoice.delete` at :5673) and `forceConsolidateCustomer` (orders.service.ts:1436, `invoice.delete` at :1438). I confirmed by grep that the only `isolationLevel` uses in these two files are orders.service.ts:2417/2743/2805/4345 and invoices.service.ts:3694/3900/4182 — none of them is a B214 call site.\n\nThe repo already documents this exact race on these exact rows: `voidInvoice` (invoices.service.ts:4171-4182) is deliberately `{ isolationLevel: \"Serializable\", timeout: 15_000 }` with the comment \"the default READ COMMITTED left a window between the cap's findMany/update pair ... where a concurrent applyToInvoice/settleOrderCreditsInTx on a different invoice could raise a note's amountUsed\". The new guard is the mirror-image read/write pair and got none of that protection.\n\nFailure scenario (deleteInvoice, but deleteOrder's second guard has an even wider window — `ledger.reverseInvoiceEntries`, `invoicePayment.deleteMany`, `invoiceItem.deleteMany` and `removeInvoiceCommission` all await between :5653 and the delete at :5673): invoice A sourced credit note cn-1 (amount 50) which was fully spent on a different invoice B (amountUsed 50, status APPLIED). Operator 1 calls `deleteInvoice(A)`; the guard reads cn-1, computes remaining 0, passes, and holds no lock on the cn-1 row. Operator 2 concurrently voids invoice B: `voidInvoice` → `releaseWalletPaymentsInTx` → `releaseInvoiceCreditsInTx` → `restoreCreditFromPaymentInTx` sets cn-1.amountUsed back to 0 / status ISSUED, and commits. Operator 1's tx then runs `tx.creditNote.updateMany({ where: { invoiceId: A }, data: { invoiceId: null } })` — it blocks only until operator 2 commits, then unlinks cn-1 — and deletes A. Result: a fully spendable $50 credit note with `invoiceId: null` and no source document. That is precisely the B214 orphan this change exists to prevent, reproduced against the shipped fix. T9/T10 in invoice-delete-credit.db.spec.ts are single-threaded and cannot see it.",
+      "fixHint": "Either take the same posture as the sibling void door — open these three transactions with `{ isolationLevel: \"Serializable\" }` — or, inside `assertNoUnspentSourcedCredits`, lock the candidate rows first (`SELECT id FROM \"CreditNote\" WHERE \"invoiceId\" = ANY(...) FOR UPDATE`) before the findMany, so a concurrent restore serialises behind the guard rather than after it.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The guard is an unlocked findMany at READ COMMITTED with no Invoice row lock and no re-check before the `updateMany({invoiceId: null})` detach, so a credit note created or revived on the invoice between the guard and the detach is silently orphaned. Real TOCTOU, but the deterministic same-transaction variant (guard before wallet release) is already the open blocker; this concurrent window is narrow and closes with the same fix class (lock the invoice row / re-check after locking).",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/invoices/invoices.service.ts",
+      "line": 4331,
+      "severity": "major",
+      "summary": "The B134 in-tx un-send checks the invoice's payment count without taking the Invoice row lock that recordPayment takes first, so a payment committed in that window leaves a DRAFT invoice carrying a confirmed payment.",
+      "detail": "Focused-re-read item 2. First, the part that IS safe: a credit application is recorded as an `InvoicePayment` row with `method: PaymentMethod.CREDIT_NOTE` (credit-notes.service.ts:594-602, inside `applyCreditInTx`), so `revertLinkedInvoicesForOrderEdit`'s count at invoices.service.ts:4331 does see credit applications and throws BadRequestException at :4332-4336. A credit-settled SENT mirror is NOT flipped to DRAFT. That half of the decider's concern is refuted.\n\nWhat is not covered: the helper takes no row lock. At invoices.service.ts:4301 it reads the linked SENT/VIEWED/OVERDUE invoices, at :4331 it counts payments, and at :4339 it blindly writes `status: DRAFT, sentAt: null, pdfUrl: null`. `recordPayment` opens its own transaction with `await tx.$executeRaw\\`SELECT id FROM \"Invoice\" WHERE id = ${id} FOR UPDATE\\`` (invoices.service.ts:4721) — a lock the merge transaction never contends for. `tenantTransaction` (prisma.service.ts:48-63) passes options straight through and the at-door merge supplies only `{ timeout: 15_000 }` (orders.service.ts:5352), i.e. READ COMMITTED.\n\nFailure scenario: an order is out for delivery with SENT mirror invoice inv-1 and zero payments. A driver approves an at-door change request; `approveChangeRequestAtStop` locks the Order row (orders.service.ts:4941), locks the stop NOWAIT (:4956), re-reads `live` (:4974) and calls `revertLinkedInvoicesForOrderEdit(order.id, tx)` at :5000. Inside it, :4301 returns inv-1 and :4331 counts 0 payments. In that window the office records a $200 CASH payment on inv-1: `recordPayment` takes `Invoice FOR UPDATE` on inv-1 (free), inserts the InvoicePayment, updates inv-1 to PARTIAL and commits. The merge tx's write at :4339 then blocks only until that commit and overwrites the row: inv-1 is DRAFT, `sentAt: null`, `pdfUrl: null`, with a confirmed $200 payment attached. The post-commit `reconcileOrderDraftInvoice(order.id, { basis: \"order\" })` at orders.service.ts:5357 then rebuilds that DRAFT's lines and total on the merged basis, so the recorded cash now sits against a document whose amount moved under it — the exact outcome the helper's own contract (\"money must never silently detach from a sent document\", :4278-4280) and the B134 comment (\"Throws if it carries payments (money never detaches)\", orders.service.ts:4997-4999) promise to prevent.\n\nHonest scoping: the race predates this change (the call previously ran outside any transaction). What is new is that the fix moved the call inside the merge tx expressly for transactional integrity and stopped one statement short of the lock `recordPayment` already establishes as the house convention for this row — and the fix's own tests (T1-T3, P4) assert only the tx-plumbing, never the payment race.",
+      "fixHint": "Inside `revertLinkedInvoicesForOrderEdit`, when a `tx` is supplied, lock each candidate invoice before the payment count — `SELECT id FROM \"Invoice\" WHERE id = ANY(...) FOR UPDATE` — matching recordPayment's own first statement; then count, then flip. Without a tx keep today's behaviour.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "The credit-application half is refuted by the evidence (CREDIT_NOTE payments are InvoicePayment rows and are counted), but the payment-count check at :4331 and the blind DRAFT write at :4339 contend no lock, while recordPayment serialises on `SELECT ... FOR UPDATE` on Invoice. A payment committed in that window yields a DRAFT invoice with sentAt null carrying a confirmed payment; B134's whole point was closing the un-send race, so a lock gap in the helper is an incomplete fix. Take the same Invoice FOR UPDATE inside the helper before counting.",
+      "unadjudicated": false
+    },
+    {
+      "file": "apps/api/src/orders/orders.service.ts",
+      "line": 5086,
+      "severity": "major",
+      "summary": "The CHANGE_QTY/REMOVE_ITEM branch moves only its two guards onto the locked in-tx row and still computes every priced field from the pre-tx snapshot, while the ADD_ITEM branch in the same fix re-reads the authoritative row.",
+      "detail": "After the fix rounds, the two halves of `approveChangeRequestAtStop` disagree about what the B135 lock is for. ADD_ITEM (orders.service.ts:5150-5158) picks its target from `heldItems` and then re-reads the whole row through the tx — `const existing = heldMatch ? await tx.orderItem.findUnique({ where: { id: heldMatch.id } }) : null` — and derives `unitsPerBox` (:5162), `boxes` (:5163), `qty` (:5164), `unitPrice` (:5169) and `promoFreeUnits` (:5173) from that authoritative row.\n\nCHANGE_QTY/REMOVE_ITEM (:5030-5136) does not. It looks up `held` only to evaluate two guards — `held?.status === \"CANCELLED\"` (:5036) and `Number((held ?? li).deliveredQty ?? 0) > 0` (:5039) — and then computes the money entirely from the pre-tx snapshot `li` (`order.lineItems.find(...)` at :5032): `upb = Number((li as any).unitsPerBox ?? 0)` (:5073), `wasBoxSplit = li.boxes != null` (:5081), `unitPrice = Number(li.unitPrice)` (:5086), `storedFreeUnits = Number((li as any).promoFreeUnits ?? 0)` (:5090), `oldUnits: li.boxes != null ? Number(li.boxes) : Number(li.qty)` (:5099), and `mutationRow.qty = split.qty - Number(li.qty)` (:5133). The fix cannot do otherwise as written: the `heldItems` select at :5004 was widened only by `id` and still omits `unitPrice`, `boxes`, `unitsPerBox` and `promoFreeUnits`.\n\nFailure scenario: line li-1 on a dispatched order is 2 boxes x 12 (unitPrice 24.00). An operator PATCHes the order through `updateOrderItems` and applies a price override to 18.00 and un-boxes the line (boxes -> null). That PATCH takes the same `SELECT ... FROM \"Order\" ... FOR UPDATE` the new comment at :4936-4940 names, so it serialises ahead of the at-door approval and commits. The approve tx then acquires the lock, re-reads `heldItems` (which carries no price or denomination), passes both guards (line is PENDING, deliveredQty 0), and at :5108-5127 writes `unitsPerBox: upb` from the stale snapshot, re-boxes the line via `normalizeBoxesPieces` because `wasBoxSplit` is the stale `true`, and writes `subtotal: computeLineSubtotal({ unitPrice: 24.00, ... })`. The operator's 18.00 override and un-boxing are silently reverted on the money column, the totals recompute at :5284-5290 reads those rows back, and `reconcileOrderDraftInvoice` at :5357 mirrors the wrong subtotal onto the customer's invoice. On REMOVE_ITEM the same staleness only corrupts provenance (`mutationRow.qty = -Number(li.qty)` at :5060 records the pre-edit quantity).\n\nThis is distinct from the ADD_ITEM stale-snapshot item already on the known list — that one was acted on and the ADD_ITEM branch now re-reads; this is the branch the fix DID touch, left half-converted, and no test in the new `approveChangeRequestAtStop: tx boundary (B134/B135)` block pins any priced field against a diverged locked row (T7 and P10 vary only `deliveredQty`/`status`).",
+      "fixHint": "Widen the `heldItems` select at :5004 to carry `unitPrice`, `boxes`, `pieces`, `unitsPerBox` and `promoFreeUnits` (or re-read the target with `tx.orderItem.findUnique` exactly as ADD_ITEM does at :5155-5158), and drive :5073-5133 off that row, keeping `li` only as the absent-row fallback.",
+      "fixComplexity": "judgment",
+      "phase": "Final pass",
+      "decision": "After the fix rounds ADD_ITEM re-reads the authoritative locked row for unitsPerBox/boxes/qty/unitPrice/promoFreeUnits, but CHANGE_QTY/REMOVE_ITEM uses the locked `held` only for the two guards and prices from the pre-tx snapshot `li` (:5073, :5081, unitPrice). A committed edit between snapshot and lock produces wrong money on the merged line; same stale-snapshot class the lens already tagged major on the other branch, and the fix is to derive every priced field from `held ?? li`.",
+      "unadjudicated": false
+    }
+  ],
+  "clean": false
+}

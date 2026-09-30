@@ -1,7 +1,14 @@
-import { IsEnum, IsOptional, IsString } from "class-validator";
+import { IsEnum, IsOptional, IsString, MaxLength } from "class-validator";
 import { OrderStatus } from "@prisma/client";
 
 export class ChangeOrderStatusDto {
   @IsEnum(OrderStatus) status: OrderStatus;
-  @IsOptional() @IsString() reason?: string;
+
+  /**
+   * Required by the service for any demotion (a one-step-back transition), which
+   * now includes staff-only DELIVERED → CONFIRMED/PARTIALLY_DELIVERED (the
+   * "Reopen Order" action) and PENDING → DRAFT — see `changeStatus`'s
+   * requires-reason set. Optional for forward transitions.
+   */
+  @IsOptional() @IsString() @MaxLength(1000) reason?: string;
 }

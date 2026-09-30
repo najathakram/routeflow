@@ -5,16 +5,20 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleProp,
   StyleSheet,
   Text,
   TextInput,
   TextInputProps,
   View,
+  ViewStyle,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
+import { confirm } from "../lib/confirm";
+import { shouldConfirmDiscard } from "../lib/discard-guard";
 
 interface FormSheetProps {
   title: string;
@@ -27,11 +31,16 @@ interface FormSheetProps {
   submitDisabled?: boolean;
   destructive?: boolean;
   /**
-   * BUG-XR2-5: when true, web users get a native "Leave site?" confirmation
-   * if they refresh / close the tab / navigate away with unsaved changes.
-   * Caller computes the boolean from its form-dirty state.
+   * BUG-XR2-5 / discard-guard (hunt-mobile-scan): when true, unsaved changes
+   * are protected two ways — (1) on web, a native "Leave site?" confirmation
+   * fires on tab close/reload (`beforeunload`, unchanged); (2) on every
+   * platform, tapping the header X or footer Cancel routes through the
+   * cross-platform `confirm()` helper ("Discard changes?") before actually
+   * cancelling, since `beforeunload` never fires for an in-app
+   * `router.back()`. Caller computes the boolean from its own form-dirty
+   * state (see `lib/discard-guard.ts`).
    */
-  warnIfDirty?: boolean;
+  confirmDiscardIfDirty?: boolean;
   /**
    * Claim the bottom safe-area inset. Off by default: operator sheets render
    * above the persistent bottom nav, which already owns that inset, and
@@ -74,16 +83,30 @@ export function FormSheet({
   submitting,
   submitDisabled,
   destructive,
-  warnIfDirty,
+  confirmDiscardIfDirty,
   bottomInset = false,
   children,
 }: FormSheetProps) {
   const router = useRouter();
-  useBeforeUnloadGuard(!!warnIfDirty);
+  useBeforeUnloadGuard(!!confirmDiscardIfDirty);
 
   const handleCancel = () => {
-    if (onCancel) onCancel();
-    else router.back();
+    const leave = () => {
+      if (onCancel) onCancel();
+      else router.back();
+    };
+    // Choke point (BUG-XR2-5 finding #1): gate on FormSheet's OWN `submitting`
+    // prop, not just the caller's dirty flag, so every caller — including one
+    // that forgot to factor submitting into its own predicate — never shows
+    // the destructive discard prompt while a submit is in flight.
+    if (shouldConfirmDiscard(!!confirmDiscardIfDirty, !!submitting)) {
+      confirm("Discard changes?", "Your unsaved changes will be lost.", leave, {
+        confirmText: "Discard",
+        destructive: true,
+      });
+      return;
+    }
+    leave();
   };
 
   const handleSubmit = async () => {
@@ -189,9 +212,23 @@ export function FormField({
   );
 }
 
-export function FormSection({ title, children }: { title?: string; children: React.ReactNode }) {
+export function FormSection({
+  title,
+  children,
+  style,
+}: {
+  title?: string;
+  children: React.ReactNode;
+  /**
+   * Escape hatch for a section that must out-rank the sections after it —
+   * e.g. one holding an overlay dropdown. RN orders only siblings of a shared
+   * parent by zIndex, so the lift has to sit on the section itself; a zIndex
+   * on the field inside it is invisible to the later section cards.
+   */
+  style?: StyleProp<ViewStyle>;
+}) {
   return (
-    <View style={styles.section}>
+    <View style={[styles.section, style]}>
       {title ? <Text style={styles.sectionTitle}>{title}</Text> : null}
       <View style={styles.sectionBody}>{children}</View>
     </View>

@@ -15,6 +15,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { ListDriversDto } from "./dto/list-drivers.dto";
@@ -25,8 +27,14 @@ import { PostLocationDto } from "./dto/post-location.dto";
 
 @ApiTags("drivers")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Owner decision 2026-08-28: /drivers is SHARED between the two delivery features — the driver
+// directory (and location pings) backs both recurring routes and ad-hoc trips, so it must keep
+// working for a delivery-only tenant. developer_mode stays accepted server-side ONLY so a dev
+// tenant can exercise the still-in-development mobile driver app end-to-end. Guard order
+// matters: AddonGuard reads req.user (set by JwtAuthGuard).
+@UseGuards(JwtAuthGuard, AddonGuard)
 @Controller("drivers")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class DriversController {
   constructor(private readonly driversService: DriversService) {}
 

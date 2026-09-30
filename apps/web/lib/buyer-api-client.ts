@@ -85,7 +85,16 @@ buyerApiClient.interceptors.response.use(
       localStorage.removeItem(BUYER_KEYS.accessToken);
       localStorage.removeItem(BUYER_KEYS.refreshToken);
       localStorage.removeItem(BUYER_KEYS.activeSeller);
-      if (typeof window !== "undefined") window.location.href = "/buyer/login";
+      // Only bounce to the buyer login when the viewer is actually IN the buyer
+      // portal. The same browser routinely holds a staff or super-admin session
+      // too (the same Google account can be both), each with its own token pair
+      // and its own 401 handling — so redirecting from a `/dashboard` or
+      // `/admin` page would evict a perfectly valid session because an
+      // unrelated buyer token went stale. The tokens are cleared either way, so
+      // the next buyer-portal visit goes through the normal login flow.
+      if (typeof window !== "undefined" && window.location.pathname.startsWith("/buyer")) {
+        window.location.href = "/buyer/login";
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

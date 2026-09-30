@@ -3,6 +3,9 @@
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
 import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
+import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { useAuth } from "@/lib/auth-context";
 import {
   useSubscription,
   useUsage,
@@ -11,6 +14,7 @@ import {
   useResumeSubscription,
   useEnableAddon,
   useDisableAddon,
+  useCreateCheckout,
   type MeterReading,
   type SubscriptionView,
   type AddonSkuDef,
@@ -81,6 +85,8 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
 
 export default function BillingSettingsPage() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "TENANT_ADMIN";
   const sub = useSubscription();
   const usage = useUsage();
   const plans = usePlans();
@@ -88,6 +94,8 @@ export default function BillingSettingsPage() {
   const resume = useResumeSubscription();
   const enable = useEnableAddon();
   const disable = useDisableAddon();
+  const checkout = useCreateCheckout();
+  const [endTrialOpen, setEndTrialOpen] = React.useState(false);
 
   const activeSkus = new Set(
     (sub.data?.addons ?? []).map((a) => a.sku).filter(Boolean) as string[],
@@ -139,6 +147,13 @@ export default function BillingSettingsPage() {
   const priceForCycle = s.cycle === "ANNUAL" ? s.annualPrice : s.monthlyPrice;
   // À-la-carte add-ons the tenant can toggle (skip ones bundled into the plan).
   const addonCatalog = (plans.data?.addons ?? []).filter((a) => a.sku !== "SEAT_EXTRA");
+  const catalogSkus = new Set(addonCatalog.map((a) => a.sku));
+  // Add-ons RouteFlow enabled for this workspace ("ships dark" SKUs like MSRP or
+  // Regulated items): absent from the self-service catalog but still active and still
+  // billed, so list them read-only — hiding them would hide the charge. Enable/Disable
+  // is a 403 on these, hence no button. Rows with no canonical SKU (client-only legacy
+  // keys such as developer_mode) are not billing lines and stay out.
+  const managedAddons = s.addons.filter((a) => a.sku && !catalogSkus.has(a.sku));
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -148,8 +163,9 @@ export default function BillingSettingsPage() {
       </div>
 
       <TrialBanner sub={s} />
+      <ReadOnlyBanner status={s.status} readOnlyReason={s.readOnlyReason} />
 
-      {s.cancelAtPeriodEnd && (
+      {s.cancelAtPeriodEnd && s.status !== "READ_ONLY" && (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
           <span className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" /> Cancellation scheduled for{" "}
@@ -167,12 +183,24 @@ export default function BillingSettingsPage() {
       )}
 
       {s.downgradeToPlanKey && (
-        <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-          Scheduled to change to <strong>{s.downgradeToPlanKey}</strong> on{" "}
-          {s.downgradeEffectiveAt
-            ? new Date(s.downgradeEffectiveAt).toLocaleDateString()
-            : "period end"}
-          . Nothing is deleted — over-cap data becomes read-only.
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+          <span>
+            Scheduled to change to <strong>{s.downgradeToPlanKey}</strong> on{" "}
+            {s.downgradeEffectiveAt
+              ? new Date(s.downgradeEffectiveAt).toLocaleDateString()
+              : "period end"}
+            . Nothing is deleted — over-cap data becomes read-only.
+          </span>
+          {/* The only self-service undo: resume() clears downgradeToPlanKey without touching
+              the plan or the period (re-subscribing would reset periodStart/periodEnd). */}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => resume.mutate()}
+            disabled={resume.isPending}
+          >
+            Keep current plan
+          </Button>
         </div>
       )}
 
@@ -197,11 +225,26 @@ export default function BillingSettingsPage() {
               </p>
             </div>
           </div>
+          {s.paymentRequired && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium text-slate-700">
+                {s.planName} · {money(s.monthlyPrice)}/mo
+              </span>
+              <Button loading={checkout.isPending} onClick={() => checkout.mutate()}>
+                Complete payment
+              </Button>
+            </div>
+          )}
           <div className="flex gap-2">
             <a href="/choose-plan">
               <Button size="sm">Change plan</Button>
             </a>
-            {!s.cancelAtPeriodEnd && s.status !== "TRIAL" && (
+            {s.status === "TRIAL" && isAdmin && (
+              <Button size="sm" variant="ghost" onClick={() => setEndTrialOpen(true)}>
+                End trial
+              </Button>
+            )}
+            {!s.cancelAtPeriodEnd && s.status !== "TRIAL" && s.status !== "READ_ONLY" && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -218,6 +261,20 @@ export default function BillingSettingsPage() {
           </div>
         </div>
       </Card>
+
+      <ConfirmDialog
+        open={endTrialOpen}
+        onClose={() => setEndTrialOpen(false)}
+        onConfirm={() => {
+          cancel.mutate(undefined, { onSuccess: () => toast({ title: "Trial ended" }) });
+          setEndTrialOpen(false);
+        }}
+        title="End your trial now?"
+        description="Your workspace becomes read-only immediately; exports still work."
+        confirmLabel="End trial"
+        variant="danger"
+        loading={cancel.isPending}
+      />
 
       {/* Usage */}
       <Card className="p-5">
@@ -270,7 +327,23 @@ export default function BillingSettingsPage() {
               </div>
             );
           })}
-          {addonCatalog.length === 0 && (
+          {managedAddons.map((a) => (
+            <div key={a.sku ?? a.name} className="flex items-center justify-between gap-4 py-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-slate-800">{a.name}</span>
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                    <Check className="h-3 w-3" /> Active
+                  </span>
+                </div>
+                <p className="text-sm text-slate-500">
+                  {a.monthly != null ? `${money(a.monthly)}/mo · ` : ""}Managed by RouteFlow
+                </p>
+              </div>
+              <span className="shrink-0 text-xs text-slate-400">Contact support to change</span>
+            </div>
+          ))}
+          {addonCatalog.length === 0 && managedAddons.length === 0 && (
             <p className="py-2 text-sm text-slate-400">No add-ons available.</p>
           )}
         </div>

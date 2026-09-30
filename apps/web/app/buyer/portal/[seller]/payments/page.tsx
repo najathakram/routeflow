@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Wallet,
@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Loader2,
   AlertCircle,
+  Info,
   FileText,
   Download,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
 import { buyerApiClient } from "@/lib/buyer-api-client";
 import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { checkBadgeFor } from "@/lib/check-badge";
+import { MakePaymentPanel } from "./_components/MakePaymentPanel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -104,11 +106,30 @@ function Field({ label, value }: { label: string; value?: string }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function BuyerPaymentsPage() {
+function BuyerPaymentsPageInner() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { activeSeller, isLoading: authLoading } = useBuyerAuth();
   const sellerSlug = params.seller as string;
+
+  // Card payments settle by webhook — `processing` must never claim success.
+  const paymentFlag = searchParams.get("payment");
+  const paymentBanner =
+    paymentFlag === "processing"
+      ? {
+          tone: "info" as const,
+          text: "Your card payment is confirming — your balance updates in a moment.",
+        }
+      : paymentFlag === "cancelled"
+        ? { tone: "neutral" as const, text: "Payment cancelled." }
+        : null;
+
+  // Seeded from the invoice-detail "Pay this invoice" link (?amount=<balanceDue>).
+  const amountParam = searchParams.get("amount");
+  const parsedAmount = amountParam ? Number(amountParam) : NaN;
+  const defaultAmount =
+    Number.isFinite(parsedAmount) && parsedAmount > 0 ? parsedAmount : undefined;
 
   const [page, setPage] = React.useState(1);
   const { data: payments, isLoading, isError } = useBuyerPayments({ page, limit: 20 });
@@ -121,9 +142,11 @@ export default function BuyerPaymentsPage() {
   const { data: remittance } = useBuyerRemittance();
   const { toast } = useToast();
 
-  const activeCredits = (statement?.transactions ?? []).filter(
-    (t) => t.type === "CREDIT_NOTE" && t.runningBalance > 0.001,
-  );
+  // M3: the "active" sub-label must never be a count derived from the capped
+  // `transactions` ledger (undercounts once a customer has more active
+  // credits than fit the page) — it reflects the uncapped `availableCredit`
+  // total the tile itself already shows.
+  const hasActiveCredit = (statement?.availableCredit ?? 0) > 0;
 
   // P5-15: monthly statement PDF download.
   const { data: statementMonths } = useBuyerStatementMonths();
@@ -200,12 +223,29 @@ export default function BuyerPaymentsPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-navy">Payments</h1>
-        {activeSeller && (
+        {activeSeller?.customer && (
           <p className="text-sm text-navy/70 mt-1">
             {activeSeller.customer.businessName} at {activeSeller.tenant.name}
           </p>
         )}
       </div>
+
+      {/* Redirect banner from the Stripe Checkout return (?payment=processing|cancelled) */}
+      {paymentBanner && (
+        <div
+          className={
+            paymentBanner.tone === "info"
+              ? "flex items-center gap-2 rounded-lg border border-info/30 bg-info-bg/60 px-4 py-3 text-sm text-navy"
+              : "flex items-center gap-2 rounded-lg border border-surface-border bg-surface-raised px-4 py-3 text-sm text-navy/70"
+          }
+        >
+          <Info className="h-4 w-4 flex-shrink-0" />
+          {paymentBanner.text}
+        </div>
+      )}
+
+      {/* Make a payment — the primary action, first block on the page */}
+      <MakePaymentPanel defaultAmount={defaultAmount} />
 
       {/* Wallet row */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
@@ -213,7 +253,7 @@ export default function BuyerPaymentsPage() {
           icon={Wallet}
           label="Store Credit"
           value={fmt(statement?.availableCredit ?? 0)}
-          sub={activeCredits.length > 0 ? `${activeCredits.length} active` : "None available"}
+          sub={hasActiveCredit ? "Available" : "None available"}
           color="bg-buyer-50 text-buyer-600"
         />
         <StatCard
@@ -419,5 +459,16 @@ export default function BuyerPaymentsPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// Suspense wrapper required because the page (and MakePaymentPanel inside it)
+// uses useSearchParams() — Next 14 fails the production build without a
+// boundary above the call. Same pattern as buyer/portal/page.tsx.
+export default function BuyerPaymentsPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <BuyerPaymentsPageInner />
+    </React.Suspense>
   );
 }

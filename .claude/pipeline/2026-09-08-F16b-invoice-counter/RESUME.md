@@ -1,0 +1,8 @@
+# RESUME — F16b B100 invoice-number counter (bug-pipeline, mode bugfix, scale major)
+
+Worktree `C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry`, branch `fix/F16b-invoice-number-counter` off master 8a1f1eab (merge `origin/master` before landing).
+Artifacts in this dir: cause-brief.md (S1 Sonnet) · cause-refutation.md (S2 Opus — design of record REFUTED: NumberingSequence + NumberingService already exist) · cause-ruling.md (S3 Fable, the design of record: wire into reserveNext with a year option; NO migration) · bug-test-plan.md (S4) · build-plan.md (S5) · pipeline-args.json.
+Engine: `local-assets/tooling/pipeline-2026-09-06-6d31a370.js` (staged copy). Launch = Workflow({ scriptPath: <engine>, args: <pipeline-args.json as an OBJECT, startedAt set at launch> }). Launch AFTER the B246-C run (owner order) and only when no push verify runs on the host and free memory > 2 GB; the compose Postgres must be up (DB lane).
+runId: wf_16afcfe2-549 (task w3o31u9qe; transcript C:/Users/nakram/.claude/projects/C--ClaudeCode-routeflow/cbfee473-03c5-474d-b0fb-371fb23a62fd/subagents/workflows/wf_16afcfe2-549) · startedAt: 2026-09-08T11:37:30Z · args ≈ 5 KB — above the ~4.5 KB record cap → NEVER resumeFromRunId; a stalled engine → light loop from the tree (L-085).
+Owner note: the "B100 migration ack" is MOOT — no DDL, no prod-migrate; report it at landing.
+Landing recipe: commit (trailer `Bookkeeping-Follow-Up: pending`) → merge origin/master → regen api+mobile+pricing reports → hook push → draft PR → window (watchdog → public → ready → CI green → squash → BOTH Railway rows SUCCESS → private) → PDC → deployment E2E → docs follow-up (B100 done with REG names + probe results; sibling rows; lesson; code map).

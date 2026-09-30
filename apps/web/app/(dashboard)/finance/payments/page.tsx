@@ -4,6 +4,8 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { Paperclip } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useInvoicePayments,
   useVoidPayment,
@@ -14,31 +16,20 @@ import {
   type StandalonePaymentDto,
 } from "@/lib/api/invoices";
 import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
+import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
 import { fmt, fmtDate } from "@/lib/formatting";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  ALL_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS as METHOD_LABELS,
+  PAYMENT_METHOD_COLORS as METHOD_COLORS,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-
-const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash",
-  CHECK: "Check",
-  ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card",
-  OTHER: "Other",
-  CREDIT_NOTE: "Credit Note",
-  ADVANCE: "Advance",
-};
-const METHOD_COLORS: Record<string, string> = {
-  CASH: "bg-success-bg text-success",
-  CHECK: "bg-brand-50 text-brand-600",
-  ACH: "bg-indigo-50 text-indigo-700",
-  CREDIT_CARD: "bg-orange-50 text-orange-700",
-  OTHER: "bg-surface-raised text-navy/70",
-  CREDIT_NOTE: "bg-purple-100 text-purple-800",
-  ADVANCE: "bg-teal-50 text-teal-700",
-};
 
 const fieldCls =
   "w-full rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500";
@@ -78,7 +69,7 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   const [bankCharges, setBankCharges] = React.useState("");
   const [paidAt, setPaidAt] = React.useState(new Date().toISOString().split("T")[0]);
   const [settledAt, setSettledAt] = React.useState("");
-  const [method, setMethod] = React.useState("CASH");
+  const [method, setMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [reference, setReference] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [allocations, setAllocations] = React.useState<Allocation[]>([]);
@@ -100,30 +91,37 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       );
   }, [customerId, invoicesData]);
 
-  // When customer changes, reset allocations and pre-fill greedily
+  // When customer changes, reset allocations and pre-fill greedily. The
+  // waterfall/clamp/remainder arithmetic lives in ONE place
+  // (`@/lib/api/supplier-payments`) shared with CustomerRecordPaymentModal and
+  // RecordSupplierPaymentModal — don't re-derive it here.
   React.useEffect(() => {
     if (!customerId || !customerInvoices.length) {
       setAllocations([]);
       return;
     }
-    let remaining = parseFloat(totalAmount) || 0;
-    const allocs: Allocation[] = customerInvoices.map((inv) => {
-      const due = inv.balanceDue ?? 0;
-      const apply = Math.min(remaining, due);
-      remaining -= apply;
-      return {
+    const { allocations: prefill } = waterfallAllocations(
+      parseFloat(totalAmount) || 0,
+      customerInvoices.map((inv) => ({ id: inv.id, amountDue: inv.balanceDue ?? 0 })),
+    );
+    const byId = new Map(prefill.map((a) => [a.id, a.amount]));
+    setAllocations(
+      customerInvoices.map((inv) => ({
         invoiceId: inv.id,
         invoiceNumber: inv.invoiceNumber,
-        amountDue: due,
-        amount: apply > 0 ? apply.toFixed(2) : "",
-      };
-    });
-    setAllocations(allocs);
+        amountDue: inv.balanceDue ?? 0,
+        amount: byId.has(inv.id) ? byId.get(inv.id)!.toFixed(2) : "",
+      })),
+    );
   }, [customerId, customerInvoices.length, totalAmount]);
 
-  const allocatedTotal = allocations.reduce((s, a) => s + (parseFloat(a.amount) || 0), 0);
   const total = parseFloat(totalAmount) || 0;
-  const excess = Math.max(0, total - allocatedTotal);
+  const { allocated: allocatedTotal, excess } = allocationTotals(
+    total,
+    // `|| null` also swallows a NaN from a half-typed value, as the old
+    // `parseFloat(a.amount) || 0` did.
+    allocations.map((a) => ({ amount: parseFloat(a.amount) || null })),
+  );
 
   const updateAlloc = (idx: number, val: string) =>
     setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));
@@ -140,10 +138,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
-    const dto: StandalonePaymentDto = {
+    // X1: bind TMethod to web's enterable subset at the use site — `method`
+    // is now typed `SelectablePaymentMethod` above, so this compiles without
+    // the `as any` the loosened (generic, `TMethod = string`) shared DTO used
+    // to force here.
+    const dto: StandalonePaymentDto<SelectablePaymentMethod> = {
       customerId,
       totalAmount: total,
-      method: method as any,
+      method,
       paidAt,
       settledAt: settledAt || undefined,
       bankCharges: bankCharges ? parseFloat(bankCharges) : undefined,
@@ -260,14 +262,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
               <label className="mb-1.5 block text-sm font-medium text-navy">Payment Mode *</label>
               <select
                 value={method}
-                onChange={(e) => setMethod(e.target.value)}
+                onChange={(e) => setMethod(e.target.value as SelectablePaymentMethod)}
                 className={fieldCls}
               >
-                <option value="CASH">Cash</option>
-                <option value="CHECK">Check</option>
-                <option value="ACH">ACH / Bank Transfer</option>
-                <option value="CREDIT_CARD">Credit Card</option>
-                <option value="OTHER">Other</option>
+                {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>
+                    {METHOD_LABELS[m]}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -436,7 +438,7 @@ export default function FinancePaymentsPage() {
   const { toast } = useToast();
 
   // Filters + sort state
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [method, setMethod] = React.useState("");
   const [status, setStatus] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
@@ -444,7 +446,7 @@ export default function FinancePaymentsPage() {
   const [customerId, setCustomerId] = React.useState("");
   const [sortBy, setSortBy] = React.useState("paidAt");
   const [sortDir, setSortDir] = React.useState("desc");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [showModal, setShowModal] = React.useState(false);
   const [voidConfirm, setVoidConfirm] = React.useState<{
     invoiceId: string;
@@ -454,7 +456,7 @@ export default function FinancePaymentsPage() {
   const params: PaymentListParams = {
     page,
     limit: 25,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     method: method || undefined,
     status: status || undefined,
     dateFrom: dateFrom || undefined,
@@ -471,6 +473,7 @@ export default function FinancePaymentsPage() {
 
   const payments = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
   const summary = data?.summary;
   const customers = customersData?.data ?? [];
 
@@ -502,10 +505,14 @@ export default function FinancePaymentsPage() {
     }
   };
 
-  // Reset page when filters change
-  React.useEffect(() => {
-    setPage(1);
-  }, [search, method, status, dateFrom, dateTo, customerId]);
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from a payment.
+  // `search` is deliberately NOT in this list: it is the raw per-keystroke value
+  // here (this page never destructures useUrlSearch's debounced third element),
+  // and useUrlSearch's own write already drops the page param — including it
+  // would fire a history write on every keystroke to no effect.
+  useResetPageOnChange(setPage, [method, status, dateFrom, dateTo, customerId]);
 
   // Keyboard shortcut: / to focus search
   React.useEffect(() => {
@@ -557,7 +564,7 @@ export default function FinancePaymentsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-navy">Payments Received</h1>
+          <h2 className="text-xl font-semibold text-navy">Payments Received</h2>
           <p className="text-sm text-navy/70">All payments recorded against invoices</p>
         </div>
         <button
@@ -614,7 +621,7 @@ export default function FinancePaymentsPage() {
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="From date"
           />
           <span className="text-navy/70 text-sm">–</span>
@@ -622,7 +629,7 @@ export default function FinancePaymentsPage() {
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="To date"
           />
           <select
@@ -631,13 +638,11 @@ export default function FinancePaymentsPage() {
             className="rounded-lg border border-surface-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
             <option value="">All Methods</option>
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
-            <option value="CREDIT_NOTE">Credit Note</option>
-            <option value="ADVANCE">Advance</option>
+            {ALL_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
           <select
             value={status}
@@ -691,169 +696,177 @@ export default function FinancePaymentsPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-surface-raised">
-                <th
-                  onClick={() => toggleSort("paidAt")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Date <SortIcon col="paidAt" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th
-                  onClick={() => toggleSort("settledAt")}
-                  title={BANK_DATE_HELP}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Bank date <SortIcon col="settledAt" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th
-                  onClick={() => toggleSort("paymentNumber")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Payment # <SortIcon col="paymentNumber" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Invoice(s)</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-                <th
-                  onClick={() => toggleSort("method")}
-                  className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Mode <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Reference</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-                <th
-                  onClick={() => toggleSort("amount")}
-                  className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
-                >
-                  Amount <SortIcon col="amount" sortBy={sortBy} sortDir={sortDir} />
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border">
-              {payments.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="p-0">
-                    {search || method || status || dateFrom || dateTo || customerId ? (
-                      <EmptyState
-                        variant="invoices"
-                        title="No matching payments"
-                        description="No payments match your current search and filters."
-                        action={
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setSearch("");
-                              setMethod("");
-                              setStatus("");
-                              setDateFrom("");
-                              setDateTo("");
-                              setCustomerId("");
-                            }}
-                          >
-                            Clear filters
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <EmptyState
-                        variant="invoices"
-                        title="No payments yet"
-                        description="Record a payment to mark invoices as paid and track receipts."
-                        action={
-                          <Button size="sm" onClick={() => setShowModal(true)}>
-                            Record payment
-                          </Button>
-                        }
-                      />
-                    )}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised">
+                  <th
+                    onClick={() => toggleSort("paidAt")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Date <SortIcon col="paidAt" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th
+                    onClick={() => toggleSort("settledAt")}
+                    title={BANK_DATE_HELP}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Bank date <SortIcon col="settledAt" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th
+                    onClick={() => toggleSort("paymentNumber")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Payment # <SortIcon col="paymentNumber" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                    Invoice(s)
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                  <th
+                    onClick={() => toggleSort("method")}
+                    className="px-4 py-3 text-left text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Mode <SortIcon col="method" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                    Reference
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                  <th
+                    onClick={() => toggleSort("amount")}
+                    className="px-4 py-3 text-right text-xs font-medium text-navy/70 cursor-pointer select-none hover:text-navy"
+                  >
+                    Amount <SortIcon col="amount" sortBy={sortBy} sortDir={sortDir} />
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Actions</th>
                 </tr>
-              )}
-              {payments.map((p) => (
-                <tr
-                  key={p.id}
-                  onClick={() => router.push(`/finance/payments/${p.id}`)}
-                  className={`cursor-pointer hover:bg-surface-raised/50 transition-colors ${p.status === "VOID" ? "opacity-50" : ""}`}
-                >
-                  <td className="px-4 py-3 text-navy">{fmtDate(p.paidAt ?? p.createdAt)}</td>
-                  <td className="px-4 py-3 text-navy/70">
-                    {p.settledAt ? fmtDate(p.settledAt) : "—"}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-navy">
-                    {p.paymentNumber ?? "—"}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/invoices/${p.invoice.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="font-medium text-brand-600 hover:underline"
-                    >
-                      {p.invoice.invoiceNumber}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-navy">{p.invoice.customer?.businessName ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${METHOD_COLORS[p.method] ?? "bg-surface-raised text-navy/70"}`}
-                    >
-                      {METHOD_LABELS[p.method] ?? p.method}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-navy/70">
-                    <div className="flex items-center gap-1.5">
-                      {p.imageKey && (
-                        <span title="Has receipt image" className="inline-flex shrink-0">
-                          <Paperclip className="h-3.5 w-3.5 text-navy/50" />
-                        </span>
+              </thead>
+              <tbody className="divide-y divide-surface-border">
+                {payments.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-0">
+                      {search || method || status || dateFrom || dateTo || customerId ? (
+                        <EmptyState
+                          variant="invoices"
+                          title="No matching payments"
+                          description="No payments match your current search and filters."
+                          action={
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                setSearch("");
+                                setMethod("");
+                                setStatus("");
+                                setDateFrom("");
+                                setDateTo("");
+                                setCustomerId("");
+                              }}
+                            >
+                              Clear filters
+                            </Button>
+                          }
+                        />
+                      ) : (
+                        <EmptyState
+                          variant="invoices"
+                          title="No payments yet"
+                          description="Record a payment to mark invoices as paid and track receipts."
+                          action={
+                            <Button size="sm" onClick={() => setShowModal(true)}>
+                              Record payment
+                            </Button>
+                          }
+                        />
                       )}
-                      <span>{p.reference ?? "—"}</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold text-success">
-                    {fmt(p.amount)}
-                  </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="relative group inline-block">
-                      <button className="rounded-lg border border-surface-border px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised">
-                        ⋮
-                      </button>
-                      <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1">
-                        <button
-                          onClick={() => router.push(`/finance/payments/${p.id}`)}
-                          className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
-                        >
-                          View Receipt
-                        </button>
-                        <Link
-                          href={`/invoices/${p.invoice.id}`}
-                          className="block px-3 py-1.5 text-sm hover:bg-surface-raised"
-                        >
-                          View Invoice
-                        </Link>
-                        {p.status !== "VOID" && (
-                          <button
-                            onClick={() =>
-                              setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })
-                            }
-                            className="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-bg"
-                          >
-                            Void
-                          </button>
+                    </td>
+                  </tr>
+                )}
+                {payments.map((p) => (
+                  <tr
+                    key={p.id}
+                    onClick={() => router.push(`/finance/payments/${p.id}`)}
+                    className={`cursor-pointer hover:bg-surface-raised/50 transition-colors ${p.status === "VOID" ? "opacity-50" : ""}`}
+                  >
+                    <td className="px-4 py-3 text-navy">{fmtDate(p.paidAt ?? p.createdAt)}</td>
+                    <td className="px-4 py-3 text-navy/70">
+                      {p.settledAt ? fmtDate(p.settledAt) : "—"}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-navy">
+                      {p.paymentNumber ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/invoices/${p.invoice.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-medium text-brand-600 hover:underline"
+                      >
+                        {p.invoice.invoiceNumber}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {p.invoice.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${METHOD_COLORS[p.method] ?? "bg-surface-raised text-navy/70"}`}
+                      >
+                        {METHOD_LABELS[p.method] ?? p.method}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-navy/70">
+                      <div className="flex items-center gap-1.5">
+                        {p.imageKey && (
+                          <span title="Has receipt image" className="inline-flex shrink-0">
+                            <Paperclip className="h-3.5 w-3.5 text-navy/50" />
+                          </span>
                         )}
+                        <span>{p.reference ?? "—"}</span>
                       </div>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={(p.status ?? "PAID") as "PAID" | "DRAFT" | "VOID"} />
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-success">
+                      {fmt(p.amount)}
+                    </td>
+                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      <div className="relative group inline-block">
+                        <button className="rounded-lg border border-surface-border px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised">
+                          ⋮
+                        </button>
+                        <div className="absolute right-0 top-7 z-10 hidden group-focus-within:block bg-white border border-surface-border rounded-lg shadow-dropdown min-w-[140px] py-1">
+                          <button
+                            onClick={() => router.push(`/finance/payments/${p.id}`)}
+                            className="block w-full px-3 py-1.5 text-left text-sm hover:bg-surface-raised"
+                          >
+                            View Receipt
+                          </button>
+                          <Link
+                            href={`/invoices/${p.invoice.id}`}
+                            className="block px-3 py-1.5 text-sm hover:bg-surface-raised"
+                          >
+                            View Invoice
+                          </Link>
+                          {p.status !== "VOID" && (
+                            <button
+                              onClick={() =>
+                                setVoidConfirm({ invoiceId: p.invoice.id, paymentId: p.id })
+                              }
+                              className="block w-full px-3 py-1.5 text-left text-sm text-danger hover:bg-danger-bg"
+                            >
+                              Void
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

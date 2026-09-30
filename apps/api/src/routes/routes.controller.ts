@@ -16,6 +16,8 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
+import { AddonGuard } from "../billing/addon.guard";
+import { RequireAddon } from "../billing/require-addon.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { ListRoutesDto } from "./dto/list-routes.dto";
@@ -27,11 +29,25 @@ import { UpdateRunStatusDto } from "./dto/update-run-status.dto";
 import { ListRunsDto } from "./dto/list-runs.dto";
 import { CompleteStopDto } from "./dto/complete-stop.dto";
 import { CompleteWithPaymentDto } from "./dto/complete-with-payment.dto";
+import { SettleRunDto } from "./dto/settle-run.dto";
+import { AttachPodArtifactDto } from "./dto/attach-pod-artifact.dto";
+import { UpdateStopStatusDto } from "./dto/update-stop-status.dto";
+import { ReorderRunStopsDto } from "./dto/reorder-run-stops.dto";
+import { DriverPaymentsGuard } from "./driver-payments.guard";
 
 @ApiTags("routes")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Owner decision 2026-08-28: /routes is SHARED between the two delivery features — an ad-hoc
+// trip materializes a route template + run, so template/detail/optimize flows must keep working
+// for a delivery-only tenant (mirrors RECURRING_ROUTES_PATHS in
+// apps/web/app/(dashboard)/layout.tsx, which downgrades everything under /routes except the
+// list/create pages to "either"). developer_mode stays accepted server-side ONLY so a dev tenant
+// can exercise the still-in-development mobile driver app end-to-end — it no longer unlocks this
+// UI anywhere in the web/mobile clients. Guard order matters: AddonGuard reads req.user (set by
+// JwtAuthGuard).
+@UseGuards(JwtAuthGuard, AddonGuard)
 @Controller("routes")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RoutesController {
   constructor(private readonly routesService: RoutesService) {}
 
@@ -118,8 +134,12 @@ export class RoutesController {
 
 @ApiTags("route-runs")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
+// Same either-gate as RoutesController above — a run is the shared execution object for both
+// recurring routes and ad-hoc trips, so runs/detail/complete flows must keep working for either
+// feature alone. See the rationale comment on RoutesController.
+@UseGuards(JwtAuthGuard, AddonGuard)
 @Controller("route-runs")
+@RequireAddon("recurring_routes", "order_delivery", "developer_mode")
 export class RouteRunsController {
   constructor(private readonly routesService: RoutesService) {}
 
@@ -179,8 +199,18 @@ export class RouteRunsController {
   }
 
   // RF-005: Atomic complete + payment
+  //
+  // At-door MONEY COLLECTION is a per-tenant OPT-IN (owner decision
+  // 2026-08-24): some tenants (acme-retail) let drivers collect at the door, others
+  // (acme-distro) bill on account only and the office collects. Enforced by
+  // DriverPaymentsGuard on the BODY, not a blanket addon gate on the route —
+  // every mobile completion (including $0 "on account") flows through this
+  // endpoint for its delivered-basis invoice reconcile, so completions with
+  // no payment (or amount 0) must keep working for every tenant. Only a
+  // payment with amount > 0 requires the "driver_payments" TenantAddon
+  // (enable from platform-admin).
   @Post(":id/stops/:stopId/complete-with-payment")
-  @UseGuards(RolesGuard)
+  @UseGuards(RolesGuard, DriverPaymentsGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   completeWithPayment(
     @Param("id") runId: string,
@@ -192,26 +222,51 @@ export class RouteRunsController {
     return this.routesService.completeWithPayment(runId, stopId, { ...body, idempotencyKey }, user);
   }
 
+  // Durable POD: one artifact per JSON request (data URL, never multipart —
+  // FormData is excluded from the mobile offline queue), stored under
+  // tenants/<tenantId>/pod/<stopId>/ and appended to the stop.
+  @Post(":id/stops/:stopId/pod-artifact")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  attachPodArtifact(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @Body() body: AttachPodArtifactDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.attachPodArtifact(runId, stopId, body, user);
+  }
+
+  @Get(":id/stops/:stopId/pod")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  getStopPod(
+    @Param("id") runId: string,
+    @Param("stopId") stopId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.routesService.getStopPod(runId, stopId, user);
+  }
+
+  // Declared BEFORE ":id/stops/:stopId": Express matches in order, so "reorder" would otherwise be
+  // taken as a :stopId and this handler would never run (#2110).
+  @Patch(":id/stops/reorder")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  reorderRunStops(@Param("id") id: string, @Body() body: ReorderRunStopsDto) {
+    return this.routesService.reorderRunStops(id, body.order);
+  }
+
   @Patch(":id/stops/:stopId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
   updateStopStatus(
     @Param("id") id: string,
     @Param("stopId") stopId: string,
-    @Body() body: { status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string },
+    @Body() body: UpdateStopStatusDto,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateStopStatus(id, stopId, body, user);
-  }
-
-  @Patch(":id/stops/reorder")
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  reorderRunStops(
-    @Param("id") id: string,
-    @Body() body: { order: { id: string; stopNumber: number }[] },
-  ) {
-    return this.routesService.reorderRunStops(id, body.order);
   }
 
   @Patch(":id")
@@ -241,6 +296,16 @@ export class RouteRunsController {
     @CurrentUser() user: JwtPayload,
   ) {
     return this.routesService.updateRunStatus(id, dto, user);
+  }
+
+  // F05 / R6: NEW endpoint — never a retrofit of the PATCH :id notes field.
+  // Driver settles their own run; an operator may settle (and later amend)
+  // any run. Server computes expected cash itself (`getRunCashCollections`).
+  @Post(":id/settlement")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.DRIVER)
+  settleRun(@Param("id") id: string, @Body() dto: SettleRunDto, @CurrentUser() user: JwtPayload) {
+    return this.routesService.settleRun(id, dto, user);
   }
 
   @Post(":id/stops/:stopId/reopen")

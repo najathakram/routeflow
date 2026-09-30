@@ -38,6 +38,9 @@ interface RouteState {
   removeAddedItem: (stopId: string, itemId: string) => void;
   clearStop: (stopId: string) => void;
   clearRun: () => void;
+  // D1/D3 (cause-ruling.md §3): sign-out (lib/session-teardown.ts) resets this
+  // user-scoped store so the next user on this device never sees prior data.
+  reset: () => void;
 }
 
 export const useRouteStore = create<RouteState>((set) => ({
@@ -99,6 +102,8 @@ export const useRouteStore = create<RouteState>((set) => ({
     }),
 
   clearRun: () => set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
+
+  reset: () => set({ activeRunId: null, itemResolutions: {}, stopNotes: {}, addedItems: {} }),
 }));
 
 // ─── Selectors ────────────────────────────────────────────────────────────────

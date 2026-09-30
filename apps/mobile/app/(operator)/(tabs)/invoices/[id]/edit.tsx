@@ -12,23 +12,34 @@ import {
 import { MoneyTextInput } from "../../../../../components/MoneyTextInput";
 import { ProductPickerSheet } from "../../../../../components/ProductPickerSheet";
 import { QtyStepper } from "../../../../../components/QtyStepper";
+import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import {
   useAdminCustomer,
   useAdminInvoice,
   useBusinessSettings,
   type AdminProduct,
 } from "../../../../../lib/api/admin";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import type { ScanOutcome } from "../../../../../lib/scan-loop";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../../lib/loose-units";
 import { useUpdateInvoice } from "../../../../../lib/api/invoices";
 import { alertInfo } from "../../../../../lib/confirm";
 import { ISO_DATE } from "../../../../../lib/invoice-terms";
 import {
   computeInvoiceTotals,
+  editedLineFreeUnits,
   invoiceLineDto,
   type InvoiceTotalsLine,
 } from "../../../../../lib/invoice-totals";
 import { isPendingOrderMirror } from "../../../../../lib/invoices-logic";
-import { computeLineSubtotal } from "../../../../../lib/pricing";
+import { hasUnitLine, unitLabelsOf } from "../../../../../lib/invoice-line-unit";
+import { computeLineSubtotal, isNsfLine, packFromOwnSplit } from "@routeflow/pricing";
 import { showToast } from "../../../../../lib/toast";
+import {
+  hasUnsavedInvoiceLineEdits,
+  type InvoiceEditSnapshot,
+} from "../../../../../lib/discard-guard";
+import { hydratedLineTax } from "../../../../../lib/invoice-edit-tax";
 
 /**
  * Invoice edit screen — DRAFT-only, mirroring web's invoices/[id]/edit page.
@@ -44,8 +55,19 @@ import { showToast } from "../../../../../lib/toast";
 
 type EditLine = {
   key: string;
+  /** Stored row id (SA-186) — sent back so the server matches THIS row. Absent on new lines. */
+  id?: string;
+  /** SA-184/189: a stored box line whose pack can't be recovered — read-only until the
+   *  operator sets the pack. `storedBoxes/Pieces` are re-sent verbatim (line stays untouched). */
+  locked?: boolean;
+  storedBoxes?: number;
+  storedPieces?: number;
+  /** Operator-attested pack (integer >= 2) from unlocking; the only `unitsPerBox` ever sent. */
+  attestedPack?: number;
   productId: string | null;
   description: string;
+  /** #2656: carried so the NSF fee line's Taxable toggle stays locked off (the API refuses > 0). */
+  systemKind?: string | null;
   /** Total pieces (boxes × unitsPerBox + pieces when split). */
   qty: number;
   boxes: number | null;
@@ -60,6 +82,12 @@ type EditLine = {
   taxable: boolean;
   note: string;
   noteOpen?: boolean;
+  /** BUY_N_GET_M snapshot carried from the order line — MONEY, not decoration:
+   *  the PATCH replaces every line, so dropping it re-prices an agreed
+   *  12-cases-2-free line from $350 to $420 on save. */
+  promoFreeUnits: number | null;
+  /** Whole selling units the snapshot was earned at, so a qty edit rescales it. */
+  promoBaseUnits: number | null;
 };
 
 let lineSeq = 0;
@@ -92,33 +120,82 @@ export default function EditInvoiceScreen() {
 
   // Hydrate once per invoice id — refetches must not clobber in-progress edits.
   const hydratedFor = useRef<string | null>(null);
+  // Snapshot taken at hydration, compared against the live form by `dirty`
+  // below (lib/discard-guard.ts#hasUnsavedInvoiceLineEdits). Null until the
+  // effect below has run once for this invoice.
+  const originalRef = useRef<InvoiceEditSnapshot | null>(null);
   useEffect(() => {
     if (!invoice || invoice.status !== "DRAFT" || hydratedFor.current === invoice.id) return;
     hydratedFor.current = invoice.id;
-    setLines(
-      (invoice.items ?? []).map((it) => ({
-        key: newKey(),
-        productId: it.productId ?? null,
-        description: it.description,
-        qty: Number(it.qty),
-        boxes: it.boxes ?? null,
-        pieces: it.boxes != null ? (it.pieces ?? 0) : null,
-        unitsPerBox: it.unitsPerBox ?? null,
-        unitPrice: Number(it.unitPrice),
-        discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
-        taxRate: Number(it.taxRate ?? 0),
-        taxable: Number(it.taxRate ?? 0) > 0,
-        note: it.notes ?? "",
-      })),
-    );
-    setIssueDate(invoice.issueDate ? invoice.issueDate.slice(0, 10) : "");
-    setDueDate(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
-    setInvDiscount(Number(invoice.discount) > 0 ? Number(invoice.discount) : null);
-    setShippingFee(Number(invoice.shippingFee) > 0 ? Number(invoice.shippingFee) : null);
-    setReferenceNumber(invoice.referenceNumber ?? "");
-    setSubject(invoice.subject ?? "");
-    setNotes(invoice.notes ?? "");
-    setTerms(invoice.terms ?? "");
+    // B294 (SA-141): a legacy invoice's 0-rate lines load at its verified inferred rate.
+    const lineTax = hydratedLineTax(invoice);
+    const hydratedLines = (invoice.items ?? []).map((it, i) => ({
+      key: newKey(),
+      id: it.id,
+      ...(it.boxes != null &&
+      !(
+        Number(
+          it.unitsPerBox ??
+            packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+            0,
+        ) > 1
+      )
+        ? { locked: true, storedBoxes: Number(it.boxes), storedPieces: Number(it.pieces ?? 0) }
+        : {}),
+      productId: it.productId ?? null,
+      description: it.description,
+      systemKind: it.systemKind ?? null,
+      qty: Number(it.qty),
+      boxes: it.boxes ?? null,
+      pieces: it.boxes != null ? (it.pieces ?? 0) : null,
+      // B674/SA-144: a legacy line (boxes stored, unitsPerBox never snapshotted) recovers its
+      // pack from its OWN split via packFromOwnSplit — web's exact fix. Without this, a legacy
+      // line hydrated here with unitsPerBox null failed isSplit's upb > 1 check below, so the
+      // case/piece stepper never rendered and a save re-priced the line as loose pieces.
+      unitsPerBox:
+        it.unitsPerBox ??
+        packFromOwnSplit({ qty: Number(it.qty), boxes: it.boxes, pieces: it.pieces }) ??
+        null,
+      unitPrice: Number(it.unitPrice),
+      discount: it.discount != null && Number(it.discount) > 0 ? Number(it.discount) : null,
+      ...lineTax[i],
+      note: it.notes ?? "",
+      promoFreeUnits: it.promoFreeUnits ?? null,
+      promoBaseUnits: it.promoFreeUnits
+        ? Math.trunc(Number(it.boxes != null ? it.boxes : it.qty) || 0)
+        : null,
+    }));
+    setLines(hydratedLines);
+    const hydratedIssueDate = invoice.issueDate ? invoice.issueDate.slice(0, 10) : "";
+    const hydratedDueDate = invoice.dueDate ? invoice.dueDate.slice(0, 10) : "";
+    const hydratedInvDiscount = Number(invoice.discount) > 0 ? Number(invoice.discount) : null;
+    const hydratedShippingFee =
+      Number(invoice.shippingFee) > 0 ? Number(invoice.shippingFee) : null;
+    const hydratedReferenceNumber = invoice.referenceNumber ?? "";
+    const hydratedSubject = invoice.subject ?? "";
+    const hydratedNotes = invoice.notes ?? "";
+    const hydratedTerms = invoice.terms ?? "";
+    setIssueDate(hydratedIssueDate);
+    setDueDate(hydratedDueDate);
+    setInvDiscount(hydratedInvDiscount);
+    setShippingFee(hydratedShippingFee);
+    setReferenceNumber(hydratedReferenceNumber);
+    setSubject(hydratedSubject);
+    setNotes(hydratedNotes);
+    setTerms(hydratedTerms);
+    originalRef.current = {
+      lines: hydratedLines.map(
+        ({ key, unitsPerBox, taxRate, promoFreeUnits, promoBaseUnits, ...rest }) => rest,
+      ),
+      issueDate: hydratedIssueDate,
+      dueDate: hydratedDueDate,
+      invDiscount: hydratedInvDiscount,
+      shippingFee: hydratedShippingFee,
+      referenceNumber: hydratedReferenceNumber,
+      subject: hydratedSubject,
+      notes: hydratedNotes,
+      terms: hydratedTerms,
+    };
   }, [invoice]);
 
   const patch = (key: string, up: Partial<EditLine>) =>
@@ -154,8 +231,38 @@ export default function EditInvoiceScreen() {
         taxRate: 0,
         taxable: false,
         note: "",
+        promoFreeUnits: null,
+        promoBaseUnits: null,
       },
     ]);
+  };
+
+  // B265: this screen had no scan entry outside the product picker sheet —
+  // mirrors ProductPickerSheet's own onScanned (same resolve -> archived/
+  // not-found handling), feeding scanned lines through the SAME addCatalogLine
+  // path a tapped pick uses.
+  // F1 (independent review, PR-3): mounted with `continuous`, so the scanner
+  // overlay stays up between scans and needs a ScanOutcome return every path
+  // to show feedback (BarcodeScanner.tsx reads outcome.feedback) -- the
+  // ProductPickerSheet handler this was copied from is a single-shot sheet
+  // (its own setScanOpen(false) makes the fallback toast visible), so the
+  // missing return went unnoticed there but leaves this FAB silent per scan.
+  const onScanned = async (code: string): Promise<ScanOutcome> => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    try {
+      const result = await resolveProductByCode<AdminProduct>(trimmed);
+      if (result.archived) {
+        return { feedback: { kind: "error", text: archivedMessage(result.product) } };
+      }
+      if (!result.notFound) {
+        addCatalogLine(result.product);
+        return { feedback: { kind: "added", text: `${result.product.name} added` } };
+      }
+    } catch {
+      // network error → fall through to the toast
+    }
+    return { feedback: { kind: "error", text: `No product for "${trimmed}"` } };
   };
 
   // An unlisted line is just a blank fully-editable card — no modal needed here
@@ -176,6 +283,8 @@ export default function EditInvoiceScreen() {
         taxRate: 0,
         taxable: false,
         note: "",
+        promoFreeUnits: null,
+        promoBaseUnits: null,
       },
     ]);
 
@@ -191,6 +300,7 @@ export default function EditInvoiceScreen() {
       unitsPerBox: l.unitsPerBox,
       discount: l.discount ?? 0,
       taxRate: l.taxable ? rateFor(l) : 0,
+      freeUnits: editedLineFreeUnits(l),
     }));
     return computeInvoiceTotals({
       lines: tLines,
@@ -200,6 +310,27 @@ export default function EditInvoiceScreen() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, invDiscount, shippingFee, isTaxExempt, tenantTaxRate]);
+
+  const dirty = useMemo(
+    () =>
+      hasUnsavedInvoiceLineEdits(
+        {
+          lines: lines.map(
+            ({ key, unitsPerBox, taxRate, promoFreeUnits, promoBaseUnits, ...rest }) => rest,
+          ),
+          issueDate,
+          dueDate,
+          invDiscount,
+          shippingFee,
+          referenceNumber,
+          subject,
+          notes,
+          terms,
+        },
+        originalRef.current,
+      ),
+    [lines, issueDate, dueDate, invDiscount, shippingFee, referenceNumber, subject, notes, terms],
+  );
 
   const submit = () => {
     if (!id || !invoice) return;
@@ -254,8 +385,12 @@ export default function EditInvoiceScreen() {
         terms,
         referenceNumber,
         subject,
-        items: lines.map((l) =>
-          invoiceLineDto(
+        items: lines.map((l) => ({
+          ...(l.id ? { id: l.id } : {}),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+          // SA-189: only an operator-attested pack is ever sent.
+          ...(l.attestedPack ? { unitsPerBox: l.attestedPack } : {}),
+          ...invoiceLineDto(
             {
               description: l.description.trim(),
               productId: l.productId,
@@ -265,12 +400,14 @@ export default function EditInvoiceScreen() {
               pieces: l.pieces,
               unitsPerBox: l.unitsPerBox,
               discount: l.discount ?? undefined,
-              taxable: l.taxable,
+              taxable: l.taxable && !isNsfLine(l), // #2656: the NSF fee line is never taxed
               notes: l.note,
+              promoFreeUnits: editedLineFreeUnits(l),
             },
             rateFor(l),
           ),
-        ),
+          ...(l.locked ? { boxes: l.storedBoxes ?? 0, pieces: l.storedPieces ?? 0 } : {}),
+        })),
       },
       {
         onSuccess: () => {
@@ -327,129 +464,148 @@ export default function EditInvoiceScreen() {
       `This invoice mirrors order ${invoice.order?.orderNumber ?? ""} and updates automatically until the order is delivered.`,
     );
   }
+  // units_v1, FAIL CLOSED (B784, mirrors web's B641): update() refuses a unit line (4c-2 is not
+  // built yet) and this form holds no unit state, so saving would silently store the line as a
+  // PACK line — 3 Cases (864 pieces) become 72 pieces while the money still reads $1,440. Refuse
+  // visibly here instead of letting the operator discover it from the server's 409 on Save.
+  if (hasUnitLine(invoice.items)) {
+    return guard(
+      `This invoice has a line sold by the ${unitLabelsOf(invoice.items).join(" / ")}`,
+      "Saving from this screen would turn that line into a pack line and change its quantity. Open the invoice to review it, or delete this draft and create it again.",
+    );
+  }
 
   const showTax = !isTaxExempt && (tenantTaxRate > 0 || lines.some((l) => l.taxRate > 0));
 
+  // BarcodeFab renders as a SIBLING of FormSheet, not a child: FormSheet's
+  // `children` land inside its own internal ScrollView, and an absolutely-
+  // positioned FAB in there would scroll away with the form instead of
+  // floating fixed on screen (matches movements.tsx/adjust-picker.tsx, which
+  // mount it as a sibling of their own ScrollView for the same reason).
   return (
-    <FormSheet
-      title="Edit invoice"
-      subtitle={invoice.invoiceNumber}
-      submitLabel={updateMut.isPending ? "Saving…" : "Save"}
-      submitting={updateMut.isPending}
-      warnIfDirty
-      onSubmit={submit}
-    >
-      {isTaxExempt ? (
-        <Text style={styles.exemptHint}>Tax-exempt customer — no tax will be charged.</Text>
-      ) : null}
+    <>
+      <FormSheet
+        title="Edit invoice"
+        subtitle={invoice.invoiceNumber}
+        submitLabel={updateMut.isPending ? "Saving…" : "Save"}
+        submitting={updateMut.isPending}
+        confirmDiscardIfDirty={dirty && !updateMut.isPending}
+        onSubmit={submit}
+      >
+        {isTaxExempt ? (
+          <Text style={styles.exemptHint}>Tax-exempt customer — no tax will be charged.</Text>
+        ) : null}
 
-      {lines.map((l) => (
-        <LineCard
-          key={l.key}
-          line={l}
-          showTax={showTax}
-          rate={rateFor(l)}
-          removable={lines.length > 1}
-          onPatch={(up) => patch(l.key, up)}
-          onSetBoxes={(n) => setBoxes(l, n)}
-          onSetPieces={(n) => setPieces(l, n)}
-          onSetQty={(n) => patch(l.key, { qty: Math.max(0, Math.floor(n)) })}
-          onRemove={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+        {lines.map((l) => (
+          <LineCard
+            key={l.key}
+            line={l}
+            showTax={showTax}
+            rate={rateFor(l)}
+            removable={lines.length > 1}
+            onPatch={(up) => patch(l.key, up)}
+            onSetBoxes={(n) => setBoxes(l, n)}
+            onSetPieces={(n) => setPieces(l, n)}
+            onSetQty={(n) => patch(l.key, { qty: Math.max(0, Math.floor(n)) })}
+            onRemove={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}
+          />
+        ))}
+
+        <View style={styles.addRow}>
+          <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)} hitSlop={4}>
+            <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
+            <Text style={styles.addBtnText}>Add item</Text>
+          </Pressable>
+          <Pressable style={styles.addBtn} onPress={addUnlistedLine} hitSlop={4}>
+            <Ionicons name="create-outline" size={16} color={ios.brand} />
+            <Text style={styles.addBtnText}>Add unlisted item</Text>
+          </Pressable>
+        </View>
+
+        <FormSection title="Details">
+          <FormField label="Issue date" hint="YYYY-MM-DD; blank keeps the original date.">
+            <FormTextInput
+              value={issueDate}
+              onChangeText={setIssueDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          </FormField>
+          <FormField label="Due date">
+            <FormTextInput
+              value={dueDate}
+              onChangeText={setDueDate}
+              placeholder="YYYY-MM-DD"
+              keyboardType="numbers-and-punctuation"
+            />
+          </FormField>
+          <FormField label="Reference number">
+            <FormTextInput
+              value={referenceNumber}
+              onChangeText={setReferenceNumber}
+              placeholder="PO / reference (optional)"
+            />
+          </FormField>
+          <FormField label="Subject">
+            <FormTextInput
+              value={subject}
+              onChangeText={setSubject}
+              placeholder="Shown on the invoice header (optional)"
+            />
+          </FormField>
+          <View style={styles.moneyRow}>
+            <View style={styles.moneyCol}>
+              <FormField label="Invoice discount ($)">
+                <MoneyTextInput
+                  value={invDiscount}
+                  onChangeValue={setInvDiscount}
+                  placeholder="0.00"
+                  style={styles.moneyInput}
+                  returnKeyType="done"
+                />
+              </FormField>
+            </View>
+            <View style={styles.moneyCol}>
+              <FormField label="Shipping fee ($)">
+                <MoneyTextInput
+                  value={shippingFee}
+                  onChangeValue={setShippingFee}
+                  placeholder="0.00"
+                  style={styles.moneyInput}
+                  returnKeyType="done"
+                />
+              </FormField>
+            </View>
+          </View>
+          <FormField label="Notes">
+            <FormTextInput value={notes} onChangeText={setNotes} multiline placeholder="Notes…" />
+          </FormField>
+          <FormField label="Terms">
+            <FormTextInput value={terms} onChangeText={setTerms} multiline placeholder="Terms…" />
+          </FormField>
+        </FormSection>
+
+        <View style={styles.totalsCard}>
+          <TotalRow label="Subtotal" value={totals.subtotal} />
+          {totals.taxTotal > 0 ? <TotalRow label="Tax" value={totals.taxTotal} /> : null}
+          {totals.discount > 0 ? <TotalRow label="Discount" value={-totals.discount} /> : null}
+          {totals.shippingFee > 0 ? <TotalRow label="Shipping" value={totals.shippingFee} /> : null}
+          <View style={[styles.totalRow, styles.totalRowMain]}>
+            <Text style={styles.totalLabelMain}>Total</Text>
+            <Text style={styles.totalValueMain}>${totals.total.toFixed(2)}</Text>
+          </View>
+        </View>
+
+        <ProductPickerSheet
+          visible={pickerOpen}
+          title="Add item"
+          activeOnly
+          onClose={() => setPickerOpen(false)}
+          onSelect={addCatalogLine}
         />
-      ))}
-
-      <View style={styles.addRow}>
-        <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)} hitSlop={4}>
-          <Ionicons name="add-circle-outline" size={16} color={ios.brand} />
-          <Text style={styles.addBtnText}>Add item</Text>
-        </Pressable>
-        <Pressable style={styles.addBtn} onPress={addUnlistedLine} hitSlop={4}>
-          <Ionicons name="create-outline" size={16} color={ios.brand} />
-          <Text style={styles.addBtnText}>Add unlisted item</Text>
-        </Pressable>
-      </View>
-
-      <FormSection title="Details">
-        <FormField label="Issue date" hint="YYYY-MM-DD; blank keeps the original date.">
-          <FormTextInput
-            value={issueDate}
-            onChangeText={setIssueDate}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </FormField>
-        <FormField label="Due date">
-          <FormTextInput
-            value={dueDate}
-            onChangeText={setDueDate}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </FormField>
-        <FormField label="Reference number">
-          <FormTextInput
-            value={referenceNumber}
-            onChangeText={setReferenceNumber}
-            placeholder="PO / reference (optional)"
-          />
-        </FormField>
-        <FormField label="Subject">
-          <FormTextInput
-            value={subject}
-            onChangeText={setSubject}
-            placeholder="Shown on the invoice header (optional)"
-          />
-        </FormField>
-        <View style={styles.moneyRow}>
-          <View style={styles.moneyCol}>
-            <FormField label="Invoice discount ($)">
-              <MoneyTextInput
-                value={invDiscount}
-                onChangeValue={setInvDiscount}
-                placeholder="0.00"
-                style={styles.moneyInput}
-                returnKeyType="done"
-              />
-            </FormField>
-          </View>
-          <View style={styles.moneyCol}>
-            <FormField label="Shipping fee ($)">
-              <MoneyTextInput
-                value={shippingFee}
-                onChangeValue={setShippingFee}
-                placeholder="0.00"
-                style={styles.moneyInput}
-                returnKeyType="done"
-              />
-            </FormField>
-          </View>
-        </View>
-        <FormField label="Notes">
-          <FormTextInput value={notes} onChangeText={setNotes} multiline placeholder="Notes…" />
-        </FormField>
-        <FormField label="Terms">
-          <FormTextInput value={terms} onChangeText={setTerms} multiline placeholder="Terms…" />
-        </FormField>
-      </FormSection>
-
-      <View style={styles.totalsCard}>
-        <TotalRow label="Subtotal" value={totals.subtotal} />
-        {totals.taxTotal > 0 ? <TotalRow label="Tax" value={totals.taxTotal} /> : null}
-        {totals.discount > 0 ? <TotalRow label="Discount" value={-totals.discount} /> : null}
-        {totals.shippingFee > 0 ? <TotalRow label="Shipping" value={totals.shippingFee} /> : null}
-        <View style={[styles.totalRow, styles.totalRowMain]}>
-          <Text style={styles.totalLabelMain}>Total</Text>
-          <Text style={styles.totalValueMain}>${totals.total.toFixed(2)}</Text>
-        </View>
-      </View>
-
-      <ProductPickerSheet
-        visible={pickerOpen}
-        title="Add item"
-        onClose={() => setPickerOpen(false)}
-        onSelect={addCatalogLine}
-      />
-    </FormSheet>
+      </FormSheet>
+      <BarcodeFab onScanned={onScanned} continuous hidden={pickerOpen} />
+    </>
   );
 }
 
@@ -488,6 +644,10 @@ function LineCard({
 }) {
   const upb = Number(line.unitsPerBox ?? 0);
   const isSplit = line.boxes != null && upb > 1;
+  // #2698 (SA-564a): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, line.pieces);
+  const freeUnits = editedLineFreeUnits(line);
   const lineTotal = Math.max(
     0,
     computeLineSubtotal({
@@ -496,6 +656,7 @@ function LineCard({
       boxes: line.boxes,
       pieces: line.pieces,
       unitsPerBox: line.unitsPerBox,
+      freeUnits,
     }) - (line.discount ?? 0),
   );
 
@@ -528,56 +689,129 @@ function LineCard({
         ) : null}
       </View>
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>$</Text>
-          <MoneyTextInput
-            style={styles.fieldMoneyInput}
-            value={line.unitPrice}
-            onChangeValue={(v) => onPatch({ unitPrice: v })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
+      {line.locked ? (
+        <View testID="locked-line">
+          <Text style={styles.fieldHint}>
+            {line.storedBoxes} case · {line.storedPieces} loose · $
+            {Number(line.unitPrice ?? 0).toFixed(2)}
+            {" — set the box and piece count for this line to edit it."}
+          </Text>
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Units per case</Text>
+            <TextInput
+              keyboardType="number-pad"
+              placeholder="e.g. 12"
+              placeholderTextColor={ios.label3}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (Number.isInteger(n) && n >= 2) {
+                  onPatch({
+                    locked: false,
+                    unitsPerBox: n,
+                    attestedPack: n,
+                    qty: (line.storedBoxes ?? 0) * n + (line.storedPieces ?? 0),
+                  });
+                }
+              }}
+              style={styles.fieldMoneyInput}
+            />
+          </View>
         </View>
-      </View>
-
-      {isSplit ? (
+      ) : (
         <>
           <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Cases</Text>
-            <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
-          </View>
-          <View style={styles.fieldRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.fieldLabel}>Loose units</Text>
-              <Text style={styles.fieldHint}>{upb} per case</Text>
+            <Text style={styles.fieldLabel}>Price{isSplit ? " / case" : ""}</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>$</Text>
+              <MoneyTextInput
+                style={styles.fieldMoneyInput}
+                value={line.unitPrice}
+                onChangeValue={(v) => onPatch({ unitPrice: v })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
             </View>
-            <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+          </View>
+
+          {isSplit ? (
+            <>
+              <View style={styles.fieldRow}>
+                <Text style={styles.fieldLabel}>Cases</Text>
+                <QtyStepper value={line.boxes ?? 0} onChangeQty={onSetBoxes} />
+              </View>
+              {showLoose ? (
+                <View style={styles.fieldRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.fieldLabel}>Extra loose units</Text>
+                    <Text style={styles.fieldHint}>{upb} per case</Text>
+                  </View>
+                  <QtyStepper value={line.pieces ?? 0} onChangeQty={onSetPieces} max={upb - 1} />
+                  {canRemoveLooseUnits(line.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onSetPieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={styles.looseRemove}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
+                  style={styles.looseAdd}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add extra loose units"
+                >
+                  <Text style={styles.looseAddText}>+ units</Text>
+                </Pressable>
+              )}
+            </>
+          ) : (
+            <View style={styles.fieldRow}>
+              <Text style={styles.fieldLabel}>Qty</Text>
+              <QtyStepper value={line.qty} onChangeQty={onSetQty} />
+            </View>
+          )}
+
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Discount</Text>
+            <View style={styles.fieldInputWrap}>
+              <Text style={styles.fieldCurrency}>−$</Text>
+              <MoneyTextInput
+                style={[
+                  styles.fieldMoneyInput,
+                  (line.discount ?? 0) > 0 && styles.fieldMoneyActive,
+                ]}
+                value={line.discount}
+                onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
+                placeholder="0.00"
+                returnKeyType="done"
+              />
+            </View>
           </View>
         </>
-      ) : (
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Qty</Text>
-          <QtyStepper value={line.qty} onChangeQty={onSetQty} />
-        </View>
       )}
 
-      <View style={styles.fieldRow}>
-        <Text style={styles.fieldLabel}>Discount</Text>
-        <View style={styles.fieldInputWrap}>
-          <Text style={styles.fieldCurrency}>−$</Text>
-          <MoneyTextInput
-            style={[styles.fieldMoneyInput, (line.discount ?? 0) > 0 && styles.fieldMoneyActive]}
-            value={line.discount}
-            onChangeValue={(v) => onPatch({ discount: v != null && v > 0 ? v : null })}
-            placeholder="0.00"
-            returnKeyType="done"
-          />
-        </View>
-      </View>
-
-      {showTax && rate > 0 ? (
+      {showTax && rate > 0 && isNsfLine(line) ? (
+        // #2656 / SA-549: the NSF fee line is never taxed — the toggle is locked off (API refuses > 0).
+        <Pressable
+          style={[styles.taxRow, { opacity: 0.5 }]}
+          disabled
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked: false, disabled: true }}
+          accessibilityLabel="Not taxed: the NSF fee is never taxed"
+        >
+          <View style={styles.checkbox} />
+          <Text style={styles.taxLabel}>Not taxed (NSF fee)</Text>
+        </Pressable>
+      ) : showTax && rate > 0 ? (
         <Pressable
           style={styles.taxRow}
           onPress={() => onPatch({ taxable: !line.taxable })}
@@ -619,6 +853,27 @@ function LineCard({
 }
 
 const styles = StyleSheet.create({
+  // #2698: the opt-in loose-units control (dashed, small) and its remove button — as CartRow.
+  looseRemove: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: ios.fill,
+    marginLeft: 6,
+  },
+  looseAdd: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 12,
+    minHeight: 32,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: ios.separator,
+  },
+  looseAddText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand },
   guardCard: {
     backgroundColor: ios.bgElev,
     borderRadius: 14,

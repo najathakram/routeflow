@@ -5,9 +5,49 @@
  * Role: OPERATOR (admin / Admin@123) within the seeded tenant
  */
 
-import { test, expect } from "@playwright/test";
-import { setTenantCookie, loginAsOperator, logout } from "./helpers/auth";
+import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
+import { setTenantCookie, loginAsOperator, logout, fillWorkspaceIfShown } from "./helpers/auth";
 import { TENANT_SLUG } from "./helpers/constants";
+import { apiBase, operatorAccessToken } from "./helpers/api";
+
+/** Bearer + tenant headers for a direct API call, or null when unauthenticated. */
+async function apiHeaders(
+  page: Page,
+): Promise<{ authorization: string; "x-tenant-slug": string } | null> {
+  const token = await operatorAccessToken(page);
+  if (!token) return null;
+  return { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG };
+}
+
+/**
+ * The stable seeded product OP-09c/OP-11b exercise the tier editor on.
+ * NEVER "the first row": spec 21's B24 guard fixtures sort newest-first and
+ * a failed run leaves them behind (the guard under test refuses their
+ * deletion), so row 1 is fixture roulette. Espresso Beans lists at $24, which
+ * keeps OP-09c's 9.75 below list — the tier-monotonicity warning otherwise
+ * appends "⚠" to the label's own text node and no exact match survives it.
+ */
+async function gotoTierEditorProduct(page: Page, request: APIRequestContext): Promise<void> {
+  await page.goto("/products");
+  await expect(page.getByRole("button", { name: /table view/i })).toBeVisible({
+    timeout: 15_000,
+  });
+  const headers = await apiHeaders(page);
+  test.skip(!headers, "No operator access token available in localStorage");
+  const listRes = await request.get(
+    `${apiBase(page.url())}/api/v1/products?search=${encodeURIComponent("E2E Espresso Beans")}`,
+    { headers: headers! },
+  );
+  expect(listRes.ok()).toBe(true);
+  const body = await listRes.json();
+  const rows = (body.data ?? body.products ?? body) as Array<{ id: string; name: string }>;
+  const target = rows.find?.((p) => p.name === "E2E Espresso Beans 1kg");
+  expect(
+    target,
+    "seeded product 'E2E Espresso Beans 1kg' must exist on e2e-routeflow",
+  ).toBeTruthy();
+  await page.goto(`/products/${target!.id}`);
+}
 
 test.describe("Operator — Tenant Dashboard", () => {
   // Storage state (operator.json) is pre-loaded by the "operator" Playwright project,
@@ -67,6 +107,17 @@ test.describe("Operator — Tenant Dashboard", () => {
       .locator("[class*='stat'], [class*='kpi'], [class*='card'], [class*='metric']")
       .first();
     await expect(card).toBeVisible({ timeout: 15_000 });
+  });
+
+  test("OP-03b dispatch-addon canary — Dispatch nav group visible in sidebar", async ({ page }) => {
+    // The e2e tenant keeps the recurring_routes + order_delivery addons active
+    // via e2e-seed.js (developer_mode no longer unlocks them since 2026-08-28),
+    // so the Dispatch nav group (Overview / Routes / Drivers) must render. This
+    // fails fast and clearly on a broken/missing seed row, instead of OP-10
+    // failing vaguely later when it can't find the /routes nav link.
+    await expect(page.getByRole("button", { name: "Dispatch", exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 
   // ── Orders ────────────────────────────────────────────────────────────────
@@ -189,23 +240,23 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test('OP-09c tier prices save on a standalone product (regression: parentProductId "" → 400)', async ({
     page,
+    request,
   }) => {
-    await page.goto("/products");
-    // Products defaults to Grid view (cards, no <table>) — switch to Table view
-    // so the row-click locator below has a table to match.
-    await page.getByRole("button", { name: /table view/i }).click();
-    // Open the first product's detail page. Click the FIRST cell specifically
-    // (product name/thumbnail) — several other cells (SKU, Category, Price)
-    // wrap their content in onClick={e => e.stopPropagation()} for their own
-    // inline-edit controls, so a raw row click can land there and silently
-    // swallow the row's onRowClick navigation.
-    await page.locator("table tbody tr td").first().click();
-    await page.waitForURL(/\/products\/.+/);
+    // See gotoTierEditorProduct: a stable seeded product, never row-1 roulette.
+    // Row 1 once handed this test a $1.00-list guard leftover; its 9.75 write
+    // tripped the monotonicity warning and poisoned the label for every later
+    // run ("Tier 2 ⚠" — this suite's chronic red of 2026-08-31).
+    await gotoTierEditorProduct(page, request);
     // Enter edit mode (icon button)
     await page.locator('button[title="Edit product"]').first().click();
     // Set Tier 2 to a valid price. (The tier editor is a DecimalInput —
-    // type="text" inputMode="decimal" since the money-input fix.)
-    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    // type="text" inputMode="decimal" since the money-input fix.) The label
+    // match is prefix-tolerant: a monotonicity violation appends "⚠" to the
+    // SAME text node, which an exact match can never survive.
+    const tier2 = page
+      .getByText(/^Tier 2/)
+      .locator("xpath=..")
+      .locator("input");
     await expect(tier2).toBeVisible({ timeout: 10_000 });
     await tier2.fill("9.75");
     // Save must produce a 2xx PATCH — the old spread payload sent
@@ -250,21 +301,18 @@ test.describe("Operator — Tenant Dashboard", () => {
 
   test("OP-11b money inputs never reformat while typing (2.50 stays 2.50, not 2.05)", async ({
     page,
+    request,
   }) => {
     // The product tier editor uses the shared DecimalInput — the same component
     // behind every price/discount field. Typing must be sanitize-only; the old
     // numeric-bound input echoed toFixed(2) mid-keystroke ("2." → "2.00" → "2.05").
-    await page.goto("/products");
-    // Products defaults to Grid view (cards, no <table>) — switch to Table view
-    // so the row-click locator below has a table to match.
-    await page.getByRole("button", { name: /table view/i }).click();
-    // Click the FIRST cell specifically — see OP-09c's comment: other cells
-    // (SKU, Category, Price) stopPropagation() for their own inline-edit
-    // controls, so a raw row click can silently swallow the navigation.
-    await page.locator("table tbody tr td").first().click();
-    await page.waitForURL(/\/products\/.+/);
+    // Stable product + prefix-tolerant label per OP-09c — see gotoTierEditorProduct.
+    await gotoTierEditorProduct(page, request);
     await page.locator('button[title="Edit product"]').first().click();
-    const tier2 = page.getByText("Tier 2", { exact: true }).locator("xpath=..").locator("input");
+    const tier2 = page
+      .getByText(/^Tier 2/)
+      .locator("xpath=..")
+      .locator("input");
     await expect(tier2).toBeVisible({ timeout: 10_000 });
 
     await tier2.fill("");
@@ -444,6 +492,46 @@ test.describe("Operator — Tenant Dashboard", () => {
     await page.getByRole("button", { name: /create vendor bill/i }).click();
     await page.waitForTimeout(800);
     expect(billPosted).toBe(false);
+  });
+
+  test("OP-17g REG-OCR-2 single scan surfaces the server's error message instead of the generic file hint", async ({
+    page,
+  }) => {
+    // The scan-invoice call is gated (403 ADDON_GATE) — the modal must surface
+    // the server's own message, not the generic "check the file" hint.
+    await page.route("**/vendor-bills/scan-invoice", (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: "application/json",
+        body: JSON.stringify({
+          statusCode: 403,
+          error: "Forbidden",
+          code: "ADDON_GATE",
+          addonKeys: ["ocr"],
+          message: 'This feature requires the "ocr" add-on.',
+        }),
+      }),
+    );
+
+    await mockSuppliers(page);
+    await page.goto("/inventory");
+    await page.getByRole("button", { name: /scan invoice/i }).click();
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({ name: "invoice.png", mimeType: "image/png", buffer: Buffer.from("fake") });
+
+    // The scan-error toast viewport is Radix's role="region" labelled
+    // "Notifications (F8)"; each visible toast is a listitem — scoping
+    // through the region excludes the separate aria-live announcer mirror
+    // (role="status", portaled to <body>) that otherwise duplicates the same
+    // text and trips strict mode (see 21-destructive-guards.spec.ts).
+    const scanErrorToast = page
+      .getByRole("region", { name: /notifications/i })
+      .getByRole("listitem")
+      .filter({ hasText: /ocr/i });
+    await expect(scanErrorToast).toBeVisible({ timeout: 15_000 });
+    await expect(scanErrorToast).toContainText('This feature requires the "ocr" add-on.');
+    await expect(page.getByText("Please check the file and try again.")).toHaveCount(0);
   });
 
   /**
@@ -882,11 +970,15 @@ test.describe("Operator — Tenant Dashboard", () => {
     // Current-stock hint proves the selection registered.
     await expect(page.getByText(/current stock:/i)).toBeVisible();
 
-    // The modal's labels aren't htmlFor-associated — target by position:
-    // the qty/cost grid renders them as the first two number inputs.
+    // The modal's labels aren't htmlFor-associated — target by position. The
+    // layout depends on the picked product: non-boxed renders [Quantity, Unit
+    // Cost]; a BOXED product renders [Boxes, + Pieces, Cost per Box] (#417).
+    // First = qty/boxes and LAST = the required cost in both layouts — nth(1)
+    // would fill Pieces on a boxed product and leave Cost empty, so the
+    // required-field validation silently blocks the submit.
     const numberInputs = page.locator('form input[type="number"]');
-    await numberInputs.nth(0).fill("1");
-    await numberInputs.nth(1).fill("1.00");
+    await numberInputs.first().fill("1");
+    await numberInputs.last().fill("1.00");
 
     const purchaseResp = page.waitForResponse(
       (r) => r.url().includes("/inventory/movements/purchase") && r.request().method() === "POST",
@@ -941,6 +1033,9 @@ test.describe("Operator — Tenant Dashboard", () => {
       .or(page.getByText(/continue with google/i))
       .first();
     if (await googleBtn.isVisible()) {
+      // Required since the login page stopped deriving a bogus workspace from the
+      // Railway hostname: startGoogleSignIn() refuses without a workspace value.
+      await fillWorkspaceIfShown(page);
       await googleBtn.click();
       // Should redirect to Google (or navigate to accounts.google.com)
       await page.waitForURL(/accounts\.google\.com|google\.com\/o\/oauth/, { timeout: 15_000 });
@@ -948,6 +1043,25 @@ test.describe("Operator — Tenant Dashboard", () => {
     } else {
       test.skip(true, "Google OAuth button not visible (env vars may not be set)");
     }
+  });
+
+  // ── Portal switcher (T27; spec R6, R11) ───────────────────────────────────
+
+  test("OP-23 user menu offers the buyer portal, and /dashboard records rf-last-portal=op", async ({
+    page,
+    context,
+  }) => {
+    await page.getByRole("button", { name: "Open user menu" }).click();
+
+    // Radix renders the item with `asChild` over a next/link anchor, so it is
+    // reachable as either role — the accessible NAME is the contract. This
+    // operator has no buyer session, so it is the sign-in variant.
+    const item = page.getByRole("menuitem", { name: "Buyer portal sign-in" });
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await expect(item).toHaveAttribute("href", "/buyer/login");
+
+    const cookies = await context.cookies();
+    expect(cookies.find((c) => c.name === "rf-last-portal")?.value).toBe("op");
   });
 
   // ── Logout ────────────────────────────────────────────────────────────────

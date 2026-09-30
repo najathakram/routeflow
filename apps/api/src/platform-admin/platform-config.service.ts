@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 
@@ -12,11 +12,13 @@ const CLAUDE_MODELS = [
 ];
 
 // Rough per-1M-token USD pricing (input, output) for the display-only "Est.
-// spend" figure — not billing.
+// spend" figure — not billing. Refreshed 2026-08-29 to current Anthropic API
+// rates (Opus tier 5/25, Sonnet 5 2/10, Haiku 4.5 1/5) — the previous values
+// were one-to-three model generations stale and overstated Opus spend 3×.
 const AI_MODEL_PRICING: Record<string, { in: number; out: number }> = {
-  opus: { in: 15, out: 75 },
-  sonnet: { in: 3, out: 15 },
-  haiku: { in: 0.8, out: 4 },
+  opus: { in: 5, out: 25 },
+  sonnet: { in: 2, out: 10 },
+  haiku: { in: 1, out: 5 },
 };
 
 function modelPrice(model: string): { in: number; out: number } {
@@ -27,53 +29,13 @@ function modelPrice(model: string): { in: number; out: number } {
 }
 
 @Injectable()
-export class PlatformConfigService implements OnModuleInit {
+export class PlatformConfigService {
   private readonly logger = new Logger(PlatformConfigService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {}
-
-  /**
-   * Auto-create the PlatformConfig table if it doesn't exist yet.
-   * This avoids needing a manual migration when the feature is first deployed.
-   */
-  async onModuleInit() {
-    try {
-      await this.prisma.$executeRaw`
-        CREATE TABLE IF NOT EXISTS "PlatformConfig" (
-          "id"        TEXT NOT NULL DEFAULT gen_random_uuid()::text,
-          "key"       TEXT NOT NULL,
-          "value"     TEXT NOT NULL,
-          "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now(),
-          CONSTRAINT "PlatformConfig_pkey" PRIMARY KEY ("id"),
-          CONSTRAINT "PlatformConfig_key_key" UNIQUE ("key")
-        )
-      `;
-      // AI usage/metering log — additive + idempotent (same auto-create pattern
-      // as PlatformConfig above, so no Prisma migration is required to ship).
-      await this.prisma.$executeRaw`
-        CREATE TABLE IF NOT EXISTS "AiUsageEvent" (
-          "id"           TEXT NOT NULL DEFAULT gen_random_uuid()::text,
-          "tenantId"     TEXT,
-          "feature"      TEXT NOT NULL,
-          "model"        TEXT NOT NULL,
-          "inputTokens"  INTEGER NOT NULL DEFAULT 0,
-          "outputTokens" INTEGER NOT NULL DEFAULT 0,
-          "success"      BOOLEAN NOT NULL DEFAULT true,
-          "createdAt"    TIMESTAMP(3) NOT NULL DEFAULT now(),
-          CONSTRAINT "AiUsageEvent_pkey" PRIMARY KEY ("id")
-        )
-      `;
-      await this.prisma.$executeRaw`
-        CREATE INDEX IF NOT EXISTS "AiUsageEvent_createdAt_idx" ON "AiUsageEvent"("createdAt")
-      `;
-      this.logger.log("PlatformConfig + AiUsageEvent tables ready");
-    } catch (err: any) {
-      this.logger.error(`Platform table setup failed: ${err?.message}`);
-    }
-  }
 
   // ─── Low-level helpers ──────────────────────────────────────────────────────
 
@@ -173,9 +135,10 @@ export class PlatformConfigService implements OnModuleInit {
   // ─── AI usage metering + connection test ────────────────────────────────────
 
   /**
-   * Append a usage row. Exposed for the AI call sites (OCR / forecasting) to
-   * record token usage — those modules are out of this session's scope, so this
-   * isn't wired yet; the usage panel reports whatever has been recorded.
+   * Append a usage row. Called by every Anthropic call site: vendor-bill scan
+   * (`ocr.vendor_bill`), supplier-statement scan (`ocr.supplier_statement`),
+   * expense-receipt extraction (`ocr.expense_receipt`), and route insights
+   * (`insights.route`). Never throws — metering must not fail the feature.
    */
   async recordAiUsage(evt: {
     tenantId?: string | null;
@@ -225,6 +188,7 @@ export class PlatformConfigService implements OnModuleInit {
 
     let ocrScans = 0;
     let forecastRuns = 0;
+    let insightRuns = 0;
     let tokensIn = 0;
     let tokensOut = 0;
     let totalCalls = 0;
@@ -238,8 +202,9 @@ export class PlatformConfigService implements OnModuleInit {
       failures += Number(r.failures);
       tokensIn += inTok;
       tokensOut += outTok;
-      if (r.feature === "ocr") ocrScans += calls;
-      if (r.feature === "forecast") forecastRuns += calls;
+      if (r.feature === "ocr" || r.feature.startsWith("ocr.")) ocrScans += calls;
+      if (r.feature === "forecast" || r.feature.startsWith("forecast.")) forecastRuns += calls;
+      if (r.feature.startsWith("insights.")) insightRuns += calls;
       const price = modelPrice(r.model);
       estSpendUsd += (inTok / 1e6) * price.in + (outTok / 1e6) * price.out;
     }
@@ -248,6 +213,7 @@ export class PlatformConfigService implements OnModuleInit {
       days,
       ocrScans,
       forecastRuns,
+      insightRuns,
       tokensIn,
       tokensOut,
       estSpendUsd: Math.round(estSpendUsd * 100) / 100,
@@ -285,5 +251,15 @@ export class PlatformConfigService implements OnModuleInit {
     } catch (err: any) {
       return { ok: false, model, error: err?.message ?? "Request failed" };
     }
+  }
+
+  // ─── Platform identity ──────────────────────────────────────────────────────
+
+  async getHouseTenantId(): Promise<string | null> {
+    return this.getValue("platform.houseTenantId");
+  }
+
+  async setHouseTenantId(tenantId: string): Promise<void> {
+    await this.setValue("platform.houseTenantId", tenantId);
   }
 }

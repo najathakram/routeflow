@@ -1,4 +1,5 @@
-import { Platform, ToastAndroid } from "react-native";
+import { Alert, Platform, ToastAndroid } from "react-native";
+import { getToastHost } from "./toast-host";
 
 export function showToast(message: string) {
   if (Platform.OS === "android") {
@@ -30,6 +31,15 @@ export function showToast(message: string) {
       el.style.opacity = "0";
       setTimeout(() => el.remove(), 350);
     }, 2200);
+  } else {
+    // iOS (REG-B151): route to whichever screen's InlineToast is currently
+    // mounted (lib/toast-host.ts); when no host is registered, fall back to
+    // a native alert so the message is never silently dropped.
+    const host = getToastHost();
+    if (host) {
+      host(message);
+    } else {
+      Alert.alert(message);
+    }
   }
-  // iOS: no-op — use in-screen feedback instead of Alert.alert
 }

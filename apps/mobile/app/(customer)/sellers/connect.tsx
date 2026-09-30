@@ -13,6 +13,10 @@ export default function ConnectSellerScreen() {
   const [emailAtSeller, setEmailAtSeller] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // #2341: a 0-seller buyer lands here from sign-up / login with nothing
+  // under it in the stack, so "back" falls back to the seller list.
+  const leave = () => (router.canGoBack() ? router.back() : router.replace("/(customer)/sellers"));
+
   const canSubmit = sellerSlug.trim().length > 0 && EMAIL_RE.test(emailAtSeller.trim());
 
   const onSubmit = () => {
@@ -20,9 +24,12 @@ export default function ConnectSellerScreen() {
     requestMut.mutate(
       { sellerSlug: sellerSlug.trim().toLowerCase(), emailAtSeller: emailAtSeller.trim() },
       {
-        onSuccess: () => {
-          showToast("Connection request sent");
-          router.back();
+        onSuccess: (res) => {
+          // The server's message is the real outcome — instant connect, pending
+          // review, or pending-with-a-verify-your-email hint (mirrors web's
+          // ConnectSellerModal, which stopped hardcoding "will review" copy).
+          showToast(res?.message ?? "Connection request sent");
+          leave();
         },
         onError: (e: any) =>
           setError(
@@ -38,6 +45,7 @@ export default function ConnectSellerScreen() {
       title="Connect a Seller"
       submitLabel="Send Request"
       onSubmit={onSubmit}
+      onCancel={leave}
       submitting={requestMut.isPending}
       submitDisabled={!canSubmit}
       // The one FormSheet with no bottom nav under it — (customer)/_layout is a

@@ -16,6 +16,7 @@ import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
+import { escapeHtml } from "../common/html-escape";
 
 export interface BuyerDeviceInfo {
   userAgent?: string;
@@ -66,10 +67,128 @@ export class BuyerAuthService {
     );
     this.logger.log(`BuyerAccount registered: ${account.email}`);
 
+    // Fire-and-forget: the verification email gates only instant seller
+    // auto-connect (BuyerService.requestSeller), never the session itself — a
+    // transport failure must not fail registration. Buyers can re-request the
+    // link any time via /buyer/auth/resend-verification.
+    void this.issueVerificationEmail(account).catch((e: Error) =>
+      this.logger.warn(`Verification email for ${account.email} failed: ${e.message}`),
+    );
+
     return {
       ...tokens,
       buyer: { id: account.id, email: account.email, name: account.name, hasPassword: true },
     };
+  }
+
+  // ─── Email verification ───────────────────────────────────────────────────────
+
+  /** Verification links live longer than reset links — 24h vs 15min — because
+   *  they prove a mailbox, not authorize a credential change. */
+  static readonly EMAIL_VERIFY_TTL_MS = 24 * 60 * 60_000;
+
+  /**
+   * Creates a single-use verification token and emails the link. The token is
+   * stored hashed (like reset tokens); the base URL is resolved strictly
+   * server-side so a client can never redirect the token elsewhere.
+   */
+  private async issueVerificationEmail(account: { id: string; email: string }) {
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = this.hashToken(rawToken);
+    const expiresAt = new Date(Date.now() + BuyerAuthService.EMAIL_VERIFY_TTL_MS);
+
+    // Clean up previous unexpired tokens to avoid table bloat (mirrors reset flow)
+    await this.prisma.buyerEmailVerificationToken.deleteMany({
+      where: { buyerAccountId: account.id, usedAt: null, expiresAt: { gt: new Date() } },
+    });
+    await this.prisma.buyerEmailVerificationToken.create({
+      data: { buyerAccountId: account.id, tokenHash, expiresAt },
+    });
+
+    const urls = this.configService.get<AppConfig["urls"]>("urls")!;
+    const verifyUrl = `${urls.web}/buyer/verify-email?token=${rawToken}`;
+
+    return this.emailService.send({
+      to: account.email,
+      subject: "Verify your email for RouteFlow",
+      html: `<p>Hi,</p>
+<p>A RouteFlow buyer portal account was created with this email address. Confirm it's yours to unlock instant connections to sellers who already know this email.</p>
+<p><a href="${escapeHtml(verifyUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Verify my email</a></p>
+<p>This link expires in <strong>24 hours</strong>.</p>
+<p><strong>Didn't create this account?</strong> Ignore this email and do not click the button — the account will simply stay unverified.</p>`,
+      // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+      senderClass: "platform",
+    });
+  }
+
+  /**
+   * Consumes a verification token and flips `emailVerified` — the flag
+   * `BuyerService.requestSeller` requires before a sign-in-email match may
+   * auto-connect to a seller's customer record.
+   */
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    const tokenHash = this.hashToken(token);
+    const record = await this.prisma.buyerEmailVerificationToken.findUnique({
+      where: { tokenHash },
+    });
+
+    if (!record) {
+      throw new BadRequestException("Verification link is invalid or has already been used.");
+    }
+    if (record.usedAt) throw new BadRequestException("Verification link has already been used.");
+    if (record.expiresAt < new Date()) {
+      throw new BadRequestException(
+        "Verification link has expired. Sign in and request a new one from your portal.",
+      );
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.buyerEmailVerificationToken.update({
+        where: { tokenHash },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.buyerAccount.update({
+        where: { id: record.buyerAccountId },
+        data: { emailVerified: true },
+      }),
+    ]);
+
+    this.logger.log(`BuyerAccount ${record.buyerAccountId} verified their email`);
+    return {
+      message: "Email verified. Sellers who know this email can now connect you instantly.",
+    };
+  }
+
+  /**
+   * Re-sends the verification link for the signed-in buyer. Awaited (not
+   * fire-and-forget) so the response can be honest about delivery — send()
+   * returns `{delivered}` instead of throwing for transport problems.
+   */
+  async resendVerification(
+    buyerAccountId: string,
+  ): Promise<{ message: string; sent: boolean; alreadyVerified?: boolean }> {
+    const account = await this.prisma.buyerAccount.findUnique({ where: { id: buyerAccountId } });
+    if (!account || account.deletedAt || account.status !== "ACTIVE") {
+      throw new UnauthorizedException();
+    }
+    if (account.emailVerified) {
+      return { message: "Your email is already verified.", sent: false, alreadyVerified: true };
+    }
+
+    const result = await this.issueVerificationEmail(account).catch((e: Error) => {
+      this.logger.warn(`Resend verification for ${account.email} failed: ${e.message}`);
+      return { delivered: false as const };
+    });
+
+    return result.delivered
+      ? {
+          message: `Verification email sent to ${account.email}. The link expires in 24 hours.`,
+          sent: true,
+        }
+      : {
+          message: "We couldn't send the verification email right now — please try again shortly.",
+          sent: false,
+        };
   }
 
   // ─── Login ────────────────────────────────────────────────────────────────────
@@ -80,10 +199,9 @@ export class BuyerAuthService {
     });
 
     // F3-005: return a CONSTANT "Invalid credentials" for not-found, deleted,
-    // AND suspended accounts. A distinct "suspended" message was an enumeration
-    // oracle — it confirmed the email belongs to a real (suspended) account.
-    // Mirrors staff validateUser, which returns null for any non-ACTIVE status.
-    if (!account || account.deletedAt || account.status !== "ACTIVE") {
+    // suspended, AND wrong-password alike — never a distinct message, so none
+    // of these leaks account existence/status via the response BODY.
+    if (!account || account.deletedAt) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -97,6 +215,19 @@ export class BuyerAuthService {
     const valid = await bcrypt.compare(dto.password, account.passwordHash);
     if (!valid) {
       await this.recordFailedLogin(account.id, account.failedLoginAttempts, account.lockedUntil);
+      throw new UnauthorizedException("Invalid credentials");
+    }
+
+    // Status is checked AFTER the password (B213-class fix, mirroring
+    // auth.service.ts validateUser): the message stays the SAME constant
+    // "Invalid credentials" either way (buyers have no email-verification
+    // login gate to explain), but checking status FIRST used to make a
+    // SUSPENDED account's response consistently fast (no bcrypt) while an
+    // ACTIVE account's wrong-password response was consistently slow (bcrypt
+    // runs) — a timing oracle for "is this email a suspended buyer account"
+    // that the message-level fix above never addressed. Only reachable with
+    // the CORRECT password, so nothing new leaks to a stranger guessing.
+    if (account.status !== "ACTIVE") {
       throw new UnauthorizedException("Invalid credentials");
     }
     if (account.failedLoginAttempts > 0 || account.lockedUntil) {
@@ -331,9 +462,11 @@ export class BuyerAuthService {
         to: account.email,
         subject: "A password was set on your RouteFlow account",
         html: `<p>A password was just set on your RouteFlow portal account, which previously signed in with Google only.</p>
-               <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-               <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+               <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+               <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                <p>You can now sign in with your email and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
       .catch(() => {});
 
@@ -377,16 +510,39 @@ export class BuyerAuthService {
     const urls = this.configService.get<AppConfig["urls"]>("urls")!;
     const resetUrl = `${urls.web}/buyer/reset-password?token=${rawToken}`;
 
+    // B212-class fix: a real delivery failure for a real buyer used to leave
+    // zero trace anywhere. Still fire-and-forget (NOT awaited): the response
+    // text is the SAME fixed, enumeration-safe message regardless of delivery
+    // outcome, and awaiting the send here would make a registered address
+    // cost an extra SMTP/Resend round-trip that an unknown address never pays
+    // for — a timing oracle on the one endpoint whose whole contract is
+    // enumeration safety (review finding on PR #778). The attempt is logged,
+    // just never blocks the response.
     this.emailService
       .send({
         to: account.email,
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow portal account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
-      .catch(() => {});
+      .then((sendResult) => {
+        if (!sendResult.delivered) {
+          this.logger.error(
+            `Password reset email NOT delivered for buyer ${account.id} (${account.email}) — ` +
+              `transport=${sendResult.transport} ` +
+              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+          );
+        }
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send password reset email for buyer ${account.id} (${account.email}): ${err.message}`,
+        );
+      });
 
     return MSG;
   }

@@ -16,7 +16,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminCustomers, useAdminOrders, type AdminOrder } from "../../../lib/api/admin";
 import { useCreateReturn, type ReturnReason } from "../../../lib/api/returns";
-import { buildReturnItems } from "../../../lib/returns-logic";
+import { buildReturnItems, restockForReason } from "../../../lib/returns-logic";
 import { sanitizeIntInput } from "../../../lib/qty";
 import { showToast } from "../../../lib/toast";
 
@@ -185,10 +185,13 @@ function ItemsStep({
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // REG-B61: an explicit per-line restock choice wins; otherwise the default
+  // comes from the chosen reason (`restockForReason`), never a hardcoded `true`.
   const items = buildReturnItems(
     lines.map((li) => ({ productId: li.productId, orderedQty: Number(li.qty) })),
     qtys,
     restock,
+    reason ?? "",
   );
 
   const submit = () => {
@@ -265,7 +268,7 @@ function ItemsStep({
                     <Text style={styles.itemMeta}>Ordered {ordered}</Text>
                     <View style={styles.restockRow}>
                       <Switch
-                        value={restock[pid] ?? true}
+                        value={restock[pid] ?? restockForReason(reason ?? "")}
                         onValueChange={(v) => setRestock((m) => ({ ...m, [pid]: v }))}
                         trackColor={{ true: ios.brand }}
                       />

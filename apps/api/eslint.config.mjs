@@ -53,4 +53,21 @@ export default tseslint.config(
       "prettier/prettier": ["warn", { endOfLine: "auto" }],
     },
   },
+  {
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(deleteMany|updateMany)$/][arguments.length=0]",
+          message: "B126: unscoped bulk write. Pass { where: { tenantId } }.",
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name=/^(deleteMany|updateMany)$/] > ObjectExpression[properties.length=0]",
+          message: "B126: deleteMany({}) deletes EVERY tenant's rows.",
+        },
+      ],
+    },
+  },
 );

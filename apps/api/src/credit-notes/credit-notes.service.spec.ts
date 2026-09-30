@@ -1,14 +1,18 @@
 import { Test } from "@nestjs/testing";
+import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { CreditNotesService } from "./credit-notes.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("CreditNotesService — W5c regulated reversal", () => {
   let service: CreditNotesService;
   let prisma: ReturnType<typeof createMockPrisma>;
   let ledger: { reverseCreditNoteEntries: jest.Mock; unreverseCreditNoteEntries: jest.Mock };
+  let gateway: { emitCreditNoteCreated: jest.Mock; emitCreditNoteVoided: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
@@ -16,16 +20,35 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
       unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     };
+    gateway = { emitCreditNoteCreated: jest.fn(), emitCreditNoteVoided: jest.fn() };
     const mod = await Test.createTestingModule({
       providers: [
         CreditNotesService,
         { provide: PrismaService, useValue: prisma },
-        { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
+        { provide: RouteFlowGateway, useValue: gateway },
         { provide: RegulatedLedgerService, useValue: ledger },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
     prisma.creditNote.findFirst.mockResolvedValue(null); // nextCnNumber → CN-…-0001
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
     prisma.creditNote.create.mockImplementation((args: any) =>
       Promise.resolve({ id: "cn-1", ...args.data, customer: {} }),
     );
@@ -34,7 +57,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   const invoiceWith = (items: any[]) => ({ total: 100, customerId: "c1", items });
 
   it("reverses the ledger ONLY for an explicitly credited regulated line (line linkage)", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 6 },
         { id: "ii-2", subtotal: 70, qty: 7, trackedCategoryId: null, categoryTaxAmount: 0 },
@@ -66,7 +89,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("does NOT reverse the regulated ledger for a lump-sum credit with no line linkage", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 100, qty: 10, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -77,8 +100,8 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
-  it("crediting only a NON-regulated line never reverses regulated excise (no misattribution)", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+  it("SA-311: crediting only a NON-regulated line persists its CreditNoteItem but never reverses regulated excise", async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
         { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
@@ -91,12 +114,50 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       amount: 50,
       items: [{ invoiceItemId: "ii-std", amount: 50 }], // credit the candy, not the tobacco
     });
-    expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    // SA-311 (#2181): the ordinary line keeps its line link (insights attribution + the
+    // cumulative per-line cap read it) ...
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData).toEqual([
+      expect.objectContaining({
+        creditNoteId: "cn-1",
+        tenantId: "test-tenant",
+        invoiceItemId: "ii-std",
+        trackedCategoryId: null,
+        amount: 50,
+      }),
+    ]);
+    // ... and the regulated ledger is untouched, exactly as before.
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
 
+  it("SA-311: a mixed credit persists an item for EVERY referenced line and reverses the ledger once", async () => {
+    prisma.invoice.findFirst.mockResolvedValue(
+      invoiceWith([
+        { id: "ii-reg", subtotal: 50, qty: 5, trackedCategoryId: "cat-A", categoryTaxAmount: 5 },
+        { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+      ]),
+    );
+    prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    await service.create({
+      customerId: "c1",
+      invoiceId: "inv-1",
+      amount: 60,
+      items: [
+        { invoiceItemId: "ii-reg", amount: 20 },
+        { invoiceItemId: "ii-std", amount: 40 },
+      ],
+    });
+    const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+    expect(itemsData.map((i: any) => [i.invoiceItemId, i.trackedCategoryId, i.amount])).toEqual([
+      ["ii-reg", "cat-A", 20],
+      ["ii-std", null, 40],
+    ]);
+    expect(prisma.creditNoteItem.createMany).toHaveBeenCalledTimes(1);
+    expect(ledger.reverseCreditNoteEntries).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects line amounts that do not reconcile to the credit-note total", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -113,7 +174,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("rejects a credit line that is not on the source invoice", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 30, qty: 3, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -132,7 +193,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   it("merges duplicate line references and REJECTS when the combined amount exceeds the line", async () => {
     // Two-line, $200 invoice so the header cap passes and the MERGED per-line cap is
     // what rejects the over-credit (the exact duplicate-invoiceItemId over-reversal vector).
-    prisma.invoice.findUnique.mockResolvedValue({
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 200,
       customerId: "c1",
       items: [
@@ -159,7 +220,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     // untouched. A new $100 credit of ii-1 passes the header cap ($100 prior + $100 = $200
     // ≤ $200, since ii-2's slack absorbs it) but must be rejected by the per-line cumulative
     // cap — otherwise ii-1 is credited $200 against a $100 subtotal (over-refund/over-reverse).
-    prisma.invoice.findUnique.mockResolvedValue({
+    prisma.invoice.findFirst.mockResolvedValue({
       total: 200,
       customerId: "c1",
       items: [
@@ -179,8 +240,125 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     ).rejects.toThrow(/plus prior credits.*would exceed invoice line subtotal/);
   });
 
+  describe("SA-401a: the per-line QTY cap is cumulative too (base pieces)", () => {
+    // One ordinary line: 5 pieces for $50. An earlier note credited $10 for 4 pieces.
+    const arrange = () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 10 } });
+      prisma.creditNoteItem.findMany.mockResolvedValue([
+        { invoiceItemId: "ii-std", amount: 10, qty: 4 },
+      ]);
+    };
+
+    it("a second credit whose qty would exceed the line qty is a 400, though its amount alone passes", async () => {
+      arrange();
+      await expect(
+        service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 10, // $10 + prior $10 = $20 <= $50: the amount cap would pass
+          items: [{ invoiceItemId: "ii-std", amount: 10, qty: 2 }], // 4 + 2 = 6 > 5 pieces
+        }),
+      ).rejects.toThrow(/plus prior credited qty \(4\) would exceed invoice line qty \(5\)/);
+      expect(prisma.creditNoteItem.createMany).not.toHaveBeenCalled();
+    });
+
+    it("a qty exactly reaching the line qty passes", async () => {
+      arrange();
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 10,
+        items: [{ invoiceItemId: "ii-std", amount: 10, qty: 1 }], // 4 + 1 = 5
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([1]);
+    });
+
+    // #2245 Opus BLOCK: an amount-only credit (no qty — the web picker) defaults its qty to
+    // round3(line.qty × fraction), and those roundings accumulate. The default is clamped to the
+    // line's remaining qty, and the credit that CLOSES the line's amount takes exactly the rest.
+    describe("amount-only default qty never trips the qty cap (#2245)", () => {
+      const arrangeThirds = (prior: { amount: number; qty: number }[]) => {
+        prisma.invoice.findFirst.mockResolvedValue(
+          invoiceWith([
+            { id: "ii-3", subtotal: 3, qty: 2, trackedCategoryId: null, categoryTaxAmount: 0 },
+          ]),
+        );
+        prisma.creditNote.aggregate.mockResolvedValue({
+          _sum: { amount: prior.reduce((t, p) => t + p.amount, 0) },
+        });
+        prisma.creditNoteItem.findMany.mockResolvedValue(
+          prior.map((p) => ({ invoiceItemId: "ii-3", ...p })),
+        );
+      };
+      const qtys = () =>
+        prisma.creditNoteItem.createMany.mock.calls[0][0].data.map((i: any) => i.qty);
+
+      it("the credit that closes the line takes exactly the remaining qty (0.667 + 0.667 + 0.666 = 2)", async () => {
+        arrangeThirds([
+          { amount: 1, qty: 0.667 },
+          { amount: 1, qty: 0.667 },
+        ]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.666]);
+      });
+
+      it("a non-closing default is clamped to what is left, never above it", async () => {
+        // Earlier explicit credit took 1.9 of 2 pieces for 1.00; this 1.00 (not closing: 2 of 3)
+        // would default to 0.667 — clamped to the 0.1 left.
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await service.create({
+          customerId: "c1",
+          invoiceId: "inv-1",
+          amount: 1,
+          items: [{ invoiceItemId: "ii-3", amount: 1 }],
+        });
+        expect(qtys()).toEqual([0.1]);
+      });
+
+      it("an EXPLICIT qty is still capped strictly", async () => {
+        arrangeThirds([{ amount: 1, qty: 1.9 }]);
+        await expect(
+          service.create({
+            customerId: "c1",
+            invoiceId: "inv-1",
+            amount: 1,
+            items: [{ invoiceItemId: "ii-3", amount: 1, qty: 0.5 }],
+          }),
+        ).rejects.toThrow(/would exceed invoice line qty \(2\)/);
+      });
+    });
+
+    it("the default qty (line.qty x amount fraction) is unchanged", async () => {
+      prisma.invoice.findFirst.mockResolvedValue(
+        invoiceWith([
+          { id: "ii-std", subtotal: 50, qty: 5, trackedCategoryId: null, categoryTaxAmount: 0 },
+        ]),
+      );
+      prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+      await service.create({
+        customerId: "c1",
+        invoiceId: "inv-1",
+        amount: 20,
+        items: [{ invoiceItemId: "ii-std", amount: 20 }], // 20/50 of 5 pieces = 2
+      });
+      const itemsData = prisma.creditNoteItem.createMany.mock.calls[0][0].data;
+      expect(itemsData.map((i: any) => i.qty)).toEqual([2]);
+    });
+  });
+
   it("merges duplicate line references into a single CreditNoteItem when within the line", async () => {
-    prisma.invoice.findUnique.mockResolvedValue(
+    prisma.invoice.findFirst.mockResolvedValue(
       invoiceWith([
         { id: "ii-1", subtotal: 100, qty: 10, trackedCategoryId: "cat-A", categoryTaxAmount: 0 },
       ]),
@@ -207,7 +385,7 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("rejects a credit that would exceed the invoice total", async () => {
-    prisma.invoice.findUnique.mockResolvedValue({ total: 100, customerId: "c1", items: [] });
+    prisma.invoice.findFirst.mockResolvedValue({ total: 100, customerId: "c1", items: [] });
     prisma.creditNote.aggregate.mockResolvedValue({ _sum: { amount: 80 } }); // 80 already credited
     await expect(
       service.create({ customerId: "c1", invoiceId: "inv-1", amount: 30 }),
@@ -215,8 +393,14 @@ describe("CreditNotesService — W5c regulated reversal", () => {
   });
 
   it("voidCreditNote un-reverses the ledger for an unused (ISSUED) credit", async () => {
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.updateMany.mockResolvedValue({ count: 1 }); // race-free flip succeeds
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-1",
+      creditNoteNumber: "CN-2026-0001",
+      customerId: "c1",
+      amount: 50,
+    });
     await service.voidCreditNote("cn-1");
     expect(prisma.creditNote.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -227,20 +411,29 @@ describe("CreditNotesService — W5c regulated reversal", () => {
     expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith(
       expect.objectContaining({ creditNoteId: "cn-1" }),
     );
+    // B343: a void previously fired no socket event at all.
+    expect(gateway.emitCreditNoteVoided).toHaveBeenCalledWith(expect.anything(), {
+      creditNoteId: "cn-1",
+      creditNoteNumber: "CN-2026-0001",
+      customerId: "c1",
+      amount: 50,
+    });
   });
 
   it("refuses the void when a concurrent apply already consumed the credit (0 rows flipped)", async () => {
     // Guard read sees ISSUED/unused, but the race-free updateMany matches 0 rows.
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
     prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
   });
 
   it("blocks voiding an APPLIED credit note (must un-apply first) — no ledger touch", async () => {
-    prisma.creditNote.findUnique.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
+    prisma.creditNote.findFirst.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
     await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
     expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
+    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
     expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -251,6 +444,10 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
 
   beforeEach(async () => {
     prisma = createMockPrisma();
+    // SA-436 (#2401): these pins describe the sweep with the tenant switch ON (it defaults OFF).
+    (prisma.tenantConfig.findUnique as jest.Mock).mockResolvedValue({
+      creditAutoApplyOnSend: true,
+    });
     const mod = await Test.createTestingModule({
       providers: [
         CreditNotesService,
@@ -262,6 +459,20 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
             reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
         },
       ],
     }).compile();
@@ -316,6 +527,85 @@ describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
     expect(cnUpdate.data.status).toBe("ISSUED"); // 0.7 << 100 remaining, stays open
     expect(cnUpdate.data.appliedAt).toBeInstanceOf(Date);
     expect(cnUpdate.data.autoApplied).toBe(false); // manual apply, no opts.autoApplied
+  });
+
+  // PR-2 (check-payments B1 hardening, N4): invoiceBalance/applyAmount moved from
+  // (total - sumConfirmed) to remainingCapacity() (total - sumNotVoid) — a DRAFT
+  // sibling (e.g. an unconfirmed bank-reconciliation import row) now also reserves
+  // capacity, so a credit note can no longer be applied on top of it past what the
+  // invoice can actually hold once that DRAFT confirms.
+  it("applyToInvoice: a DRAFT sibling payment reserves capacity too (PR-2 REG)", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-draft-cap",
+      creditNoteNumber: "CN-2026-0012",
+      amount: 100,
+      amountUsed: 0,
+      status: "ISSUED",
+      customerId: "c1",
+      expiresAt: null,
+      appliedAt: null,
+      appliedToInvoiceId: null,
+      autoApplied: false,
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: "inv-draft-cap",
+      customerId: "c1",
+      total: 1,
+      dueDate: null,
+      status: "SENT",
+      payments: [
+        { amount: 0.1, status: "PAID" },
+        // Before PR-2: this DRAFT row reserved nothing, so invoiceBalance was 0.9.
+        // After PR-2: it reserves its $0.2 too, leaving only 0.7.
+        { amount: 0.2, status: "DRAFT" },
+      ],
+    });
+
+    await service.applyToInvoice("cn-draft-cap", "inv-draft-cap");
+
+    expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ amount: 0.7, method: "CREDIT_NOTE" }),
+      }),
+    );
+  });
+
+  // PR-2 review (routeflow-Lead, 2026-09-16) REG: the status recompute must stay
+  // CONFIRMED-basis, never the DRAFT-inclusive capacity figure — applying a $40
+  // credit on top of a $60 DRAFT sibling must NOT flip a $100 invoice to PAID.
+  it("applyToInvoice: a DRAFT sibling does not fund the recomputed status (PR-2 REG)", async () => {
+    prisma.creditNote.findUnique.mockResolvedValue({
+      id: "cn-status-draft",
+      creditNoteNumber: "CN-2026-0013",
+      amount: 100,
+      amountUsed: 0,
+      status: "ISSUED",
+      customerId: "c1",
+      expiresAt: null,
+      appliedAt: null,
+      appliedToInvoiceId: null,
+      autoApplied: false,
+    });
+    prisma.invoice.findUnique.mockResolvedValue({
+      id: "inv-status-draft",
+      customerId: "c1",
+      total: 100,
+      dueDate: null,
+      status: "SENT",
+      payments: [{ amount: 60, status: "DRAFT" }],
+    });
+
+    await service.applyToInvoice("cn-status-draft", "inv-status-draft");
+
+    // capacity = 100 - 60(DRAFT) = 40, so applyAmount = 40. Buggy basis:
+    // newPaid = alreadyPaid(60, DRAFT-inclusive) + 40 = 100 -> PAID. Fixed basis:
+    // newPaid = sumConfirmed(0) + 40 = 40 -> PARTIAL.
+    expect(prisma.invoicePayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ amount: 40 }) }),
+    );
+    expect(prisma.invoice.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "PARTIAL" }) }),
+    );
   });
 
   it("applyToInvoice: full exhaustion flips APPLIED + appliedToInvoiceId, invoice PAID", async () => {
@@ -597,6 +887,20 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
             unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
           },
         },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // Harness: CreditNotesService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") },
+        },
       ],
     }).compile();
     service = mod.get(CreditNotesService);
@@ -608,7 +912,9 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         { id: "pay-a", invoiceId: "inv-1", creditNoteId: "cn-1", amount: 30, status: "PAID" },
         { id: "pay-b", invoiceId: "inv-2", creditNoteId: "cn-1", amount: 20, status: "PAID" },
       ]);
-      // restoreCreditFromPaymentInTx reads the note then the invoice, per payment.
+      // restoreCreditFromPaymentInTx reads the note then the invoice, per payment;
+      // releaseCreditsInTx separately looks up the creditNoteNumber (once per note,
+      // memoized after the first payment) via the converted findFirst.
       prisma.creditNote.findUnique
         .mockResolvedValueOnce({
           id: "cn-1",
@@ -617,7 +923,6 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           status: "ISSUED",
           appliedToInvoiceId: null,
         })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-1" })
         .mockResolvedValueOnce({
           id: "cn-1",
           amount: 100,
@@ -625,6 +930,7 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           status: "ISSUED",
           appliedToInvoiceId: null,
         });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-1" });
       prisma.invoice.findUnique
         .mockResolvedValueOnce({
           id: "inv-1",
@@ -659,15 +965,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-v", invoiceId: "inv-void", creditNoteId: "cn-9", amount: 25, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-9",
-          amount: 25,
-          amountUsed: 25,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-void",
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-9" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-9",
+        amount: 25,
+        amountUsed: 25,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-void",
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-9" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-void",
         total: 25,
@@ -692,16 +997,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-x", invoiceId: "inv-x", creditNoteId: "cn-x", amount: 15, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-x",
-          amount: 15,
-          amountUsed: 15,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-x",
-          expiresAt: new Date("2020-01-01"), // long past
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-X" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-x",
+        amount: 15,
+        amountUsed: 15,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-x",
+        expiresAt: new Date("2020-01-01"), // long past
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-X" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-x",
         total: 15,
@@ -726,16 +1030,15 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       prisma.invoicePayment.findMany.mockResolvedValueOnce([
         { id: "pay-f", invoiceId: "inv-f", creditNoteId: "cn-f", amount: 10, status: "PAID" },
       ]);
-      prisma.creditNote.findUnique
-        .mockResolvedValueOnce({
-          id: "cn-f",
-          amount: 10,
-          amountUsed: 10,
-          status: "APPLIED",
-          appliedToInvoiceId: "inv-f",
-          expiresAt: future,
-        })
-        .mockResolvedValueOnce({ creditNoteNumber: "CN-F" });
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-f",
+        amount: 10,
+        amountUsed: 10,
+        status: "APPLIED",
+        appliedToInvoiceId: "inv-f",
+        expiresAt: future,
+      });
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ creditNoteNumber: "CN-F" });
       prisma.invoice.findUnique.mockResolvedValueOnce({
         id: "inv-f",
         total: 10,
@@ -819,17 +1122,16 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: "inv-1",
         })
         .mockResolvedValueOnce({ id: "cn-1", amount: 40, amountUsed: 0, status: "ISSUED" });
-      // 1st invoice.findUnique: inside restoreCreditFromPaymentInTx (recompute status).
-      // 2nd: unapplyFromInvoice's own orderId lookup.
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-1",
-          total: 100,
-          dueDate: null,
-          status: "PAID",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: null });
+      // invoice.findUnique: inside restoreCreditFromPaymentInTx (recompute status).
+      // invoice.findFirst: unapplyFromInvoice's own orderId lookup (converted read).
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-1",
+        total: 100,
+        dueDate: null,
+        status: "PAID",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: null });
 
       const result = await service.unapplyFromInvoice("cn-1", "inv-1");
 
@@ -864,15 +1166,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: null,
         })
         .mockResolvedValueOnce({ id: "cn-2", amount: 100, amountUsed: 30, status: "ISSUED" });
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-2",
-          total: 50,
-          dueDate: null,
-          status: "PARTIAL",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: null });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-2",
+        total: 50,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: null });
 
       await service.unapplyFromInvoice("cn-2", "inv-2");
 
@@ -910,15 +1211,14 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
           appliedToInvoiceId: null,
         })
         .mockResolvedValueOnce({ id: "cn-4", amount: 100, amountUsed: 0, status: "ISSUED" });
-      prisma.invoice.findUnique
-        .mockResolvedValueOnce({
-          id: "inv-4",
-          total: 25,
-          dueDate: null,
-          status: "SENT",
-          payments: [],
-        })
-        .mockResolvedValueOnce({ orderId: "order-4" });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-4",
+        total: 25,
+        dueDate: null,
+        status: "SENT",
+        payments: [],
+      });
+      prisma.invoice.findFirst.mockResolvedValueOnce({ orderId: "order-4" });
       prisma.orderCreditNote.findFirst.mockResolvedValueOnce({
         id: "ocn-4",
         orderId: "order-4",
@@ -1076,6 +1376,180 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
       const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
       expect(cnUpdate.data.amountUsed).toBe(20);
+    });
+
+    // PR-2 review (routeflow-Lead, 2026-09-16) REG-B1-shrink: a DRAFT sibling payment
+    // (e.g. an unconfirmed bank-reconciliation import) must still be counted in the
+    // shrink pass's "excess paid" figure. With the earlier (reverted) sumConfirmed
+    // basis, $40 PAID credit + $60 DRAFT on an invoice shrunk to $70 reported excess =
+    // 40 - 70 (negative) and refunded nothing, silently leaving the real $30
+    // over-collection (100 not-void dollars against a $70 total) stuck on the invoice.
+    it("REG-B1-shrink: a DRAFT sibling still counts toward excess — 40 PAID credit + 60 DRAFT on a $70 invoice refunds the real $30 excess", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-shrink-draft",
+          invoiceNumber: "INV-SHRINK-DRAFT",
+          total: 70, // shrunk from 100
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-draft-cash",
+              amount: 60,
+              status: "DRAFT",
+              method: "CASH",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-01"),
+            },
+            {
+              id: "pay-credit-shrink",
+              amount: 40,
+              status: "PAID",
+              method: "CREDIT_NOTE",
+              creditNoteId: "cn-shrink",
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.creditNote.findUnique.mockResolvedValueOnce({
+        id: "cn-shrink",
+        amount: 100,
+        amountUsed: 40,
+        status: "ISSUED",
+        appliedToInvoiceId: null,
+      });
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-shrink-draft",
+        total: 70,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [
+          { amount: 60, status: "DRAFT" },
+          { amount: 10, status: "PAID" },
+        ],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-shrink-draft");
+
+      // excess = (60 DRAFT + 40 PAID) - 70 = 30 — NOT 40 - 70 (negative).
+      expect(result.unapplied).toBe(30);
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-credit-shrink" },
+        data: { amount: 10 },
+      });
+      const cnUpdate = prisma.creditNote.update.mock.calls[0][0];
+      expect(cnUpdate.data.amountUsed).toBe(10);
+    });
+
+    // B315: the shrink pass only ever looked at CREDIT_NOTE payments — an applied ADVANCE
+    // (wallet money exactly like a credit note) just stayed "spent" against a total that no
+    // longer existed once the order edit shrunk the invoice, silently losing the customer's
+    // prepaid dollars instead of giving them back to AdvancePayment.balance.
+    it("REG-B315 shrink pass: an invoice total dropped below an applied ADVANCE restores the excess to the wallet's AdvancePayment.balance", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]); // no apply-phase intents needed
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-adv",
+          invoiceNumber: "INV-ADV",
+          total: 60, // shrunk from 100
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-advance",
+              amount: 100,
+              status: "PAID",
+              method: "ADVANCE",
+              advancePaymentId: "ap-1",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-adv",
+        total: 60,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [{ amount: 60, status: "PAID" }],
+      });
+
+      const result = await service.settleOrderCreditsInTx(prisma as any, "order-adv");
+
+      // $40 excess (100 paid - 60 total) comes back to the wallet.
+      expect(result.unapplied).toBe(40);
+      expect(prisma.invoicePayment.update).toHaveBeenCalledWith({
+        where: { id: "pay-advance" },
+        data: { amount: 60 },
+      });
+      expect(prisma.invoicePayment.delete).not.toHaveBeenCalled();
+      // Opus review (F39): the balance restore is ONE atomic `LEAST(amount, balance + $restore)`
+      // UPDATE — never a findUnique-then-update read-modify-write, which would reopen B310's
+      // lost-update class on this same column. No `advancePayment.findUnique`/`.update` mock is
+      // even set up above; if the code regressed to the read-then-write shape, those calls
+      // would return the mock's untouched defaults (null / {}) and this assertion would fail.
+      const rawCall = prisma.$executeRaw.mock.calls.find((args: any) =>
+        args[0].join("?").includes("AdvancePayment"),
+      );
+      expect(rawCall).toBeDefined();
+      const [strings, restoreArg, idArg] = rawCall!;
+      expect(strings.join("?")).toContain("LEAST(amount, balance +");
+      expect(restoreArg).toBe(40);
+      expect(idArg).toBe("ap-1");
+      expect(prisma.advancePayment.update).not.toHaveBeenCalled();
+    });
+
+    // B406: the raw AdvancePayment UPDATE (Opus review F39's atomic LEAST(), above) had no
+    // tenantId predicate — a latent hazard, not a live cross-tenant write (payment.advancePaymentId
+    // only ever reaches it via a tenant-scoped tx.invoice.findMany read), but worth closing as
+    // defense-in-depth for a future caller that feeds this an unscoped id. Pins that the query
+    // text and the bound tenantId are both actually present, not just that a string appears
+    // somewhere in the SQL.
+    it("REG-B406 the AdvancePayment balance-restore UPDATE scopes by tenantId, not id alone", async () => {
+      prisma.orderCreditNote.findMany.mockResolvedValueOnce([]);
+      prisma.invoice.findMany.mockResolvedValueOnce([
+        {
+          id: "inv-adv-2",
+          invoiceNumber: "INV-ADV-2",
+          total: 60,
+          dueDate: null,
+          status: "PARTIAL",
+          payments: [
+            {
+              id: "pay-advance-2",
+              amount: 100,
+              status: "PAID",
+              method: "ADVANCE",
+              advancePaymentId: "ap-2",
+              creditNoteId: null,
+              createdAt: new Date("2026-01-02"),
+            },
+          ],
+        },
+      ]);
+      prisma.invoice.findUnique.mockResolvedValueOnce({
+        id: "inv-adv-2",
+        total: 60,
+        dueDate: null,
+        status: "PARTIAL",
+        payments: [{ amount: 60, status: "PAID" }],
+      });
+
+      await service.settleOrderCreditsInTx(prisma as any, "order-adv-2");
+
+      const rawCall = prisma.$executeRaw.mock.calls.find((args: any) =>
+        args[0].join("?").includes("AdvancePayment"),
+      );
+      expect(rawCall).toBeDefined();
+      const [strings, , idArg, tenantIdArg] = rawCall!;
+      expect(strings.join("?")).toContain('AND "tenantId" = ');
+      expect(idArg).toBe("ap-2");
+      // The mock prisma's getTenantId() default ("test-tenant") is what settleOrderCreditsInTx
+      // resolves and threads through when the caller passes none explicitly.
+      expect(tenantIdArg).toBe("test-tenant");
     });
 
     it("explicit-amount intent applies exactly min(requested amount, credit remaining, invoice balance)", async () => {
@@ -1324,5 +1798,239 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         /not found/i,
       );
     });
+  });
+});
+
+// ─── T4 unit pin — REG-B267 (cause-ruling.md §2 D2, bug-test-plan.md T4) ───
+//
+// nextCnNumber's `orderBy { creditNoteNumber: "desc" }` TEXT scan (permanent
+// wall past 9999, cross-tenant on a null request tenant) is replaced by a
+// standalone `numbering.reserveNext("CREDIT_NOTE", { year, tenantId })` call,
+// hoisted ABOVE the SERIALIZABLE `tenantTransaction` — never `{ tx }`, since a
+// blocked counter UPDATE aborts under SERIALIZABLE instead of waiting
+// (cause-refutation.md §2.1 CORRECTION 1). TODAY create() has no NumberingService
+// dependency at all and still scans tx.creditNote.findFirst, so this fails on
+// the uncalled mock's own value (0 calls), not an unresolved import or a stub.
+describe("CreditNotesService — REG-B267 pin: numbering reservation", () => {
+  let service: CreditNotesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let mockNumbering: { reserveNext: jest.Mock };
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    mockNumbering = { reserveNext: jest.fn().mockResolvedValue("CN-2026-0001") };
+    const mod = await Test.createTestingModule({
+      providers: [
+        CreditNotesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: { emitCreditNoteCreated: jest.fn() } },
+        {
+          provide: RegulatedLedgerService,
+          useValue: {
+            reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+            unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: CommissionEngineService,
+          useValue: {
+            syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
+            syncOrderInvoices: jest.fn().mockResolvedValue(undefined),
+            removeInvoiceCommission: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // B267 harness note (cause-refutation.md §8): CreditNotesService gains a
+        // NumberingService constructor parameter once P1/P2 land — the service
+        // does not inject it yet, so this provider is unused by today's code and
+        // only backs the pin below.
+        { provide: NumberingService, useValue: mockNumbering },
+      ],
+    }).compile();
+    service = mod.get(CreditNotesService);
+    // REG-B267-E: create() now reads the customer through the tenant-scoped
+    // `forTenant().customer.findFirst` BEFORE reserving a number, so every
+    // create-path test needs an in-tenant customer to get past that gate.
+    prisma.customer.findFirst.mockResolvedValue({ id: "c1", businessName: "Acme Retail" });
+    prisma.creditNote.create.mockImplementation((args: any) =>
+      Promise.resolve({ id: "cn-pin-1", ...args.data, customer: {} }),
+    );
+  });
+
+  it('create() reserves the number via numbering.reserveNext("CREDIT_NOTE", { year, tenantId }) BEFORE opening the tenantTransaction', async () => {
+    await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledWith(
+      "CREDIT_NOTE",
+      expect.objectContaining({ year: new Date().getFullYear(), tenantId: "test-tenant" }),
+    );
+
+    const reserveOrder = mockNumbering.reserveNext.mock.invocationCallOrder[0];
+    const txOrder = prisma.tenantTransaction.mock.invocationCallOrder[0];
+    expect(reserveOrder).toBeLessThan(txOrder);
+
+    // The VALUE oracle, not just the wiring: the string reserveNext handed back
+    // is the one written as creditNoteNumber. Without this, a fix that calls
+    // reserveNext and then still writes its own scanned number would satisfy the
+    // call assertions above for the wrong reason.
+    expect(prisma.creditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
+      }),
+    );
+  });
+
+  // REG-B267 tenant gate: `forTenant()` returns the UNSCOPED client when the
+  // ambient tenant is null, so a null-tenant create must be refused BEFORE any
+  // read — otherwise the caller gets another tenant's invoice figures in the
+  // 400 body (cause-ruling.md §2 D2: "null → the service throws").
+  it("REG-B267 null tenant: create() refuses before reading anything and reserves no number", async () => {
+    prisma.getTenantId.mockReturnValue(null);
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toThrow(
+      new BadRequestException("A tenant context is required."),
+    );
+
+    expect(prisma.invoice.findUnique).not.toHaveBeenCalled();
+    expect(prisma.invoice.findFirst).not.toHaveBeenCalled();
+    expect(prisma.customer.findFirst).not.toHaveBeenCalled();
+    expect(mockNumbering.reserveNext).not.toHaveBeenCalled();
+  });
+
+  // REG-B267 customer gate: the response's customer summary is read on the
+  // tenant-scoped `findFirst` ahead of the reservation, so a customerId owned by
+  // another tenant 404s and burns no number instead of producing a credit note
+  // bound to a foreign customer (and leaking that tenant's businessName).
+  it("REG-B267 foreign customer: create() 404s and reserves no number when the customer is not in the tenant", async () => {
+    prisma.customer.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.create({ customerId: "c-other-tenant", amount: 25 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(mockNumbering.reserveNext).not.toHaveBeenCalled();
+    expect(prisma.creditNote.create).not.toHaveBeenCalled();
+  });
+
+  // REG-B267 P2002: the catch spans five statements, so only a violation whose
+  // constraint names creditNoteNumber is a number conflict. (a)/(b) are the two
+  // shapes Prisma emits for that constraint; (c) proves a different unique is
+  // NOT relabelled as a retryable numbering conflict.
+  it("REG-B267 P2002 (a): a creditNoteNumber field-array target maps to ConflictException", async () => {
+    prisma.creditNote.create.mockRejectedValue({
+      code: "P2002",
+      meta: { target: ["tenantId", "creditNoteNumber"] },
+    });
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it("REG-B267 P2002 (b): a constraint-name target maps to ConflictException", async () => {
+    prisma.creditNote.create.mockRejectedValue({
+      code: "P2002",
+      meta: { target: "CreditNote_tenantId_creditNoteNumber_key" },
+    });
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+  });
+
+  it("REG-B267 P2002 (c): a NON-numbering unique propagates as the original error", async () => {
+    const err = { code: "P2002", meta: { target: ["creditNoteId", "productId"] } };
+    prisma.creditNote.create.mockRejectedValue(err);
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBe(err);
+  });
+
+  // F1 (cause-ruling.md §2 D2 follow-up, findings #0 real=true sev=minor on run
+  // 57): the SERIALIZABLE tx's aggregate-then-insert into CreditNote is a
+  // textbook rw-antidependency — PostgreSQL SSI cancels one concurrent racer
+  // with 40001, which Prisma raises as P2034. `tenantTransaction` is a bare
+  // `$transaction` with no retry, so this used to escape as a raw 500 with the
+  // standalone-reserved number already burned. These two pins prove the bounded
+  // retry: the SAME number survives a transient P2034 (F), and exhausting the
+  // budget maps to a 409 rather than letting the raw error out (G).
+  it("REG-B267-F retries P2034 with the same number", async () => {
+    const p2034 = {
+      code: "P2034",
+      message:
+        "Transaction failed due to a write conflict or a deadlock. Please retry your transaction.",
+    };
+    prisma.tenantTransaction.mockImplementationOnce(() => Promise.reject(p2034));
+
+    const result = await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    expect(result.creditNoteNumber).toBe("CN-2026-0001");
+    expect(prisma.creditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ creditNoteNumber: "CN-2026-0001" }),
+      }),
+    );
+  });
+
+  it("REG-B267-G exhausts to 409", async () => {
+    const p2034 = {
+      code: "P2034",
+      message:
+        "Transaction failed due to a write conflict or a deadlock. Please retry your transaction.",
+    };
+    prisma.tenantTransaction.mockImplementation(() => Promise.reject(p2034));
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toEqual(
+      new ConflictException("Concurrent credit note for this invoice, please retry"),
+    );
+
+    // One reservation, three exhausted transaction attempts (max) — never a
+    // second reserveNext call burning a second number for the same request.
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3);
+  });
+
+  // Found live by REG-B267-H (DB lane, credit-note-numbering.db.spec.ts) under
+  // real concurrent load: Prisma 7's driver-adapter engine (@prisma/adapter-pg)
+  // can surface the SAME SQLSTATE 40001/40P01 conflict as a raw
+  // `DriverAdapterError` (name: "DriverAdapterError", message/cause.kind:
+  // "TransactionWriteConflict") INSTEAD OF the fully-wrapped
+  // `PrismaClientKnownRequestError { code: "P2034" }` the two pins above cover
+  // — observed escaping unwrapped even while a sibling racer in the same run
+  // got the P2034 shape for the identical conflict. Without this shape in
+  // `isSerializationFailure`, that racer's error skipped the retry entirely
+  // and escaped as a raw 500.
+  it("REG-B267-F (driver-adapter shape) retries a raw DriverAdapterError TransactionWriteConflict with the same number", async () => {
+    const driverAdapterErr = Object.assign(new Error("TransactionWriteConflict"), {
+      name: "DriverAdapterError",
+      cause: { kind: "TransactionWriteConflict" },
+    });
+    prisma.tenantTransaction.mockImplementationOnce(() => Promise.reject(driverAdapterErr));
+
+    const result = await service.create({ customerId: "c1", amount: 25 });
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(2);
+    expect(result.creditNoteNumber).toBe("CN-2026-0001");
+  });
+
+  // Opus re-check fix (REG-B267-I): `validateAndBuildCnItems`'s in-tx cap check
+  // can reject with a `BadRequestException` whose message legitimately quotes a
+  // code-looking number ("(40001)" here is part of the CENTS figure, not a
+  // SQLSTATE) — the old `isSerializationFailure` matched that substring and
+  // retried a validated 400 as if it were a transient conflict. An HttpException
+  // must never be classified as a serialization failure: one attempt, the 400
+  // propagates unchanged, and the bounded backoff never sleeps.
+  it("REG-B267-I in-tx 400 is not retried", async () => {
+    const rejection = new BadRequestException(
+      "Credit note amount (40001) would exceed invoice total",
+    );
+    prisma.tenantTransaction.mockImplementation(() => Promise.reject(rejection));
+
+    await expect(service.create({ customerId: "c1", amount: 25 })).rejects.toBe(rejection);
+
+    expect(mockNumbering.reserveNext).toHaveBeenCalledTimes(1);
+    expect(prisma.tenantTransaction).toHaveBeenCalledTimes(1);
+    expect(prisma.creditNote.create).not.toHaveBeenCalled();
   });
 });

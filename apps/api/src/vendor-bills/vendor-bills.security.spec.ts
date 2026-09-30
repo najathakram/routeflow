@@ -16,7 +16,7 @@
 import "reflect-metadata";
 import { Test } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
 import { UserRole } from "@prisma/client";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
@@ -27,6 +27,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { DuplicateMatchService } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { ProductAliasService } from "../import/product-alias.service";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RecordVendorBillPaymentDto } from "./dto/record-vendor-bill-payment.dto";
@@ -53,11 +54,20 @@ describe("VendorBillsService — F10-004 payment amount guard", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService against the same prisma mock — these tests do
+        // not exercise alias learning, they just need the dependency satisfied.
+        ProductAliasService,
       ],
     }).compile();
     service = mod.get(VendorBillsService);
@@ -179,11 +189,20 @@ describe("check-duplicate — access control", () => {
       providers: [
         VendorBillsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: ConfigService, useValue: { get: jest.fn() } },
+        {
+          provide: PlatformConfigService,
+          useValue: {
+            resolveAnthropicKey: jest.fn().mockResolvedValue(null),
+            recordAiUsage: jest.fn(),
+          },
+        },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: DuplicateMatchService, useValue: dupMatch },
         { provide: StorageService, useValue: storage },
         { provide: InventoryService, useValue: inventory },
+        // Real ProductAliasService against the same prisma mock — these tests do
+        // not exercise alias learning, they just need the dependency satisfied.
+        ProductAliasService,
       ],
     }).compile();
     dupMatch.findVendorBillDuplicate.mockResolvedValue({
@@ -202,7 +221,7 @@ describe("check-duplicate — access control", () => {
     await mod.get(VendorBillsService).checkDuplicate({ supplierInvoiceNumber: "INV-1" });
 
     expect(prisma.forTenant).toHaveBeenCalled();
-    expect(prisma.supplier.findUnique).toHaveBeenCalledWith({
+    expect(prisma.supplier.findFirst).toHaveBeenCalledWith({
       where: { id: "sup-1" },
       select: { name: true },
     });

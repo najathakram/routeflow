@@ -1,6 +1,7 @@
 import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { apiClient } from "./api-client";
+import { buildLocationPayload } from "./location-payload";
 
 const TASK_NAME = "routeflow.driver-location";
 let activeRunId: string | null = null;
@@ -10,6 +11,7 @@ interface LocationPayload {
   lng: number;
   heading?: number | null;
   speedKph?: number | null;
+  accuracy?: number;
   recordedAt: string;
   runId?: string | null;
 }
@@ -32,9 +34,7 @@ if (!TaskManager.isTaskDefined(TASK_NAME)) {
     await postLocation({
       lat: sample.coords.latitude,
       lng: sample.coords.longitude,
-      heading: sample.coords.heading ?? null,
-      speedKph: sample.coords.speed != null ? sample.coords.speed * 3.6 : null,
-      recordedAt: new Date(sample.timestamp).toISOString(),
+      ...buildLocationPayload(sample.coords, new Date(sample.timestamp).toISOString()),
       runId: activeRunId,
     });
   });
@@ -78,9 +78,7 @@ export async function startLocationTracking(runId: string): Promise<StartTrackin
     await postLocation({
       lat: current.coords.latitude,
       lng: current.coords.longitude,
-      heading: current.coords.heading ?? null,
-      speedKph: current.coords.speed != null ? current.coords.speed * 3.6 : null,
-      recordedAt: new Date(current.timestamp).toISOString(),
+      ...buildLocationPayload(current.coords, new Date(current.timestamp).toISOString()),
       runId,
     });
   } catch {

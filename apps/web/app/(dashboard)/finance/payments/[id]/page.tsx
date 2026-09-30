@@ -7,22 +7,13 @@ import { ArrowLeft, Ban, Printer } from "lucide-react";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
-  useInvoicePayments,
+  usePaymentDetail,
   useVoidPayment,
   useGetPaymentImageUrl,
 } from "@/lib/api/invoices";
 import { Badge, Button, Card, useToast } from "@routeflow/ui/web";
 import { fmt, fmtDate } from "@/lib/formatting";
-
-const METHOD_LABELS: Record<string, string> = {
-  CASH: "Cash",
-  CHECK: "Check",
-  ACH: "ACH / Bank Transfer",
-  CREDIT_CARD: "Credit Card",
-  OTHER: "Other",
-  CREDIT_NOTE: "Credit Note",
-  ADVANCE: "Advance",
-};
+import { paymentMethodLabel } from "@/lib/payment-methods";
 
 const BANK_DATE_HELP =
   "When the funds actually landed in your account — e.g. a post-dated check's clearing date. Leave blank if unknown.";
@@ -33,17 +24,12 @@ export default function PaymentDetailPage() {
   const router = useRouter();
   const { toast } = useToast();
 
-  // Fetch the payment by searching all payments by id — use list with no filters,
-  // since we don't have a single-payment endpoint yet.
-  // We'll fetch a large page and find the matching one.
-  const { data, isLoading } = useInvoicePayments({ limit: 200 });
+  const { data: payment, isLoading } = usePaymentDetail(id);
   const voidPayment = useVoidPayment();
 
   React.useEffect(() => {
     setTitle("Payment Receipt");
   }, [setTitle]);
-
-  const payment = data?.data.find((p) => p.id === id);
 
   // Enrich the "Applied Invoice" card with the invoice's own total / balance /
   // status. Guarded below for loading/undefined so the card degrades gracefully.
@@ -118,9 +104,9 @@ export default function PaymentDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="font-mono text-2xl font-bold text-navy">
+            <h2 className="font-mono text-2xl font-bold text-navy">
               {payment.paymentNumber ?? "Payment"}
-            </h1>
+            </h2>
             <Badge status={status as "PAID" | "DRAFT" | "VOID"} />
           </div>
           <p className="mt-1 text-sm text-navy/70">
@@ -189,7 +175,7 @@ export default function PaymentDetailPage() {
             <div className="flex items-center justify-between gap-3 border-b border-surface-border py-2.5 text-[13px]">
               <span className="text-navy/70">Payment mode</span>
               <span className="text-right font-medium text-navy">
-                {METHOD_LABELS[payment.method] ?? payment.method}
+                {paymentMethodLabel(payment.method)}
               </span>
             </div>
             {payment.reference && (
@@ -212,7 +198,7 @@ export default function PaymentDetailPage() {
           {/* Notes */}
           {payment.notes && (
             <div className="mt-6 border-t border-surface-border pt-4">
-              <p className="overline mb-1">Notes</p>
+              <p className="eyebrow-label mb-1">Notes</p>
               <p className="text-sm text-navy/70 whitespace-pre-line">{payment.notes}</p>
             </div>
           )}

@@ -1,0 +1,378 @@
+{
+  "v": 1,
+  "sessionId": "32da3f13-2e1e-4c36-a3d8-b009216b77af",
+  "project": "C:\\ClaudeCode\\routeflow",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-fable-5-1": {
+        "input": 2678,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 502269,
+        "cacheRead": 50276495,
+        "output": 182811,
+        "messages": 122,
+        "tokens": 50964253,
+        "costUsd": 31.78183375
+      }
+    },
+    "total": {
+      "input": 2678,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 502269,
+      "cacheRead": 50276495,
+      "output": 182811,
+      "messages": 122,
+      "tokens": 50964253,
+      "costUsd": 31.78183375
+    },
+    "messages": 122,
+    "firstAt": "2026-09-11T22:45:01.467Z",
+    "lastAt": "2026-09-12T02:18:28.359Z",
+    "activeMs": 8227050,
+    "cacheHitRatio": 0.9900564659034299
+  },
+  "workflows": {},
+  "agents": {
+    "byType": {
+      "general-purpose": {
+        "total": {
+          "input": 2318,
+          "cacheWrite5m": 6530778,
+          "cacheWrite1h": 0,
+          "cacheRead": 206809675,
+          "output": 45671,
+          "messages": 0,
+          "tokens": 213388442,
+          "costUsd": 59.82640145
+        },
+        "byModel": {
+          "claude-sonnet-5": {
+            "input": 2276,
+            "cacheWrite5m": 6264507,
+            "cacheWrite1h": 0,
+            "cacheRead": 204554881,
+            "output": 45598,
+            "messages": 0,
+            "tokens": 210867262,
+            "costUsd": 57.0327757
+          },
+          "claude-opus-5": {
+            "input": 42,
+            "cacheWrite5m": 266271,
+            "cacheWrite1h": 0,
+            "cacheRead": 2254794,
+            "output": 73,
+            "messages": 0,
+            "tokens": 2521180,
+            "costUsd": 2.79362575
+          }
+        },
+        "agents": 32,
+        "durationMs": 19148640
+      }
+    },
+    "list": [
+      {
+        "id": "a03280b5d084c1826",
+        "agentType": "general-purpose",
+        "description": "Apply rulings + ground the build plan",
+        "tokens": 7349556,
+        "costUsd": 1.7726695,
+        "cacheHitRatio": 0.9837744719247579,
+        "durationMs": 641141
+      },
+      {
+        "id": "a09b2c2836ebd353c",
+        "agentType": "general-purpose",
+        "description": "Fix round 2a: apply + intake findings",
+        "tokens": 9075698,
+        "costUsd": 3.1143937000000004,
+        "cacheHitRatio": 0.9391349912049499,
+        "durationMs": 874320
+      },
+      {
+        "id": "a1759df41d655441d",
+        "agentType": "general-purpose",
+        "description": "Wave 2A: WP2 plane-sync v2",
+        "tokens": 9680987,
+        "costUsd": 2.8599012000000004,
+        "cacheHitRatio": 0.9587606736071369,
+        "durationMs": 1408660
+      },
+      {
+        "id": "a2481e386d7bff6e4",
+        "agentType": "general-purpose",
+        "description": "Wave 1B: WP1 shared client + denylist",
+        "tokens": 4966976,
+        "costUsd": 1.376163,
+        "cacheHitRatio": 0.9675995710552946,
+        "durationMs": 434444
+      },
+      {
+        "id": "a2af8fba67126fcac",
+        "agentType": "general-purpose",
+        "description": "Probe + apply blocked Plane updates via REST",
+        "tokens": 646526,
+        "costUsd": 0.301741,
+        "cacheHitRatio": 0.8841499254456248,
+        "durationMs": 150500
+      },
+      {
+        "id": "a2d5760e14407278a",
+        "agentType": "general-purpose",
+        "description": "Pack: rf-plane harness inventory",
+        "tokens": 1133178,
+        "costUsd": 0.5326393,
+        "cacheHitRatio": 0.8827336123225944,
+        "durationMs": 112468
+      },
+      {
+        "id": "a3a84a3f15b419da3",
+        "agentType": "general-purpose",
+        "description": "Wave 4: WP6 docs, flows, scripts, code map",
+        "tokens": 12215098,
+        "costUsd": 2.9227064,
+        "cacheHitRatio": 0.9840424229555501,
+        "durationMs": 904780
+      },
+      {
+        "id": "a3c9dbd5905b43937",
+        "agentType": "general-purpose",
+        "description": "Build S0.5 context pack",
+        "tokens": 22472702,
+        "costUsd": 5.0323767,
+        "cacheHitRatio": 0.9908805316574774,
+        "durationMs": 1031474
+      },
+      {
+        "id": "a3f7939fbd09491a3",
+        "agentType": "general-purpose",
+        "description": "Opus refute-first review of the harness",
+        "tokens": 1731160,
+        "costUsd": 1.76351325,
+        "cacheHitRatio": 0.909891180150631,
+        "durationMs": 231789
+      },
+      {
+        "id": "a422baaa5fe3aa1ff",
+        "agentType": "general-purpose",
+        "description": "Wave 2B: TP2+TP3+TP4 tests",
+        "tokens": 10303760,
+        "costUsd": 2.6192346,
+        "cacheHitRatio": 0.97708251594954,
+        "durationMs": 950916
+      },
+      {
+        "id": "a4380935d8795c683",
+        "agentType": "general-purpose",
+        "description": "Probe Plane endpoint shapes (GET only)",
+        "tokens": 385394,
+        "costUsd": 0.214975,
+        "cacheHitRatio": 0.8464953271028037,
+        "durationMs": 59087
+      },
+      {
+        "id": "a48e2fb1f8ed58512",
+        "agentType": "general-purpose",
+        "description": "Build review radius pack",
+        "tokens": 29607679,
+        "costUsd": 7.1472792,
+        "cacheHitRatio": 0.982493311428354,
+        "durationMs": 1416008
+      },
+      {
+        "id": "a4b0adaa5ff90c9a6",
+        "agentType": "general-purpose",
+        "description": "Fix round 3: denylist override + empty file",
+        "tokens": 4999557,
+        "costUsd": 1.2683238000000001,
+        "cacheHitRatio": 0.9768011419006821,
+        "durationMs": 340632
+      },
+      {
+        "id": "a4c086438dcf7dbec",
+        "agentType": "general-purpose",
+        "description": "WP2b: R14 branch guard in plane-sync",
+        "tokens": 6647518,
+        "costUsd": 1.9266563,
+        "cacheHitRatio": 0.9622400034188693,
+        "durationMs": 674477
+      },
+      {
+        "id": "a5f34fa96af52337b",
+        "agentType": "general-purpose",
+        "description": "Run perRound + final gates",
+        "tokens": 2316615,
+        "costUsd": 0.632766,
+        "cacheHitRatio": 0.9700320736359204,
+        "durationMs": 369109
+      },
+      {
+        "id": "a641c0471049db20b",
+        "agentType": "general-purpose",
+        "description": "Dedupe dry-run listing (GET only)",
+        "tokens": 514553,
+        "costUsd": 0.2701205,
+        "cacheHitRatio": 0.8639669038737334,
+        "durationMs": 133453
+      },
+      {
+        "id": "a673d16341cc4dc4b",
+        "agentType": "general-purpose",
+        "description": "Wave 3C: WP4 plane-triage",
+        "tokens": 5545426,
+        "costUsd": 1.519363,
+        "cacheHitRatio": 0.9686814048997981,
+        "durationMs": 602379
+      },
+      {
+        "id": "a67b6fd764a1e7762",
+        "agentType": "general-purpose",
+        "description": "Research: Plane automation best practices",
+        "tokens": 632176,
+        "costUsd": 0.29963290000000004,
+        "cacheHitRatio": 0.8810026623133177,
+        "durationMs": 149093
+      },
+      {
+        "id": "a6cda2f05ec929a5b",
+        "agentType": "general-purpose",
+        "description": "Wave 3A: WP3 plane-intake",
+        "tokens": 9306040,
+        "costUsd": 2.7140598,
+        "cacheHitRatio": 0.9610064577593067,
+        "durationMs": 893916
+      },
+      {
+        "id": "a720137e0baf19eb6",
+        "agentType": "general-purpose",
+        "description": "Opus scoped re-check of the 7 fixes",
+        "tokens": 790020,
+        "costUsd": 1.0301125,
+        "cacheHitRatio": 0.8603474225590483,
+        "durationMs": 116046
+      },
+      {
+        "id": "a73be452bd58b0482",
+        "agentType": "general-purpose",
+        "description": "Create rf-plane2 worktree + install",
+        "tokens": 1643502,
+        "costUsd": 0.5817852,
+        "cacheHitRatio": 0.9331783341010278,
+        "durationMs": 735388
+      },
+      {
+        "id": "a785e56c2183ad371",
+        "agentType": "general-purpose",
+        "description": "Fix round 2b: sync + client findings",
+        "tokens": 11578175,
+        "costUsd": 2.8041151,
+        "cacheHitRatio": 0.9833233710242135,
+        "durationMs": 907871
+      },
+      {
+        "id": "a83257dd95b59ca0a",
+        "agentType": "general-purpose",
+        "description": "Live dry-run of the first ops file",
+        "tokens": 602407,
+        "costUsd": 0.2712602,
+        "cacheHitRatio": 0.8921925616719717,
+        "durationMs": 39610
+      },
+      {
+        "id": "a8dc17912ed73d1b5",
+        "agentType": "general-purpose",
+        "description": "Read-only BUGS drift report vs ledger",
+        "tokens": 939125,
+        "costUsd": 0.3504108,
+        "cacheHitRatio": 0.9248846488458495,
+        "durationMs": 119165
+      },
+      {
+        "id": "a942a00d5b169bcf2",
+        "agentType": "general-purpose",
+        "description": "T16 branch-guard tests (TP1/TP5)",
+        "tokens": 5541070,
+        "costUsd": 1.741154,
+        "cacheHitRatio": 0.9516894415634073,
+        "durationMs": 863438
+      },
+      {
+        "id": "a9e5040b9bb6a551c",
+        "agentType": "general-purpose",
+        "description": "Expand ruling into test/build plans",
+        "tokens": 19754139,
+        "costUsd": 4.5743537000000005,
+        "cacheHitRatio": 0.986564783332622,
+        "durationMs": 1397767
+      },
+      {
+        "id": "aa5d9a6d39d8773d4",
+        "agentType": "general-purpose",
+        "description": "Record the hook-incident lesson",
+        "tokens": 7425630,
+        "costUsd": 1.7621994,
+        "cacheHitRatio": 0.9845359095952115,
+        "durationMs": 633960
+      },
+      {
+        "id": "aabfe8c5610ac259f",
+        "agentType": "general-purpose",
+        "description": "Wave 1A: TP1+TP5+TP6 tests first",
+        "tokens": 7356189,
+        "costUsd": 2.3942135,
+        "cacheHitRatio": 0.9460879146308252,
+        "durationMs": 1071081
+      },
+      {
+        "id": "ac64f4f4851a5364c",
+        "agentType": "general-purpose",
+        "description": "Pack: registry/feature delta since Plane seed",
+        "tokens": 1175718,
+        "costUsd": 0.459157,
+        "cacheHitRatio": 0.9173938524272934,
+        "durationMs": 127076
+      },
+      {
+        "id": "ad75ab9236b7b561f",
+        "agentType": "general-purpose",
+        "description": "Fix round 1: array shapes + full pagination",
+        "tokens": 11531021,
+        "costUsd": 3.2254587000000003,
+        "cacheHitRatio": 0.9662555815953383,
+        "durationMs": 828126
+      },
+      {
+        "id": "afb34e8d56be78160",
+        "agentType": "general-purpose",
+        "description": "Wave 3B: WP5 per build plan",
+        "tokens": 3493684,
+        "costUsd": 1.7805466,
+        "cacheHitRatio": 0.8671509875650562,
+        "durationMs": 624038
+      },
+      {
+        "id": "afc0e8e65c133647f",
+        "agentType": "general-purpose",
+        "description": "Re-run all gates on the final tree",
+        "tokens": 2027163,
+        "costUsd": 0.5631196,
+        "cacheHitRatio": 0.9685766915497045,
+        "durationMs": 306428
+      }
+    ],
+    "total": {
+      "input": 2318,
+      "cacheWrite5m": 6530778,
+      "cacheWrite1h": 0,
+      "cacheRead": 206809675,
+      "output": 45671,
+      "messages": 1159,
+      "tokens": 213388442,
+      "costUsd": 59.82640145
+    },
+    "cacheHitRatio": 0.9693774672121419
+  },
+  "warnings": []
+}

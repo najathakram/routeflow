@@ -6,17 +6,38 @@ import { BarcodeScanner } from "./BarcodeScanner";
 import { ScanOutcome } from "../lib/scan-loop";
 import { useFabPositionStore } from "../lib/fab-position-store";
 
-interface Props {
-  /**
-   * Called with the scanned code string. In `continuous` mode its return
-   * value (see `ScanOutcome`) drives the scanner overlay's feedback/close.
-   */
-  onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
+type Base = {
   /** Hide the FAB when something else has focus (e.g. a modal is open). */
   hidden?: boolean;
   /** Keep the scanner open after each scan (order/invoice builders). */
   continuous?: boolean;
-}
+};
+
+/**
+ * Exactly one of `onScanned` / `onPress` must be supplied. Neither would make
+ * the FAB an inert button; both would silently ignore `onScanned`, since
+ * `onPress` intercepts the tap.
+ */
+type Props = Base &
+  (
+    | {
+        /**
+         * Called with the scanned code string. In `continuous` mode its return
+         * value (see `ScanOutcome`) drives the scanner overlay's feedback/close.
+         */
+        onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
+        onPress?: never;
+      }
+    | {
+        /**
+         * Intercept the tap instead of opening this component's own scanner —
+         * for screens that route the operator into an existing scan surface
+         * (e.g. order edit-items opens ProductPicker pre-armed to scan).
+         */
+        onPress: () => void;
+        onScanned?: never;
+      }
+  );
 
 const FAB_SIZE = 56;
 const EDGE_MARGIN = 16;
@@ -36,16 +57,18 @@ const TOP_RESERVED = 60;
  * The default position is the right edge at ~2/3 down the screen — within
  * easy thumb reach for either-handed phone use.
  *
- * Tapping (no drag) opens the camera scanner overlay; the result is forwarded
- * to `onScanned`. Drag distance > DRAG_THRESHOLD suppresses the tap so the
- * operator never accidentally fires the scanner mid-drag.
+ * Tapping (no drag) either calls `onPress` when the screen supplies one — that
+ * screen owns its own scan surface and this component never opens its overlay —
+ * or opens the camera scanner overlay and forwards the result to `onScanned`.
+ * Drag distance > DRAG_THRESHOLD suppresses the tap so the operator never
+ * accidentally fires the scanner mid-drag.
  *
  * Why this is shared rather than per-screen: the user complained that on
  * /new-order (and the other scan sites) they had to scroll up to find the
  * scanner button. A floating button keeps the action one tap away regardless
  * of scroll position.
  */
-export function BarcodeFab({ onScanned, hidden = false, continuous = false }: Props) {
+export function BarcodeFab({ onScanned, onPress, hidden = false, continuous = false }: Props) {
   const { width, height } = Dimensions.get("window");
   const persisted = useFabPositionStore();
 
@@ -128,6 +151,10 @@ export function BarcodeFab({ onScanned, hidden = false, continuous = false }: Pr
       wasDragged.current = false;
       return;
     }
+    if (onPress) {
+      onPress();
+      return;
+    }
     setScanOpen(true);
   };
 
@@ -152,7 +179,7 @@ export function BarcodeFab({ onScanned, hidden = false, continuous = false }: Pr
         </Pressable>
       </Animated.View>
 
-      {scanOpen ? (
+      {scanOpen && onScanned ? (
         <View style={styles.scannerOverlay}>
           <BarcodeScanner
             continuous={continuous}

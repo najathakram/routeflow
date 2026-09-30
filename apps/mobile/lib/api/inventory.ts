@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
+export type { InventoryValuation, RecomputeCostsResult } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,7 +27,20 @@ export interface StockAdjustmentDto {
 
 export interface StockPurchaseDto {
   productId: string;
-  quantity: number;
+  /**
+   * Base units (PIECES) received. Omit when sending `boxes`/`pieces` — the API
+   * resolves the received piece total from the split and ignores `quantity`
+   * when either is present. A bare `quantity` KEEPS meaning pieces.
+   */
+  quantity?: number;
+  /** Whole boxes received — only for products with `unitsPerBox > 1`. */
+  boxes?: number;
+  /** Loose pieces beyond whole boxes — pairs with `boxes`. */
+  pieces?: number;
+  /**
+   * Cost per SELLING UNIT — a box when `boxes`/`pieces` is sent, a piece
+   * otherwise. The API converts to a per-piece cost before AVCO math.
+   */
   unitCost: number;
   supplierId?: string;
   reference?: string;
@@ -56,13 +71,6 @@ export function useStockOverview() {
 }
 
 // ─── Cost basis & valuation ───────────────────────────────────────────────────
-
-export interface InventoryValuation {
-  totalValue: number;
-  productCount: number;
-  missingCostCount: number;
-  missingCostProducts: { id: string; name: string }[];
-}
 
 export function useInventoryValuation() {
   return useQuery<InventoryValuation>({
@@ -101,22 +109,6 @@ export function useBulkSetCostBasis() {
       qc.invalidateQueries({ queryKey: ["products"] });
     },
   });
-}
-
-/** Result of a recompute-costs dry-run or apply (mirror of web). */
-export interface RecomputeCostsResult {
-  dryRun: boolean;
-  processed: number;
-  updated: number;
-  noHistory: { productId: string; name: string }[];
-  results: {
-    productId: string;
-    name: string;
-    oldAvgCost: number | null;
-    newAvgCost: number | null;
-    stockDrift: number;
-    movementsBackfilled: number;
-  }[];
 }
 
 /**
@@ -173,6 +165,8 @@ export interface InventoryMovement {
   unitCost?: number;
   reference?: string;
   notes?: string;
+  /** B562: the accounting date (a backdated purchase's effective date); `createdAt` is insertion time. */
+  effectiveAt?: string;
   createdAt: string;
 }
 

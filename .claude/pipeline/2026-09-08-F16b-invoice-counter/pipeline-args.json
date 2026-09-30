@@ -1,0 +1,131 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-08-F16b-invoice-counter/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-08-F16b-invoice-counter/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-08T11:37:30Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "B100 (F16b). Design of record = cause-ruling.md section 2 (read with the plan); binding facts = cause-refutation.md section 7. NO schema change, NO migration: NumberingSequence.year already exists. Money + tenancy: every number is tenant-scoped, per-year, format INV-<year>-#### unchanged, -R{i} untouched, null tenant throws. Option-B bookkeeping: no map/lessons/ledger edits. Never run Playwright. The DB lane runs against the compose Postgres via scripts/local-env.mjs.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/api/src/import/numbering.service.ts",
+    "apps/api/src/import/numbering.module.ts",
+    "apps/api/src/import/import.module.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/invoices/invoices.module.ts",
+    "apps/api/src/estimates/estimates.service.ts",
+    "apps/api/src/estimates/estimates.module.ts",
+    "apps/api/src/payment-requests/payment-requests.service.ts",
+    "apps/api/prisma/schema/platform.prisma"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "orderBy:\\s*\\{\\s*\\w*[Nn]umber:\\s*\"desc\"\\s*\\}",
+      "note": "max+1 scan over a TEXT number column (lexicographic wall); siblings est/cn/bill/statement/PO/backfill-invoices.js are FILED, not fixed"
+    },
+    {
+      "regex": "parseInt\\([^)]*split\\(\"-\"\\)",
+      "note": "hand-copied number parser (L-072 shape); FILE"
+    },
+    {
+      "regex": "\\?\\? \"singleton\"",
+      "note": "null-tenant sentinel counter key; FILE (PaymentCounter precedent documented in docs/IMPROVEMENTS.md)"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-DB",
+      "title": "DB-lane repro (tenancy, wall, concurrency, lazy seed)",
+      "files": ["apps/api/src/invoices/invoice-numbering.db.spec.ts"],
+      "brief": "bug-test-plan T1 (a a2 b c d d2); own tenants + cleanup; implement nothing",
+      "effort": "high"
+    },
+    {
+      "id": "TP-UNIT",
+      "title": "unit repros + pins",
+      "files": [
+        "apps/api/src/invoices/invoices.service.spec.ts",
+        "apps/api/src/estimates/estimates.service.spec.ts",
+        "apps/api/src/import/numbering.service.spec.ts"
+      ],
+      "brief": "bug-test-plan T2 (a b) + pins P1-P6; harness notes (NumberingService provider); implement nothing",
+      "effort": "high"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- invoice-numbering --runInBand\"",
+      "cd apps/api && npx jest src/invoices/invoices.service.spec.ts src/estimates/estimates.service.spec.ts --runInBand -t \"REG-B100\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "NumberingService learns the year, lazy seed, FOR UPDATE",
+      "files": [
+        "apps/api/src/import/numbering.service.ts",
+        "apps/api/src/import/numbering.module.ts"
+      ],
+      "brief": "build-plan P1",
+      "effort": "high"
+    },
+    {
+      "id": "P2",
+      "title": "five invoice mint sites through reserveNext",
+      "files": [
+        "apps/api/src/invoices/invoices.service.ts",
+        "apps/api/src/estimates/estimates.service.ts"
+      ],
+      "brief": "build-plan P2",
+      "effort": "high",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P3",
+      "title": "module wiring",
+      "files": [
+        "apps/api/src/invoices/invoices.module.ts",
+        "apps/api/src/estimates/estimates.module.ts",
+        "apps/api/src/import/import.module.ts"
+      ],
+      "brief": "build-plan P3",
+      "effort": "medium",
+      "dependsOn": ["P1"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/invoices src/estimates src/import --runInBand"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api\"",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/import/numbering.service.ts",
+        "behavior": "per-year key, INV-<year>- format, lazy seed from the numeric max",
+        "test": "REG-B100-B REG-B100-D",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "behavior": "generateInvoiceNumber delegates to the tenant-scoped sequence inside the tx",
+        "test": "REG-B100-A REG-B100-C",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/estimates/estimates.service.ts",
+        "behavior": "convertToInvoice mints through the sequence",
+        "test": "REG-B100-A",
+        "revertFix": true
+      }
+    ]
+  }
+}

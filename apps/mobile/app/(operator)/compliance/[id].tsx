@@ -12,6 +12,7 @@ import {
   useRegulatedLedger,
   usePrepareFiling,
 } from "../../../lib/api/regulated";
+import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
 import {
   fmtMoney,
   lastCompletedPeriod,
@@ -20,6 +21,7 @@ import {
 } from "../../../lib/regulated-format";
 import { RegulatedFilingsList } from "../../../components/RegulatedFilingsList";
 import { RegulatedReportSection } from "../../../components/RegulatedReportSection";
+import { TobaccoPackSection } from "../../../components/TobaccoPackSection";
 import { shareCsv } from "../../../lib/share-pdf";
 import { showToast } from "../../../lib/toast";
 
@@ -28,7 +30,11 @@ export default function RegulatedSectionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: section, isLoading } = useTrackedCategory(id);
   const { data: subs = [] } = useTrackedSubcategories(id);
-  const { data: filings = [] } = useRegulatedFilings(id);
+  // Ledger/filings/reports are the Regulated compliance pack — gated on the raw
+  // tobacco_dealer addon (mirrors web's useTenantAddons gate). Categorization
+  // (section/subcategories/product counts) stays free above.
+  const packEnabled = useHasAddon(TOBACCO_ADDON);
+  const { data: filings = [] } = useRegulatedFilings(id, { enabled: packEnabled });
   const prepare = usePrepareFiling();
   const [preparing, setPreparing] = useState(false);
 
@@ -39,7 +45,7 @@ export default function RegulatedSectionDetailScreen() {
   const year = now.getUTCFullYear();
   const currentMonth = now.getUTCMonth() + 1; // 1-12
   const from = `${year}-01-01`;
-  const ledger = useRegulatedLedger({ category: id, from }, { enabled: !!id });
+  const ledger = useRegulatedLedger({ category: id, from }, { enabled: !!id && packEnabled });
 
   const ledgerRows = ledger.data?.rows;
   const monthKey = `${year}-${String(currentMonth).padStart(2, "0")}`;
@@ -136,21 +142,23 @@ export default function RegulatedSectionDetailScreen() {
           </Text>
         </View>
 
-        <View style={styles.kpiRow}>
-          <KpiCard
-            icon={<Ionicons name="cash-outline" size={18} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            value={ledger.isLoading ? "…" : fmtMoney(thisMonth?.netSales ?? 0)}
-            label="Net sales (month)"
-          />
-          <KpiCard
-            icon={<Ionicons name="receipt-outline" size={18} color={ios.system.orangeInk} />}
-            iconBg={ios.system.orangeWash}
-            value={ledger.isLoading ? "…" : fmtMoney(thisMonth?.categoryTax ?? 0)}
-            label="Tax (month)"
-          />
-        </View>
-        <View style={[styles.kpiRow, { marginTop: 12 }]}>
+        {packEnabled ? (
+          <View style={styles.kpiRow}>
+            <KpiCard
+              icon={<Ionicons name="cash-outline" size={18} color={ios.system.greenInk} />}
+              iconBg={ios.system.greenWash}
+              value={ledger.isLoading ? "…" : fmtMoney(thisMonth?.netSales ?? 0)}
+              label="Net sales (month)"
+            />
+            <KpiCard
+              icon={<Ionicons name="receipt-outline" size={18} color={ios.system.orangeInk} />}
+              iconBg={ios.system.orangeWash}
+              value={ledger.isLoading ? "…" : fmtMoney(thisMonth?.categoryTax ?? 0)}
+              label="Tax (month)"
+            />
+          </View>
+        ) : null}
+        <View style={[styles.kpiRow, { marginTop: packEnabled ? 12 : 8 }]}>
           <KpiCard
             icon={<Ionicons name="cube-outline" size={18} color={ios.brand} />}
             iconBg={ios.brandWash}
@@ -160,22 +168,36 @@ export default function RegulatedSectionDetailScreen() {
           <KpiCard
             icon={<Ionicons name="document-text-outline" size={18} color={ios.system.purpleInk} />}
             iconBg={ios.system.purpleWash}
-            value={String(filings.length)}
+            value={packEnabled ? String(filings.length) : "—"}
             label="Filings"
           />
         </View>
 
-        <ListGroup header={`MONTHLY · ${year}`}>
-          {monthlyRows.map((r) => (
-            <View key={r.key} style={styles.monthRow}>
-              <Text style={styles.monthLabel}>{r.label}</Text>
-              <View style={{ alignItems: "flex-end" }}>
-                <Text style={styles.monthNet}>{fmtMoney(r.netSales)}</Text>
-                <Text style={styles.monthTax}>Tax {fmtMoney(r.categoryTax)}</Text>
-              </View>
+        {packEnabled ? (
+          <>
+            <ListGroup header={`MONTHLY · ${year}`}>
+              {monthlyRows.map((r) => (
+                <View key={r.key} style={styles.monthRow}>
+                  <Text style={styles.monthLabel}>{r.label}</Text>
+                  <View style={{ alignItems: "flex-end" }}>
+                    <Text style={styles.monthNet}>{fmtMoney(r.netSales)}</Text>
+                    <Text style={styles.monthTax}>Tax {fmtMoney(r.categoryTax)}</Text>
+                  </View>
+                </View>
+              ))}
+            </ListGroup>
+            {section.isTobaccoCategory ? <TobaccoPackSection /> : null}
+          </>
+        ) : (
+          <ListGroup header="COMPLIANCE PACK">
+            <View style={styles.emptyRow}>
+              <Text style={styles.emptyText}>
+                Ledgers, reports and filings are part of the Regulated compliance pack, which
+                isn&apos;t enabled for this workspace. Ask your platform administrator.
+              </Text>
             </View>
-          ))}
-        </ListGroup>
+          </ListGroup>
+        )}
 
         {activeSubs.length > 0 ? (
           <View style={styles.chipSection}>
@@ -192,27 +214,33 @@ export default function RegulatedSectionDetailScreen() {
           </View>
         ) : null}
 
-        <View style={styles.prepareRow}>
-          <Text style={styles.prepareText}>Prepare a filing for the last completed period.</Text>
-          <Pressable style={styles.prepareBtn} onPress={handlePrepare} disabled={preparing}>
-            {preparing ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.prepareBtnText}>Prepare filing</Text>
-            )}
-          </Pressable>
-        </View>
+        {packEnabled ? (
+          <>
+            <View style={styles.prepareRow}>
+              <Text style={styles.prepareText}>
+                Prepare a filing for the last completed period.
+              </Text>
+              <Pressable style={styles.prepareBtn} onPress={handlePrepare} disabled={preparing}>
+                {preparing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.prepareBtnText}>Prepare filing</Text>
+                )}
+              </Pressable>
+            </View>
 
-        <RegulatedReportSection
-          categoryId={section.id}
-          categoryName={section.name}
-          defaultTemplate={section.reportTemplate}
-        />
+            <RegulatedReportSection
+              categoryId={section.id}
+              categoryName={section.name}
+              defaultTemplate={section.reportTemplate}
+            />
 
-        <RegulatedFilingsList
-          filings={filings}
-          emptyHint="No filings prepared yet. Use Prepare filing above to generate one for the last completed period."
-        />
+            <RegulatedFilingsList
+              filings={filings}
+              emptyHint="No filings prepared yet. Use Prepare filing above to generate one for the last completed period."
+            />
+          </>
+        ) : null}
 
         <View style={{ height: 32 }} />
       </ScrollView>
@@ -223,6 +251,13 @@ export default function RegulatedSectionDetailScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: ios.bg },
   center: { padding: 40, alignItems: "center", gap: 10 },
+  emptyRow: { padding: 16 },
+  emptyText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: ios.label2,
+    textAlign: "center",
+  },
   headBlock: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 4, gap: 4 },
   headName: { fontSize: 22, fontFamily: "Inter_700Bold", color: ios.label, letterSpacing: -0.4 },
   headSub: { fontSize: 13, fontFamily: "Inter_400Regular", color: ios.label2 },

@@ -8,11 +8,19 @@ import type { AnalyticsService } from "./analytics.service";
  * validation branch, which has no dependencies.
  */
 describe("AnalyticsController", () => {
-  let service: { getProductDemand: jest.Mock };
+  let service: {
+    getProductDemand: jest.Mock;
+    getRoutePerformance: jest.Mock;
+    getDriverPerformance: jest.Mock;
+  };
   let controller: AnalyticsController;
 
   beforeEach(() => {
-    service = { getProductDemand: jest.fn().mockResolvedValue({}) };
+    service = {
+      getProductDemand: jest.fn().mockResolvedValue({}),
+      getRoutePerformance: jest.fn().mockResolvedValue([]),
+      getDriverPerformance: jest.fn().mockResolvedValue([]),
+    };
     controller = new AnalyticsController(service as unknown as AnalyticsService);
   });
 
@@ -46,6 +54,24 @@ describe("AnalyticsController", () => {
         expect(service.getProductDemand).not.toHaveBeenCalled();
       },
     );
+  });
+
+  describe("route/driver performance", () => {
+    it("forwards from/to to both service methods — the web date picker was silently ignored", () => {
+      controller.getRoutes("2026-06-01", "2026-06-30");
+      expect(service.getRoutePerformance).toHaveBeenCalledWith("2026-06-01", "2026-06-30");
+
+      controller.getDrivers("2026-06-01", "2026-06-30");
+      expect(service.getDriverPerformance).toHaveBeenCalledWith("2026-06-01", "2026-06-30");
+    });
+
+    it("forwards absent params as undefined (all-time, the mobile admin call)", () => {
+      controller.getRoutes();
+      expect(service.getRoutePerformance).toHaveBeenCalledWith(undefined, undefined);
+
+      controller.getDrivers();
+      expect(service.getDriverPerformance).toHaveBeenCalledWith(undefined, undefined);
+    });
   });
 
   it("lists the demand route in the self-describing index", () => {

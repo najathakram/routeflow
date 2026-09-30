@@ -1,6 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { InvoicePdfVariant } from "../invoice-pdf-variant";
+import type { PaymentMethod } from "@routeflow/types";
+import type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  SendInvoiceEmailResult,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,6 +23,8 @@ export type InvoiceStatus =
 export interface InvoiceItem {
   id: string;
   description: string;
+  /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+  systemKind?: string | null;
   productId?: string;
   qty: number;
   unitPrice: number;
@@ -25,16 +33,16 @@ export interface InvoiceItem {
   /** STANDARD | SPECIAL | DISCOUNTED | MANUAL | PROMO. */
   priceType?: string;
   subtotal: number;
+  /**
+   * Suggested retail price, per PIECE, snapshotted onto the line when it was
+   * created — display-only, never re-read from the live product. Null/undefined
+   * = nothing to show.
+   */
+  msrp?: number | null;
 }
 
-export type PaymentMethod =
-  | "CASH"
-  | "CHECK"
-  | "ACH"
-  | "CREDIT_CARD"
-  | "CREDIT_NOTE"
-  | "ADVANCE"
-  | "OTHER";
+// #2722: the shared enum directly (no alias chain through ../payment-methods).
+export type { PaymentMethod } from "@routeflow/types";
 
 export interface InvoicePayment {
   id: string;
@@ -66,6 +74,12 @@ export interface Invoice {
   shippingFee?: number | string;
   total: number;
   dueDate?: string;
+  /**
+   * Structured "Net 30"-style label, persisted alongside `dueDate` so the two
+   * can never disagree. Undefined/null on historical invoices predating this
+   * field — renders nothing.
+   */
+  paymentTermsLabel?: string | null;
   notes?: string;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
@@ -137,23 +151,6 @@ export function useRecordInvoicePayment() {
   });
 }
 
-export interface CreateInvoiceItem {
-  /** Free-text label. For an unlisted (non-catalog) line, omit productId. */
-  description: string;
-  productId?: string;
-  qty: number;
-  unitPrice: number;
-  /** Optional box/piece split for boxed products. Server prorates the line. */
-  boxes?: number;
-  pieces?: number;
-  /** Flat dollars off this line — server: lineSub = roundMoney(subtotal − discount). */
-  discount?: number;
-  /** Tax FRACTION (0.08 = 8%), charged on the POST-discount line subtotal. */
-  taxRate?: number;
-  /** Buyer-visible line note — prints under the description on the PDF (≤2000). */
-  notes?: string;
-}
-
 export interface CreateInvoiceDto {
   customerId: string;
   items: CreateInvoiceItem[];
@@ -168,6 +165,9 @@ export interface CreateInvoiceDto {
   shippingFee?: number;
   referenceNumber?: string;
   subject?: string;
+  /** #1529: opt-in deposit schedule (a percent of the total due by its own date), as on web. */
+  depositPercent?: number;
+  depositDueDate?: string;
   /** Carrier shipment tracking recorded at creation time. */
   shippingCarrier?: string;
   shippingTrackingNumber?: string;
@@ -185,9 +185,17 @@ export function useCreateInvoice() {
   });
 }
 
+/** `/send-email` resolves to `SendInvoiceEmailResult`; the bodyless `/send`
+ *  (mark-as-sent) resolves to the updated invoice. Narrow with `"warning" in res`. */
+export type SendInvoiceResult = Invoice | SendInvoiceEmailResult;
+
 export function useSendInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string; email?: string; variant?: InvoicePdfVariant }>({
+  return useMutation<
+    SendInvoiceResult,
+    Error,
+    { id: string; email?: string; variant?: InvoicePdfVariant }
+  >({
     // Two branches: send-email (attaches the PDF at the chosen stage) vs `/send`
     // mark-as-sent (no email). `variant` rides ONLY on the send-email body — the
     // mark-as-sent call must stay bodyless.
@@ -291,7 +299,7 @@ export function useUpdateInvoice() {
  * explicitly (web does the same — the server also accepts an override address).
  */
 export function useSendInvoiceReminder() {
-  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+  return useMutation<SendInvoiceEmailResult, Error, { id: string; email?: string }>({
     mutationFn: ({ id, email }) =>
       apiClient.post(`/invoices/${id}/send-reminder`, email ? { email } : {}).then((r) => r.data),
   });
@@ -390,20 +398,6 @@ export function useUpdateInvoiceShipment() {
 
 // ─── Split / partial invoice from order ───────────────────────────────────────
 
-export interface CreatePartialInvoiceItem {
-  orderItemId: string;
-  qty: number;
-}
-
-export interface CreatePartialInvoiceDto {
-  orderId: string;
-  items: CreatePartialInvoiceItem[];
-  dueDate?: string;
-  terms?: string;
-  notes?: string;
-  send?: boolean;
-}
-
 /**
  * Create one of N partial invoices from an order. Available to operator and driver
  * (driver uses it from the stop-completion flow). Each call increments
@@ -460,7 +454,13 @@ export function useCreateInvoiceFromOrder() {
 /** DRAFT (proforma, pre-delivery) vs FINAL (issued) invoice-PDF stage. */
 // Canonical type + smart-default live in ../invoice-pdf-variant (triple mirror with
 // apps/api + apps/web); re-exported here so existing importers keep their path.
-export type { InvoicePdfVariant };
+export type { InvoicePdfVariant } from "../invoice-pdf-variant";
+export type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreatePartialInvoiceItem,
+  SendInvoiceEmailResult,
+} from "@routeflow/types";
 
 export function useInvoicePdf() {
   return useMutation<

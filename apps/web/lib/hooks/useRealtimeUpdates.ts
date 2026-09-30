@@ -71,16 +71,6 @@ export function useRealtimeUpdates() {
       });
     });
 
-    socket.on("inventory.low.stock", (data: { productName: string; stockLevel: number }) => {
-      void qc.invalidateQueries({ queryKey: ["products"] });
-      void qc.invalidateQueries({ queryKey: ["inventory"] });
-      toast({
-        title: "Low stock alert",
-        description: `${data.productName} — only ${data.stockLevel} units remaining`,
-        variant: "error",
-      });
-    });
-
     socket.on("return.created", (data: { customerName: string; reason: string }) => {
       void qc.invalidateQueries({ queryKey: ["returns"] });
       toast({
@@ -97,10 +87,43 @@ export function useRealtimeUpdates() {
       },
     );
 
-    socket.on("creditNote.created", (data: { creditNoteNumber: string; creditNoteId: string }) => {
-      void qc.invalidateQueries({ queryKey: ["credit-notes"] });
-      void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
-    });
+    // A buyer declared a cash payment from the portal — it sits PENDING until an
+    // operator approves it under Finance → Payment Requests.
+    socket.on(
+      "buyer.payment.requested",
+      (data: { customerName: string; kind: "CARD" | "CASH" }) => {
+        void qc.invalidateQueries({ queryKey: ["payment-requests"] });
+        if (data.kind !== "CASH") return;
+        toast({
+          title: "Cash payment declared",
+          description: `${data.customerName} — approve it under Finance → Payment Requests`,
+        });
+      },
+    );
+
+    // B343: this handler never invalidated the customer statement query, so a
+    // statement left open kept showing pre-credit-note outstanding/available-credit
+    // figures. `customerId` was always on the wire (CreditNoteCreatedPayload) — just
+    // never read here.
+    socket.on(
+      "creditNote.created",
+      (data: { creditNoteNumber: string; creditNoteId: string; customerId: string }) => {
+        void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+        void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
+        void qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+      },
+    );
+
+    // B343: voidCreditNote fired no socket event at all — a remote void never reached
+    // an open customer statement or credit-notes view.
+    socket.on(
+      "creditNote.voided",
+      (data: { creditNoteNumber: string; creditNoteId: string; customerId: string }) => {
+        void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+        void qc.invalidateQueries({ queryKey: ["credit-notes", data.creditNoteId] });
+        void qc.invalidateQueries({ queryKey: ["customers", data.customerId, "statement"] });
+      },
+    );
 
     return () => {
       socket.off("connect_error");
@@ -109,10 +132,11 @@ export function useRealtimeUpdates() {
       socket.off("order.urgent.placed");
       socket.off("order.statusChanged");
       socket.off("driver.status.updated");
-      socket.off("inventory.low.stock");
       socket.off("return.created");
       socket.off("invoice.updated");
+      socket.off("buyer.payment.requested");
       socket.off("creditNote.created");
+      socket.off("creditNote.voided");
       disconnectSocket();
     };
   }, [qc, toast]);

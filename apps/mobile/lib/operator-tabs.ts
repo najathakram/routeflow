@@ -47,6 +47,7 @@ const SECTION_TO_TAB: Readonly<Record<string, OperatorTabKey>> = {
   drivers: "dispatch",
   driver: "dispatch",
   fleet: "dispatch",
+  trips: "dispatch",
 
   orders: "orders",
   "new-order": "orders",
@@ -59,6 +60,20 @@ const SECTION_TO_TAB: Readonly<Record<string, OperatorTabKey>> = {
 
   more: "more",
 };
+
+/**
+ * Which tabs the bar should render for the current tenant/loading state.
+ *
+ * Per-tenant addons gate the Dispatch tab: it fronts the driver/route/fleet
+ * surfaces AND the ad-hoc order-delivery entry, so `dispatchAccess` is EITHER
+ * feature's access — `recurring_routes || order_delivery` (owner decision
+ * 2026-08-28: `developer_mode` no longer unlocks either). Pure — pass `false`
+ * while the addon fetch is loading so the tab never flashes then vanishes (see
+ * `OperatorTabBar`, which composes it from `useRoutesAccess`/`useDeliveryAccess`).
+ */
+export function visibleOperatorTabs(dispatchAccess: boolean): OperatorTabKey[] {
+  return dispatchAccess ? [...OPERATOR_TABS] : OPERATOR_TABS.filter((t) => t !== "dispatch");
+}
 
 /** expo-router segments keep their parens: "(operator)", "(tabs)". */
 const isGroup = (s: string) => s.startsWith("(") && s.endsWith(")");

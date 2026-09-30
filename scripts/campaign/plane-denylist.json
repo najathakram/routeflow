@@ -1,0 +1,26 @@
+{
+  "patterns": [
+    {
+      "name": "tenant-uuid",
+      "regex": "[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+      "flags": "i"
+    },
+    { "name": "invoice-number", "regex": "\\bINV-\\d{4}-\\d+\\b" },
+    {
+      "name": "email",
+      "regex": "[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",
+      "flags": "i"
+    },
+    {
+      "name": "connection-string",
+      "regex": "\\b(postgres(ql)?|redis|mysql)://",
+      "flags": "i"
+    },
+    { "name": "jwt", "regex": "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}" },
+    { "name": "railway-host", "regex": "\\.up\\.railway\\.app\\b" },
+    {
+      "name": "api-key-ish",
+      "regex": "\\b(sk|pk|plane_api|plane_wh)_[A-Za-z0-9]{12,}"
+    }
+  ]
+}

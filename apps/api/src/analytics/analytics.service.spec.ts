@@ -5,6 +5,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { ProductInsightsService } from "../sales-facts/product-insights.service";
+import { SalesFactsService } from "../sales-facts/sales-facts.service";
 
 const D = (n: number | string) => new Prisma.Decimal(n);
 
@@ -22,6 +24,10 @@ describe("AnalyticsService — invoiced-sales readers", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnalyticsService,
+        // #2118: getProductSales/getProductDemand delegate into the sales-facts layer — the
+        // REAL services over the same mocked Prisma, so every pin below still exercises them.
+        ProductInsightsService,
+        SalesFactsService,
         { provide: PrismaService, useValue: prisma },
         { provide: AddonService, useValue: addonService },
         { provide: SystemConfigService, useValue: systemConfig },
@@ -64,8 +70,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       // avgCostAfter snapshots: 2.00 until June 10, then 3.00 — the two
       // invoices straddle the change and must be costed differently.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
-        { productId: "p1", createdAt: new Date("2026-06-10"), avgCostAfter: D(3) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-10"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -147,7 +153,7 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(movementArgs.where).toEqual({
         productId: { in: ["p1"] },
         avgCostAfter: { not: null },
-        createdAt: { lte: expect.any(Date) },
+        effectiveAt: { lte: expect.any(Date) },
       });
     });
   });
@@ -342,12 +348,85 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       ]);
       prisma.stockMovement.findMany
         .mockResolvedValueOnce([]) // nothing since the cutoff
-        .mockResolvedValueOnce([{ productId: "p1", createdAt: daysAgo(40) }]);
+        .mockResolvedValueOnce([{ productId: "p1", effectiveAt: daysAgo(40) }]);
 
       const res = await service.getDeadStock(30);
 
       expect(res).toHaveLength(1);
       expect(res[0].daysInactive).toBe(40); // movement (40d) is newer than the sale (80d)
+    });
+
+    it("keeps the parameterless rolling window open-ended (gte only)", async () => {
+      prisma.product.findMany.mockResolvedValue([{ id: "p1", name: "P1", currentStock: D(3) }]);
+      prisma.invoice.findMany.mockResolvedValue([]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      await service.getDeadStock(30);
+
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(expect.any(Date));
+      expect(effectiveAt.lte).toBeUndefined();
+    });
+
+    it("a from/to range REPLACES the rolling window — activity outside it doesn't rescue", async () => {
+      prisma.product.findMany.mockResolvedValue([
+        { id: "sold-in", name: "In-range", currentStock: D(5) },
+        { id: "sold-out", name: "Out-of-range", currentStock: D(9) },
+      ]);
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-05-10"), items: [{ productId: "sold-in" }] },
+        // Sold AFTER the window closes — active today, but dead within May.
+        { issueDate: new Date("2026-06-20"), items: [{ productId: "sold-out" }] },
+      ]);
+      prisma.stockMovement.findMany.mockResolvedValue([]);
+
+      const res = await service.getDeadStock(30, "2026-05-01", "2026-05-31");
+
+      expect(res.map((r) => r.id)).toEqual(["sold-out"]);
+      // Display fields stay "most recent activity ever", not range-clipped.
+      expect(res[0].lastMovement).toEqual(new Date("2026-06-20"));
+      // The movement query is bounded to the same window.
+      const { effectiveAt } = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(effectiveAt.gte).toEqual(new Date("2026-05-01"));
+      expect(effectiveAt.lte.toISOString()).toContain("2026-05-31T23:59:59");
+    });
+  });
+
+  describe("getDso", () => {
+    it("averages days from issue to payment across PAID invoices, unwindowed by default", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-06-01"), paidAt: new Date("2026-06-11") }, // 10d
+        { issueDate: new Date("2026-06-01"), paidAt: new Date("2026-06-21") }, // 20d
+      ]);
+
+      const res = await service.getDso();
+
+      expect(res).toEqual({ dso: 15, count: 2 });
+      // No bounds ⇒ no issueDate filter — mobile's parameterless call stays all-time.
+      expect(prisma.invoice.findMany.mock.calls[0][0].where).toEqual({
+        status: "PAID",
+        paidAt: { not: null },
+      });
+    });
+
+    it("windows on issueDate when from/to are given — payment may land after `to`", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        { issueDate: new Date("2026-06-15"), paidAt: new Date("2026-08-14") }, // 60d
+      ]);
+
+      const res = await service.getDso("2026-06-01", "2026-06-30");
+
+      expect(res).toEqual({ dso: 60, count: 1 });
+      const { where } = prisma.invoice.findMany.mock.calls[0][0];
+      expect(where.status).toBe("PAID");
+      expect(where.issueDate.gte).toEqual(new Date("2026-06-01"));
+      expect(where.issueDate.lte.toISOString()).toContain("2026-06-30T23:59:59");
+    });
+
+    it("returns zeros for an empty window", async () => {
+      prisma.invoice.findMany.mockResolvedValue([]);
+
+      expect(await service.getDso("2026-01-01", "2026-01-31")).toEqual({ dso: 0, count: 0 });
     });
   });
 
@@ -378,8 +457,8 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       systemConfig.get.mockResolvedValue("true");
       prisma.invoice.findMany.mockResolvedValue([tobaccoInvoice]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "pt", createdAt: new Date("2026-06-01"), avgCostAfter: D(10) },
-        { productId: "pn", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "pt", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(10) },
+        { productId: "pn", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
       ]);
 
       const result = await service.getGrossMarginTrend();
@@ -443,13 +522,13 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       const day2 = new Date("2026-06-15");
       prisma.stockMovement.findMany.mockResolvedValue([
         {
-          createdAt: day1,
+          effectiveAt: day1,
           unitCost: D(2),
           avgCostAfter: D(2),
           type: "PURCHASE",
         },
         {
-          createdAt: day2,
+          effectiveAt: day2,
           unitCost: D(3.15),
           avgCostAfter: D(3.15),
           type: "COST_BASIS",
@@ -467,6 +546,158 @@ describe("AnalyticsService — invoiced-sales readers", () => {
         { date: day1, unitCost: 2, avgCostAfter: 2, type: "PURCHASE" },
         { date: day2, unitCost: 3.15, avgCostAfter: 3.15, type: "COST_BASIS" },
       ]);
+    });
+  });
+
+  // ─── PR-B: per-buyer sales history behind the product Sales tab ───────────
+  describe("getProductSales", () => {
+    const inv = (over: Record<string, any> = {}) => ({
+      id: "inv-1",
+      invoiceNumber: "INV-1",
+      orderId: "ord-1",
+      order: { orderNumber: "ORD-1042" },
+      issueDate: new Date("2026-06-05"),
+      customerId: "cust-1",
+      customer: { id: "cust-1", businessName: "Acme Grocers" },
+      items: [
+        {
+          qty: D(24),
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 12,
+          unitPrice: D(30),
+          subtotal: D(60),
+          originalPrice: null,
+          priceType: "STANDARD",
+        },
+      ],
+      ...over,
+    });
+
+    it("reads THROUGH Invoice (never invoiceItem) and filters to accrual sales", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      await service.getProductSales("p1");
+
+      // Nested-created invoice lines can carry tenantId = null, so a direct
+      // invoiceItem query under forTenant() would silently drop most history.
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+      const args = prisma.invoice.findMany.mock.calls[0][0];
+      expect(args.where.items).toEqual({ some: { productId: "p1" } });
+      // #2118 plan A2: a WRITTEN_OFF invoice was a sale at issue (badged); only DRAFT/VOID out.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
+      // Only this product's lines come back, not every line on the invoice.
+      expect(args.select.items.where).toEqual({ productId: "p1" });
+    });
+
+    it("keeps the stored subtotal for a boxed line instead of qty × unitPrice", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv()]);
+
+      const res = await service.getProductSales("p1");
+
+      // 2 boxes at a $30 BOX price = $60. Re-deriving 24 × 30 = $720 would
+      // over-charge by unitsPerBox — the money-discipline trap.
+      expect(res.lines[0]).toMatchObject({
+        qty: 24,
+        boxes: 2,
+        pieces: 0,
+        unitsPerBox: 12,
+        unitPrice: 30,
+        lineTotal: 60,
+        customerName: "Acme Grocers",
+        invoiceNumber: "INV-1",
+        orderId: "ord-1",
+        orderNumber: "ORD-1042",
+      });
+      expect(res.summary.totalRevenue).toBe(60);
+    });
+
+    it("a directly-raised invoice reports no order, never a sliced uuid", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv({ orderId: null, order: null })]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.lines[0].orderId).toBeNull();
+      expect(res.lines[0].orderNumber).toBeNull();
+    });
+
+    it("flags a re-priced line and carries its struck-through original", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv({
+          items: [
+            {
+              qty: D(3),
+              boxes: null,
+              pieces: null,
+              unitsPerBox: null,
+              unitPrice: D(8),
+              subtotal: D(24),
+              originalPrice: D(10),
+              priceType: "DISCOUNTED",
+            },
+          ],
+        }),
+      ]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.lines[0]).toMatchObject({ unitPrice: 8, originalPrice: 10, overridden: true });
+    });
+
+    it("averages by revenue per unit, counts distinct buyers, and spans invoices", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        inv(),
+        inv({
+          id: "inv-2",
+          invoiceNumber: "INV-2",
+          customerId: "cust-2",
+          customer: { id: "cust-2", businessName: "Bodega Two" },
+          items: [
+            {
+              qty: D(6),
+              boxes: null,
+              pieces: null,
+              unitsPerBox: null,
+              unitPrice: D(4),
+              subtotal: D(24),
+              originalPrice: null,
+              priceType: "STANDARD",
+            },
+          ],
+        }),
+      ]);
+
+      const res = await service.getProductSales("p1");
+
+      expect(res.summary).toMatchObject({
+        count: 2,
+        buyers: 2,
+        totalQty: 30,
+        totalRevenue: 84,
+        minPrice: 4,
+        maxPrice: 30,
+        // Weighted: 84 / 30 units — NOT the (30+4)/2 = 17 mean of unit prices.
+        avgPrice: 2.8,
+      });
+    });
+
+    it("renders a deleted customer without crashing, and empties cleanly", async () => {
+      prisma.invoice.findMany.mockResolvedValue([inv({ customer: null })]);
+      const res = await service.getProductSales("p1");
+      expect(res.lines[0].customerName).toBe("—");
+
+      prisma.invoice.findMany.mockResolvedValue([]);
+      const empty = await service.getProductSales("p1");
+      expect(empty.lines).toEqual([]);
+      expect(empty.summary).toMatchObject({
+        count: 0,
+        buyers: 0,
+        totalQty: 0,
+        totalRevenue: 0,
+        minPrice: null,
+        maxPrice: null,
+        avgPrice: null,
+      });
     });
   });
 
@@ -538,13 +769,14 @@ describe("AnalyticsService — invoiced-sales readers", () => {
       expect(res.range).toBe(range);
     });
 
-    it("filters out DRAFT/VOID/WRITTEN_OFF and matches only this product's lines", async () => {
+    it("filters out DRAFT/VOID (accrual basis) and matches only this product's lines", async () => {
       prisma.invoice.findMany.mockResolvedValue([]);
 
       await service.getProductDemand("p1", "30d");
 
       const args = prisma.invoice.findMany.mock.calls[0][0];
-      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] });
+      // #2118 plan A2: WRITTEN_OFF is a sale at issue; only DRAFT/VOID are excluded.
+      expect(args.where.status).toEqual({ notIn: ["DRAFT", "VOID"] });
       expect(args.where.items).toEqual({ some: { productId: "p1" } });
       // The nested filter is what keeps other products' (and null-productId ad-hoc)
       // lines out of each invoice's item array.
@@ -634,6 +866,255 @@ describe("AnalyticsService — invoiced-sales readers", () => {
 
       expect(res.totals).toEqual({ units: 4, revenue: 40 });
       expect(systemConfig.get).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("route & driver performance", () => {
+    // On-time = stop completedAt on or before the END of the run's scheduledDate
+    // calendar day (UTC) — there is no ETA field on RouteRunStop to compare against.
+    const run = (over: Record<string, unknown> = {}) => ({
+      routeId: "r1",
+      status: "COMPLETED",
+      scheduledDate: new Date("2026-08-10T00:00:00.000Z"),
+      startedAt: new Date("2026-08-10T08:00:00.000Z"),
+      completedAt: new Date("2026-08-10T10:00:00.000Z"),
+      route: { id: "r1", name: "North Loop" },
+      orders: [],
+      stops: [],
+      ...over,
+    });
+    const stopAt = (iso: string | null) => ({ completedAt: iso ? new Date(iso) : null });
+
+    it("aggregates on-time %, stops/hour, and average duration across a route's runs", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        // 2h run: 3 stops on the scheduled day, 1 the day after (late), 1 never completed.
+        run({
+          stops: [
+            stopAt("2026-08-10T09:00:00.000Z"),
+            stopAt("2026-08-10T09:20:00.000Z"),
+            stopAt("2026-08-10T23:59:59.000Z"),
+            stopAt("2026-08-11T00:30:00.000Z"),
+            stopAt(null),
+          ],
+        }),
+        // 1h run two days later: 2 on-time stops.
+        run({
+          scheduledDate: new Date("2026-08-12T00:00:00.000Z"),
+          startedAt: new Date("2026-08-12T09:00:00.000Z"),
+          completedAt: new Date("2026-08-12T10:00:00.000Z"),
+          stops: [stopAt("2026-08-12T09:15:00.000Z"), stopAt("2026-08-12T09:45:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row).toMatchObject({
+        id: "r1",
+        name: "North Loop",
+        totalRuns: 2,
+        completedRuns: 2,
+        completionRate: 100,
+      });
+      expect(row.onTimeRate).toBeCloseTo((5 / 6) * 100, 5); // 6 completed, 1 late
+      expect(row.stopsPerHour).toBe(2); // 6 completed stops over 3 valid hours
+      expect(row.avgRunDurationMinutes).toBe(90); // (120m + 60m) / 2
+    });
+
+    it("excludes runs missing start/finish stamps from duration math without losing their stops or completion counts", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          stops: [
+            stopAt("2026-08-10T09:00:00.000Z"),
+            stopAt("2026-08-10T09:10:00.000Z"),
+            stopAt("2026-08-10T09:20:00.000Z"),
+            stopAt("2026-08-10T09:30:00.000Z"),
+          ],
+        }),
+        // In-progress run: startedAt only. Its 2 completed stops still count for
+        // on-time %, but must stay out of BOTH sides of stops/hour and duration.
+        run({
+          status: "IN_PROGRESS",
+          completedAt: null,
+          stops: [stopAt("2026-08-10T09:40:00.000Z"), stopAt("2026-08-10T09:50:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row.totalRuns).toBe(2);
+      expect(row.completedRuns).toBe(1);
+      expect(row.completionRate).toBe(50);
+      expect(row.onTimeRate).toBe(100); // all 6 completed stops on-time
+      expect(row.stopsPerHour).toBe(2); // only the finished run: 4 stops / 2h
+      expect(row.avgRunDurationMinutes).toBe(120); // only the finished run
+    });
+
+    it("returns null metrics (never NaN/Infinity/0) when a route has no timing data", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({ status: "SCHEDULED", startedAt: null, completedAt: null, stops: [stopAt(null)] }),
+        // Zero-length span is junk data, not a 0-minute run — also excluded.
+        run({
+          status: "COMPLETED",
+          startedAt: new Date("2026-08-10T08:00:00.000Z"),
+          completedAt: new Date("2026-08-10T08:00:00.000Z"),
+          stops: [],
+        }),
+      ]);
+
+      const [row] = await service.getRoutePerformance();
+
+      expect(row.onTimeRate).toBeNull();
+      expect(row.stopsPerHour).toBeNull();
+      expect(row.avgRunDurationMinutes).toBeNull();
+      expect(row.completionRate).toBe(50);
+    });
+
+    it("windows runs on scheduledDate when from/to given, and applies no filter otherwise", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([]);
+
+      await service.getRoutePerformance();
+      expect(prisma.routeRun.findMany.mock.calls[0][0].where).toEqual({});
+
+      await service.getRoutePerformance("2026-08-01", "2026-08-31");
+      const windowed = prisma.routeRun.findMany.mock.calls[1][0].where;
+      expect(windowed.scheduledDate.gte).toEqual(new Date("2026-08-01"));
+      expect(windowed.scheduledDate.lte).toEqual(new Date("2026-08-31T23:59:59.999Z"));
+    });
+
+    it("computes the same stop metrics per driver alongside order-based delivery counts", async () => {
+      const driver = { id: "d1", contactName: "Sam Field", user: { username: "sam" } };
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          driver,
+          orders: [{ id: "o1" }, { id: "o2" }],
+          stops: [stopAt("2026-08-10T09:00:00.000Z"), stopAt("2026-08-11T01:00:00.000Z")],
+        }),
+        run({
+          driver,
+          status: "IN_PROGRESS",
+          completedAt: null,
+          orders: [{ id: "o3" }],
+          stops: [stopAt("2026-08-10T09:30:00.000Z")],
+        }),
+      ]);
+
+      const [row] = await service.getDriverPerformance("2026-08-01", "2026-08-31");
+
+      expect(row).toMatchObject({
+        id: "d1",
+        name: "Sam Field",
+        totalDeliveries: 3,
+        completedDeliveries: 2,
+      });
+      expect(row.onTimeRate).toBeCloseTo((2 / 3) * 100, 5); // 3 completed stops, 1 late
+      expect(row.stopsPerHour).toBe(1); // valid run only: 2 stops / 2h
+      expect(row.avgRunDurationMinutes).toBe(120);
+      // Unassigned runs stay out, and the date window rides along with that filter.
+      const where = prisma.routeRun.findMany.mock.calls[0][0].where;
+      expect(where.driverId).toEqual({ not: null });
+      expect(where.scheduledDate.gte).toEqual(new Date("2026-08-01"));
+    });
+
+    it("windows route performance on scheduledDate when a range is sent", async () => {
+      await service.getRoutePerformance("2026-06-01", "2026-06-30");
+
+      const args = prisma.routeRun.findMany.mock.calls[0][0];
+      expect(args.where.scheduledDate.gte).toEqual(new Date("2026-06-01"));
+      expect(args.where.scheduledDate.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("windows driver performance without dropping the driverId filter", async () => {
+      await service.getDriverPerformance("2026-06-01", "2026-06-30");
+
+      const args = prisma.routeRun.findMany.mock.calls[0][0];
+      expect(args.where.driverId).toEqual({ not: null });
+      expect(args.where.scheduledDate.gte).toEqual(new Date("2026-06-01"));
+      expect(args.where.scheduledDate.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("stays all-time with no params — the mobile admin screen sends none", async () => {
+      await service.getRoutePerformance();
+      expect(prisma.routeRun.findMany.mock.calls[0][0].where).toEqual({});
+
+      await service.getDriverPerformance();
+      expect(prisma.routeRun.findMany.mock.calls[1][0].where).toEqual({ driverId: { not: null } });
+    });
+
+    it("accepts a one-sided window, filling the other side with the shared default", async () => {
+      // Either bound present ⇒ the window is real; dateRange supplies the missing
+      // side (from → Jan 1 of the current year, to → now), it is NOT left open.
+      await service.getRoutePerformance("2026-06-01");
+      const fromOnly = prisma.routeRun.findMany.mock.calls[0][0].where.scheduledDate;
+      expect(fromOnly.gte).toEqual(new Date("2026-06-01"));
+      expect(fromOnly.lte.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(fromOnly.lte.getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+      await service.getRoutePerformance(undefined, "2026-06-30");
+      const toOnly = prisma.routeRun.findMany.mock.calls[1][0].where.scheduledDate;
+      // UTC-anchored, not `new Date(year, 0, 1)`: the two-argument constructor reads
+      // HOST-LOCAL components, so on a host west of UTC the window opened hours after
+      // UTC midnight and the gte filter dropped every row dated January 1 (F25).
+      expect(toOnly.gte).toEqual(new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1)));
+      expect(toOnly.lte.toISOString()).toBe("2026-06-30T23:59:59.999Z");
+    });
+
+    it("aggregates per-route completion rates from the returned runs", async () => {
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({ status: "COMPLETED", stops: [stopAt("2026-08-10T09:00:00.000Z")] }),
+        run({ status: "IN_PROGRESS", completedAt: null, stops: [] }),
+      ]);
+
+      const res = await service.getRoutePerformance("2026-06-01", "2026-06-30");
+
+      // Both runs fold into ONE row for the route; only the finished one may
+      // enter the duration math, but both count toward the completion rate.
+      expect(res).toEqual([
+        {
+          id: "r1",
+          name: "North Loop",
+          totalRuns: 2,
+          completedRuns: 1,
+          completionRate: 50,
+          onTimeRate: 100,
+          stopsPerHour: 0.5,
+          avgRunDurationMinutes: 120,
+        },
+      ]);
+    });
+
+    it("counts driver deliveries per order, skipping runs whose driver is gone", async () => {
+      const driver = { id: "d1", contactName: "Sam Field", user: { username: "sam" } };
+      prisma.routeRun.findMany.mockResolvedValue([
+        run({
+          driver,
+          orders: [{ id: "o1" }, { id: "o2" }],
+          stops: [stopAt("2026-08-10T09:00:00.000Z"), stopAt("2026-08-10T09:30:00.000Z")],
+        }),
+        run({
+          driver,
+          status: "IN_PROGRESS",
+          completedAt: null,
+          orders: [{ id: "o3" }],
+          stops: [stopAt("2026-08-10T10:00:00.000Z")],
+        }),
+        // Driver row deleted: the run contributes neither its order nor its stops.
+        run({ driver: null, orders: [{ id: "o4" }], stops: [stopAt("2026-08-10T11:00:00.000Z")] }),
+      ]);
+
+      const res = await service.getDriverPerformance();
+
+      expect(res).toEqual([
+        {
+          id: "d1",
+          name: "Sam Field",
+          totalDeliveries: 3,
+          completedDeliveries: 2,
+          completionRate: (2 / 3) * 100,
+          onTimeRate: 100,
+          stopsPerHour: 1,
+          avgRunDurationMinutes: 120,
+        },
+      ]);
     });
   });
 });

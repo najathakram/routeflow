@@ -1,6 +1,19 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest } from "./change-requests";
+import type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  OrderTrackingResponse,
+  UnitAwareLineInput,
+} from "@routeflow/types";
+export type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  OrderTracking,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -15,8 +28,22 @@ export interface OrderItem {
     name: string;
     unit: string;
     unitsPerBox?: number | null; // NEW — boxed-line steppers (at-door adjust, P10-POS-3)
+    pricePerUnit?: number | string;
+    /** units_v1 (SA-085f): the pack's tier-price columns — the unit picker's ladder ties to
+     *  the SAME product record `resolveUnitPrice` prices with server-side. */
+    priceTier2?: number | string | null;
+    priceTier3?: number | string | null;
+    priceTier4?: number | string | null;
+    priceTier5?: number | string | null;
     averageCost?: number | string | null; // NEW
     category?: string | null; // NEW
+    /** Row anatomy (order-ui T1/T8): SKU line + read-time variant-name composition — the order
+     *  detail read (`GET /orders/:id`) selects these. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   qty: number;
   unitPrice: number;
@@ -34,11 +61,34 @@ export interface OrderItem {
   /** Boxed split persisted server-side; boxes==null means qty is in selling units. */
   boxes?: number | null;
   pieces?: number | null;
+  /**
+   * SALE-TIME box size for a box-split line (null on selling-unit lines). The
+   * server already sends it (mirrors `apps/web/lib/api/orders.ts#OrderItem`);
+   * declaring it is what lets `short-pick.ts#freeUnitSizeFor` prefer this
+   * snapshot over the LIVE `product.unitsPerBox`, so a repacked product never
+   * re-prorates an old line's free boxes at the new box size.
+   */
+  unitsPerBox?: number | null;
+  /**
+   * BUY_N_GET_M snapshot: whole free SELLING units on this line (BOXES for a
+   * boxed line). The stored `subtotal` already nets them off — any local
+   * recompute MUST pass them to `computeLineSubtotal` or it over-charges.
+   */
+  promoFreeUnits?: number | null;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
   /** Cumulative qty already delivered — gates at-door adjustability (server: LINE_ALREADY_DELIVERED). */
   deliveredQty?: number; // NEW
   status: string;
+  /**
+   * B648: units_v1 — the unit this line is sold by ("Case"…); null on a plain
+   * piece/pack line. The server already returns it on `GET /orders/:id`
+   * (findOne's `lineItems` uses a plain `include`, so every OrderItem scalar
+   * column comes through) — only this client type didn't declare it, so the
+   * driver's short-pick screen had no way to know a line was unit-aware
+   * (`lib/short-pick.ts#ShortPickLine.unitLabel`/`isUnitAwareLine`).
+   */
+  unitLabel?: string | null;
 }
 
 export type OrderStatus =
@@ -123,16 +173,18 @@ export interface CreateOrderDto {
  * unitPrice REQUIRED, never boxed). Mirrors the API contract.
  */
 export type CreateOrderItemInput =
-  | {
+  | (UnitAwareLineInput & {
       productId: string;
       qty: number;
       boxes?: number;
       pieces?: number;
       /** One-time discounted price override (per catalog unit; box price for boxed). */
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       /** Optional per-line note — carried onto the invoice line (buyer-visible). */
       notes?: string;
-    }
+    })
   | {
       /** Free-text label for an unlisted (non-catalog) line. */
       name: string;
@@ -167,6 +219,13 @@ export interface CreateOrderAsDriverDto {
   discountAmount?: number;
   /** Optional flat shipping fee added to the order total (never taxed). Only send when > 0. */
   shippingFee?: number;
+  /**
+   * Fulfillment mode for this order. Omit for ROUTE (the server default and the
+   * dispatch-eligible path); "SHIP" marks it carrier/supplier-shipped, which
+   * excludes it from every trip/route sweep. Seeded from the customer's own
+   * default in `NewOrderScreen`.
+   */
+  fulfillPath?: "ROUTE" | "SHIP";
   routeRunId?: string;
   routeRunStopId?: string;
   immediateDelivery?: boolean;
@@ -181,15 +240,14 @@ export interface CreateOrderAsDriverDto {
    * [] = remove all; otherwise the FULL desired set (server diffs).
    */
   appliedCreditNotes?: AppliedCreditNoteInput[];
-}
-
-export interface ActiveOrderSummary {
-  id: string;
-  orderNumber: string | null;
-  status: "DRAFT" | "PENDING";
-  itemCount: number;
-  total: number;
-  createdAt: string;
+  /**
+   * F30/R8: one uuid per CART SESSION, sent as the `Idempotency-Key` HEADER
+   * (never in the body — the server reads it off the header only). A duplicate
+   * POST under the same key — a timed-out request the operator retries, an
+   * offline-queue replay — returns the ORIGINAL order instead of creating a
+   * second one. Mint/reset it with `lib/order-submit-key`.
+   */
+  idempotencyKey?: string;
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
@@ -202,25 +260,22 @@ export function useMyOrders(params?: { status?: string; page?: number; limit?: n
   });
 }
 
-export function useOrder(id: string) {
-  return useQuery<Order>({
-    queryKey: ["orders", id],
-    queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
+/**
+ * The ONE order-detail query definition. `useOrder` and any `useQueries` fan-out
+ * over several orders (the driver return screen reads a stop's orders at once)
+ * must share it, so both land on the same cache entry instead of a second,
+ * silently divergent fetch.
+ */
+export function orderQueryOptions(id: string) {
+  return {
+    queryKey: ["orders", id] as const,
+    queryFn: (): Promise<Order> => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
-  });
+  };
 }
 
-/** What cancelling this order would do to its invoices and applied credits.
- *  Mirrors web's `useCancelImpact` — same endpoint, same shape. */
-export interface CancelImpact {
-  orderId: string;
-  orderNumber: string;
-  alreadyCancelled: boolean;
-  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
-  advanceToRestore: number;
-  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
-  canCancel: boolean;
+export function useOrder(id: string) {
+  return useQuery<Order>(orderQueryOptions(id));
 }
 
 /**
@@ -253,10 +308,39 @@ export function useCancelImpact(id: string, enabled = true) {
  * Both prefixes also cover every per-id key beneath them, so these two calls
  * are the complete set. EVERY order mutation goes through this helper; do not
  * hand-roll the invalidation again, that is how the families drifted apart.
+ *
+ * Exported because a non-order mutation can release orders too: a terminal
+ * route-run write (lib/api/routes.ts#useUpdateRunStatus, F11) unpins the
+ * undelivered orders server-side, and the screen that cancels the run is the
+ * OPERATOR one — which reads the ["admin", "orders"] family.
  */
-function invalidateOrderCaches(qc: QueryClient) {
+export function invalidateOrderCaches(qc: QueryClient) {
   void qc.invalidateQueries({ queryKey: ["orders"] });
   void qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+}
+
+/**
+ * Both an item edit and a new-order submit can rewrite money OUTSIDE the
+ * order itself, and neither used to tell the cache:
+ *  - `resyncOrderInvoicesForEdit` rewrites the linked invoice(s) on every
+ *    item edit (server: invoices.service.ts) — a mounted invoice screen kept
+ *    showing the pre-edit total. The `invoice.updated` socket emit
+ *    (useSocket.ts) is the primary fix; this covers the editing device when
+ *    the socket is down.
+ *  - Applying/creating a credit note against the order (both mutations accept
+ *    `appliedCreditNotes`) changes that credit's remaining balance, but the
+ *    server CLAMPS an over-application instead of rejecting it — so a stale
+ *    ["credit-notes"] cache silently keeps advertising the OLD balance for up
+ *    to its 60s staleTime, and the operator gets a truncated apply with no
+ *    message telling them why.
+ * Call this alongside {@link invalidateOrderCaches} from `useUpdateOrderItems`
+ * and `useCreateOrderAsDriver` ONLY — other order mutations (status changes,
+ * cancel, shipment, urgent toggle) don't touch either family.
+ */
+export function invalidateOrderMoneySideEffects(qc: QueryClient) {
+  void qc.invalidateQueries({ queryKey: ["credit-notes"] });
+  void qc.invalidateQueries({ queryKey: ["invoices"] });
+  void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
 }
 
 export function useCreateOrder() {
@@ -267,13 +351,102 @@ export function useCreateOrder() {
   });
 }
 
+/**
+ * A line on a `POST /orders/sell` request. EITHER a catalog line (productId
+ * set, boxed split optional) OR an unlisted ad-hoc line (`name` set, no
+ * productId) — mirrors {@link CreateOrderItemInput}. Unlisted lines are NOT
+ * filtered out here: the sale gate (`lib/sale-mode.ts`) already accounts for
+ * them in its total-equality assertion, so they must ride along on the wire.
+ */
+export type CreateSaleItemInput =
+  | {
+      productId: string;
+      qty: number;
+      boxes?: number;
+      pieces?: number;
+      unitPrice?: number;
+      /** #2696(c) SA-558e: required when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
+      notes?: string;
+    }
+  | { name: string; qty: number; unitPrice: number; notes?: string };
+
+/**
+ * `POST /orders/sell` DTO — the van-sale "collapse" path (create order +
+ * mark delivered + move stock + issue/send invoice in one call). Mirrors
+ * web's `CreateSaleDto` (`apps/web/lib/api/orders.ts`) but deliberately
+ * narrower:
+ *  - NO `send`: the server ignores `dto.send` entirely (`orders.service.ts`
+ *    ~1681-1685) — it's a dead field, so we don't pretend it does anything.
+ *  - NO `discountAmount`: the sale gate (`saleModeGate`, WP1) only ever
+ *    allows this path when the invoice-level discount is 0 (an invoice
+ *    discount is silently dropped by `createInvoiceFromOrder`), so there is
+ *    never a non-zero value to send.
+ *  - NO `terms` / `dueDate`: this screen's sale mode has no long-form Terms &
+ *    Conditions textarea (unlike web), and `saleModeGate` rule 4 makes the sale
+ *    path ineligible as soon as the operator touches Due date or Terms — so the
+ *    only due date there would ever be to send is the builder's hardcoded
+ *    Net-30 default, which would override the tenant's configured
+ *    `invoice.defaultTerms`. The server's default stays authoritative here.
+ */
+export interface CreateSaleDto {
+  customerId: string;
+  items: CreateSaleItemInput[];
+  /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
+  deliveredNow: boolean;
+  notes?: string;
+  shippingFee?: number;
+  /** Business date (YYYY-MM-DD) for a sale entered late. Omit for a same-day sale. */
+  orderDate?: string;
+}
+
+/**
+ * What `POST /orders/sell` actually resolves to: the created INVOICE, not the
+ * order. `orders.service.ts` `createSale()` returns `invoicesService.send(inv.id)`
+ * for a delivered-now sale and `invoices[0]` otherwise — neither payload carries
+ * an `invoices` array. Web types it the same way (`apps/web/lib/api/orders.ts`).
+ */
+export interface CreatedSaleInvoice {
+  id: string;
+  invoiceNumber: string;
+}
+
+/**
+ * "Bill now": create an order AND its invoice in one step (POST /orders/sell).
+ * Mirrors web's `useCreateSale` — same cache invalidations as {@link useCreateOrder}
+ * plus `["invoices"]`, since the sale also issues (and may send) an invoice.
+ * Resolves to the created invoice ({@link CreatedSaleInvoice}).
+ */
+export function useCreateSale() {
+  const qc = useQueryClient();
+  return useMutation<CreatedSaleInvoice, Error, CreateSaleDto>({
+    mutationFn: (dto) => apiClient.post("/orders/sell", dto).then((r) => r.data),
+    onSuccess: () => {
+      invalidateOrderCaches(qc);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+  });
+}
+
 export function useCreateOrderAsDriver() {
   const qc = useQueryClient();
   return useMutation<Order, Error, CreateOrderAsDriverDto>({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
+    // `idempotencyKey` travels as a HEADER, never in the body (the same idiom
+    // as `useCompleteWithPayment` in lib/api/routes.ts) — api-client also
+    // preserves that header across an offline-queue replay, so a replayed cart
+    // collapses onto the original order rather than duplicating it.
+    mutationFn: ({ idempotencyKey, ...body }) =>
+      apiClient
+        .post(
+          "/orders",
+          body,
+          idempotencyKey ? { headers: { "idempotency-key": idempotencyKey } } : {},
+        )
+        .then((r) => r.data),
     onSuccess: (_, vars) => {
       if (vars.routeRunId) qc.invalidateQueries({ queryKey: ["route-runs", vars.routeRunId] });
       invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
     },
   });
 }
@@ -314,8 +487,15 @@ export function useCancelOrder() {
  * unlisted line (`name`…). Only DTO-whitelisted keys — never spread a draft.
  * `notes` = per-line note carried onto the invoice line (buyer-visible).
  */
-export interface UpdateOrderItemInput {
+export interface UpdateOrderItemInput extends UnitAwareLineInput {
   id?: string;
+  /**
+   * units_v1: present ONLY alongside `unitLabel` on an UPDATE — an id-only edit of a line the
+   * server doesn't already know is unit-aware silently discards the label otherwise
+   * (`prepareUnitEditContext` only preloads the product when the STORED line already carries a
+   * unitLabel or the dto item itself names a productId; a filed, unfixed server gap). Also the
+   * ordinary "for new catalog items" field for every other branch.
+   */
   productId?: string;
   name?: string;
   action?: "CANCEL" | "DELETE" | "UPDATE";
@@ -337,10 +517,14 @@ export function useUpdateOrderItems() {
       orderId: string;
       items: UpdateOrderItemInput[];
       /**
-       * `false` = incremental merge: untouched lines (absent from `items`) are
-       * left as-is, protecting invoiced qty + override history. Always pass
-       * `false` from the edit UI — omitting it lets the server's legacy heuristic
-       * flip to full-replace when every entry is id-less (e.g. only new adds).
+       * `false` (or omitted) = incremental merge: untouched lines (absent from
+       * `items`) are left as-is, protecting invoiced qty + override history.
+       * Only `true` replaces the whole line set.
+       *
+       * F30/R10 (B198): the server's old shape-inference heuristic — flip to
+       * full-replace when every entry is id-less — is GONE, so omitting the flag
+       * is now safe. Still pass `false` explicitly from the edit UI: it states
+       * the intent at the call site rather than relying on the default.
        */
       replaceAll?: boolean;
       /**
@@ -359,7 +543,10 @@ export function useUpdateOrderItems() {
           ...(appliedCreditNotes !== undefined ? { appliedCreditNotes } : {}),
         })
         .then((r) => r.data),
-    onSuccess: () => invalidateOrderCaches(qc),
+    onSuccess: () => {
+      invalidateOrderCaches(qc);
+      invalidateOrderMoneySideEffects(qc);
+    },
   });
 }
 
@@ -404,8 +591,12 @@ export function useChangeOrderStatus() {
 /**
  * Reopen a CANCELLED order back to PENDING (`POST /orders/:id/reopen`,
  * OPERATOR-only). The server 400s if a PAID/PARTIAL/WRITTEN_OFF invoice exists
- * on the order — surface that message. (A DELIVERED order is instead "reopened"
- * by demoting its status to CONFIRMED via useChangeOrderStatus + a reason.)
+ * on the order — surface that message.
+ *
+ * A DELIVERED order canNOT be reopened at all: the server's transition table has
+ * `DELIVERED: []` (see `lib/order-status-flow.ts`), so demoting it to CONFIRMED
+ * always 400s with "Cannot transition from DELIVERED to CONFIRMED". Correcting
+ * an already-delivered order means editing its items, not moving it backwards.
  */
 export function useReopenOrder() {
   const qc = useQueryClient();
@@ -446,13 +637,6 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
   });
 }
 
-export interface CustomerPriceHistory {
-  [productId: string]: {
-    lastPrice: number;
-    listPriceAtTime: number;
-  };
-}
-
 /**
  * Per-product last-given price for a customer. Fetched once when the customer
  * is selected so scanning is instant — no per-item API call needed.
@@ -480,19 +664,9 @@ export function useDeleteOrder() {
 
 // ─── Tracking ─────────────────────────────────────────────────────────────────
 
-export interface OrderTracking {
-  runId: string;
-  routeName: string | null;
-  driverName: string | null;
-  runStatus: string;
-  stopNumber: number;
-  stopStatus: string;
-  stopsAhead: number;
-  estimatedArrivalWindow: { start: string | null; end: string | null };
-}
-
+// `OrderTracking` is the shared wire shape (#2095), re-exported at the top of this file.
 export function useOrderTracking(orderId: string, orderStatus?: string) {
-  return useQuery<{ status: string; tracking: OrderTracking | null }>({
+  return useQuery<OrderTrackingResponse>({
     queryKey: ["orders", orderId, "tracking"],
     queryFn: () => apiClient.get(`/orders/${orderId}/tracking`).then((r) => r.data),
     enabled: !!orderId && orderStatus === "OUT_FOR_DELIVERY",

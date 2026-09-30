@@ -1,5 +1,5 @@
 import React from "react";
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -34,10 +34,27 @@ export class InvoiceService {
 
   // ─── Generate PDF, upload to R2, update Transaction.pdfUrl ────────────────
 
-  async generateInvoicePdf(transactionId: string): Promise<string> {
-    // Fetch full transaction data
-    const txn = await this.prisma.transaction.findUnique({
-      where: { id: transactionId },
+  async generateInvoicePdf(transactionId: string, tenantId: string): Promise<string> {
+    // SECURITY (R7 / REG-B188): scope the lookup to the job's tenantId. The bare
+    // findUnique({id}) this replaced would find (and later mutate) ANY tenant's
+    // transaction row — a background job carries no ambient request context for
+    // forTenant() to key off, so the tenantId travels explicitly in the job payload
+    // (GenerateInvoiceJobData) and is checked here instead. Same guard shape as
+    // getPresignedUrl's F1-002 fix below.
+    //
+    // Fail CLOSED on a payload with no tenantId. Job data is deserialized from Redis, so
+    // `tenantId: string` on GenerateInvoiceJobData is compile-time only — and Prisma drops
+    // `undefined` filter fields, which would silently degrade the two guards below to the
+    // tenant-blind `{ id }` shape B188 exists to close. A producer that forgets the field
+    // must fail loudly here rather than serve any tenant's transaction.
+    if (typeof tenantId !== "string" || tenantId.length === 0) {
+      throw new BadRequestException(
+        `generate-invoice job for transaction ${transactionId} carries no tenantId`,
+      );
+    }
+
+    const txn = await this.prisma.transaction.findFirst({
+      where: { id: transactionId, tenantId },
       include: {
         customer: { select: { id: true, businessName: true, contactName: true } },
         order: true,
@@ -82,9 +99,10 @@ export class InvoiceService {
 
     this.logger.log(`Uploaded PDF to R2: ${key}`);
 
-    // Persist the R2 object key on the transaction
-    await this.prisma.transaction.update({
-      where: { id: transactionId },
+    // Persist the R2 object key on the transaction — updateMany carries the same
+    // tenantId guard as the read above (R7 / REG-B188).
+    await this.prisma.transaction.updateMany({
+      where: { id: transactionId, tenantId },
       data: { pdfUrl: key },
     });
 

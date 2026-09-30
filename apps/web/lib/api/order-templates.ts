@@ -1,13 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-
-export interface OrderTemplateItem {
-  id: string;
-  productId: string;
-  product?: { id: string; name: string; unit: string };
-  qty: number;
-  notes?: string;
-}
+import type { OrderTemplateItem } from "@routeflow/types";
+export type { OrderTemplateItem } from "@routeflow/types";
 
 export interface OrderTemplate {
   id: string;
@@ -67,7 +61,14 @@ export function useUpdateOrderTemplate() {
   return useMutation<
     OrderTemplate,
     Error,
-    { id: string; name?: string; daysOfWeek?: number[]; isActive?: boolean; notes?: string }
+    {
+      id: string;
+      name?: string;
+      daysOfWeek?: number[];
+      isActive?: boolean;
+      notes?: string;
+      items?: { productId: string; qty: number; notes?: string }[];
+    }
   >({
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),

@@ -14,6 +14,7 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useAdminInvoices, type AdminInvoice } from "../../../../lib/api/admin";
+import { fmtCalendarDate } from "../../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -126,7 +127,7 @@ function Row({ inv, onPress }: { inv: AdminInvoice; onPress: () => void }) {
   const s = inv.isOverdue ? { variant: "red" as const, label: "Overdue" } : statusPill(inv.status);
   const dueLabel = useMemo(() => {
     if (!inv.dueDate) return "";
-    return `Due ${new Date(inv.dueDate).toLocaleDateString()}`;
+    return `Due ${fmtCalendarDate(inv.dueDate)}`;
   }, [inv.dueDate]);
   const balance = inv.balanceDue ?? inv.total;
   return (

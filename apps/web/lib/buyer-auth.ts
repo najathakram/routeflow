@@ -23,7 +23,7 @@ export interface BuyerSeller {
     logoKey: string | null;
     primaryColor: string | null;
   };
-  customer: { id: string; businessName: string; email: string | null };
+  customer: { id: string; businessName: string; email: string | null } | null;
 }
 
 interface BuyerAuthResponse {
@@ -32,30 +32,9 @@ interface BuyerAuthResponse {
   buyer: BuyerUser;
 }
 
-// Legacy keys used before NEW-m2-1 / RF-077
+// Legacy pre-NEW-m2-1/RF-077 key — still written by the Google OAuth callback
+// (for unmigrated readers) and read as a fallback by getBuyerAccessToken().
 const LEGACY_BUYER_ACCESS = "buyerAccessToken";
-const LEGACY_BUYER_REFRESH = "buyerRefreshToken";
-const LEGACY_BUYER_SELLER = "buyerActiveSeller";
-
-/**
- * One-time migration: copy legacy buyerAccessToken → rf:buyer:accessToken then
- * delete the legacy keys. Idempotent — safe to call on every page load.
- */
-export function migrateLegacyBuyerToken(): void {
-  if (typeof window === "undefined") return;
-  const legacy = localStorage.getItem(LEGACY_BUYER_ACCESS);
-  if (!legacy) return;
-  if (!localStorage.getItem(BUYER_KEYS.accessToken)) {
-    localStorage.setItem(BUYER_KEYS.accessToken, legacy);
-    const legacyRefresh = localStorage.getItem(LEGACY_BUYER_REFRESH);
-    if (legacyRefresh) localStorage.setItem(BUYER_KEYS.refreshToken, legacyRefresh);
-    const legacySeller = localStorage.getItem(LEGACY_BUYER_SELLER);
-    if (legacySeller) localStorage.setItem(BUYER_KEYS.activeSeller, legacySeller);
-  }
-  localStorage.removeItem(LEGACY_BUYER_ACCESS);
-  localStorage.removeItem(LEGACY_BUYER_REFRESH);
-  localStorage.removeItem(LEGACY_BUYER_SELLER);
-}
 
 function parseJwtPayload(token: string): Record<string, unknown> | null {
   try {
@@ -66,9 +45,22 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-export function getStoredBuyer(): BuyerUser | null {
+/**
+ * Canonical accessor for the buyer access token — the namespaced key first,
+ * falling back to the legacy pre-NEW-m2-1 key so sessions written by older
+ * code paths keep working. ALL buyer token reads must go through this: the
+ * A5 seller-list outage came from call sites still reading the legacy
+ * literal ("buyerAccessToken"), which plain email/password login never
+ * writes — only the Google OAuth callback backfilled it, so password logins
+ * on a fresh device saw no sellers and could never reach a dashboard.
+ */
+export function getBuyerAccessToken(): string | null {
   if (typeof window === "undefined") return null;
-  const token = localStorage.getItem(BUYER_KEYS.accessToken);
+  return localStorage.getItem(BUYER_KEYS.accessToken) ?? localStorage.getItem(LEGACY_BUYER_ACCESS);
+}
+
+export function getStoredBuyer(): BuyerUser | null {
+  const token = getBuyerAccessToken();
   if (!token) return null;
   const payload = parseJwtPayload(token);
   if (!payload) return null;
@@ -79,6 +71,32 @@ export function getStoredBuyer(): BuyerUser | null {
     email: payload.email as string,
     name: payload.name as string,
   };
+}
+
+/**
+ * The signed-in buyer account's id (the access token's `sub`), whether or not the token has
+ * expired yet: an identity for keying this buyer's local data, never proof of a live session.
+ */
+export function getStoredBuyerId(): string | null {
+  const token = getBuyerAccessToken();
+  if (!token) return null;
+  const payload = parseJwtPayload(token);
+  if (!payload || (payload.type as string) !== "BUYER") return null;
+  return typeof payload.sub === "string" && payload.sub ? payload.sub : null;
+}
+
+/**
+ * #2142 N2/W2: the notification bell persists per buyer account AND per seller, under
+ * `rf_buyer_notifications:<buyerId>:<seller tenant id>`, so a second buyer on the same browser
+ * never sees the first one's notices, and one buyer never sees seller A's notices in seller B's
+ * portal (after a switch, or once A has revoked the link). The seller is the active seller's
+ * `tenant.id` (a stable id, unlike a renameable slug). `buyerLogout` removes every key under the
+ * prefix, including the old unkeyed and per-buyer-only ones.
+ */
+export const BUYER_NOTIFICATIONS_PREFIX = "rf_buyer_notifications";
+
+export function buyerNotificationsKey(buyerId: string, sellerTenantId: string): string {
+  return `${BUYER_NOTIFICATIONS_PREFIX}:${buyerId}:${sellerTenantId}`;
 }
 
 export function getStoredActiveSeller(): BuyerSeller | null {
@@ -146,7 +164,12 @@ export async function buyerLogout(): Promise<void> {
   localStorage.removeItem(BUYER_KEYS.refreshToken);
   localStorage.removeItem(BUYER_KEYS.activeSeller);
   Object.keys(localStorage)
-    .filter((k) => k.startsWith("buyerCart_"))
+    .filter(
+      (k) =>
+        k.startsWith("buyerCart_") ||
+        k === BUYER_NOTIFICATIONS_PREFIX ||
+        k.startsWith(`${BUYER_NOTIFICATIONS_PREFIX}:`),
+    )
     .forEach((k) => localStorage.removeItem(k));
   clearBuyerPresenceCookie();
 }
@@ -227,6 +250,24 @@ export async function buyerRequestPasswordReset(email: string): Promise<void> {
 
 export async function buyerResetPassword(token: string, newPassword: string): Promise<void> {
   await axios.post(`${BASE_URL}/buyer/auth/reset-password`, { token, newPassword });
+}
+
+export async function buyerVerifyEmail(token: string): Promise<{ message: string }> {
+  const { data } = await axios.post<{ message: string }>(`${BASE_URL}/buyer/auth/verify-email`, {
+    token,
+  });
+  return data;
+}
+
+export async function buyerResendVerification(
+  accessToken: string,
+): Promise<{ message: string; sent: boolean; alreadyVerified?: boolean }> {
+  const { data } = await axios.post<{ message: string; sent: boolean; alreadyVerified?: boolean }>(
+    `${BASE_URL}/buyer/auth/resend-verification`,
+    {},
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  return data;
 }
 
 export async function requestSellerConnection(

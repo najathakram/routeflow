@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Ban,
@@ -23,7 +23,7 @@ import {
   useConvertEstimateToInvoice,
   useVoidEstimate,
 } from "@/lib/api/estimates";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { DocumentLetterhead } from "@/components/DocumentLetterhead";
 
 // ─── Void confirm modal ───────────────────────────────────────────────────────
@@ -68,12 +68,14 @@ function VoidConfirmModal({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function EstimateDetailPage({ params }: { params: { id: string } }) {
+export default function EstimateDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: estimate, isLoading, isError } = useEstimate(params.id);
+  const { data: estimate, isLoading, isError } = useEstimate(id);
   const sendEstimate = useSendEstimate();
   const acceptEstimate = useAcceptEstimate();
   const declineEstimate = useDeclineEstimate();
@@ -116,14 +118,14 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
     sendEstimate.mutate(estimate.id, {
       onSuccess: () => {
         toast({
-          title: "Estimate sent",
-          description: `${estimate.estimateNumber} has been sent to the customer.`,
+          title: "Estimate marked as sent",
+          description: `${estimate.estimateNumber} is marked Sent. No email was sent.`,
           variant: "success",
         });
       },
       onError: () => {
         toast({
-          title: "Failed to send estimate",
+          title: "Failed to mark estimate as sent",
           description: "Please try again.",
           variant: "error",
         });
@@ -171,18 +173,32 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
 
   const handleConvert = () => {
     convertToInvoice.mutate(estimate.id, {
-      onSuccess: ({ invoiceId }) => {
+      onSuccess: (inv) => {
         toast({
           title: "Invoice created",
           description: `${estimate.estimateNumber} has been converted to an invoice.`,
           variant: "success",
         });
-        router.push(`/invoices/${invoiceId}`);
+        // B15-NAV: the server returns the created Invoice keyed `id` (not
+        // `invoiceId`). Never navigate to /invoices/undefined — without an id,
+        // stay here; the hook's onSuccess already refetches the estimate.
+        const target = inv?.id ?? (inv as unknown as { invoiceId?: string } | undefined)?.invoiceId;
+        if (target) router.push(`/invoices/${target}`);
       },
-      onError: () => {
+      onError: (err: unknown) => {
+        // B15: surface the server's rejection reason (e.g. "Estimate must be
+        // ACCEPTED") instead of a fixed "Please try again." that hid why a
+        // convert attempt failed. `message` may be a string or an array of
+        // validation messages (class-validator's default shape).
+        const serverMessage = (
+          err as { response?: { data?: { message?: string | string[] } } } | undefined
+        )?.response?.data?.message;
+        const description = Array.isArray(serverMessage)
+          ? serverMessage.join(", ")
+          : (serverMessage ?? "Please try again.");
         toast({
           title: "Failed to convert estimate",
-          description: "Please try again.",
+          description,
           variant: "error",
         });
       },
@@ -209,8 +225,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
     });
   };
 
-  const canConvert = status === "DRAFT" || status === "SENT" || status === "ACCEPTED";
-  const isReadOnly = status === "DECLINED" || status === "EXPIRED";
+  // F27: mirrors the API rule — only ACCEPTED estimates can be converted.
+  const canConvert = status === "ACCEPTED";
+  // Wave E / imp-10b, L-072 (sibling-sweep find): dropped a comparison against a
+  // phantom "EXPIRED" EstimateStatus value the schema has never had.
+  const isReadOnly = status === "DECLINED";
 
   return (
     <div className="space-y-5 p-6">
@@ -226,7 +245,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h1>
+          <h2 className="text-2xl font-bold text-navy">{estimate.estimateNumber}</h2>
           <Badge status={status} />
         </div>
 
@@ -240,16 +259,7 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
                 onClick={handleSend}
                 loading={sendEstimate.isPending}
               >
-                Send
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<FileText className="h-4 w-4" />}
-                onClick={handleConvert}
-                loading={convertToInvoice.isPending}
-              >
-                Convert to Invoice
+                Mark as sent
               </Button>
               <Button
                 size="sm"
@@ -281,19 +291,10 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               >
                 Mark Declined
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<FileText className="h-4 w-4" />}
-                onClick={handleConvert}
-                loading={convertToInvoice.isPending}
-              >
-                Convert to Invoice
-              </Button>
             </>
           )}
 
-          {status === "ACCEPTED" && (
+          {canConvert && (
             <Button
               size="sm"
               leftIcon={<FileText className="h-4 w-4" />}
@@ -351,11 +352,11 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Valid Until:</span>{" "}
-                  {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
+                  {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </p>
               </div>
             </div>
@@ -494,13 +495,13 @@ export default function EstimateDetailPage({ params }: { params: { id: string } 
               <div className="flex justify-between">
                 <dt className="text-navy/70">Issue Date</dt>
                 <dd className="text-navy">
-                  {fmtDate((estimate as any).issueDate ?? estimate.createdAt)}
+                  {fmtCalendarDate(estimate.issueDate ?? estimate.createdAt)}
                 </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-navy/70">Valid Until</dt>
                 <dd className="text-navy">
-                  {fmtDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
+                  {fmtCalendarDate((estimate as any).expiresAt ?? (estimate as any).expiryDate)}
                 </dd>
               </div>
             </dl>

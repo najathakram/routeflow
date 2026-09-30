@@ -1,0 +1,150 @@
+{
+  "api": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api/src/returns/returns-refund.spec.ts"
+    ],
+    "perHazard": [
+      {
+        "i": 0,
+        "status": "fixed",
+        "pin": "returns-refund.spec.ts — (1) \"REG-B53 a SINGLE creditable invoice is capped by its OWN remaining room too\" now builds its invoice rows with the new `invoicesAsSelected(args, rows)` projector and asserts `err.message` toContain(\"INV-060\") AND not.toContain(\"inv-only\"); (2) \"REG-B53 a refund larger than the SOURCE invoice's own room refuses BEFORE the claim\" (2+-invoice branch, same message) likewise projected, asserting toContain(\"INV-059B\") / not.toContain(\"inv-b\"); (3) NEW negative pin \"REG-B53 the refusal's invoice name comes from the SELECT: a row without `invoiceNumber` degrades to the raw id\" feeds the pre-fix row shape un-projected and asserts the message contains the id \"inv-unnamed\". Mutation probe: deleting `invoiceNumber: true` from the service select turned exactly the two projected pins RED (2 failed / 25 passed) while the negative pin stayed green; line restored and re-verified.",
+        "what": "Added `invoiceNumber: true` to the ONLY invoice select whose rows reach billedBasisFor's per-invoice refusal — `processRefund`'s `return.findUnique` → `order.select.invoices.select` (apps/api/src/returns/returns.service.ts, the block introduced by the comment \"Fetch every invoice with enough to price + rank it.\", now ~line 575-585). Grep of the service found four `invoices:` selects: line 84 (create()'s order.findUnique, `{ id: true }` only), line ~250 (findAll), line ~575 (processRefund), line ~765 (findOne). Only processRefund's rows reach `billedBasisFor` (the single call site, `method !== EXTERNAL_REFUND`); findAll/findOne price through the PURE `priceReturn` helper, which composes no message, and create()'s select never reaches either — so those three were left untouched by design. Also documented at the throw site that the `?? invoiceId` fallback now covers only the impossible lost-field case (a UUID there is a bug, not a label); the template itself is unchanged."
+      },
+      {
+        "i": 1,
+        "status": "skipped",
+        "pin": "n/a",
+        "what": "Hazard 1 (web renders the NOTHING_CREDITABLE token verbatim) is owned by the web executor — apps/web/app/(dashboard)/returns/[id]/page.tsx is outside my file allow-list."
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no output (run twice: after the edits, and again after restoring the mutation probe)."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "10 suites / 136 tests passed (incl. the new negative pin), 18-22 s. The two logged \"Refund mint failed\" ERROR lines are pre-existing intentional-failure specs, not failures."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx prettier --check src/returns/returns.service.ts src/returns/returns-refund.spec.ts",
+        "pass": true,
+        "summary": "\"All matched files use Prettier code style!\" (self-check, not a brief gate)."
+      }
+    ],
+    "notes": "Exact select changed (one, in apps/api/src/returns/returns.service.ts, processRefund's `this.prisma.forTenant().return.findUnique` → `include.order.select.invoices.select`): `{ id, status, total, createdAt, items }` → `{ id, invoiceNumber, status, total, createdAt, items }`. No other select was modified; `returns.service.ts`'s three other `invoices:` selects (create ~L84, findAll ~L250, findOne ~L765) do not feed billedBasisFor (they feed the pure `priceReturn`, which throws no per-invoice message), so per the round-4 ruling they were deliberately left alone — worth one line of the reviewer's trace.\n\nHonest-fixture mechanism: the spec now has a small `invoicesAsSelected(args, rows)` helper (placed above the first describe) that PROJECTS a full invoice record through the `select` the service actually passed to `return.findUnique`, driven by `mockImplementation` instead of `mockResolvedValue`. A fixture therefore cannot supply a field the production query does not ask for; it throws loudly if the select cannot be found on the args (harness-integrity guard). Nested `items` (an object select) passes through whole. The spec had no existing fixture factory to extend, so the helper is the new one.\n\nI also converted the sibling 2+-invoice pin (ret-53f) to the same projector: it composes the identical refusal string and previously asserted `/inv-b/`, i.e. it pinned the raw-UUID shape hazard 0 condemns. That is one extra file-local edit beyond the literal ruling; flagging it explicitly in case the reviewer wants it scoped back.\n\nMutation evidence (probe applied and reverted, no git commands used): with `invoiceNumber: true` deleted from the select, `npx jest src/returns/returns-refund.spec.ts` reported 2 failed / 25 passed — exactly the two projected pins — proving they assert the QUERY, not just the template; the new negative pin (un-projected old row shape → message names the id) stayed green in both states, so it pins the fallback independently. The line was restored, and both brief gates were re-run green afterwards.\n\nNo git write commands, no installs, no docker/playwright, no full `npx jest`; `apps/api/src/routes/routes.service.ts` untouched. One iteration, no breakage to fix."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web/app/(dashboard)/returns/[id]/page.tsx"
+    ],
+    "perHazard": [
+      {
+        "i": 1,
+        "status": "fixed",
+        "what": "Mapped the machine token to prose in the copy layer only. Added `REFUND_ESTIMATE_REASON_LABELS: Record<string, string>` (NOTHING_CREDITABLE -> \"Nothing billed on this order can be refunded.\") plus `refundEstimateReasonText(reason)` returning the map hit or the generic fallback \"No refundable amount\", both placed beside `fmtMoney`. Replaced the boolean `showEstimateReason` with `estimateReasonLabel` (same gate: reason present AND estimate falsy) and rendered that label in the muted <p> instead of the raw field. Server contract untouched — no api/DTO/type change, `refundEstimateReason` stays a token on the wire (L-072).",
+        "pin": "apps/web/app/(dashboard)/returns/[id]/page.tsx:85-94 (labels map + refundEstimateReasonText), :122-123 (estimateReasonLabel replaces showEstimateReason), :140 (<p className=\"text-xs text-navy/70\">{estimateReasonLabel}</p>)"
+      }
+    ],
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no diagnostics, first iteration — no follow-up fix iterations needed."
+      }
+    ],
+    "notes": "Scope respected: only apps/web/app/(dashboard)/returns/[id]/page.tsx edited; no git write commands, no install/docker/playwright/jest, routes.service.ts untouched. `showEstimateReason` had exactly two references (the definition and the JSX) — both replaced, so no dangling symbol; grep confirmed `refundEstimateReason` still flows in unchanged from `ret.refundEstimateReason` at the ResolveReturnModal call site (:792 region) and through the prop type `refundEstimateReason?: string | null`. The map is keyed `Record<string, string>` rather than a union so an unrecognised future token hits the generic fallback instead of failing to typecheck; fallback wording is the ruling's \"No refundable amount\" (note: round-3's hazard detail floated \"fall back to the raw value\" — fix-round-4.md overrides that, and the ruling is what I implemented, so a raw SCREAMING_SNAKE token can no longer reach the DOM). Prettier style held: double quotes, semicolons, trailing comma in the map, longest new line 99 cols (the ternary breaks after `=` exactly as prettier formats it); the >100-col lines still in the file are all pre-existing JSX className strings and the box-drawing section comment. No client identifiers introduced. Not visually verified in a browser — the brief named the tsc gate only and forbade playwright/dev-server work."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "API TypeScript compilation successful (no errors)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest src/returns src/credit-notes --runInBand",
+        "pass": true,
+        "summary": "API Jest tests: 136 passed, 10 test suites, 0 failures",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx tsc --noEmit",
+        "pass": true,
+        "summary": "Mobile TypeScript compilation successful (no errors)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest returns-logic",
+        "pass": true,
+        "summary": "Mobile Jest tests: 30 passed, 1 test suite, 0 failures",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Web TypeScript compilation successful (no errors)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "review": {
+    "perHazard": [
+      {
+        "i": 0,
+        "verdict": "fixed",
+        "evidence": "Traced every path into billedBasisFor's message. billedBasisFor is private with exactly ONE call site — returns.service.ts:605, `method !== \"EXTERNAL_REFUND\"` in processRefund — and the only invoice rows it ever sees are `ret.order.invoices` from processRefund's `return.findUnique` at :559-591. That select now reads `{ id, invoiceNumber, status, total, createdAt, items{productId,qty,subtotal} }` (:578-586), so `latest?.invoiceNumber` at :471 is populated in production; `Invoice.invoiceNumber` is a non-nullable String (prisma/schema/finance.prisma:157), so the `?? invoiceId` fallback is now genuinely unreachable. The service's three other `invoices:` selects were correctly left alone: :84 (create's order.findUnique, `{id:true}`) never reaches pricing at all; :246 (findAll) and :762 (findOne) feed only the PURE `priceReturn` (:484), which returns `refusal: \"NOTHING_CREDITABLE\"` and composes no per-invoice string — grep confirms \"remaining room\" exists at exactly one place, returns.service.ts:470. Pin honesty: `invoicesAsSelected(args, rows)` (returns-refund.spec.ts:43-57) reads `args.include.order.select.invoices.select`, which is the real shape of the production call (`findUnique({ where, include: { items: true, order: { select: {...} } } })`, :559-563), and copies only fields the select asks for — so the fixture provably cannot invent `invoiceNumber`; it throws loudly if the select is absent, so a harness drift fails rather than silently passing. Both projected pins (:580 ret-53f, 2+-invoice branch, asserts toContain(\"INV-059B\") / not.toContain(\"inv-b\"); :633 ret-53g, single-invoice branch, toContain(\"INV-060\") / not.toContain(\"inv-only\")) therefore assert the QUERY. Deleting `invoiceNumber: true` from :581 deterministically drops the field from the projection → the message falls back to the id → both `toContain` assertions fail, which matches the executor's reported 2-failed/25-passed probe (I did not re-run it; the brief forbids edits, and the projector makes the outcome mechanical). The new negative pin at :687 feeds the pre-fix row shape un-projected via `mockResolvedValue` and asserts the message contains \"inv-unnamed\", pinning the fallback independently of the select — it stays green in both states, exactly as claimed. Regate: api tsc exit 0, `npx jest src/returns src/credit-notes` 136/136."
+      },
+      {
+        "i": 1,
+        "verdict": "fixed",
+        "evidence": "apps/web/app/(dashboard)/returns/[id]/page.tsx now maps in the copy layer only: `REFUND_ESTIMATE_REASON_LABELS` (:88-90, NOTHING_CREDITABLE -> \"Nothing billed on this order can be refunded.\") + `refundEstimateReasonText` (:92-94) with a generic \"No refundable amount\" fallback keyed `Record<string,string>`, so an unknown future token degrades to prose instead of a type error or a raw token. `showEstimateReason` is gone (repo-wide grep: zero hits) and the JSX at :145 renders `{estimateReasonLabel}` — computed at :123-124 from the same gate as before (`refundEstimateReason && !refundEstimate`) — so no SCREAMING_SNAKE string can reach the DOM on this page. Server contract untouched: the only repo-wide producers of the token are returns.service.ts:282 and :818 (`refusal ?? null`), unchanged this round; `packages/types/api/returns.ts` and `apps/web/lib/api/returns.ts:74` still type it as `string | null`, so the field stays machine-readable (L-072 respected). The token is rendered nowhere else — grep finds no `refundEstimateReason` in apps/web/app/(dashboard)/returns/page.tsx or in any mobile screen. Regate: web tsc exit 0; `npx prettier --check` on the file (read-only) reports clean."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "line": 463,
+        "severity": "minor",
+        "summary": "The refusal the round made operator-facing prints an unrounded float for the remaining room (`latestRoom` is a raw Decimal subtraction).",
+        "detail": "`const latestRoom = Number(latest?.total ?? 0) - Number(latestAgg._sum.amount ?? 0)` (:463) is the only money figure in this string that never passes through `roundMoney` — `amount` does (priceReturn rounds at :541). The message at :470 interpolates it verbatim, and round 3 promoted that string to the resolve toast's description, so with e.g. an invoice total 100.10 already carrying 70.05 of credit the operator reads \"exceeds the remaining room 30.049999999999997 on invoice INV-060\". Round 4 is what makes this visible-quality matter (the whole point of adding `invoiceNumber` was that the operator acts on this sentence), and the two new pins assert only `toContain(\"INV-06x\")`, so nothing guards the number's shape. Not a correctness defect — the comparison itself uses the 0.001 epsilon and is unaffected — and it does not block landing; the one-line follow-up is `roundMoney(...)` around the subtraction (or formatting both figures at the throw site), ideally with a pin on the rendered digits."
+      }
+    ],
+    "recommendation": "land",
+    "reasoning": "Both round-4 hazards are genuinely fixed, and I tried to refute each rather than confirm it. Hazard 0's completeness claim holds under a full trace: `billedBasisFor` is private with a single call site, its invoice rows come from exactly one query, that query now selects `invoiceNumber`, and the three sibling `invoices:` selects provably cannot reach the message (they feed the pure `priceReturn`, which composes no string — \\\"remaining room\\\" occurs once in the whole service). The pin is no longer self-fulfilling: the `invoicesAsSelected` projector derives fixture rows from the real `select` object on the mock's own args, so a fixture cannot supply a field production never asks for, and the new un-projected negative pin holds the fallback branch from the other side — the two assertions are now about the query and the template separately, which is precisely what the ruling asked for. The executor's extra scope (converting the sibling ret-53f pin to the projector) is a strict improvement, not scope creep: that pin previously asserted `/inv-b/`, i.e. it pinned the raw-UUID shape hazard 0 condemns. Hazard 1 is a pure copy-layer change with the wire contract untouched, `showEstimateReason` fully removed, and no other surface rendering the token. I hunted the two failure modes the brief named and found neither: the added `invoiceNumber` never crosses the wire (processRefund returns `updated`, a separate include-less findUnique at :625, and findAll/findOne strip their invoice graphs), so no DRIVER/CUSTOMER-visible shape changed; and the spec fixture cannot diverge from a second query because the projector reads the args of whichever call it is given and throws loudly if the select is missing — the worst case is a red test, never a false green. The one new finding is cosmetic (an unrounded float in the same refusal string) and is not worth a round of its own: it is a one-line change a follow-up can carry, and forcing another executor pass over `returns.service.ts` costs more risk than it removes. All five regate commands are green (api tsc, api jest 136/136, mobile tsc, mobile jest 30/30, web tsc), prettier is clean on both touched files, `apps/api/src/routes/routes.service.ts` is untouched, and no client identifiers were introduced. Land."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "API: 255 test suites passed, 4142 tests passed in 116.776s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/mobile && npx jest --silent",
+        "pass": true,
+        "summary": "Mobile: 111 test suites passed, 1418 tests passed in 55.09s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Web: 30 test suites passed, 161 tests passed in 23.141s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25 && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register self-consistent: 40/40 entries, 40.0/40.0 KB, archived 38, nextId 83",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  }
+}

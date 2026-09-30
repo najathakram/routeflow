@@ -5,11 +5,20 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
+import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
+// WP5b (R3b.3, R3b.5): flag.credit_notes ships dark (DARK_PLAN_FLAGS in
+// plan-flag-policy.ts) — this class-level guard is a courtesy allow until the
+// PLAN_FLAG_ENFORCEMENT switch flips on. Per-handler RolesGuard/@Roles stays as-is —
+// not moved to the class level.
 @Controller("credit-notes")
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PlanFlagGuard)
+@RequirePlanFlag("flag.credit_notes")
 export class CreditNotesController {
   constructor(private readonly creditNotesService: CreditNotesService) {}
 
@@ -48,32 +57,61 @@ export class CreditNotesController {
     return this.creditNotesService.findOneForUser(id, user);
   }
 
-  @Post(":id/issue")
-  @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  issue(@Param("id") id: string) {
-    return this.creditNotesService.issue(id);
-  }
-
   @Post(":id/apply")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  apply(@Param("id") id: string, @Body() body: { invoiceId: string; amount?: number }) {
+  apply(@Param("id") id: string, @Body() body: ApplyCreditNoteDto) {
     return this.creditNotesService.applyToInvoice(id, body.invoiceId, body.amount);
   }
 
   @Post(":id/void")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
+  // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
+  // lets it satisfy OPERATOR).
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
   voidNote(@Param("id") id: string) {
     return this.creditNotesService.voidCreditNote(id);
   }
 
+  // SA-436 PR-2 (#2402): the invoices a void-with-reversal reopens, and any refusal. Read-only.
+  @Get(":id/void-preview")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  voidPreview(@Param("id") id: string) {
+    return this.creditNotesService.voidPreview(id);
+  }
+
+  // SA-436 PR-2 (#2402): un-apply everywhere, remember each pair, then void.
+  @Post(":id/void-with-reversal")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  voidWithReversal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null);
+  }
+
   @Post(":id/unapply")
   @UseGuards(RolesGuard)
-  @Roles(UserRole.OPERATOR)
-  unapply(@Param("id") id: string, @Body() body: { invoiceId: string }) {
-    return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId);
+  // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
+  // lets it satisfy OPERATOR).
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  unapply(
+    @Param("id") id: string,
+    @Body() body: UnapplyCreditNoteDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.unapplyFromInvoice(id, body.invoiceId, user?.sub ?? null);
+  }
+
+  // SA-436 (#2401): OPERATOR and TENANT_ADMIN only; a DRIVER or CUSTOMER gets 403.
+  @Patch(":id/auto-apply-exclusion")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  setAutoApplyExclusion(
+    @Param("id") id: string,
+    @Body() dto: SetAutoApplyExclusionDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.setAutoApplyExcluded(id, dto.excluded, user?.sub ?? null);
   }
 
   @Patch(":id")

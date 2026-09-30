@@ -1,5 +1,6 @@
 "use client";
 
+import { driverNavItemVisible } from "@/lib/portal-routing";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -27,13 +28,13 @@ import {
   Receipt,
   RotateCcw,
   FileCheck,
+  FileSpreadsheet,
   Wallet,
   Building2,
   DollarSign,
   CreditCard,
   BarChart3,
   PieChart,
-  ShoppingBag,
   ClipboardList,
   Megaphone,
   Search,
@@ -41,33 +42,51 @@ import {
   X,
   Check,
   Languages,
-  Cigarette,
   ShieldCheck,
   ShieldAlert,
+  Handshake,
+  BadgePercent,
   type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
 import { TenantLogo } from "@/components/TenantLogo";
+import { BRAND_MARK_SRC } from "@/components/brand";
+import { PortalSwitchLink } from "@/components/PortalSwitchLink";
+import { setLastPortalCookie } from "@/lib/presence-cookies";
 import { CommandPalette, useCommandPalette } from "@/components/CommandPalette";
+import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
+import { useSubscription } from "@/lib/api/billing";
 import { useAuth } from "@/lib/auth-context";
-import { clearTenantCookie } from "@/lib/tenant-cookie";
+import {
+  getImpersonation,
+  exitImpersonation,
+  subscribeImpersonation,
+  type ImpersonationState,
+} from "@/lib/impersonation";
 import { PageTitleProvider, usePageTitle } from "@/lib/page-title-context";
 import { useRealtimeUpdates } from "@/lib/hooks/useRealtimeUpdates";
 import { useNotifications, type AppNotification } from "@/lib/hooks/useNotifications";
 import { useExpiringAuthorizations, type ExpiringAuthorization } from "@/lib/api/authorizations";
+import { usePendingPortalApprovals } from "@/lib/api/portal-approvals";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 import { DraftDock } from "@/components/DraftDock";
-import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
+import { useHasAddon, useTenantAddons } from "@/lib/api/tobacco";
+import { useRoutesAccess, useDeliveryAccess, SALES_AGENTS_ADDON } from "@/lib/api/addons";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
+import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
+import { RouteGuard } from "./_components/gates/RouteGuard";
 
 // ─── Nav types & structure ────────────────────────────────────────────────────
 
 type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
 type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
-type NavEntry = NavLeaf | NavGroup;
+/** Placeholder row held at a gated entry's position while its addon/entitlement
+ *  query is still resolving, so the rail never grows once the answer lands. */
+type NavSkeleton = { kind: "skeleton"; key: string };
+type NavEntry = NavLeaf | NavGroup | NavSkeleton;
 
 /** Full operator nav — all sections visible */
 const OPERATOR_NAV: NavEntry[] = [
@@ -88,6 +107,7 @@ const OPERATOR_NAV: NavEntry[] = [
     children: [
       { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
       { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
+      { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
       { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
     ],
   },
@@ -115,7 +135,18 @@ const OPERATOR_NAV: NavEntry[] = [
       { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
       { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
       { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
-      { kind: "leaf", label: "Expenses", href: "/finance/expenses", icon: ShoppingBag },
+      {
+        kind: "leaf",
+        label: "Payment Requests",
+        href: "/finance/payment-requests",
+        icon: DollarSign,
+      },
+      {
+        kind: "leaf",
+        label: "Supplier Statements",
+        href: "/finance/statements",
+        icon: FileSpreadsheet,
+      },
       { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
     ],
   },
@@ -141,21 +172,58 @@ const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-/** Driver nav — routes and settings only */
+/**
+ * Driver nav — routes and settings only. PHASE 1a (web driver mode): "Today's
+ * route" is the landing item, pointing at the DRIVER-only my-runs view — see
+ * getNavForRole's filter below, which drops it (and "My Routes") together
+ * when neither routes addon is enabled.
+ */
 const DRIVER_NAV: NavEntry[] = [
+  { kind: "leaf", label: "Today's route", href: "/routes/my-runs", icon: Truck },
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavEntry[] {
+function getNavForRole(
+  role: string | undefined,
+  canActAsDriver: boolean | undefined,
+  access: { routesAccess: boolean; deliveryAccess: boolean },
+): NavEntry[] {
+  const { routesAccess, deliveryAccess } = access;
   if (role === "CUSTOMER") return CUSTOMER_NAV;
-  if (role === "DRIVER") return DRIVER_NAV;
-  // Operators who can also act as drivers get "My Routes" inside the Dispatch
-  // group (alongside Overview / Routes / Drivers) instead of as a stand-alone
-  // top-level item — keeps the sidebar tidy and groups all dispatch tools.
-  if (canActAsDriver) {
-    return OPERATOR_NAV.map((entry): NavEntry => {
+  if (role === "DRIVER") {
+    // Drivers run both recurring routes and ad-hoc delivery trips, so "My
+    // Routes"/"Today's route" need either surface unlocked — not just
+    // recurring routes. GET /route-runs/my-runs is gated the same way
+    // server-side (RouteRunsController's own @RequireAddon).
+    return DRIVER_NAV.filter((e) => e.kind !== "leaf" || driverNavItemVisible(e.href, access));
+  }
+
+  // Tenants without either addon never see the Dispatch group — it's gated
+  // on having at least one of the two features.
+  const showDispatchGroup = routesAccess || deliveryAccess;
+  let baseNav = OPERATOR_NAV.filter(
+    (entry) => !(entry.kind === "group" && entry.label === "Dispatch" && !showDispatchGroup),
+  ).map((entry): NavEntry => {
+    if (entry.kind !== "group" || entry.label !== "Dispatch") return entry;
+    // Inside a visible Dispatch group, the routes/delivery leaves are each
+    // gated on their own feature; Overview and Drivers are shared by both
+    // and always render once the group itself is showing.
+    return {
+      ...entry,
+      children: entry.children.filter((c) => {
+        if (c.href === "/routes") return routesAccess;
+        if (c.href === "/deliveries") return deliveryAccess;
+        return true;
+      }),
+    };
+  });
+
+  // Operators who can also act as drivers get "My Routes" inside the
+  // Dispatch group instead of as a stand-alone top-level item.
+  if (canActAsDriver && showDispatchGroup) {
+    baseNav = baseNav.map((entry): NavEntry => {
       if (entry.kind === "group" && entry.label === "Dispatch") {
         const alreadyHasMyRoutes = entry.children.some((c) => c.href === "/routes/my-runs");
         if (alreadyHasMyRoutes) return entry;
@@ -170,40 +238,50 @@ function getNavForRole(role: string | undefined, canActAsDriver?: boolean): NavE
       return entry;
     });
   }
-  return OPERATOR_NAV; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
+
+  return baseNav; // OPERATOR, SUPER_ADMIN, TENANT_ADMIN, unknown
 }
 
-// ─── Role-based route guard ───────────────────────────────────────────────────
-
-/** Paths that CUSTOMER users may access (prefix-matched) */
-const CUSTOMER_ALLOWED: string[] = ["/dashboard", "/orders", "/returns", "/invoices", "/settings"];
-/** Paths that DRIVER users may access (prefix-matched) */
-const DRIVER_ALLOWED: string[] = ["/dashboard", "/routes", "/settings"];
-
-function isPathAllowed(pathname: string, allowed: string[]): boolean {
-  return allowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
-}
-
-function RouteGuard({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const pathname = usePathname();
-  const router = useRouter();
-
-  React.useEffect(() => {
-    const role = user?.role;
-    if (!role) return;
-    let allowed: string[] | null = null;
-    if (role === "CUSTOMER") allowed = CUSTOMER_ALLOWED;
-    if (role === "DRIVER") allowed = DRIVER_ALLOWED;
-    if (allowed && !isPathAllowed(pathname, allowed)) {
-      router.replace("/dashboard");
+/**
+ * Lite-L2 (WP8): drop every nav leaf whose href is a plan-gated route
+ * (`PLAN_GATED_NAV`) the current plan doesn't grant — `planFlagVisible` gives the
+ * three-valued rule (hidden while loading, shown on a fetch failure). A leaf not in
+ * PLAN_GATED_NAV is always kept. A group left with zero children after filtering is
+ * dropped entirely (same precedent as the Dispatch-group filter above).
+ */
+function filterPlanGatedNav(
+  entries: NavEntry[],
+  planState: { flags: readonly string[] | undefined; resolved: boolean; failed: boolean },
+): NavEntry[] {
+  const isVisible = (href: string): boolean => {
+    const key = matchPlanGatedRoute(href);
+    if (!key) return true;
+    return planFlagVisible({
+      enabled: planState.flags === undefined || planState.flags.includes(key),
+      resolved: planState.resolved,
+      failed: planState.failed,
+    });
+  };
+  return entries.reduce<NavEntry[]>((acc, entry) => {
+    if (entry.kind === "leaf") {
+      if (isVisible(entry.href)) acc.push(entry);
+      return acc;
     }
-  }, [user?.role, pathname, router]);
-
-  return <>{children}</>;
+    if (entry.kind === "group") {
+      const children = entry.children.filter((c) => isVisible(c.href));
+      if (children.length > 0) acc.push({ ...entry, children });
+      return acc;
+    }
+    acc.push(entry); // skeleton
+    return acc;
+  }, []);
 }
 
 // ─── Auth guard ───────────────────────────────────────────────────────────────
+// Role-based route/plan gating lives in ./_components/gates/RouteGuard.tsx (and
+// PlanGateBoundary.tsx) — moved out of this file so both are unit-testable on
+// their own (a named export from an App Router layout.tsx fails `next build`'s
+// layout-file export check; B449 fix-round finding 1).
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading, user } = useAuth();
@@ -217,7 +295,11 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     }
     if (user?.forcePasswordChange) {
       router.push("/change-password");
+      return;
     }
+    // "/" opens the portal used last when both a buyer and an operator session
+    // are live (lib/portal-routing.ts) — record that this one rendered.
+    setLastPortalCookie("op");
   }, [isAuthenticated, isLoading, user, router]);
 
   if (isLoading) {
@@ -228,7 +310,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated || user?.forcePasswordChange) return null;
-  return <RouteGuard>{children}</RouteGuard>;
+  // B471: DashboardShell wraps RouteGuard (not the other way around) so a locked route's
+  // panel renders INSIDE the shell's <main> — the sidebar and header stay mounted and the
+  // user can navigate away, instead of the lock replacing the whole shell.
+  return (
+    <DashboardShell>
+      <RouteGuard>{children}</RouteGuard>
+    </DashboardShell>
+  );
 }
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
@@ -269,6 +358,23 @@ function NavLink({
 
 // ─── Nav group section ────────────────────────────────────────────────────────
 
+/**
+ * When a group has sibling children whose hrefs prefix one another (e.g.
+ * "/deliveries" and "/deliveries/new"), a plain `pathname.startsWith(href)`
+ * check lights up every ancestor, not just the actual current page. Return
+ * the single longest-matching child href (or null) so exactly one leaf highlights.
+ */
+function longestMatchingChildHref(children: NavLeaf[], pathname: string): string | null {
+  let best: string | null = null;
+  for (const child of children) {
+    const matches = pathname === child.href || pathname.startsWith(child.href + "/");
+    if (matches && (best === null || child.href.length > best.length)) {
+      best = child.href;
+    }
+  }
+  return best;
+}
+
 function NavGroupSection({
   group,
   collapsed,
@@ -286,7 +392,8 @@ function NavGroupSection({
   onToggle: (label: string) => void;
   onNavigate?: () => void;
 }) {
-  const isAnyChildActive = group.children.some((c) => pathname.startsWith(c.href));
+  const activeChildHref = longestMatchingChildHref(group.children, pathname);
+  const isAnyChildActive = activeChildHref !== null;
   // The group holding the active route is always shown expanded so the current
   // page is never hidden inside a collapsed group.
   const expanded = open || isAnyChildActive;
@@ -302,7 +409,7 @@ function NavGroupSection({
             <NavLink
               item={child}
               collapsed={true}
-              active={pathname.startsWith(child.href)}
+              active={child.href === activeChildHref}
               onNavigate={onNavigate}
             />
           </li>
@@ -339,7 +446,7 @@ function NavGroupSection({
               <NavLink
                 item={child}
                 collapsed={false}
-                active={pathname.startsWith(child.href)}
+                active={child.href === activeChildHref}
                 onNavigate={onNavigate}
               />
             </li>
@@ -368,7 +475,8 @@ function SidebarNav({
   // active route stays open regardless.
   const activeGroupLabel =
     navStructure.find(
-      (e) => e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
+      (e): e is NavGroup =>
+        e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
     )?.label ?? null;
   const [openGroup, setOpenGroup] = React.useState<string | null>(activeGroupLabel);
 
@@ -381,7 +489,22 @@ function SidebarNav({
   return (
     <ul className="flex flex-col gap-0.5">
       {navStructure.map((entry) =>
-        entry.kind === "leaf" ? (
+        entry.kind === "skeleton" ? (
+          // Held at a gated entry's position while its addon/entitlement query
+          // resolves — same row height/padding as a group header, so nothing
+          // shifts once the real group or leaf replaces it.
+          <li key={entry.key} aria-hidden="true">
+            <div
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-3 py-2",
+                collapsed && "justify-center px-0",
+              )}
+            >
+              <div className="skeleton h-4 w-4 shrink-0 rounded" />
+              {!collapsed && <div className="skeleton h-3 w-24 rounded-full" />}
+            </div>
+          </li>
+        ) : entry.kind === "leaf" ? (
           <li key={entry.href}>
             <NavLink
               item={entry}
@@ -439,6 +562,12 @@ function NotificationIcon({ type }: { type: AppNotification["type"] }) {
         <Truck className="h-4 w-4 text-brand-500" />
       </span>
     );
+  if (type === "buyer" || type === "crm")
+    return (
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-50">
+        <Users className="h-4 w-4 text-brand-500" />
+      </span>
+    );
   // stock
   return (
     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-bg">
@@ -469,9 +598,35 @@ function Header({
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
-  const { data: expiring = [] } = useExpiringAuthorizations();
-  const bellCount = unreadCount + expiring.length;
+  // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
+  // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
+  // GET /customers/pending-portal-approvals (also OPERATOR-only) — a
+  // CUSTOMER/DRIVER on their own /dashboard must fire neither.
+  const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  // #2254: GET /authorizations/expiring-soon is @Roles(OPERATOR) — staff only, like the above.
+  const { data: expiring = [] } = useExpiringAuthorizations({ enabled: isStaffRole });
+  // Buyer-connect requests whose sign-in email didn't match the customer
+  // record — pinned in the bell until the seller approves or declines
+  // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).
+  const { data: pendingApprovals = [] } = usePendingPortalApprovals({ enabled: isStaffRole });
+  const bellCount = unreadCount + expiring.length + pendingApprovals.length;
   const { driveMode, setDriveMode } = useDriveMode();
+  // Drive mode is a recurring-routes affordance ("My Routes"), so it's gated
+  // on routesAccess (not delivery access).
+  const { enabled: routesAccess } = useRoutesAccess();
+
+  // B138: mirror ImpersonationBanner's read so the avatar menu never offers
+  // "Sign out" while impersonation state exists (expired included — an expired
+  // impersonation plus a /auth/logout POST races api-client's auto-exit).
+  const [imp, setImp] = React.useState<ImpersonationState | null>(null);
+  React.useEffect(() => {
+    const read = () => setImp(getImpersonation());
+    read();
+    return subscribeImpersonation(read);
+  }, []);
+  React.useEffect(() => {
+    setImp(getImpersonation());
+  }, [pathname]);
 
   // Show a back button only on sub-pages (e.g. /routes/123, /customers/456)
   const isSubPage = pathname.split("/").filter(Boolean).length > 1;
@@ -503,7 +658,7 @@ function Header({
         {title && <h1 className="text-base font-semibold text-navy truncate">{title}</h1>}
         {/* Drive-mode indicator + one-tap Exit (pos-cost-roles-spec §4) — lets the
             operator leave the field layout without hunting through the avatar menu. */}
-        {driveMode && (
+        {routesAccess && driveMode && (
           <button
             onClick={() => setDriveMode(false)}
             className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-600 transition-colors hover:bg-brand-100"
@@ -525,7 +680,7 @@ function Header({
         >
           <Search className="h-[15px] w-[15px]" />
           <span>{t("topbar.searchPlaceholder")}</span>
-          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong border-b-2 bg-paper px-1.5 font-mono text-[11px] text-ink-500">
+          <kbd className="ml-auto inline-flex h-5 items-center rounded-[5px] border border-line-strong bg-paper px-1.5 font-mono text-[11px] text-ink-500">
             ⌘K
           </kbd>
         </button>
@@ -579,6 +734,41 @@ function Header({
 
               {/* List */}
               <div className="max-h-[60vh] overflow-y-auto">
+                {/* Buyer-connect approval requests — pinned above everything else,
+                    server-derived so it stays until the seller acts (not cleared
+                    by "mark all read"/"clear", not lost on localStorage clear).
+                    Clicking a row goes to the customer page where Approve/Decline
+                    live (lib/api/portal-approvals.ts). */}
+                {pendingApprovals.length > 0 && (
+                  <div className="border-b border-surface-border">
+                    <p className="px-4 pt-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-navy/40">
+                      Action needed
+                    </p>
+                    <ul className="divide-y divide-surface-border">
+                      {pendingApprovals.map((a) => (
+                        <DropdownMenu.Item
+                          key={a.customerId}
+                          asChild
+                          onSelect={() => router.push(`/customers/${a.customerId}`)}
+                        >
+                          <li className="flex cursor-pointer items-start gap-3 bg-brand-50/40 px-4 py-3 outline-none transition-colors hover:bg-brand-50">
+                            <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-brand-600">
+                              <Users className="h-4 w-4" />
+                            </span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-navy">
+                                {a.buyerName} wants to connect
+                              </p>
+                              <p className="mt-0.5 truncate text-xs text-navy/70 leading-snug">
+                                {a.buyerEmail} → {a.customerName}
+                              </p>
+                            </div>
+                          </li>
+                        </DropdownMenu.Item>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {/* W7b: license expiry section (30/7/1 + expired) */}
                 {expiring.length > 0 && (
                   <div className="border-b border-surface-border">
@@ -617,12 +807,14 @@ function Header({
                     </ul>
                   </div>
                 )}
-                {notifications.length === 0 && expiring.length === 0 ? (
+                {notifications.length === 0 &&
+                expiring.length === 0 &&
+                pendingApprovals.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-10 text-center">
                     <Bell className="h-8 w-8 text-navy/20" />
                     <p className="text-sm text-navy/70">No notifications yet</p>
                     <p className="text-xs text-navy/30">
-                      Urgent orders, driver updates, and low-stock alerts will appear here
+                      Order, delivery, and account alerts will appear here.
                     </p>
                   </div>
                 ) : notifications.length > 0 ? (
@@ -636,13 +828,23 @@ function Header({
                         )}
                       >
                         <NotificationIcon type={n.type} />
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-navy">{n.title}</p>
-                          <p className="mt-0.5 text-xs text-navy/70 leading-snug">
-                            {n.description}
-                          </p>
-                          <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
-                        </div>
+                        {n.href ? (
+                          <Link href={n.href} className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">{n.title}</p>
+                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                              {n.description}
+                            </p>
+                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                          </Link>
+                        ) : (
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-navy">{n.title}</p>
+                            <p className="mt-0.5 text-xs text-navy/70 leading-snug">
+                              {n.description}
+                            </p>
+                            <p className="mt-1 text-[10px] text-navy/30">{timeAgo(n.timestamp)}</p>
+                          </div>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -679,14 +881,13 @@ function Header({
                 <UserIcon className="h-4 w-4 text-navy/70" />
                 {t("menu.profile")}
               </DropdownMenu.Item>
-
               {/* Drive mode — one tap toggle to the field run layout for admins/operators
                   who can act as a driver (canActAsDriver; capability enforced server-side
                   by RolesGuard). Turning it on swaps layout only — no logout, permission
                   change, or draft loss — and jumps to My Routes; turning it off (here or
                   via the topbar Exit affordance) just restores the normal layout in place.
                   pos-cost-roles-spec §4. */}
-              {(user as { canActAsDriver?: boolean })?.canActAsDriver && (
+              {(user as { canActAsDriver?: boolean })?.canActAsDriver && routesAccess && (
                 <DropdownMenu.Item
                   className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
                   onSelect={() => {
@@ -700,7 +901,20 @@ function Header({
                   {driveMode && <Check className="h-4 w-4 text-accent-deep" />}
                 </DropdownMenu.Item>
               )}
-
+              {/* Buyer ⇄ seller portal switch — the two portals are separate
+                  sessions in one browser; this is the door between them
+                  (components/PortalSwitchLink.tsx). */}
+              <DropdownMenu.Item asChild>
+                <PortalSwitchLink
+                  to="buyer"
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-navy outline-none hover:bg-surface-raised"
+                  iconClassName="h-4 w-4 text-navy/70"
+                  labels={{
+                    switch: t("menu.switchToBuyerPortal"),
+                    signIn: t("menu.buyerPortalSignIn"),
+                  }}
+                />
+              </DropdownMenu.Item>
               {/* Language / Idioma — per-user locale (unified/ux-standards.html) */}
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
               <div className="flex items-center gap-2 px-3 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wider text-navy/40">
@@ -717,15 +931,24 @@ function Header({
                   {locale === l && <Check className="h-4 w-4 text-accent-deep" />}
                 </DropdownMenu.Item>
               ))}
-
               <DropdownMenu.Separator className="my-1 border-t border-surface-border" />
-              <DropdownMenu.Item
-                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
-                onSelect={() => void logout()}
-              >
-                <LogOut className="h-4 w-4" />
-                {t("menu.signOut")}
-              </DropdownMenu.Item>
+              {imp ? (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                  onSelect={() => exitImpersonation()}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t(imp.expired ? "menu.returnToAdmin" : "menu.exitImpersonation")}
+                </DropdownMenu.Item>
+              ) : (
+                <DropdownMenu.Item
+                  className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm text-danger outline-none hover:bg-danger-bg"
+                  onSelect={() => void logout()}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t("menu.signOut")}
+                </DropdownMenu.Item>
+              )}
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
@@ -737,36 +960,39 @@ function Header({
 // ─── Impersonation banner ─────────────────────────────────────────────────────
 
 function ImpersonationBanner() {
-  const router = useRouter();
-  const [tenantSlug, setTenantSlug] = React.useState<string | null>(null);
+  const pathname = usePathname();
+  const [imp, setImp] = React.useState<ImpersonationState | null>(null);
 
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
-    const imp = localStorage.getItem("impersonationToken");
-    if (imp) {
-      setTenantSlug(localStorage.getItem("impersonationTenantSlug") ?? "unknown");
-    }
+    const read = () => setImp(getImpersonation());
+    read();
+    return subscribeImpersonation(read);
   }, []);
+  React.useEffect(() => {
+    setImp(getImpersonation());
+  }, [pathname]);
 
-  if (!tenantSlug) return null;
-
-  const exitImpersonation = () => {
-    clearTenantCookie();
-    localStorage.removeItem("impersonationToken");
-    localStorage.removeItem("impersonationTenantSlug");
-    router.push("/admin/tenants");
-  };
+  if (!imp) return null;
 
   return (
     <div className="flex items-center justify-between bg-red-600 px-4 py-2 text-sm text-white">
       <span>
-        ⚠️ Impersonating <strong>{tenantSlug}</strong> — acting as Tenant Admin
+        {imp.expired ? (
+          <>
+            ⚠️ Impersonation of <strong>{imp.slug}</strong> has expired
+          </>
+        ) : (
+          <>
+            ⚠️ Impersonating <strong>{imp.slug}</strong> — acting as{" "}
+            {imp.username ?? "Tenant Admin"}
+          </>
+        )}
       </span>
       <button
         onClick={exitImpersonation}
         className="rounded bg-white/20 px-3 py-1 text-xs font-semibold hover:bg-white/30 transition-colors"
       >
-        Exit impersonation
+        {imp.expired ? "Return to admin" : "Exit impersonation"}
       </button>
     </div>
   );
@@ -777,21 +1003,66 @@ function ImpersonationBanner() {
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { open: paletteOpen, setOpen: setPaletteOpen } = useCommandPalette();
-  const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // routesAccess/deliveryAccess/hasSalesAgents all read the same underlying
+  // tenant-addons query (react-query dedupes on queryKey), so this one
+  // `isLoading` is that single shared fetch's in-flight state — used below
+  // to hold a skeleton for every addon-gated nav entry (Dispatch, Sales Agents)
+  // until the real answer is in, instead of the group just popping into
+  // existence. Deliberately NOT `!resolved` (= `!isSuccess`): useTenantAddons
+  // is `retry: false`, so one 5xx would leave `resolved` false forever and
+  // strand the placeholders as permanent shimmer. `isLoading` settles either
+  // way, and a failed fetch degrades to the pre-existing "gate stays hidden".
+  const { isLoading: addonsLoading } = useTenantAddons();
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
   // Only OPERATOR/TENANT_ADMIN see regulated nav; skip the fetch for CUSTOMER/DRIVER.
   const isStaff = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
-  const { data: regulatedSections } = useTrackedCategories({ active: true }, { enabled: isStaff });
+  // RO-1: dashboard-wide read-only banner, fed by the same query as the billing page.
+  // `enabled: isStaff` mirrors the endpoint's own @Roles(OPERATOR) gate (it 403s for
+  // CUSTOMER/DRIVER); a 60s staleTime keeps it from refetching on every navigation.
+  // Lite-L2 (WP8): the same result also drives the nav's plan-gated filtering below —
+  // isSuccess/isError captured alongside `data` (do not add a second useSubscription call).
+  const {
+    data: subscriptionStatus,
+    isSuccess: subscriptionResolved,
+    isError: subscriptionFailed,
+  } = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  const { data: regulatedSections, isLoading: regulatedLoading } = useTrackedCategories(
+    { active: true },
+    { enabled: isStaff },
+  );
   const navStructure = React.useMemo(() => {
-    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver);
-    if (!isStaff) return nav;
+    const nav = getNavForRole(user?.role, (user as any)?.canActAsDriver, {
+      routesAccess,
+      deliveryAccess,
+    });
+
+    // CUSTOMER/DRIVER nav has neither a Dispatch nor a Sales Agents entry, so
+    // the skeleton splicing below only applies to the operator-ish (isStaff)
+    // branch. While the shared addons fetch is in flight, `enabled` defaults
+    // false and getNavForRole already omitted Dispatch — hold a skeleton at
+    // its position (right before Customers) so the rail doesn't grow once the
+    // real answer resolves.
+    let base = nav;
+    if (isStaff && addonsLoading) {
+      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
+      const skeleton: NavEntry = { kind: "skeleton", key: "dispatch-skeleton" };
+      base =
+        idx === -1 ? [...base, skeleton] : [...base.slice(0, idx), skeleton, ...base.slice(idx)];
+    }
+
+    if (!isStaff) return base;
 
     // "Regulated Items" nav group — one child per active regulated section, each
     // opening that section's dashboard. Shown whenever the tenant has ≥1 section
-    // (an empty group is never spliced). The addon-gated Tobacco deep page stays a
-    // separate leaf so existing tobacco tenants keep their dedicated view.
+    // (an empty group is never spliced); a skeleton holds its place while the
+    // tracked-categories fetch is still in flight.
     const inject: NavEntry[] = [];
     const sections = regulatedSections ?? [];
-    if (sections.length > 0) {
+    if (regulatedLoading) {
+      inject.push({ kind: "skeleton", key: "regulated-skeleton" });
+    } else if (sections.length > 0) {
       inject.push({
         kind: "group",
         label: "Regulated Items",
@@ -804,16 +1075,74 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         })),
       });
     }
-    if (hasTobacco) {
-      inject.push({ kind: "leaf", label: "Tobacco", href: "/tobacco", icon: Cigarette });
-    }
-    if (inject.length === 0) return nav;
 
-    const idx = nav.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
+    if (addonsLoading) {
+      // Sales Agents (+ its Commissions child inside Finance) pops in off the
+      // same addons fetch as Dispatch — hold a skeleton at the leaf's position
+      // (right after Customers) meanwhile.
+      const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/customers");
+      const skeleton: NavEntry = { kind: "skeleton", key: "sales-agents-skeleton" };
+      base =
+        idx === -1
+          ? [...base, skeleton]
+          : [...base.slice(0, idx + 1), skeleton, ...base.slice(idx + 1)];
+    } else if (hasSalesAgents) {
+      // "Sales Agents" as a top-level leaf right after Customers; "Commissions"
+      // inside the Finance group after Supplier Statements. Same splice style as
+      // the canActAsDriver Dispatch rewrite above — never mutate OPERATOR_NAV.
+      base = base.flatMap((entry): NavEntry[] => {
+        if (entry.kind === "leaf" && entry.href === "/customers") {
+          return [
+            entry,
+            { kind: "leaf", label: "Sales Agents", href: "/sales-agents", icon: Handshake },
+          ];
+        }
+        if (entry.kind === "group" && entry.label === "Finance") {
+          const idx = entry.children.findIndex((c) => c.href === "/finance/statements");
+          const child: NavLeaf = {
+            kind: "leaf",
+            label: "Commissions",
+            href: "/finance/commissions",
+            icon: BadgePercent,
+          };
+          const children =
+            idx === -1
+              ? [...entry.children, child]
+              : [...entry.children.slice(0, idx + 1), child, ...entry.children.slice(idx + 1)];
+          return [{ ...entry, children }];
+        }
+        return [entry];
+      });
+    }
+
+    // Lite-L2 (WP8/R4.3): hide gated leaves before the Analytics-relative inject index
+    // is computed, so Regulated Items/Sales Agents still land in the right spot even
+    // when Analytics itself is hidden (analytics is also in PLAN_GATED_NAV).
+    base = filterPlanGatedNav(base, {
+      flags: subscriptionStatus?.flags,
+      resolved: subscriptionResolved,
+      failed: subscriptionFailed,
+    });
+
+    if (inject.length === 0) return base;
+
+    const idx = base.findIndex((e) => e.kind === "leaf" && e.href === "/analytics");
     return idx === -1
-      ? [...nav, ...inject]
-      : [...nav.slice(0, idx + 1), ...inject, ...nav.slice(idx + 1)];
-  }, [user, isStaff, hasTobacco, regulatedSections]);
+      ? [...base, ...inject]
+      : [...base.slice(0, idx + 1), ...inject, ...base.slice(idx + 1)];
+  }, [
+    user,
+    isStaff,
+    hasSalesAgents,
+    regulatedSections,
+    regulatedLoading,
+    routesAccess,
+    deliveryAccess,
+    addonsLoading,
+    subscriptionStatus,
+    subscriptionResolved,
+    subscriptionFailed,
+  ]);
   const [collapsed, setCollapsed] = React.useState(() => {
     if (typeof window !== "undefined") {
       // Auto-collapse on small screens, otherwise respect saved preference
@@ -892,10 +1221,10 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         shellRouter.push("/orders");
         sequence = "";
       } else if (sequence === "gr") {
-        shellRouter.push("/routes");
+        if (routesAccess) shellRouter.push("/routes");
         sequence = "";
       } else if (sequence === "gd") {
-        shellRouter.push("/drivers");
+        if (routesAccess) shellRouter.push("/drivers");
         sequence = "";
       } else if (sequence === "gc") {
         shellRouter.push("/customers");
@@ -916,20 +1245,24 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [shellRouter]);
+  }, [shellRouter, routesAccess]);
 
-  const SHORTCUTS = [
-    { keys: ["g", "h"], label: "Go to Dashboard" },
-    { keys: ["g", "o"], label: "Go to Orders" },
-    { keys: ["g", "r"], label: "Go to Routes" },
-    { keys: ["g", "d"], label: "Go to Drivers" },
-    { keys: ["g", "c"], label: "Go to Customers" },
-    { keys: ["g", "i"], label: "Go to Invoices" },
-    { keys: ["g", "f"], label: "Go to Finance" },
-    { keys: ["g", "s"], label: "Go to Settings" },
-    { keys: ["⌘", "K"], label: "Open Command Palette" },
-    { keys: ["?"], label: "Show Keyboard Shortcuts" },
-  ];
+  const SHORTCUTS = React.useMemo(
+    () =>
+      [
+        { keys: ["g", "h"], label: "Go to Dashboard" },
+        { keys: ["g", "o"], label: "Go to Orders" },
+        { keys: ["g", "r"], label: "Go to Routes" },
+        { keys: ["g", "d"], label: "Go to Drivers" },
+        { keys: ["g", "c"], label: "Go to Customers" },
+        { keys: ["g", "i"], label: "Go to Invoices" },
+        { keys: ["g", "f"], label: "Go to Finance" },
+        { keys: ["g", "s"], label: "Go to Settings" },
+        { keys: ["⌘", "K"], label: "Open Command Palette" },
+        { keys: ["?"], label: "Show Keyboard Shortcuts" },
+      ].filter((s) => routesAccess || (s.label !== "Go to Routes" && s.label !== "Go to Drivers")),
+    [routesAccess],
+  );
 
   return (
     <div className="surface-operator flex h-screen overflow-hidden">
@@ -957,6 +1290,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
             className="h-8 w-8"
             showName={!collapsed}
             nameClassName="text-lg font-bold text-white truncate"
+            tone="light"
           />
         </div>
 
@@ -1006,6 +1340,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
                 className="h-8 w-8"
                 showName
                 nameClassName="text-lg font-bold text-white truncate"
+                tone="light"
               />
               <button
                 onClick={() => setMobileNavOpen(false)}
@@ -1032,6 +1367,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           control; below lg the rail is a drawer so it becomes the viewport corner. */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
         <ImpersonationBanner />
+        {subscriptionStatus && (
+          <ReadOnlyBanner
+            status={subscriptionStatus.status}
+            readOnlyReason={subscriptionStatus.readOnlyReason}
+            compact
+          />
+        )}
         <Header
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenMobileNav={() => setMobileNavOpen(true)}
@@ -1055,7 +1397,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      <PwaInstallPrompt logoSrc="/logo.svg" accentClass="bg-brand-600 hover:bg-brand-700" />
+      <PwaInstallPrompt logoSrc={BRAND_MARK_SRC} accentClass="bg-brand-600 hover:bg-brand-700" />
 
       {/* Keyboard shortcuts help modal */}
       {shortcutHelpOpen && (
@@ -1107,9 +1449,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <ToastProvider>
       <PageTitleProvider>
-        <AuthGuard>
-          <DashboardShell>{children}</DashboardShell>
-        </AuthGuard>
+        <AuthGuard>{children}</AuthGuard>
       </PageTitleProvider>
     </ToastProvider>
   );

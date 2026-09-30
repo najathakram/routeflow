@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildContentSecurityPolicy } from "./csp.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,7 +18,7 @@ const nextConfig = {
   },
 
   // Transpile monorepo packages so Next.js can compile their TypeScript/JSX
-  transpilePackages: ["@routeflow/ui", "@routeflow/types"],
+  transpilePackages: ["@routeflow/ui", "@routeflow/types", "@routeflow/scanning"],
 
   // Skip ESLint + TypeScript checks during production builds — both run
   // separately in CI. Without this, stale type mismatches and missing ESLint
@@ -33,9 +34,11 @@ const nextConfig = {
   // unminified code and discovering internal logic/patterns.
   productionBrowserSourceMaps: false,
 
-  experimental: {
-    // Prevent Next.js from bundling server-only packages into the client
-    serverComponentsExternalPackages: [],
+  // Defence in depth for GHSA-2xp9-vwfh-vxw4 — fixed in Next 15.5.25 (its audit-allowlist entry
+  // is retired); the optimizer stays off because the app never renders next/image. Pinned by
+  // components/next-config-images.static.test.ts.
+  images: {
+    unoptimized: true,
   },
 
   async redirects() {
@@ -50,6 +53,18 @@ const nextConfig = {
         destination: "/routes/:id/dispatch",
         permanent: true,
       },
+      // /distributors is the URL the original marketing design used for the
+      // wholesaler-side page; /wholesalers is the canonical URL. This used to
+      // be a prerendered `redirect()` page (app/(marketing)/distributors/
+      // page.tsx), but a prerendered redirect() page served from the ISR
+      // cache lost its Location header on the standalone server (307, no
+      // Location; spec 36 T1 red on 2026-09-08). A next.config redirect is
+      // evaluated before middleware, so it always carries the Location header.
+      {
+        source: "/distributors",
+        destination: "/wholesalers",
+        permanent: false,
+      },
     ];
   },
 
@@ -60,21 +75,11 @@ const nextConfig = {
     // react-pdf's inline SVG; 'unsafe-eval' is required by Next.js dev overlay and by
     // some Radix/Framer internals. Both should be tightened to nonces once the app
     // migrates to a nonce-based CSP. connect-src covers the Railway API + socket.io.
+    // NODE_ENV is not a usable discriminator in a built image — `next build` forces
+    // production, so this branch is dead in every Docker image; the http API origin is
+    // derived from NEXT_PUBLIC_API_URL instead (prod is https -> no change).
     const isDev = process.env.NODE_ENV !== "production";
-    const csp = [
-      "default-src 'self'",
-      `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com data:",
-      "img-src 'self' data: blob: https:",
-      // Dev: the local API/socket run on plain http/ws (localhost:3000), which
-      // `https: wss:` alone blocks — every API call fails CSP. Prod unchanged.
-      `connect-src 'self' https: wss:${isDev ? " http://localhost:* ws://localhost:*" : ""}`,
-      "frame-ancestors 'none'",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; ");
+    const csp = buildContentSecurityPolicy({ isDev, apiUrl: process.env.NEXT_PUBLIC_API_URL });
 
     return [
       {
@@ -106,6 +111,37 @@ const nextConfig = {
       {
         source: "/buyer/reset-password",
         headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
+      },
+      // A6: the marketing site's static, signed-out pages were shipping only
+      // `s-maxage` (App Router's own ISR default) with no plain `max-age`, so
+      // a shared/CDN cache could reuse the response but a visitor's own
+      // browser had nothing telling it to — every in-session navigation
+      // between marketing pages re-fetched the HTML. `stale-while-revalidate`
+      // matches the App Router's own 300s ISR window (`x-nextjs-stale-time`),
+      // so a background revalidation never blocks a repeat visit. Listed
+      // explicitly, one path per route — NEVER widen this to a wildcard: every
+      // other route in this app is either authenticated or reads
+      // tenant/session state (buyer portal, dashboard, admin, auth), and a
+      // shared Cache-Control there would leak one visitor's response to the
+      // next behind the same CDN edge.
+      {
+        source: "/",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400",
+          },
+        ],
+      },
+      {
+        source:
+          "/:path(product|wholesalers|retailers|pricing|company|contact|privacy|terms|sign-in|book-a-demo)",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=60, s-maxage=3600, stale-while-revalidate=86400",
+          },
+        ],
       },
     ];
   },

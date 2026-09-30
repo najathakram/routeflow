@@ -10,7 +10,7 @@ import {
 } from "class-validator";
 import { Type } from "class-transformer";
 
-class OrderTemplateItemDto {
+export class OrderTemplateItemDto {
   @IsString() productId: string;
   @IsInt() @Min(1) qty: number;
   @IsOptional() @IsString() notes?: string;

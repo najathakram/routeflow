@@ -9,6 +9,8 @@ export interface Driver {
   vehicleModel?: string;
   vehiclePlate?: string;
   licenseNumber?: string;
+  /** Composed home base ("line1, city, state, zip"); written via the four home* fields below. */
+  homeAddress?: string | null;
   status: "ACTIVE" | "INACTIVE" | "ON_LEAVE";
   user?: {
     id: string;
@@ -38,6 +40,13 @@ export interface UpdateDriverDto {
   vehicleModel?: string;
   vehicleColour?: string;
   vehiclePlate?: string;
+  // Home base — the API composes these into `homeAddress` and best-effort geocodes
+  // them, so a trip can start from the driver's home instead of the depot. Sending
+  // ANY of them rewrites the home base; omit them all to leave it untouched.
+  homeLine1?: string;
+  homeCity?: string;
+  homeState?: string;
+  homeZip?: string;
   status?: Driver["status"];
 }
 
@@ -117,25 +126,5 @@ export function useUpdateDriver() {
       qc.invalidateQueries({ queryKey: ["drivers", id] });
       qc.invalidateQueries({ queryKey: ["admin", "drivers"] });
     },
-  });
-}
-
-// ─── Location reporting (driver-side, Phase 7b) ───────────────────────────────
-
-export interface DriverLocationPoint {
-  lat: number;
-  lng: number;
-  heading?: number | null;
-  speedKph?: number | null;
-  batteryPct?: number | null;
-  recordedAt: string;
-  runId?: string | null;
-}
-
-export function usePostDriverLocation() {
-  return useMutation<void, Error, DriverLocationPoint>({
-    mutationFn: (body) => apiClient.post("/drivers/me/location", body).then(() => undefined),
-    // Keep silent on success/failure — this is background telemetry.
-    retry: 1,
   });
 }

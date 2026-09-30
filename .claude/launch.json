@@ -12,7 +12,7 @@
     {
       "name": "web",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["next", "dev"],
+      "runtimeArgs": ["next", "dev", "-H", "127.0.0.1"],
       "cwd": "apps/web",
       "port": 3001,
       "autoPort": true
@@ -45,6 +45,13 @@
       "runtimeArgs": ["serve", "--listen", "4600", "--no-clipboard", "."],
       "cwd": "routeflow-app",
       "port": 4600
+    },
+    {
+      "name": "bug-register",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--yes", "serve", "--listen", "4700", "--no-clipboard", "."],
+      "cwd": "local-assets/docs",
+      "port": 4700
     }
   ]
 }

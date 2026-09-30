@@ -81,7 +81,7 @@ export class UsersController {
     }
     const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto);
+    return this.usersService.updateUser(id, safeDto, user.username);
   }
 
   @Patch(":id/status")

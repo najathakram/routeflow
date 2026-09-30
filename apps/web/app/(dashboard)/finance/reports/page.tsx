@@ -26,6 +26,11 @@ import {
 import { ReportToolbar } from "@/components/ReportToolbar";
 import { exportReportCSV, printReport } from "@/lib/report-export";
 import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
+import {
   BarChart,
   Bar,
   XAxis,
@@ -49,10 +54,12 @@ import {
   Download,
   Printer,
 } from "lucide-react";
-import { cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { Badge, cn, useToast, type ToastVariant } from "@routeflow/ui/web";
+import { depositOverdueLine, groupArAgingByCustomer } from "@/lib/ar-aging-rows";
 import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -241,18 +248,10 @@ function ArAgingReport({
     },
     { key: `days${interval * 3}plus`, label: `${interval * 3 + 1}+ days` },
   ];
-  const customerMap: Record<string, { name: string; buckets: Record<string, number> }> = {};
-  for (const [bKey, items] of Object.entries(buckets)) {
-    for (const item of items as Array<{
-      customer: { id: string; businessName: string };
-      balance: number;
-    }>) {
-      if (!customerMap[item.customer.id])
-        customerMap[item.customer.id] = { name: item.customer.businessName, buckets: {} };
-      customerMap[item.customer.id].buckets[bKey] =
-        (customerMap[item.customer.id].buckets[bKey] ?? 0) + item.balance;
-    }
-  }
+  // #1529 (SA-517 PR-B): the same per-customer sums, plus a marker when any invoice carries an
+  // overdue deposit; the buckets and totals are unchanged.
+  const customerMap = groupArAgingByCustomer(buckets);
+  const depositLine = depositOverdueLine(data?.depositOverdue, fmt);
 
   return (
     <div>
@@ -273,6 +272,12 @@ function ArAgingReport({
           </button>
         ))}
       </div>
+      {depositLine && (
+        <p className="px-4 pb-3 text-sm text-navy/80" data-testid="ar-deposit-overdue-summary">
+          <Badge variant="warning" label="Deposits" className="mr-2" />
+          {depositLine}
+        </p>
+      )}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-surface-border bg-gray-50 text-navy/70">
@@ -303,7 +308,16 @@ function ArAgingReport({
                   className={cn("hover:bg-surface-raised/50", onSelectReport && "cursor-pointer")}
                   onClick={() => onSelectReport?.("ar-aging-details", { customerId })}
                 >
-                  <td className="px-4 py-2.5 font-medium text-brand-600">{c.name}</td>
+                  <td className="px-4 py-2.5 font-medium text-brand-600">
+                    {c.name}
+                    {c.depositOverdue && (
+                      <Badge
+                        variant="warning"
+                        label="Deposit overdue"
+                        className="ml-2 align-middle"
+                      />
+                    )}
+                  </td>
                   {colDefs.map((col) => (
                     <td key={col.key} className="px-4 py-2.5 text-right text-navy">
                       {c.buckets[col.key] ? fmt(c.buckets[col.key]) : "\u2014"}
@@ -712,7 +726,7 @@ function InvoiceDetailsReport({
           ) : (
             rows.map((r) => (
               <tr key={r.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.issueDate)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.issueDate)}</td>
                 <td className="px-4 py-2.5">
                   <Link
                     href={`/invoices/${r.id}`}
@@ -987,8 +1001,8 @@ function ArAgingDetailsReport({
         ) : (
           rows.map((r) => (
             <tr key={r.id} className="cursor-pointer hover:bg-surface-raised/50">
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.dueDate)}</td>
+              <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
+              <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.dueDate)}</td>
               <td className="px-4 py-2.5">
                 <Link
                   href={`/invoices/${r.id}`}
@@ -1047,7 +1061,9 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-1.5 px-4 pt-4">
-        {["", "DRAFT", "SENT", "ACCEPTED", "DECLINED", "EXPIRED"].map((s) => (
+        {/* Wave E / imp-10b, L-072 (sibling-sweep find): dropped "EXPIRED" — a
+            phantom EstimateStatus value the schema has never had. */}
+        {["", "DRAFT", "SENT", "ACCEPTED", "DECLINED"].map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(s)}
@@ -1088,7 +1104,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
                 <td className="px-4 py-2.5">
                   <StatusBadge status={r.status} />
                 </td>
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
                 <td
                   className={cn(
                     "px-4 py-2.5 text-sm",
@@ -1097,7 +1113,7 @@ function EstimateDetailsReport({ from, to }: { from?: string; to?: string }) {
                       : "text-navy",
                   )}
                 >
-                  {fmtDate(r.expiresAt)}
+                  {fmtCalendarDate(r.expiresAt)}
                 </td>
                 <td className="px-4 py-2.5 font-medium text-brand-600">{r.estimateNumber}</td>
                 <td className="px-4 py-2.5 text-navy">{r.customerName}</td>
@@ -1225,7 +1241,12 @@ function ReceivableSummaryReport({ from, to }: { from?: string; to?: string }) {
               className="hover:bg-surface-raised/50"
             >
               <td className="px-4 py-2.5 font-medium text-brand-600">{r.customerName}</td>
-              <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+              <td className="px-4 py-2.5 text-navy/70">
+                {/* r.date is invoice.issueDate (UTC-midnight CALENDAR date) for INVOICE
+                    rows and creditNote.createdAt (a real timestamp) otherwise — only
+                    the former needs the UTC-anchored formatter (B91). */}
+                {r.type === "INVOICE" ? fmtCalendarDate(r.date) : fmtDate(r.date)}
+              </td>
               <td className="px-4 py-2.5 font-medium text-navy">{r.transactionNumber}</td>
               <td className="px-4 py-2.5">
                 <StatusBadge status={r.type} />
@@ -1437,7 +1458,7 @@ function TimeToGetPaidReport({ from, to }: { from?: string; to?: string }) {
                   </Link>
                 </td>
                 <td className="px-4 py-2.5 text-navy">{r.customer?.businessName}</td>
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.issueDate)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.issueDate)}</td>
                 <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.paidAt)}</td>
                 <td className="px-4 py-2.5 text-right text-navy">{r.daysToPayment ?? "\u2014"}</td>
                 <td className="px-4 py-2.5 text-right font-semibold text-navy">{fmt(r.total)}</td>
@@ -1503,7 +1524,7 @@ function ExpenseDetailsReport({
           ) : (
             rows.map((r) => (
               <tr key={r.id} className="hover:bg-surface-raised/50">
-                <td className="px-4 py-2.5 text-navy/70">{fmtDate(r.date)}</td>
+                <td className="px-4 py-2.5 text-navy/70">{fmtCalendarDate(r.date)}</td>
                 <td className="px-4 py-2.5 font-medium text-navy">{r.category?.name}</td>
                 <td className="px-4 py-2.5 text-navy/70">{r.supplier?.name ?? "\u2014"}</td>
                 <td className="px-4 py-2.5 text-navy/70 max-w-xs truncate">
@@ -1730,6 +1751,7 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
     cogs: number;
     grossProfit: number;
     operatingExpenses: number;
+    badDebtExpense?: number;
     netProfit: number;
     expensesByCategory?: Record<string, number>;
   };
@@ -1799,6 +1821,16 @@ function ProfitLossReport({ from, to }: { from?: string; to?: string }) {
                 {fmt(d.operatingExpenses)}
               </td>
             </tr>
+            {!!d.badDebtExpense && (
+              <tr>
+                <td className="px-4 py-2.5 font-semibold text-navy">
+                  Bad Debt Expense (written-off invoices)
+                </td>
+                <td className="px-4 py-2.5 text-right font-semibold text-danger">
+                  {fmt(d.badDebtExpense)}
+                </td>
+              </tr>
+            )}
             <tr className="border-t-2 border-navy">
               <td className="px-4 py-3 font-bold text-navy">Net Profit</td>
               <td
@@ -1927,10 +1959,10 @@ const TX_STATUS_COLORS: Record<string, string> = {
 
 function LedgerReport() {
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [paymentModal, setPaymentModal] = React.useState<Transaction | null>(null);
   const [payAmount, setPayAmount] = React.useState("");
-  const [payMethod, setPayMethod] = React.useState<"CASH" | "CHECK" | "ACH" | "OTHER">("CASH");
+  const [payMethod, setPayMethod] = React.useState<SelectablePaymentMethod>("CASH");
   const [payRef, setPayRef] = React.useState("");
   const recordPayment = useRecordPayment();
   const { toast } = React.useContext(ToastContext);
@@ -1942,6 +1974,7 @@ function LedgerReport() {
 
   const transactions = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const openPayment = (tx: Transaction) => {
     setPaymentModal(tx);
@@ -2132,15 +2165,14 @@ function LedgerReport() {
                 <label className="mb-1 block text-xs font-medium text-navy/70">Method</label>
                 <select
                   value={payMethod}
-                  onChange={(e) =>
-                    setPayMethod(e.target.value as "CASH" | "CHECK" | "ACH" | "OTHER")
-                  }
+                  onChange={(e) => setPayMethod(e.target.value as SelectablePaymentMethod)}
                   className="h-9 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  <option value="CASH">Cash</option>
-                  <option value="CHECK">Check</option>
-                  <option value="ACH">ACH</option>
-                  <option value="OTHER">Other</option>
+                  {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>

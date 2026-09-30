@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
+import { useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowLeft,
@@ -30,6 +31,8 @@ import {
   Upload,
   Download,
   ShieldCheck,
+  Wallet,
+  UserCheck,
 } from "lucide-react";
 import {
   Avatar,
@@ -42,6 +45,7 @@ import {
   Input,
   StatCard,
   cn,
+  TAP_TARGET,
   useToast,
   type BadgeStatus,
 } from "@routeflow/ui/web";
@@ -57,11 +61,25 @@ import {
 } from "recharts";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
+import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtDate, isInternalEmail } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@/lib/pricing";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail } from "@/lib/formatting";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeMarginFraction,
+  classifyMargin,
+} from "@routeflow/pricing";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  paymentMethodLabel,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 import { useMarginConfig } from "@/lib/api/margin";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
 import {
   useCustomer,
   useCustomerOrders,
@@ -69,6 +87,8 @@ import {
   useUpdateCustomer,
   useUpdateCustomerStatus,
   useAddCustomerAddress,
+  useUpdateCustomerAddress,
+  useDeleteCustomerAddress,
   useCustomerStatement,
   useCustomerAdvancePayments,
   useCreateAdvancePayment,
@@ -90,7 +110,6 @@ import {
   useSendPortalInvite,
   useResendPortalInvite,
   useDisconnectPortal,
-  useApprovePortalRequest,
   useSoftDeleteCustomer,
   useRestoreCustomer,
   useCustomerTaxDocuments,
@@ -104,10 +123,21 @@ import {
   type CustomerPrice,
   type ContactPerson,
   type CustomerTag,
+  type PortalStatus,
   type CustomerComment,
 } from "@/lib/api/customers";
 import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import {
+  useCustomerCurrentAgent,
+  useSalesAgents,
+  useAddAssignment,
+  useCloseAssignment,
+  pctLabel,
+} from "@/lib/api/sales-agents";
 import { useInvoices } from "@/lib/api/invoices";
 import { useRoutes, useAddStopToRoute } from "@/lib/api/routes";
 import {
@@ -118,8 +148,12 @@ import {
   type OrderTemplate,
 } from "@/lib/api/order-templates";
 import { StandingOrderModal } from "./StandingOrderModal";
+import { LedgerTruncationNote } from "./ledger-truncation-note";
+import { CreditLimitPanel } from "./credit-limit-panel";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
+import { BrandMark } from "@/components/brand";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -138,9 +172,13 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "orderNumber",
     header: "Order #",
     cell: ({ row }) => (
-      <span className="font-mono text-xs font-semibold text-navy">
+      <Link
+        href={`/orders/${row.original.id}`}
+        onClick={(e) => e.stopPropagation()}
+        className="font-mono text-xs font-semibold text-navy hover:text-brand-500 hover:underline"
+      >
         {row.original.orderNumber ?? row.original.id}
-      </span>
+      </Link>
     ),
   },
   {
@@ -166,7 +204,7 @@ function TabTrigger({ value, children }: { value: string; children: React.ReactN
     <Tabs.Trigger
       value={value}
       className={cn(
-        "-mb-px border-b-2 px-4 py-3 text-sm font-medium transition-colors",
+        "-mb-px shrink-0 whitespace-nowrap border-b-2 px-4 py-3 text-sm font-medium transition-colors",
         "border-transparent text-navy/70 hover:text-navy",
         "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
       )}
@@ -317,41 +355,71 @@ function timeAgo(dateStr: string): string {
   return fmtDate(dateStr);
 }
 
-// ── Add Address Modal ─────────────────────────────────────────────────────────
+// ── Address Form Modal (add + edit) ────────────────────────────────────────
 
-interface AddAddressFormValues {
+interface AddressFormValues {
   label: string;
   line1: string;
   line2?: string;
   city: string;
   state: string;
   zip: string;
-  isDefault?: boolean;
   addressType: string;
 }
 
-function AddAddressModal({
+interface InitialAddress {
+  label?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  addressType?: string;
+  /** Not user-editable here — "Set primary" on the card is the mechanism. Carried
+   *  through purely so callers can pass the raw address row without stripping it. */
+  isDefault?: boolean;
+}
+
+function buildAddressFormValues(initialAddress?: InitialAddress): AddressFormValues {
+  return {
+    label: initialAddress?.label ?? "",
+    line1: initialAddress?.line1 ?? "",
+    line2: initialAddress?.line2 ?? "",
+    city: initialAddress?.city ?? "",
+    state: initialAddress?.state ?? "",
+    zip: initialAddress?.zip ?? "",
+    addressType: initialAddress?.addressType ?? "BILLING",
+  };
+}
+
+function AddressFormModal({
   isOpen,
   onClose,
   onSave,
   isSaving,
+  mode,
+  initialAddress,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (values: AddAddressFormValues) => void;
+  onSave: (values: AddressFormValues) => void;
   isSaving: boolean;
+  mode: "add" | "edit";
+  initialAddress?: InitialAddress;
 }) {
-  const [form, setForm] = React.useState<AddAddressFormValues>({
-    label: "",
-    line1: "",
-    city: "",
-    state: "",
-    zip: "",
-    addressType: "BILLING",
-  });
+  const [form, setForm] = React.useState<AddressFormValues>(() =>
+    buildAddressFormValues(initialAddress),
+  );
+
+  // Re-seed every time the modal opens — covers both a fresh "Add" (blank) and
+  // "Edit" (prefilled from the clicked card); one modal now serves both modes.
+  React.useEffect(() => {
+    if (isOpen) setForm(buildAddressFormValues(initialAddress));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialAddress]);
 
   const handleChange =
-    (field: keyof AddAddressFormValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    (field: keyof AddressFormValues) => (e: React.ChangeEvent<HTMLInputElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -363,21 +431,21 @@ function AddAddressModal({
     <Modal
       open={isOpen}
       onClose={onClose}
-      title="Add Address"
+      title={mode === "add" ? "Add Address" : "Edit Address"}
       footer={
         <>
           <Button variant="secondary" type="button" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" form="add-address-form" loading={isSaving}>
-            Save Address
+          <Button type="submit" form="address-form" loading={isSaving}>
+            {mode === "add" ? "Save Address" : "Save Changes"}
           </Button>
         </>
       }
     >
-      <form id="add-address-form" onSubmit={handleSubmit} noValidate>
+      <form id="address-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-sm font-medium text-navy">Address Type</label>
               <select
@@ -406,8 +474,8 @@ function AddAddressModal({
               setForm((prev) => ({ ...prev, line1: street, city, state, zip }))
             }
           />
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
               <Input
                 label="City"
                 placeholder="Austin"
@@ -439,16 +507,22 @@ function AssignRouteModal({
   onClose,
   customerId,
   addresses,
+  routesAccess,
 }: {
   isOpen: boolean;
   onClose: () => void;
   customerId: string;
   addresses: { id: string; label: string; line1: string; city: string }[];
+  routesAccess: boolean;
 }) {
-  const { data: routesData, isLoading: routesLoading } = useRoutes({
-    isActive: true,
-    page: 1,
-  });
+  // This modal is always mounted (isOpen is a prop, not a mount condition), and
+  // /routes is addon-gated server-side (403 without a dispatch addon), so the
+  // query has to stay off until it is actually open on a routes tenant —
+  // same double-gate as AssignAgentModal above.
+  const { data: routesData, isLoading: routesLoading } = useRoutes(
+    { isActive: true, page: 1 },
+    { enabled: isOpen && routesAccess },
+  );
   const addStop = useAddStopToRoute();
   const [routeId, setRouteId] = React.useState("");
   const [addressId, setAddressId] = React.useState("");
@@ -562,6 +636,119 @@ function AssignRouteModal({
   );
 }
 
+// ── Assign / Reassign Sales Agent Modal ──────────────────────────────────────
+
+function AssignAgentModal({
+  isOpen,
+  onClose,
+  customerId,
+  hasSalesAgents,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  hasSalesAgents: boolean;
+}) {
+  const { toast } = useToast();
+  // Double-gated: the button that opens this modal only renders when
+  // hasSalesAgents is true, but the query still checks it directly so a stale
+  // mount (e.g. the addon toggling off mid-session) never fires the request.
+  const { data: agents, isLoading: agentsLoading } = useSalesAgents(
+    { status: "ACTIVE" },
+    { enabled: isOpen && hasSalesAgents },
+  );
+  const [agentId, setAgentId] = React.useState("");
+  const [effectiveFrom, setEffectiveFrom] = React.useState("");
+  const addAssignment = useAddAssignment(agentId);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      setAgentId("");
+      setEffectiveFrom(new Date().toISOString().slice(0, 10));
+    }
+  }, [isOpen]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!agentId) return;
+    addAssignment.mutate(
+      { customerId, effectiveFrom: effectiveFrom || undefined },
+      {
+        onSuccess: (data) => {
+          toast({
+            title: "Agent assigned",
+            description: data.recompute
+              ? `Recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              : undefined,
+            variant: "success",
+          });
+          onClose();
+        },
+      },
+    );
+  };
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Assign Sales Agent"
+      description="Choose the agent to attribute for this customer going forward."
+      footer={
+        <>
+          <Button variant="secondary" type="button" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form="assign-agent-form"
+            loading={addAssignment.isPending}
+            disabled={!agentId}
+          >
+            Assign
+          </Button>
+        </>
+      }
+    >
+      <form id="assign-agent-form" onSubmit={handleSubmit} noValidate>
+        <div className="space-y-4">
+          {agentsLoading ? (
+            <p className="text-sm text-navy/70">Loading agents…</p>
+          ) : (
+            <div>
+              <label className="mb-1 block text-sm font-medium text-navy">Agent</label>
+              <select
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                <option value="">Select an agent…</option>
+                {(agents ?? []).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="mb-1 block text-sm font-medium text-navy">Effective from</label>
+            <input
+              type="date"
+              value={effectiveFrom}
+              onChange={(e) => setEffectiveFrom(e.target.value)}
+              className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            />
+            <p className="mt-1 text-xs text-navy/70">
+              Backdating recomputes commission from that date.
+            </p>
+          </div>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ── Contact Person Modal ─────────────────────────────────────────────────────
 
 interface ContactFormValues {
@@ -667,7 +854,7 @@ function ContactPersonModal({
     >
       <form id="contact-person-form" onSubmit={handleSubmit} noValidate>
         <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-medium text-navy">Salutation</label>
               <select
@@ -695,7 +882,7 @@ function ContactPersonModal({
               onChange={handleChange("lastName") as any}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Email"
               type="email"
@@ -711,7 +898,7 @@ function ContactPersonModal({
               onChange={handleChange("phone") as any}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
               label="Mobile"
               type="tel"
@@ -739,10 +926,32 @@ function ContactPersonModal({
 
 // ── Special Prices Tab ────────────────────────────────────────────────────────
 
+// Same VALID_TERMS list as the API DTO (update-customer.dto.ts) and the invoice
+// pages' TERMS_OPTIONS — "" clears the override and falls back to the tenant
+// default from Settings → Invoicing.
+const CUSTOMER_TERMS_OPTIONS = [
+  { value: "", label: "Use tenant default" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
 function SpecialPricesTab({ customerId }: { customerId: string }) {
+  const { data: customer } = useCustomer(customerId);
+  const updateCustomer = useUpdateCustomer();
+  const { toast } = useToast();
+  const { user } = useAuth();
+  // TENANT_ADMIN satisfies OPERATOR server-side (ROLE_SATISFIES in roles.guard.ts), so the
+  // @Roles(OPERATOR) customer endpoints accept it — gating the UI on OPERATOR alone hid
+  // these controls from a user the API already authorizes.
+  const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const { data: prices, isLoading } = useCustomerPrices(customerId);
   const upsertPrice = useUpsertCustomerPrice();
   const deletePrice = useDeleteCustomerPrice();
+  const hasMsrpAddon = useHasAddon(MSRP_ADDON);
+  const { data: tierLabels } = useTierLabels();
   // Their price vs cost now — the Price Memory margin column (pos-cost-roles §1).
   const { data: marginConfig } = useMarginConfig();
   const marginFloor = marginConfig?.defaultMarginFloor ?? 0.15;
@@ -754,7 +963,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
   const [deletingPriceId, setDeletingPriceId] = React.useState<string | null>(null);
   const [productSearch, setProductSearch] = React.useState("");
   const [selectedProductId, setSelectedProductId] = React.useState("");
-  const [selectedTier, setSelectedTier] = React.useState(1);
+  // null = "no tier override" (row is MSRP-only, or unset while adding) — a
+  // CustomerPrice row may now be tier-only, MSRP-only, or both.
+  const [selectedTier, setSelectedTier] = React.useState<number | null>(null);
+  const [msrpInput, setMsrpInput] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [productDropdownOpen, setProductDropdownOpen] = React.useState(false);
 
@@ -769,13 +981,14 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
-    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+    !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 
   const openAdd = () => {
     setEditingPrice(null);
     setSelectedProductId("");
     setProductSearch("");
-    setSelectedTier(1);
+    setSelectedTier(null);
+    setMsrpInput("");
     setNotes("");
     setIsModalOpen(true);
   };
@@ -784,18 +997,24 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     setEditingPrice(cp);
     setSelectedProductId(cp.productId);
     setProductSearch(cp.product?.name ?? "");
-    setSelectedTier(cp.pricingTier);
+    setSelectedTier(cp.pricingTier ?? null);
+    setMsrpInput(cp.msrp != null ? String(cp.msrp) : "");
     setNotes(cp.notes ?? "");
     setIsModalOpen(true);
   };
 
   const handleSave = () => {
-    if (!selectedProductId || !selectedTier) return;
+    const msrpTrimmed = msrpInput.trim();
+    if (!selectedProductId || (selectedTier == null && !msrpTrimmed)) return;
     upsertPrice.mutate(
       {
         customerId,
         productId: selectedProductId,
         pricingTier: selectedTier,
+        // Only ever include msrp when the tenant has the addon — the server
+        // 403s any *present* msrp key (even unchanged) for a tenant without
+        // flag.msrp, which would otherwise block plain tier-override saves.
+        ...(hasMsrpAddon ? { msrp: msrpTrimmed ? parseFloat(msrpTrimmed) : null } : {}),
         notes: notes || undefined,
       },
       {
@@ -811,17 +1030,164 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
     deletePrice.mutate({ customerId, priceId }, { onSuccess: () => setDeletingPriceId(null) });
   };
 
+  // Deposit % is free text, so — unlike the sibling <select>s — it must NOT
+  // PATCH per keystroke: typing "50" would persist 5 first and the server value
+  // would fight the field mid-typing. Hold it locally, re-seed from the server,
+  // and commit once on blur/Enter (clamped to the DTO's 0–100).
+  const serverDeposit =
+    customer?.defaultDepositPercent != null ? Number(customer.defaultDepositPercent) : null;
+  const [depositInput, setDepositInput] = React.useState("");
+  React.useEffect(() => {
+    setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+  }, [serverDeposit]);
+
+  const commitDeposit = () => {
+    const raw = depositInput.trim();
+    const parsed = raw === "" ? null : Number(raw);
+    if (parsed != null && !Number.isFinite(parsed)) {
+      setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+      return;
+    }
+    const next = parsed == null ? null : Math.min(100, Math.max(0, parsed));
+    setDepositInput(next != null ? String(next) : "");
+    if (next === serverDeposit) return;
+    updateCustomer.mutate(
+      { id: customerId, defaultDepositPercent: next },
+      {
+        onError: (err: any) => {
+          setDepositInput(serverDeposit != null ? String(serverDeposit) : "");
+          toast({
+            title: "Couldn't save deposit",
+            description: err?.response?.data?.message ?? "",
+            variant: "error",
+          });
+        },
+      },
+    );
+  };
+
   const priceList: CustomerPrice[] = prices ?? [];
 
   return (
     <Tabs.Content value="special-prices" className="mt-5 focus:outline-none">
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Default Pricing Tier</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Applies to every product for this customer. Per-product overrides below take
+              precedence.
+            </p>
+          </div>
+          {isOperator ? (
+            <select
+              value={customer?.pricingTier ?? 1}
+              onChange={(e) => {
+                updateCustomer.mutate({ id: customerId, pricingTier: Number(e.target.value) });
+              }}
+              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {[1, 2, 3, 4, 5].map((t) => (
+                <option key={t} value={t}>
+                  {tierLabel(tierLabels, t)}
+                  {t === 1 ? " (Default)" : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm font-semibold text-navy">
+              {tierLabel(tierLabels, customer?.pricingTier ?? 1)}
+            </p>
+          )}
+        </div>
+        {priceList.length > 0 && (
+          <p className="mt-3 text-xs text-navy/70">
+            {priceList.length} product{priceList.length === 1 ? " has" : "s have"} a per-product
+            override and will keep {priceList.length === 1 ? "its" : "their"} own tier.
+          </p>
+        )}
+      </Card>
+
+      <Card className="mb-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold text-navy">Default Payment Terms</h3>
+            <p className="mt-0.5 text-xs text-navy/70">
+              Seeds the terms and due date on this customer&apos;s new invoices. Wins over the
+              tenant default in Settings &rarr; Invoicing.
+            </p>
+          </div>
+          {isOperator ? (
+            <select
+              value={customer?.defaultPaymentTerms ?? ""}
+              onChange={(e) => {
+                updateCustomer.mutate({ id: customerId, defaultPaymentTerms: e.target.value });
+              }}
+              className="rounded border border-surface-border bg-white px-2 py-1 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              {CUSTOMER_TERMS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="text-sm font-semibold text-navy">
+              {customer?.defaultPaymentTerms || "Tenant default"}
+            </p>
+          )}
+        </div>
+
+        {/* Deposit — auto-applies to every invoice GENERATED for this customer
+            (order flows); computeDepositFields derives the amount at read time,
+            untouched here. A manual invoice's own deposit still wins. */}
+        <div className="mt-3 flex items-center justify-between gap-4 border-t border-surface-border pt-3">
+          <div>
+            <p className="text-sm font-medium text-navy">Deposit</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-navy/70">
+              Deposit due on invoice date; the remainder follows the terms above. Applies to new
+              invoices automatically.
+            </p>
+          </div>
+          {isOperator ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                placeholder="—"
+                value={depositInput}
+                onChange={(e) => setDepositInput(e.target.value)}
+                onBlur={commitDeposit}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                className="w-16 rounded border border-surface-border bg-white px-2 py-1 text-right text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+              <span className="text-sm text-navy/70">%</span>
+            </div>
+          ) : (
+            customer?.defaultDepositPercent != null && (
+              <p className="text-sm font-semibold text-navy">
+                {Number(customer.defaultDepositPercent)}%
+              </p>
+            )
+          )}
+        </div>
+      </Card>
+
       <Card>
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <h3 className="text-base font-semibold text-navy">Product Tier Overrides</h3>
+            <h3 className="text-base font-semibold text-navy">Product Overrides</h3>
             <p className="mt-0.5 text-xs text-navy/70">
-              Override the pricing tier for specific products. These override the customer&apos;s
-              default tier.
+              {hasMsrpAddon
+                ? "Override the pricing tier and/or MSRP for specific products. These override the customer's default tier and the product's default MSRP."
+                : "Override the pricing tier for specific products. These override the customer's default tier."}
             </p>
           </div>
           <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={openAdd}>
@@ -833,7 +1199,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
           <p className="text-sm text-navy/70">Loading…</p>
         ) : priceList.length === 0 ? (
           <div className="rounded-lg border border-dashed border-surface-border bg-surface-raised py-10 text-center">
-            <p className="text-sm text-navy/70">No tier overrides set.</p>
+            <p className="text-sm text-navy/70">No product overrides set.</p>
             <button className="mt-2 text-sm text-brand-500 hover:underline" onClick={openAdd}>
               Add the first one &rarr;
             </button>
@@ -855,6 +1221,11 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                   <th className="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Override Tier
                   </th>
+                  {hasMsrpAddon && (
+                    <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
+                      MSRP Override
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wider text-navy/70">
                     Tier Price
                   </th>
@@ -871,7 +1242,10 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {priceList.map((cp) => {
-                  const tierPrice = cp.product ? getTierPrice(cp.product, cp.pricingTier) : 0;
+                  // No tier override on this row (MSRP-only) \u2192 price at the
+                  // customer's default tier, same as an ordinary order would.
+                  const effectiveTier = cp.pricingTier ?? customer?.pricingTier ?? 1;
+                  const tierPrice = cp.product ? getTierPrice(cp.product, effectiveTier) : 0;
                   return (
                     <tr key={cp.id} className="hover:bg-gray-50/60">
                       <td className="px-6 py-3 text-sm font-medium text-navy">
@@ -886,11 +1260,27 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                           : "\u2014"}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <Badge variant="neutral">Tier {cp.pricingTier}</Badge>
+                        {cp.pricingTier != null ? (
+                          <Badge variant="neutral">{tierLabel(tierLabels, cp.pricingTier)}</Badge>
+                        ) : (
+                          <span className="text-xs italic text-navy/50">Default tier</span>
+                        )}
                       </td>
+                      {hasMsrpAddon && (
+                        <td className="px-4 py-3 text-right text-sm text-navy/70">
+                          {cp.msrp != null ? (
+                            <span className="font-mono tabular-nums text-navy">
+                              {fmt(Number(cp.msrp))}
+                              <span className="ml-1 text-[10px] text-navy/50">/pc</span>
+                            </span>
+                          ) : (
+                            <span className="text-navy/30">\u2014</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-4 py-3 text-right text-sm font-semibold text-brand-600">
                         {fmt(tierPrice)}
-                        {tierUnset(cp.product, cp.pricingTier) && (
+                        {cp.pricingTier != null && tierUnset(cp.product, cp.pricingTier) && (
                           <span className="ml-1 text-xs font-normal text-navy/50">(list)</span>
                         )}
                       </td>
@@ -918,14 +1308,20 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             title="Edit override"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy",
+                            )}
                             onClick={() => openEdit(cp)}
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             title="Delete override"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger",
+                            )}
                             onClick={() => setDeletingPriceId(cp.id)}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -945,7 +1341,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
       <Modal
         open={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title={editingPrice ? "Edit Tier Override" : "Add Tier Override"}
+        title={editingPrice ? "Edit Price Override" : "Add Price Override"}
         footer={
           <>
             <Button
@@ -958,7 +1354,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             <Button
               loading={upsertPrice.isPending}
               onClick={handleSave}
-              disabled={!selectedProductId || !selectedTier}
+              disabled={!selectedProductId || (selectedTier == null && !msrpInput.trim())}
             >
               Save
             </Button>
@@ -1004,24 +1400,29 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
             </div>
           </div>
           <div>
-            <label className="mb-1.5 block text-sm font-medium text-navy/80">Pricing Tier</label>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">
+              Pricing Tier (optional)
+            </label>
             <select
-              value={selectedTier}
-              onChange={(e) => setSelectedTier(Number(e.target.value))}
+              value={selectedTier ?? ""}
+              onChange={(e) =>
+                setSelectedTier(e.target.value === "" ? null : Number(e.target.value))
+              }
               className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             >
+              <option value="">No override (use customer default)</option>
               {[1, 2, 3, 4, 5].map((t) => (
                 <option key={t} value={t}>
-                  Tier {t}
+                  {tierLabel(tierLabels, t)}
                   {t === 1 ? " (List Price)" : ""}
                   {selectedProduct ? ` — ${fmt(getTierPrice(selectedProduct, t))}` : ""}
                   {tierUnset(selectedProduct, t) ? " (list)" : ""}
                 </option>
               ))}
             </select>
-            {selectedProduct && (
+            {selectedProduct && selectedTier != null && (
               <p className="mt-1 text-xs text-navy/70">
-                Price at Tier {selectedTier}:{" "}
+                Price at {tierLabel(tierLabels, selectedTier)}:{" "}
                 <span className="font-semibold text-brand-600">
                   {fmt(getTierPrice(selectedProduct, selectedTier))}
                 </span>
@@ -1031,6 +1432,22 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
               </p>
             )}
           </div>
+          {hasMsrpAddon && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-navy/80">
+                MSRP Override (optional, per piece)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="Leave blank to use the product's default MSRP"
+                value={msrpInput}
+                onChange={(e) => setMsrpInput(e.target.value)}
+                className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+            </div>
+          )}
           <div>
             <label className="mb-1.5 block text-sm font-medium text-navy/80">
               Notes (optional)
@@ -1052,8 +1469,8 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
         onConfirm={() => {
           if (deletingPriceId) handleDelete(deletingPriceId);
         }}
-        title="Delete tier override?"
-        description="This will remove the tier override for this product. The customer will get their default tier price."
+        title="Delete price override?"
+        description="This will remove the tier and/or MSRP override for this product. The customer will get their default tier price and the product's default MSRP."
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deletePrice.isPending}
@@ -1140,7 +1557,10 @@ function CommentsTab({ customerId }: { customerId: string }) {
                   </div>
                   <button
                     title="Delete comment"
-                    className="rounded p-1 text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger"
+                    className={cn(
+                      TAP_TARGET,
+                      "rounded p-1 text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger",
+                    )}
                     onClick={() =>
                       deleteComment.mutate({
                         customerId,
@@ -1408,7 +1828,10 @@ function DocumentsTab({ customerId }: { customerId: string }) {
                 <button
                   onClick={() => handleDelete(d.id)}
                   title="Delete document"
-                  className="absolute right-2 top-2 rounded-full bg-white/90 p-1.5 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100"
+                  className={cn(
+                    TAP_TARGET,
+                    "touch-reveal absolute right-2 top-2 rounded-full bg-white/90 text-navy/70 opacity-0 shadow transition hover:text-danger group-hover:opacity-100",
+                  )}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -1497,32 +1920,64 @@ type CustomerStatus = (typeof STATUS_CYCLE)[number];
  *  single enum value (a comma-list 400s) — so it's filtered client-side. */
 const OUTSTANDING_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
-export default function CustomerDetailPage({ params }: { params: { id: string } }) {
+function CustomerDetailPageInner({ id }: { id: string }) {
   const { setTitle } = usePageTitle();
   const router = useRouter();
   const { user } = useAuth();
-  const isOperator = user?.role === "OPERATOR";
+  // See the note in SpecialPricesTab: TENANT_ADMIN satisfies OPERATOR server-side.
+  const isOperator = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const { toast } = useToast();
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // Assigning a customer to a standing route is a recurring-routes surface —
+  // /routes 403s without a dispatch addon, so hide the entry point and keep the
+  // modal's query off (this page is not behind the shell's RouteGuard).
+  const { enabled: routesAccess } = useRoutesAccess();
+  const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
+  const [agentModalOpen, setAgentModalOpen] = React.useState(false);
+  const closeAssignment = useCloseAssignment();
 
-  const { data: customer, isLoading } = useCustomer(params.id);
-  const { data: ordersResult } = useCustomerOrders(params.id);
-  const { data: customerRoutes } = useCustomerRoutes(params.id);
-  const { data: orderTemplates } = useOrderTemplates(params.id);
+  const handleEndAttribution = () => {
+    if (!confirm("Remove this customer's sales agent attribution?")) return;
+    closeAssignment.mutate(
+      { customerId: id },
+      {
+        onSuccess: (data) => {
+          toast({
+            title: "Agent removed",
+            description: data.recompute
+              ? `Recomputed ${data.recompute.invoicesSynced} invoice(s)`
+              : undefined,
+            variant: "success",
+          });
+        },
+      },
+    );
+  };
+
+  const { data: customer, isLoading } = useCustomer(id);
+  const { data: tierLabels } = useTierLabels();
+  const { data: ordersResult, isError: ordersError } = useCustomerOrders<ApiOrder>(id);
+  const { data: customerRoutes } = useCustomerRoutes(id);
+  const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
   const addAddress = useAddCustomerAddress();
+  const updateAddress = useUpdateCustomerAddress();
+  const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
   const generateOrder = useGenerateTemplateOrder();
 
-  const { data: statement } = useCustomerStatement(params.id);
-  const { data: advancePayments } = useCustomerAdvancePayments(params.id);
+  const { data: statement, isError: statementFailed } = useCustomerStatement(id);
+  const { data: advancePayments } = useCustomerAdvancePayments(id);
   const createAdvance = useCreateAdvancePayment();
+  const queryClient = useQueryClient();
 
   const [invoiceFilter, setInvoiceFilter] = React.useState<"all" | "outstanding" | "paid" | "void">(
     "all",
   );
   const { data: invoicesData, isLoading: invoicesLoading } = useInvoices({
-    customerId: params.id,
+    customerId: id,
     status: invoiceFilter === "paid" ? "PAID" : invoiceFilter === "void" ? "VOID" : undefined,
     limit: 50,
   });
@@ -1534,12 +1989,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   }, [invoicesData, invoiceFilter]);
 
   // New hooks
-  const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(params.id);
+  const { data: contactPersons, isLoading: contactsLoading } = useContactPersons(id);
   const deleteContact = useDeleteContactPerson();
   const { data: allTags } = useCustomerTags();
   const assignTag = useAssignCustomerTag();
   const removeTag = useRemoveCustomerTag();
-  const { data: chartData } = useCustomerIncomeChart(params.id);
+  const { data: chartData } = useCustomerIncomeChart(id);
 
   // Delete customer — reversible soft-delete with 8-second Undo (ux-standards).
   const softDeleteCustomer = useSoftDeleteCustomer();
@@ -1548,7 +2003,6 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   const [isDeleteOpen, setIsDeleteOpen] = React.useState(false);
 
   const handleDeleteCustomer = () => {
-    const id = params.id;
     const name = customer?.businessName ?? "Customer";
     // Capture the pre-delete status so Undo restores exactly (not force-ACTIVE).
     const priorStatus = currentStatus;
@@ -1563,26 +2017,48 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
   };
 
   // Buyer Portal management
-  const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(params.id);
+  const { data: portalStatus, isLoading: portalLoading } = usePortalStatus(id);
+  // The shared PortalStatus type (apps/web/lib/api/customers.ts) doesn't declare
+  // buyerName/buyerEmail — out of this package's file scope to touch — but the API's
+  // getPortalStatus now returns them (flat, not nested under buyerAccount) while a
+  // request is PENDING_SELLER_APPROVAL, so the card can say WHO is asking. Read them
+  // via a local, additive cast instead of widening the shared interface.
+  const pendingRequester = portalStatus as
+    | (PortalStatus & { buyerName?: string | null; buyerEmail?: string | null })
+    | undefined;
   const sendInvite = useSendPortalInvite();
   const resendInvite = useResendPortalInvite();
   const disconnectPortal = useDisconnectPortal();
+  // Both hooks invalidate portal-status AND the bell's pending-approvals list, so
+  // approving or declining here makes the "Action needed" row disappear immediately.
   const approvePortal = useApprovePortalRequest();
+  const declinePortal = useDeclinePortalRequest();
   const [portalInviteEmail, setPortalInviteEmail] = React.useState("");
   const [portalMsg, setPortalMsg] = React.useState<string | null>(null);
+  const [declineConfirmOpen, setDeclineConfirmOpen] = React.useState(false);
 
   // Tax-exempt documents
-  const { data: taxDocs = [] } = useCustomerTaxDocuments(params.id);
-  const uploadTaxDocs = useUploadCustomerTaxDocuments(params.id);
-  const deleteTaxDoc = useDeleteCustomerTaxDocument(params.id);
+  const { data: taxDocs = [] } = useCustomerTaxDocuments(id);
+  const uploadTaxDocs = useUploadCustomerTaxDocuments(id);
+  const deleteTaxDoc = useDeleteCustomerTaxDocument(id);
   // Routed through the same DocumentViewer used by the Documents tab (not a plain <img>
   // lightbox) so a PDF tax-exempt document is viewable, not just images.
   const [taxDocLightbox, setTaxDocLightbox] = React.useState<CustomerDocument | null>(null);
   const taxDocInputRef = React.useRef<HTMLInputElement>(null);
 
   const allOrders: ApiOrder[] = ordersResult?.data ?? [];
+  // H1: `allOrders` is a capped page (the endpoint's take:50 display budget),
+  // so every COUNT the UI shows reads the server's own `meta.total` over the
+  // customer's whole order history — a customer with 120 orders must not read
+  // "Orders (50)". The list below stays the display budget it always was.
+  const orderCount = ordersResult?.meta?.total ?? 0;
   const addresses = customer?.addresses ?? [];
   const currentStatus: CustomerStatus = (customer?.user?.status as CustomerStatus) ?? "ACTIVE";
+  // REG-B170: the detail page previously looked fully live for a removed (soft-deleted)
+  // customer — no banner, edit/status/remove controls all still rendered. Reads keep working
+  // (restore symmetry); only the banner + Restore surface and hiding those controls are new —
+  // the actual safety net is the server refusing update/changeStatus for a removed customer.
+  const isRemoved = !!customer?.deletedAt;
 
   React.useEffect(() => {
     setTitle(customer?.businessName ?? "Customer");
@@ -1590,9 +2066,35 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isAddAddressOpen, setIsAddAddressOpen] = React.useState(false);
+  // Non-null = the address card being edited (edit mode of AddressFormModal);
+  // null = the modal (when isAddAddressOpen) is in "add" mode.
+  const [editingAddress, setEditingAddress] = React.useState<any | null>(null);
+  // Inline two-tap delete confirm, keyed by address id (the suppliers-page idiom).
+  const [deleteAddressConfirmId, setDeleteAddressConfirmId] = React.useState<string | null>(null);
   const [isAssignRouteOpen, setIsAssignRouteOpen] = React.useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = React.useState("");
   const [pendingStatus, setPendingStatus] = React.useState<CustomerStatus | null>(null);
+
+  // Controlled Tabs so the Edit Customer modal's "Addresses tab" link (the honest
+  // replacement for the modal's old silent-discard address section) can switch to
+  // it — including a query-string entry (`?tab=addresses`) so the SAME link works
+  // when the modal was opened from the customers LIST page and lands here fresh.
+  const searchParams = useSearchParams();
+  const [activeTab, setActiveTab] = React.useState("profile");
+  React.useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab) setActiveTab(tab);
+  }, [searchParams]);
+
+  // B512 (C2 390px audit): the tab strip scrolls horizontally on mobile instead
+  // of wrapping, so a deep link (`?tab=documents`) landing on a tab past the
+  // fold must scroll it into view — otherwise the strip looks like it starts on
+  // a random tab with no indication anything is off-screen to the left.
+  const tabsListRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const activeEl = tabsListRef.current?.querySelector<HTMLElement>('[data-state="active"]');
+    activeEl?.scrollIntoView({ inline: "center", block: "nearest" });
+  }, [activeTab]);
 
   // Delivery time window
   const [windowStart, setWindowStart] = React.useState(customer?.deliveryWindowStart ?? "");
@@ -1615,7 +2117,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
       setWindowStart("");
       setWindowEnd("");
       updateCustomer.mutate({
-        id: params.id,
+        id: id,
         deliveryWindowStart: "",
         deliveryWindowEnd: "",
       });
@@ -1632,9 +2134,17 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     [uploadTaxDocs],
   );
 
+  // Customer-level payment allocation (lump sum across open invoices)
+  const [isRecordPaymentOpen, setIsRecordPaymentOpen] = React.useState(false);
+
   // Advance payment
   const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
-  const [advanceForm, setAdvanceForm] = React.useState({
+  const [advanceForm, setAdvanceForm] = React.useState<{
+    method: SelectablePaymentMethod;
+    amount: string;
+    reference: string;
+    notes: string;
+  }>({
     method: "ACH",
     amount: "",
     reference: "",
@@ -1669,7 +2179,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   const handleTimeWindowBlur = () => {
     updateCustomer.mutate({
-      id: params.id,
+      id: id,
       deliveryWindowStart: windowStart || undefined,
       deliveryWindowEnd: windowEnd || undefined,
     });
@@ -1698,22 +2208,87 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
     if (s === "INACTIVE" || s === "SUSPENDED") {
       setPendingStatus(s);
     } else {
-      updateStatus.mutate({ id: params.id, status: s });
+      updateStatus.mutate({ id: id, status: s });
     }
   };
 
   const confirmStatusChange = () => {
     if (!pendingStatus) return;
     updateStatus.mutate(
-      { id: params.id, status: pendingStatus },
+      { id: id, status: pendingStatus },
       { onSuccess: () => setPendingStatus(null) },
     );
   };
 
-  const handleSaveAddress = (values: AddAddressFormValues) => {
-    addAddress.mutate(
-      { id: params.id, ...values },
-      { onSuccess: () => setIsAddAddressOpen(false) },
+  const handleSaveAddress = (values: AddressFormValues) => {
+    if (editingAddress) {
+      updateAddress.mutate(
+        { id: id, addrId: editingAddress.id, ...values },
+        {
+          onSuccess: () => {
+            toast({ title: "Address updated", variant: "success" });
+            // Close BEFORE clearing editingAddress — the modal is open on
+            // isAddAddressOpen and derives its mode from editingAddress, so
+            // leaving it open would flip it into a blank "Add Address" form.
+            setIsAddAddressOpen(false);
+            setEditingAddress(null);
+          },
+          onError: (err: any) =>
+            toast({
+              title: "Update failed",
+              description: err?.response?.data?.message ?? "",
+              variant: "error",
+            }),
+        },
+      );
+    } else {
+      addAddress.mutate(
+        { id: id, ...values },
+        {
+          onSuccess: () => {
+            toast({ title: "Address added", variant: "success" });
+            setIsAddAddressOpen(false);
+          },
+          onError: (err: any) =>
+            toast({
+              title: "Couldn't add address",
+              description: err?.response?.data?.message ?? "",
+              variant: "error",
+            }),
+        },
+      );
+    }
+  };
+
+  const handleSetPrimaryAddress = (addrId: string) => {
+    updateAddress.mutate(
+      { id: id, addrId, isDefault: true },
+      {
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't set primary",
+            description: err?.response?.data?.message ?? "",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  const handleDeleteAddress = (addrId: string) => {
+    setDeleteAddressConfirmId(null);
+    deleteAddress.mutate(
+      { id: id, addrId },
+      {
+        onSuccess: () => toast({ title: "Address deleted", variant: "success" }),
+        // The server 409s (ConflictException) with a specific reason when a route
+        // stop still references this address — surface it, don't swallow it.
+        onError: (err: any) =>
+          toast({
+            title: "Couldn't delete address",
+            description: err?.response?.data?.message ?? "This address couldn't be deleted.",
+            variant: "error",
+          }),
+      },
     );
   };
 
@@ -1727,9 +2302,6 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
 
   // Credit limit usage
   const creditLimit = customer?.creditLimit != null ? Number(customer.creditLimit) : null;
-  const receivables = customer?.receivables != null ? Number(customer.receivables) : 0;
-  const creditUsagePercent =
-    creditLimit && creditLimit > 0 ? Math.min(100, (receivables / creditLimit) * 100) : 0;
 
   return (
     <div className="space-y-5 p-6">
@@ -1744,14 +2316,40 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </Link>
       </div>
 
+      {/* REG-B170: removed customers previously looked fully live here — no indication, and
+          restore was reachable only within the 8-second Undo toast right after removal. */}
+      {isRemoved && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
+          <p className="text-sm font-medium text-danger">
+            This customer has been removed. Restore it to edit or change its status.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            leftIcon={<UserCheck className="h-3.5 w-3.5" />}
+            onClick={() => restoreCustomer.mutate({ id })}
+            loading={restoreCustomer.isPending}
+          >
+            Restore
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <Avatar name={customer.businessName} size="lg" className="h-[42px] w-[42px] text-sm" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <h1 className="text-2xl font-bold text-navy">{customer.businessName}</h1>
-              <Badge status={currentStatus} />
-              <Badge variant="info" label={`Tier ${customer.pricingTier ?? 1} pricing`} />
+              {isRemoved ? (
+                <Badge variant="danger" label="Removed" />
+              ) : (
+                <Badge status={currentStatus} />
+              )}
+              <Badge
+                variant="info"
+                label={`${tierLabel(tierLabels, customer.pricingTier ?? 1)} pricing`}
+              />
               <span
                 className={cn(
                   "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold",
@@ -1783,32 +2381,36 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<Pencil className="h-3.5 w-3.5" />}
-            onClick={() => setIsEditOpen(true)}
-          >
-            Edit
-          </Button>
+          {!isRemoved && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<Pencil className="h-3.5 w-3.5" />}
+              onClick={() => setIsEditOpen(true)}
+            >
+              Edit
+            </Button>
+          )}
           <Button
             variant="secondary"
             size="sm"
             leftIcon={<FileText className="h-3.5 w-3.5" />}
-            href={`/invoices/new?customerId=${params.id}`}
+            href={`/invoices/new?customerId=${id}`}
           >
             New Invoice
           </Button>
+          <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
 
       {/* Tabs */}
-      <Tabs.Root defaultValue="profile" className="flex flex-col">
-        <Tabs.List className="flex border-b border-surface-border">
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
+        <Tabs.List
+          ref={tabsListRef}
+          className="flex overflow-x-auto border-b border-surface-border"
+        >
           <TabTrigger value="profile">Profile</TabTrigger>
-          <TabTrigger value="orders">
-            Orders{allOrders.length > 0 ? ` (${allOrders.length})` : ""}
-          </TabTrigger>
+          <TabTrigger value="orders">Orders{orderCount > 0 ? ` (${orderCount})` : ""}</TabTrigger>
           <TabTrigger value="addresses">Addresses ({addresses.length})</TabTrigger>
           <TabTrigger value="standing-orders">
             Standing Orders
@@ -1847,7 +2449,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <StatCard
                 label="Orders"
-                value={allOrders.length}
+                value={ordersError ? "—" : orderCount}
                 icon={<FileText className="h-5 w-5" />}
               />
               <StatCard
@@ -1956,10 +2558,13 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                 alt="Tax exempt doc"
                                 className="h-full w-full object-cover"
                               />
-                              <div className="absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="touch-reveal absolute inset-0 flex items-center justify-center gap-1.5 bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
                                 <button
                                   onClick={() => setTaxDocLightbox(taxDocToViewerDoc(doc))}
-                                  className="rounded-full bg-white/90 p-1.5 text-navy hover:bg-white"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "rounded-full bg-white/90 text-navy hover:bg-white",
+                                  )}
                                   title="View full size"
                                 >
                                   <ZoomIn className="h-3.5 w-3.5" />
@@ -1967,7 +2572,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                 {isOperator && (
                                   <button
                                     onClick={() => deleteTaxDoc.mutate(doc.key)}
-                                    className="rounded-full bg-white/90 p-1.5 text-red-600 hover:bg-white"
+                                    className={cn(
+                                      TAP_TARGET,
+                                      "rounded-full bg-white/90 text-red-600 hover:bg-white",
+                                    )}
                                     title="Delete"
                                   >
                                     <Trash2 className="h-3.5 w-3.5" />
@@ -1992,7 +2600,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           value={customer.pricingTier ?? 1}
                           onChange={(e) => {
                             updateCustomer.mutate({
-                              id: params.id,
+                              id: id,
                               pricingTier: Number(e.target.value),
                             });
                           }}
@@ -2000,7 +2608,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         >
                           {[1, 2, 3, 4, 5].map((t) => (
                             <option key={t} value={t}>
-                              Tier {t}
+                              {tierLabel(tierLabels, t)}
                               {t === 1 ? " (Default)" : ""}
                             </option>
                           ))}
@@ -2009,43 +2617,19 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     </div>
                     {!isOperator && (
                       <p className="mt-1 text-sm font-semibold text-navy">
-                        Tier {customer.pricingTier ?? 1}
+                        {tierLabel(tierLabels, customer.pricingTier ?? 1)}
                       </p>
                     )}
                   </div>
 
-                  {/* Credit Limit bar */}
-                  {creditLimit != null && creditLimit > 0 && (
-                    <div className="mt-5 border-t border-surface-border pt-4">
-                      <div className="mb-1.5 flex items-center justify-between">
-                        <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                          Credit Limit
-                        </p>
-                        <p className="text-sm font-semibold text-navy">
-                          {fmt(receivables)} / {fmt(creditLimit)}
-                        </p>
-                      </div>
-                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-surface-raised">
-                        <div
-                          className={cn(
-                            "h-full rounded-full transition-all",
-                            creditUsagePercent > 90
-                              ? "bg-danger"
-                              : creditUsagePercent > 70
-                                ? "bg-warning"
-                                : "bg-brand-500",
-                          )}
-                          style={{ width: `${creditUsagePercent}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 text-xs text-navy/70">
-                        {creditUsagePercent.toFixed(0)}% used
-                        {creditLimit - receivables > 0 && (
-                          <> &middot; {fmt(creditLimit - receivables)} available</>
-                        )}
-                      </p>
-                    </div>
-                  )}
+                  {/* Credit limit (D6/B462 + B576): from the statement, the same figure the
+                      server's hard block is checked against. */}
+                  <CreditLimitPanel
+                    creditLimit={creditLimit}
+                    creditExposure={statement?.creditExposure}
+                    pendingExposure={statement?.pendingExposure}
+                    statementUnavailable={statementFailed}
+                  />
                 </Card>
               </div>
 
@@ -2065,10 +2649,13 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         {tag.name}
                         <button
                           title={`Remove tag "${tag.name}"`}
-                          className="rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100"
+                          className={cn(
+                            TAP_TARGET,
+                            "touch-reveal rounded-full p-0.5 opacity-0 transition-opacity hover:bg-black/10 group-hover:opacity-100",
+                          )}
                           onClick={() =>
                             removeTag.mutate({
-                              customerId: params.id,
+                              customerId: id,
                               tagId: tag.id,
                             })
                           }
@@ -2100,7 +2687,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface-raised"
                                 onClick={() => {
                                   assignTag.mutate({
-                                    customerId: params.id,
+                                    customerId: id,
                                     tagId: tag.id,
                                   });
                                   setTagDropdownOpen(false);
@@ -2233,7 +2820,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         <div className="flex shrink-0 items-center gap-0.5">
                           <button
                             title="Edit contact"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-white hover:text-navy"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded p-1.5 text-navy/70 transition-colors hover:bg-white hover:text-navy",
+                            )}
                             onClick={() => {
                               setEditingContact(contact);
                               setIsContactModalOpen(true);
@@ -2243,7 +2833,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           </button>
                           <button
                             title="Delete contact"
-                            className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                            className={cn(
+                              TAP_TARGET,
+                              "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger",
+                            )}
                             onClick={() => setDeletingContactId(contact.id)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -2298,7 +2891,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                       </span>
                     </label>
                     <div
-                      className={`grid grid-cols-2 gap-4 transition-opacity ${anyTime ? "pointer-events-none opacity-40" : ""}`}
+                      className={`grid grid-cols-1 gap-4 transition-opacity sm:grid-cols-2 ${anyTime ? "pointer-events-none opacity-40" : ""}`}
                     >
                       <div className="space-y-1">
                         <label className="flex items-center gap-1.5 text-xs font-medium text-navy/70">
@@ -2368,64 +2961,146 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         ))}
                       </ul>
                     )}
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      leftIcon={<Plus className="h-4 w-4" />}
-                      onClick={() => setIsAssignRouteOpen(true)}
-                    >
-                      Assign to Route
-                    </Button>
+                    {routesAccess && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        leftIcon={<Plus className="h-4 w-4" />}
+                        onClick={() => setIsAssignRouteOpen(true)}
+                      >
+                        Assign to Route
+                      </Button>
+                    )}
                   </div>
                 </Card>
               </div>
 
               <div className="space-y-5">
-                <Card title="Account Status">
-                  <div className="flex flex-col gap-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm text-navy/70">Current status</p>
-                      <Badge status={currentStatus} />
-                    </div>
-                    <div className="space-y-2">
-                      {STATUS_CYCLE.map((s) => (
-                        <button
-                          key={s}
-                          onClick={() => handleStatusChange(s)}
-                          disabled={updateStatus.isPending}
-                          className={cn(
-                            "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
-                            currentStatus === s
-                              ? "border-brand-500 bg-brand-50 text-brand-700"
-                              : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
+                {hasSalesAgents && (
+                  <Card title="Sales Agent">
+                    {currentAgent.isLoading ? (
+                      <p className="text-sm text-navy/70">Loading…</p>
+                    ) : currentAgent.data?.assignment ? (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <Link
+                            href={`/sales-agents/${currentAgent.data.assignment.agent.id}`}
+                            className="text-sm font-semibold text-brand-700 hover:underline"
+                          >
+                            {currentAgent.data.assignment.agent.name}
+                          </Link>
+                          {currentAgent.data.assignment.agent.status !== "ACTIVE" && (
+                            <Badge
+                              variant="warning"
+                              label={
+                                currentAgent.data.assignment.agent.status === "STOPPED_FOR_NEW"
+                                  ? "Stopped for new"
+                                  : "Paused"
+                              }
+                            />
                           )}
-                        >
-                          <span
-                            className={cn(
-                              "h-2 w-2 rounded-full",
-                              s === "ACTIVE"
-                                ? "bg-success"
-                                : s === "INACTIVE"
-                                  ? "bg-navy/30"
-                                  : "bg-danger",
-                            )}
-                          />
-                          {s.charAt(0) + s.slice(1).toLowerCase()}
-                        </button>
-                      ))}
-                    </div>
-                    {currentStatus === "SUSPENDED" && (
-                      <div className="border-t border-surface-border pt-4">
-                        <button
-                          onClick={() => setIsDeleteOpen(true)}
-                          className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                          Remove customer
-                        </button>
+                        </div>
+                        <p className="text-xs text-navy/70">
+                          Since {fmtCalendarDate(currentAgent.data.assignment.effectiveFrom)}
+                          {currentAgent.data.customerRatePct != null &&
+                            ` · customer rate ${pctLabel(currentAgent.data.customerRatePct)}`}
+                        </p>
+                        {isOperator && (
+                          <div className="flex gap-2 border-t border-surface-border pt-3">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => setAgentModalOpen(true)}
+                            >
+                              Reassign
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={handleEndAttribution}>
+                              Remove
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-3">
+                        <p className="text-sm text-navy/70">No agent assigned (house account).</p>
+                        {isOperator && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setAgentModalOpen(true)}
+                          >
+                            Assign agent
+                          </Button>
+                        )}
                       </div>
                     )}
-                  </div>
+                  </Card>
+                )}
+
+                <Card title="Account Status">
+                  {isRemoved ? (
+                    // REG-B170: status can't be cycled and Remove doesn't apply to an
+                    // already-removed customer — Restore is the only action here.
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-navy/70">Current status</p>
+                        <Badge variant="danger" label="Removed" />
+                      </div>
+                      <Button
+                        variant="secondary"
+                        leftIcon={<UserCheck className="h-4 w-4" />}
+                        onClick={() => restoreCustomer.mutate({ id })}
+                        loading={restoreCustomer.isPending}
+                      >
+                        Restore customer
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-navy/70">Current status</p>
+                        <Badge status={currentStatus} />
+                      </div>
+                      <div className="space-y-2">
+                        {STATUS_CYCLE.map((s) => (
+                          <button
+                            key={s}
+                            onClick={() => handleStatusChange(s)}
+                            disabled={updateStatus.isPending}
+                            className={cn(
+                              "flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
+                              currentStatus === s
+                                ? "border-brand-500 bg-brand-50 text-brand-700"
+                                : "border-surface-border text-navy/70 hover:border-navy/30 hover:text-navy",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-2 w-2 rounded-full",
+                                s === "ACTIVE"
+                                  ? "bg-success"
+                                  : s === "INACTIVE"
+                                    ? "bg-navy/30"
+                                    : "bg-danger",
+                              )}
+                            />
+                            {s.charAt(0) + s.slice(1).toLowerCase()}
+                          </button>
+                        ))}
+                      </div>
+                      {currentStatus === "SUSPENDED" && (
+                        <div className="border-t border-surface-border pt-4">
+                          <button
+                            onClick={() => setIsDeleteOpen(true)}
+                            className="flex w-full items-center gap-2 rounded-lg border border-danger/30 px-3 py-2 text-sm font-medium text-danger transition-colors hover:bg-danger/5"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Remove customer
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </Card>
 
                 {/* ── Buyer Portal card ──────────────────────────── */}
@@ -2483,6 +3158,20 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         </p>
                       )}
 
+                      {/* Pending approval: show WHO is asking to connect */}
+                      {portalStatus?.status === "PENDING_SELLER_APPROVAL" &&
+                        pendingRequester?.buyerName && (
+                          <div className="rounded-lg bg-brand-50 px-3 py-2 text-xs text-navy/70">
+                            <p className="font-medium text-navy">
+                              {pendingRequester.buyerName}
+                              {pendingRequester.buyerEmail
+                                ? ` (${pendingRequester.buyerEmail})`
+                                : ""}
+                            </p>
+                            <p>wants to connect as this customer.</p>
+                          </div>
+                        )}
+
                       {/* Error/success message */}
                       {portalMsg && (
                         <p className="rounded-lg bg-success/10 px-3 py-2 text-xs text-success">
@@ -2512,7 +3201,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                               setPortalMsg(null);
                               sendInvite.mutate(
                                 {
-                                  id: params.id,
+                                  id: id,
                                   method: "EMAIL",
                                   overrideEmail: portalInviteEmail || undefined,
                                 },
@@ -2535,7 +3224,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                             loading={resendInvite.isPending}
                             onClick={() => {
                               setPortalMsg(null);
-                              resendInvite.mutate(params.id, {
+                              resendInvite.mutate(id, {
                                 onSuccess: (d: { message?: string }) =>
                                   setPortalMsg(d?.message ?? "Invite resent!"),
                                 onError: () => setPortalMsg(null),
@@ -2547,19 +3236,31 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         )}
 
                         {portalStatus?.status === "PENDING_SELLER_APPROVAL" && (
-                          <Button
-                            size="sm"
-                            loading={approvePortal.isPending}
-                            onClick={() => {
-                              setPortalMsg(null);
-                              approvePortal.mutate(params.id, {
-                                onSuccess: () => setPortalMsg("Buyer connection approved!"),
-                                onError: () => setPortalMsg(null),
-                              });
-                            }}
-                          >
-                            Approve Connection
-                          </Button>
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              loading={approvePortal.isPending}
+                              onClick={() => {
+                                setPortalMsg(null);
+                                approvePortal.mutate(id, {
+                                  onSuccess: () => setPortalMsg("Buyer connection approved!"),
+                                  onError: () => setPortalMsg(null),
+                                });
+                              }}
+                            >
+                              Approve Connection
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => {
+                                setPortalMsg(null);
+                                setDeclineConfirmOpen(true);
+                              }}
+                            >
+                              Decline
+                            </Button>
+                          </div>
                         )}
 
                         {(portalStatus?.status === "ACTIVE" ||
@@ -2571,7 +3272,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                             loading={disconnectPortal.isPending}
                             onClick={() => {
                               setPortalMsg(null);
-                              disconnectPortal.mutate(params.id, {
+                              disconnectPortal.mutate(id, {
                                 onSuccess: () => setPortalMsg("Portal disconnected."),
                                 onError: () => setPortalMsg(null),
                               });
@@ -2609,11 +3310,23 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                 />
               </div>
             </div>
+            {orderCount > allOrders.length && (
+              <p className="mb-2 text-xs text-navy/70">
+                Showing the latest {allOrders.length} of {orderCount} orders.
+              </p>
+            )}
             <div className="-mx-6 -mb-6">
               <Table
                 data={filteredOrders}
                 columns={orderColumns}
-                emptyState="No orders match the selected filter."
+                onRowClick={(row) => router.push(`/orders/${row.original.id}`)}
+                emptyState={
+                  ordersError
+                    ? "Couldn't load this customer's orders. Refresh to try again."
+                    : orderStatusFilter
+                      ? "No orders match the selected filter."
+                      : "No orders yet."
+                }
               />
             </div>
           </Card>
@@ -2627,7 +3340,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
               <Button
                 size="sm"
                 leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setIsAddAddressOpen(true)}
+                onClick={() => {
+                  setEditingAddress(null);
+                  setIsAddAddressOpen(true);
+                }}
               >
                 Add Address
               </Button>
@@ -2692,11 +3408,75 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                                   {addr.zip}
                                 </p>
                               </div>
-                              {addr.isDefault && (
-                                <span className="shrink-0 rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
-                                  Primary
-                                </span>
-                              )}
+                              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                                {addr.isDefault && (
+                                  <span className="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-medium text-brand-700">
+                                    Primary
+                                  </span>
+                                )}
+                                {deleteAddressConfirmId === addr.id ? (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-danger">Delete?</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteAddress(addr.id)}
+                                      disabled={deleteAddress.isPending}
+                                      className="text-xs font-medium text-danger hover:underline disabled:opacity-40"
+                                    >
+                                      Delete
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteAddressConfirmId(null)}
+                                      className="text-xs text-navy/70 hover:text-navy transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    {!addr.isDefault && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSetPrimaryAddress(addr.id)}
+                                        disabled={updateAddress.isPending}
+                                        title="Set as primary"
+                                        className={cn(
+                                          TAP_TARGET,
+                                          "rounded p-1 text-navy/30 transition-colors hover:bg-warning/10 hover:text-warning disabled:opacity-40",
+                                        )}
+                                      >
+                                        <Star className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingAddress(addr);
+                                        setIsAddAddressOpen(true);
+                                      }}
+                                      title="Edit"
+                                      className={cn(
+                                        TAP_TARGET,
+                                        "rounded p-1 text-navy/30 transition-colors hover:bg-surface-raised hover:text-navy",
+                                      )}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDeleteAddressConfirmId(addr.id)}
+                                      title="Delete"
+                                      className={cn(
+                                        TAP_TARGET,
+                                        "rounded p-1 text-navy/30 transition-colors hover:bg-danger/10 hover:text-danger",
+                                      )}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             </li>
                           ))}
                         </ul>
@@ -2785,7 +3565,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           title={tmpl.isActive ? "Pause template" : "Activate template"}
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                          className={cn(
+                            TAP_TARGET,
+                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy",
+                          )}
                           onClick={() =>
                             updateTemplate.mutate({
                               id: tmpl.id,
@@ -2804,7 +3587,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         </button>
                         <button
                           title="Generate order now"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600"
+                          className={cn(
+                            TAP_TARGET,
+                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-brand-50 hover:text-brand-600",
+                          )}
                           onClick={() =>
                             generateOrder.mutate(tmpl.id, {
                               onSuccess: () => window.alert(`Order generated for "${tmpl.name}"!`),
@@ -2815,7 +3601,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         </button>
                         <button
                           title="Edit template"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy"
+                          className={cn(
+                            TAP_TARGET,
+                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-surface-raised hover:text-navy",
+                          )}
                           onClick={() => {
                             setEditingTemplate(tmpl);
                             setIsStandingOrderOpen(true);
@@ -2825,7 +3614,10 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                         </button>
                         <button
                           title="Delete template"
-                          className="rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger"
+                          className={cn(
+                            TAP_TARGET,
+                            "rounded p-1.5 text-navy/70 transition-colors hover:bg-danger-bg hover:text-danger",
+                          )}
                           onClick={() => setDeletingTemplateId(tmpl.id)}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -2844,14 +3636,18 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
           {/* Summary bar */}
           {(() => {
             const allInvoices = invoicesData?.data ?? [];
-            const outstanding = allInvoices.filter((inv) =>
-              ["SENT", "VIEWED", "PARTIAL", "OVERDUE"].includes(inv.status),
-            );
-            const overdueCount = allInvoices.filter((inv) => inv.status === "OVERDUE").length;
-            const outstandingTotal = outstanding.reduce(
-              (sum, inv) => sum + (inv.balanceDue ?? inv.total),
-              0,
-            );
+            // B110: the Outstanding card reads the statement's own
+            // `outstandingAmount` — computed server-side over the customer's
+            // WHOLE open invoice set — instead of reducing this tab's paged
+            // `invoicesData` (which silently undercounted once a customer had
+            // more open invoices than fit one page). Matches the Overview
+            // tile above (both read the same `statement`), never a second,
+            // page-scoped basis.
+            // m8: "Overdue" is a money figure too — read the statement's
+            // `overdueAmount` (the server's uncapped sum over the customer's
+            // whole open set), never a count over this tab's 50-row page.
+            const outstandingTotal = statement?.outstandingAmount ?? 0;
+            const overdueTotal = statement?.overdueAmount ?? 0;
             return (
               <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-3">
                 <Card>
@@ -2869,9 +3665,9 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     Overdue
                   </p>
                   <p
-                    className={`mt-1 text-xl font-bold ${overdueCount > 0 ? "text-danger" : "text-navy"}`}
+                    className={`mt-1 text-xl font-bold ${overdueTotal > 0 ? "text-danger" : "text-navy"}`}
                   >
-                    {overdueCount} invoice{overdueCount !== 1 ? "s" : ""}
+                    {fmt(overdueTotal)}
                   </p>
                 </Card>
                 <Card>
@@ -2912,7 +3708,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                 ))}
               </div>
               <Link
-                href={`/invoices/new?customerId=${params.id}`}
+                href={`/invoices/new?customerId=${id}`}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -2928,7 +3724,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                 <FileText className="mx-auto mb-3 h-8 w-8 text-navy/20" />
                 <p className="text-sm font-medium text-navy/70">No invoices found</p>
                 <Link
-                  href={`/invoices/new?customerId=${params.id}`}
+                  href={`/invoices/new?customerId=${id}`}
                   className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90"
                 >
                   <Plus className="h-3.5 w-3.5" />
@@ -2966,12 +3762,12 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-navy/70">
-                            {inv.issueDate ? fmtDate(inv.issueDate) : "—"}
+                            {inv.issueDate ? fmtCalendarDate(inv.issueDate) : "—"}
                           </td>
                           <td
                             className={`px-4 py-3 ${isOverdue ? "font-semibold text-danger" : "text-navy/70"}`}
                           >
-                            {inv.dueDate ? fmtDate(inv.dueDate) : "—"}
+                            {inv.dueDate ? fmtCalendarDate(inv.dueDate) : "—"}
                           </td>
                           <td className="px-4 py-3 text-right text-navy">{fmt(inv.total)}</td>
                           <td
@@ -3010,6 +3806,14 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     {fmt(statement?.outstandingAmount ?? 0)}
                   </p>
                   <p className="text-xs text-navy/70">Amount currently owed on invoices</p>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    leftIcon={<Wallet className="h-4 w-4" />}
+                    onClick={() => setIsRecordPaymentOpen(true)}
+                  >
+                    Record Payment
+                  </Button>
                 </div>
               </Card>
               <Card>
@@ -3060,7 +3864,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                           </span>
                         </div>
                         <p className="mt-0.5 text-xs text-navy/70">
-                          {ap.method}
+                          {paymentMethodLabel(ap.method)}
                           {ap.reference ? ` \u00b7 ${ap.reference}` : ""} \u00b7{" "}
                           {new Date(ap.createdAt).toLocaleDateString()}
                         </p>
@@ -3088,7 +3892,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                 <div className="mb-6 flex items-start justify-between">
                   <div>
                     <div className="flex items-center gap-2">
-                      <img src="/logo.svg" alt="RouteFlow" className="h-7 w-7 object-contain" />
+                      <BrandMark size={28} />
                       <span className="text-base font-bold text-navy">RouteFlow</span>
                     </div>
                     <p className="mt-0.5 text-xs text-navy/70">Austin, TX · routeflow.io</p>
@@ -3121,7 +3925,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                   )}
                 </div>
 
-                <div className="mb-6 grid grid-cols-4 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border">
+                <div className="mb-6 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border sm:grid-cols-4">
                   {[
                     {
                       label: "Opening Balance",
@@ -3129,31 +3933,17 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                       valueClass: "text-navy",
                     },
                     {
-                      // Server types are UPPERCASE; the old lowercase filters
-                      // never matched and these tiles computed $0.00 forever.
+                      // B110/M1: lifetime totals come from the server's
+                      // DB-side aggregate over the WHOLE invoice/payment
+                      // history, never a reduce over the capped `transactions`
+                      // ledger below (which stops at one page).
                       label: "Invoiced Amount",
-                      value: fmt(
-                        statement?.transactions
-                          .filter((tx) => tx.type === "INVOICE")
-                          .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0,
-                      ),
+                      value: fmt(statement?.lifetimeInvoiced ?? 0),
                       valueClass: "text-navy",
                     },
                     {
-                      // Payments are folded into invoices (never rows):
-                      // received = invoiced − still-owed on the listed rows.
                       label: "Amount Received",
-                      value: fmt(
-                        Math.max(
-                          0,
-                          (statement?.transactions
-                            .filter((tx) => tx.type === "INVOICE")
-                            .reduce((s, tx) => s + Math.abs(tx.amount), 0) ?? 0) -
-                            (statement?.transactions
-                              .filter((tx) => tx.type === "INVOICE")
-                              .reduce((s, tx) => s + Math.abs(tx.runningBalance), 0) ?? 0),
-                        ),
-                      ),
+                      value: fmt(statement?.lifetimeReceived ?? 0),
                       valueClass: "text-success",
                     },
                     {
@@ -3177,11 +3967,13 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                   ))}
                 </div>
 
+                <LedgerTruncationNote truncated={statement?.transactionsTruncated} />
+
                 {!statement || statement.transactions.length === 0 ? (
                   <p className="text-sm text-navy/70">No transactions on record.</p>
                 ) : (
-                  <div className="-mx-8 overflow-hidden">
-                    <table className="w-full text-sm">
+                  <div className="-mx-8 overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm">
                       <thead>
                         <tr className="bg-[#1B3A5C]">
                           <th className="px-8 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-white/80">
@@ -3287,6 +4079,20 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
             </div>
           </div>
 
+          {isRecordPaymentOpen && (
+            <CustomerRecordPaymentModal
+              customerId={id}
+              customerName={customer.businessName}
+              onClose={() => setIsRecordPaymentOpen(false)}
+              // useRecordPaymentStandalone only invalidates ["invoices"]; the Open
+              // Balance headline and the advance list on this tab live under
+              // ["customers", id, …] and would otherwise stay stale.
+              onSuccess={() => {
+                void queryClient.invalidateQueries({ queryKey: ["customers", id] });
+              }}
+            />
+          )}
+
           <Modal
             open={isAdvanceOpen}
             onClose={() => setIsAdvanceOpen(false)}
@@ -3308,7 +4114,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                     if (!amt || amt <= 0) return;
                     createAdvance.mutate(
                       {
-                        customerId: params.id,
+                        customerId: id,
                         method: advanceForm.method,
                         amount: amt,
                         reference: advanceForm.reference || undefined,
@@ -3333,15 +4139,16 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
                   onChange={(e) =>
                     setAdvanceForm((f) => ({
                       ...f,
-                      method: e.target.value,
+                      method: e.target.value as SelectablePaymentMethod,
                     }))
                   }
                   className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  <option value="CASH">Cash</option>
-                  <option value="CHECK">Check</option>
-                  <option value="ACH">ACH / Bank Transfer</option>
-                  <option value="OTHER">Other</option>
+                  {SELECTABLE_PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -3398,16 +4205,16 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         </Tabs.Content>
 
         {/* ── Special Prices tab ─────────────────────────────────── */}
-        <SpecialPricesTab customerId={params.id} />
+        <SpecialPricesTab customerId={id} />
 
         {/* ── Comments tab ───────────────────────────────────────── */}
-        <CommentsTab customerId={params.id} />
+        <CommentsTab customerId={id} />
 
         {/* ── Documents tab ──────────────────────────────────────── */}
-        <DocumentsTab customerId={params.id} />
+        <DocumentsTab customerId={id} />
 
         {/* ── Licenses & Authorizations tab (W6b) ────────────────── */}
-        <AuthorizationsTab customerId={params.id} />
+        <AuthorizationsTab customerId={id} />
       </Tabs.Root>
 
       {/* Modals */}
@@ -3417,22 +4224,28 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         mode="edit"
         initialData={customer}
       />
-      <AddAddressModal
+      <AddressFormModal
         isOpen={isAddAddressOpen}
-        onClose={() => setIsAddAddressOpen(false)}
+        onClose={() => {
+          setIsAddAddressOpen(false);
+          setEditingAddress(null);
+        }}
         onSave={handleSaveAddress}
-        isSaving={addAddress.isPending}
+        isSaving={editingAddress ? updateAddress.isPending : addAddress.isPending}
+        mode={editingAddress ? "edit" : "add"}
+        initialAddress={editingAddress ?? undefined}
       />
       <AssignRouteModal
         isOpen={isAssignRouteOpen}
         onClose={() => setIsAssignRouteOpen(false)}
-        customerId={params.id}
+        customerId={id}
         addresses={addresses.map((a: any) => ({
           id: a.id,
           label: a.label ?? "Address",
           line1: a.line1,
           city: a.city,
         }))}
+        routesAccess={routesAccess}
       />
       <ContactPersonModal
         isOpen={isContactModalOpen}
@@ -3440,8 +4253,14 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
           setIsContactModalOpen(false);
           setEditingContact(null);
         }}
-        customerId={params.id}
+        customerId={id}
         editingContact={editingContact}
+      />
+      <AssignAgentModal
+        isOpen={agentModalOpen}
+        onClose={() => setAgentModalOpen(false)}
+        customerId={id}
+        hasSalesAgents={hasSalesAgents}
       />
 
       <ConfirmDialog
@@ -3467,7 +4286,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
           setIsStandingOrderOpen(false);
           setEditingTemplate(null);
         }}
-        customerId={params.id}
+        customerId={id}
         template={editingTemplate}
       />
 
@@ -3477,7 +4296,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         onConfirm={() => {
           if (!deletingTemplateId) return;
           deleteTemplate.mutate(
-            { id: deletingTemplateId, customerId: params.id },
+            { id: deletingTemplateId, customerId: id },
             { onSuccess: () => setDeletingTemplateId(null) },
           );
         }}
@@ -3494,7 +4313,7 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         onConfirm={() => {
           if (!deletingContactId) return;
           deleteContact.mutate(
-            { customerId: params.id, contactId: deletingContactId },
+            { customerId: id, contactId: deletingContactId },
             { onSuccess: () => setDeletingContactId(null) },
           );
         }}
@@ -3503,6 +4322,26 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
         confirmLabel="Yes, delete"
         variant="danger"
         loading={deleteContact.isPending}
+      />
+
+      <ConfirmDialog
+        open={declineConfirmOpen}
+        onClose={() => setDeclineConfirmOpen(false)}
+        onConfirm={() => {
+          declinePortal.mutate(id, {
+            onSuccess: () => {
+              setDeclineConfirmOpen(false);
+              setPortalMsg("Request declined.");
+            },
+          });
+        }}
+        title="Decline this request?"
+        description={`Decline ${
+          pendingRequester?.buyerName ?? "this buyer"
+        }'s request? They will not be connected to this account.`}
+        confirmLabel="Yes, decline"
+        variant="danger"
+        loading={declinePortal.isPending}
       />
 
       {/* ── Remove customer modal — reversible soft-delete with 8s Undo ── */}
@@ -3536,5 +4375,24 @@ export default function CustomerDetailPage({ params }: { params: { id: string } 
            document is viewable too, not just images ─────────────────────────────── */}
       <DocumentViewer doc={taxDocLightbox} onClose={() => setTaxDocLightbox(null)} />
     </div>
+  );
+}
+
+/** `useSearchParams` (the `?tab=addresses` deep link the Edit Customer modal's
+ *  honest "Addresses tab" link uses) needs a Suspense boundary above it — same
+ *  wrapper `suppliers/[id]/page.tsx` uses for its `?paymentGroup=` deep link. */
+export default function CustomerDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
+  return (
+    <React.Suspense
+      fallback={
+        <div className="flex h-64 items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-500 border-t-transparent" />
+        </div>
+      }
+    >
+      <CustomerDetailPageInner id={id} />
+    </React.Suspense>
   );
 }

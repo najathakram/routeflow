@@ -2,7 +2,15 @@ import { Injectable, Logger } from "@nestjs/common";
 import { TenantStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { addonSkuCode, planKeyFromEnum, PlanKey } from "./plan-catalog.constants";
+import { FeatureOverrideService } from "./feature-override.service";
+import {
+  addonSkuCode,
+  effectivePlanFlags,
+  findPlanDefinition,
+  isAlwaysEnforcedPlan,
+  planKeyFromEnum,
+  PlanKey,
+} from "./plan-catalog.constants";
 
 /** Per-meter capacity caps; `null` means unlimited. */
 export interface EntitlementCaps {
@@ -10,6 +18,7 @@ export interface EntitlementCaps {
   routes: number | null;
   scans: number | null;
   msgs: number | null;
+  customers: number | null;
 }
 
 /** The fully-resolved entitlement snapshot for a tenant. */
@@ -25,6 +34,9 @@ export interface Entitlements {
   addons: string[];
   caps: EntitlementCaps;
   trialEndsAt: Date | null;
+  /** RO-1: why `status` is READ_ONLY (trial_expired | subscription_cancelled |
+   *  trial_cancelled); null otherwise. Mirrors `Tenant.readOnlyReason`. */
+  readOnlyReason: string | null;
 }
 
 /** Compact subset carried in the JWT so the client can render gates without a round-trip. */
@@ -41,7 +53,18 @@ interface CacheEntry {
   expiresAt: number;
 }
 
-/** Cache TTL: entitlement mutations (plan/addon changes) call {@link invalidate}. */
+/**
+ * Cache TTL: entitlement mutations (plan/addon changes) call {@link invalidate}.
+ *
+ * This cache is PER PROCESS, and {@link invalidate} only clears the process it runs in — so on
+ * more than one replica the TTL is the convergence window for the others. That is staleness, not
+ * divergence. Writes ARE gated on this cache in places — `commission-reconciliation` skips a
+ * tenant on `hasFlag("flag.sales_agents")` read from a cached snapshot — so a decision can act on
+ * a value up to the TTL out of date. What multiple replicas do NOT add is a longer or unbounded
+ * window: every process converges within the same 30 s, and the crons that mutate plans are
+ * single-elected by `@LeaderCron`, so the worst case stays "one replica gating on an entitlement
+ * up to 30 s out of date" — never two replicas disagreeing beyond that.
+ */
 const CACHE_TTL_MS = 30_000;
 
 /**
@@ -59,6 +82,7 @@ export class EntitlementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly catalog: PlanCatalogService,
+    private readonly featureOverrides: FeatureOverrideService,
   ) {}
 
   /** Resolve (and cache) the full entitlement snapshot for a tenant. */
@@ -73,10 +97,34 @@ export class EntitlementsService {
     return value;
   }
 
-  /** Server-authoritative flag check (consumed by the PlanFlagGuard added in the plan-gating phase). */
+  /**
+   * Server-authoritative flag check (consumed by cron/service call sites that need a raw
+   * true/false, bypassing PlanFlagGuard's HTTP-shaped 403). An active override is absolute —
+   * checked before the plan/addon resolution, GRANT/DENY deciding outright (owner ruling,
+   * feature-grants PR-1); only its absence falls through to today's plan-flag behaviour.
+   */
   async hasFlag(tenantId: string, flagKey: string): Promise<boolean> {
+    const override = await this.featureOverrides.get(tenantId, flagKey);
+    if (override === "GRANT") return true;
+    if (override === "DENY") return false;
+
     const ent = await this.resolve(tenantId);
     return ent.flags.includes(flagKey);
+  }
+
+  /**
+   * True when `tenantId`'s plan is an always-enforced plan (R3a.3/R3a.7 — today just
+   * LITE): such a tenant never gets the PLAN_FLAG_ENFORCEMENT kill switch's dark-flag
+   * courtesy allow, on PlanFlagGuard or AddonGuard. Never throws — an unresolvable
+   * tenant is treated as not always-enforced, the same fail-open the dark-flag path
+   * already takes on a resolution error.
+   */
+  async isAlwaysEnforcedTenant(tenantId: string): Promise<boolean> {
+    try {
+      return isAlwaysEnforcedPlan((await this.resolve(tenantId)).planKey);
+    } catch {
+      return false;
+    }
   }
 
   /** The compact claims embedded in the JWT / refreshed token. */
@@ -132,7 +180,10 @@ export class EntitlementsService {
     // plan a subscription still names), fall back conservatively AND report the
     // effective plan so planKey/flags/caps stay internally consistent — never a
     // BUSINESS claim backed by STARTER caps.
-    const exactDef = version.definitions.find((d) => d.planKey === planKey);
+    // Compare NORMALIZED keys: a tenant pinned to a pre-rename version still finds
+    // its own definition when the key it carries (or the one the legacy TenantPlan
+    // enum maps to) is the renamed twin of the row — e.g. SCALE ↔ BUSINESS.
+    const exactDef = findPlanDefinition(version.definitions, planKey);
     const def =
       exactDef ??
       version.definitions.find((d) => d.planKey === "STARTER") ??
@@ -152,16 +203,46 @@ export class EntitlementsService {
     const skuByCode = new Map(version.addonSkus.map((s) => [s.sku, s]));
 
     // Resolve active add-ons → canonical SKU codes → catalog metadata.
+    // #2700 (SA-559(2)): flags gain forward from the PUBLISHED version's same plan. One extra
+    // query, only when the tenant is pinned to a version that is not itself the published one
+    // (this whole result sits behind the 30 s cache); it also serves the SKU fallback below.
+    const published =
+      tenant.planVersionId && version.status !== "PUBLISHED"
+        ? await this.catalog.getPublishedVersion()
+        : null;
     const activeCodes: string[] = [];
-    const flags = new Set<string>(def.featureFlags);
-    const capacity: Record<string, number> = { SEATS: 0, ROUTES: 0, SCANS: 0, MSGS: 0 };
+    const flags = new Set<string>(effectivePlanFlags(def, version.id, published));
+    const capacity: Record<string, number> = {
+      SEATS: 0,
+      ROUTES: 0,
+      SCANS: 0,
+      MSGS: 0,
+      CUSTOMERS: 0,
+    };
 
+    // An addon SKU introduced in a LATER catalog version than the tenant's
+    // pinned one (e.g. MSRP, first published in v9) has no row in the pinned
+    // catalog — without a fallback, enabling that addon would grant nothing
+    // for every grandfathered tenant, while the addon-keyed UI gates turn on
+    // and each gated write 403s. Pinning protects plan PRICING; it must not
+    // make newer addons un-grantable. Resolved lazily: the published catalog
+    // is only fetched when a pinned catalog actually misses a code.
+    const publishedSkuByCode: Map<string, (typeof version.addonSkus)[number]> =
+      published && published.id !== version.id
+        ? new Map(published.addonSkus.map((s) => [s.sku, s]))
+        : new Map();
     for (const addon of tenant.addons) {
       const code = addonSkuCode(addon);
       if (!code) continue;
       activeCodes.push(code);
-      const meta = skuByCode.get(code);
-      if (!meta) continue;
+      const meta = skuByCode.get(code) ?? publishedSkuByCode.get(code);
+      if (!meta) {
+        this.logger.warn(
+          `tenant ${tenantId}: active addon '${addon.addonKey}' resolves to SKU '${code}' ` +
+            `not present in pinned or published catalog — granting nothing`,
+        );
+        continue;
+      }
       for (const flag of meta.grantsFlags) flags.add(flag);
       if (meta.meteredKey && meta.capacityPerUnit) {
         capacity[meta.meteredKey] += addon.quantity * meta.capacityPerUnit;
@@ -184,8 +265,10 @@ export class EntitlementsService {
         routes: cap(def.routesConcurrent ?? null, "ROUTES"),
         scans: cap(def.scansIncluded ?? null, "SCANS"),
         msgs: cap(def.msgsIncluded ?? null, "MSGS"),
+        customers: cap(def.customersIncluded ?? null, "CUSTOMERS"),
       },
       trialEndsAt: tenant.trialEndsAt,
+      readOnlyReason: tenant.readOnlyReason ?? null,
     };
   }
 

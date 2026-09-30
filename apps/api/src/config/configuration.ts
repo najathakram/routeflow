@@ -7,8 +7,9 @@ import * as crypto from "crypto";
  * a fixed domain-separation label. This removes the secret-reuse blast radius (a
  * disclosure of one secret no longer reveals the other) while requiring no new
  * env var and never crashing boot. Note: changing the derivation invalidates
- * any URLs signed before deploy; those expire within urlExpirySeconds (≤1h) and
- * are re-minted on the next page load.
+ * any URLs signed before deploy at once (their signatures stop verifying); they
+ * are re-minted on the next page load, and product images re-fetch a fresh URL
+ * on their own when one fails to load (#2091).
  */
 function resolveStorageSigningSecret(): string {
   const explicit = process.env.STORAGE_URL_SIGNING_SECRET;
@@ -34,10 +35,21 @@ function resolveStorageSigningSecret(): string {
   return Buffer.from(derived).toString("hex");
 }
 
+/**
+ * A positive whole number from the environment, or `fallback` when the variable is unset, blank
+ * or anything else ("abc", "-5", "1.5", "0"). `parseInt` alone let a typo through as NaN, which
+ * StorageService then signed into every URL as `expires=NaN` — an unverifiable link.
+ */
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim() ?? "";
+  if (!/^\d+$/.test(raw)) return fallback;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
 export interface AppConfig {
   nodeEnv: string;
   port: number;
-  taxRate: number;
   database: {
     url: string;
   };
@@ -73,8 +85,25 @@ export interface AppConfig {
   storage: {
     /** Secret used to HMAC-sign local-disk presigned URLs. Derived from JWT_SECRET via HKDF when not set explicitly (F5-001). */
     urlSigningSecret: string;
-    /** Lifetime in seconds for signed local-disk URLs. Default 1 hour. */
+    /**
+     * Minimum lifetime in seconds of a signed storage URL (local disk and R2), default 1 hour.
+     * A per-mint URL (every key that is not write-once) lives exactly this long; a stable
+     * product-image URL always has at least this much left when it is minted (#2091).
+     */
     urlExpirySeconds: number;
+    /**
+     * Window in seconds that stable product-image URLs are bucketed to, default 12 hours: every
+     * mint of one key inside a window returns the identical URL, so the browser cache hits
+     * (#2091). See StorageService.presignedUrl.
+     */
+    stableUrlWindowSeconds: number;
+  };
+  throttle: {
+    /**
+     * Per-IP ceiling (requests / 60 s) for GET /uploads/*, which is exempt from the global
+     * 100 / 60 s throttle because one catalog page loads more images than that (#2091).
+     */
+    uploadsLimit: number;
   };
   ors: {
     apiKey: string;
@@ -91,16 +120,16 @@ export interface AppConfig {
   stripe: {
     secretKey: string;
     webhookSecret: string;
-    priceStarter: string;
-    priceProfessional: string;
-    priceEnterprise: string;
+    /** Connect platform client id (ca_…) — tenant-account OAuth linking. */
+    connectClientId: string;
+    /** Signing secret of the "events on connected accounts" webhook endpoint. */
+    connectWebhookSecret: string;
   };
 }
 
 export const configuration = (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? "development",
   port: parseInt(process.env.PORT ?? "3000", 10),
-  taxRate: parseFloat(process.env.TAX_RATE ?? "0.1"),
   database: {
     url: process.env.DATABASE_URL ?? "",
   },
@@ -136,7 +165,11 @@ export const configuration = (): AppConfig => ({
   uploadDir: process.env.UPLOAD_DIR ?? "",
   storage: {
     urlSigningSecret: resolveStorageSigningSecret(),
-    urlExpirySeconds: parseInt(process.env.STORAGE_URL_EXPIRY_SECONDS ?? "3600", 10),
+    urlExpirySeconds: positiveIntEnv("STORAGE_URL_EXPIRY_SECONDS", 3600),
+    stableUrlWindowSeconds: positiveIntEnv("STORAGE_URL_STABLE_WINDOW_SECONDS", 43_200),
+  },
+  throttle: {
+    uploadsLimit: positiveIntEnv("UPLOADS_THROTTLE_LIMIT", 1200),
   },
   ors: {
     apiKey: process.env.ORS_API_KEY ?? "",
@@ -153,8 +186,7 @@ export const configuration = (): AppConfig => ({
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY ?? "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
-    priceStarter: process.env.STRIPE_PRICE_STARTER ?? "",
-    priceProfessional: process.env.STRIPE_PRICE_PROFESSIONAL ?? "",
-    priceEnterprise: process.env.STRIPE_PRICE_ENTERPRISE ?? "",
+    connectClientId: process.env.STRIPE_CONNECT_CLIENT_ID ?? "",
+    connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
   },
 });

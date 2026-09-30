@@ -4,6 +4,7 @@ import { io, type Socket } from "socket.io-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "../lib/auth-store";
 import { OP_KEYS, DRIVER_KEYS } from "../lib/auth-keys";
+import { toSecureStoreKey } from "../lib/secure-key";
 
 const SOCKET_URL = (process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:3000").replace(/\/$/, "");
 
@@ -91,7 +92,7 @@ export function useSocket() {
         token = localStorage.getItem(tokenKey);
       } else {
         const { getItemAsync } = await import("expo-secure-store");
-        token = await getItemAsync(tokenKey);
+        token = await getItemAsync(toSecureStoreKey(tokenKey));
       }
 
       dbg(`storage read key=${tokenKey} token=${token ? "[present]" : "[null]"}`);
@@ -171,17 +172,29 @@ export function useSocket() {
         void qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
       });
 
-      socket.on("inventory.low.stock", () => {
-        void qc.invalidateQueries({ queryKey: ["admin", "products"] });
-        void qc.invalidateQueries({ queryKey: ["admin", "dashboard"] });
-      });
-
       socket.on("return.created", () => {
         void qc.invalidateQueries({ queryKey: ["admin", "returns"] });
       });
 
       socket.on("invoice.updated", () => {
+        // The gateway emits into BOTH the operators room and the customer's
+        // own room (customer:<customerId>), but only the operator family was
+        // ever invalidated here — so a buyer's invoice screen (["invoices",
+        // id], useMyInvoice) never learned about a server-side rewrite (e.g.
+        // resyncOrderInvoicesForEdit on an order-item edit) from ANY emit.
         void qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+        void qc.invalidateQueries({ queryKey: ["invoices"] });
+      });
+
+      // A catalog write (create/update/archive/bulk) is stale the moment it
+      // lands on another device — the scan-picker, barcode lookup and admin
+      // product list all read from these two families. Never key off
+      // payload.productId: every list key's second element is a params
+      // OBJECT ([\"products\", query] / [\"admin\",\"products\", params]), so
+      // only the family PREFIX actually reaches those caches.
+      socket.on("product.updated", () => {
+        void qc.invalidateQueries({ queryKey: ["products"] });
+        void qc.invalidateQueries({ queryKey: ["admin", "products"] });
       });
     };
 

@@ -1,0 +1,462 @@
+{
+  "seq": 6,
+  "idempotencyKey": "2026-09-11-crm-gohighlevel-handoff:Verify:1",
+  "phase": {
+    "phase": "Verify",
+    "ran": true,
+    "agents": 12,
+    "rawFindings": 0,
+    "tokens": 50919,
+    "model": "claude-sonnet-5 (location check) + claude-sonnet-5 (refuters, per file; claude-opus-5 for a blocker/major finding on a HIGH-risk file) + claude-fable-5-1 (split-vote tie-break)",
+    "effort": "location check low / refuters high (high on HIGH-risk findings) / tie-break high",
+    "estUsd": 1.27,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 42, "tokens": 732418, "estUsd": 10.75 },
+  "findingsBySeverity": { "blocker": 24, "major": 28, "minor": 14 },
+  "findingSummaries": [],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-12T03:58:27Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/spec.md",
+    "uxSpecPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/ux-spec.md",
+    "testPlanPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/test-plan.md",
+    "designSystemPath": ".claude/pipeline/design-system.md",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm",
+    "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm/.claude/pipeline/2026-09-11-crm-gohighlevel-handoff"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-12T03:58:27Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 4,
+        "tokens": 52653,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.26,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": true,
+        "agents": 7,
+        "rawFindings": 0,
+        "tokens": 98554,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 0.99,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 1,
+        "tokens": 57891,
+        "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+        "effort": "low run / high audit / medium remediation",
+        "estUsd": 1.45,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 0,
+        "tokens": 335612,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 3.36,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": true,
+        "agents": 10,
+        "rawFindings": 63,
+        "tokens": 136789,
+        "model": "claude-haiku-4-5 (gate/regate) + claude-sonnet-5 (build-fix; claude-opus-5 when the manifest has a HIGH-risk file) + claude-opus-5 (lenses)",
+        "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses high",
+        "estUsd": 3.42,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": true,
+        "agents": 12,
+        "rawFindings": 0,
+        "tokens": 50919,
+        "model": "claude-sonnet-5 (location check) + claude-sonnet-5 (refuters, per file; claude-opus-5 for a blocker/major finding on a HIGH-risk file) + claude-fable-5-1 (split-vote tie-break)",
+        "effort": "location check low / refuters high (high on HIGH-risk findings) / tie-break high",
+        "estUsd": 1.27,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      { "file": "(gate-command)", "severity": "major", "phase": "Baseline" },
+      { "file": "(gate-command)", "severity": "major", "phase": "Baseline" },
+      { "file": "(artifact)", "severity": "major", "phase": "Baseline" },
+      { "file": "(artifact)", "severity": "major", "phase": "Baseline" },
+      { "file": "(red-gate)", "severity": "blocker", "phase": "Red gate" },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.module.ts", "severity": "blocker", "phase": "Gate & Review" },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/billing/addon-gate-registry.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-writeback.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm-connection.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-handoff.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/billing/addon-gate-registry.spec.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/crm/crm.controller.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.types.ts", "severity": "major", "phase": "Gate & Review" },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(dashboard)/settings/_components/GoHighLevelSettingsTab.tsx",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      { "file": "apps/api/src/crm/crm.types.ts", "severity": "blocker", "phase": "Gate & Review" },
+      {
+        "file": "apps/api/src/crm/gohighlevel/gohighlevel-poll.service.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": true
+}

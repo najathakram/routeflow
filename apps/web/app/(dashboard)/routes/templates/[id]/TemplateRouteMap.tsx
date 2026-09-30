@@ -13,6 +13,8 @@ import { Home, MapPin, Trash2 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import type { RouteTemplateStop } from "@/lib/api/routes";
 import { useGoogleMapsKey } from "@/hooks/useGoogleMapsKey";
+import { MapErrorBoundary, MapsApiGate } from "@/components/GoogleMapsGate";
+import { DrivingPathLayer } from "@/components/DrivingPathLayer";
 
 // ─── Numbered stop bubble ──────────────────────────────────────────────────────
 
@@ -65,44 +67,94 @@ function DepotMarkerBubble() {
   );
 }
 
-// ─── Polyline between stops (with depot round-trip) ───────────────────────────
+// ─── Driving route between stops (with depot round-trip) ──────────────────────
 
 function PolylineLayer({
   stops,
   depot,
+  precomputedPolyline,
 }: {
   stops: RouteTemplateStop[];
   depot?: { lat: number; lng: number } | null;
+  /** Route.plannedPolyline — when set, DrivingPathLayer decodes and renders it
+   *  directly instead of calling the Routes API, so a stored route never
+   *  re-bills Google per view. */
+  precomputedPolyline?: string | null;
 }) {
-  const map = useMap();
-  const mapsLib = useMapsLibrary("maps");
-  const polylineRef = React.useRef<google.maps.Polyline | null>(null);
-
-  React.useEffect(() => {
-    if (!map || !mapsLib) return;
+  const coords = React.useMemo(() => {
     const stopCoords = stops
       .filter((s) => s.customerAddress?.lat != null && s.customerAddress?.lng != null)
       .sort((a, b) => a.stopNumber - b.stopNumber)
       .map((s) => ({ lat: s.customerAddress!.lat!, lng: s.customerAddress!.lng! }));
 
     // Build path: depot → stops → depot (if depot exists)
-    const coords: Array<{ lat: number; lng: number }> = [];
-    if (depot) coords.push({ lat: depot.lat, lng: depot.lng });
-    coords.push(...stopCoords);
-    if (depot && stopCoords.length > 0) coords.push({ lat: depot.lat, lng: depot.lng });
+    const out: Array<{ lat: number; lng: number }> = [];
+    if (depot) out.push({ lat: depot.lat, lng: depot.lng });
+    out.push(...stopCoords);
+    if (depot && stopCoords.length > 0) out.push({ lat: depot.lat, lng: depot.lng });
+    return out;
+  }, [stops, depot]);
 
-    if (polylineRef.current) polylineRef.current.setMap(null);
-    polylineRef.current = new mapsLib.Polyline({
-      path: coords,
-      strokeColor: "#3b82f6",
-      strokeOpacity: 0.8,
-      strokeWeight: 3,
-      map,
-    });
-    return () => {
-      polylineRef.current?.setMap(null);
-    };
-  }, [map, mapsLib, stops, depot]);
+  if (coords.length < 2) return null;
+
+  return (
+    <DrivingPathLayer
+      waypoints={coords}
+      strokeColor="#3b82f6"
+      strokeOpacity={0.8}
+      precomputedPolyline={precomputedPolyline}
+    />
+  );
+}
+
+// ─── Route variant overlays (Fastest/Shortest/No-tolls comparison) ────────────
+
+export interface VariantOverlay {
+  encodedPolyline: string;
+  color: string;
+  selected: boolean;
+}
+
+/**
+ * Draws one polyline per route variant so the user can compare Fastest/
+ * Shortest/No-tolls on the map before picking one. Replaces the default
+ * `PolylineLayer` entirely when present — a route is either showing its one
+ * chosen/planned path or comparing candidates, never both. The selected
+ * variant gets the full brand treatment; the rest fade to grey so they read
+ * as "other options" rather than competing paths.
+ */
+export function EncodedPolylineLayer({ overlays }: { overlays: VariantOverlay[] }) {
+  const map = useMap();
+  const mapsLib = useMapsLibrary("maps");
+  const geometryLib = useMapsLibrary("geometry");
+
+  React.useEffect(() => {
+    if (!map || !mapsLib || !geometryLib) return;
+
+    const polylines = overlays
+      .map((overlay) => {
+        let path: google.maps.LatLng[];
+        try {
+          path = geometryLib.encoding.decodePath(overlay.encodedPolyline);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn("Variant polyline decode failed, skipping overlay:", err);
+          return null;
+        }
+        if (path.length < 2) return null;
+        return new mapsLib.Polyline({
+          path,
+          geodesic: false,
+          strokeColor: overlay.selected ? overlay.color : "#9ca3af",
+          strokeOpacity: overlay.selected ? 0.9 : 0.35,
+          strokeWeight: overlay.selected ? 5 : 3,
+          map,
+        });
+      })
+      .filter((p): p is google.maps.Polyline => p !== null);
+
+    return () => polylines.forEach((p) => p.setMap(null));
+  }, [map, mapsLib, geometryLib, overlays]);
 
   return null;
 }
@@ -136,6 +188,35 @@ function FitBoundsLayer({
   return null;
 }
 
+// ─── Pan (not fit) to the externally-selected stop ─────────────────────────────
+
+/**
+ * Opt-in companion to `FitBoundsLayer`: `FitBoundsLayer` only ever runs once
+ * (on first geo data), so a later change to `selectedStopId` — e.g. the
+ * mobile deliveries/new sheet's list↔marker sync — needs its own effect to
+ * recenter the map. Gated behind `panToSelectedStop` so existing callers
+ * (routes/templates/[id]/page.tsx) that already manage `selectedStopId` for
+ * highlight-only purposes see no behavior change.
+ */
+function PanToStopLayer({
+  stops,
+  selectedStopId,
+}: {
+  stops: RouteTemplateStop[];
+  selectedStopId?: string | null;
+}) {
+  const map = useMap();
+
+  React.useEffect(() => {
+    if (!map || !selectedStopId) return;
+    const stop = stops.find((s) => s.id === selectedStopId);
+    if (!stop?.customerAddress?.lat || !stop.customerAddress.lng) return;
+    map.panTo({ lat: stop.customerAddress.lat, lng: stop.customerAddress.lng });
+  }, [map, stops, selectedStopId]);
+
+  return null;
+}
+
 // ─── Placeholder when map cannot render ───────────────────────────────────────
 
 function MapPlaceholder({ message }: { message: string }) {
@@ -157,6 +238,20 @@ export interface TemplateRouteMapProps {
   depotLat?: number | null;
   depotLng?: number | null;
   depotAddress?: string | null;
+  /** Route.plannedPolyline — rendered by the default driving-path layer when
+   *  no variant comparison is active, so a stored route costs nothing to view. */
+  plannedPolyline?: string | null;
+  /** Route-variant comparison polylines (Fastest/Shortest/No-tolls). When
+   *  present (non-empty), these replace the default driving-path layer. */
+  variantOverlays?: VariantOverlay[];
+  /** Opt-in: recenter (pan, not fit) on `selectedStopId` whenever it changes —
+   *  the mobile deliveries/new sheet's marker↔list sync. Omit/false preserves
+   *  today's highlight-only behavior for every other caller. */
+  panToSelectedStop?: boolean;
+  /** Opt-in: fires on a click that lands on the map background (not a marker
+   *  — see PanToStopLayer's doc comment). Used by the mobile deliveries/new
+   *  sheet to collapse to "peek" on an empty-map tap. */
+  onMapClick?: () => void;
 }
 
 function MapContent({
@@ -167,6 +262,9 @@ function MapContent({
   depotLat,
   depotLng,
   depotAddress,
+  plannedPolyline,
+  variantOverlays,
+  panToSelectedStop,
 }: TemplateRouteMapProps) {
   const [openInfoId, setOpenInfoId] = React.useState<string | null>(null);
   const [depotInfoOpen, setDepotInfoOpen] = React.useState(false);
@@ -180,7 +278,12 @@ function MapContent({
   return (
     <>
       <FitBoundsLayer stops={geoStops} depot={depot} />
-      <PolylineLayer stops={stops} depot={depot} />
+      {panToSelectedStop && <PanToStopLayer stops={geoStops} selectedStopId={selectedStopId} />}
+      {variantOverlays && variantOverlays.length > 0 ? (
+        <EncodedPolylineLayer overlays={variantOverlays} />
+      ) : (
+        <PolylineLayer stops={stops} depot={depot} precomputedPolyline={plannedPolyline} />
+      )}
 
       {/* Depot marker */}
       {depot && (
@@ -260,6 +363,10 @@ export function TemplateRouteMap({
   depotLat,
   depotLng,
   depotAddress,
+  plannedPolyline,
+  variantOverlays,
+  panToSelectedStop,
+  onMapClick,
 }: TemplateRouteMapProps) {
   const { key: MAPS_KEY, loading: mapsKeyLoading } = useGoogleMapsKey();
   const geoStops = stops.filter((s) => s.customerAddress?.lat != null);
@@ -286,26 +393,38 @@ export function TemplateRouteMap({
     ? { lat: depotLat!, lng: depotLng! }
     : { lat: geoStops[0].customerAddress!.lat!, lng: geoStops[0].customerAddress!.lng! };
 
+  const failedFallback = (
+    <MapPlaceholder message="Google Maps couldn't start — the site's API key was rejected or the Maps script was blocked. Contact your administrator." />
+  );
+
   return (
-    <APIProvider apiKey={MAPS_KEY}>
-      <Map
-        defaultCenter={center}
-        defaultZoom={11}
-        mapId="template-route-map"
-        gestureHandling="greedy"
-        disableDefaultUI={false}
-        style={{ width: "100%", height: "100%" }}
-      >
-        <MapContent
-          stops={stops}
-          selectedStopId={selectedStopId}
-          onSelectStop={onSelectStop}
-          onRemoveStop={onRemoveStop}
-          depotLat={depotLat}
-          depotLng={depotLng}
-          depotAddress={depotAddress}
-        />
-      </Map>
-    </APIProvider>
+    <MapErrorBoundary fallback={failedFallback}>
+      <APIProvider apiKey={MAPS_KEY}>
+        <MapsApiGate fallback={failedFallback}>
+          <Map
+            defaultCenter={center}
+            defaultZoom={11}
+            mapId="template-route-map"
+            gestureHandling="greedy"
+            disableDefaultUI={false}
+            style={{ width: "100%", height: "100%" }}
+            onClick={onMapClick ? () => onMapClick() : undefined}
+          >
+            <MapContent
+              stops={stops}
+              selectedStopId={selectedStopId}
+              onSelectStop={onSelectStop}
+              onRemoveStop={onRemoveStop}
+              panToSelectedStop={panToSelectedStop}
+              depotLat={depotLat}
+              depotLng={depotLng}
+              depotAddress={depotAddress}
+              plannedPolyline={plannedPolyline}
+              variantOverlays={variantOverlays}
+            />
+          </Map>
+        </MapsApiGate>
+      </APIProvider>
+    </MapErrorBoundary>
   );
 }

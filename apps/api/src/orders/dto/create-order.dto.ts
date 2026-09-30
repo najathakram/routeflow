@@ -17,7 +17,9 @@ import {
   ValidateNested,
 } from "class-validator";
 import { Type } from "class-transformer";
+import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { InlineReturnLinesDto } from "../../returns/dto/capture-inline-return.dto";
 
 // BUG-B1-6: bound numeric inputs server-side. The audit submitted a
 // $25,664,510.89 order — all line items totalled cleanly through the API
@@ -37,6 +39,11 @@ export class OrderItemDto {
   @StripHtml()
   name?: string;
   @IsInt() @Min(1) @Max(100_000) qty: number;
+  /**
+   * units_v1: sell by this unit of the product's ladder (Case, Pallet, Piece …). STAFF ONLY, behind
+   * flag.units_v1; `qty` then counts the unit and boxes/pieces must be omitted. Blank = the pack.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) boxes?: number;
   @IsOptional() @IsInt() @Min(0) @Max(100_000) pieces?: number;
   /** One-time discount price override — operator-supplied, not stored in CustomerPrice */
@@ -44,6 +51,8 @@ export class OrderItemDto {
   @IsOptional() @IsString() @MaxLength(2000) notes?: string;
   @IsOptional() @IsString() @MaxLength(2000) itemNote?: string;
   @IsOptional() @IsString() @MaxLength(200) substitution?: string;
+  /** #2696(c): why a staff price moves off this customer's special (tier) price — required then. */
+  @IsOptional() @IsString() @MaxLength(200) overrideReason?: string;
 }
 
 export class AppliedCreditNoteDto {
@@ -76,6 +85,12 @@ export class CreateOrderDto {
    * late. Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
    */
   @IsOptional() @IsDateString() orderDate?: string;
+  /**
+   * Sales agents & commissions: per-order commission-rate override. `0` IS a valid
+   * value ("exempt"); omit for no override (customer/agent default rates apply).
+   * Staff-only: the service rejects it from any non-OPERATOR/TENANT_ADMIN caller.
+   */
+  @IsOptional() @IsNumber() @Min(0) @Max(100) commissionRatePct?: number;
   @IsOptional() @IsString() @MaxLength(64) routeRunId?: string;
   @IsOptional() @IsString() @MaxLength(64) routeRunStopId?: string;
   @IsOptional() @IsBoolean() immediateDelivery?: boolean;
@@ -94,6 +109,14 @@ export class CreateOrderDto {
    * `{ code: 'MERGE_CHOICE_REQUIRED', activeOrder: {...} }` so the UI can prompt.
    */
   @IsOptional() @IsEnum(["merge", "separate"]) mergeChoice?: "merge" | "separate";
+  /**
+   * Ad-hoc trips + fulfillment mode: how this order is delivered. Omit to fall
+   * back to the customer's own default (`create()` resolves
+   * `dto.fulfillPath ?? customer.fulfillPath ?? ROUTE`).
+   */
+  @IsOptional()
+  @IsEnum(FulfillPath)
+  fulfillPath?: FulfillPath;
   /** Credit notes to apply to this order's invoice(s). undefined = leave untouched;
    *  [] = remove all; otherwise the FULL desired set (server diffs). */
   @IsOptional()
@@ -102,4 +125,14 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
+
+  /**
+   * #2094 (SA-194): a return taken inside this order's own transaction. Customer and order are
+   * DERIVED from the document, never supplied; `returnKey` is the per-attempt nonce (replay -> one
+   * credit). Staff and driver only: a buyer carrying it is refused before any read (OrdersService).
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InlineReturnLinesDto)
+  inlineReturn?: InlineReturnLinesDto;
 }

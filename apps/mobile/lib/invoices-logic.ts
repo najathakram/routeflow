@@ -9,6 +9,17 @@ export function canWriteOff(status: string): boolean {
 }
 
 /**
+ * B4: whether "Record payment" can be offered. The server only rejects VOID,
+ * so DRAFT (and WRITTEN_OFF) used to pass a bare `!isPaid && !isVoid` gate
+ * here — the POST succeeds, but `recomputeStatus` treats DRAFT as terminal,
+ * so a fully-paid invoice stays DRAFT and drops out of AR/aging. Mirrors
+ * web's allow-list exactly (invoices/[id]/page.tsx canRecordPayment gate).
+ */
+export function canRecordPayment(status: string): boolean {
+  return status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
+}
+
+/**
  * Whether a recorded payment can be edited/voided: not an Advance/Credit-Note
  * source draw (the server rejects hand-editing those), and not on a terminal
  * payment or invoice state.
@@ -81,4 +92,14 @@ export function isPendingOrderMirror(inv: {
   if (!inv.orderId) return false;
   if (inv.deliveryBatchId != null) return false;
   return inv.orderStatus !== "DELIVERED" && inv.orderStatus !== "PARTIALLY_DELIVERED";
+}
+
+/**
+ * Whether Send can be offered right now. DRAFT alone is not enough: a pending
+ * order mirror is locked server-side (`assertOrderInvoiceUnlocked`), so sending
+ * one is a guaranteed 400 — the order has to be delivered first, and then the
+ * invoice follows. The Edit tile already gated on this; Send did not.
+ */
+export function canSendInvoiceNow(status: string, pendingMirror: boolean): boolean {
+  return status === "DRAFT" && !pendingMirror;
 }

@@ -1,0 +1,148 @@
+{
+  "mode": "bugfix",
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-08-numbering-siblings/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/pipeline/2026-09-08-numbering-siblings/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-08T23:30:00Z",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry",
+  "context": "Numbering siblings Group A: B267 credit notes (HIGH, tenancy), B268 import fallback (live invoices overwritten), B269 payments (global unique paymentNumber, Stripe settlement stall — HIGH), B277 estimate P2002 pin. Design of record = cause-ruling.md section 2; binding facts = cause-refutation.md (sections 1.3, 2.1, 4, 5, 8). NO schema change (Group B enum migration is a separate run). Money + tenancy: tenant-scoped series, formats byte-identical (CN-<year>-####, PAY-<tenantShort>-####, INV-<year>-####), null tenant throws (never the singleton counter), standalone reservations hold no other lock, nothing nests a $transaction, credit notes validate before reserving. Option-B bookkeeping: no map/lessons/ledger edits. Never run Playwright. DB lane via scripts/local-env.mjs against the compose Postgres.",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '[.](ts|tsx|json)$' | grep -v '^[.]claude/' | xargs -r npx prettier --write",
+  "radiusFiles": [
+    "apps/api/src/import/numbering.service.ts",
+    "apps/api/src/import/numbering.module.ts",
+    "apps/api/src/credit-notes/credit-notes.service.ts",
+    "apps/api/src/credit-notes/credit-notes.module.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/payment-requests/payment-requests.service.ts",
+    "apps/api/src/import/import.service.ts",
+    "apps/api/src/estimates/estimates.service.ts",
+    "apps/api/prisma/schema/finance.prisma"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "\\?\\? \"singleton\"",
+      "note": "null-tenant sentinel counter key — every remaining hit is a defect; FILE any outside this group"
+    },
+    {
+      "regex": "orderBy:\\s*\\{\\s*\\w*[Nn]umber:\\s*\"desc\"\\s*\\}",
+      "note": "max+1 scan over a TEXT number column; Group B rows (bills/PO/statements) are already filed — FILE new ones only"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-DB",
+      "title": "DB-lane repros: credit notes, payments, import fallback",
+      "files": [
+        "apps/api/src/credit-notes/credit-note-numbering.db.spec.ts",
+        "apps/api/src/invoices/payment-numbering.db.spec.ts",
+        "apps/api/src/import/import-numbering.db.spec.ts"
+      ],
+      "brief": "bug-test-plan T1 (REG-B267 a-e), T2 (REG-B269 a-c + pin d), T3 (REG-B268 a + pin b); own tenants + cleanup; implement nothing",
+      "effort": "high"
+    },
+    {
+      "id": "TP-UNIT",
+      "title": "unit pins",
+      "files": [
+        "apps/api/src/invoices/invoices.service.spec.ts",
+        "apps/api/src/credit-notes/credit-notes.service.spec.ts",
+        "apps/api/src/estimates/estimates.service.spec.ts"
+      ],
+      "brief": "bug-test-plan T4 pins + harness notes (23 provider sites per cause-refutation.md section 8); implement nothing",
+      "effort": "high"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api -- src/credit-notes/credit-note-numbering.db.spec.ts src/invoices/payment-numbering.db.spec.ts src/import/import-numbering.db.spec.ts -t REG-B26\"",
+      "cd apps/api && npx jest src/invoices/invoices.service.spec.ts src/credit-notes/credit-notes.service.spec.ts --runInBand -t \"REG-B26\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "title": "NumberingService learns CREDIT_NOTE (literal branch)",
+      "files": ["apps/api/src/import/numbering.service.ts"],
+      "brief": "build-plan P1",
+      "effort": "high"
+    },
+    {
+      "id": "P2",
+      "title": "credit notes: validate-before-reserve, standalone reservation, 409",
+      "files": [
+        "apps/api/src/credit-notes/credit-notes.service.ts",
+        "apps/api/src/credit-notes/credit-notes.module.ts"
+      ],
+      "brief": "build-plan P2",
+      "effort": "high",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P3",
+      "title": "payments: nextPaymentNumber(tenantId) standalone counter, tenant segment on site 3",
+      "files": ["apps/api/src/invoices/invoices.service.ts"],
+      "brief": "build-plan P3",
+      "effort": "high"
+    },
+    {
+      "id": "P4",
+      "title": "import fallback rows reserve through the service",
+      "files": ["apps/api/src/import/import.service.ts"],
+      "brief": "build-plan P4",
+      "effort": "high",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P5",
+      "title": "estimate P2002 pin + module wiring + provider sites",
+      "files": [
+        "apps/api/src/estimates/estimates.service.ts",
+        "apps/api/src/import/numbering.module.ts"
+      ],
+      "brief": "build-plan P5",
+      "effort": "medium",
+      "dependsOn": ["P1"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/import src/invoices src/credit-notes src/estimates src/payment-requests --runInBand"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "node scripts/local-env.mjs --db --db-specs -- \"npm run test:db -w apps/api\"",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/import/numbering.service.ts",
+        "behavior": "CREDIT_NOTE seed and wall",
+        "test": "REG-B267-B REG-B267-C",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/credit-notes/credit-notes.service.ts",
+        "behavior": "tenant-scoped standalone reservation",
+        "test": "REG-B267-A",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/invoices/invoices.service.ts",
+        "behavior": "payment number tenant segment + standalone counter",
+        "test": "REG-B269-A REG-B269-B",
+        "revertFix": true
+      },
+      {
+        "file": "apps/api/src/import/import.service.ts",
+        "behavior": "fallback rows reserve; live invoices untouched",
+        "test": "REG-B268-A",
+        "revertFix": true
+      }
+    ]
+  }
+}

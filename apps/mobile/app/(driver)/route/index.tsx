@@ -15,6 +15,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import * as Location from "expo-location";
+import * as Linking from "expo-linking";
 import { ios } from "@routeflow/ui/tokens";
 import { InlineStats, NavBar, Pill, ProgressTrack, StopCard } from "@routeflow/ui/mobile/ios";
 import {
@@ -26,10 +27,13 @@ import {
   type RouteRunStop,
 } from "../../../lib/api/routes";
 import { openRouteInMaps } from "../../../components/openInMaps";
+import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useAuthStore } from "../../../lib/auth-store";
 import { startLocationTracking, stopLocationTracking } from "../../../lib/location-tracker";
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
-import type { CollectionEntry } from "../../../lib/run-settlement";
+import { shouldForceSettlement, type CollectionEntry } from "../../../lib/run-settlement";
+import { sumStopOrders } from "../../../lib/run-money";
+import { buildGoogleMapsLegs, type GmapsPoint } from "../../../lib/gmaps-export";
 
 /**
  * Best-effort foreground GPS read. Returns null if perms denied / unavailable —
@@ -59,6 +63,56 @@ async function readDriverLocation(): Promise<{ lat: number; lng: number } | null
 async function openRouteFromHere(stops: RouteRunStop[]): Promise<void> {
   const loc = await readDriverLocation();
   openRouteInMaps(stops, loc ? { originLat: loc.lat, originLng: loc.lng } : {});
+}
+
+/**
+ * Route-planning fields (depot/end) that route-planning-options (WP1-WP3)
+ * adds to the Route model. The mobile `RouteRun.route` type doesn't declare
+ * them yet — read defensively so this screen degrades gracefully whether or
+ * not a given run payload carries them.
+ */
+type RunRouteWithPlanning = NonNullable<RouteRun["route"]> & {
+  depotLat?: number | null;
+  depotLng?: number | null;
+  endLat?: number | null;
+  endLng?: number | null;
+  endKind?: string | null;
+};
+
+/**
+ * Ordered [depot, ...stops, end?] point list for the "Open in Google Maps"
+ * export: the route's start point, every stop with captured coordinates in
+ * stop-number order, then the route's end point when the run payload carries
+ * one (endKind present and not "NONE"). A point missing coordinates is
+ * skipped rather than breaking the sequence.
+ */
+function buildRunMapPoints(run: RouteRun): GmapsPoint[] {
+  const route = run.route as RunRouteWithPlanning | undefined;
+  const points: GmapsPoint[] = [];
+
+  if (typeof route?.depotLat === "number" && typeof route?.depotLng === "number") {
+    points.push({ lat: route.depotLat, lng: route.depotLng });
+  }
+
+  const sortedStops = [...(run.stops ?? [])].sort((a, b) => a.stopNumber - b.stopNumber);
+  for (const stop of sortedStops) {
+    const lat = stop.customerAddress?.lat;
+    const lng = stop.customerAddress?.lng;
+    if (typeof lat === "number" && typeof lng === "number") {
+      points.push({ lat, lng });
+    }
+  }
+
+  if (
+    route?.endKind &&
+    route.endKind !== "NONE" &&
+    typeof route.endLat === "number" &&
+    typeof route.endLng === "number"
+  ) {
+    points.push({ lat: route.endLat, lng: route.endLng });
+  }
+
+  return points;
 }
 
 // Stable reference for "no collections recorded for this run" — same reason
@@ -117,12 +171,10 @@ function StartOfDay({ run }: { run: RouteRun }) {
   const greetingName = firstName.charAt(0).toUpperCase() + firstName.slice(1);
 
   const stopCount = run.stops?.length ?? 0;
-  const totalValue = (run.stops ?? []).reduce((sum, stop) => {
-    const orderTotal = (stop.orders ?? []).reduce((t, o) => {
-      return t + (o.lineItems ?? []).reduce((s, li) => s + li.qty * li.unitPrice, 0);
-    }, 0);
-    return sum + orderTotal;
-  }, 0);
+  // REG-B49 (spec R2): box-aware line money, never qty * unitPrice — a boxed
+  // line's `unitPrice` is the BOX price, so multiplying it by the piece-count
+  // `qty` over-charges by `unitsPerBox`.
+  const totalValue = (run.stops ?? []).reduce((sum, stop) => sum + sumStopOrders(stop), 0);
   // NEW-rweb-7: scheduledDate is a UTC ISO string whose date component is the
   // intended calendar date. Parsing it directly with `new Date()` interprets
   // midnight UTC as the previous evening in negative-offset timezones, making
@@ -234,7 +286,25 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
   const optimize = useOptimizeRouteRun();
   const updateStatus = useUpdateRunStatus();
   const collections = useRunSettlementStore((s) => s.collectionsByRun[run.id] ?? EMPTY_COLLECTIONS);
-  const hasCashToReconcile = collections.some((c) => c.method === "CASH" || c.method === "CHECK");
+  // REG-B152 (spec R8): server-truth first (run.collectedPayments +
+  // settlementNote), OR'd with this device's own signal for the query-
+  // staleness window right after a collection — see shouldForceSettlement.
+  const hasCashToReconcile = shouldForceSettlement(
+    run,
+    collections.some((c) => c.method === "CASH" || c.method === "CHECK"),
+  );
+
+  const gmapsLegs = useMemo(() => buildGoogleMapsLegs(buildRunMapPoints(run)), [run]);
+  const [gmapsLegsSheetOpen, setGmapsLegsSheetOpen] = useState(false);
+
+  const onOpenInGoogleMaps = () => {
+    if (gmapsLegs.length === 0) return;
+    if (gmapsLegs.length === 1) {
+      void Linking.openURL(gmapsLegs[0]!.url);
+      return;
+    }
+    setGmapsLegsSheetOpen(true);
+  };
 
   const onOptimizeFromHere = async () => {
     const loc = await readDriverLocation();
@@ -404,6 +474,12 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Stops</Text>
+          {gmapsLegs.length > 0 ? (
+            <Pressable style={styles.gmapsRow} onPress={onOpenInGoogleMaps}>
+              <Ionicons name="navigate-outline" size={14} color={ios.brand} />
+              <Text style={styles.gmapsRowText}>Open in Google Maps</Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <View style={{ paddingHorizontal: 16, gap: 8, paddingBottom: 24 }}>
@@ -421,6 +497,17 @@ function TodaysRoute({ run, onOpenStop }: { run: RouteRun; onOpenStop: (id: stri
           ))}
         </View>
       </ScrollView>
+
+      <OptionPickerSheet
+        visible={gmapsLegsSheetOpen}
+        title="Open in Google Maps"
+        options={gmapsLegs.map((leg) => ({ id: leg.url, label: leg.label }))}
+        onClose={() => setGmapsLegsSheetOpen(false)}
+        onSelect={(opt) => {
+          setGmapsLegsSheetOpen(false);
+          void Linking.openURL(opt.id);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -607,5 +694,16 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_700Bold",
     color: ios.label,
     letterSpacing: -0.3,
+  },
+  gmapsRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  gmapsRowText: {
+    fontSize: 13,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
   },
 });

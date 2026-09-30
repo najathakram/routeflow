@@ -5,7 +5,7 @@
  * the row and pays another at the bottom.
  */
 import { boxedLineSummary } from "../lib/boxed-line-summary";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 describe("boxedLineSummary", () => {
   it("formats cases + loose with the prorated subtotal", () => {

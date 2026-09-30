@@ -44,6 +44,7 @@ export default function StopPhotoScreen() {
           onAdd={(uri) => setLocal((p) => [...p, uri])}
           onRemove={(uri) => setLocal((p) => p.filter((u) => u !== uri))}
           maxPhotos={3}
+          output="data-url"
         />
       </View>
       <View style={{ flex: 1 }} />

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
@@ -15,6 +16,7 @@ import { EmailService } from "../email/email.service";
 import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { escapeHtml } from "../common/html-escape";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -24,6 +26,8 @@ export interface DeviceInfo {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
@@ -58,7 +62,6 @@ export class AuthService {
     }
 
     if (!user || user.deletedAt !== null) return null;
-    if (user.status !== "ACTIVE") return null;
     // Account lockout: a locked account fails WITHOUT running bcrypt (no
     // timing oracle, no counter churn) and with the same null as any bad
     // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
@@ -71,6 +74,31 @@ export class AuthService {
       await this.recordFailedLogin(user.id, user.failedLoginAttempts, user.lockedUntil);
       return null;
     }
+    // Status is checked AFTER the password is verified, not before (it used to
+    // run first) — this closes a timing oracle: checking status first meant
+    // every non-ACTIVE username short-circuited before bcrypt ran, so response
+    // latency alone told an attacker which usernames exist. Running bcrypt
+    // unconditionally makes every non-ACTIVE case take the same time as a
+    // wrong password (B213). Only reachable with the CORRECT password, so
+    // nothing here tells a stranger an account exists.
+    //
+    // Deliberately generic for EVERY non-ACTIVE status, including INACTIVE:
+    // an earlier version of this fix threw a distinguishable EMAIL_NOT_VERIFIED
+    // for INACTIVE specifically, on the theory that INACTIVE means "self-signup
+    // admin pending email verification" (TenantsService.register). That's not
+    // true in general — INACTIVE is the SAME status an admin sets via
+    // UsersService.changeStatus (apps/web settings page) to deactivate ANY
+    // staff member, and the same status BillingCronService's seat-cap
+    // enforcement writes on a plan downgrade. Surfacing EMAIL_NOT_VERIFIED (and
+    // a "Resend verification email" affordance) to a deactivated staff member
+    // handed them a path back to ACTIVE via TenantsService.resendVerification +
+    // verifyEmailAndLogin below — a self-reactivation hole caught in review.
+    // UserStatus (prisma/schema/tenancy.prisma) has no column distinguishing
+    // "never verified" from "deliberately deactivated," so this cannot be
+    // gated safely without a schema discriminator (e.g. a nullable
+    // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
+    // proposed as a follow-up, not built here.
+    if (user.status !== "ACTIVE") return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
         where: { id: user.id },
@@ -79,6 +107,20 @@ export class AuthService {
     }
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  /**
+   * #2159 S1: stamp `User.lastLoginAt` on every interactive session mint (password, Google,
+   * email-verification, set/change password) — the onboarding "admin / drivers have signed in"
+   * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
+   * mints its own tokens elsewhere and deliberately does not come through here.
+   */
+  private async touchLastLogin(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
   }
 
   /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
@@ -115,6 +157,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
+    await this.touchLastLogin(user.id);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -184,10 +227,13 @@ export class AuthService {
             to: (user as any).email as string,
             subject: "New login detected on your RouteFlow account",
             html: `<p>A new login was detected on your RouteFlow account.</p>
-                   <p><strong>Device:</strong> ${deviceName}</p>
-                   <p><strong>IP address:</strong> ${deviceInfo.ipAddress ?? "unknown"}</p>
-                   <p><strong>Time:</strong> ${loginTime}</p>
+                   <p><strong>Device:</strong> ${escapeHtml(deviceName)}</p>
+                   <p><strong>IP address:</strong> ${escapeHtml(deviceInfo.ipAddress ?? "unknown")}</p>
+                   <p><strong>Time:</strong> ${escapeHtml(loginTime)}</p>
                    <p>If this wasn't you, please contact support immediately and change your password.</p>`,
+            // email-connect-google PR-3: a security notification must never leave from a
+            // tenant's own connected mailbox/SMTP — platform sender only.
+            senderClass: "platform",
           })
           .catch(() => {});
       }
@@ -241,11 +287,11 @@ export class AuthService {
       throw new UnauthorizedException("Refresh token revoked or expired");
     }
 
-    // Rotate — delete old, issue new pair (deleteMany avoids P2025 on race)
-    await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
-
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
     if (!user || user.status !== "ACTIVE" || user.deletedAt) {
+      // B155: the old delete-then-check ordering consumed the token here too —
+      // keep that, or a suspended user's row survives in listSessions.
+      await this.prisma.refreshToken.deleteMany({ where: { tokenHash } });
       throw new UnauthorizedException("Account unavailable");
     }
 
@@ -281,18 +327,52 @@ export class AuthService {
     });
 
     const refreshToken = this.jwtService.sign(
-      { sub: user.id, type: "staff" }, // F5-003: realm discriminator (rotated token)
+      // F5-003: realm discriminator (rotated token).
+      // B155: `jti` is what makes each rotated token UNIQUE. Without it the payload is
+      // only {sub, type} plus jsonwebtoken's iat/exp at one-second resolution, so two
+      // sessions of the SAME user rotating inside one second mint byte-identical tokens
+      // and therefore the same sha256 `tokenHash` — a `@unique` column. The old code
+      // wrote it through `upsert`, whose update branch silently absorbed the duplicate
+      // (merging the two sessions); the compare-and-swap below would instead raise P2002
+      // and 500 the refresh, which every client treats as a dead session.
+      { sub: user.id, type: "staff", jti: crypto.randomUUID() },
       { secret: jwtConfig.refreshSecret, expiresIn: jwtConfig.refreshExpiresIn as any },
     );
 
-    // Preserve device info from old token if not provided
-    const effectiveDeviceInfo: DeviceInfo = deviceInfo ?? {
-      userAgent: stored.userAgent ?? undefined,
-      ipAddress: stored.ipAddress ?? undefined,
-      deviceName: stored.deviceName ?? undefined,
-    };
+    // B155: rotate IN PLACE. The old code deleted the row and upserted a NEW one
+    // (a new id + createdAt every ~15 min), so Active Sessions showed the last
+    // rotation as "Signed in" and Revoke-by-listed-id 403'd after any rotation.
+    // Compare-and-swap on { id, oldHash }: the update IS the invalidation of the
+    // old token. `id`/`createdAt`/`userId` are never written.
+    const now = new Date();
+    const newTokenHash = this.hashToken(refreshToken);
+    const newExpiresAt = new Date(this.jwtService.decode(refreshToken).exp * 1000);
+    const { count } = await this.prisma.refreshToken.updateMany({
+      where: { id: stored.id, tokenHash: stored.tokenHash },
+      data: {
+        tokenHash: newTokenHash,
+        expiresAt: newExpiresAt,
+        lastUsedAt: now,
+        // Only overwrite device columns when the caller supplied them (mirrors the
+        // old upsert's `update` branch); `undefined` leaves a column untouched.
+        userAgent: deviceInfo?.userAgent,
+        ipAddress: deviceInfo?.ipAddress,
+        deviceName: deviceInfo?.deviceName,
+      },
+    });
 
-    await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo);
+    if (count === 0) {
+      // Lost a concurrent-rotation race: another refresh of the same token already
+      // swapped the hash. Preserve the old tolerance (the deleteMany comment's
+      // "avoids P2025 on race") — give the loser a fresh row so BOTH refreshes
+      // succeed exactly as before.
+      const effectiveDeviceInfo: DeviceInfo = deviceInfo ?? {
+        userAgent: stored.userAgent ?? undefined,
+        ipAddress: stored.ipAddress ?? undefined,
+        deviceName: stored.deviceName ?? undefined,
+      };
+      await this.storeRefreshToken(user.id, refreshToken, effectiveDeviceInfo);
+    }
 
     return {
       accessToken,
@@ -380,7 +460,18 @@ export class AuthService {
       throw new BadRequestException("Account not found.");
     }
 
-    // Already verified — still issue tokens so clicking the link twice works smoothly
+    // Already verified — still issue tokens so clicking the link twice works smoothly.
+    // X2 fix: only INACTIVE (the legitimate self-signup-pending-verification
+    // state) may transition to ACTIVE here. This token is a 24h-lived JWT
+    // signed at signup time — if an admin SUSPENDS the account within that
+    // window (e.g. for abuse, before the owner ever verified), the still-valid
+    // link must not silently un-suspend it. Any other non-ACTIVE status is a
+    // deliberate administrative decision this token was never meant to override.
+    if (user.status !== "ACTIVE" && user.status !== "INACTIVE") {
+      throw new BadRequestException(
+        "This account is not available. Contact support if you believe this is an error.",
+      );
+    }
     const activeUser =
       user.status === "ACTIVE"
         ? user
@@ -431,16 +522,40 @@ export class AuthService {
     const base = surface === "web" ? urls.web : urls.mobileWeb;
     const resetUrl = `${base}/reset-password?token=${rawToken}`;
 
+    // B212-class fix: this used to be fire-and-forget with the result
+    // discarded (`.catch(() => {})`) — a real delivery failure had zero trace
+    // anywhere but "user says they never got the email". Still fire-and-forget
+    // (NOT awaited): the response text is the SAME fixed, enumeration-safe
+    // message regardless of delivery outcome, and awaiting the send here would
+    // make a registered address cost an extra SMTP/Resend round-trip that an
+    // unknown address never pays for — a timing oracle on the one endpoint
+    // whose whole contract is enumeration safety (review finding on PR #778).
+    // The attempt is logged, just never blocks the response.
     this.emailService
       .send({
         to: email,
         subject: "Reset your RouteFlow password",
         html: `<p>Hi,</p>
 <p>We received a request to reset the password for your RouteFlow account.</p>
-<p><a href="${resetUrl}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
+<p><a href="${escapeHtml(resetUrl)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;">Reset password</a></p>
 <p>This link expires in <strong>15 minutes</strong>. If you didn't request this, you can safely ignore this email — your password will not change.</p>`,
+        // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+        senderClass: "platform",
       })
-      .catch(() => {});
+      .then((sendResult) => {
+        if (!sendResult.delivered) {
+          this.logger.error(
+            `Password reset email NOT delivered for user ${user.id} (${email}) — ` +
+              `transport=${sendResult.transport} ` +
+              `error=${sendResult.error ?? sendResult.smtpFallbackReason ?? "unknown"}.`,
+          );
+        }
+      })
+      .catch((err: Error) => {
+        this.logger.error(
+          `Failed to send password reset email for user ${user.id} (${email}): ${err.message}`,
+        );
+      });
 
     return MSG;
   }
@@ -502,6 +617,13 @@ export class AuthService {
       data: { password: newHash, forcePasswordChange: false },
     });
 
+    // N2 review fix: a 72h staff-invite/admin-reset set-password link must not
+    // outlive the user changing their own password through a different path.
+    await this.prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
     const tokens = await this.mintSessionForUser(updated);
 
     return {
@@ -532,6 +654,13 @@ export class AuthService {
       data: { password: newHash, forcePasswordChange: false },
     });
 
+    // N2 review fix: same invalidation as changePassword — a 72h staff-invite/
+    // admin-reset set-password link must not outlive this mutation either.
+    await this.prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
     const tokens = await this.mintSessionForUser(updated, deviceInfo);
 
     if (user.email) {
@@ -541,9 +670,11 @@ export class AuthService {
           to: user.email,
           subject: "A password was set on your RouteFlow account",
           html: `<p>A password was just set on your RouteFlow account, which previously signed in with Google only.</p>
-                 <p><strong>Time:</strong> ${new Date().toUTCString()}</p>
-                 <p><strong>IP address:</strong> ${deviceInfo?.ipAddress ?? "unknown"}</p>
+                 <p><strong>Time:</strong> ${escapeHtml(new Date().toUTCString())}</p>
+                 <p><strong>IP address:</strong> ${escapeHtml(deviceInfo?.ipAddress ?? "unknown")}</p>
                  <p>You can now sign in with your username and this password as well as with Google. If this wasn't you, reset your password immediately and contact support.</p>`,
+          // email-connect-google PR-3: platform sender only — never a tenant mailbox/SMTP.
+          senderClass: "platform",
         })
         .catch(() => {});
     }
@@ -562,6 +693,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    await this.touchLastLogin(user.id);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 

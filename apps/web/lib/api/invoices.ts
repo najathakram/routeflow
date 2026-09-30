@@ -1,6 +1,22 @@
+import type { InvoiceItemSystemKind } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
+import type { AnyPaymentMethod, SelectablePaymentMethod } from "../payment-methods";
+import type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreateRecurringInvoiceDto,
+  InvoiceKpiSummary,
+  PaymentListParams,
+  PaymentListResponse,
+  PriceType,
+  RecurringInvoice,
+  SendInvoiceEmailResult,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+  UpdateInvoiceItem,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +30,35 @@ export type InvoiceStatus =
   | "OVERDUE"
   | "WRITTEN_OFF";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
+// `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
+// declared identically here AND in `orders.ts` — collapsed to one import).
+//
+// X1 note on the payment DTO below: its `TMethod` stays generic
+// (defaults to plain `string`) in `packages/types/api/finance.ts`, on
+// purpose, so each app can plug in its own hand-curated "enterable" method
+// union. Do NOT bind that parameter with a same-named local alias in this
+// file (i.e. a re-declaration of the identifier as a narrowed alias) — the
+// T1 sweep's "no local re-declaration in lib/api" guards (the shared-dto
+// inventory spec and the shared-dto-rewrite codemod's `--check`) read this
+// file's raw text and can't tell a narrowing alias apart from a forked
+// duplicate. Bind the narrow union at each USE site instead — see
+// `useRecordPaymentStandalone` below, which applies `<SelectablePaymentMethod>`
+// where it types the mutation payload.
+export type {
+  CreateInvoiceItem,
+  CreatePartialInvoiceDto,
+  CreatePartialInvoiceItem,
+  CreateRecurringInvoiceDto,
+  PaymentListParams,
+  PaymentListResponse,
+  PriceType,
+  RecurringInvoice,
+  RecurringInvoiceItem,
+  SendInvoiceEmailResult,
+  SetCheckStatusDto,
+  StandalonePaymentDto,
+  UpdateInvoiceItem,
+} from "@routeflow/types";
 
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
 export type CheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
@@ -24,6 +68,8 @@ export interface InvoiceItem {
   productId?: string;
   product?: { id: string; name: string; unit?: string; unitsPerBox?: number | null };
   description: string;
+  /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+  systemKind?: InvoiceItemSystemKind | null;
   qty: number;
   unitPrice: number;
   discount?: number;
@@ -38,18 +84,31 @@ export interface InvoiceItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Recompute this line with THIS, never the live product. */
   unitsPerBox?: number | null;
+  /** units_v1: the non-pack unit this line was sold by ("Case"); null/absent = the pack. When set,
+   *  `boxes` counts THAT unit (not boxes) and `unitsPerBox` is the unit's pieces. */
+  unitLabel?: string | null;
+  /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
+   *  boxed line). MUST be round-tripped by the edit form — the PATCH items path
+   *  replaces every line, and dropping it re-prices the line to full. */
+  promoFreeUnits?: number | null;
   /** Per-line note carried from the order line (buyer-visible; prints on the PDF). */
   notes?: string | null;
   /** Provenance back to the source order line (null for manual/freeform lines). */
   orderItemId?: string | null;
   taxable?: boolean;
   total?: number;
+  /**
+   * Suggested retail price snapshotted at line-creation time (per PIECE, even
+   * on a boxed line) — never re-read from the live product, so an issued
+   * invoice's MSRP never changes. null/absent = render nothing.
+   */
+  msrp?: number | null;
 }
 
 export interface InvoicePayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  method: AnyPaymentMethod;
   status?: "DRAFT" | "PAID" | "VOID";
   reference?: string;
   notes?: string;
@@ -98,6 +157,21 @@ export interface Invoice {
   referenceNumber?: string;
   subject?: string;
   terms?: string;
+  /**
+   * Structured "Net 30"-style label, distinct from `terms` (the long-form
+   * Terms & Conditions text) — always agrees with `dueDate` on every invoice
+   * this label was set on.
+   */
+  paymentTermsLabel?: string | null;
+  /** Deposit schedule (Tier 1, deliberately minimal): percent of `total` due by
+   *  `depositDueDate`. `depositAmount`/`depositOverdue` are server-computed at
+   *  read time, never stored. */
+  depositPercent?: number | null;
+  depositDueDate?: string | null;
+  depositAmount?: number | null;
+  depositOverdue?: boolean;
+  /** Tenant display preference (rides the payload so CUSTOMER viewers get it too). */
+  hideOriginalPrice?: boolean;
   pdfUrl?: string;
   writeOffReason?: string;
   writtenOffAt?: string;
@@ -111,8 +185,15 @@ export interface Invoice {
   payments?: InvoicePayment[];
   /** Server-computed balance due — 0 for PAID/VOID/WRITTEN_OFF regardless of payment records */
   balanceDue?: number;
-  /** Server-computed total amount paid across all InvoicePayment records */
+  /** Server-computed CASH-ONLY amount paid (B421) — excludes CREDIT_NOTE/ADVANCE
+   *  applications, which are surfaced separately below. */
   paidAmount?: number;
+  /** Confirmed credit-note applications on this invoice (B421) — reduces
+   *  balanceDue but is never cash the customer paid. 0/absent renders nothing. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications on this invoice (B421) — same
+   *  balance-reducing, non-cash treatment as creditApplied. */
+  advanceApplied?: number;
   /** Carrier shipment tracking (when goods ship via a carrier, not our own route). */
   shippingCarrier?: string | null;
   shippingTrackingNumber?: string | null;
@@ -142,15 +223,31 @@ export function useInvoices(
   params?: {
     customerId?: string;
     status?: string;
+    /**
+     * Multi-status filter — sent instead of `status` (never both) to compose a
+     * status SET, e.g. the "unpaid" statuses (SENT/VIEWED/PARTIAL/OVERDUE) the
+     * due-soon chips apply when no single status tab is explicitly picked.
+     * Mirrors the API's pre-existing `statuses` (`ListInvoicesDto`) IN-clause.
+     */
+    statuses?: string[];
     search?: string;
     dateFrom?: string;
     dateTo?: string;
+    /** Due-date window (YYYY-MM-DD, inclusive) — the invoices-page due-soon chips. */
+    dueFrom?: string;
+    dueTo?: string;
     sortBy?: string;
     sortOrder?: "asc" | "desc";
     page?: number;
     limit?: number;
     /** When true, return ONLY invoices that have a tracking number (shipments list). */
     shipped?: boolean;
+    /**
+     * Derived-overdue filter: status in SENT/VIEWED/PARTIAL/OVERDUE AND dueDate
+     * in the past — broader than `status: "OVERDUE"` alone (mirrors the API's
+     * `ListInvoicesDto.isOverdue`).
+     */
+    isOverdue?: boolean;
   },
   options?: { refetchInterval?: number; enabled?: boolean },
 ) {
@@ -158,6 +255,23 @@ export function useInvoices(
     queryKey: ["invoices", params],
     queryFn: () => apiClient.get("/invoices", { params }).then((r) => r.data),
     ...options,
+  });
+}
+
+/**
+ * B12: the invoices page's six KPI tiles, computed server-side over the
+ * tenant's whole OPEN set — replaces `useInvoices({ limit: 999 })` +
+ * client-side reduce, which silently dropped whichever invoices page 1000+
+ * would have held. `today` is the VIEWER's own calendar day (`YYYY-MM-DD`)
+ * so the tiles agree with the due-soon chips (L-047 — never derived from the
+ * server's clock).
+ */
+export function useInvoiceKpiSummary(today: string) {
+  return useQuery<InvoiceKpiSummary>({
+    queryKey: ["invoices", "kpi-summary", today],
+    queryFn: () =>
+      apiClient.get("/invoices/kpi-summary", { params: { today } }).then((r) => r.data),
+    enabled: !!today,
   });
 }
 
@@ -172,7 +286,7 @@ export function useInvoice(id: string) {
 export interface AllPayment {
   id: string;
   amount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_NOTE" | "ADVANCE" | "CREDIT_CARD";
+  method: AnyPaymentMethod;
   reference?: string;
   notes?: string;
   bankCharges?: number;
@@ -195,46 +309,14 @@ export interface AllPayment {
   };
 }
 
-export interface PaymentListParams {
-  page?: number;
-  limit?: number;
-  customerId?: string;
-  method?: string;
-  status?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  search?: string;
-  sortBy?: string;
-  sortDir?: string;
-}
-
-export interface PaymentListResponse {
-  data: AllPayment[];
-  meta: { total: number; page: number; limit: number; totalPages: number };
-  summary: { totalReceived: number; count: number; advanceBalance: number };
-}
-
 export function useInvoicePayments(params?: PaymentListParams) {
-  return useQuery<PaymentListResponse>({
+  return useQuery<PaymentListResponse<AllPayment>>({
     queryKey: ["invoices", "payments", params],
     queryFn: () => apiClient.get("/invoices/payments", { params }).then((r) => r.data),
   });
 }
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
-
-export interface CreateInvoiceItem {
-  productId?: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  taxRate?: number;
-  discount?: number;
-  boxes?: number;
-  pieces?: number;
-  /** Per-line note (buyer-visible; prints on the PDF). */
-  notes?: string;
-}
 
 export interface CreateInvoiceDto {
   customerId: string;
@@ -252,6 +334,15 @@ export interface CreateInvoiceDto {
   shippingTrackingNumber?: string;
   /** If true, invoice transitions DRAFT → SENT immediately after creation. */
   send?: boolean;
+  /**
+   * Structured "Net 30"-style label — whichever term string drove `dueDate`
+   * above. Distinct from `terms` (the long-form Terms & Conditions text).
+   */
+  paymentTermsLabel?: string;
+  /** Deliberately minimal deposit schedule (Tier 1): percent of the total due
+   *  by `depositDueDate`. The dollar amount is always derived server-side. */
+  depositPercent?: number;
+  depositDueDate?: string;
 }
 
 export function useCreateInvoice() {
@@ -262,10 +353,55 @@ export function useCreateInvoice() {
   });
 }
 
+/**
+ * Duplicate an invoice ON THE SERVER (POST /invoices/:id/duplicate). The server copies every line's
+ * stored boxes / pieces / subtotal verbatim into a DRAFT and refuses an order-linked invoice and a unit
+ * line. The web must never rebuild a line from `{ qty, unitPrice }` (B644): a stored qty is in BASE pieces
+ * while a boxed line's unitPrice is per BOX, so that rebuild priced 6 boxes of 12 at $40 ($240) as
+ * 72 x $40 = $2,880.
+ */
+export function useDuplicateInvoice() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, string>({
+    mutationFn: (id) => apiClient.post(`/invoices/${id}/duplicate`).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["invoices"] }),
+  });
+}
+
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+  >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoices", id] });
+    },
+  });
+}
+
+/**
+ * WP3: narrow post-issue correction of exactly `{ dueDate?, paymentTermsLabel?,
+ * referenceNumber?, subject? }` — never items/discount/shipping/deposit, which
+ * still require a credit note or a DRAFT edit. The server rejects VOID/
+ * WRITTEN_OFF invoices; a dueDate change re-runs recomputeStatus (can flip
+ * SENT↔OVERDUE) but never triggers the order back-sync.
+ */
+export interface UpdateInvoiceTermsDto {
+  dueDate?: string;
+  paymentTermsLabel?: string;
+  referenceNumber?: string;
+  subject?: string;
+}
+
+export function useUpdateInvoiceTerms() {
+  const qc = useQueryClient();
+  return useMutation<Invoice, Error, { id: string } & UpdateInvoiceTermsDto>({
+    mutationFn: ({ id, ...dto }) =>
+      apiClient.patch(`/invoices/${id}/terms`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
       qc.invalidateQueries({ queryKey: ["invoices", id] });
@@ -326,7 +462,7 @@ export function deriveInvoiceVariant(inv: {
 export function useSendInvoiceEmail() {
   const qc = useQueryClient();
   return useMutation<
-    { success: boolean; sentTo: string },
+    SendInvoiceEmailResult,
     Error,
     { id: string; email?: string; variant?: InvoicePdfVariant }
   >({
@@ -341,7 +477,7 @@ export function useSendInvoiceEmail() {
 
 export function useSendInvoiceReminder() {
   const qc = useQueryClient();
-  return useMutation<{ success: boolean; sentTo: string }, Error, { id: string; email?: string }>({
+  return useMutation<SendInvoiceEmailResult, Error, { id: string; email?: string }>({
     mutationFn: ({ id, email }) =>
       apiClient.post(`/invoices/${id}/send-reminder`, { email }).then((r) => r.data),
   });
@@ -387,8 +523,11 @@ export function useApplyCreditNote() {
 
 export function useApplyAdvanceToInvoice() {
   const qc = useQueryClient();
+  // F7 (money discipline): the server's response carries an additive `appliedAmount` —
+  // the amount it actually applied (min(wallet balance, invoice balance)) — so callers
+  // report that instead of re-deriving it client-side.
   return useMutation<
-    Invoice,
+    Invoice & { appliedAmount: number },
     Error,
     { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
   >({
@@ -453,7 +592,7 @@ export function useDownloadInvoicePdf() {
 
 export interface RecordInvoicePaymentDto {
   id: string;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: number;
   paidAt?: string;
   /** Bank landing date. May be in the future; omit when unknown. */
@@ -479,7 +618,7 @@ export function useRecordInvoicePayment() {
 export interface UpdateInvoicePaymentDto {
   invoiceId: string;
   paymentId: string;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: number;
   paidAt?: string;
   /** Omit to keep the stored bank date; send null to clear it. */
@@ -557,26 +696,15 @@ export function useGetPaymentImageUrl() {
   });
 }
 
-export interface StandalonePaymentDto {
-  customerId: string;
-  totalAmount: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
-  paidAt?: string;
-  /** Bank landing date applied to every allocation row of the group. */
-  settledAt?: string | null;
-  bankCharges?: number;
-  reference?: string;
-  notes?: string;
-  status?: "DRAFT" | "PAID";
-  allocations: { invoiceId: string; amount: number }[];
-}
-
 export function useRecordPaymentStandalone() {
   const qc = useQueryClient();
   return useMutation<
     { payments: AllPayment[]; paymentGroupId: string; excess: number },
     Error,
-    StandalonePaymentDto
+    // X1: bind TMethod to web's enterable subset at the use site (not via a
+    // local re-declaration — see the comment above `StandalonePaymentDto`'s
+    // re-export).
+    StandalonePaymentDto<SelectablePaymentMethod>
   >({
     mutationFn: (dto) => apiClient.post("/invoices/payments/record", dto).then((r) => r.data),
     onSuccess: () => {
@@ -596,14 +724,6 @@ export function useVoidPayment() {
       qc.invalidateQueries({ queryKey: ["invoices", "payments"] });
     },
   });
-}
-
-export interface SetCheckStatusDto {
-  invoiceId: string;
-  paymentId: string;
-  status: CheckStatus;
-  /** NSF fee to bill the customer when status = BOUNCED (omit or 0 = no fee). */
-  nsfFeeAmount?: number;
 }
 
 /**
@@ -655,46 +775,18 @@ export function usePaymentDetail(id: string) {
 
 // ─── Recurring invoices ───────────────────────────────────────────────────────
 
-export interface RecurringInvoiceItem {
-  description: string;
-  productId?: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  taxRate?: number;
-}
+/**
+ * REG-B106: mirrors `RUN_UNFINALIZED_ERROR` in
+ * `apps/api/src/recurring-invoices/recurring-invoices.service.ts`. A `lastError` starting
+ * with this text means the invoice WAS created (the cycle is billed) and only the run's
+ * bookkeeping failed — so that failure must never be offered as a retry: re-running would
+ * bill the same cycle twice.
+ */
+export const RUN_UNFINALIZED_PREFIX = "The invoice was created but the run could not be finalized";
 
-export interface RecurringInvoice {
-  id: string;
-  customerId: string;
-  customer?: { id: string; businessName: string };
-  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  isActive: boolean;
-  autoSend: boolean;
-  notes?: string;
-  terms?: string;
-  discount?: number;
-  shippingFee?: number;
-  nextRunAt: string;
-  lastRunAt?: string;
-  items: RecurringInvoiceItem[];
-  createdAt: string;
-}
-
-export interface CreateRecurringInvoiceDto {
-  customerId: string;
-  frequency: "WEEKLY" | "BIWEEKLY" | "MONTHLY";
-  dayOfWeek?: number;
-  dayOfMonth?: number;
-  autoSend?: boolean;
-  notes?: string;
-  terms?: string;
-  discount?: number;
-  shippingFee?: number;
-  nextRunAt: string;
-  items: RecurringInvoiceItem[];
+/** True when a FAILED cycle produced no invoice, so "Run Now" is a safe retry. */
+export function isRetryableRunFailure(lastError?: string | null): boolean {
+  return !!lastError && !lastError.startsWith(RUN_UNFINALIZED_PREFIX);
 }
 
 export function useRecurringInvoices(customerId?: string) {
@@ -746,8 +838,10 @@ export function useDeactivateRecurringInvoice() {
 /**
  * Resume a paused template via the dedicated `POST /:id/activate` endpoint. The
  * old approach (`useUpdateRecurringInvoice` with `{ isActive: true }`) never
- * persisted — the PATCH validates against CreateRecurringInvoiceDto (no isActive
- * field; whitelist ValidationPipe) and was rejected.
+ * persisted — the PATCH was unvalidated before `UpdateRecurringInvoiceDto`
+ * (F13/B92); it now validates and whitelists, and `isActive` is deliberately
+ * absent from that DTO, so a `{ isActive: true }` PATCH is a 400 — the activate
+ * endpoint stays the resume path.
  */
 export function useActivateRecurringInvoice() {
   const qc = useQueryClient();
@@ -757,9 +851,15 @@ export function useActivateRecurringInvoice() {
   });
 }
 
+/**
+ * Run a template now. The server claims the cycle atomically before generating,
+ * so a losing racer (a second "Run now" tap, or the daily cron) gets NO invoice
+ * back — the response body is empty. Typed nullable so callers must branch;
+ * axios yields `""` for that empty body, so guard on `inv?.id`, not `inv != null`.
+ */
 export function useRunRecurringInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, string>({
+  return useMutation<Invoice | null, Error, string>({
     mutationFn: (id) => apiClient.post(`/recurring-invoices/${id}/run`).then((r) => r.data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -806,20 +906,6 @@ export function useCreateInvoiceFromOrder() {
 
 // ─── Split / partial invoice from order ───────────────────────────────────────
 
-export interface CreatePartialInvoiceItem {
-  orderItemId: string;
-  qty: number;
-}
-
-export interface CreatePartialInvoiceDto {
-  orderId: string;
-  items: CreatePartialInvoiceItem[];
-  dueDate?: string;
-  terms?: string;
-  notes?: string;
-  send?: boolean;
-}
-
 /**
  * Create one of N partial invoices from an order. Operator picks which order items
  * (and how many of each) to bill on this invoice + a due date. Each call increments
@@ -855,6 +941,14 @@ export interface PriceAdjustmentDto {
 
 export interface InvoiceSettings {
   defaultTerms: string;
+  hideOriginalPrice?: boolean;
+  /** Tenant-wide deposit default (0–100). null/absent = no tenant deposit policy;
+   *  a customer's own `defaultDepositPercent` still wins when set. */
+  depositDefaultPercent?: number | null;
+  /** When true, an order's mirror invoice is ISSUED (SENT, no email) at
+   *  placement so the deposit can be paid immediately; the order stays
+   *  editable until delivery. */
+  depositCollectAtOrder?: boolean;
 }
 
 export function useInvoiceSettings() {

@@ -7,12 +7,17 @@ import {
   ServiceUnavailableException,
   UnprocessableEntityException,
 } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
+import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SystemConfigService } from "../system-config/system-config.service";
-import { Prisma, MovementType } from "@prisma/client";
+import { PlatformConfigService } from "../platform-admin/platform-config.service";
+import { Prisma, MovementType, PaymentMethod } from "@prisma/client";
 import { costDecimal, nextAverageCost, reverseAverageCost } from "../inventory/costing";
-import { roundMoney } from "../common/pricing";
+import { assertBillWithinPo, type BillLinePieces } from "./po-bill-match";
+import { assertPackSizeKnownOrLog } from "./pack-size-gate";
+import { roundMoney } from "@routeflow/pricing";
+import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
+import { calendarFieldStamp } from "../common/calendar-date";
 import Anthropic from "@anthropic-ai/sdk";
 import sharp from "sharp";
 import { buildTokenWeights, composedProductName, matchLine } from "./product-matcher";
@@ -24,9 +29,14 @@ import {
 } from "../import/duplicate-match.service";
 import { StorageService } from "../storage/storage.service";
 import { InventoryService } from "../inventory/inventory.service";
+import { ProductAliasService, type AliasTarget } from "../import/product-alias.service";
+import { matchSupplier } from "../import/supplier-match";
 import { hashFile, lineFingerprint } from "./invoice-scan.fingerprint";
 import { CheckVendorBillDuplicateDto } from "./dto/check-vendor-bill-duplicate.dto";
 import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
+import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
+import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -112,18 +122,19 @@ export class VendorBillsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
     private readonly systemConfig: SystemConfigService,
+    private readonly platformConfig: PlatformConfigService,
     private readonly duplicateMatch: DuplicateMatchService,
     private readonly storage: StorageService,
     private readonly inventory: InventoryService,
+    private readonly productAlias: ProductAliasService,
   ) {}
 
   /**
    * A bill line's INVENTORY denomination. Suppliers price lines in whatever
    * unit the invoice prints — usually CASES for boxed goods — while
    * `Product.currentStock` and `Product.averageCost` are contractually per
-   * PIECE (common/pricing.ts `costPerSellingUnit`). A line with
+   * PIECE (@routeflow/pricing `costPerSellingUnit`). A line with
    * `packSize > 1` is a case line: pieces = qty × packSize, per-piece cost =
    * unitCost ÷ packSize. The bill's own money is untouched — `totalOwed`
    * stays Σ qty × unitCost in invoice denomination, matching the printed
@@ -142,6 +153,95 @@ export class VendorBillsService {
       return { qty: rawQty.mul(pack), unitCost: costDecimal(rawCost.div(pack)) };
     }
     return { qty: rawQty, unitCost: rawCost };
+  }
+
+  /**
+   * A DTO bill line in the PURCHASE ORDER's denomination — pieces and a
+   * per-piece cost, via the same lineInventoryDelta receive/revert/void use — so
+   * the bill-vs-PO gate and a PO raised from the bill's lines compare like for
+   * like. Mirrors create()'s line defaults (qty 1, unitCost/unitPrice, packSize).
+   */
+  private billLineToPieces(item: any): BillLinePieces & {
+    sku: string | null;
+    packSize: number | null;
+  } {
+    const packSize = Number.isFinite(Number(item.packSize))
+      ? Math.trunc(Number(item.packSize))
+      : null;
+    const { qty, unitCost } = this.lineInventoryDelta({
+      qty: new Prisma.Decimal(item.qty || 1),
+      unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+      packSize,
+    });
+    return {
+      productId: item.productId || null,
+      description: item.description || item.name || "",
+      qty,
+      unitCost,
+      sku: item.sku || null,
+      packSize: packSize != null && packSize > 0 ? packSize : null,
+    };
+  }
+
+  /**
+   * Two requests racing for the same PO (the bill link is unique) or the same next
+   * PO number lose on a unique constraint — surface that as a retryable 409 instead
+   * of a 500. Anything else passes through untouched.
+   */
+  private translateLinkRace(e: unknown, linking: boolean): unknown {
+    if (linking && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+      return new ConflictException({
+        code: "PO_LINK_CONFLICT",
+        message:
+          "Another bill or purchase order was created at the same moment — please try again.",
+      });
+    }
+    return e;
+  }
+
+  /**
+   * Link a new bill to an EXISTING purchase order (units/PO step 7). The PO must
+   * exist in the tenant, be open, belong to the bill's supplier and not already
+   * have a bill (one bill per PO), and the bill may not exceed it — see
+   * po-bill-match.ts. Returns the PO id to store on the bill.
+   */
+  private async linkExistingPurchaseOrder(
+    tx: Prisma.TransactionClient,
+    purchaseOrderId: string,
+    supplierId: string | null,
+    items: any[],
+  ): Promise<string> {
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: purchaseOrderId },
+      include: { items: true },
+    });
+    if (!po) throw new NotFoundException("Purchase order not found");
+    if (po.status === "CLOSED") {
+      throw new BadRequestException(
+        `Purchase order ${po.poNumber} is closed — it can't be billed.`,
+      );
+    }
+    if (supplierId && po.supplierId !== supplierId) {
+      throw new BadRequestException(
+        `Purchase order ${po.poNumber} belongs to a different supplier than this bill.`,
+      );
+    }
+    const already = await tx.vendorBill.findFirst({
+      where: { purchaseOrderId: po.id, status: { not: "VOID" as any } },
+      select: { billNumber: true },
+    });
+    if (already) {
+      throw new ConflictException({
+        code: "PO_ALREADY_BILLED",
+        message: `Purchase order ${po.poNumber} already has bill ${already.billNumber}.`,
+      });
+    }
+    assertBillWithinPo(
+      po.poNumber,
+      po.items,
+      items.map((i) => this.billLineToPieces(i)),
+    );
+    return po.id;
   }
 
   /**
@@ -175,6 +275,8 @@ export class VendorBillsService {
   }
 
   async create(dto: any) {
+    // #2488: the literal calendar day, refused (400 naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
     // supplierId is required when creating manually from the UI, but optional for import-created bills
     if (dto.requireSupplier !== false) {
       if (!dto.supplierId || typeof dto.supplierId !== "string" || dto.supplierId.trim() === "") {
@@ -184,18 +286,86 @@ export class VendorBillsService {
     const supplierId = dto.supplierId && dto.supplierId.trim() ? dto.supplierId.trim() : null;
 
     // Calculate totalOwed from line items if provided, otherwise use dto.totalOwed
-    let totalOwed = dto.totalOwed ?? 0;
+    let preTaxOwed = dto.totalOwed ?? 0;
     if (dto.items && Array.isArray(dto.items) && dto.items.length > 0) {
-      totalOwed = dto.items.reduce(
+      preTaxOwed = dto.items.reduce(
         (sum: number, item: any) =>
           sum + (Number(item.qty) || 1) * Number(item.unitCost ?? item.unitPrice ?? 0),
         0,
       );
     }
+    const billTaxAmount = Number(dto.taxAmount) || 0;
     // Sales tax on the supplier invoice is owed too (the scan flow passes it as
     // taxAmount — line items only carry the pre-tax unit costs). totalOwed is a
     // monetary write, so round it.
-    totalOwed = roundMoney(totalOwed + (Number(dto.taxAmount) || 0));
+    const totalOwed = roundMoney(preTaxOwed + billTaxAmount);
+
+    // B451 gap 4: VendorBillItemDto.qty/unitCost/unitPrice now carry @Min(0),
+    // but this method also accepts an internal caller's raw `dto.totalOwed`/
+    // `dto.items` bypassing that DTO (see class comment) — the shared guard
+    // covers both paths.
+    assertMoneyInvariantsOrThrow({ subtotal: preTaxOwed, tax: billTaxAmount, total: totalOwed });
+
+    // units/PO step 7 — a bill may link to an existing PO OR raise a new draft PO
+    // from its own lines (the scan flow), never both. A raised PO needs a supplier
+    // and every line mapped to a product: a PO line without a product can't exist.
+    const wantsPurchaseOrder = dto.createPurchaseOrder === true;
+    if (wantsPurchaseOrder && dto.purchaseOrderId) {
+      throw new BadRequestException(
+        "Choose an existing purchase order or raise a new one from this bill, not both.",
+      );
+    }
+    if (wantsPurchaseOrder) {
+      if (!supplierId) {
+        throw new BadRequestException("Select a supplier before raising a purchase order.");
+      }
+      const lines: any[] = Array.isArray(dto.items) ? dto.items : [];
+      if (lines.length === 0 || lines.some((i) => !i.productId)) {
+        throw new BadRequestException(
+          "Map every line to a product before raising a purchase order from this bill.",
+        );
+      }
+      // B743: the raised PO's qtyOrdered/unitCost are taken DIRECTLY from
+      // billLineToPieces's output and become the authoritative stock-mover
+      // for this bill (receive() skips a PO-linked bill entirely) — so an
+      // ambiguous pack here must be caught before the PO is ever raised,
+      // not later at some unrelated PO receive screen.
+      const products = await this.prisma.forTenant().product.findMany({
+        where: { id: { in: [...new Set(lines.map((i) => i.productId))] } },
+        select: {
+          id: true,
+          name: true,
+          unitsPerBox: true,
+          units: { select: { factorToBase: true } },
+        },
+      });
+      const productsById = new Map(products.map((p) => [p.id, p]));
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        lines.map((item, lineIndex) => ({
+          id: null,
+          lineIndex,
+          description: item.description || item.name || "",
+          productId: item.productId,
+          packSize: item.packSize,
+          qty: Number(item.qty ?? 1),
+          unitCost: Number(item.unitCost ?? item.unitPrice ?? 0),
+          product: productsById.get(item.productId),
+        })),
+        !!dto.acknowledgePackSizeUnknown,
+        { path: "raise-po", billId: null, billNumber: null },
+      );
+    }
+
+    if (dto.purchaseOrderId && !supplierId) {
+      // requireSupplier:false callers (internal imports) skip the supplier check above —
+      // linking a PO without knowing the bill's supplier would skip the PO/supplier match.
+      throw new BadRequestException("Select the supplier before linking a purchase order.");
+    }
+    if (dto.purchaseOrderId && (!Array.isArray(dto.items) || dto.items.length === 0)) {
+      throw new BadRequestException("A bill linked to a purchase order needs at least one line.");
+    }
 
     const supplierInvoiceNumber = this.resolveSupplierInvoiceNumber(dto);
     const billDate = this.parseDate(dto.billDate);
@@ -218,7 +388,7 @@ export class VendorBillsService {
       if (match?.matchedBy === "number") {
         const duplicate = await this.toDuplicatePayload(match);
         throw new ConflictException({
-          code: "DUPLICATE_VENDOR_BILL",
+          code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
           message: this.duplicateMessage(supplierInvoiceNumber, match),
           duplicate,
         });
@@ -229,53 +399,224 @@ export class VendorBillsService {
       await this.assertNoPostedLineMatch(dto, totalOwed, supplierId ?? null);
     }
 
-    const bill = await this.prisma.forTenant().vendorBill.create({
-      data: {
-        billNumber: await this.nextBillNumber(),
-        ...(supplierId ? { supplierId } : {}),
-        status: "DRAFT",
-        totalOwed,
-        ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
-        // Kept alongside totalOwed (which already includes the tax) so an edit
-        // recomputing totals from line items can no longer silently drop them.
-        taxAmount: this.moneyOrNull(dto.taxAmount),
-        subtotal: this.moneyOrNull(dto.subtotal),
-        billDate,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
-        notes: dto.notes,
-        items:
-          dto.items && dto.items.length > 0
-            ? {
-                createMany: {
-                  data: dto.items.map((item: any) => ({
-                    productId: item.productId || null,
-                    description: item.description || item.name || "",
-                    qty: new Prisma.Decimal(item.qty || 1),
-                    unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
-                    // Read off the invoice and previously discarded here. `sku`
-                    // is what matches this line to a product on the next scan
-                    // from the same supplier.
-                    sku: item.sku || null,
-                    packSize: Number.isFinite(Number(item.packSize))
-                      ? Math.trunc(Number(item.packSize))
-                      : null,
-                    lineTotal: this.moneyOrNull(item.lineTotal),
-                  })),
-                },
-              }
-            : undefined,
+    const billNumber = await this.nextBillNumber();
+    const billInclude = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
       },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        items: {
-          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
-        },
-      },
-    });
+      purchaseOrder: { select: { id: true, poNumber: true, status: true } },
+    };
 
-    await this.markScanPosted(dto.scanId, bill.id);
+    // Wrapped in a transaction (not the plain forTenant() write this used to
+    // be) so a fresh bill can auto-apply the supplier's available on-account
+    // credit in the same atomic step — see applySupplierCreditToBill.
+    const bill = await this.prisma
+      .tenantTransaction(async (tx) => {
+        // The linked PO is what MOVES STOCK (send → receive); the bill is money
+        // only. Created/validated in this same transaction so the two documents
+        // exist together or not at all.
+        let purchaseOrderId: string | null = null;
+        if (wantsPurchaseOrder) {
+          const po = await this.inventory.createDraftPurchaseOrderInTx(tx, {
+            supplierId: supplierId!,
+            notes: dto.notes ?? null,
+            lines: (dto.items as any[]).map((i) => {
+              const l = this.billLineToPieces(i);
+              return {
+                productId: l.productId!,
+                qtyOrdered: new Prisma.Decimal(l.qty),
+                unitCost: new Prisma.Decimal(l.unitCost),
+                // the bill line's own exact total (cases x case cost), not pieces x the 4 dp per-piece cost.
+                // `qty || 1` is the bill's OWN rule for a missing/zero qty (totalOwed above, the stored line
+                // and billLineToPieces all read it that way), so the PO line and the bill line agree.
+                totalCost: roundMoney(
+                  new Prisma.Decimal(i.qty || 1)
+                    .mul(new Prisma.Decimal(i.unitCost ?? i.unitPrice ?? 0))
+                    .toNumber(),
+                ),
+                sku: l.sku,
+                packSize: l.packSize,
+              };
+            }),
+          });
+          purchaseOrderId = po.id;
+        } else if (dto.purchaseOrderId) {
+          purchaseOrderId = await this.linkExistingPurchaseOrder(
+            tx,
+            dto.purchaseOrderId,
+            supplierId,
+            Array.isArray(dto.items) ? dto.items : [],
+          );
+        }
+
+        const created = await tx.vendorBill.create({
+          data: {
+            billNumber,
+            ...(supplierId ? { supplierId } : {}),
+            ...(purchaseOrderId ? { purchaseOrderId } : {}),
+            status: "DRAFT",
+            totalOwed,
+            ...(supplierInvoiceNumber ? { supplierInvoiceNumber } : {}),
+            // Kept alongside totalOwed (which already includes the tax) so an edit
+            // recomputing totals from line items can no longer silently drop them.
+            taxAmount: this.moneyOrNull(dto.taxAmount),
+            subtotal: this.moneyOrNull(dto.subtotal),
+            billDate,
+            dueDate,
+            // Persisted verbatim, never recomputed here — bills have no
+            // due-date-computation machinery server side (see schema comment).
+            termsLabel: dto.termsLabel ?? null,
+            notes: dto.notes,
+            items:
+              dto.items && dto.items.length > 0
+                ? {
+                    createMany: {
+                      data: dto.items.map((item: any) => ({
+                        productId: item.productId || null,
+                        description: item.description || item.name || "",
+                        qty: new Prisma.Decimal(item.qty || 1),
+                        unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
+                        // Read off the invoice and previously discarded here. `sku`
+                        // is what matches this line to a product on the next scan
+                        // from the same supplier.
+                        sku: item.sku || null,
+                        packSize: Number.isFinite(Number(item.packSize))
+                          ? Math.trunc(Number(item.packSize))
+                          : null,
+                        lineTotal: this.moneyOrNull(item.lineTotal),
+                      })),
+                    },
+                  }
+                : undefined,
+          },
+          include: billInclude,
+        });
+
+        // B710: the scan is claimed in THIS transaction, so a second post of one scan is refused
+        // (409) and rolls back its bill, PO and credit draws instead of writing a second restock.
+        if (dto.scanId) await this.claimScanInTx(tx, dto.scanId, created.id);
+
+        if (!supplierId) return created;
+        return this.applySupplierCreditToBill(tx, created, billInclude);
+      })
+      .catch((e: unknown) => {
+        throw this.translateLinkRace(e, wantsPurchaseOrder || !!dto.purchaseOrderId);
+      });
 
     return bill;
+  }
+
+  /**
+   * Auto-apply a supplier's available on-account credit (`SupplierCredit`,
+   * created by `recordSupplierPayment` when a payment overshoots what was
+   * owed) to a bill the moment it's created — and again when a DRAFT bill is
+   * edited, after `update()` has handed the previous draws back — oldest credit
+   * first, never drawing more than the bill still owes. Each draw is its own
+   * `BillPayment`
+   * carrying `supplierCreditId` (method CREDIT_NOTE, `reference` tagged
+   * `SUPPLIER_CREDIT-<id8>` for humans; the ID column is what code matches on)
+   * inside the SAME transaction the bill was created in, so the bill can never
+   * be observed with unapplied credit sitting next to it. A bill with no
+   * supplier, no owed amount, or a supplier with no credit is returned
+   * untouched.
+   *
+   * Only `totalPaid` moves — the bill STAYS DRAFT. Flipping a never-received
+   * bill to PAID/PARTIAL here would lock it out of its whole draft lifecycle:
+   * `update()` refuses a non-DRAFT bill, `revertToDraft()` refuses PAID (and
+   * refuses PARTIAL with no `receivedDate`), `delete()`/`bulkDelete()` refuse
+   * anything but DRAFT/VOID, and `findAll`'s needsMapping queue is scoped to
+   * DRAFT — so a mis-scanned bill for a supplier holding any credit would be
+   * uneditable, undeletable and invisible to product mapping. Paid-ness is
+   * arithmetic (`totalOwed − totalPaid`) everywhere that matters (landmine 1);
+   * status is the receipt lifecycle and stays that.
+   */
+  private async applySupplierCreditToBill(tx: any, bill: any, include: Record<string, unknown>) {
+    // Credit is held per supplier, and `supplierId` is optional on a bill —
+    // querying it as null would be a Prisma validation error, not an empty set.
+    if (!bill.supplierId) return bill;
+    // Arithmetic, never status (landmine 1) — and against what the bill STILL
+    // owes, not its gross total: on the edit path the row can already carry
+    // payments, and credit must never be drawn past the outstanding balance.
+    const alreadyPaid = Number(bill.totalPaid ?? 0);
+    const owedRemaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
+    if (!(owedRemaining > 0.001)) return bill;
+
+    const credits = await tx.supplierCredit.findMany({
+      where: { supplierId: bill.supplierId, balance: { gt: 0 } },
+      orderBy: { receivedAt: "asc" },
+    });
+    if (credits.length === 0) return bill;
+
+    let remaining = owedRemaining;
+    let applied = 0;
+    for (const credit of credits) {
+      if (remaining <= 0.001) break;
+      const creditBalance = Number(credit.balance);
+      const draw = roundMoney(Math.min(creditBalance, remaining));
+      if (draw <= 0.001) continue;
+
+      await tx.billPayment.create({
+        data: {
+          vendorBillId: bill.id,
+          amount: draw,
+          method: PaymentMethod.CREDIT_NOTE,
+          supplierCreditId: credit.id,
+          reference: `SUPPLIER_CREDIT-${credit.id.slice(0, 8)}`,
+          notes: `Paid ${draw.toFixed(2)} from account credit`,
+        },
+      });
+      await tx.supplierCredit.update({
+        where: { id: credit.id },
+        data: { balance: roundMoney(creditBalance - draw) },
+      });
+
+      remaining = roundMoney(remaining - draw);
+      applied = roundMoney(applied + draw);
+    }
+
+    if (applied <= 0.001) return bill;
+
+    // totalPaid only — status is deliberately untouched (see the note above).
+    return tx.vendorBill.update({
+      where: { id: bill.id },
+      data: { totalPaid: roundMoney(alreadyPaid + applied) },
+      include,
+    });
+  }
+
+  /**
+   * Hand back on-account credit a bill drew, when that bill is voided or
+   * deleted. A draw is a `BillPayment` carrying `supplierCreditId`; voiding or
+   * deleting the bill makes the draw meaningless, and without this the
+   * supplier's prepaid money would simply vanish — `getSupplierStatement`
+   * excludes VOID bills entirely, so neither the bill, the draw, nor the
+   * credit balance would show it any more.
+   *
+   * Idempotent by construction: each refunded draw row is deleted as it is
+   * refunded, so voiding a bill and later deleting it cannot refund twice. A
+   * credit is never pushed above the `amount` that created it. Returns the
+   * total handed back so the caller can correct the bill's `totalPaid`.
+   */
+  private async refundDrawnSupplierCredits(tx: any, vendorBillId: string): Promise<number> {
+    const draws = await tx.billPayment.findMany({
+      where: { vendorBillId, supplierCreditId: { not: null } },
+    });
+    if (!draws || draws.length === 0) return 0;
+
+    let refunded = 0;
+    for (const draw of draws) {
+      const credit = await tx.supplierCredit.findUnique({ where: { id: draw.supplierCreditId } });
+      if (!credit) continue;
+      const restored = roundMoney(
+        Math.min(Number(credit.amount), Number(credit.balance) + Number(draw.amount)),
+      );
+      await tx.supplierCredit.update({ where: { id: credit.id }, data: { balance: restored } });
+      refunded = roundMoney(refunded + Number(draw.amount));
+    }
+
+    await tx.billPayment.deleteMany({ where: { id: { in: draws.map((d: any) => d.id) } } });
+    return refunded;
   }
 
   /** Round every monetary write; absent stays absent rather than becoming 0. */
@@ -320,7 +661,7 @@ export class VendorBillsService {
     const match = await this.vendorBillMatchById(priorScan.vendorBillId, totalOwed);
     if (!match) return;
     throw new ConflictException({
-      code: "DUPLICATE_VENDOR_BILL",
+      code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL,
       message: this.duplicateMessage(priorScan.supplierInvoiceNumber, match),
       duplicate: await this.toDuplicatePayload(match),
     });
@@ -336,7 +677,7 @@ export class VendorBillsService {
     if (dto.scanId) {
       const scan = await this.prisma
         .forTenant()
-        .invoiceScan.findUnique({
+        .invoiceScan.findFirst({
           where: { id: dto.scanId },
           select: { lineFingerprint: true },
         })
@@ -355,7 +696,7 @@ export class VendorBillsService {
     billId: string,
     total: number,
   ): Promise<VendorBillDuplicateMatch | null> {
-    const bill = await this.prisma.forTenant().vendorBill.findUnique({
+    const bill = await this.prisma.forTenant().vendorBill.findFirst({
       where: { id: billId },
       select: {
         id: true,
@@ -385,20 +726,48 @@ export class VendorBillsService {
   }
 
   /**
-   * Close the loop from bill back to the document it came from. A bad or
-   * foreign scanId must not fail a bill that is already written — `updateMany`
-   * stays tenant-scoped and simply matches nothing.
+   * B710: close the loop from bill back to the scan it came from, inside the bill's own
+   * transaction, as a guarded claim. A scan backs at most one live bill: it is claimable while
+   * not yet POSTED, or once the bill it posted was deleted (the link is nulled) or VOIDed, since
+   * voiding is how an operator undoes a bad post. Each claim is a conditional `updateMany`, so two
+   * concurrent posts serialize on the row and the loser matches nothing: a 409 that rolls its
+   * whole transaction back. A bad or foreign scanId still never fails a bill: the tenant-scoped
+   * lookup finds nothing and the bill is kept, unlinked.
    */
-  private async markScanPosted(scanId: string | undefined, vendorBillId: string): Promise<void> {
-    if (!scanId) return;
-    try {
-      await this.prisma.forTenant().invoiceScan.updateMany({
-        where: { id: scanId },
-        data: { status: "POSTED", vendorBillId },
+  private async claimScanInTx(
+    tx: Prisma.TransactionClient,
+    scanId: string,
+    vendorBillId: string,
+  ): Promise<void> {
+    const data = { status: "POSTED" as const, vendorBillId };
+    const fresh = await tx.invoiceScan.updateMany({
+      where: { id: scanId, OR: [{ status: { not: "POSTED" } }, { vendorBillId: null }] },
+      data,
+    });
+    if (fresh.count > 0) return;
+
+    const scan = await tx.invoiceScan.findFirst({
+      where: { id: scanId },
+      select: { vendorBillId: true, vendorBill: { select: { billNumber: true, status: true } } },
+    });
+    if (!scan) return;
+    if (scan.vendorBill?.status === "VOID") {
+      // Compare-and-swap on the void bill's id: a concurrent re-post that won first moved it on.
+      const repost = await tx.invoiceScan.updateMany({
+        where: { id: scanId, status: "POSTED", vendorBillId: scan.vendorBillId },
+        data,
       });
-    } catch (e) {
-      this.logger.error(`create: failed to mark scan ${scanId} POSTED: ${(e as Error).message}`);
+      if (repost.count > 0) return;
     }
+    const billNumber = scan.vendorBill?.billNumber ?? null;
+    throw new ConflictException({
+      code: "SCAN_ALREADY_POSTED",
+      message: billNumber
+        ? `This scan was already posted as bill ${billNumber}. Void that bill to post the scan again.`
+        : "This scan was already posted. Refresh and check its bill before posting again.",
+      vendorBillId: scan.vendorBillId ?? null,
+      billNumber,
+    });
   }
 
   /**
@@ -451,7 +820,7 @@ export class VendorBillsService {
     const supplier = match.supplierId
       ? await this.prisma
           .forTenant()
-          .supplier.findUnique({ where: { id: match.supplierId }, select: { name: true } })
+          .supplier.findFirst({ where: { id: match.supplierId }, select: { name: true } })
       : null;
     return {
       billId: match.id,
@@ -484,10 +853,21 @@ export class VendorBillsService {
   }
 
   async update(id: string, dto: any) {
+    // #2488: 400 (naming the field) before any read or write.
+    const dueDate = dto.dueDate ? calendarFieldStamp(dto.dueDate, "dueDate") : null;
     const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
     if (bill.status !== "DRAFT") {
       throw new BadRequestException("Only DRAFT bills can be edited. Revert to draft first.");
+    }
+    if (
+      bill.purchaseOrderId &&
+      dto.supplierId !== undefined &&
+      dto.supplierId !== bill.supplierId
+    ) {
+      throw new BadRequestException(
+        "This bill is linked to a purchase order — its supplier can't be changed.",
+      );
     }
 
     // Recalculate total if items are provided. Mirror create(): fold the
@@ -504,22 +884,73 @@ export class VendorBillsService {
       const tax =
         dto.taxAmount !== undefined ? Number(dto.taxAmount) || 0 : Number(bill.taxAmount ?? 0);
       totalOwed = roundMoney(itemsTotal + tax);
+
+      // B451 gap 4: same guard as create() — a negative qty/unitCost line
+      // (or a negative taxAmount) must not persist a negative totalOwed here
+      // either.
+      assertMoneyInvariantsOrThrow({ subtotal: itemsTotal, tax, total: totalOwed });
     }
 
+    const billInclude = {
+      supplier: { select: { id: true, name: true } },
+      items: {
+        include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+      },
+      payments: { orderBy: { createdAt: "desc" as const } },
+    };
+
     return this.prisma.tenantTransaction(async (tx) => {
+      // A bill linked to a purchase order can't be edited past what the PO
+      // authorised (checked before anything is deleted).
+      if (bill.purchaseOrderId && Array.isArray(dto.items)) {
+        if (dto.items.length === 0) {
+          throw new BadRequestException(
+            "A bill linked to a purchase order needs at least one line.",
+          );
+        }
+        const linkedPo = await tx.purchaseOrder.findUnique({
+          where: { id: bill.purchaseOrderId },
+          include: { items: true },
+        });
+        // Fail CLOSED: a link to a PO that no longer resolves can't be checked.
+        if (!linkedPo) {
+          throw new ConflictException({
+            code: "PO_LINK_BROKEN",
+            message: "The purchase order this bill is linked to could not be found.",
+          });
+        }
+        assertBillWithinPo(
+          linkedPo.poNumber,
+          linkedPo.items,
+          dto.items.map((i: any) => this.billLineToPieces(i)),
+        );
+      }
+
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
         await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
       }
 
-      return tx.vendorBill.update({
+      // A DRAFT bill can already be carrying auto-applied supplier credit —
+      // applySupplierCreditToBill leaves the bill DRAFT precisely so it stays
+      // editable — and an edit moves both of the things that draw was sized and
+      // addressed by. Hand every draw back BEFORE the write, then re-apply
+      // against the edited bill. Without this, correcting the total downwards
+      // strands the difference on a bill that no longer owes it (the supplier
+      // statement's `outstanding` goes negative), and re-pointing `supplierId`
+      // pays the new supplier's bill out of the old supplier's account.
+      const refunded = await this.refundDrawnSupplierCredits(tx, id);
+
+      const updated = await tx.vendorBill.update({
         where: { id },
         data: {
+          ...this.totalPaidAfterRefund(bill, refunded),
           ...(dto.supplierId !== undefined && { supplierId: dto.supplierId }),
           ...(dto.billDate !== undefined && {
             billDate: dto.billDate ? new Date(dto.billDate) : null,
           }),
-          ...(dto.dueDate !== undefined && { dueDate: dto.dueDate ? new Date(dto.dueDate) : null }),
+          ...(dto.dueDate !== undefined && { dueDate }),
+          ...(dto.termsLabel !== undefined && { termsLabel: dto.termsLabel }),
           ...(dto.notes !== undefined && { notes: dto.notes }),
           ...(dto.supplierInvoiceNumber !== undefined && {
             supplierInvoiceNumber: this.resolveSupplierInvoiceNumber({
@@ -540,7 +971,7 @@ export class VendorBillsService {
                       qty: new Prisma.Decimal(item.qty || 1),
                       unitCost: new Prisma.Decimal(item.unitCost ?? item.unitPrice ?? 0),
                       sku: item.sku || null,
-                      packSize: item.packSize != null && item.packSize > 0 ? item.packSize : null,
+                      packSize: this.billLineToPieces(item).packSize,
                       lineTotal: item.lineTotal != null ? new Prisma.Decimal(item.lineTotal) : null,
                     })),
                   },
@@ -548,14 +979,10 @@ export class VendorBillsService {
               }
             : {}),
         },
-        include: {
-          supplier: { select: { id: true, name: true } },
-          items: {
-            include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
-          },
-          payments: { orderBy: { createdAt: "desc" } },
-        },
+        include: billInclude,
       });
+
+      return this.applySupplierCreditToBill(tx, updated, billInclude);
     });
   }
 
@@ -563,7 +990,9 @@ export class VendorBillsService {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({
       where: { id },
       include: {
-        items: { include: { product: true } },
+        // `units` (B743): the units_v1 selling ladder is a second signal (alongside
+        // `unitsPerBox`) that a product is known to be boxed — see pack-size-gate.ts.
+        items: { include: { product: { include: { units: { select: { factorToBase: true } } } } } },
         supplier: { select: { id: true, name: true } },
       },
     });
@@ -596,11 +1025,14 @@ export class VendorBillsService {
     const unlinkedItems = bill.items.filter((i) => !i.productId);
     if (
       bill.receivedDate == null &&
+      // A PO-linked bill moves no stock at all (guard e), so "these lines won't
+      // update inventory" would be a warning about nothing.
+      bill.purchaseOrderId == null &&
       !dto?.acknowledgeUnlinked &&
       (bill.items.length === 0 || unlinkedItems.length > 0)
     ) {
       throw new ConflictException({
-        code: "UNLINKED_ITEMS",
+        code: API_ERROR_CODES.UNLINKED_ITEMS,
         message:
           bill.items.length === 0
             ? "This bill has no line items, so receiving it will not update any inventory or costs."
@@ -647,6 +1079,41 @@ export class VendorBillsService {
         .filter((p) => p.receiveQty.gt(0));
     }
 
+    // B743: a bill line billed in the supplier's own denomination (cases when
+    // packSize > 1) but with no pack stated silently posts as pieces at the
+    // case price once it moves stock below — refuse (once enforced) or log
+    // (while dark). Guard (e) already means a PO-linked bill posts no stock
+    // here at all, so this only applies to bills receiving directly. First
+    // receipt only per line — a partial top-up keeps the basis it was
+    // already posted at, never re-asking.
+    if (bill.purchaseOrderId == null) {
+      assertPackSizeKnownOrLog(
+        this.logger,
+        this.prisma.getTenantId(),
+        plan
+          .filter(({ item }) => item.productId && this.lineReceivedQty(bill, item).lte(0))
+          .map(({ item }) => ({
+            id: item.id,
+            // Opus review (B743 PR A, finding 3): this array is FILTERED
+            // (see .filter above) — indexing it directly gave the position
+            // in the filtered plan, not the line's real position on the
+            // bill. Every line here already carries a real `item.id`
+            // (unlike create()'s raise-PO path, where lineIndex is the only
+            // identifier for a not-yet-persisted line) — findIndex against
+            // the bill's own full item list is the line's true position.
+            lineIndex: bill.items.findIndex((i) => i.id === item.id),
+            description: item.description,
+            productId: item.productId!,
+            packSize: item.packSize,
+            qty: Number(item.qty),
+            unitCost: Number(item.unitCost),
+            product: item.product,
+          })),
+        !!dto?.acknowledgePackSizeUnknown,
+        { path: "receive", billId: bill.id, billNumber: bill.billNumber },
+      );
+    }
+
     // Fully received once every linked line's cumulative receipt covers its
     // qty. Status stays a lossy display blend (recordPayment overwrites it);
     // receipt truth lives in receivedDate + per-line qtyReceived.
@@ -662,8 +1129,21 @@ export class VendorBillsService {
       // its per-PIECE contract (margins previously inflated by unitsPerBox²).
       const effectiveDate = bill.billDate ?? new Date();
       const restockedIds: string[] = [];
+      // B562 follow-up: a bill is received in ONE transaction across every
+      // line. If one product's ledger has a gap (see recomputeProductInTx),
+      // that must not abort lines that are perfectly fine — receiving stock
+      // is never the dangerous part, only recomputing the average is. Each
+      // gapped line still gets its quantity + immediate weighted-average
+      // update below (same as recordPurchase); only the backdated ledger
+      // replay/backfill is skipped for it, and it's reported here — same
+      // shape as recomputeCosts's `gapsDetected` — so the caller can flag it.
+      const gapsDetected: { productId: string; name: string; stockDrift: number }[] = [];
       for (const { item, receiveQty } of plan) {
         if (!item.productId || !item.product) continue;
+        // Guard (e): a bill linked to a purchase order NEVER touches stock — the
+        // PO's own receive is the stock mover, and posting here too would count a
+        // scanned delivery twice. The bill's receipt state below still advances.
+        if (bill.purchaseOrderId != null) continue;
 
         const { qty, unitCost } = this.lineInventoryDelta({
           qty: receiveQty,
@@ -673,7 +1153,7 @@ export class VendorBillsService {
 
         // Read fresh state inside the tx so multi-line bills of the same
         // product compound correctly instead of using the pre-tx snapshot
-        const product = await tx.product.findUnique({
+        const product = await tx.product.findFirst({
           where: { id: item.productId },
           select: { currentStock: true, averageCost: true, costingMethod: true },
         });
@@ -716,8 +1196,9 @@ export class VendorBillsService {
             performedById: performedById ?? null,
             // Stamp the movement at the BILL date, matching the lot — a
             // backdated bill's cost snapshot must sit at the right point in
-            // the ledger (the lot and the movement used to disagree).
-            createdAt: effectiveDate,
+            // the ledger (the lot and the movement used to disagree). B562:
+            // on effectiveAt (the accounting date); createdAt stays write-once.
+            effectiveAt: effectiveDate,
           },
         });
 
@@ -729,12 +1210,27 @@ export class VendorBillsService {
           },
         });
 
-        // Backdated bill: later movements' snapshots (and possibly the
-        // average) are now stale — replay the product, like recordPurchase.
+        // Backdated bill: the average later rows imply may have moved — replay the
+        // product like recordPurchase (a dated COST_BASIS correction, SA-136 §4).
+        // `throwOnGap: false` — a gap here must flag this ONE line, never
+        // abort the whole bill (see the comment above the loop).
         const newer = await tx.stockMovement.count({
-          where: { productId: item.productId, createdAt: { gt: effectiveDate } },
+          where: { productId: item.productId, effectiveAt: { gt: effectiveDate } },
         });
-        if (newer > 0) await this.inventory.recomputeProductInTx(tx, item.productId);
+        if (newer > 0) {
+          const replay = await this.inventory.recomputeProductInTx(tx, item.productId, {
+            throwOnGap: false,
+            trigger: `BILL:${id}`,
+            performedById: performedById ?? null,
+          });
+          if (replay?.gapDetected) {
+            gapsDetected.push({
+              productId: item.productId,
+              name: item.product.name,
+              stockDrift: replay.stockDrift,
+            });
+          }
+        }
 
         restockedIds.push(item.productId);
       }
@@ -765,7 +1261,7 @@ export class VendorBillsService {
         },
       });
 
-      return { updatedBill, restockedIds };
+      return { updatedBill, restockedIds, gapsDetected };
     });
 
     // Bill receive is the main restock path — fire the same low-stock-cleared
@@ -774,7 +1270,9 @@ export class VendorBillsService {
       this.inventory.fireStockAlerts([...new Set(updated.restockedIds)]);
     }
 
-    return updated.updatedBill;
+    // gapsDetected is additive — every line was still received; these are
+    // just the ones whose cost history couldn't be safely recomputed (B562).
+    return { ...updated.updatedBill, gapsDetected: updated.gapsDetected };
   }
 
   async revertToDraft(id: string) {
@@ -800,13 +1298,17 @@ export class VendorBillsService {
       );
     }
 
+    // Guard (e): a PO-linked bill never posted stock (receive skips it), so
+    // there is nothing to reverse — the PO owns its own movements and lots.
+    const movesStock = bill.purchaseOrderId == null;
+
     return this.prisma.tenantTransaction(async (tx) => {
       // Reverse inventory for each product-linked item — in the SAME
       // inventory denomination receive() applied (case lines converted to
       // pieces + per-piece cost), and only the quantity ACTUALLY received
       // (partial receipts reverse partially), or the reversal stops matching
       // the receipt.
-      for (const item of bill.items) {
+      for (const item of movesStock ? bill.items : []) {
         if (!item.productId) continue;
 
         const receivedQty = this.lineReceivedQty(bill, item);
@@ -827,7 +1329,7 @@ export class VendorBillsService {
         });
 
         // Read current product state within the transaction for accurate AVCO reversal
-        const product = await tx.product.findUnique({
+        const product = await tx.product.findFirst({
           where: { id: item.productId },
           select: { currentStock: true, averageCost: true },
         });
@@ -850,7 +1352,7 @@ export class VendorBillsService {
       }
 
       // Reverse the lots this bill created (one per received line)
-      await this.reverseBillLots(tx, bill.billNumber);
+      if (movesStock) await this.reverseBillLots(tx, bill.billNumber);
 
       // Revert bill status to DRAFT and clear per-line receipt progress — the
       // bill is back to never-received. Nested updateMany, not a direct
@@ -910,9 +1412,11 @@ export class VendorBillsService {
     // PAID/PARTIAL, so a paid-but-never-received bill used to get a phantom
     // reversal (negative adjustment draining stock that was never added).
     // receivedDate is the receipt marker.
+    // Guard (e): a PO-linked bill posted no stock, so a void has none to reverse.
     const needsReversal =
       (bill.status === "RECEIVED" || bill.status === "PARTIAL" || bill.status === "PAID") &&
-      bill.receivedDate != null;
+      bill.receivedDate != null &&
+      bill.purchaseOrderId == null;
     if (needsReversal) {
       return this.prisma.tenantTransaction(async (tx) => {
         for (const item of bill.items) {
@@ -927,7 +1431,7 @@ export class VendorBillsService {
             packSize: item.packSize,
           });
 
-          const product = await tx.product.findUnique({
+          const product = await tx.product.findFirst({
             where: { id: item.productId },
             select: { currentStock: true, averageCost: true },
           });
@@ -969,13 +1473,58 @@ export class VendorBillsService {
         // Reverse the lots this bill created
         await this.reverseBillLots(tx, bill.billNumber);
 
-        return tx.vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+        const refunded = await this.refundDrawnSupplierCredits(tx, id);
+        return tx.vendorBill.update({
+          where: { id },
+          data: {
+            status: "VOID" as any,
+            ...this.totalPaidAfterRefund(bill, refunded),
+            ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
+          },
+        });
       });
     }
 
-    return this.prisma
-      .forTenant()
-      .vendorBill.update({ where: { id }, data: { status: "VOID" as any } });
+    // Transactional (it used to be a bare update) so the credit refund and the
+    // void land together — a void that took the credit back but failed to void
+    // would be worse than either alone.
+    return this.prisma.tenantTransaction(async (tx) => {
+      const refunded = await this.refundDrawnSupplierCredits(tx, id);
+      return tx.vendorBill.update({
+        where: { id },
+        data: {
+          status: "VOID" as any,
+          ...this.totalPaidAfterRefund(bill, refunded),
+          ...(await this.unlinkPurchaseOrderOnVoid(tx, bill)),
+        },
+      });
+    });
+  }
+
+  /**
+   * A voided bill lets go of its purchase order. The link is unique (one bill per PO),
+   * so a VOID bill that kept it would leave the PO permanently unbillable — and the
+   * operator's only way to bill the delivery again would be an UNLINKED bill, which
+   * posts stock of its own on top of what the PO already received (a double count).
+   * The old link is kept in the bill's notes so the audit trail isn't lost.
+   */
+  private async unlinkPurchaseOrderOnVoid(
+    tx: Prisma.TransactionClient,
+    bill: { purchaseOrderId: string | null; notes: string | null },
+  ): Promise<{ purchaseOrderId?: null; notes?: string }> {
+    if (!bill.purchaseOrderId) return {};
+    const po = await tx.purchaseOrder.findUnique({
+      where: { id: bill.purchaseOrderId },
+      select: { poNumber: true },
+    });
+    const note = `Voided — unlinked from purchase order ${po?.poNumber ?? bill.purchaseOrderId}.`;
+    return { purchaseOrderId: null, notes: bill.notes ? `${bill.notes}\n${note}` : note };
+  }
+
+  /** Keep the denormalised `totalPaid` in step with draws handed back to credit. */
+  private totalPaidAfterRefund(bill: { totalPaid: unknown }, refunded: number) {
+    if (refunded <= 0.001) return {};
+    return { totalPaid: Math.max(0, roundMoney(Number(bill.totalPaid ?? 0) - refunded)) };
   }
 
   async findAll(
@@ -1040,9 +1589,30 @@ export class VendorBillsService {
       where: { id },
       include: {
         supplier: true,
+        purchaseOrder: { select: { id: true, poNumber: true, status: true } },
         payments: { orderBy: { createdAt: "desc" } },
         items: {
-          include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
+          include: {
+            // Widened ONLY here (not the list endpoint, not other write
+            // sites) so the bill detail page can tell whether a mapped
+            // product has variants and show a "Generic — split into
+            // variants?" affordance. Additive fields only — response shape
+            // stays backward-compatible for every other consumer.
+            product: {
+              select: {
+                id: true,
+                name: true,
+                sku: true,
+                unit: true,
+                parentProductId: true,
+                // ACTIVE children only: the badge invites a split, and stock
+                // can only ever be assigned to an active variant — counting
+                // deactivated ones would offer the affordance on a generic
+                // whose only variant is deleted.
+                _count: { select: { variants: { where: { isActive: true } } } },
+              },
+            },
+          },
         },
       },
     });
@@ -1052,12 +1622,69 @@ export class VendorBillsService {
 
   // ─── Product Mapping Memory ───────────────────────────────────────────────────
 
+  /**
+   * `ProductMapping`'s compound key (`@@unique([supplierName, rawDescription])`)
+   * has NO tenantId — it is a GLOBAL key. An `upsert` on that key can hit
+   * another tenant's row: tenant B correcting the same (supplier,
+   * description) pair as tenant A either 500s on the collision or silently
+   * overwrites A's mapping. Go tenant-scoped instead: look up this tenant's
+   * own row first, update it by id if found, otherwise attempt a create and
+   * swallow ONLY a P2002 on that create (another tenant already holds the
+   * global key) — log it and return gracefully rather than 500 the
+   * operator's correction. Any other error still rethrows.
+   */
   async saveProductMapping(supplierName: string, rawDescription: string, productId: string | null) {
-    return this.prisma.forTenant().productMapping.upsert({
-      where: { supplierName_rawDescription: { supplierName, rawDescription } },
-      create: { supplierName, rawDescription, productId },
-      update: { productId },
+    // Prisma DROPS `undefined` filter keys, so a missing supplierName or
+    // rawDescription would turn the lookup below into "this tenant's FIRST
+    // mapping" and then repoint an unrelated raw description at the wrong
+    // product. The controller's `SaveProductMappingDto` rejects that at the
+    // HTTP boundary; this keeps every other caller honest too.
+    if (typeof supplierName !== "string" || typeof rawDescription !== "string") {
+      throw new BadRequestException("supplierName and rawDescription are required");
+    }
+    const existing = await this.prisma.forTenant().productMapping.findFirst({
+      where: { supplierName, rawDescription },
     });
+    let mapping: any;
+    if (existing) {
+      mapping = await this.prisma.forTenant().productMapping.update({
+        where: { id: existing.id },
+        data: { productId },
+      });
+    } else {
+      const data: SaveProductMappingDto = { supplierName, rawDescription, productId };
+      try {
+        mapping = await this.prisma.forTenant().productMapping.create({ data });
+      } catch (e) {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+          this.logger.debug(
+            `saveProductMapping: P2002 on create for (${supplierName}, ${rawDescription}) — another tenant already holds this global mapping key`,
+          );
+          mapping = null;
+        } else {
+          throw e;
+        }
+      }
+    }
+
+    // Dual-write into ProductAlias — tenant-scoped and normalized, the
+    // eventual replacement for the legacy global-keyed table above — but
+    // ONLY when the supplier name actually resolves to a real Supplier. The
+    // scan flow must NEVER learn under the "" any-supplier scope: that scope
+    // is reserved for batch-import's own any-supplier aliases, and writing
+    // there from an unresolved-supplier correction would let it wrongly
+    // answer for every other supplier too. Clearing a match (productId null)
+    // unlearns instead of learning null.
+    const supplierId = await this.resolveSupplierId(supplierName);
+    if (supplierId) {
+      if (productId) {
+        await this.productAlias.learn(supplierId, rawDescription, { productId });
+      } else {
+        await this.productAlias.unlearn(supplierId, rawDescription);
+      }
+    }
+
+    return mapping;
   }
 
   async getProductMappings(supplierName: string) {
@@ -1065,6 +1692,123 @@ export class VendorBillsService {
       where: { supplierName },
       include: { product: { select: { id: true, name: true, sku: true, unit: true } } },
     });
+  }
+
+  /** Resolve a supplier's raw scanned name to a real Supplier via the shared scorer. */
+  private async resolveSupplierId(supplierRaw: string | null | undefined): Promise<string | null> {
+    if (!supplierRaw) return null;
+    const suppliers = await this.prisma.forTenant().supplier.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+    return matchSupplier(supplierRaw, suppliers)?.id ?? null;
+  }
+
+  /**
+   * Phase-2 server-side matching: resolve the supplier's raw name to a real
+   * Supplier, then match every line against three tiers in priority order —
+   * a learned `ProductAlias` (this supplier, falling back to the ""
+   * any-supplier scope), the legacy `ProductMapping` table, then the fuzzy
+   * composed-name matcher. Runs on BOTH the fresh-scan path and a re-scanned
+   * cache hit (see `rematchPriorScan`) so a just-taught alias applies on the
+   * very next scan of the same document.
+   */
+  private async matchItems(
+    supplierRaw: string | null | undefined,
+    items: any[],
+  ): Promise<{ supplierId: string | null; items: any[] }> {
+    const supplierId = await this.resolveSupplierId(supplierRaw);
+
+    const [products, allMappings, aliasMap] = await Promise.all([
+      this.prisma.forTenant().product.findMany({
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          barcode: true,
+          unitSku: true,
+          parentProductId: true,
+          parent: { select: { name: true } },
+        },
+      }),
+      this.prisma.forTenant().productMapping.findMany({
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              barcode: true,
+              parentProductId: true,
+              parent: { select: { name: true } },
+            },
+          },
+        },
+      }),
+      this.productAlias.resolveMany(
+        supplierId,
+        items.map((item) => item.extractedName ?? ""),
+      ),
+    ]);
+
+    // Build mapping index keyed by supplierName → rawDescription (lowercase)
+    const mappingIndex: Record<
+      string,
+      Record<string, { productId: string | null; productName: string | null }>
+    > = {};
+    for (const m of allMappings) {
+      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
+      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
+        productId: m.productId,
+        productName: m.product ? composedProductName(m.product) : null,
+      };
+    }
+
+    const supplierName = supplierRaw ?? "";
+    const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
+
+    // Rarity-weighted token weights over the composed catalog names — computed
+    // once for the whole scan, reused per line.
+    const weights = buildTokenWeights(products);
+
+    const matched = items.map((item) => {
+      const raw: string = item.extractedName ?? "";
+      const rawLower = raw.toLowerCase();
+
+      // 0. Learned alias — tenant-scoped and normalized, takes priority over
+      //    the legacy mapping tier below. Supplier-specific beats the ""
+      //    any-supplier fallback (resolveMany already applied that order).
+      const aliasTarget: AliasTarget | undefined = aliasMap.get(raw);
+      if (aliasTarget?.productId) {
+        const product = products.find((p) => p.id === aliasTarget.productId);
+        return {
+          ...item,
+          matchedProductId: aliasTarget.productId,
+          matchedProductName: product ? composedProductName(product) : null,
+          confidence: "high",
+          matchSource: "alias",
+        };
+      }
+
+      // 1. Exact mapping hit (learned from previous corrections) — learned
+      //    mappings stay authoritative, no candidates.
+      if (supplierMappings[rawLower]?.productId) {
+        const m = supplierMappings[rawLower];
+        return {
+          ...item,
+          matchedProductId: m.productId,
+          matchedProductName: m.productName,
+          confidence: "high",
+          matchSource: "memory",
+        };
+      }
+
+      // 2-3. Composed-name / rarity-weighted fuzzy matching against the catalog.
+      const match = matchLine(raw, item.sku ?? null, products, weights);
+      return { ...item, ...match };
+    });
+
+    return { supplierId, items: matched };
   }
 
   /**
@@ -1082,14 +1826,11 @@ export class VendorBillsService {
   async scanInvoice(files: ScanInvoiceFile[], scannedById?: string) {
     const fileHash = hashFile(files.map((f) => f.buffer));
     const prior = await this.findScanByHash(fileHash);
-    if (prior) return prior;
+    if (prior) return this.rematchPriorScan(prior);
 
-    // Look up API key: DB-stored key takes precedence over env var
-    const storedKey = await this.systemConfig.get("anthropic.apiKey");
-    const apiKey =
-      storedKey && storedKey.length > 0
-        ? storedKey
-        : this.configService.get<string>("ANTHROPIC_API_KEY");
+    // Key priority: tenant key (SystemConfig) → platform key → env var.
+    const tenantKey = await this.systemConfig.get("anthropic.apiKey");
+    const apiKey = await this.platformConfig.resolveAnthropicKey(tenantKey);
     if (!apiKey || apiKey.length === 0) {
       throw new BadRequestException(
         "AI invoice scanning is not available. Please contact your system administrator to configure the ANTHROPIC_API_KEY.",
@@ -1209,6 +1950,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     } catch (err) {
       const status = (err as { status?: number })?.status;
       this.logger.error(`scanInvoice: Anthropic call failed (status ${status}): ${String(err)}`);
+      await this.platformConfig.recordAiUsage({
+        tenantId: this.prisma.getTenantId(),
+        feature: "ocr.vendor_bill",
+        model: SCAN_MODEL,
+        success: false,
+      });
       if (status === 401 || status === 403) {
         throw new BadRequestException({
           message:
@@ -1232,6 +1979,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       });
     }
     const scanDurationMs = Date.now() - startedAt;
+
+    // The call succeeded, so the spend is real — record it even if parsing
+    // the response fails below.
+    await this.platformConfig.recordAiUsage({
+      tenantId: this.prisma.getTenantId(),
+      feature: "ocr.vendor_bill",
+      model: SCAN_MODEL,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0,
+    });
 
     const content = message.content[0];
     if (content.type !== "text") {
@@ -1267,77 +2024,13 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       parsed.notes = priorNotes ? `${priorNotes} ${skipNote}` : skipNote;
     }
 
-    // ── Phase 2: Server-side product matching (free, instant, no tokens) ──
-    const [products, allMappings] = await Promise.all([
-      this.prisma.forTenant().product.findMany({
-        select: {
-          id: true,
-          name: true,
-          sku: true,
-          barcode: true,
-          unitSku: true,
-          parentProductId: true,
-          parent: { select: { name: true } },
-        },
-      }),
-      this.prisma.forTenant().productMapping.findMany({
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              sku: true,
-              barcode: true,
-              parentProductId: true,
-              parent: { select: { name: true } },
-            },
-          },
-        },
-      }),
-    ]);
+    // ── Phase 2: Server-side supplier + product matching (free, instant) ──
+    const { supplierId, items } = await this.matchItems(
+      typeof parsed.supplier === "string" ? parsed.supplier : null,
+      (parsed.items as any[]) ?? [],
+    );
 
-    // Build mapping index keyed by supplierName → rawDescription (lowercase)
-    const mappingIndex: Record<
-      string,
-      Record<string, { productId: string | null; productName: string | null }>
-    > = {};
-    for (const m of allMappings) {
-      if (!mappingIndex[m.supplierName]) mappingIndex[m.supplierName] = {};
-      mappingIndex[m.supplierName][m.rawDescription.toLowerCase()] = {
-        productId: m.productId,
-        productName: m.product ? composedProductName(m.product) : null,
-      };
-    }
-
-    const supplierName = (parsed.supplier as string) ?? "";
-    const supplierMappings = supplierName ? (mappingIndex[supplierName] ?? {}) : {};
-
-    // Rarity-weighted token weights over the composed catalog names — computed
-    // once for the whole scan, reused per line.
-    const weights = buildTokenWeights(products);
-
-    const items = ((parsed.items as any[]) ?? []).map((item: any) => {
-      const raw: string = item.extractedName ?? "";
-      const rawLower = raw.toLowerCase();
-
-      // 1. Exact mapping hit (learned from previous corrections) — learned
-      //    mappings stay first and authoritative, no candidates.
-      if (supplierMappings[rawLower]?.productId) {
-        const m = supplierMappings[rawLower];
-        return {
-          ...item,
-          matchedProductId: m.productId,
-          matchedProductName: m.productName,
-          confidence: "high",
-        };
-      }
-
-      // 2-3. Composed-name / rarity-weighted fuzzy matching against the catalog.
-      const match = matchLine(raw, item.sku ?? null, products, weights);
-      return { ...item, ...match };
-    });
-
-    const result = { ...parsed, items };
+    const result = { ...parsed, items, supplierId };
     const scan = await this.persistScan({
       files,
       fileHash,
@@ -1346,6 +2039,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       result,
       scanDurationMs,
       scannedById,
+      supplierId,
     });
     return { ...result, scanId: scan?.id ?? null };
   }
@@ -1397,6 +2091,25 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     >;
   }
 
+  /**
+   * A cached scan's payload was matched (or not) against whatever aliases and
+   * mappings existed at scan time. A rescan is exactly the moment an operator
+   * expects a just-taught correction to apply, so strip the stale match
+   * fields and re-run `matchItems` in memory before returning — the stored
+   * `extractedPayload` (fingerprints, scan history) is never rewritten.
+   */
+  private async rematchPriorScan(prior: Record<string, any>): Promise<Record<string, any>> {
+    const rawItems: any[] = Array.isArray(prior.items) ? prior.items : [];
+    const strippedItems = rawItems.map((item: any) => {
+      const { matchedProductId, matchedProductName, confidence, candidates, matchSource, ...rest } =
+        item ?? {};
+      return rest;
+    });
+    const supplierRaw = typeof prior.supplier === "string" ? prior.supplier : null;
+    const { supplierId, items } = await this.matchItems(supplierRaw, strippedItems);
+    return { ...prior, items, supplierId };
+  }
+
   /** Record the scan and file it under all three duplicate keys. Never throws. */
   private async persistScan(args: {
     files: ScanInvoiceFile[];
@@ -1406,6 +2119,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     result: Record<string, unknown>;
     scanDurationMs: number;
     scannedById?: string;
+    supplierId?: string | null;
   }): Promise<{ id: string } | null> {
     const { files, fileHash, parsed, items, result } = args;
     try {
@@ -1423,6 +2137,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           model: SCAN_MODEL,
           scanDurationMs: args.scanDurationMs,
           supplierNameRaw: typeof parsed.supplier === "string" ? parsed.supplier : null,
+          supplierId: args.supplierId ?? null,
           supplierInvoiceNumber: invoiceNumber || null,
           invoiceDate: this.parseDate(parsed.invoiceDate as string | null),
           subtotal: this.moneyOrNull(parsed.subtotal),
@@ -1513,7 +2228,10 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     return { ...scan, fileUrl };
   }
 
-  async recordPayment(id: string, dto: { amount: number; method: string; reference?: string }) {
+  async recordPayment(
+    id: string,
+    dto: { amount: number; method: string; reference?: string; notes?: string },
+  ) {
     // F10-004: reject non-positive amounts. A negative/zero payment would reduce
     // totalPaid and could flip the bill's status, corrupting AP balances. The
     // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
@@ -1537,6 +2255,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           amount: dto.amount,
           method: dto.method as any,
           reference: dto.reference,
+          // Was silently discarded here — the DTO accepted it but this create()
+          // never read it back off dto, so every note an operator typed vanished.
+          notes: dto.notes ?? null,
         },
       });
       const newPaid = roundMoney(alreadyPaid + Number(dto.amount));
@@ -1555,6 +2276,250 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     });
   }
 
+  /**
+   * The AP mirror of `InvoicesService.recordStandalonePayment`: one lump-sum
+   * supplier payment allocated across N of that supplier's bills, all sharing
+   * one `paymentGroupId` so the group reads as a single event. Any amount left
+   * unallocated becomes a `SupplierCredit` rather than a rejection — the
+   * operator paid what they paid.
+   *
+   * Landmine 1: eligibility per bill is `totalOwed − totalPaid > 0.001`,
+   * ALWAYS arithmetic against the ledger (this bill's own `BillPayment` rows),
+   * never `VendorBillStatus` — PARTIAL is written both for a short receipt and
+   * for a part payment, so it cannot tell you what's actually owed.
+   *
+   * Everything happens in one transaction: an allocation to a bill belonging
+   * to a different supplier, or exceeding what a bill can still take, or the
+   * allocations summing past `totalAmount`, throws and rolls back the whole
+   * group — nothing is half-written.
+   */
+  async recordSupplierPayment(dto: RecordSupplierPaymentDto) {
+    // Resolve the supplier through the tenant-scoped client first, exactly as
+    // getSupplierStatement does. Without it an unknown id surfaces as a raw
+    // Prisma FK error (500) from the SupplierCredit write below, and another
+    // tenant's id would mint a credit row nobody can ever see or spend.
+    const supplier = await this.prisma.forTenant().supplier.findUnique({
+      where: { id: dto.supplierId },
+    });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+
+    const requestedTotal = roundMoney(dto.allocations.reduce((s, a) => s + Number(a.amount), 0));
+    if (requestedTotal > dto.totalAmount + 0.001) {
+      throw new BadRequestException(
+        `Allocations total ${requestedTotal.toFixed(2)} exceed the payment amount of ${Number(dto.totalAmount).toFixed(2)}.`,
+      );
+    }
+
+    const paymentGroupId = randomUUID();
+    const paidAt = dto.paidAt ? new Date(dto.paidAt) : new Date();
+
+    return this.prisma.tenantTransaction(async (tx) => {
+      const payments: any[] = [];
+      const bills: { id: string; status: string; totalPaid: number }[] = [];
+      let allocatedTotal = 0;
+
+      for (const alloc of dto.allocations) {
+        const amount = roundMoney(Number(alloc.amount));
+        if (amount <= 0.001) continue;
+
+        const bill = await tx.vendorBill.findUnique({
+          where: { id: alloc.vendorBillId },
+          include: { payments: true },
+        });
+        if (!bill) throw new NotFoundException(`Bill ${alloc.vendorBillId} not found`);
+        // Highest-risk guard in this method: money must never land on another
+        // supplier's bill. Checked per allocation, not once for the group.
+        if (bill.supplierId !== dto.supplierId) {
+          throw new BadRequestException(
+            `Bill ${bill.billNumber} does not belong to the selected supplier.`,
+          );
+        }
+        // The ONE status comparison this method makes, and the only one it may:
+        // VOID is unambiguous. A voided bill keeps its totalOwed and gets no
+        // offsetting payment rows, so the arithmetic below still reports a
+        // balance — and the update further down would overwrite VOID with
+        // PAID/PARTIAL, resurrecting a cancelled bill (whose stock was already
+        // reversed) into AP with real cash on it. Reachable as a race: another
+        // operator voids the bill between the modal loading it and submitting.
+        // Mirrors bookkeeping.payBillFully and invoices' recordStandalonePayment.
+        if (bill.status === "VOID") {
+          throw new BadRequestException(`Bill ${bill.billNumber} is void and cannot be paid.`);
+        }
+
+        // The ledger, exactly as recordPayment does — never the denormalised
+        // totalPaid column, and never bill.status (landmine 1).
+        const alreadyPaid = roundMoney(
+          bill.payments.reduce((s: number, p: any) => s + Number(p.amount), 0),
+        );
+        const remaining = roundMoney(Number(bill.totalOwed) - alreadyPaid);
+        if (amount > remaining + 0.001) {
+          throw new BadRequestException(
+            `Allocation of ${amount.toFixed(2)} to bill ${bill.billNumber} exceeds its remaining balance of ${remaining.toFixed(2)}.`,
+          );
+        }
+
+        const payment = await tx.billPayment.create({
+          data: {
+            vendorBillId: bill.id,
+            amount,
+            method: dto.method,
+            paidAt,
+            reference: dto.reference ?? null,
+            notes: dto.notes ?? null,
+            paymentGroupId,
+          },
+        });
+        payments.push(payment);
+        allocatedTotal = roundMoney(allocatedTotal + amount);
+
+        const newPaid = roundMoney(alreadyPaid + amount);
+        // Same rule as recordPayment — arithmetic, never a status precondition.
+        const newStatus = newPaid >= Number(bill.totalOwed) - 0.001 ? "PAID" : "PARTIAL";
+        const updated = await tx.vendorBill.update({
+          where: { id: bill.id },
+          data: { totalPaid: newPaid, status: newStatus as any },
+        });
+        bills.push({
+          id: updated.id,
+          status: updated.status,
+          totalPaid: Number(updated.totalPaid),
+        });
+      }
+
+      // Overpayment is on-account credit, not a rejection: the operator paid
+      // what they paid. Mirrors recordStandalonePayment's excess -> AdvancePayment.
+      const excess = roundMoney(dto.totalAmount - allocatedTotal);
+      if (excess > 0.001) {
+        await tx.supplierCredit.create({
+          data: {
+            supplierId: dto.supplierId,
+            amount: excess,
+            balance: excess,
+            method: dto.method,
+            reference: dto.reference ?? null,
+            notes: dto.notes ?? null,
+            receivedAt: paidAt,
+          },
+        });
+      }
+
+      return { paymentGroupId, payments, excess: Math.max(0, excess), bills };
+    });
+  }
+
+  /**
+   * Pure read: a running-balance timeline for one supplier — bills (up) and
+   * real cash movements (down) merged and sorted by date. `outstanding` is
+   * `Σ(totalOwed − totalPaid)` over non-VOID bills — arithmetic, never status
+   * (landmine 1); VOID itself is unambiguous so it's the one status this file
+   * ever filters on.
+   *
+   * A `SupplierCredit`'s ORIGINAL amount is counted as a "down" movement the
+   * moment it is created (that cash genuinely left the operator's hand then).
+   * When it is later drawn against a bill (auto-apply), the resulting
+   * `BillPayment` carries `supplierCreditId` and is deliberately EXCLUDED from
+   * the timeline's payment rows — it is not new money, just the same dollars
+   * already counted being matched to a bill, and counting both would
+   * double-subtract it. The test is the FK, never the `reference` text: that
+   * field is operator-typed on both money paths, so matching a
+   * `"SUPPLIER_CREDIT-"` prefix would let a real cash payment disappear from
+   * the timeline while still counting toward `totalPaid`. The bill's own
+   * `totalPaid` still reflects the draw (via the normal per-bill payments
+   * relation), so `outstanding` stays correct either way.
+   */
+  async getSupplierStatement(supplierId: string) {
+    const supplier = await this.prisma.forTenant().supplier.findUnique({
+      where: { id: supplierId },
+    });
+    if (!supplier) throw new NotFoundException("Supplier not found");
+
+    const [bills, credits] = await Promise.all([
+      this.prisma.forTenant().vendorBill.findMany({
+        where: { supplierId, status: { not: "VOID" as any } },
+        include: { payments: true },
+        orderBy: [{ billDate: "asc" }, { createdAt: "asc" }],
+      }),
+      this.prisma.forTenant().supplierCredit.findMany({
+        where: { supplierId },
+        orderBy: { receivedAt: "asc" },
+      }),
+    ]);
+
+    type Row = {
+      id: string;
+      date: Date;
+      type: "BILL" | "PAYMENT" | "CREDIT";
+      description: string;
+      amount: number; // signed: bills +, payments/credits -
+      billId?: string;
+      billNumber?: string;
+      paymentGroupId?: string | null;
+    };
+    const rows: Row[] = [];
+
+    let totalOwed = 0;
+    let totalPaid = 0;
+    for (const b of bills) {
+      const owed = Number(b.totalOwed);
+      const paid = roundMoney(b.payments.reduce((s: number, p: any) => s + Number(p.amount), 0));
+      totalOwed = roundMoney(totalOwed + owed);
+      totalPaid = roundMoney(totalPaid + paid);
+
+      rows.push({
+        id: b.id,
+        date: b.billDate ?? b.createdAt,
+        type: "BILL",
+        description: `Bill ${b.billNumber}`,
+        amount: owed,
+        billId: b.id,
+        billNumber: b.billNumber,
+      });
+
+      for (const payment of b.payments as any[]) {
+        if (payment.supplierCreditId) continue;
+        rows.push({
+          id: payment.id,
+          date: payment.paidAt,
+          type: "PAYMENT",
+          description: `Payment on ${b.billNumber}`,
+          amount: -Number(payment.amount),
+          billId: b.id,
+          billNumber: b.billNumber,
+          paymentGroupId: payment.paymentGroupId ?? null,
+        });
+      }
+    }
+
+    let creditBalance = 0;
+    for (const credit of credits) {
+      creditBalance = roundMoney(creditBalance + Number(credit.balance));
+      rows.push({
+        id: credit.id,
+        date: credit.receivedAt,
+        type: "CREDIT",
+        description: credit.notes || "Overpayment held as account credit",
+        amount: -Number(credit.amount),
+      });
+    }
+
+    rows.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    let running = 0;
+    const timeline = rows.map((row) => {
+      running = roundMoney(running + row.amount);
+      return { ...row, balance: running };
+    });
+
+    return {
+      supplierId,
+      timeline,
+      totalOwed,
+      totalPaid,
+      outstanding: roundMoney(totalOwed - totalPaid),
+      creditBalance,
+    };
+  }
+
   async delete(id: string) {
     const bill = await this.prisma.forTenant().vendorBill.findUnique({ where: { id } });
     if (!bill) throw new NotFoundException("Bill not found");
@@ -1563,11 +2528,14 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         "Cannot delete a bill that has been received or paid. Void it instead.",
       );
     }
-    await this.prisma.$transaction([
-      this.prisma.forTenant().billPayment.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.forTenant().vendorBillItem.deleteMany({ where: { vendorBillId: id } }),
-      this.prisma.forTenant().vendorBill.delete({ where: { id } }),
-    ]);
+    await this.prisma.tenantTransaction(async (tx) => {
+      // A DRAFT bill can legitimately carry auto-applied credit draws — give
+      // that money back before its payment rows are destroyed with the bill.
+      await this.refundDrawnSupplierCredits(tx, id);
+      await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
+      await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      await tx.vendorBill.delete({ where: { id } });
+    });
     return { success: true };
   }
 
@@ -1582,15 +2550,16 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     const skipped = bills.filter((b) => b.status !== "DRAFT" && b.status !== "VOID");
     if (deletable.length > 0) {
       const deletableIds = deletable.map((b) => b.id);
-      await this.prisma.$transaction([
-        this.prisma
-          .forTenant()
-          .billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma
-          .forTenant()
-          .vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } }),
-        this.prisma.forTenant().vendorBill.deleteMany({ where: { id: { in: deletableIds } } }),
-      ]);
+      await this.prisma.tenantTransaction(async (tx) => {
+        // Same reason as delete(): auto-applied credit goes back before the
+        // draw rows are destroyed. Already-VOID bills refunded nothing left.
+        for (const billId of deletableIds) {
+          await this.refundDrawnSupplierCredits(tx, billId);
+        }
+        await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
+      });
     }
     return {
       deleted: deletable.length,

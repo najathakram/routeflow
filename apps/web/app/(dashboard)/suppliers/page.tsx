@@ -22,7 +22,8 @@ import {
 import { PageHeader, Badge, Button, cn } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
-import { useDebounce } from "@/lib/hooks/useDebounce";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import {
   useSuppliers,
   useCreateSupplier,
@@ -38,6 +39,18 @@ function fmt(n?: number) {
   if (n == null || n === 0) return null;
   return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+
+// Same VALID_TERMS list as the API DTO (create-supplier.dto.ts) and the
+// invoice pages' TERMS_OPTIONS — "" seeds/clears "no default" (falls back to
+// whatever the operator picks on the bill).
+const TERMS_OPTIONS = [
+  { value: "", label: "No default" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
 
 // ─── Supplier form modal ───────────────────────────────────────────────────────
 
@@ -61,6 +74,7 @@ function SupplierModal({
     website: initial?.website ?? "",
     notes: initial?.notes ?? "",
     leadTimeDays: initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "",
+    defaultTerms: initial?.defaultTerms ?? "",
     addressLine1: initial?.addressLine1 ?? "",
     addressLine2: initial?.addressLine2 ?? "",
     city: initial?.city ?? "",
@@ -83,6 +97,10 @@ function SupplierModal({
       website: form.website || undefined,
       notes: form.notes || undefined,
       leadTimeDays: form.leadTimeDays ? Number(form.leadTimeDays) : undefined,
+      // Always send — unlike the free-text fields above, "" here is a deliberate
+      // choice (the "No default" option), not "leave unset", and the API reads
+      // "" as "clear a previously-set default" (create-supplier.dto.ts).
+      defaultTerms: form.defaultTerms,
       addressLine1: form.addressLine1 || undefined,
       addressLine2: form.addressLine2 || undefined,
       city: form.city || undefined,
@@ -166,6 +184,22 @@ function SupplierModal({
                   className={inputCls}
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
+                  Default payment terms
+                </label>
+                <select
+                  value={form.defaultTerms}
+                  onChange={(e) => set("defaultTerms", e.target.value)}
+                  className={inputCls}
+                >
+                  {TERMS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-navy/70 uppercase tracking-wide">
                   Email
@@ -197,11 +231,16 @@ function SupplierModal({
                 Address
               </p>
               <div className="space-y-2">
-                <input
-                  placeholder="Street address"
+                <AddressAutocomplete
+                  placeholder="Street address — start typing for suggestions"
                   value={form.addressLine1}
-                  onChange={(e) => set("addressLine1", e.target.value)}
-                  className={inputCls}
+                  onChange={(v) => set("addressLine1", v)}
+                  onAddressSelect={({ street, city, state, zip }) => {
+                    set("addressLine1", street);
+                    set("city", city);
+                    set("state", state);
+                    set("zip", zip);
+                  }}
                 />
                 <input
                   placeholder="Address line 2"
@@ -669,8 +708,7 @@ export default function SuppliersPage() {
     setTitle("Suppliers");
   }, [setTitle]);
 
-  const [search, setSearch] = React.useState("");
-  const debouncedSearch = useDebounce(search, 300);
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [activeFilter, setActiveFilter] = React.useState<"all" | "active" | "inactive">("all");
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("list");
   const [showModal, setShowModal] = React.useState(false);
@@ -808,7 +846,7 @@ export default function SuppliersPage() {
         title="Suppliers"
         subtitle={`${total} supplier${total !== 1 ? "s" : ""}${totalOutstanding > 0 ? ` · ${fmt(totalOutstanding)} outstanding` : ""}`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={
@@ -1005,37 +1043,39 @@ export default function SuppliersPage() {
       ) : viewMode === "list" ? (
         /* ── List view ── */
         <div className="overflow-hidden rounded-xl border border-surface-border bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-surface-border bg-surface-raised/60">
-                {selectMode && <th className="w-10 px-4 py-2.5" />}
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Supplier
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Contact
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Location
-                </th>
-                <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Lead
-                </th>
-                <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Outstanding
-                </th>
-                <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
-                  Status
-                </th>
-                <th className="w-20 px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {suppliers.map((s) => (
-                <SupplierRow key={s.id} {...sharedRowProps(s)} />
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-surface-border bg-surface-raised/60">
+                  {selectMode && <th className="w-10 px-4 py-2.5" />}
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Supplier
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Contact
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Location
+                  </th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Lead
+                  </th>
+                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Outstanding
+                  </th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-navy/70 uppercase tracking-wide">
+                    Status
+                  </th>
+                  <th className="w-20 px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {suppliers.map((s) => (
+                  <SupplierRow key={s.id} {...sharedRowProps(s)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {/* Total outstanding footer */}
           {totalOutstanding > 0 && (

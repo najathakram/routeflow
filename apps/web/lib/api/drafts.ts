@@ -1,26 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-
-/**
- * Minimize & resume drafts (pos-cost-roles-spec §2). A parked builder draft;
- * `payload` is the full builder state so a draft restores exactly. Per-user,
- * tenant-scoped server-side.
- */
-export interface SaleDraft {
-  id: string;
-  kind: "ORDER" | "INVOICE";
-  customerId?: string | null;
-  customerName?: string | null;
-  title?: string | null;
-  payload: Record<string, unknown>;
-  device?: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type SaveDraftInput = Partial<
-  Pick<SaleDraft, "kind" | "customerId" | "customerName" | "title" | "payload" | "device">
->;
+import type { SaleDraft, SaveDraftInput } from "@routeflow/types";
+export type { SaleDraft, SaveDraftInput } from "@routeflow/types";
 
 export function useDrafts() {
   return useQuery<SaleDraft[]>({

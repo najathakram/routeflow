@@ -6,6 +6,7 @@
  */
 import {
   activeOperatorTab,
+  visibleOperatorTabs,
   OPERATOR_TABS,
   OPERATOR_TAB_ROOT,
   type OperatorTabKey,
@@ -68,6 +69,17 @@ describe("activeOperatorTab — routes outside (tabs)", () => {
   });
 });
 
+describe("activeOperatorTab — ad-hoc trips section", () => {
+  it("maps the trips section to Dispatch (an unmapped section produces a dead tab bar)", () => {
+    expect(activeOperatorTab(["(operator)", "trips"])).toBe("dispatch");
+  });
+
+  it("stays on Dispatch however deep the trips route goes", () => {
+    expect(activeOperatorTab(["(operator)", "trips", "new"])).toBe("dispatch");
+    expect(activeOperatorTab(["(operator)", "trips", "index"])).toBe("dispatch");
+  });
+});
+
 describe("activeOperatorTab — degenerate input", () => {
   it("treats the bare group as Home", () => {
     expect(activeOperatorTab(["(operator)"])).toBe("home");
@@ -102,5 +114,17 @@ describe("table invariants", () => {
     for (const tab of OPERATOR_TABS) {
       expect(activeOperatorTab(["(operator)", "(tabs)", tab])).toBe(tab);
     }
+  });
+});
+
+describe("visibleOperatorTabs — dispatch access gate", () => {
+  it("returns every tab, including Dispatch, when either feature grants access", () => {
+    expect(visibleOperatorTabs(true)).toEqual([...OPERATOR_TABS]);
+    expect(visibleOperatorTabs(true)).toContain("dispatch");
+  });
+
+  it("drops only Dispatch when neither feature grants access, preserving order", () => {
+    expect(visibleOperatorTabs(false)).toEqual(["home", "orders", "warehouse", "more"]);
+    expect(visibleOperatorTabs(false)).not.toContain("dispatch");
   });
 });

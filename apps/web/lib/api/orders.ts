@@ -1,10 +1,24 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { ChangeRequest, ChangeRequestResolveAction } from "@/lib/change-requests";
+import type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  InlineReturnLinesRequest,
+  PriceType,
+} from "@routeflow/types";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
-export type PriceType = "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL" | "PROMO";
+// `PriceType` re-exported from @routeflow/types (wave E / imp-10b R2: was
+// declared identically here AND in `invoices.ts` — collapsed to one import).
+export type {
+  ActiveOrderSummary,
+  CancelImpact,
+  CustomerPriceHistory,
+  PriceType,
+} from "@routeflow/types";
 
 export interface Order {
   id: string;
@@ -19,6 +33,8 @@ export interface Order {
     email?: string | null;
   };
   status: "DRAFT" | "PENDING" | "CONFIRMED" | "OUT_FOR_DELIVERY" | "DELIVERED" | "CANCELLED";
+  /** ROUTE = dispatched on a delivery route (default); SHIP = supplier/carrier-shipped, excluded from trip/route dispatch. */
+  fulfillPath: "ROUTE" | "SHIP";
   urgent: boolean;
   subtotal: number;
   tax: number;
@@ -29,6 +45,8 @@ export interface Order {
   requestedDeliveryDate?: string;
   /** Business date the order actually happened on. Null = `createdAt` is the date. */
   orderDate?: string | null;
+  /** Staff-only per-order commission override. `0` = exempt (no commission); `null`/absent = agent/customer default. */
+  commissionRatePct?: number | string | null;
   templateId?: string;
   lineItems: OrderItem[];
   /** Invoices generated from this order (sibling split invoices share invoiceGroupId). */
@@ -37,9 +55,21 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
-    /** CREDIT_NOTE payments only (server-scoped include) — sums to the "applied
-     *  $ so far" shown per credit-note intent on the order detail page. */
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
+     *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
+     *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * Credit-note intents applied to this order (join table — survives invoice
@@ -115,6 +145,12 @@ export interface OrderItem {
     unitsPerBox?: number | null;
     averageCost?: string | number | null;
     category?: string | null;
+    /** SKU line + read-time name composition (`displayProductName`) — `GET /orders/:id` only. */
+    sku?: string | null;
+    unitSku?: string | null;
+    variantName?: string | null;
+    parentProductId?: string | null;
+    parent?: { name: string } | null;
   };
   /** Free-text label for an unlisted line (productId null, priceType "MANUAL"). */
   name?: string | null;
@@ -127,6 +163,13 @@ export interface OrderItem {
   pieces?: number | null;
   /** Sale-time box-size snapshot. Box math must use THIS, not the live product. */
   unitsPerBox?: number | null;
+  /** units_v1: set when this line sells by a named unit (Case, Pallet, Piece…) — `boxes` is then
+   *  the COUNT of that unit (never a physical box) and `qty` the base-piece total. Null = the pack. */
+  unitLabel?: string | null;
+  /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
+   *  boxed line). Any local re-pricing MUST subtract it — otherwise the line
+   *  previews at full price while the server bills the reduced subtotal. */
+  promoFreeUnits?: number | null;
   /** Server-stored line subtotal (the agreed money). Prefer this over recomputing. */
   subtotal?: number;
   /**
@@ -145,15 +188,6 @@ export interface OrderItem {
   deliveredQty?: number;
 }
 
-export interface ActiveOrderSummary {
-  id: string;
-  orderNumber: string | null;
-  status: "DRAFT" | "PENDING";
-  itemCount: number;
-  total: number;
-  createdAt: string;
-}
-
 interface PaginatedResponse<T> {
   data: T[];
   meta: { total: number; page: number; limit: number; totalPages: number };
@@ -162,14 +196,23 @@ interface PaginatedResponse<T> {
 export function useOrders(
   params?: {
     customerId?: string;
+    /** PR-B: only orders containing at least one line for this product. */
+    productId?: string;
     status?: string;
     urgent?: boolean;
+    fulfillPath?: "ROUTE" | "SHIP";
     page?: number;
     limit?: number;
     deliveryDateFrom?: string;
     deliveryDateTo?: string;
+    /**
+     * B144: composes with `customerId` and role scope (never swallowed by
+     * either) — matches against order number OR the customer's business
+     * name.
+     */
+    search?: string;
   },
-  options?: { refetchInterval?: number },
+  options?: { refetchInterval?: number; enabled?: boolean },
 ) {
   return useQuery<PaginatedResponse<Order>>({
     queryKey: ["orders", params],
@@ -184,18 +227,6 @@ export function useOrder(id: string) {
     queryFn: () => apiClient.get(`/orders/${id}`).then((r) => r.data),
     enabled: !!id,
   });
-}
-
-/** What cancelling this order would do to its invoices and applied credits. */
-export interface CancelImpact {
-  orderId: string;
-  orderNumber: string;
-  alreadyCancelled: boolean;
-  invoicesToVoid: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  creditsToRestore: Array<{ creditNoteId: string; creditNoteNumber: string; amount: number }>;
-  advanceToRestore: number;
-  blockingPayments: Array<{ invoiceNumber: string; amount: number }>;
-  canCancel: boolean;
 }
 
 /**
@@ -224,6 +255,8 @@ export type CreateOrderItem =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | {
@@ -258,10 +291,31 @@ export function useCreateOrder() {
       /** Customer credit notes to apply to this order's invoice(s) at creation
        *  time — undefined/omitted leaves credits untouched. */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** Staff-only per-order commission override; 0 = exempt. */
+      commissionRatePct?: number;
+      /** #2406: an inline return to capture in the SAME write as this order — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being created, never sent here (see
+       *  CreateOrderDto.inlineReturn, apps/api/src/orders/orders.controller.ts). */
+      inlineReturn?: InlineReturnLinesRequest;
+      /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
+       *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
+      idempotencyKey?: string;
     }
   >({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this create carried an inline return — refresh any "Returns on this order"
+      // read (GET /returns?orderId=).
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
+    },
   });
 }
 
@@ -277,6 +331,15 @@ export interface CreateSaleDto {
   }[];
   /** true = van/cash sale (order DELIVERED + invoice SENT). false = PENDING order + linked DRAFT invoice. */
   deliveredNow: boolean;
+  /**
+   * Delivery-date picker: when present it REPLACES `deliveredNow`'s binary.
+   *  - deliveredOn <= today (tenant-tz calendar compare) → behaves as deliveredNow=true
+   *    AND sets deliveredAt to that date (staff-only backdating).
+   *  - deliveredOn > today → behaves as deliveredNow=false and sets
+   *    requestedDeliveryDate = deliveredOn.
+   * `deliveredNow` is still sent for backward compat; when both are present, `deliveredOn` wins.
+   */
+  deliveredOn?: string;
   notes?: string;
   discountAmount?: number;
   shippingFee?: number;
@@ -286,6 +349,10 @@ export interface CreateSaleDto {
   orderDate?: string;
   /** Only when deliveredNow=false: send (issue) the draft invoice now instead of leaving it a draft. */
   send?: boolean;
+  /** Due date (YYYY-MM-DD) for the created invoice. Omit to fall back to the tenant's default terms. */
+  dueDate?: string;
+  /** Long-form Terms & Conditions text for the created invoice. Omit to fall back to the tenant default. */
+  terms?: string;
   /** Customer credit notes to apply to this order's invoice(s) at creation
    *  time — undefined/omitted leaves credits untouched. */
   appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
@@ -333,13 +400,6 @@ export function useActiveOrderForCustomer(customerId: string | null | undefined)
   });
 }
 
-export interface CustomerPriceHistory {
-  [productId: string]: {
-    lastPrice: number;
-    listPriceAtTime: number;
-  };
-}
-
 /**
  * Per-product last-given price for a customer. Fetched once when the customer
  * is selected so scanning is instant — no per-item API call needed.
@@ -368,17 +428,29 @@ export function useUpdateOrderStatus() {
 
 export interface ItemUpdate {
   id?: string; // omitted for new items — the API creates them
-  productId?: string; // for new catalog items
+  productId?: string; // for new catalog items, and on an existing line's UPDATE when
+  // unitLabel is present (see unitLabel below — prepareUnitEditContext needs it to
+  // preload the product/ladder; an id-only UPDATE against a plain-pack line silently
+  // discards a bare unitLabel otherwise, see unit-line-edit.ts)
   /** Free-text label for a new unlisted line (no id, no productId) or a rename of one. */
   name?: string;
   action?: "CANCEL" | "DELETE" | "UPDATE";
+  /** units_v1, STAFF ONLY: with `unitLabel` present, the COUNT of that unit (e.g. 4
+   *  Cases) — never expanded to base pieces client-side, and boxes/pieces must be
+   *  omitted (assertUnitLabelNamed refuses an unnamed qty/price edit of a unit line). */
   qty?: number;
   /** Boxed split so the server prorates by BOX price (unitPrice is the box price).
-   *  Omit for non-boxed lines — the server then charges unitPrice * qty. */
+   *  Omit for non-boxed lines — the server then charges unitPrice * qty. Never send
+   *  alongside unitLabel (units_v1 lines are count + label only). */
   boxes?: number;
   pieces?: number;
   substituteProductId?: string;
   notes?: string;
+  /** units_v1: sell this line by a named unit (Case, Pallet, Piece…) instead of the pack.
+   *  Absent on an existing unit-aware line's edit is REFUSED server-side (409
+   *  UNIT_AWARE_LINE), never interpreted as pieces — see unit-line-edit.ts
+   *  assertUnitLabelNamed. Send `productId` alongside it (see above). */
+  unitLabel?: string;
   unitPrice?: number; // one-time per-line price override (DRAFT only, operator)
   overrideReason?: string; // optional note explaining the override
 }
@@ -400,9 +472,21 @@ export function useUpdateOrderItems() {
        * Staff-only (operator/tenant-admin); the server ignores it otherwise.
        */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** #2406: an inline return to capture in the SAME write as this edit — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
+       *  UpdateOrderItemsDto.inlineReturn). */
+      inlineReturn?: InlineReturnLinesRequest;
     }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee, appliedCreditNotes }) =>
+    mutationFn: ({
+      id,
+      items,
+      orderNotes,
+      replaceAll,
+      shippingFee,
+      appliedCreditNotes,
+      inlineReturn,
+    }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
           items,
@@ -410,11 +494,15 @@ export function useUpdateOrderItems() {
           replaceAll,
           shippingFee,
           appliedCreditNotes,
+          inlineReturn,
         })
         .then((r) => r.data),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       qc.setQueryData(["orders", data.id], data);
       qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this write carried an inline return — refresh the order-detail "Returns on
+      // this order" panel (GET /returns?orderId=), which reads the server's own figures.
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
 }
@@ -507,5 +595,23 @@ export function useResolveChangeRequest() {
       qc.invalidateQueries({ queryKey: ["orders", orderId] });
       qc.invalidateQueries({ queryKey: ["orders"] });
     },
+  });
+}
+
+export function usePatchOrderCommissionRate() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; commissionRatePct: number | null }>({
+    mutationFn: ({ id, commissionRatePct }) =>
+      apiClient.patch(`/orders/${id}/commission-rate`, { commissionRatePct }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
+  });
+}
+
+export function usePatchOrderFulfillPath() {
+  const qc = useQueryClient();
+  return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+    mutationFn: ({ id, fulfillPath }) =>
+      apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
   });
 }

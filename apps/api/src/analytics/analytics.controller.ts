@@ -3,12 +3,16 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { AnalyticsService } from "./analytics.service";
 import { DEMAND_RANGES, isDemandRange } from "./demand-range";
 
+// All 16 endpoints on this controller are analytics-only (no DRIVER/CUSTOMER traffic).
 @Controller("analytics")
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, PlanFlagGuard)
 @Roles(UserRole.OPERATOR)
+@RequirePlanFlag("flag.analytics")
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
@@ -32,6 +36,11 @@ export class AnalyticsController {
         "GET /analytics/price-history/:productId",
         "GET /analytics/cost-history/:productId",
         "GET /analytics/demand/:productId",
+        "GET /analytics/product-sales/:productId",
+        // #2118: served by ProductInsightsController (sales-facts), same gate.
+        "GET /analytics/products/:id/insights",
+        "GET /analytics/products/:id/sales",
+        "GET /analytics/products/:id/insights.csv",
       ],
     };
   }
@@ -62,13 +71,13 @@ export class AnalyticsController {
   }
 
   @Get("routes/performance")
-  getRoutes() {
-    return this.analyticsService.getRoutePerformance();
+  getRoutes(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getRoutePerformance(from, to);
   }
 
   @Get("drivers/performance")
-  getDrivers() {
-    return this.analyticsService.getDriverPerformance();
+  getDrivers(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getDriverPerformance(from, to);
   }
 
   @Get("inventory/turnover")
@@ -77,18 +86,23 @@ export class AnalyticsController {
   }
 
   @Get("inventory/dead-stock")
-  getDeadStock(@Query("daysInactive") days?: string) {
-    return this.analyticsService.getDeadStock(days ? parseInt(days) : 30);
+  getDeadStock(
+    @Query("daysInactive") days?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+  ) {
+    return this.analyticsService.getDeadStock(days ? parseInt(days) : 30, from, to);
   }
 
+  // Deliberately no from/to: current prices vs current costs (see the service doc).
   @Get("inventory/margin-alerts")
   getMarginAlerts() {
     return this.analyticsService.getMarginAlerts();
   }
 
   @Get("dso")
-  getDso() {
-    return this.analyticsService.getDso();
+  getDso(@Query("from") from?: string, @Query("to") to?: string) {
+    return this.analyticsService.getDso(from, to);
   }
 
   @Get("sales-by-category")
@@ -114,6 +128,16 @@ export class AnalyticsController {
   @Get("cost-history/:productId")
   getCostHistory(@Param("productId") id: string) {
     return this.analyticsService.getCostHistory(id);
+  }
+
+  /** PR-B: per-buyer sales history for the product Sales tab. `limit` caps the
+   *  returned lines (1-500, default 200) so a long-lived product can't return
+   *  an unbounded payload; an out-of-range value is clamped, not rejected. */
+  @Get("product-sales/:productId")
+  getProductSales(@Param("productId") id: string, @Query("limit") limit?: string) {
+    const parsed = limit != null && limit.trim() !== "" ? Number(limit) : NaN;
+    const take = Number.isFinite(parsed) ? Math.min(500, Math.max(1, Math.trunc(parsed))) : 200;
+    return this.analyticsService.getProductSales(id, take);
   }
 
   @Get("demand/:productId")

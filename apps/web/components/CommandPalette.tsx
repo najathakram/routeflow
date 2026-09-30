@@ -26,12 +26,31 @@ import {
   Building2,
   Layers,
   Megaphone,
+  Route as RouteIcon,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { apiClient } from "@/lib/api-client";
 import { useI18n } from "@/lib/i18n";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+
+/**
+ * `?action=new` for a list route, preserving that list's own query state when
+ * the palette is opened while already standing on it.
+ *
+ * The target page consumes `action` and replaces the URL with whatever remains,
+ * so pushing a bare `/orders?action=new` from /orders?page=2 threw away the
+ * operator's page and search on the way in.
+ */
+function createHref(base: string): string {
+  const params =
+    typeof window !== "undefined" && window.location.pathname === base
+      ? new URLSearchParams(window.location.search)
+      : new URLSearchParams();
+  params.set("action", "new");
+  return `${base}?${params.toString()}`;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,187 +66,217 @@ interface CommandItem {
 
 // ─── Static command definitions ───────────────────────────────────────────────
 
+/**
+ * Command ids gated per-feature addon (owner decision 2026-08-25: recurring
+ * routes and ad-hoc order delivery are separate addons; owner decision
+ * 2026-08-28: `devMode` no longer unlocks either one client-side).
+ */
+const ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"];
+const DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"];
+
 function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] {
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
   return React.useMemo(
-    () => [
-      // ─ Navigation ──
-      {
-        id: "nav-dashboard",
-        group: "Navigate",
-        label: "Dashboard",
-        icon: LayoutDashboard,
-        action: () => router.push("/dashboard"),
-        keywords: "home",
-      },
-      {
-        id: "nav-orders",
-        group: "Navigate",
-        label: "All Orders",
-        icon: ShoppingCart,
-        action: () => router.push("/orders"),
-      },
-      {
-        id: "nav-returns",
-        group: "Navigate",
-        label: "Returns",
-        icon: RotateCcw,
-        action: () => router.push("/returns"),
-      },
-      {
-        id: "nav-routes",
-        group: "Navigate",
-        label: "Routes",
-        icon: MapPin,
-        action: () => router.push("/routes"),
-      },
-      {
-        id: "nav-drivers",
-        group: "Navigate",
-        label: "Drivers",
-        icon: Truck,
-        action: () => router.push("/drivers"),
-      },
-      {
-        id: "nav-customers",
-        group: "Navigate",
-        label: "Customers",
-        icon: Users,
-        action: () => router.push("/customers"),
-      },
-      {
-        id: "nav-products",
-        group: "Navigate",
-        label: "Products",
-        icon: Package,
-        action: () => router.push("/products"),
-      },
-      {
-        id: "nav-promotions",
-        group: "Navigate",
-        label: "Promotions",
-        icon: Megaphone,
-        action: () => router.push("/promotions"),
-      },
-      {
-        id: "nav-inventory",
-        group: "Navigate",
-        label: "Inventory",
-        icon: Layers,
-        action: () => router.push("/inventory"),
-      },
-      {
-        id: "nav-suppliers",
-        group: "Navigate",
-        label: "Suppliers",
-        icon: Building2,
-        action: () => router.push("/suppliers"),
-      },
-      {
-        id: "nav-invoices",
-        group: "Navigate",
-        label: "Invoices",
-        icon: FileText,
-        action: () => router.push("/invoices"),
-      },
-      {
-        id: "nav-estimates",
-        group: "Navigate",
-        label: "Estimates",
-        icon: FileCheck,
-        action: () => router.push("/estimates"),
-      },
-      {
-        id: "nav-credit-notes",
-        group: "Navigate",
-        label: "Credit Notes",
-        icon: Receipt,
-        action: () => router.push("/credit-notes"),
-      },
-      {
-        id: "nav-payments",
-        group: "Navigate",
-        label: "Payments",
-        icon: CreditCard,
-        action: () => router.push("/finance/payments"),
-      },
-      {
-        id: "nav-expenses",
-        group: "Navigate",
-        label: "Expenses",
-        icon: ShoppingBag,
-        action: () => router.push("/finance/expenses"),
-      },
-      {
-        id: "nav-finance",
-        group: "Navigate",
-        label: "Finance Overview",
-        icon: Wallet,
-        action: () => router.push("/finance/dashboard"),
-      },
-      {
-        id: "nav-reports",
-        group: "Navigate",
-        label: "Reports",
-        icon: BarChart3,
-        action: () => router.push("/finance/reports"),
-      },
-      {
-        id: "nav-analytics",
-        group: "Navigate",
-        label: "Analytics",
-        icon: BarChart2,
-        action: () => router.push("/analytics"),
-      },
-      {
-        id: "nav-settings",
-        group: "Navigate",
-        label: "Settings",
-        icon: Settings,
-        action: () => router.push("/settings"),
-      },
-      // ─ Actions ──
-      {
-        id: "act-new-order",
-        group: "Actions",
-        label: "New Order",
-        icon: Plus,
-        action: () => router.push("/orders?action=new"),
-        keywords: "create add order",
-      },
-      {
-        id: "act-new-invoice",
-        group: "Actions",
-        label: "New Invoice",
-        icon: Plus,
-        action: () => router.push("/invoices/new"),
-        keywords: "create add invoice",
-      },
-      {
-        id: "act-new-route",
-        group: "Actions",
-        label: "New Route",
-        icon: Plus,
-        action: () => router.push("/routes/create"),
-        keywords: "create add route",
-      },
-      {
-        id: "act-new-customer",
-        group: "Actions",
-        label: "New Customer",
-        icon: Plus,
-        action: () => router.push("/customers?action=new"),
-        keywords: "create add customer",
-      },
-      {
-        id: "act-new-product",
-        group: "Actions",
-        label: "New Product",
-        icon: Plus,
-        action: () => router.push("/products?action=new"),
-        keywords: "create add product",
-      },
-    ],
-    [router],
+    () =>
+      [
+        // ─ Navigation ──
+        {
+          id: "nav-dashboard",
+          group: "Navigate",
+          label: "Dashboard",
+          icon: LayoutDashboard,
+          action: () => router.push("/dashboard"),
+          keywords: "home",
+        },
+        {
+          id: "nav-orders",
+          group: "Navigate",
+          label: "All Orders",
+          icon: ShoppingCart,
+          action: () => router.push("/orders"),
+        },
+        {
+          id: "nav-returns",
+          group: "Navigate",
+          label: "Returns",
+          icon: RotateCcw,
+          action: () => router.push("/returns"),
+        },
+        {
+          id: "nav-deliveries",
+          group: "Navigate",
+          label: "Deliveries",
+          icon: Package,
+          action: () => router.push("/deliveries"),
+        },
+        {
+          id: "nav-routes",
+          group: "Navigate",
+          label: "Routes",
+          icon: MapPin,
+          action: () => router.push("/routes"),
+        },
+        {
+          id: "nav-drivers",
+          group: "Navigate",
+          label: "Drivers",
+          icon: Truck,
+          action: () => router.push("/drivers"),
+        },
+        {
+          id: "nav-customers",
+          group: "Navigate",
+          label: "Customers",
+          icon: Users,
+          action: () => router.push("/customers"),
+        },
+        {
+          id: "nav-products",
+          group: "Navigate",
+          label: "Products",
+          icon: Package,
+          action: () => router.push("/products"),
+        },
+        {
+          id: "nav-promotions",
+          group: "Navigate",
+          label: "Promotions",
+          icon: Megaphone,
+          action: () => router.push("/promotions"),
+        },
+        {
+          id: "nav-inventory",
+          group: "Navigate",
+          label: "Inventory",
+          icon: Layers,
+          action: () => router.push("/inventory"),
+        },
+        {
+          id: "nav-suppliers",
+          group: "Navigate",
+          label: "Suppliers",
+          icon: Building2,
+          action: () => router.push("/suppliers"),
+        },
+        {
+          id: "nav-invoices",
+          group: "Navigate",
+          label: "Invoices",
+          icon: FileText,
+          action: () => router.push("/invoices"),
+        },
+        {
+          id: "nav-estimates",
+          group: "Navigate",
+          label: "Estimates",
+          icon: FileCheck,
+          action: () => router.push("/estimates"),
+        },
+        {
+          id: "nav-credit-notes",
+          group: "Navigate",
+          label: "Credit Notes",
+          icon: Receipt,
+          action: () => router.push("/credit-notes"),
+        },
+        {
+          id: "nav-payments",
+          group: "Navigate",
+          label: "Payments",
+          icon: CreditCard,
+          action: () => router.push("/finance/payments"),
+        },
+        {
+          id: "nav-expenses",
+          group: "Navigate",
+          label: "Bills & Purchasing",
+          icon: ShoppingBag,
+          action: () => router.push("/vendor-bills"),
+        },
+        {
+          id: "nav-finance",
+          group: "Navigate",
+          label: "Finance Overview",
+          icon: Wallet,
+          action: () => router.push("/finance/dashboard"),
+        },
+        {
+          id: "nav-reports",
+          group: "Navigate",
+          label: "Reports",
+          icon: BarChart3,
+          action: () => router.push("/finance/reports"),
+        },
+        {
+          id: "nav-analytics",
+          group: "Navigate",
+          label: "Analytics",
+          icon: BarChart2,
+          action: () => router.push("/analytics"),
+        },
+        {
+          id: "nav-settings",
+          group: "Navigate",
+          label: "Settings",
+          icon: Settings,
+          action: () => router.push("/settings"),
+        },
+        // ─ Actions ──
+        {
+          id: "act-new-order",
+          group: "Actions",
+          label: "New Order",
+          icon: Plus,
+          action: () => router.push(createHref("/orders")),
+          keywords: "create add order",
+        },
+        {
+          id: "act-new-invoice",
+          group: "Actions",
+          label: "New Invoice",
+          icon: Plus,
+          action: () => router.push("/invoices/new"),
+          keywords: "create add invoice",
+        },
+        {
+          id: "act-new-route",
+          group: "Actions",
+          label: "New Route",
+          icon: Plus,
+          action: () => router.push("/routes/create"),
+          keywords: "create add route",
+        },
+        {
+          id: "act-plan-trip",
+          group: "Actions",
+          label: "Plan delivery trip",
+          icon: RouteIcon,
+          action: () => router.push("/deliveries/new"),
+          keywords: "adhoc trip dispatch delivery",
+        },
+        {
+          id: "act-new-customer",
+          group: "Actions",
+          label: "New Customer",
+          icon: Plus,
+          action: () => router.push(createHref("/customers")),
+          keywords: "create add customer",
+        },
+        {
+          id: "act-new-product",
+          group: "Actions",
+          label: "New Product",
+          icon: Plus,
+          action: () => router.push(createHref("/products")),
+          keywords: "create add product",
+        },
+      ].filter((c) => {
+        if (ROUTES_COMMAND_IDS.includes(c.id)) return routesAccess;
+        if (DELIVERY_COMMAND_IDS.includes(c.id)) return deliveryAccess;
+        return true;
+      }),
+    [router, routesAccess, deliveryAccess],
   );
 }
 

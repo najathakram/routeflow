@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Download, X, Share, Plus, Smartphone, Monitor, CheckCircle2 } from "lucide-react";
+import { BRAND_MARK_SRC } from "./brand";
 
 type Variant = "tenant" | "buyer";
 
@@ -28,7 +29,7 @@ const STYLES = {
     accentIcon: "text-brand-600",
     gradient: "from-brand-600 to-brand-700",
     ring: "ring-brand-500/20",
-    logoSrc: "/logo.svg",
+    logoSrc: BRAND_MARK_SRC,
     appName: "RouteFlow",
   },
   buyer: {
@@ -37,7 +38,7 @@ const STYLES = {
     accentIcon: "text-buyer-600",
     gradient: "from-buyer-700 to-buyer-800",
     ring: "ring-buyer-500/20",
-    logoSrc: "/logo-buyer.svg",
+    logoSrc: BRAND_MARK_SRC,
     appName: "RouteFlow Buyer",
   },
 } as const;

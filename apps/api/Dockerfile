@@ -1,5 +1,5 @@
 # ─── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -10,13 +10,28 @@ COPY package.json package-lock.json turbo.json ./
 # Shared packages (package.json only — source copied later)
 COPY packages/config/package.json            packages/config/
 COPY packages/eslint-config/package.json     packages/eslint-config/
-COPY packages/types/package.json             packages/types/
-COPY packages/typescript-config/package.json packages/typescript-config/
+# @routeflow/pricing is COMPILED (see packages/pricing): the root `postinstall`
+# runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
+# already be here — a manifest-only copy makes that build fail with no inputs.
+COPY packages/pricing/                       packages/pricing/
+# @routeflow/scanning is COMPILED the same way (built right after pricing).
+COPY packages/scanning/                      packages/scanning/
+# The same postinstall then builds @routeflow/returns (`npm run build -w
+# @routeflow/returns`), and returns imports types from `@routeflow/types` —
+# so both need a full-directory copy here too, not just their manifests.
+COPY packages/returns/                       packages/returns/
+COPY packages/types/                         packages/types/
+# Whole directory, not just the manifest: packages/pricing/tsconfig.json extends
+# `@routeflow/typescript-config/base.json`, which the postinstall build above
+# resolves during `npm ci` — a manifest-only copy leaves that file missing.
+COPY packages/typescript-config/             packages/typescript-config/
 COPY packages/ui/package.json               packages/ui/
 
-# API workspace manifest + prisma schema (needed by postinstall `prisma generate`)
+# API workspace manifest + the multi-file prisma schema FOLDER and prisma.config.ts
+# (both needed by the postinstall `prisma generate` that runs inside `npm ci` below —
+# a missed edit here fails the image build at `npm ci`, not at runtime).
 COPY apps/api/package.json apps/api/
-COPY apps/api/prisma/schema.prisma apps/api/prisma/
+COPY apps/api/prisma/schema apps/api/prisma/schema
 COPY apps/api/prisma.config.ts apps/api/
 
 # Install all workspace dependencies (with scripts so @nestjs/core postinstall runs).
@@ -32,7 +47,7 @@ WORKDIR /app/apps/api
 RUN npx prisma generate && npm run build
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 

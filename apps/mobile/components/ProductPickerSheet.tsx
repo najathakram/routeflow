@@ -11,10 +11,12 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { SearchBar } from "@routeflow/ui/mobile/ios";
-import { useAdminProducts, type AdminProduct } from "../lib/api/admin";
+import { type AdminProduct } from "../lib/api/admin";
+import { useAdminProductSearch } from "../lib/use-product-search";
 import { BarcodeScanner } from "./BarcodeScanner";
-import { resolveProductByCode } from "../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../lib/barcode-resolve";
 import { showToast } from "../lib/toast";
+import { apiClient } from "../lib/api-client";
 
 /**
  * Reusable searchable + scannable product picker sheet — replaces the dumb
@@ -29,6 +31,7 @@ export function ProductPickerSheet({
   onSelect,
   title = "Product",
   standaloneOnly = false,
+  activeOnly = false,
   initialSearch,
 }: {
   visible: boolean;
@@ -39,25 +42,53 @@ export function ProductPickerSheet({
   /** Only offer standalone products (e.g. picking a variant PARENT). */
   standaloneOnly?: boolean;
   /**
+   * B142: filter archived products out of the list — for the order/invoice/
+   * standing-order (template) callers, where picking one commits a brand-new
+   * line. Stock-count, PO-receive, vendor-bill-scan, and variant-parent
+   * pickers need the unfiltered catalog and leave this false.
+   */
+  activeOnly?: boolean;
+  /**
    * Pre-fill the search box each time the sheet opens. Used by the sale
    * builders when a scanned code has several substring matches: the sheet opens
    * already showing them, so choosing is one tap.
    */
   initialSearch?: string;
 }) {
-  const [search, setSearch] = useState(initialSearch ?? "");
   const [scanOpen, setScanOpen] = useState(false);
+  // The catalogue loads only when the operator asks for it — a typed/scanned
+  // term or a deliberate "Browse catalogue" tap (owner ask 2026-09-14) —
+  // instead of the old `limit: 0` fetch-all (10,000-row clamp server-side,
+  // one presigned thumbnail URL per row). Resets on close so the next open
+  // starts quiet again.
+  const [browsing, setBrowsing] = useState(false);
+  const {
+    search,
+    setSearch,
+    products: rows,
+    isLoading,
+    idle,
+    isPlaceholder,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useAdminProductSearch<AdminProduct>({
+    enabled: visible,
+    browsing,
+    // B142: parity with web's SearchableProductPicker — filter archived
+    // products out of the manual tap list rather than letting them be
+    // committed as a brand-new line (the scan path was already guarded).
+    // Opt-in only: see the `activeOnly` prop doc above.
+    isActive: activeOnly ? true : undefined,
+  });
+  const products = rows.filter((p) => !standaloneOnly || !p.parentProductId);
 
-  // Re-seed on each open — `initialSearch` is a different scanned code each time.
+  // Re-seed on each open — `initialSearch` is a different scanned code each
+  // time — and drop browse so the next open starts quiet again.
   useEffect(() => {
     if (visible) setSearch(initialSearch ?? "");
-  }, [visible, initialSearch]);
-
-  const { data, isLoading } = useAdminProducts({
-    search: search.trim() || undefined,
-    limit: 0,
-  });
-  const products = (data?.data ?? []).filter((p) => !standaloneOnly || !p.parentProductId);
+    else setBrowsing(false);
+  }, [visible, initialSearch, setSearch]);
 
   const pick = (p: AdminProduct) => {
     setSearch("");
@@ -70,11 +101,22 @@ export function ProductPickerSheet({
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode(trimmed);
+      if (result.archived) {
+        // F30 / R5: this sheet feeds sale, purchase and count lines — handing
+        // an archived product to `onSelect` commits it. Name it instead; the
+        // "No product" toast below would be a lie.
+        showToast(archivedMessage(result.product));
+        return;
+      }
       if (!result.notFound) {
         const hit = result.product as AdminProduct & { parentProductId?: string | null };
         if (standaloneOnly && hit.parentProductId) {
-          // Scanned a variant while picking a parent — resolve to its parent.
-          const parent = products.find((p) => p.id === hit.parentProductId);
+          // Scanned a variant while picking a parent — resolve to its parent
+          // directly. The page rows are now gated on a term/browse, so a
+          // scanned variant would otherwise always miss the local `find`.
+          const { data: parent } = await apiClient.get<AdminProduct>(
+            `/products/${hit.parentProductId}`,
+          );
           if (parent) {
             pick(parent);
             return;
@@ -112,14 +154,35 @@ export function ProductPickerSheet({
           }
         />
 
-        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={200}
+          onScroll={({ nativeEvent: e }) => {
+            const nearBottom =
+              e.layoutMeasurement.height + e.contentOffset.y >= e.contentSize.height - 400;
+            if (!nearBottom || isPlaceholder || !hasNextPage || isFetchingNextPage) return;
+            fetchNextPage();
+          }}
+        >
           {isLoading ? (
             <View style={styles.center}>
               <ActivityIndicator color={ios.brand} />
             </View>
+          ) : idle ? (
+            <View style={styles.center}>
+              <Text style={styles.empty}>Scan or search to find a product.</Text>
+              <Pressable
+                onPress={() => setBrowsing(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Browse the full catalogue"
+              >
+                <Text style={styles.empty}>Browse catalogue</Text>
+              </Pressable>
+            </View>
           ) : products.length === 0 ? (
             <View style={styles.center}>
-              <Text style={styles.empty}>{search ? "No matches." : "No products yet."}</Text>
+              <Text style={styles.empty}>No matches.</Text>
             </View>
           ) : (
             <View style={styles.list}>
@@ -136,6 +199,11 @@ export function ProductPickerSheet({
                       <Text style={styles.meta} numberOfLines={1}>
                         {p.sku ? `SKU ${p.sku}` : "No SKU"}
                         {p.unit ? ` · ${p.unit}` : ""}
+                        {/* This list is unfiltered by `isActive`, and a scan that
+                            resolved ambiguously seeds it — so an archived row can
+                            sit next to sellable ones. Say which it is (F30 / R5)
+                            rather than letting it be picked as an ordinary line. */}
+                        {p.isActive === false ? " · Archived" : ""}
                       </Text>
                     </View>
                     <View style={styles.stockPill}>
@@ -151,6 +219,11 @@ export function ProductPickerSheet({
               })}
             </View>
           )}
+          {isFetchingNextPage ? (
+            <View style={styles.center}>
+              <ActivityIndicator color={ios.brand} />
+            </View>
+          ) : null}
           <View style={{ height: 24 }} />
         </ScrollView>
 
@@ -180,7 +253,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   title: { fontSize: 16, fontFamily: "Inter_700Bold", color: ios.label },
-  center: { padding: 40, alignItems: "center" },
+  center: { padding: 40, alignItems: "center", gap: 10 },
   empty: { fontSize: 14, fontFamily: "Inter_400Regular", color: ios.label2 },
   list: {
     marginHorizontal: 16,

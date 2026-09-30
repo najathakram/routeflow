@@ -1,0 +1,40 @@
+{
+  "runId": "wf_74fd65b6-9da",
+  "mode": "bugfix",
+  "scale": "minor",
+  "startedAt": "2026-09-08T21:00:00Z",
+  "estimatedCostUsd": 10.33,
+  "agents": 33,
+  "totalTokens": 3896184,
+  "durationMs": 8495272,
+  "clean": false,
+  "note": "Aggregate truncated in the task output; reconstructed from journal.jsonl (33 results).",
+  "redGate": {
+    "ran": true,
+    "audits": 2,
+    "note": "after remediation: 18 REG-B263 tests failed / 0 passed on the unmodified tree (one oracle per it); the audits' aggregate flags predate the remediation"
+  },
+  "fixPlanning": {
+    "rounds": 2,
+    "round1": { "fix": 8, "dispute": 0, "defer": 0 },
+    "round2": { "fix": 2, "dispute": 0, "defer": 0 }
+  },
+  "review": { "lenses": ["correctness", "test-quality"], "lastRoundFindings": 1 },
+  "finalGate": {
+    "pass": true,
+    "commands": [
+      "cd apps/mobile && npx jest --silent (118 suites / 1479 tests)",
+      "npm run lint -w apps/mobile (0 errors)",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "remainingFindings": [
+    "minor: picker strip below-floor row wording/basis (edit-items.tsx ~2158) — light-loop fix round"
+  ],
+  "mutationProbe": { "ran": false, "note": "no probe records in the journal (minor scale)" },
+  "uiVerify": {
+    "ran": false,
+    "reason": "no mobile renderer on the host; owner device check after the next EAS build"
+  },
+  "phaseReport": []
+}

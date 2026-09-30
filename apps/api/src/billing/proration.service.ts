@@ -1,12 +1,27 @@
 import { BadRequestException, Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { PlanCatalogService } from "./plan-catalog.service";
-import { roundMoney } from "../common/pricing";
-import { annualSaving, cyclePrice, daysBetween, prorateDaily, Cycle } from "./billing-math";
-import { PLAN_KEYS } from "./plan-catalog.constants";
+import { roundMoney } from "@routeflow/pricing";
+import {
+  annualPrice,
+  annualSaving,
+  cyclePrice,
+  daysBetween,
+  periodMonths,
+  prorateDaily,
+  Cycle,
+} from "./billing-math";
+import { planRank } from "./plan-catalog.constants";
 
-/** Plan ordering for "included at plan and above" checks. */
-const PLAN_RANK: Record<string, number> = Object.fromEntries(PLAN_KEYS.map((k, i) => [k, i]));
+/**
+ * Plan ordering for "included at plan and above" checks. Goes through `planRank`
+ * so historical keys stored on superseded catalog versions (TEAM/BUSINESS) rank
+ * alongside their current equivalents instead of falling off the ladder.
+ */
+function rankOrDefault(planKey: string, fallback: number): number {
+  const rank = planRank(planKey);
+  return rank < 0 ? fallback : rank;
+}
 
 export interface QuoteRequest {
   planKey: string;
@@ -92,7 +107,7 @@ export class ProrationService {
       const qty = Math.max(1, Math.trunc(a.quantity ?? 1));
       const includedFree =
         !!sku.includedAtPlan &&
-        (PLAN_RANK[req.planKey] ?? 0) >= (PLAN_RANK[sku.includedAtPlan] ?? Number.MAX_SAFE_INTEGER);
+        rankOrDefault(req.planKey, 0) >= rankOrDefault(sku.includedAtPlan, Number.MAX_SAFE_INTEGER);
       const unitMonthly = Number(sku.monthlyPrice);
       const lineMonthly = unitMonthly * qty;
       lines.push({
@@ -169,16 +184,50 @@ export class ProrationService {
     const msInWindow = windowEnd.getTime() - windowStart.getTime();
     const msRemaining = Math.max(0, Math.min(msInWindow, windowEnd.getTime() - now.getTime()));
     const monthly = Number(sku.monthlyPrice);
+    // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
+    const windowCharge = monthly * periodMonths(windowStart, windowEnd);
 
     return {
       sku: sku.sku,
       name: sku.name,
       monthly: roundMoney(monthly),
-      proratedToday: prorateDaily(monthly, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
+      proratedToday: prorateDaily(windowCharge, msRemaining / MS_PER_DAY, msInWindow / MS_PER_DAY),
       daysRemaining: Math.round(msRemaining / MS_PER_DAY),
       daysInCycle: daysBetween(windowStart, windowEnd),
       effectiveAt: now.toISOString(),
       nextChargeAt: windowEnd.toISOString(),
     };
+  }
+
+  /**
+   * The prorated charge for a monthly price DELTA over the remaining current period.
+   * ADMIN-UPDATEPLAN-1: promoted from the private copy in `SubscriptionMutationService`
+   * (used by `upgrade()`/`planChangePreview()`) to its natural home here, so
+   * `PlatformAdminService.updatePlan()` can share the exact same math for an admin
+   * upgrade instead of duplicating it — moved byte-identical, never re-derived.
+   */
+  proratedDiff(
+    sub: { cycle: string; periodStart: Date | null; periodEnd: Date | null },
+    monthlyDelta: number,
+  ): number {
+    const now = new Date();
+    if (sub.cycle === "ANNUAL" && sub.periodStart && sub.periodEnd) {
+      const aIn = sub.periodEnd.getTime() - sub.periodStart.getTime();
+      const aRem = Math.max(0, Math.min(aIn, sub.periodEnd.getTime() - now.getTime()));
+      return aIn > 0 ? roundMoney((annualPrice(monthlyDelta) * aRem) / aIn) : 0;
+    }
+    let start: Date;
+    let end: Date;
+    if (sub.periodStart && sub.periodEnd && sub.periodStart <= now && now < sub.periodEnd) {
+      start = sub.periodStart;
+      end = sub.periodEnd;
+    } else {
+      start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    }
+    const msIn = end.getTime() - start.getTime();
+    const msRem = Math.max(0, Math.min(msIn, end.getTime() - now.getTime()));
+    // A 90/180-day manual row (cycle MONTHLY since B863) covers 3/6 monthly charges (SA-383).
+    return msIn > 0 ? roundMoney((monthlyDelta * periodMonths(start, end) * msRem) / msIn) : 0;
   }
 }

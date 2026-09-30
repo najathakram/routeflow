@@ -1,24 +1,10 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { StyleSheet, Text, View } from "react-native";
+import { View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { IosTabBar } from "@routeflow/ui/mobile/ios";
-import { useNetworkSync } from "../../hooks/useNetworkSync";
+import { OfflineBanner } from "../../components/OfflineBanner";
 import { useSocket } from "../../hooks/useSocket";
-
-function OfflineBanner() {
-  const { isOnline, queueLength } = useNetworkSync();
-  if (isOnline) return null;
-  return (
-    <View style={styles.offlineBanner}>
-      <Ionicons name="cloud-offline-outline" size={14} color={ios.system.orangeInk} />
-      <Text style={styles.offlineText}>
-        Offline
-        {queueLength > 0 ? ` — ${queueLength} action${queueLength !== 1 ? "s" : ""} queued` : ""}
-      </Text>
-    </View>
-  );
-}
 
 export default function DriverLayout() {
   // RF-002: keep the driver app subscribed to real-time route/stop events so
@@ -92,22 +78,3 @@ export default function DriverLayout() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  offlineBanner: {
-    backgroundColor: ios.system.orangeWash,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(255,149,0,0.3)",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-  },
-  offlineText: {
-    color: ios.system.orangeInk,
-    fontSize: 13,
-    fontFamily: "Inter_500Medium",
-  },
-});

@@ -3,8 +3,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { IosTabBar } from "@routeflow/ui/mobile/ios";
+import { useDeveloperMode } from "../../lib/api/addons";
 
 export default function TenantTabsLayout() {
+  const { enabled: devMode } = useDeveloperMode();
   return (
     <View style={{ flex: 1, backgroundColor: ios.bg }}>
       <Tabs
@@ -28,6 +30,7 @@ export default function TenantTabsLayout() {
           name="dispatch"
           options={{
             title: "Dispatch",
+            href: devMode ? undefined : null,
             tabBarIcon: ({ color, size }) => (
               <Ionicons name="car-outline" size={size} color={color} />
             ),

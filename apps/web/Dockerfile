@@ -1,5 +1,5 @@
 # ─── Stage 1: Builder ─────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -12,28 +12,30 @@ COPY package.json package-lock.json turbo.json ./
 # Shared packages (package.json only — source copied later)
 COPY packages/config/package.json            packages/config/
 COPY packages/eslint-config/package.json     packages/eslint-config/
-COPY packages/types/package.json             packages/types/
-COPY packages/typescript-config/package.json packages/typescript-config/
+# @routeflow/pricing is COMPILED (see packages/pricing): the root `postinstall`
+# runs its tsc build during the `npm ci` below, so its sources + tsconfigs must
+# already be here — a manifest-only copy makes that build fail with no inputs.
+COPY packages/pricing/                       packages/pricing/
+# @routeflow/scanning is COMPILED the same way (built right after pricing).
+COPY packages/scanning/                      packages/scanning/
+# The same postinstall then builds @routeflow/returns (`npm run build -w
+# @routeflow/returns`), and returns imports types from `@routeflow/types` —
+# so both need a full-directory copy here too, not just their manifests.
+COPY packages/returns/                       packages/returns/
+COPY packages/types/                         packages/types/
+# Whole directory, not just the manifest: packages/pricing/tsconfig.json extends
+# `@routeflow/typescript-config/base.json`, which the postinstall build above
+# resolves during `npm ci` — a manifest-only copy leaves that file missing.
+COPY packages/typescript-config/             packages/typescript-config/
 COPY packages/ui/package.json               packages/ui/
 
 # Web workspace manifest
 COPY apps/web/package.json apps/web/
 
-# Install all workspace dependencies.
-# --force bypasses the EBADPLATFORM error for @next/swc-win32-x64-msvc which
-# ends up in the lockfile when generated on Windows. The Linux SWC binary is
-# installed automatically by Next.js; the Windows artifact is simply skipped.
-RUN npm install --force
-
-# Pin React 18 at the image root for this web-only build.
-# apps/mobile pins React 19 (RN 0.83), which npm hoists to /app/node_modules,
-# leaving web's react@18 / react-dom@18 nested under apps/web. The hoisted
-# `next` then resolves the wrong React (19) and can't find react-dom at all,
-# failing the build with "Cannot find module 'react-dom/server.browser'".
-# Installing web's React 18 at the root (no --save: the shared lockfile/
-# manifests are untouched, and api/mobile builds are unaffected) makes
-# `next build` resolve a consistent React 18 runtime.
-RUN npm install --force --no-save react@18.3.1 react-dom@18.3.1
+# Install exactly the committed lockfile — no registry re-resolution.
+# (win32-only optional deps like @next/swc-win32-* are skipped cleanly by
+# modern npm; the old --force recipe predates that.)
+RUN npm ci
 
 # ── Copy full source ──
 COPY packages/ packages/
@@ -50,13 +52,30 @@ ARG NEXT_PUBLIC_API_URL=https://routeflowapi-production.up.railway.app/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_GOOGLE_MAPS_KEY=""
 ENV NEXT_PUBLIC_GOOGLE_MAPS_KEY=$NEXT_PUBLIC_GOOGLE_MAPS_KEY
+# B826: the driver-app link (lib/driver-app-link.ts, used by the /login footer
+# link and the dashboard driver banner) needs this baked in — same default the
+# removed middleware proxy used to fall back to. B825's return_origin is
+# resolved server-side (apps/api) from the browser's own window.location.origin
+# at runtime, not from this build-time var.
+ARG NEXT_PUBLIC_MOBILE_WEB_URL=https://routeflowmobile-production.up.railway.app
+ENV NEXT_PUBLIC_MOBILE_WEB_URL=$NEXT_PUBLIC_MOBILE_WEB_URL
+# Release-health tagging (SentryInit.tsx): the browser-side Sentry release tag.
+# RAILWAY_GIT_COMMIT_SHA is a Railway system var proven present at container
+# RUNTIME (see apps/web/app/api/health/route.ts) but NOT proven present at
+# BUILD time, and a client component can only ever see a NEXT_PUBLIC_* var
+# baked in at `next build` — so this is its own build arg, populated by
+# setting a `NEXT_PUBLIC_RELEASE_SHA` service variable in Railway that
+# references `${{RAILWAY_GIT_COMMIT_SHA}}` (see apps/web/.env.example). Empty
+# default so a build with the var unset never fails.
+ARG NEXT_PUBLIC_RELEASE_SHA=""
+ENV NEXT_PUBLIC_RELEASE_SHA=$NEXT_PUBLIC_RELEASE_SHA
 # Purge any Next.js build cache to ensure a completely fresh build.
 # Then build the Next.js application (output: standalone is set in next.config.mjs)
 WORKDIR /app/apps/web
 RUN rm -rf .next && npm run build
 
 # ─── Stage 2: Runner ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 

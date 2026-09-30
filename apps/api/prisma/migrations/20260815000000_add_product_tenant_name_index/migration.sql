@@ -1,0 +1,11 @@
+-- Product_tenantId_name_idx has been declared in schema.prisma since #130 but never
+-- reached production: the migration that should have carried it was one of the many
+-- missing from the old, incomplete history. 0_init deliberately reflects production
+-- as it actually is, so the index is added here instead — this is the migration that
+-- finally delivers it.
+--
+-- Safe to run in a transaction: Product holds ~2.6k rows / 2.6 MB in production, so
+-- the build is effectively instantaneous and the brief ACCESS SHARE lock is a
+-- non-event. CONCURRENTLY would be required only on a table large enough for the
+-- write lock to matter, and it cannot run inside Prisma's migration transaction.
+CREATE INDEX "Product_tenantId_name_idx" ON "Product"("tenantId", "name");

@@ -77,6 +77,11 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
         id: "pay-check",
         amount: 100,
         method: "CHECK",
+        // B421: the real query's own `select` now fetches `status` (the
+        // shared `splitConfirmed` re-checks it generically) — every row here
+        // already passed the query's `...CONFIRMED_PAYMENT` where-clause, so
+        // every fixture row is PAID, same as the query would actually return.
+        status: "PAID",
         reference: null,
         paidAt: new Date("2026-06-05T00:00:00.000Z"),
         invoice: { invoiceNumber: "INV-100" },
@@ -85,6 +90,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
         id: "pay-credit-note",
         amount: 80,
         method: "CREDIT_NOTE",
+        status: "PAID",
         reference: null,
         paidAt: new Date("2026-06-07T00:00:00.000Z"),
         invoice: { invoiceNumber: "INV-100" },
@@ -92,7 +98,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
     ];
 
     beforeEach(() => {
-      prisma.customer.findUnique.mockResolvedValue(MOCK_CUSTOMER);
+      prisma.customer.findFirst.mockResolvedValue(MOCK_CUSTOMER);
       prisma.invoice.findMany.mockResolvedValue([INV_100, INV_101]);
       prisma.invoicePayment.findMany.mockResolvedValue(MONTH_PAYMENT_ROWS);
       prisma.creditNote.findMany.mockResolvedValue([]);
@@ -134,6 +140,30 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       expect(stmt.lineItems.some((li) => li.type === "PAYMENT" && li.amount === -80)).toBe(false);
     });
 
+    it("REG-B421: an ADVANCE-method application also routes into credits (same bucket as CREDIT_NOTE, via the shared splitConfirmed)", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        ...MONTH_PAYMENT_ROWS,
+        {
+          id: "pay-advance",
+          amount: 15,
+          method: "ADVANCE",
+          status: "PAID",
+          reference: null,
+          paidAt: new Date("2026-06-08T00:00:00.000Z"),
+          invoice: { invoiceNumber: "INV-100" },
+        },
+      ]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      // 80 (CREDIT_NOTE) + 15 (ADVANCE) = 95, both non-cash for THIS
+      // per-invoice-balance statement (unlike bookkeeping's cash-flow, which
+      // treats them asymmetrically — see payment-confirmation.ts's own doc).
+      expect(stmt.credits).toBe(95);
+      expect(stmt.payments).toBe(100);
+      expect(stmt.lineItems.some((li) => li.type === "CREDIT" && li.amount === -15)).toBe(true);
+    });
+
     it("absorbs a mid-month write-off into adjustments so the identity still holds exactly", async () => {
       const INV_200_WRITTEN_OFF = {
         id: "inv-200",
@@ -155,7 +185,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       );
     });
 
-    it("queries invoices excluding DRAFT/VOID and payments excluding VOID", async () => {
+    it("queries invoices excluding DRAFT/VOID and payments narrowed to CONFIRMED (REG-B11)", async () => {
       await service.buildMonthlyStatement("cust-1", "2026-06");
 
       expect(prisma.invoice.findMany).toHaveBeenCalledWith(
@@ -169,9 +199,103 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
       expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({
-            status: { not: "VOID" },
+            status: "PAID",
           }),
         }),
+      );
+    });
+
+    it("REG-B11: a DRAFT payment never reduces the receivable the customer is shown", async () => {
+      // The customer-facing statement must agree with the invoice PDF and the
+      // reminder email, which now report on the CONFIRMED basis: an unconfirmed
+      // $120 DRAFT row is not collected money, so closing stays 370, not 250.
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          ...INV_100,
+          payments: [
+            ...INV_100.payments,
+            {
+              amount: 120,
+              paidAt: new Date("2026-06-08T00:00:00.000Z"),
+              status: "DRAFT",
+              method: "BANK_TRANSFER",
+            },
+          ],
+        },
+        INV_101,
+      ]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      expect(stmt.closing).toBe(370);
+      expect(stmt.closing).not.toBe(250);
+      expect(stmt.opening).toBe(300);
+      expect(stmt.opening + stmt.charges - stmt.payments - stmt.credits + stmt.adjustments).toBe(
+        stmt.closing,
+      );
+    });
+
+    it("REG-M2: a payment's settled date (not paidAt) determines when it reduces the receivable and its line-item date (check-payments PR-2b)", async () => {
+      // A $200 payment recorded (paidAt) in April but not settled until June
+      // 15 — a post-dated check paid in advance and cashed mid-month.
+      // Pre-M2 (paidAt-only) this would have already reduced the June-1
+      // opening balance; M2 says it hasn't collected until settledAt.
+      const INV_200 = {
+        id: "inv-200",
+        invoiceNumber: "INV-200",
+        total: 500,
+        status: "SENT",
+        issueDate: new Date("2026-04-01T00:00:00.000Z"),
+        payments: [
+          {
+            amount: 200,
+            paidAt: new Date("2026-04-20T00:00:00.000Z"),
+            settledAt: new Date("2026-06-15T00:00:00.000Z"),
+            status: "PAID",
+            method: "CASH",
+          },
+        ],
+      };
+      prisma.invoice.findMany.mockResolvedValue([INV_200]);
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          id: "pay-pdc",
+          amount: 200,
+          method: "CASH",
+          status: "PAID",
+          reference: null,
+          paidAt: new Date("2026-04-20T00:00:00.000Z"),
+          settledAt: new Date("2026-06-15T00:00:00.000Z"),
+          invoice: { invoiceNumber: "INV-200" },
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([]);
+
+      const stmt = await service.buildMonthlyStatement("cust-1", "2026-06");
+
+      // Opus review of PR-2b: pin the QUERY shape itself, not just the
+      // downstream numbers — the where clause must be settledDateFilter's
+      // OR (settledAt-or-legacy-paidAt), never a bare paidAt range.
+      expect(prisma.invoicePayment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { settledAt: { gte: expect.any(Date), lt: expect.any(Date) } },
+              { settledAt: null, paidAt: { gte: expect.any(Date), lt: expect.any(Date) } },
+            ],
+          }),
+        }),
+      );
+
+      // Not yet settled as of June 1 -> the full $500 is still owed at opening.
+      expect(stmt.opening).toBe(500);
+      // Settled June 15, inside the month -> collected by closing (June 30).
+      expect(stmt.closing).toBe(300);
+      expect(stmt.payments).toBe(200);
+      const paymentLine = stmt.lineItems.find((li) => li.type === "PAYMENT");
+      expect(paymentLine?.date).toBe("2026-06-15T00:00:00.000Z");
+      expect(stmt.opening + stmt.charges - stmt.payments - stmt.credits + stmt.adjustments).toBe(
+        stmt.closing,
       );
     });
 
@@ -216,7 +340,7 @@ describe("StatementService (P5-15 — monthly statement reconciliation)", () => 
 
   describe("buildMonthlyStatement — customer not found", () => {
     it("throws NotFoundException when the customer does not exist", async () => {
-      prisma.customer.findUnique.mockResolvedValue(null);
+      prisma.customer.findFirst.mockResolvedValue(null);
       prisma.invoice.findMany.mockResolvedValue([]);
       prisma.invoicePayment.findMany.mockResolvedValue([]);
       prisma.creditNote.findMany.mockResolvedValue([]);

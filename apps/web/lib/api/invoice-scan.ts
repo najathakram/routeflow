@@ -1,14 +1,6 @@
 import { apiClient } from "../api-client";
-
-/** A ranked "Did you mean…" suggestion for a line that didn't confidently match. */
-export interface ScanCandidate {
-  productId: string;
-  /** Composed display name (e.g. "Big Red Chewing Gum - Cinnamon"). */
-  name: string;
-  sku: string | null;
-  /** Weighted-overlap score, 0..1. */
-  score: number;
-}
+import type { ScanCandidate } from "@routeflow/types";
+export type { ScanCandidate } from "@routeflow/types";
 
 export interface ScannedItem {
   extractedName: string;
@@ -24,10 +16,22 @@ export interface ScannedItem {
   packSize?: number | null;
   /** Ranked alternates when the match was too weak to auto-assign. */
   candidates?: ScanCandidate[];
+  /**
+   * Set when the match came from a remembered correction — the tenant-scoped
+   * `ProductAlias` tier ("alias") or the legacy `ProductMapping` tier
+   * ("memory") — rather than fresh fuzzy matching. Absent for a fuzzy match.
+   */
+  matchSource?: "alias" | "memory";
 }
 
 export interface ScanResult {
   supplier: string | null;
+  /**
+   * Server-resolved supplier id for this invoice (via the shared
+   * `supplier-match` matcher, tenant-scoped) — preferred over re-matching
+   * `supplier` by name on the client.
+   */
+  supplierId?: string | null;
   invoiceNumber: string | null;
   invoiceDate: string | null;
   expenseDescription: string | null;

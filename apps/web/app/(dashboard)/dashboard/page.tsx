@@ -23,14 +23,21 @@ import {
 import { StatCard, Badge, Table, Button, Card, cn, EmptyState } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "@/lib/api-client";
+import { fmtCalendarDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useOrders, type Order } from "@/lib/api/orders";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
 import { useProducts } from "@/lib/api/products";
+import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { DRIVER_LANDING } from "@/lib/portal-routing";
+import { DriverAppBanner } from "./DriverAppBanner";
+import { GettingStartedBanner } from "./GettingStartedBanner";
+import { useTenantOnboarding } from "@/lib/api/onboarding";
 
 // ─── Column definitions (stable refs, defined outside component) ───────────────
 
@@ -81,7 +88,7 @@ const routeColumns: ColumnDef<RouteRun, unknown>[] = [
               minute: "2-digit",
             })
           : row.original.scheduledDate
-            ? new Date(row.original.scheduledDate).toLocaleDateString()
+            ? fmtCalendarDate(row.original.scheduledDate)
             : "—"}
       </span>
     ),
@@ -275,9 +282,11 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 
 function OverdueInvoicesPanel({
   invoices,
+  totalCount,
   isLoading,
 }: {
   invoices: Invoice[];
+  totalCount: number;
   isLoading: boolean;
 }) {
   if (isLoading) {
@@ -300,7 +309,7 @@ function OverdueInvoicesPanel({
       <div className="flex items-center justify-between border-b border-surface-border px-5 py-3.5">
         <div className="flex items-center gap-2">
           <h3 className="text-base font-semibold text-navy">Overdue Invoices</h3>
-          {invoices.length > 0 && <Badge variant="danger" label={`${invoices.length}`} />}
+          {totalCount > 0 && <Badge variant="danger" label={`${totalCount}`} />}
         </div>
         <Link
           href="/invoices?status=OVERDUE"
@@ -358,9 +367,11 @@ function OverdueInvoicesPanel({
 interface Product {
   id: string;
   name: string;
+  /** PIECES (system-wide stock unit) — label via `unitsLabel`, never next to `unit`. */
   currentStock?: number | null;
   lowStockThreshold?: number | null;
   unit?: string;
+  unitsPerBox?: number | null;
 }
 
 function LowStockPanel({
@@ -424,7 +435,7 @@ function LowStockPanel({
                       stockUnset ? "text-navy/70" : qty === 0 ? "text-danger" : "text-warning",
                     )}
                   >
-                    {stockUnset ? "Not set" : `${qty} ${p.unit ?? "units"}`}
+                    {stockUnset ? "Not set" : unitsLabel(qty, p.unitsPerBox, p.unit ?? "units")}
                   </span>
                   {!stockUnset && (
                     <span className="mono text-navy/70">
@@ -497,6 +508,13 @@ export default function DashboardPage() {
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
+  // Routes/drivers are recurring-routes surfaces, so every gate below (the mode
+  // pill AND the route/driver cards it reveals) must use the same condition as
+  // the shell's "Drive mode" menu item / exit chip in (dashboard)/layout.tsx —
+  // otherwise a recurring_routes tenant can enter drive mode but lands back
+  // here with no mode pill and no driver content.
+  const { enabled: routesAccess, resolved: addonsResolved } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
 
   const baseIsOperator =
     !user?.role ||
@@ -505,8 +523,32 @@ export default function DashboardPage() {
     user.role === "TENANT_ADMIN";
   const isCustomer = user?.role === "CUSTOMER";
   const baseIsDriver = user?.role === "DRIVER";
+  // #2159 S4: the onboarding banner is for the workspace's own staff only.
+  const onboardingQuery = useTenantOnboarding(
+    user?.role === "TENANT_ADMIN" || user?.role === "OPERATOR",
+  );
+  // #2254: /orders is OPERATOR+CUSTOMER only; /invoices and /bookkeeping/finance-dashboard are
+  // OPERATOR only. A DRIVER fired all five here (403s) and saw "Could not load recent orders."
+  const readsBusinessData = !baseIsDriver;
+  const driverWithoutRuns = baseIsDriver && addonsResolved && !routesAccess && !deliveryAccess;
 
-  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator;
+  const canActAsDriver = user?.canActAsDriver === true && baseIsOperator && routesAccess;
+
+  // PHASE 1a (web driver mode): a pure DRIVER-role account lands on their own
+  // runs view instead — but ONLY when they actually have access to it (same
+  // routesAccess || deliveryAccess condition DRIVER_NAV's filter in
+  // (dashboard)/layout.tsx uses to show/hide the nav item, and the ONLY thing
+  // stopping this from being an infinite redirect loop: RouteGuard bounces a
+  // driver who lacks BOTH addons off /routes/my-runs back to /dashboard, so
+  // gating this redirect the same way is required, not optional). A driver
+  // with neither addon falls through to the ordinary dashboard render below
+  // (the nudge banner just under this still applies to them, untouched).
+  const driverHasRunsAccess = baseIsDriver && (routesAccess || deliveryAccess);
+  React.useEffect(() => {
+    if (driverHasRunsAccess) router.replace(DRIVER_LANDING);
+  }, [driverHasRunsAccess, router]);
+
+  const [driverBannerDismissed, setDriverBannerDismissed] = React.useState(false);
 
   // View mode for dual-role users — persisted across visits
   const [viewMode, setViewMode] = React.useState<ViewMode>("operator");
@@ -537,29 +579,38 @@ export default function DashboardPage() {
     data: allOrdersData,
     isLoading: ordersLoading,
     isError: ordersError,
-  } = useOrders({ page: 1, limit: 100 }, POLL);
+  } = useOrders({ page: 1, limit: 100 }, { ...POLL, enabled: readsBusinessData });
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
-    POLL,
+    { ...POLL, enabled: readsBusinessData },
   );
   const {
     data: recentOrdersData,
     isLoading: recentLoading,
     isError: recentError,
-  } = useOrders({ page: 1, limit: 5 }, POLL);
+  } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
+  // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
+  // dispatch addon), so the 30s polls must be skipped for tenants that can't see
+  // the cards they feed — same condition as the render gates below.
   const { data: routeRunsData, isLoading: runsLoading } = useRouteRuns(
     { status: "SCHEDULED" },
-    POLL,
+    { ...POLL, enabled: routesAccess },
   );
-  const { data: driversData, isLoading: driversLoading } = useDrivers({ page: 1, limit: 20 }, POLL);
+  const { data: driversData, isLoading: driversLoading } = useDrivers(
+    { page: 1, limit: 20 },
+    { ...POLL, enabled: routesAccess },
+  );
   const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
     { isActive: true, stockStatus: "LOW", limit: 5 },
     POLL,
   );
-  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard(POLL);
+  const { data: financeData, isLoading: financeLoading } = useFinanceDashboard({
+    ...POLL,
+    enabled: readsBusinessData,
+  });
   const { data: overdueData, isLoading: overdueLoading } = useInvoices(
-    { status: "OVERDUE", limit: 5, sortBy: "dueDate", sortOrder: "asc" },
-    POLL,
+    { isOverdue: true, limit: 5, sortBy: "dueDate", sortOrder: "asc" },
+    { ...POLL, enabled: readsBusinessData },
   );
 
   // ── KPI calculations ──
@@ -612,8 +663,34 @@ export default function DashboardPage() {
   const ownerName = settingsData?.ownerName;
   const businessName = settingsData?.businessName;
 
+  // PHASE 1a: the redirect effect above fires once driverHasRunsAccess is
+  // known true — render nothing rather than a frame of operator dashboard
+  // content while router.replace() is in flight. A driver without the addon
+  // falls through to the ordinary render below (driverHasRunsAccess is false).
+  if (driverHasRunsAccess) return null;
+
   return (
     <div className="space-y-6 p-6">
+      {/* ── Onboarding in progress (#2159 S4) ── */}
+      <GettingStartedBanner onboarding={onboardingQuery.data?.onboarding} />
+
+      {/* ── Driver-app nudge (DRIVER-role account, web) ── */}
+      <DriverAppBanner
+        visible={baseIsDriver && !driverBannerDismissed}
+        onDismiss={() => setDriverBannerDismissed(true)}
+      />
+
+      {/* ── Driver with neither the routes nor the delivery add-on (#2254) ── */}
+      {driverWithoutRuns && (
+        <Card>
+          <h2 className="text-base font-semibold text-navy">No routes to show yet</h2>
+          <p className="mt-1 text-sm text-navy/70">
+            Your company&apos;s plan doesn&apos;t include routes or deliveries, so there&apos;s
+            nothing assigned to you here. Ask your admin to turn on Routes.
+          </p>
+        </Card>
+      )}
+
       {/* ── Mode switcher (dual-role users only) ── */}
       {canActAsDriver && (
         <div className="-mb-3 flex justify-end">
@@ -641,10 +718,12 @@ export default function DashboardPage() {
               <FileMinus className="mr-1.5 h-3.5 w-3.5" />
               New Invoice
             </Button>
-            <Button href="/routes/create" size="sm" variant="secondary">
-              <Truck className="mr-1.5 h-3.5 w-3.5" />
-              New Route
-            </Button>
+            {routesAccess && (
+              <Button href="/routes/create" size="sm" variant="secondary">
+                <Truck className="mr-1.5 h-3.5 w-3.5" />
+                New Route
+              </Button>
+            )}
             <Button href="/orders?action=new" size="sm" variant="primary">
               <Plus className="mr-1.5 h-3.5 w-3.5" />
               New Order
@@ -710,6 +789,7 @@ export default function DashboardPage() {
           </Link>
         )}
         {(isOperator || isDriver) &&
+          routesAccess &&
           (runsLoading ? (
             <StatSkeleton />
           ) : (
@@ -723,6 +803,7 @@ export default function DashboardPage() {
             </Link>
           ))}
         {isOperator &&
+          routesAccess &&
           (driversLoading ? (
             <StatSkeleton />
           ) : (
@@ -828,7 +909,11 @@ export default function DashboardPage() {
           ) : null}
 
           {/* Overdue invoices action list */}
-          <OverdueInvoicesPanel invoices={overdueInvoices} isLoading={overdueLoading} />
+          <OverdueInvoicesPanel
+            invoices={overdueInvoices}
+            totalCount={overdueCount}
+            isLoading={overdueLoading}
+          />
         </div>
       )}
 
@@ -883,87 +968,91 @@ export default function DashboardPage() {
               ))}
 
             {/* Scheduled route runs */}
-            <Card>
-              <div className="mb-4 flex items-center justify-between">
-                <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
-                <Link
-                  href="/routes"
-                  className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
-                >
-                  All routes <ArrowRight className="h-3 w-3" />
-                </Link>
-              </div>
-              {runsLoading ? (
-                <div className="animate-pulse space-y-3 py-4">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-10 rounded bg-navy/10" />
-                  ))}
+            {routesAccess && (
+              <Card>
+                <div className="mb-4 flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-navy">Scheduled Route Runs</h3>
+                  <Link
+                    href="/routes"
+                    className="flex items-center gap-1 text-xs font-medium text-brand-500 hover:underline"
+                  >
+                    All routes <ArrowRight className="h-3 w-3" />
+                  </Link>
                 </div>
-              ) : (
-                <div className="-mx-6 -mb-6">
-                  <Table
-                    data={activeRoutes}
-                    columns={routeColumns}
-                    onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
-                    emptyState={
-                      <EmptyState
-                        variant="routes"
-                        size={56}
-                        title="No runs scheduled"
-                        description="Dispatch a route to see today's runs here."
-                      />
-                    }
-                  />
-                </div>
-              )}
-            </Card>
+                {runsLoading ? (
+                  <div className="animate-pulse space-y-3 py-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-10 rounded bg-navy/10" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="-mx-6 -mb-6">
+                    <Table
+                      data={activeRoutes}
+                      columns={routeColumns}
+                      onRowClick={(row) => router.push(`/routes/${row.original.id}`)}
+                      emptyState={
+                        <EmptyState
+                          variant="routes"
+                          size={56}
+                          title="No runs scheduled"
+                          description="Dispatch a route to see today's runs here."
+                        />
+                      }
+                    />
+                  </div>
+                )}
+              </Card>
+            )}
           </div>
 
           {/* Right 1/3: Driver Status + Low Stock */}
           {isOperator && (
             <div className="flex flex-col gap-6">
-              <Card title="Driver Status">
-                {driversLoading ? (
-                  <div className="animate-pulse space-y-4 py-2">
-                    {[1, 2, 3].map((i) => (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className="h-2 w-2 rounded-full bg-navy/10" />
-                        <div className="flex-1 space-y-1">
-                          <div className="h-3 w-24 rounded bg-navy/10" />
-                          <div className="h-3 w-16 rounded bg-navy/10" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
-                    {drivers.length === 0 ? (
-                      <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
-                    ) : (
-                      drivers.map((driver: Driver) => (
-                        <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
-                          <span
-                            className={cn(
-                              "mt-1.5 h-2 w-2 shrink-0 rounded-full",
-                              driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
-                            )}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-navy">{driver.contactName}</p>
-                            <p className="mt-0.5 text-xs text-navy/70">
-                              {driver.vehiclePlate ?? driver.user?.username}
-                            </p>
+              {routesAccess && (
+                <Card title="Driver Status">
+                  {driversLoading ? (
+                    <div className="animate-pulse space-y-4 py-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="flex items-center gap-3">
+                          <div className="h-2 w-2 rounded-full bg-navy/10" />
+                          <div className="flex-1 space-y-1">
+                            <div className="h-3 w-24 rounded bg-navy/10" />
+                            <div className="h-3 w-16 rounded bg-navy/10" />
                           </div>
-                          <Badge
-                            variant={driver.status === "ACTIVE" ? "success" : "neutral"}
-                            label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
-                          />
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                )}
-              </Card>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <ul className="-mx-6 -mb-6 divide-y divide-surface-border">
+                      {drivers.length === 0 ? (
+                        <li className="px-6 py-4 text-sm text-navy/70">No drivers found</li>
+                      ) : (
+                        drivers.map((driver: Driver) => (
+                          <li key={driver.id} className="flex items-start gap-3 px-6 py-4">
+                            <span
+                              className={cn(
+                                "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                                driver.status === "ACTIVE" ? "bg-success" : "bg-navy/20",
+                              )}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-navy">{driver.contactName}</p>
+                              <p className="mt-0.5 text-xs text-navy/70">
+                                {driver.vehiclePlate ?? driver.user?.username}
+                              </p>
+                            </div>
+                            <Badge
+                              variant={driver.status === "ACTIVE" ? "success" : "neutral"}
+                              label={driver.status === "ACTIVE" ? "Active" : "Inactive"}
+                            />
+                          </li>
+                        ))
+                      )}
+                    </ul>
+                  )}
+                </Card>
+              )}
 
               {/* Low stock items */}
               <LowStockPanel
@@ -976,43 +1065,45 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* ── Recent Orders ── */}
-      <Card>
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
-          <Link
-            href="/orders"
-            className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
-          >
-            View all orders
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-        {recentLoading ? (
-          <div className="animate-pulse space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="h-10 rounded bg-navy/10" />
-            ))}
+      {/* ── Recent Orders (not for a DRIVER: /orders is OPERATOR+CUSTOMER only, #2254) ── */}
+      {readsBusinessData && (
+        <Card>
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-navy">Recent Orders</h2>
+            <Link
+              href="/orders"
+              className="flex items-center gap-1 text-sm text-brand-500 hover:underline"
+            >
+              View all orders
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
           </div>
-        ) : recentError ? (
-          <ErrorBanner message="Could not load recent orders." />
-        ) : (
-          <div className="-mx-6 -mb-6">
-            <Table
-              data={recentOrders}
-              columns={orderColumns}
-              emptyState={
-                <EmptyState
-                  variant="orders"
-                  size={56}
-                  title="No orders yet"
-                  description="New orders will appear here as they come in."
-                />
-              }
-            />
-          </div>
-        )}
-      </Card>
+          {recentLoading ? (
+            <div className="animate-pulse space-y-3">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="h-10 rounded bg-navy/10" />
+              ))}
+            </div>
+          ) : recentError ? (
+            <ErrorBanner message="Could not load recent orders." />
+          ) : (
+            <div className="-mx-6 -mb-6">
+              <Table
+                data={recentOrders}
+                columns={orderColumns}
+                emptyState={
+                  <EmptyState
+                    variant="orders"
+                    size={56}
+                    title="No orders yet"
+                    description="New orders will appear here as they come in."
+                  />
+                }
+              />
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

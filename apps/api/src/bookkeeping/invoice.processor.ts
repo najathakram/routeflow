@@ -5,6 +5,7 @@ import { InvoiceService } from "./invoice.service";
 
 export interface GenerateInvoiceJobData {
   transactionId: string;
+  tenantId: string;
 }
 
 @Processor("invoices")
@@ -15,11 +16,11 @@ export class InvoiceProcessor {
 
   @Process("generate-invoice")
   async handleGenerateInvoice(job: Job<GenerateInvoiceJobData>): Promise<void> {
-    const { transactionId } = job.data;
+    const { transactionId, tenantId } = job.data;
     this.logger.log(`Processing generate-invoice job for transaction ${transactionId}`);
 
     try {
-      await this.invoiceService.generateInvoicePdf(transactionId);
+      await this.invoiceService.generateInvoicePdf(transactionId, tenantId);
       this.logger.log(`Invoice PDF generated successfully for transaction ${transactionId}`);
     } catch (err: unknown) {
       this.logger.error(

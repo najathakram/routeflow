@@ -9,10 +9,7 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
   Cell,
-  Legend,
 } from "recharts";
 import {
   DollarSign,
@@ -29,6 +26,7 @@ import { PageHeader, StatCard, Card, Button, Select, cn } from "@routeflow/ui/we
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { apiClient } from "@/lib/api-client";
+import { formatMoney } from "@/lib/format";
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 
@@ -36,6 +34,15 @@ const usd = (x: number) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(x);
 
 const pct = (x: number) => x.toFixed(1) + "%";
+
+/** "1h 23m" / "45m" from fractional minutes; "—" when no run had both stamps. */
+const fmtDuration = (mins: number | null) => {
+  if (mins == null) return "—";
+  const total = Math.round(mins);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -84,8 +91,8 @@ interface DeadStock {
   id: string;
   name: string;
   currentStock: number;
-  lastMovement: string;
-  daysInactive: number;
+  lastMovement: string | null;
+  daysInactive: number | null;
 }
 
 interface MarginAlert {
@@ -103,7 +110,16 @@ interface TopCustomer {
   orderCount: number;
 }
 
-interface RoutePerformance {
+/** Stop-level operational metrics shared by the routes and drivers tables.
+ *  Null = no measurable data in the window (no completed stops / no runs with
+ *  both start and finish stamps), rendered as "—" — distinct from a real 0. */
+interface RunOpsMetrics {
+  onTimeRate: number | null;
+  stopsPerHour: number | null;
+  avgRunDurationMinutes: number | null;
+}
+
+interface RoutePerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalRuns: number;
@@ -111,7 +127,7 @@ interface RoutePerformance {
   completionRate: number;
 }
 
-interface DriverPerformance {
+interface DriverPerformance extends RunOpsMetrics {
   id: string;
   name: string;
   totalDeliveries: number;
@@ -121,16 +137,9 @@ interface DriverPerformance {
 
 // ─── Chart colours ────────────────────────────────────────────────────────────
 
-const PIE_COLORS = [
-  "#4F7FFA",
-  "#22C55E",
-  "#F59E0B",
-  "#EF4444",
-  "#8B5CF6",
-  "#06B6D4",
-  "#F97316",
-  "#EC4899",
-];
+/** Sales-by-category bars: one brand tone (tenant-aware) plus a muted grey for "Other". */
+const CATEGORY_BAR_COLOR = "var(--accent)";
+const CATEGORY_OTHER_COLOR = "#6B7280";
 
 // ─── Skeleton helpers ─────────────────────────────────────────────────────────
 
@@ -345,6 +354,26 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
     [revenueTrend],
   );
 
+  // Top 8 categories by revenue + one "Other" bar aggregating the rest — the
+  // 20-slice pie this replaced was unreadable past a handful of categories.
+  const categoryBars = React.useMemo(() => {
+    const sorted = [...salesByCategory].sort((a, b) => b.revenue - a.revenue);
+    const categoryTotal = sorted.reduce((sum, c) => sum + c.revenue, 0);
+    const rows = sorted.slice(0, 8).map((c) => ({ ...c, isOther: false }));
+    const rest = sorted.slice(8);
+    if (rest.length > 0) {
+      rows.push({
+        category: `Other (${rest.length} categories)`,
+        revenue: rest.reduce((sum, c) => sum + c.revenue, 0),
+        isOther: true,
+      });
+    }
+    return rows.map((r) => {
+      const pctOfTotal = categoryTotal > 0 ? Math.round((r.revenue / categoryTotal) * 100) : 0;
+      return { ...r, label: `${r.category} — ${pctOfTotal}%` };
+    });
+  }, [salesByCategory]);
+
   return (
     <div className="space-y-6">
       {/* KPI cards */}
@@ -477,25 +506,41 @@ function RevenueTab({ from, to }: { from: string; to: string }) {
               No category data for this period
             </div>
           ) : (
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={salesByCategory}
+            <ResponsiveContainer width="100%" height={Math.max(220, categoryBars.length * 34 + 20)}>
+              <BarChart
+                data={categoryBars}
+                layout="vertical"
+                margin={{ top: 4, right: 70, left: 8, bottom: 4 }}
+              >
+                <XAxis type="number" hide />
+                <YAxis
+                  type="category"
+                  dataKey="label"
+                  width={170}
+                  tick={{ fontSize: 12, fill: "#6B7280" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip formatter={(v) => formatMoney(Number(v))} />
+                <Bar
                   dataKey="revenue"
-                  nameKey="category"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={90}
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                  labelLine={false}
+                  radius={[0, 4, 4, 0]}
+                  barSize={18}
+                  label={{
+                    position: "right",
+                    fontSize: 11,
+                    fill: "#33425B",
+                    formatter: (v: unknown) => formatMoney(Number(v)),
+                  }}
                 >
-                  {salesByCategory.map((_, index) => (
-                    <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                  {categoryBars.map((entry) => (
+                    <Cell
+                      key={entry.category}
+                      fill={entry.isOther ? CATEGORY_OTHER_COLOR : CATEGORY_BAR_COLOR}
+                    />
                   ))}
-                </Pie>
-                <Tooltip formatter={(v) => usd(Number(v))} />
-                <Legend />
-              </PieChart>
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           )}
         </Card>
@@ -551,14 +596,16 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
       .finally(() => setDeadStockLoading(false));
   }, [from, to]);
 
+  // Margin alerts are current-state (today's price vs today's cost) — the API
+  // takes no from/to, so don't send or refetch on range changes (B40).
   React.useEffect(() => {
     setMarginAlertsLoading(true);
     apiClient
-      .get("/analytics/inventory/margin-alerts", { params: { from, to } })
+      .get("/analytics/inventory/margin-alerts")
       .then((r) => setMarginAlerts(r.data))
       .catch(() => setMarginAlerts([]))
       .finally(() => setMarginAlertsLoading(false));
-  }, [from, to]);
+  }, []);
 
   const topProductColumns: Column<TopProduct>[] = [
     {
@@ -638,20 +685,23 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
     },
     {
       header: "Days Inactive",
-      accessor: (row) => (
-        <span
-          className={cn(
-            "font-medium",
-            row.daysInactive > 90
-              ? "text-danger"
-              : row.daysInactive > 30
-                ? "text-warning"
-                : "text-navy",
-          )}
-        >
-          {row.daysInactive}d
-        </span>
-      ),
+      accessor: (row) =>
+        row.daysInactive == null ? (
+          <span className="text-navy/70">—</span>
+        ) : (
+          <span
+            className={cn(
+              "font-medium",
+              row.daysInactive > 90
+                ? "text-danger"
+                : row.daysInactive > 30
+                  ? "text-warning"
+                  : "text-navy",
+            )}
+          >
+            {row.daysInactive}d
+          </span>
+        ),
       align: "right",
     },
   ];
@@ -729,6 +779,9 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Dead Stock */}
       <Card title="Dead Stock">
+        <p className="mb-4 text-xs text-navy/60">
+          Products with stock on hand but no sales or stock movements in the selected date range.
+        </p>
         <AnalyticsTable
           columns={deadStockColumns}
           data={deadStock}
@@ -739,6 +792,9 @@ function ProductsInventoryTab({ from, to }: { from: string; to: string }) {
 
       {/* Margin Alerts */}
       <Card title="Margin Alerts">
+        <p className="mb-4 text-xs text-navy/60">
+          Based on current prices and costs — not affected by the date range.
+        </p>
         <AnalyticsTable
           columns={marginAlertColumns}
           data={marginAlerts}
@@ -833,6 +889,49 @@ function CustomersTab({ from, to }: { from: string; to: string }) {
 
 // ─── Tab 4: Operations ─────────────────────────────────────────────────────────
 
+/** The three stop-level operational columns shared by the routes and drivers tables. */
+function opsMetricColumns<T extends RunOpsMetrics>(): Column<T>[] {
+  return [
+    {
+      header: "On-Time %",
+      accessor: (row) =>
+        row.onTimeRate == null ? (
+          <span className="text-sm text-navy/40">—</span>
+        ) : (
+          <span
+            className={cn(
+              "text-sm font-medium",
+              row.onTimeRate >= 90
+                ? "text-success"
+                : row.onTimeRate >= 70
+                  ? "text-warning"
+                  : "text-danger",
+            )}
+          >
+            {pct(row.onTimeRate)}
+          </span>
+        ),
+      align: "right",
+    },
+    {
+      header: "Stops/hr",
+      accessor: (row) => (
+        <span className="text-navy/80">
+          {row.stopsPerHour == null ? "—" : row.stopsPerHour.toFixed(1)}
+        </span>
+      ),
+      align: "right",
+    },
+    {
+      header: "Avg Duration",
+      accessor: (row) => (
+        <span className="text-navy/80">{fmtDuration(row.avgRunDurationMinutes)}</span>
+      ),
+      align: "right",
+    },
+  ];
+}
+
 function OperationsTab({ from, to }: { from: string; to: string }) {
   const { toast } = useToast();
 
@@ -910,6 +1009,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
       ),
       align: "right",
     },
+    ...opsMetricColumns<RoutePerformance>(),
   ];
 
   const driverColumns: Column<DriverPerformance>[] = [
@@ -964,6 +1064,7 @@ function OperationsTab({ from, to }: { from: string; to: string }) {
       ),
       align: "right",
     },
+    ...opsMetricColumns<DriverPerformance>(),
   ];
 
   return (
@@ -1079,14 +1180,14 @@ export default function AnalyticsPage() {
       <PageHeader
         title="Analytics"
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Calendar className="h-4 w-4 text-navy/70 flex-shrink-0" />
             <input
               type="date"
               value={fromInput}
               max={toInput}
               onChange={(e) => setFromInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="From date"
             />
             <span className="text-navy/70 text-sm">–</span>
@@ -1095,7 +1196,7 @@ export default function AnalyticsPage() {
               value={toInput}
               min={fromInput}
               onChange={(e) => setToInput(e.target.value)}
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
               title="To date"
             />
             <Button variant="primary" size="sm" onClick={handleApply}>

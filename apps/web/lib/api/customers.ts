@@ -1,5 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { SelectablePaymentMethod } from "../payment-methods";
+import type { CustomerComment, CustomerDocument } from "@routeflow/types";
+export type { CustomerComment, CustomerDocument } from "@routeflow/types";
 
 export interface Customer {
   id: string;
@@ -25,6 +28,21 @@ export interface Customer {
   pricingTier?: number;
   receivables?: number;
   unusedCredits?: number;
+  /**
+   * Per-customer "this customer is always Net 60" override — one of the same
+   * VALID_TERMS values as Settings → Invoicing's tenant default ("Due on
+   * Receipt"/"Net 15"/"Net 30"/"Net 45"/"Net 60"), or "" to fall back to the
+   * tenant default. Wins over the tenant default in `resolveDefaultTerms()`.
+   */
+  defaultPaymentTerms?: string;
+  /**
+   * Per-customer default deposit percent ("50% upfront, remainder on the terms
+   * above") — auto-applied (depositDueDate = issue date) to every invoice
+   * GENERATED for this customer from an order; a manual invoice's explicit
+   * depositPercent still wins. `null`/undefined = no deposit default. Prisma
+   * Decimal serializes as a string on the wire.
+   */
+  defaultDepositPercent?: number | string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -49,14 +67,6 @@ export interface CustomerTag {
   createdAt: string;
 }
 
-export interface CustomerComment {
-  id: string;
-  customerId: string;
-  userId: string;
-  content: string;
-  createdAt: string;
-}
-
 export interface IncomeChartData {
   month: string;
   income: number;
@@ -74,6 +84,10 @@ export function useCustomers(params?: {
   sortDir?: string;
   /** "1" = only customers holding a license for a regulated category. */
   regulated?: string;
+  /** "1" = only customers with no stop on a currently SCHEDULED route. */
+  unassigned?: string;
+  /** "1" = only soft-deleted (removed) customers — an explicit trash view. */
+  removed?: string;
 }) {
   return useQuery({
     queryKey: ["customers", params],
@@ -122,8 +136,20 @@ export function useUpdateCustomerStatus() {
   });
 }
 
-export function useCustomerOrders(id: string) {
-  return useQuery({
+/**
+ * `GET /customers/:id/orders` response. The server returns at most 50 rows —
+ * a DISPLAY budget — alongside an honest `meta.total` counted over the
+ * customer's WHOLE order history, so every count the UI renders must read
+ * `meta.total`; `data.length` silently stops at the cap. `meta` is optional
+ * only so an older response shape degrades to 0 instead of throwing.
+ */
+export interface CustomerOrdersResponse<T = unknown> {
+  data: T[];
+  meta?: { total: number; page: number; limit: number; totalPages: number };
+}
+
+export function useCustomerOrders<T = unknown>(id: string) {
+  return useQuery<CustomerOrdersResponse<T>>({
     queryKey: ["customers", id, "orders"],
     queryFn: () => apiClient.get(`/customers/${id}/orders`).then((r) => r.data),
     enabled: !!id,
@@ -150,8 +176,38 @@ export function useAddCustomerAddress() {
 export function useUpdateCustomerAddress() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, addrId, ...data }: { id: string; addrId: string; [k: string]: unknown }) =>
-      apiClient.patch(`/customers/${id}/addresses/${addrId}`, data).then((r) => r.data),
+    mutationFn: ({
+      id,
+      addrId,
+      ...data
+    }: {
+      id: string;
+      addrId: string;
+      label?: string;
+      line1?: string;
+      line2?: string;
+      city?: string;
+      state?: string;
+      zip?: string;
+      isDefault?: boolean;
+      /** BILLING | SHIPPING | DELIVERY — matches the API's UpdateAddressDto. */
+      addressType?: string;
+    }) => apiClient.patch(`/customers/${id}/addresses/${addrId}`, data).then((r) => r.data),
+    onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
+  });
+}
+
+/**
+ * Delete a customer address. The server 409s (ConflictException) when a
+ * RouteStop or RouteRunStop still references it — surface that message via
+ * toast, don't swallow it. Deleting the primary promotes the oldest
+ * remaining address to primary server-side.
+ */
+export function useDeleteCustomerAddress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, addrId }: { id: string; addrId: string }) =>
+      apiClient.delete(`/customers/${id}/addresses/${addrId}`).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
   });
 }
@@ -185,6 +241,22 @@ export interface CustomerStatement {
   availableCredit: number;
   advanceBalance: number;
   pendingOrdersAmount?: number;
+  /** Operator statement only (absent on the buyer portal): the exposure the hard
+   *  credit limit is checked against — issued open-invoice balances, drafts backed by
+   *  an open/delivered order, and the unbilled value of open orders. Same derivation
+   *  the credit block uses (D6 / B462). */
+  creditExposure?: number;
+  /** Operator statement only: unissued DRAFT invoice balances with NO open or
+   *  delivered order behind them (standalone, cancelled/draft order, quote) —
+   *  shown beside, never inside, `creditExposure`. */
+  pendingExposure?: number;
+  /** Lifetime billed total, summed by the DATABASE over the whole history —
+   *  never a reduce over the capped `transactions` ledger below. */
+  lifetimeInvoiced: number;
+  /** Lifetime money received (CONFIRMED payments only), summed by the
+   *  DATABASE over the whole history. */
+  lifetimeReceived: number;
+  transactionsTruncated: boolean;
   transactions: StatementTransaction[];
 }
 
@@ -203,7 +275,7 @@ export interface AdvancePayment {
   customerId: string;
   amount: number;
   balance: number;
-  method: "CASH" | "CHECK" | "ACH" | "OTHER";
+  method: SelectablePaymentMethod;
   reference?: string;
   notes?: string;
   createdAt: string;
@@ -222,7 +294,13 @@ export function useCreateAdvancePayment() {
   return useMutation<
     AdvancePayment,
     Error,
-    { customerId: string; amount: number; method: string; reference?: string; notes?: string }
+    {
+      customerId: string;
+      amount: number;
+      method: SelectablePaymentMethod;
+      reference?: string;
+      notes?: string;
+    }
   >({
     mutationFn: ({ customerId, ...data }) =>
       apiClient.post(`/customers/${customerId}/advance-payments`, data).then((r) => r.data),
@@ -233,32 +311,21 @@ export function useCreateAdvancePayment() {
   });
 }
 
-export function useApplyAdvancePayment() {
-  const qc = useQueryClient();
-  return useMutation<
-    unknown,
-    Error,
-    { customerId: string; advancePaymentId: string; invoiceId: string; amount?: number }
-  >({
-    mutationFn: ({ customerId, advancePaymentId, ...data }) =>
-      apiClient
-        .post(`/customers/${customerId}/advance-payments/${advancePaymentId}/apply`, data)
-        .then((r) => r.data),
-    onSuccess: (_d, vars) => {
-      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "advance-payments"] });
-      qc.invalidateQueries({ queryKey: ["customers", vars.customerId, "statement"] });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-    },
-  });
-}
-
 // ─── Customer Special Prices ──────────────────────────────────────────────────
 
 export interface CustomerPrice {
   id: string;
   customerId: string;
   productId: string;
-  pricingTier: number;
+  /**
+   * A row may now be tier-only, MSRP-only, or both — null means "no tier
+   * override" (the customer's default tier applies), not "Tier 0". Every
+   * existing reader already falls back with `?? defaultTier`.
+   */
+  pricingTier: number | null;
+  /** Per-customer MSRP override, per PIECE. null = no override (product default applies).
+   *  Prisma Decimal serializes as a string on the wire. */
+  msrp?: number | string | null;
   notes?: string;
   product?: {
     id: string;
@@ -272,6 +339,7 @@ export interface CustomerPrice {
     priceTier5?: number | string;
     averageCost?: number | string | null;
     unitsPerBox?: number | null;
+    msrp?: number | string | null;
   };
 }
 
@@ -292,7 +360,13 @@ export function useUpsertCustomerPrice() {
     }: {
       customerId: string;
       productId: string;
-      pricingTier: number;
+      /** Explicit null clears the tier override. Omit the key (don't pass undefined
+       *  through) rather than sending it when the caller never touched this field. */
+      pricingTier?: number | null;
+      /** Explicit null clears the MSRP override. Omit the key entirely (never send
+       *  `msrp: undefined`/null) for a tenant without the MSRP addon — the server
+       *  403s on any *present* msrp key when flag.msrp is off. */
+      msrp?: number | null;
       notes?: string;
     }) => apiClient.post(`/customers/${customerId}/prices`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
@@ -312,10 +386,21 @@ export function useDeleteCustomerPrice() {
   });
 }
 
+/**
+ * Delete a customer. Accepts either a bare id (hard-delete attempt — 409s if the
+ * customer has financial records) or `{ id, force }` to take the soft-delete
+ * branch server-side (mirrors {@link useSoftDeleteCustomer}, which always forces).
+ */
 export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => apiClient.delete(`/customers/${id}`).then((r) => r.data),
+    mutationFn: (args: string | { id: string; force?: boolean }) => {
+      const id = typeof args === "string" ? args : args.id;
+      const force = typeof args === "string" ? undefined : args.force;
+      return apiClient
+        .delete(`/customers/${id}`, force ? { params: { force: "true" } } : undefined)
+        .then((r) => r.data);
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers"] });
     },
@@ -351,16 +436,6 @@ export function useRestoreCustomer() {
       qc.invalidateQueries({ queryKey: ["customers", vars.id] });
     },
   });
-}
-
-export interface CustomerDocument {
-  id: string;
-  docType: string;
-  originalName: string;
-  mimeType: string;
-  sizeBytes: number;
-  createdAt: string;
-  url: string;
 }
 
 export function useCustomerDocuments(customerId: string) {
@@ -569,7 +644,7 @@ export function useCustomerIncomeChart(customerId: string) {
 
 export function useExportCustomers() {
   return useMutation({
-    mutationFn: async (params?: Record<string, string>) => {
+    mutationFn: async (params?: Record<string, string | undefined>) => {
       const res = await apiClient.get("/customers/export", { params, responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a");
@@ -650,42 +725,8 @@ export function useDisconnectPortal() {
   });
 }
 
-export function useApprovePortalRequest() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      apiClient.post(`/customers/${id}/portal-approve`).then((r) => r.data),
-    onSuccess: (_d, id) => qc.invalidateQueries({ queryKey: ["customers", id, "portal-status"] }),
-  });
-}
-
-export interface PendingPortalApproval {
-  id: string;
-  customerId: string;
-  customer: { id: string; businessName: string; contactName: string; email: string | null };
-  buyerAccount: { id: string; email: string; name: string } | null;
-  createdAt: string;
-}
-
-export function usePendingPortalApprovals() {
-  return useQuery<PendingPortalApproval[]>({
-    queryKey: ["customers", "pending-portal-approvals"],
-    queryFn: () => apiClient.get("/customers/pending-portal-approvals").then((r) => r.data),
-    refetchInterval: 30_000, // auto-refresh every 30 s
-  });
-}
-
-export function useApprovePortalFromList() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (customerId: string) =>
-      apiClient.post(`/customers/${customerId}/portal-approve`).then((r) => r.data),
-    onSuccess: (_d, customerId) => {
-      qc.invalidateQueries({ queryKey: ["customers", "pending-portal-approvals"] });
-      qc.invalidateQueries({ queryKey: ["customers", customerId, "portal-status"] });
-    },
-  });
-}
+// Pending buyer-connect approvals (the query + approve/decline mutations) live in
+// lib/api/portal-approvals.ts — one definition, one declared row shape, one cache key.
 
 // ── Tax-exempt document hooks ─────────────────────────────────────────────────
 
@@ -727,33 +768,6 @@ export function useDeleteCustomerTaxDocument(customerId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers", customerId, "tax-documents"] });
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
-    },
-  });
-}
-
-// ─── Cleanup imported customers ────────────────────────────────────────────────
-
-export interface CleanupPreview {
-  toDelete: number;
-  toKeep: number;
-  buyers: { id: string; businessName: string }[];
-}
-
-export function useCleanupPreview() {
-  return useQuery<CleanupPreview>({
-    queryKey: ["customers", "cleanup-preview"],
-    queryFn: () => apiClient.get("/customers/cleanup-preview").then((r) => r.data),
-    enabled: false,
-    staleTime: 0,
-  });
-}
-
-export function useDeleteImportedCustomers() {
-  const qc = useQueryClient();
-  return useMutation<{ deleted: number; preserved: number }>({
-    mutationFn: () => apiClient.delete("/customers/cleanup-imported").then((r) => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["customers"] });
     },
   });
 }

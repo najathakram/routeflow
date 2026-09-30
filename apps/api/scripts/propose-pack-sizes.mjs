@@ -27,10 +27,28 @@
 // NOTHING IS WRITTEN without --execute, and --execute additionally requires
 // --confirm-tenant=<slug> typed back. Default output is a report to review.
 //
+// #2717 M1 (SA-572e, #2728 M1 follow-up): `Product.unitsPerBox` is mirrored into `ProductBarcode`
+// rows by the app's own dual-write (products.service.ts) and by the one-time backfill
+// (backfill-product-catalog-rows.ts) — those rows are a MIRROR of the legacy column, never a second
+// source of truth. Writing `unitsPerBox` here with raw SQL bypasses that sync, so this script clears
+// this product's `ProductBarcode` rows in the SAME transaction as the `unitsPerBox` write: the
+// product falls back to being row-less (read-model fallback = `synthesizeLegacyBarcodes`, planned
+// fresh from the just-written column) until the next backfill run re-mirrors it. Never leave a stale
+// row (planned from the OLD unitsPerBox) sitting next to a legacy column that has already moved on.
+//
 //   railway run --service postgres node apps/api/scripts/propose-pack-sizes.mjs
 //   ... --tenant=<slug>          scope to one tenant (default: all ACTIVE)
 //   ... --min-confidence=HIGH    only propose HIGH rows (default: HIGH)
 //   ... --limit=50               cap rows printed per tier (default: 40)
+//
+// MIRROR, NOT SOURCE OF TRUTH: `parsePackSizeDetailed` and the classification
+// logic below are a copy of `packages/types/pack-size.ts`
+// (`parsePackSizeDetailed` / `suggestPackSize`), which is the canonical
+// implementation consumed by apps/api, apps/web, and apps/mobile. This script
+// keeps its own copy only because it runs standalone under plain `node`
+// (invoked directly via `railway run`) and cannot import the TS package. Any
+// behavioural change belongs in `packages/types/pack-size.ts` first, ported
+// here in step — never the other way around.
 import { createRequire } from "module";
 const { Client } = createRequire(import.meta.url)("pg");
 
@@ -65,7 +83,8 @@ if (!url) {
  * ("2/12", "5 HOUR") are rejected rather than guessed, because a wrong pack
  * size mis-prices every loose sale of that product.
  *
- * Mirrors apps/mobile/lib/pack-size.ts — keep the two in step.
+ * Mirrors `packages/types/pack-size.ts` (the canonical implementation) — keep
+ * the two in step; see the file header for why this copy exists.
  */
 export function parsePackSize(name) {
   const r = parsePackSizeDetailed(name);
@@ -94,8 +113,40 @@ export function parsePackSizeDetailed(name) {
   // Strip measurements so "5 HOUR" / "65MG" / "3OZ" can't read as counts.
   const cleaned = s.replace(/\b[\d.]+\s*(HOUR|HR|ML|OZ|LB|KG|MG|G|L|CM|MM|IN|FT|%)\b/g, " ");
 
-  // 12CT / 12 CT / 12-CT / 24PK / 24 PACK / 10 COUNT
-  for (const m of cleaned.matchAll(/\b(\d{1,4})\s*[-\s]?\s*(CT|CNT|COUNT|PK|PACK|PCS|PC)\b/g)) {
+  // 12CT / 12 CT / 12-CT / 24PK / 24 PACK / 10 COUNT — and their plurals
+  // (12CTS / 24PKS / 24 PACKS / 10 COUNTS). Mirrors the fix in
+  // packages/types/pack-size.ts: the suffix alternation is non-capturing with
+  // a trailing `S?` rather than listing "PACKS" etc. as their own
+  // alternatives, because a bare trailing `\b` after each literal used to
+  // make the plural forms invisible ("PACKS" has no word/non-word transition
+  // right after "PACK", so the old `(CT|CNT|COUNT|PK|PACK|PCS|PC)\b`
+  // alternation simply failed to match there). That let a nested-packaging
+  // name like "…5CT - 12Packs" read as ONLY the "5" — a false single count at
+  // HIGH confidence instead of the AMBIGUOUS refusal two distinct counts
+  // require. `PCS` no longer needs its own alternative: it's `PC` + `S?`.
+  // The suffix group is non-capturing on purpose — `m[2]` was never read
+  // (only `m[1]`, the count, was), but it existed as a capture group before;
+  // grep for `m[2]`/`match[2]` on any future edit near this regex before
+  // assuming a numbered group still holds the suffix text.
+  //
+  // ⚠️ This fix landed 2026-08-20. Any pack-size proposal report generated
+  // before that date — including the 812-product proposal already reviewed
+  // for this tenant batch — was produced with the OLD (buggy) regex, and may
+  // have classified a nested-packaging name (a plural count suffix hiding a
+  // second, different count) as a single confident count instead of
+  // AMBIGUOUS. Re-run this script to regenerate any proposal relied on for a
+  // write, rather than trusting an old report's output.
+  // "N PACK(S) OF M" states BOTH numbers (N outer packs of M inner). Only
+  // the first carries a suffix, so the matcher below would see just the N
+  // and report a confident single count. Read the pair first and push both
+  // so the >1-distinct rule refuses. Mirrors packages/types/pack-size.ts.
+  for (const m of cleaned.matchAll(
+    /\b(\d{1,4})\s*(?:CT|CNT|COUNT|PK|PACK|PC|BOX|BOXES|CASE|CASES)S?\s+OF\s+(\d{1,4})\b/g,
+  )) {
+    counts.push(Number(m[1]), Number(m[2]));
+  }
+
+  for (const m of cleaned.matchAll(/\b(\d{1,4})\s*[-\s]?\s*(?:CT|CNT|COUNT|PK|PACK|PC)S?\b/g)) {
     counts.push(Number(m[1]));
   }
 
@@ -106,7 +157,8 @@ export function parsePackSizeDetailed(name) {
 const PACKISH_UNIT = /\b(box|case|carton|pack|pk|ct|dozen|dz|bundle|tray|sleeve|showcase)\b/i;
 /** Unit nouns that say "this row IS one piece" — a pack size here would divide
  *  a piece price by the pack and undercharge by that factor. Never propose. */
-const PIECE_UNIT = /^\s*(pcs?|pieces?|ea|each|single|singles|unit|units|bottle|can|stick)\s*$/i;
+const PIECE_UNIT =
+  /^\s*(pcs?|pieces?|ea|each|singles?|units?|bottles?|cans?|sticks?|rolls?|sheets?|strips?|bags?|jars?|tubes?|pouch(?:es)?)\s*$/i;
 
 function classify(p) {
   const { packSize, counts } = parsePackSizeDetailed(p.name);
@@ -215,15 +267,31 @@ for (const t of tenants) {
     const apply = [...tiers.HIGH, ...(MIN_CONFIDENCE === "MEDIUM" ? tiers.MEDIUM : [])];
     let n = 0;
     for (const r of apply) {
-      // Re-assert the precondition inside the write: never overwrite a pack size
-      // someone set between the report and the run.
-      const res = await client.query(
-        `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
-          WHERE id = $2 AND "tenantId" = $3
-            AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
-        [r.packSize, r.id, t.id],
-      );
-      n += res.rowCount;
+      // #2717 M1 (SA-572e): the unitsPerBox write and the mirror-clearing delete happen in ONE
+      // transaction on this same client — either both land or neither does, so the legacy column
+      // and its ProductBarcode mirror (or lack of one) can never observably disagree.
+      await client.query("BEGIN");
+      try {
+        // Re-assert the precondition inside the write: never overwrite a pack size
+        // someone set between the report and the run.
+        const res = await client.query(
+          `UPDATE "Product" SET "unitsPerBox" = $1, "updatedAt" = now()
+            WHERE id = $2 AND "tenantId" = $3
+              AND ("unitsPerBox" IS NULL OR "unitsPerBox" <= 1)`,
+          [r.packSize, r.id, t.id],
+        );
+        if (res.rowCount > 0) {
+          await client.query(
+            `DELETE FROM "ProductBarcode" WHERE "productId" = $1 AND "tenantId" = $2`,
+            [r.id, t.id],
+          );
+        }
+        await client.query("COMMIT");
+        n += res.rowCount;
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw e;
+      }
     }
     console.log(`   ✅ APPLIED pack size to ${n} product(s) on ${t.slug}.`);
   }

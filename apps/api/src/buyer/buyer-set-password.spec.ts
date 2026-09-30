@@ -127,6 +127,7 @@ describe("BuyerAuthService.setPassword", () => {
       expect.objectContaining({
         to: "buyer@example.com",
         subject: expect.stringContaining("password was set"),
+        senderClass: "platform",
       }),
     );
   });

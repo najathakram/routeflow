@@ -27,7 +27,8 @@ interface PlatformStats {
   tenants: { total: number; active: number; trial: number; suspended: number };
   totalUsers: number;
   newTenantsThisMonth: number;
-  estMrrUsd: number;
+  mrr: number;
+  ledgerMrr: number;
   planBreakdown: Record<string, number>;
   recentTenants: Array<{
     id: string;
@@ -68,8 +69,32 @@ const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(n);
+
+function MrrCard({ mrr, ledgerMrr }: { mrr: number | undefined; ledgerMrr: number | undefined }) {
+  const ready = typeof mrr === "number" && typeof ledgerMrr === "number";
+  const gapCents = ready ? Math.round(mrr * 100) - Math.round(ledgerMrr * 100) : 0;
+  return (
+    <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
+      <div className="text-xs uppercase tracking-wide text-slate-400">MRR</div>
+      <div className="text-2xl font-semibold text-white" data-testid="dashboard-mrr">
+        {ready ? usd(mrr) : "—"}
+      </div>
+      <div
+        className="mt-1 text-xs text-slate-400"
+        data-testid="dashboard-ledger-mrr"
+        title="MRR and its ledger reconciliation come from one computation over PRODUCTION tenants."
+      >
+        Reconciled to ledger: {ready ? usd(ledgerMrr) : "—"}
+        {ready && gapCents !== 0 && (
+          <span className="ml-1 text-amber-400">· differs by {usd(Math.abs(gapCents) / 100)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
@@ -93,12 +118,15 @@ export default function AdminDashboardPage() {
   }, []);
 
   if (loading)
-    return <div className="p-6 text-center text-slate-500 py-12">Loading dashboard...</div>;
+    return <div className="p-6 text-center text-slate-400 py-12">Loading dashboard...</div>;
 
   if (error) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error}
         </div>
       </div>
@@ -121,7 +149,7 @@ export default function AdminDashboardPage() {
         </div>
         <Link
           href="/admin/tenants/new"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+          className="admin-tap rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
         >
           + Create Tenant
         </Link>
@@ -151,9 +179,10 @@ export default function AdminDashboardPage() {
         <AdminStatCard
           label="Total Users"
           value={stats.totalUsers}
-          sub="Across all workspaces"
+          sub="Staff accounts across all workspaces"
           icon={<Users className="h-5 w-5" />}
         />
+        <MrrCard mrr={stats.mrr} ledgerMrr={stats.ledgerMrr} />
       </div>
 
       {/* Charts Row */}
@@ -197,19 +226,12 @@ export default function AdminDashboardPage() {
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <p className="py-8 text-center text-sm text-slate-500">No growth data yet</p>
+            <p className="py-8 text-center text-sm text-slate-400">No growth data yet</p>
           )}
         </AdminCard>
 
         {/* Plan Distribution */}
-        <AdminCard
-          title="Plan Distribution"
-          actions={
-            <span className="font-mono text-xs text-slate-400">
-              Est. MRR <span className="text-slate-200">{usd(stats.estMrrUsd)}</span>
-            </span>
-          }
-        >
+        <AdminCard title="Plan Distribution">
           {planData.length > 0 ? (
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
@@ -245,7 +267,7 @@ export default function AdminDashboardPage() {
               </PieChart>
             </ResponsiveContainer>
           ) : (
-            <p className="py-8 text-center text-sm text-slate-500">No plan data yet</p>
+            <p className="py-8 text-center text-sm text-slate-400">No plan data yet</p>
           )}
         </AdminCard>
       </div>
@@ -263,12 +285,17 @@ export default function AdminDashboardPage() {
           noPadding
         >
           {stats.trialsExpiringSoon.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-slate-500">No trials expiring within 7 days.</p>
+            <p className="px-5 py-6 text-sm text-slate-400">No trials expiring within 7 days.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto"
+              role="region"
+              aria-label="Trials expiring soon"
+              tabIndex={0}
+            >
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-2.5 text-left">Tenant</th>
                     <th className="px-4 py-2.5 text-left">Plan</th>
                     <th className="px-4 py-2.5 text-right">Users</th>
@@ -285,7 +312,7 @@ export default function AdminDashboardPage() {
                       <tr key={t.id} className="hover:bg-slate-700/20">
                         <td className="px-4 py-2">
                           <div className="text-white">{t.name ?? t.slug}</div>
-                          <div className="font-mono text-xs text-slate-500">{t.slug}</div>
+                          <div className="font-mono text-xs text-slate-400">{t.slug}</div>
                         </td>
                         <td className="px-4 py-2">
                           <AdminBadge variant="plan">{t.plan}</AdminBadge>
@@ -305,7 +332,7 @@ export default function AdminDashboardPage() {
                         <td className="px-4 py-2">
                           <Link
                             href={`/admin/tenants/${t.id}`}
-                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
                           >
                             View
                           </Link>
@@ -330,12 +357,17 @@ export default function AdminDashboardPage() {
           noPadding
         >
           {stats.atRiskTenants.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-slate-500">No at-risk tenants.</p>
+            <p className="px-5 py-6 text-sm text-slate-400">No at-risk tenants.</p>
           ) : (
-            <div className="overflow-x-auto">
+            <div
+              className="overflow-x-auto"
+              role="region"
+              aria-label="At-risk tenants"
+              tabIndex={0}
+            >
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-2.5 text-left">Tenant</th>
                     <th className="px-4 py-2.5 text-left">Status</th>
                     <th className="px-4 py-2.5 text-left">Plan</th>
@@ -347,7 +379,7 @@ export default function AdminDashboardPage() {
                     <tr key={t.id} className="hover:bg-slate-700/20">
                       <td className="px-4 py-2">
                         <div className="text-white">{t.name ?? t.slug}</div>
-                        <div className="text-xs text-slate-500">{t.riskReason}</div>
+                        <div className="text-xs text-slate-400">{t.riskReason}</div>
                       </td>
                       <td className="px-4 py-2">
                         <AdminBadge>{t.status}</AdminBadge>
@@ -358,7 +390,7 @@ export default function AdminDashboardPage() {
                       <td className="px-4 py-2">
                         <Link
                           href={`/admin/tenants/${t.id}`}
-                          className="text-xs text-indigo-400 hover:text-indigo-300"
+                          className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
                         >
                           View
                         </Link>
@@ -376,16 +408,19 @@ export default function AdminDashboardPage() {
       <AdminCard
         title="Recent Tenants"
         actions={
-          <Link href="/admin/tenants" className="text-xs text-indigo-400 hover:text-indigo-300">
+          <Link
+            href="/admin/tenants"
+            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
+          >
             View all
           </Link>
         }
         noPadding
       >
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" role="region" aria-label="Recent tenants" tabIndex={0}>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-5 py-3 text-left">Slug</th>
                 <th className="px-5 py-3 text-left">Business Name</th>
                 <th className="px-5 py-3 text-left">Status</th>
@@ -399,7 +434,7 @@ export default function AdminDashboardPage() {
                   <td className="px-5 py-3">
                     <Link
                       href={`/admin/tenants/${t.id}`}
-                      className="font-mono text-indigo-400 hover:text-indigo-300"
+                      className="admin-tap-text font-mono text-indigo-400 hover:text-indigo-300"
                     >
                       {t.slug}
                     </Link>
@@ -411,14 +446,14 @@ export default function AdminDashboardPage() {
                   <td className="px-5 py-3">
                     <AdminBadge variant="plan">{t.plan}</AdminBadge>
                   </td>
-                  <td className="px-5 py-3 text-slate-500">
+                  <td className="px-5 py-3 text-slate-400">
                     {new Date(t.createdAt).toLocaleDateString()}
                   </td>
                 </tr>
               ))}
               {stats.recentTenants.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                  <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
                     No tenants yet
                   </td>
                 </tr>

@@ -1,0 +1,7 @@
+CREATE TYPE "RouteKind" AS ENUM ('SCHEDULED', 'ADHOC');
+ALTER TABLE "Route" ADD COLUMN "kind" "RouteKind" NOT NULL DEFAULT 'SCHEDULED';
+CREATE INDEX "Route_tenantId_kind_idx" ON "Route"("tenantId", "kind");
+ALTER TABLE "Order" ADD COLUMN "fulfillPath" "FulfillPath" NOT NULL DEFAULT 'ROUTE';
+ALTER TABLE "Driver" ADD COLUMN "homeLat" DOUBLE PRECISION;
+ALTER TABLE "Driver" ADD COLUMN "homeLng" DOUBLE PRECISION;
+ALTER TABLE "Driver" ADD COLUMN "homeAddress" TEXT;

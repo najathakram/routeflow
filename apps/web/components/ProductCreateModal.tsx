@@ -7,6 +7,7 @@ import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/pr
 import { apiClient } from "@/lib/api-client";
 import { PRODUCT_NAME_SEPARATOR } from "@/lib/product-display";
 import { BarcodeScannerButton } from "./BarcodeScannerButton";
+import { PackSizePrompt } from "./PackSizePrompt";
 import { UnitCombobox } from "./UnitCombobox";
 import { CategoryCombobox } from "./CategoryCombobox";
 import { SubcategoryCombobox } from "./SubcategoryCombobox";
@@ -764,6 +765,27 @@ export function ProductCreateModal({
                     </p>
                   )}
               </div>
+
+              {/* Pack-size prompt — suggested from the name/unit while the field
+                  above is still unset. Never guesses: HIGH/MEDIUM pre-fills the
+                  parsed count, AMBIGUOUS states the conflict and leaves the input
+                  empty, PIECE_UNIT renders nothing. `/products/create` is only a
+                  redirect to this modal (RF-203), so this IS the web create form. */}
+              {/* `col-span-2` goes on the component itself, not a wrapper: the
+                  prompt renders null most of the time and an empty wrapper would
+                  still cost a grid row of `gap-4`. */}
+              <PackSizePrompt
+                className="col-span-2"
+                // Mirrors the submit-time name resolution above: a variant is
+                // created under its own `variantName`, not the blank name field.
+                name={
+                  form.parentProductId && form.variantName.trim() ? form.variantName : form.name
+                }
+                unit={form.unit}
+                unitSku={form.unitSku}
+                unitsPerBox={form.unitsPerBox}
+                onAccept={(value) => set("unitsPerBox", String(value))}
+              />
             </div>
           </div>
 

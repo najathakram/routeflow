@@ -1,5 +1,22 @@
+// `@LeaderCron` wraps every cron tick in a Postgres advisory lock (common/cron-lock.ts).
+// These specs invoke the tick directly and have no database, so the lock is a PASS-THROUGH here:
+// it must still call the body — a mock that skipped it would make every assertion below measure
+// a tick that never ran.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
+import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -23,6 +40,15 @@ describe("RecurringInvoicesService (pause/resume)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
@@ -33,10 +59,14 @@ describe("RecurringInvoicesService (pause/resume)", () => {
     );
   });
 
-  it("activate() sets isActive=true", async () => {
+  it("activate() sets isActive=true (conditionally, on a currently inactive template)", async () => {
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.recurringInvoice.findUnique
+      .mockResolvedValueOnce({ id: "ri-1", isActive: false })
+      .mockResolvedValueOnce({ id: "ri-1", isActive: true });
     const res = await service.activate("ri-1");
-    expect(prisma.recurringInvoice.update).toHaveBeenCalledWith({
-      where: { id: "ri-1" },
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledWith({
+      where: { id: "ri-1", isActive: false },
       data: { isActive: true },
     });
     expect(res.isActive).toBe(true);
@@ -93,11 +123,22 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);
     prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
     prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    // CAS claim (updateMany) must succeed for generation to proceed at all — see B9.
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it("auto-send EMAILS the invoice (sendEmail), not the mark-as-sent-only path", async () => {
@@ -117,7 +158,568 @@ describe("RecurringInvoicesService (auto-send honesty, R5)", () => {
     await expect(
       (service as any).generateInvoiceFromTemplate(template(true)),
     ).resolves.toBeDefined();
-    // The invoice is left generated (DRAFT) and the template's nextRunAt still advances.
-    expect(prisma.recurringInvoice.update).toHaveBeenCalled();
+    // The invoice is left generated (DRAFT) and the cycle was still claimed (nextRunAt advanced).
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalled();
+  });
+});
+
+// B9 — the cycle must be claimed (CAS on nextRunAt) BEFORE the invoice is created, not
+// after. Previously the advance was the last statement, so runNow racing the cron (or a
+// crash after create) could mint a duplicate invoice for the same cycle.
+describe("RecurringInvoicesService (cycle claim, B9)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = () => ({
+    id: "ri-1",
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend: false,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+  });
+
+  it("returns null and creates no invoice when the CAS claim matches nothing (already claimed by a racing caller)", async () => {
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    expect(result).toBeNull();
+    expect(invoices.create).not.toHaveBeenCalled();
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+    // T20 (pin, R18): a lost claim records no outcome either.
+    expect(prisma.recurringInvoice.update).not.toHaveBeenCalled();
+  });
+
+  it("claims the cycle via updateMany BEFORE creating the invoice, and advances nextRunAt exactly once on the happy path", async () => {
+    const callOrder: string[] = [];
+    prisma.recurringInvoice.updateMany.mockImplementation((args: any) => {
+      callOrder.push("claim");
+      expect(args.where).toEqual({ id: "ri-1", nextRunAt: new Date("2026-07-01") });
+      expect(args.data.nextRunAt).toBeInstanceOf(Date);
+      return Promise.resolve({ count: 1 });
+    });
+    invoices.create.mockImplementation(() => {
+      callOrder.push("create");
+      return Promise.resolve({ id: "inv-1" });
+    });
+
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    expect(result).toEqual({ id: "inv-1" });
+    expect(callOrder).toEqual(["claim", "create"]);
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalledTimes(1);
+    // No trailing advance — the CAS claim above is the only nextRunAt write.
+    // (R13, B106: the happy path legitimately calls recurringInvoice.update once more
+    // to record the SUCCESS outcome after the invoice is linked — the pin's real intent
+    // is "no second nextRunAt write", so it is asserted directly rather than via a
+    // blanket "never called".)
+    const nextRunWrites = prisma.recurringInvoice.update.mock.calls.filter(
+      (c: any) => "nextRunAt" in (c[0]?.data ?? {}),
+    );
+    expect(nextRunWrites).toHaveLength(0);
+  });
+});
+
+// B142 (train 2, cause-ruling.md §2/§3, D3 batch path): recurring generation must
+// NEVER reject on an archived SKU — a reject inside invoicesService.create() makes
+// the cron throw, and REG-B106's failure handler gives the cycle back, so the
+// template would re-fail every night and the customer would never be billed
+// (cause-refutation.md §2 "Recurring generation is the sharpest risk"). Instead it
+// bills as scheduled and records a note on the invoice so the gap is visible.
+describe("RecurringInvoicesService (archived SKU in generation, B142)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = () => ({
+    id: "ri-1",
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend: false,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [
+      {
+        description: "Archived Widget",
+        productId: "prod-archived",
+        qty: 1,
+        unitPrice: 10,
+        discount: 0,
+        taxRate: 0,
+      },
+    ],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" });
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.product.findMany.mockResolvedValue([
+      { id: "prod-archived", isActive: false, sku: "ARCH-1", name: "Archived Widget" },
+    ]);
+  });
+
+  it("REG-B142-C generation with an archived SKU still bills and records a note", async () => {
+    const result = await (service as any).generateInvoiceFromTemplate(template());
+
+    // Never a reject — the invoice is still created (no thrown BadRequestException).
+    expect(invoices.create).toHaveBeenCalledTimes(1);
+    expect(result).toBeDefined();
+    expect(result).not.toBeNull();
+
+    const createArg = invoices.create.mock.calls[0][0];
+    expect(createArg.notes ?? "").toMatch(/archived/i);
+    // The cycle must still be claimed/advanced — a note is not a failure outcome.
+    expect(prisma.recurringInvoice.updateMany).toHaveBeenCalled();
+  });
+});
+
+// T4 (pin, R1) — same-month boundary guard: an operator-set first run earlier in the
+// month than dayOfMonth still lands on that month's occurrence, not next month.
+// T2 (pin, R2) — the dom-31 clamp. NOT a B46 proof: a month-end `from` is rolled into
+// the next month by the unconditional `+1 day` BEFORE the buggy `setDate(1)` compare is
+// reached, and `Math.min(dom, daysInMonth)` already clamps, so dom 31 passes today and
+// must keep passing after the fix.
+describe("RecurringInvoicesService (calcNextRunAt MONTHLY pins)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+  });
+
+  it("dayOfMonth 15, from 2026-07-10 (earlier in the same month) -> 2026-07-15", () => {
+    const result = (service as any).calcNextRunAt("MONTHLY", null, 15, new Date(2026, 6, 10));
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6); // July
+    expect(result.getDate()).toBe(15);
+  });
+
+  it("pin (T2, R2): dayOfMonth 31 clamps 2026-01-31 -> Feb 28 -> Mar 31", () => {
+    const first = (service as any).calcNextRunAt("MONTHLY", null, 31, new Date(2026, 0, 31));
+    expect(first.getFullYear()).toBe(2026);
+    expect(first.getMonth()).toBe(1); // February (2026 is not a leap year)
+    expect(first.getDate()).toBe(28);
+
+    const second = (service as any).calcNextRunAt("MONTHLY", null, 31, first);
+    expect(second.getFullYear()).toBe(2026);
+    expect(second.getMonth()).toBe(2); // March
+    expect(second.getDate()).toBe(31);
+  });
+});
+
+// T8 (pin, R3) — WEEKLY/BIWEEKLY next-run computation is unchanged by the MONTHLY fix.
+describe("RecurringInvoicesService (calcNextRunAt WEEKLY/BIWEEKLY, pin)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+  });
+
+  it("WEEKLY dayOfWeek 1, from Mon 2026-07-13 -> next Monday 2026-07-20", () => {
+    const result = (service as any).calcNextRunAt("WEEKLY", 1, null, new Date(2026, 6, 13));
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6); // July
+    expect(result.getDate()).toBe(20);
+  });
+
+  it("BIWEEKLY dayOfWeek 1, from Mon 2026-07-13 -> 2026-07-27 (next Monday + 7 days)", () => {
+    const result = (service as any).calcNextRunAt("BIWEEKLY", 1, null, new Date(2026, 6, 13));
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6); // July
+    expect(result.getDate()).toBe(27);
+  });
+
+  it("WEEKLY dayOfWeek 3, from Mon 2026-07-13 -> 2026-07-15 (next Wednesday)", () => {
+    const result = (service as any).calcNextRunAt("WEEKLY", 3, null, new Date(2026, 6, 13));
+    expect(result.getFullYear()).toBe(2026);
+    expect(result.getMonth()).toBe(6); // July
+    expect(result.getDate()).toBe(15);
+  });
+});
+
+// T21 (pin, R19) — the midnight cron must keep going after one template throws:
+// generateInvoiceFromTemplate is wrapped in a per-template try/catch, so a failure on
+// the first due template still leaves the second one attempted. This passes today and
+// must keep passing once B106's outcome recording is added inside that same path.
+describe("RecurringInvoicesService (cron continues past a failing template, pin)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const template = (id: string) => ({
+    id,
+    customerId: "c1",
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend: false,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+  });
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue({ id: "inv-2" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-2" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
+        },
+        { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+
+    prisma.tenant.findMany.mockResolvedValue([{ id: "t1" }]);
+    prisma.recurringInvoice.findMany.mockResolvedValue([template("ri-1"), template("ri-2")]);
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 });
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" });
+    prisma.invoice.update.mockResolvedValue({ id: "inv-2" });
+  });
+
+  it("attempts the second due template after the first one throws", async () => {
+    await service.generateDueRecurringInvoices();
+    expect(invoices.create).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Honest stand-in for Postgres: applies the `where` the service actually sends, so a where-only fix is
+// observable (L-081: a mock that injects a fixed result cannot see one). Strict: an unmodelled filter
+// shape throws instead of silently matching.
+function matchesWhere(row: any, where: any = {}): boolean {
+  for (const [key, cond] of Object.entries(where)) {
+    if (key === "customer") {
+      const rel = (cond as any)?.is ?? cond;
+      if (
+        !rel ||
+        !Object.prototype.hasOwnProperty.call(rel, "deletedAt") ||
+        rel.deletedAt !== null
+      ) {
+        throw new Error(`matchesWhere: unsupported customer filter ${JSON.stringify(cond)}`);
+      }
+      if (row.customer.deletedAt !== null) return false;
+      continue;
+    }
+    if (cond !== null && typeof cond === "object" && !(cond instanceof Date)) {
+      const c = cond as any;
+      if ("has" in c) {
+        if (!row[key].includes(c.has)) return false;
+      } else if ("in" in c) {
+        if (!c.in.includes(row[key])) return false;
+      } else if ("lte" in c) {
+        if (!(row[key] <= c.lte)) return false;
+      } else {
+        throw new Error(`matchesWhere: unsupported filter on ${key}: ${JSON.stringify(cond)}`);
+      }
+      continue;
+    }
+    if (row[key] !== cond) return false;
+  }
+  return true;
+}
+
+const REMOVED_AT = new Date("2026-09-01T00:00:00.000Z");
+
+describe("RecurringInvoicesService.generateDueRecurringInvoices — removed customer (B131)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let invoices: { create: jest.Mock; send: jest.Mock; sendEmail: jest.Mock };
+
+  const ri = (id: string, customerId: string, autoSend: boolean, deletedAt: Date | null) => ({
+    id,
+    customerId,
+    discount: 0,
+    shippingFee: 0,
+    notes: null,
+    terms: null,
+    autoSend,
+    frequency: "MONTHLY",
+    dayOfWeek: null,
+    dayOfMonth: 1,
+    isActive: true,
+    nextRunAt: new Date("2026-07-01"),
+    items: [{ description: "x", productId: null, qty: 1, unitPrice: 10, discount: 0, taxRate: 0 }],
+    customer: { id: customerId, deletedAt },
+  });
+
+  async function boot(removedAt: Date | null) {
+    prisma = createMockPrisma();
+    invoices = {
+      create: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      send: jest.fn().mockResolvedValue({ id: "inv-1" }),
+      sendEmail: jest.fn().mockResolvedValue({ success: true }),
+    };
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: TenantContextService,
+          useValue: { run: jest.fn((_id: string, fn: () => unknown) => fn()) },
+        },
+        { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    const rows = [
+      ri("ri-live", "c-live", false, null),
+      ri("ri-removed", "c-removed", true, removedAt),
+    ];
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }] as any);
+    prisma.recurringInvoice.findMany.mockImplementation((async (args: any) =>
+      rows.filter((r) => matchesWhere(r, args?.where))) as any);
+    prisma.recurringInvoice.updateMany.mockResolvedValue({ count: 1 }); // B9 CAS claim succeeds
+    prisma.recurringInvoice.update.mockResolvedValue({ id: "ri-1" } as any);
+    prisma.invoice.update.mockResolvedValue({ id: "inv-1" } as any);
+  }
+
+  it("REG-B131 T2: generateDueRecurringInvoices never invoices a removed customer", async () => {
+    await boot(REMOVED_AT);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.create.mock.calls.map((c) => c[0].customerId)).toEqual(["c-live"]);
+  });
+
+  it("REG-B131 T3: generateDueRecurringInvoices never emails a removed customer's auto-send invoice", async () => {
+    await boot(REMOVED_AT);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.sendEmail).toHaveBeenCalledTimes(0);
+  });
+
+  it("B131 P2: a restored customer's recurring invoice generates again", async () => {
+    await boot(null);
+    await service.generateDueRecurringInvoices();
+    expect(invoices.create.mock.calls.map((c) => c[0].customerId)).toEqual(["c-live", "c-removed"]);
+  });
+
+  // Observability of the suppression itself: when every due row belongs to a removed customer the tick
+  // returns before the per-tenant log, so that night would leave no line at all. createMockPrisma()
+  // defaults every count() to 0, which is why the tests above stay green with no extra mock.
+  it("REG-B131 T11: generateDueRecurringInvoices warns per tenant and totals the suppressed rows", async () => {
+    await boot(REMOVED_AT);
+    prisma.recurringInvoice.count.mockResolvedValue(2 as any);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+    const log = jest.spyOn((service as any).logger, "log").mockImplementation(() => {});
+
+    await service.generateDueRecurringInvoices();
+
+    // The warned number must come from the suppressed set, not from any set: a count whose where is
+    // flipped (or loses the relation filter) would log a confident wrong number, so pin the filter.
+    expect(prisma.recurringInvoice.count).toHaveBeenCalledTimes(1);
+    expect(prisma.recurringInvoice.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ customer: { deletedAt: { not: null } } }),
+      }),
+    );
+
+    const suppressionWarnings = warn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((m) => m.includes("REG-B131"));
+    expect(suppressionWarnings).toHaveLength(1);
+    expect(suppressionWarnings[0]).toContain("tn-1");
+    expect(suppressionWarnings[0]).toContain("2");
+    expect(log.mock.calls.map((c) => String(c[0])).some((m) => m.includes("2 suppressed"))).toBe(
+      true,
+    );
+  });
+
+  it("B131 P11: generateDueRecurringInvoices does not warn when nothing is suppressed", async () => {
+    await boot(null);
+    const warn = jest.spyOn((service as any).logger, "warn").mockImplementation(() => {});
+
+    await service.generateDueRecurringInvoices();
+
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("REG-B131"))).toHaveLength(0);
+  });
+});
+
+// The other side of the same rule: the sweep skipping a removed customer's schedules means a
+// schedule created for one would only ever be a silent no-op, so create() refuses it outright.
+describe("RecurringInvoicesService.create — removed customer (B131)", () => {
+  let service: RecurringInvoicesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  const dto = {
+    customerId: "c-1",
+    frequency: "MONTHLY",
+    dayOfMonth: 1,
+    nextRunAt: "2026-10-01T00:00:00.000Z",
+    items: [{ description: "x", qty: 1, unitPrice: 10 }],
+  } as any;
+
+  async function boot(deletedAt: Date | null) {
+    prisma = createMockPrisma();
+    const mod = await Test.createTestingModule({
+      providers: [
+        RecurringInvoicesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: {} },
+        { provide: InvoicesService, useValue: {} },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+      ],
+    }).compile();
+    service = mod.get(RecurringInvoicesService);
+    // Honest stand-in for Postgres: applies the `where` the service actually sends (findUnique
+    // carries the extended `deletedAt: null` filter), so a where-only fix is observable (L-081).
+    prisma.customer.findUnique.mockImplementation((async (args: any) => {
+      const where = args?.where ?? {};
+      if (where.deletedAt === null && deletedAt !== null) return null;
+      return { id: where.id, deletedAt };
+    }) as any);
+    // Everything past the customer gate succeeds, so pre-fix the call RESOLVED and wrote a row.
+    prisma.recurringInvoice.create.mockResolvedValue({ id: "ri-1" } as any);
+  }
+
+  it("REG-B131 T17: creating a recurring invoice for a removed customer is refused", async () => {
+    await boot(REMOVED_AT);
+
+    await expect(service.create(dto)).rejects.toThrow(new NotFoundException("Customer not found"));
+    expect(prisma.recurringInvoice.create).not.toHaveBeenCalled();
+  });
+
+  it("B131 P16: a live customer's recurring invoice is still created", async () => {
+    await boot(null);
+
+    await expect(service.create(dto)).resolves.toEqual({ id: "ri-1" });
+    expect(prisma.recurringInvoice.create).toHaveBeenCalled();
   });
 });

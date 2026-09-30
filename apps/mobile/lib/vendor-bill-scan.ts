@@ -1,5 +1,11 @@
-import type { DuplicateVendorBillInfo, PriorScanSummary, ScanResult } from "./api/vendor-bills";
-import { roundMoney } from "./pricing";
+import type {
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  ScanResult,
+  ScannedItem,
+} from "./api/vendor-bills";
+import { roundMoney } from "@routeflow/pricing";
+import { toBillLine, type PieceSnapshot, type ScanLineUnit } from "./scan-line-units";
 
 /**
  * Pure (screen-free, testable) helpers for the vendor-bill scan flow — turn an AI
@@ -12,6 +18,36 @@ import { roundMoney } from "./pricing";
 export interface SupplierRef {
   id: string;
   name: string;
+}
+
+/**
+ * `matchSource` and the scan-level `supplierId` are server fields added by
+ * the API work package of this same PR-5 batch; `operatorConfirmed` and
+ * `warning` are client-only. `api/vendor-bills.ts`'s `ScanResult`/`ScannedItem`
+ * types are owned by a different work package, so the additive shape is
+ * declared locally rather than widening a file outside this package's scope
+ * — both new fields are optional, so a plain `ScanResult`/`ScannedItem`
+ * value is still structurally assignable wherever these are expected.
+ */
+export interface ScannedItemEx extends ScannedItem {
+  /** Set server-side when this line resolved from ProductAlias/legacy ProductMapping memory. */
+  matchSource?: "alias" | "memory" | null;
+  /**
+   * Client-only: true once the OPERATOR explicitly picked/confirmed this
+   * link (candidate chip, picker, or create sheet) — never set for the AI's
+   * own auto-match. Only confirmed links are safe to teach back via
+   * `mappingsFromScan`, or the app would learn from its own guesses.
+   */
+  operatorConfirmed?: boolean;
+  /** Set by `applyLineEdit` when the last Boxes/Pieces conversion needed a caveat. */
+  warning?: "NOT_DIVISIBLE" | "PPB_MISMATCH";
+}
+
+export interface ScanResultEx extends Omit<ScanResult, "items"> {
+  /** Server-resolved supplier id (`supplier-match.ts`) — preferred over a
+   *  client-side name lookup against the loaded `suppliers` list. */
+  supplierId?: string | null;
+  items: ScannedItemEx[];
 }
 
 export interface ScanBillItemDto {
@@ -48,6 +84,50 @@ export interface ScanProductMapping {
   productId: string;
 }
 
+/**
+ * A scanned line with a NEGATIVE `qty` is a deposit return / credit line — the
+ * AI extracts a printed quantity like "-1" against a positive per-unit price.
+ * That is not a physical stock movement (nothing is being received), so it's
+ * normalized to a money-only adjustment before it reaches the server:
+ * `qty` flips positive (the server's `qty` bound is `@Min(0)` — every real
+ * caller sends non-negative), `unitCost` flips negative so the line still
+ * NETS the same amount owed, `lineTotal`'s sign follows `unitCost`'s, and
+ * `productId` is dropped so `receive()`'s stock/inventory logic (which only
+ * ever touches lines carrying a `productId`) can never move stock for it.
+ * A line whose `qty` was already non-negative passes through unchanged —
+ * this only fires for the deposit-return shape.
+ */
+function normalizeScanLine(i: ScannedItemEx): ScanBillItemDto {
+  const rawQty = i.qty ?? 1;
+  const isNegativeQtyLine = rawQty < 0;
+  if (!isNegativeQtyLine) {
+    return {
+      description: i.extractedName,
+      productId: i.matchedProductId ?? undefined,
+      qty: rawQty,
+      unitCost: i.unitCost ?? 0,
+      sku: i.sku?.trim() || undefined,
+      packSize: i.packSize ?? undefined,
+      lineTotal: i.lineTotal ?? undefined,
+    };
+  }
+  return {
+    description: i.extractedName,
+    productId: undefined,
+    // Plain negation, not -Math.abs(...): preserves the amount owed for
+    // EITHER sign the AI extracted the cost as (a deposit return can arrive
+    // as qty:-1/unitCost:+5 OR qty:-1/unitCost:-5 depending on how the
+    // invoice printed it) — -Math.abs would silently flip a
+    // already-negative unitCost positive, doubling the line's effect on
+    // totalOwed instead of preserving it.
+    qty: Math.abs(rawQty),
+    unitCost: -(i.unitCost ?? 0),
+    sku: i.sku?.trim() || undefined,
+    packSize: i.packSize ?? undefined,
+    lineTotal: i.lineTotal != null ? -i.lineTotal : undefined,
+  };
+}
+
 /** Build the POST /vendor-bills DTO from a scan result. Lines with neither a
  * quantity nor a cost are dropped (blank AI rows); everything else is kept even
  * when unmatched (`productId` omitted) so the bill can be linked later.
@@ -55,21 +135,27 @@ export interface ScanProductMapping {
  * Per-line `sku`/`packSize`/`lineTotal` and the document's `subtotal`/`tax` are
  * carried through as printed — they were read off the invoice and used to be
  * dropped on the floor here. Tax is the one that moves money: the server adds
- * it to the line sum, so `scanBillTotal` counts it too. */
+ * it to the line sum, so `scanBillTotal` counts it too.
+ *
+ * Supplier: the server now resolves `supplierId` itself (`supplier-match.ts`,
+ * same exact→startsWith→contains ladder import uses) — prefer that over the
+ * client-side exact-name lookup here, which stays only as a fallback for a
+ * cached/older scan payload that never carried one. */
 export function buildBillDtoFromScan(
-  result: ScanResult,
+  result: ScanResultEx,
   suppliers: SupplierRef[] | undefined,
 ): ScanBillDto {
   const supplierName = (result.supplier ?? "").trim();
   const matchedSupplier = supplierName
     ? suppliers?.find((s) => s.name.toLowerCase() === supplierName.toLowerCase())
     : undefined;
+  const supplierId = result.supplierId ?? matchedSupplier?.id ?? undefined;
   const invoiceNumber = (result.invoiceNumber ?? "").trim();
   const tax = roundMoney(result.tax ?? 0);
   const subtotal = roundMoney(result.subtotal ?? 0);
 
   return {
-    supplierId: matchedSupplier?.id,
+    supplierId,
     billDate: result.invoiceDate ?? undefined,
     notes: scanNotes(supplierName, invoiceNumber),
     supplierInvoiceNumber: invoiceNumber || undefined,
@@ -77,16 +163,12 @@ export function buildBillDtoFromScan(
     subtotal: subtotal > 0 ? subtotal : undefined,
     scanId: result.scanId ?? undefined,
     items: (result.items ?? [])
-      .filter((i) => (i.qty ?? 0) > 0 || (i.unitCost ?? 0) > 0)
-      .map((i) => ({
-        description: i.extractedName,
-        productId: i.matchedProductId ?? undefined,
-        qty: i.qty ?? 1,
-        unitCost: i.unitCost ?? 0,
-        sku: i.sku?.trim() || undefined,
-        packSize: i.packSize ?? undefined,
-        lineTotal: i.lineTotal ?? undefined,
-      })),
+      // Opus review of #791: `> 0` on both clauses silently dropped a
+      // discount line printed with a null/0 qty and a negative unitCost
+      // (`0 > 0` and `-5 > 0` are both false). `!== 0` keeps any line that
+      // carries a real qty OR a real cost, in either direction.
+      .filter((i) => (i.qty ?? 0) !== 0 || (i.unitCost ?? 0) !== 0)
+      .map((i) => normalizeScanLine(i)),
   };
 }
 
@@ -160,6 +242,22 @@ export function priorScanPrompt(prior: PriorScanSummary): {
   };
 }
 
+/**
+ * True when the API rejected a vendor-bill create with `MONEY_INVARIANT`
+ * (B451/#791) — the whole document's lines net negative (e.g. every line is
+ * a return/discount, so `totalOwed` would come out negative). The scan UI
+ * shows a dedicated "this looks like a credit memo" message for this
+ * instead of the generic error toast; see
+ * apps/mobile/app/(operator)/vendor-bills/scan.tsx submitBill. Kept in this
+ * pure, react-native-free module (rather than lib/api/vendor-bills.ts, which
+ * transitively imports react-native via api-client) so it stays reachable
+ * from the mobile pure-logic Jest suite.
+ */
+export function isMoneyInvariantError(error: unknown): boolean {
+  const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
+  return data?.code === "MONEY_INVARIANT";
+}
+
 /** "Jul 3, 2026" for a stored ISO timestamp; empty when it can't be read. */
 function scanDate(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -180,16 +278,19 @@ export function unmatchedCount(result: ScanResult): number {
 }
 
 /**
- * Link one extracted line to a product (from picking an existing product OR
- * creating one on the spot). Returns a new ScanResult — the line's confidence is
- * promoted to "high" since the operator explicitly chose it.
+ * Link one extracted line to a product (from picking an existing product,
+ * tapping a candidate chip, OR creating one on the spot) — every path goes
+ * through this one function. Returns a new ScanResult — the line's confidence
+ * is promoted to "high" and `operatorConfirmed` is set, since the operator
+ * explicitly chose it (as opposed to the AI's own auto-match). Only
+ * confirmed links are safe to teach back — see `mappingsFromScan`.
  */
 export function linkScanItem(
-  result: ScanResult,
+  result: ScanResultEx,
   index: number,
   productId: string,
   productName: string,
-): ScanResult {
+): ScanResultEx {
   return {
     ...result,
     items: result.items.map((it, i) =>
@@ -199,22 +300,117 @@ export function linkScanItem(
             matchedProductId: productId,
             matchedProductName: productName,
             confidence: "high",
+            operatorConfirmed: true,
           }
         : it,
     ),
   };
 }
 
-/** Mappings to persist so the AI matcher learns — one per line that ended up
- * linked to a product. Requires a supplier name (the mapping key on the server). */
-export function mappingsFromScan(result: ScanResult): ScanProductMapping[] {
+/**
+ * Mappings to persist so the AI matcher learns — one per line the OPERATOR
+ * explicitly confirmed (`operatorConfirmed`, set by `linkScanItem`). A line
+ * the AI auto-matched on its own (arrives pre-matched from the scan, never
+ * touched by `linkScanItem`) is excluded: teaching the matcher from its own
+ * unconfirmed guesses is exactly the self-reinforcing bug this filters out.
+ * Requires a supplier name (the mapping key on the server).
+ */
+export function mappingsFromScan(result: ScanResultEx): ScanProductMapping[] {
   const supplierName = (result.supplier ?? "").trim();
   if (!supplierName) return [];
   return (result.items ?? [])
-    .filter((i) => !!i.matchedProductId && !!i.extractedName)
+    .filter((i) => i.operatorConfirmed === true && !!i.matchedProductId && !!i.extractedName)
     .map((i) => ({
       supplierName,
       rawDescription: i.extractedName,
       productId: i.matchedProductId as string,
     }));
+}
+
+// ─── Boxes/Pieces line editing (A3) ────────────────────────────────────────────
+// `LineEditSheet` lets the operator re-denominate one scanned line between
+// Boxes and Pieces. All the actual unit math is `scan-line-units.ts#toBillLine`
+// (the binding A3 contract) — everything here just seeds/commits it so the
+// toggle is lossless and `packSize` never survives stale next to a Pieces
+// choice (the #335/#336 stock/AVCO corruption class).
+
+/**
+ * The canonical, unit-independent `PieceSnapshot` a scanned line's CURRENT
+ * qty/unitCost/packSize represents — seeds `LineEditSheet`'s toggle baseline
+ * exactly once per line. Toggling Boxes<->Pieces from this fixed snapshot
+ * (rather than re-deriving from whatever's currently on screen) is what makes
+ * repeated flips restore the original values exactly instead of drifting
+ * through already-rounded intermediate numbers.
+ *
+ * The derived per-piece cost is deliberately NOT rounded here (same as web's
+ * `canonicalizeLine`): the snapshot is the full-precision canonical form and
+ * `toBillLine` applies `roundUnitCost` once, on the value it emits. Rounding
+ * the quotient too would make a case cost that doesn't divide evenly come
+ * back changed — $19.99/24 would redisplay and save as $19.9896.
+ */
+export function pieceSnapshotFromLine(line: {
+  qty: number;
+  unitCost: number;
+  packSize?: number | null;
+}): PieceSnapshot {
+  const ppb = line.packSize;
+  if (ppb != null && ppb > 1) {
+    return { qtyPieces: line.qty * ppb, costPerPiece: line.unitCost / ppb };
+  }
+  return { qtyPieces: line.qty, costPerPiece: line.unitCost };
+}
+
+/** The unit a scanned line is CURRENTLY denominated in — derived from
+ *  `packSize`, never stored separately (A3: "unit DERIVED from packSize>1"). */
+export function unitFromLine(line: { packSize?: number | null }): ScanLineUnit {
+  return line.packSize != null && line.packSize > 1 ? "boxes" : "pieces";
+}
+
+/**
+ * Pieces-per-box prefill for the sheet: the OCR-read `packSize` first, else
+ * the linked product's `unitsPerBox` — "OCR-then-product", per the plan.
+ * Never invented from neither, and never 1 (that isn't boxed at all).
+ */
+export function initialPpbDraft(
+  line: { packSize?: number | null },
+  catalogUnitsPerBox?: number | null,
+): number | null {
+  if (line.packSize != null && line.packSize > 1) return line.packSize;
+  if (catalogUnitsPerBox != null && catalogUnitsPerBox > 1) return catalogUnitsPerBox;
+  return null;
+}
+
+/**
+ * Pure Boxes/Pieces commit for one scan line: delegate the actual conversion
+ * to `toBillLine` and write its FULL result — `qty`, `unitCost`, and
+ * `packSize` explicitly (including `null`) — into the line, replacing
+ * whatever it had before. `packSize` is never left at a stale OCR value: a
+ * Pieces choice always clears it to `null`, so the receive-time
+ * `lineInventoryDelta` conversion (which fires whenever `packSize > 1`) can
+ * never accidentally fire for a line the operator chose to bill in pieces.
+ * Any previous warning is cleared the same way when the new conversion is clean.
+ */
+export function applyLineEdit(
+  result: ScanResultEx,
+  index: number,
+  snap: PieceSnapshot,
+  unit: ScanLineUnit,
+  piecesPerBox: number | null | undefined,
+  catalogUnitsPerBox?: number | null,
+): ScanResultEx {
+  const denom = toBillLine(snap, unit, piecesPerBox, catalogUnitsPerBox);
+  return {
+    ...result,
+    items: result.items.map((it, i) =>
+      i === index
+        ? {
+            ...it,
+            qty: denom.qty,
+            unitCost: denom.unitCost,
+            packSize: denom.packSize,
+            warning: denom.warning,
+          }
+        : it,
+    ),
+  };
 }

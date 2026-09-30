@@ -27,7 +27,7 @@ describe("ProductAliasService", () => {
         { supplierId: "", productId: "any", expenseCategoryId: null },
         { supplierId: "sup1", productId: "specific", expenseCategoryId: null },
       ]);
-      prisma.product.findUnique.mockResolvedValue({ id: "specific" });
+      prisma.product.findFirst.mockResolvedValue({ id: "specific" });
       const target = await service.resolve("sup1", "cloud chips");
       expect(target).toEqual({ productId: "specific", expenseCategoryId: null });
     });
@@ -41,7 +41,7 @@ describe("ProductAliasService", () => {
       prisma.productAlias.findMany.mockResolvedValue([
         { supplierId: "", productId: "deleted-product", expenseCategoryId: "cat-1" },
       ]);
-      prisma.product.findUnique.mockResolvedValue(null); // product no longer exists
+      prisma.product.findFirst.mockResolvedValue(null); // product no longer exists
       const target = await service.resolve(null, "some deposit");
       expect(target).toEqual({ productId: null, expenseCategoryId: "cat-1" });
     });

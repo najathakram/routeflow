@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
@@ -15,15 +15,20 @@ import {
   useUploadPaymentImage,
   type StandalonePaymentAllocation,
 } from "../../../lib/api/payments";
-import type { EditablePaymentMethod } from "../../../lib/api/payments";
 import {
   allocationTotals,
   oldestInvoicesFirst,
   waterfallAllocations,
 } from "../../../lib/payments-logic";
-import { roundMoney } from "../../../lib/pricing";
+import {
+  SELECTABLE_METHOD_OPTIONS,
+  type SelectablePaymentMethod,
+} from "../../../lib/payment-methods";
+import { roundMoney } from "@routeflow/pricing";
 import { productImageFile } from "../../../lib/product-image";
 import { showToast } from "../../../lib/toast";
+import { fmtCalendarDate } from "../../../lib/format-date";
+import { hasUnsavedPayment } from "../../../lib/discard-guard";
 
 /**
  * Standalone payment with multi-invoice allocation — one check at the door
@@ -35,13 +40,7 @@ import { showToast } from "../../../lib/toast";
  * over-allocation. Unallocated excess becomes an ADVANCE for the customer.
  */
 
-const METHODS: { id: EditablePaymentMethod; label: string }[] = [
-  { id: "CASH", label: "Cash" },
-  { id: "CHECK", label: "Check" },
-  { id: "ACH", label: "ACH" },
-  { id: "CREDIT_CARD", label: "Credit card" },
-  { id: "OTHER", label: "Other" },
-];
+const METHODS = SELECTABLE_METHOD_OPTIONS;
 
 const BANK_DATE_LABEL = "Money received in bank";
 const BANK_DATE_HELP =
@@ -55,8 +54,13 @@ const OPEN_STATUSES = ["SENT", "VIEWED", "PARTIAL", "OVERDUE"];
 
 export default function RecordStandalonePaymentScreen() {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState<string | null>(null);
-  const [customerName, setCustomerName] = useState<string | null>(null);
+  // Optionally pre-filled by the customer detail screen's "Record payment"
+  // link so the picker step is skipped for an operator who already knows whose
+  // payment this is. Opened from the payments hub there are no params and the
+  // picker shows exactly as before; "Change" clears back to it either way.
+  const params = useLocalSearchParams<{ customerId?: string; customerName?: string }>();
+  const [customerId, setCustomerId] = useState<string | null>(params.customerId || null);
+  const [customerName, setCustomerName] = useState<string | null>(params.customerName || null);
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
@@ -159,7 +163,7 @@ function PaymentForm({
     [invoicesData],
   );
 
-  const [method, setMethod] = useState<EditablePaymentMethod>("CASH");
+  const [method, setMethod] = useState<SelectablePaymentMethod>("CASH");
   const [amount, setAmount] = useState("");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -273,7 +277,16 @@ function PaymentForm({
       subtitle={customerName}
       submitLabel={mut.isPending ? "Saving…" : asDraft ? "Save as draft" : "Save as paid"}
       submitting={mut.isPending}
-      warnIfDirty
+      confirmDiscardIfDirty={hasUnsavedPayment({
+        amount,
+        reference,
+        notes,
+        bankCharges,
+        paidAt,
+        settledAt,
+        photos,
+        asDraft,
+      })}
       onSubmit={submit}
     >
       <Pressable style={styles.changeCustomer} onPress={onChangeCustomer} hitSlop={6}>
@@ -357,7 +370,7 @@ function PaymentForm({
                 </Text>
                 <Text style={styles.allocMeta}>
                   Due ${Number(inv.balanceDue ?? 0).toFixed(2)}
-                  {inv.dueDate ? ` · by ${new Date(inv.dueDate).toLocaleDateString()}` : ""}
+                  {inv.dueDate ? ` · by ${fmtCalendarDate(inv.dueDate)}` : ""}
                 </Text>
               </View>
               <View style={styles.allocInputWrap}>

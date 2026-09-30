@@ -1,9 +1,32 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { API_ERROR_CODES } from "@routeflow/types";
+import type {
+  CheckVendorBillDuplicateDto,
+  DuplicateVendorBillError,
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  ScanCandidate,
+  UnlinkedItemsError,
+  VendorBillStatus,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type VendorBillStatus = "DRAFT" | "RECEIVED" | "PARTIAL" | "FULL" | "VOID";
+/**
+ * Wave E / imp-10b, L-072: was a hand-typed local union with an invented
+ * `"FULL"` value (not a real Prisma value) and no `"OVERDUE"` — now imported
+ * from `@routeflow/types`, pinned to the schema by `enum-parity.spec.ts`.
+ */
+export type {
+  CheckVendorBillDuplicateDto,
+  DuplicateVendorBillError,
+  DuplicateVendorBillInfo,
+  PriorScanSummary,
+  ScanCandidate,
+  UnlinkedItemsError,
+  VendorBillStatus,
+} from "@routeflow/types";
 
 export interface VendorBillItem {
   id: string;
@@ -30,14 +53,6 @@ export interface VendorBill {
   createdAt: string;
 }
 
-/** Ranked suggestion for an unmatched scan line (mirrors web lib/api/invoice-scan.ts). */
-export interface ScanCandidate {
-  productId: string;
-  name: string;
-  sku: string | null;
-  score: number;
-}
-
 /** One extracted line as the API actually returns it (mirrors web lib/api/invoice-scan.ts). */
 export interface ScannedItem {
   extractedName: string;
@@ -59,23 +74,6 @@ export interface ScannedItem {
  *  re-upload never reports one. */
 export type InvoiceScanStatus = "SCANNED" | "POSTED" | "DISCARDED" | "DUPLICATE";
 
-/**
- * The archive entry for a document that was read before (mirrors web
- * lib/api/vendor-bills.ts). Present only when the uploaded bytes hash to a scan
- * already on file — in which case the extraction it arrives with is the STORED
- * one, replayed without a second AI call.
- */
-export interface PriorScanSummary {
-  scanId: string;
-  /** ISO timestamp of the earlier scan. */
-  scannedAt: string;
-  status: InvoiceScanStatus;
-  vendorBillId: string | null;
-  billNumber: string | null;
-  supplierInvoiceNumber: string | null;
-  total: number | null;
-}
-
 /** Header fields as the API actually returns them (`supplier`, `invoiceDate` — not
  * `supplierName`/`billDate`; the old names silently read as undefined). */
 export interface ScanResult {
@@ -96,48 +94,25 @@ export interface ScanResult {
   priorScan?: PriorScanSummary | null;
 }
 
-/** Payload of the 409 thrown when receiving a bill with unmapped lines. */
-export interface UnlinkedItemsError {
-  code: "UNLINKED_ITEMS";
-  message: string;
-  unlinkedItems: { id: string; description: string; qty: number; unitCost: number }[];
-}
-
 /** Extract the UNLINKED_ITEMS payload from an axios error, if that's what it is. */
 export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
-}
-
-/** An already-recorded bill that matches the one being entered. */
-export interface DuplicateVendorBillInfo {
-  billId: string;
-  billNumber: string;
-  status: string;
-  /** The existing bill is still DRAFT — finishing it beats creating a second one. */
-  resumable: boolean;
-  totalOwed: number;
-  billDate: string | null;
-  receivedDate: string | null;
-  supplierName: string | null;
-  itemCount: number;
-  /** "number" = the supplier's own invoice number matched; "fuzzy" = supplier + date + total. */
-  matchedBy: "number" | "fuzzy";
-  totalMatches: boolean;
-}
-
-/** Payload of the 409 thrown when creating a bill that already exists. */
-export interface DuplicateVendorBillError {
-  code: "DUPLICATE_VENDOR_BILL";
-  message: string;
-  duplicate: DuplicateVendorBillInfo;
+  return data?.code === API_ERROR_CODES.UNLINKED_ITEMS ? (data as UnlinkedItemsError) : null;
 }
 
 /** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
 export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
+  return data?.code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL
+    ? (data as DuplicateVendorBillError)
+    : null;
 }
+
+// isMoneyInvariantError lives in ../vendor-bill-scan (a pure, react-native-free
+// module) instead of here, so it stays reachable from the mobile pure-logic
+// Jest suite — this file transitively imports react-native via ../api-client
+// and can't be pulled into those tests.
+export { isMoneyInvariantError } from "../vendor-bill-scan";
 
 /** A DRAFT bill whose receive would skip inventory/cost updates. */
 export function billNeedsMapping(bill: VendorBill): boolean {
@@ -215,13 +190,6 @@ export function useCreateVendorBill() {
   });
 }
 
-export interface CheckVendorBillDuplicateDto {
-  supplierId?: string;
-  supplierInvoiceNumber?: string;
-  total?: number;
-  billDate?: string;
-}
-
 /**
  * Read-only pre-flight of the guard `POST /vendor-bills` enforces, so a client
  * can warn before the operator commits. Needs either the supplier invoice
@@ -239,10 +207,22 @@ export function useCheckVendorBillDuplicate() {
 
 export function useReceiveVendorBill() {
   const qc = useQueryClient();
-  return useMutation<VendorBill, Error, { id: string; acknowledgeUnlinked?: boolean }>({
-    mutationFn: ({ id, acknowledgeUnlinked }) =>
+  return useMutation<
+    VendorBill,
+    Error,
+    {
+      id: string;
+      acknowledgeUnlinked?: boolean;
+      /** B743: sent ONLY after the operator explicitly chose "Receive as loose pieces". */
+      acknowledgePackSizeUnknown?: boolean;
+    }
+  >({
+    mutationFn: ({ id, acknowledgeUnlinked, acknowledgePackSizeUnknown }) =>
       apiClient
-        .post(`/vendor-bills/${id}/receive`, acknowledgeUnlinked ? { acknowledgeUnlinked } : {})
+        .post(`/vendor-bills/${id}/receive`, {
+          ...(acknowledgeUnlinked ? { acknowledgeUnlinked } : {}),
+          ...(acknowledgePackSizeUnknown ? { acknowledgePackSizeUnknown } : {}),
+        })
         .then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
@@ -260,6 +240,10 @@ export function useVoidVendorBill() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): void decrements stock server-side — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }

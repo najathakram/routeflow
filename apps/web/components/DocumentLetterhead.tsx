@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useTenant } from "./tenant-provider";
+import { BRAND_MARK_SRC } from "./brand";
 
 interface DocumentLetterheadProps {
   /** Optional tagline shown beneath the business name */
@@ -15,7 +16,7 @@ interface DocumentLetterheadProps {
  */
 export function DocumentLetterhead({ tagline }: DocumentLetterheadProps) {
   const { branding } = useTenant();
-  const logoSrc = branding?.logoUrl ?? "/logo.svg";
+  const logoSrc = branding?.logoUrl ?? BRAND_MARK_SRC;
   const name = branding?.businessName ?? "RouteFlow";
 
   return (

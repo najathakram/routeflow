@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -10,6 +11,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -21,12 +23,29 @@ import { StripHtml } from "../../common/transforms/strip-html.transform";
 export class CreateInvoiceItemDto {
   @IsString() description: string;
   @IsOptional() @IsUUID() productId?: string;
+  /** SA-093a round 6: this line's source order line, server-validated against the invoice's own
+   *  order. Round-trip it on every edit — omitting it drops the line to product-match fallback. */
+  @IsOptional() @IsUUID() orderItemId?: string;
   @IsNumber() @Min(0.001) qty: number;
   @IsNumber() @Min(0) unitPrice: number;
   @IsOptional() @IsNumber() @Min(0) discount?: number;
   @IsOptional() @IsNumber() @Min(0) taxRate?: number;
+  /**
+   * units_v1: sell this line by a unit of the product's ladder (Case, Pallet, Piece …); `qty` then
+   * counts the unit (a whole number) and boxes/pieces/promoFreeUnits must be omitted. Behind
+   * flag.units_v1; blank = the pack.
+   */
+  @IsOptional() @IsString() @MaxLength(64) unitLabel?: string | null;
   @IsOptional() @IsInt() @Min(0) boxes?: number;
   @IsOptional() @IsInt() @Min(0) pieces?: number;
+  /**
+   * BUY_N_GET_M snapshot: whole free SELLING units on this line (boxes for a
+   * boxed line), carried from the source order line. The PATCH items path
+   * delete-and-recreates every line, so a client editing a DRAFT MUST round-trip
+   * it — omitting it re-prices an agreed $350 BOGO line to 12 × $35 = $420.
+   * Clamped server-side to the line's own whole units − 1 (never a free line).
+   */
+  @IsOptional() @IsInt() @Min(0) promoFreeUnits?: number;
   /** Per-line note (buyer-visible; prints under the description on the PDF). */
   @IsOptional() @StripHtml() @IsString() @MaxLength(2000) notes?: string;
 }
@@ -51,6 +70,20 @@ export class CreateInvoiceDto {
   @IsOptional() @IsString() @MaxLength(128) shippingTrackingNumber?: string;
   /** If true, immediately send the invoice after creation (DRAFT → SENT). */
   @IsOptional() @IsBoolean() send?: boolean;
+  /**
+   * Structured "Net 30"-style label, distinct from `terms` above (the long-form
+   * Terms & Conditions text) — conflating the two was the documented historical
+   * bug. Must always agree with `dueDate`: whichever string drove the due-date
+   * math is what belongs here.
+   */
+  @IsOptional() @IsString() @MaxLength(40) paymentTermsLabel?: string;
+  /**
+   * Deliberately minimal deposit schedule (Tier 1): percent of the invoice total
+   * due by depositDueDate. The dollar amount is always DERIVED at read time
+   * (see InvoicesService), never stored.
+   */
+  @IsOptional() @IsNumber() @Min(0.01) @Max(99.99) depositPercent?: number;
+  @IsOptional() @IsDateString() depositDueDate?: string;
 }
 
 export class RecordInvoicePaymentDto {
@@ -79,7 +112,7 @@ export class UpdatePaymentDto {
 
 export class AllocationDto {
   @IsString() @IsNotEmpty() invoiceId: string;
-  @IsNumber() @Min(0.01) amount: number;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) amount: number;
 }
 
 export class StandalonePaymentDto {
@@ -94,6 +127,11 @@ export class StandalonePaymentDto {
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsEnum(["DRAFT", "PAID"]) status?: string;
   @IsArray()
+  // Post-dated check payments PR-1 (additive-only, no behavior change for any real request —
+  // every existing caller allocates to a handful of invoices): caps a standalone payment's
+  // waterfall allocation so a malformed/adversarial request can't force an unbounded per-row
+  // fan-out.
+  @ArrayMaxSize(50)
   @ValidateNested({ each: true })
   @Type(() => AllocationDto)
   allocations: AllocationDto[];

@@ -4,9 +4,21 @@ import { CreditNotesService } from "./credit-notes.service";
 import { PrismaModule } from "../prisma/prisma.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 import { RegulatedModule } from "../regulated/regulated.module";
+import { CommissionsModule } from "../sales-agents/commissions.module";
+import { NumberingModule } from "../import/numbering.module";
+import { EntitlementsModule } from "../billing/entitlements.module";
 
 @Module({
-  imports: [PrismaModule, GatewaysModule, RegulatedModule],
+  imports: [
+    PrismaModule,
+    GatewaysModule,
+    RegulatedModule,
+    CommissionsModule,
+    // REG-B267/cause-ruling.md §2 D2: reserveNext("CREDIT_NOTE", …) mints credit
+    // note numbers through the shared NumberingService.
+    NumberingModule,
+    EntitlementsModule,
+  ],
   controllers: [CreditNotesController],
   providers: [CreditNotesService],
   exports: [CreditNotesService],

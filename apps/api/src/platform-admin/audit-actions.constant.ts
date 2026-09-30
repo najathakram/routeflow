@@ -29,6 +29,20 @@ export const AdminAuditAction = {
   ADDON_ENABLED: "ADDON_ENABLED",
   ADDON_DISABLED: "ADDON_DISABLED",
   IMPERSONATION_STARTED: "IMPERSONATION_STARTED",
+  TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
+  FEATURE_OVERRIDE_SET: "FEATURE_OVERRIDE_SET",
+  FEATURE_OVERRIDE_REVOKED: "FEATURE_OVERRIDE_REVOKED",
+  ENTITLEMENTS_MODE_CHANGED: "ENTITLEMENTS_MODE_CHANGED",
+  FEATURE_DIFF_EXPLAINED: "FEATURE_DIFF_EXPLAINED",
+  CONFIG_SNAPSHOT_RESTORED: "CONFIG_SNAPSHOT_RESTORED",
+  CONFIG_SNAPSHOT_FLAG_CHANGED: "CONFIG_SNAPSHOT_FLAG_CHANGED",
+  // #2159 S1 — wholesaler onboarding cases. tenantId is null until the case is activated.
+  ONBOARDING_CASE_CREATED: "ONBOARDING_CASE_CREATED",
+  ONBOARDING_STAGE_ADVANCED: "ONBOARDING_STAGE_ADVANCED",
+  ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED",
+  // #2159 S2 — the intake link.
+  ONBOARDING_LINK_ISSUED: "ONBOARDING_LINK_ISSUED",
+  ONBOARDING_LINK_REVOKED: "ONBOARDING_LINK_REVOKED",
 } as const;
 
 export type AdminAuditActionCode = (typeof AdminAuditAction)[keyof typeof AdminAuditAction];
@@ -49,6 +63,18 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<AdminAuditActionCode, string> = {
   ADDON_ENABLED: "Add-on enabled",
   ADDON_DISABLED: "Add-on disabled",
   IMPERSONATION_STARTED: "Impersonation started",
+  TENANT_CLASS_CHANGED: "Class changed",
+  FEATURE_OVERRIDE_SET: "Feature override set",
+  FEATURE_OVERRIDE_REVOKED: "Feature override revoked",
+  ENTITLEMENTS_MODE_CHANGED: "Entitlements mode changed",
+  FEATURE_DIFF_EXPLAINED: "Feature resolver diff explained",
+  CONFIG_SNAPSHOT_RESTORED: "Configuration snapshot restored",
+  CONFIG_SNAPSHOT_FLAG_CHANGED: "Config snapshot flag changed",
+  ONBOARDING_CASE_CREATED: "Onboarding case created",
+  ONBOARDING_STAGE_ADVANCED: "Onboarding stage advanced",
+  ONBOARDING_STEP_WAIVED: "Onboarding step waived",
+  ONBOARDING_LINK_ISSUED: "Onboarding intake link issued",
+  ONBOARDING_LINK_REVOKED: "Onboarding intake link revoked",
 };
 
 /** Facet list for the audit-log filter dropdown (code + label), ordered as declared. */

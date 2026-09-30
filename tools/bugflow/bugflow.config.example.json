@@ -1,0 +1,104 @@
+{
+  "$comment": {
+    "repo": "owner/name on GitHub — where every issue, label, and Project lives.",
+    "project": "Projects v2 project NUMBER (not id). Placeholder below — VERIFY/replace once the real Project exists (see docs/DASHBOARD.md).",
+    "labels": "Namespace -> literal label prefix bugflow writes as '<prefix>:<value>'. Customize the prefix text if a repo wants it; the namespaces themselves are fixed by docs/DATA-MODEL.md.",
+    "carveOut": "Regex source strings (case-insensitive), copied verbatim from scripts/campaign/bugs.mjs's classify()/SENSITIVE in the current registry (on master since #597). Tested against title + the joined `## Files` list only — bugflow has no `location` field, which deliberately widens the ported classify() surface (title + location). A bug may carry more than one class label: 1 agent-safe, or 1-3 carve-out classes, never both — see docs/DATA-MODEL.md.",
+    "hubFiles": "Static allow-list of god-files excluded from hard-conflict detection in `bugflow plan` (docs/PLANNING.md). Unlike bugs.mjs's dynamic frequency threshold, this is a plain list a human edits by hand as the codebase changes.",
+    "areas": "Path glob -> area label. First match wins, so order matters — put specific globs before general ones. Drawn from this repo's own CLAUDE.md Architecture section. `unknown` is a reserved area with no glob of its own — assigned when a legacy import or triage has no `## Files` to match against; the nightly triage routine sweeps it once files are known.",
+    "automation": "The owner kill switch (RUNBOOK.md's pause-all-automation procedure) — every `bugflow next` call reads this fresh, so flipping `enabled` to false pauses every seat immediately, including a worker mid-run.",
+    "seats": "GitHub login -> allowedClasses + dailyClaimCap, for FLEET seats only. A human's own interactive session is never listed here — the carve-out gates unattended automation, not humans (docs/CLAIMS-AND-LEASES.md).",
+    "lease": "Claim lease duration in minutes — unchanged from scripts/team/team.mjs's LEASE_MINUTES.",
+    "batch": "Planning caps — see docs/PLANNING.md.",
+    "harness": "Routing thresholds for the cheap, capped Ralph tier vs. the full bug-pipeline tier — see docs/HARNESS.md.",
+    "proof": "The REG token grammar `bugflow check` matches — REG-#N for bugs filed directly in bugflow, REG-B### preserved for bugs imported from the legacy registry.",
+    "snapshot": "Where `bugflow snapshot` commits its offline export — see docs/DATA-MODEL.md's snapshot formats.",
+    "privacy": "The client-identifier denylist itself is NEVER written into this file or this repo — only the name of the environment variable `bugflow sync` reads it from at run time, from a private source.",
+    "deploy": "The GitHub deployment environment and check-run names `bugflow verify` reads for post-deploy proof."
+  },
+
+  "repo": "najathakram/routeflow",
+  "project": 0,
+
+  "automation": { "enabled": true },
+
+  "labels": {
+    "status": "status",
+    "class": "class",
+    "tier": "tier",
+    "severity": "severity",
+    "area": "area",
+    "wave": "wave",
+    "harness": "harness",
+    "source": "source"
+  },
+
+  "carveOut": {
+    "money": "pricing\\.ts|\\bprice|\\bmoney|invoice|credit[- ]?note|payment|\\btax\\b|discount|promo|billing|commission|wallet|estimate|vendor[- ]?bill|bookkeeping|\\bcost|settle|refund|deposit|ledger",
+    "tenancy": "\\btenant|\\brls\\b|impersonat|\\bauth\\b|\\brole\\b|permission|\\bscoped?\\b|\\bjwt\\b|session|forTenant|platform[- ]admin",
+    "migration": "migration|schema\\.prisma|prisma migrate|backfill|\\bdrop (table|column)|destructive"
+  },
+
+  "hubFiles": [
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/routes/routes.service.ts",
+    "apps/api/prisma/schema.prisma"
+  ],
+
+  "areas": {
+    "apps/api/src/orders/**": "orders",
+    "apps/api/src/order-templates/**": "orders",
+    "apps/api/src/routes/**": "orders",
+    "apps/api/src/route-optimization/**": "orders",
+    "apps/api/src/invoices/**": "finance",
+    "apps/api/src/credit-notes/**": "finance",
+    "apps/api/src/vendor-bills/**": "finance",
+    "apps/api/src/estimates/**": "finance",
+    "apps/api/src/recurring-invoices/**": "finance",
+    "apps/api/src/bookkeeping/**": "finance",
+    "apps/api/src/billing/**": "finance",
+    "apps/api/src/uploads/**": "platform",
+    "apps/api/src/storage/**": "platform",
+    "apps/api/src/notifications/**": "platform",
+    "apps/api/src/messages/**": "platform",
+    "apps/api/src/email/**": "platform",
+    "apps/api/src/analytics/**": "platform",
+    "apps/api/src/audit/**": "platform",
+    "apps/api/src/import/**": "platform",
+    "apps/api/src/config/**": "platform",
+    "apps/api/src/system-config/**": "platform",
+    "apps/api/**": "api",
+    "apps/web/**": "web",
+    "apps/mobile/**": "mobile",
+    "packages/**": "packages",
+    "tools/bugflow/**": "bugflow"
+  },
+
+  "seats": {
+    "acme-fleet-seat-1": { "allowedClasses": ["agent-safe"], "dailyClaimCap": 6 },
+    "acme-fleet-seat-2": { "allowedClasses": ["agent-safe"], "dailyClaimCap": 6 }
+  },
+
+  "lease": { "minutes": 90 },
+
+  "batch": { "maxBugs": 4 },
+
+  "harness": {
+    "ralph": { "maxFiles": 3, "tier": "t1", "maxIterations": 8 }
+  },
+
+  "proof": {
+    "tokenFormat": "REG-#{n}",
+    "legacyTokenFormat": "REG-B{n}"
+  },
+
+  "snapshot": { "branch": "claude/bugflow-snapshot" },
+
+  "privacy": { "denylistEnv": "BUGFLOW_CLIENT_DENYLIST" },
+
+  "deploy": {
+    "environment": "production",
+    "checkRuns": ["E2E (Playwright)"]
+  }
+}

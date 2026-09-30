@@ -3,13 +3,25 @@
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { FEATURE_OVERRIDE_KIND_VALUES, type FeatureOverrideKind } from "@routeflow/types";
+import type { FeatureRegistryRow } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { setTenantCookie } from "@/lib/tenant-cookie";
+import { setImpersonation } from "@/lib/impersonation";
 import { AdminTabs } from "../../../_components/AdminTabs";
 import { AdminBadge, planLabel } from "../../../_components/AdminBadge";
+import { usePlanOptions, withCurrentPlan } from "../../../_components/usePlanOptions";
 import { AdminCard } from "../../../_components/AdminCard";
 import { AdminModal } from "../../../_components/AdminModal";
-import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText } from "lucide-react";
+import { DisabledHint } from "../../../_components/DisabledHint";
+import { TenantPricingCard } from "./_components/TenantPricingCard";
+import { LayoutDashboard, CreditCard, Puzzle, Settings, ScrollText, Archive } from "lucide-react";
+import { FeatureConsole } from "./_features/FeatureConsole";
+import { ConfigSnapshotsTab } from "./_features/ConfigSnapshotsTab";
+import { TierChangeControl } from "./_features/TierChangeControl";
+import { PreviewDrawer } from "./_features/PreviewDrawer";
+import { previewTenantFeatures } from "@/lib/platform-admin/features";
+import type { FeaturePreviewResponse } from "./_features/types";
 
 const usd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -26,6 +38,9 @@ interface TenantDetail {
   name: string;
   status: string;
   plan: string;
+  // SA-140/B556: display-resolved — falls back to `plan` only when no subscription.planKey is
+  // set (a drifted tenant). `plan` itself is unchanged.
+  planKey: string;
   trialEndsAt: string | null;
   createdAt: string;
   deletedAt: string | null;
@@ -81,60 +96,12 @@ interface AuditLogEntry {
   actor?: AuditActor | null;
 }
 
-interface Addon {
-  id: string;
-  addonKey: string;
-  active: boolean;
-  stripePriceId: string | null;
-  createdAt: string;
-}
-
-const PLANS = ["STARTER", "PROFESSIONAL", "ENTERPRISE"] as const;
-
-const AVAILABLE_ADDONS = [
-  {
-    key: "ai_scanning",
-    name: "AI Receipt Scanning",
-    description: "Automatically extract data from receipt images using AI",
-  },
-  {
-    key: "advanced_routes",
-    name: "Advanced Route Optimization",
-    description: "AI-powered route optimization and real-time rerouting",
-  },
-  {
-    key: "api_access",
-    name: "API Access",
-    description: "Full REST API access for third-party integrations",
-  },
-  {
-    key: "custom_branding",
-    name: "Custom Branding",
-    description: "White-label branding with custom logo, colors, and domain",
-  },
-  {
-    key: "priority_support",
-    name: "Priority Support",
-    description: "Dedicated support channel with 4-hour SLA",
-  },
-  {
-    key: "advanced_reporting",
-    name: "Advanced Reporting",
-    description: "Custom report builder with export and scheduling",
-  },
-  {
-    key: "tobacco_dealer",
-    name: "Tobacco Dealer Compliance",
-    description:
-      "Tobacco product tracking, optional exclusion from main analytics, and monthly compliance reports",
-  },
-];
-
 const TABS = [
   { key: "overview", label: "Overview", icon: <LayoutDashboard className="h-4 w-4" /> },
   { key: "billing", label: "Billing & Subscription", icon: <CreditCard className="h-4 w-4" /> },
   { key: "addons", label: "Addons & Features", icon: <Puzzle className="h-4 w-4" /> },
   { key: "config", label: "Configuration", icon: <Settings className="h-4 w-4" /> },
+  { key: "snapshots", label: "Config Snapshots", icon: <Archive className="h-4 w-4" /> },
   { key: "audit", label: "Audit Log", icon: <ScrollText className="h-4 w-4" /> },
 ];
 
@@ -286,7 +253,7 @@ function TenantAdminSection({
             ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
-              <dt className="text-slate-500">{label}</dt>
+              <dt className="text-slate-400">{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}
@@ -294,7 +261,7 @@ function TenantAdminSection({
       ) : (
         <div className="rounded-lg border border-dashed border-red-700/40 bg-red-900/10 p-4 text-center">
           <p className="text-sm font-semibold text-red-400">No admin account found</p>
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-slate-400">
             This tenant cannot be impersonated until an admin account exists.
           </p>
           {!showCreateForm ? (
@@ -309,6 +276,7 @@ function TenantAdminSection({
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">Username</label>
                 <input
+                  aria-label="Username"
                   required
                   value={createForm.username}
                   onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
@@ -319,6 +287,7 @@ function TenantAdminSection({
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-400">Email</label>
                 <input
+                  aria-label="Email"
                   required
                   type="email"
                   value={createForm.email}
@@ -327,7 +296,7 @@ function TenantAdminSection({
                   className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
               </div>
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-slate-400">
                 A temporary password will be auto-generated and emailed to the admin.
               </p>
               <div className="flex gap-2">
@@ -371,13 +340,16 @@ function OverviewTab({
 }) {
   const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
   const [showResetConfirm, setShowResetConfirm] = React.useState(false);
+  // B857: the resolved planKey, never the raw legacy `plan` enum (TEAM/BUSINESS/…), which is
+  // not among the options and left the select showing a plan the tenant isn't on.
+  const currentPlan = tenant.planKey ?? tenant.plan;
+  const planOptions = usePlanOptions();
   const [resetResult, setResetResult] = React.useState<{
     username: string;
     tempPassword: string;
   } | null>(null);
   const [copied, setCopied] = React.useState(false);
   const [trialDays, setTrialDays] = React.useState(14);
-  const [selectedPlan, setSelectedPlan] = React.useState(tenant.plan);
 
   const [recentLogs, setRecentLogs] = React.useState<AuditLogEntry[]>([]);
   React.useEffect(() => {
@@ -399,19 +371,21 @@ function OverviewTab({
       {/* At-a-glance KPIs */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:col-span-2">
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Est. MRR</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Est. MRR</p>
           <p className="mt-2 text-2xl font-bold text-white">{usd(tenant.estMrrUsd ?? 0)}</p>
-          <p className="mt-1 text-xs text-slate-500">{planLabel(tenant.plan)} · stopgap estimate</p>
+          <p className="mt-1 text-xs text-slate-400">
+            {planLabel(tenant.planKey ?? tenant.plan)} · stopgap estimate
+          </p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Orders, 30d</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Orders, 30d</p>
           <p className="mt-2 text-2xl font-bold text-white">{tenant.orders30d ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-500">Placed in the last 30 days</p>
+          <p className="mt-1 text-xs text-slate-400">Placed in the last 30 days</p>
         </div>
         <div className="rounded-xl bg-slate-800 p-5 ring-1 ring-white/5">
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-500">Users</p>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Users</p>
           <p className="mt-2 text-2xl font-bold text-white">{tenant.counts?.users ?? 0}</p>
-          <p className="mt-1 text-xs text-slate-500">Across this workspace</p>
+          <p className="mt-1 text-xs text-slate-400">Across this workspace</p>
         </div>
       </div>
 
@@ -440,7 +414,7 @@ function OverviewTab({
             [
               "Plan",
               <AdminBadge key="plan" variant="plan">
-                {tenant.plan}
+                {tenant.planKey ?? tenant.plan}
               </AdminBadge>,
             ],
             ["Status", <AdminBadge key="status">{tenant.status}</AdminBadge>],
@@ -452,13 +426,13 @@ function OverviewTab({
             ],
           ].map(([label, value]) => (
             <div key={String(label)} className="flex justify-between items-center">
-              <dt className="text-slate-500">{label}</dt>
+              <dt className="text-slate-400">{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}
           {tenant.trialEndsAt && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Trial Ends</dt>
+              <dt className="text-slate-400">Trial Ends</dt>
               <dd>
                 <TrialEndsBadge trialEndsAt={tenant.trialEndsAt} />
               </dd>
@@ -466,7 +440,7 @@ function OverviewTab({
           )}
           {tenant.primaryColor && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Brand color</dt>
+              <dt className="text-slate-400">Brand color</dt>
               <dd className="flex items-center gap-2">
                 <span
                   className="inline-block h-3.5 w-3.5 rounded ring-1 ring-white/10"
@@ -478,19 +452,19 @@ function OverviewTab({
           )}
           {tenant.counts && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Linked buyers</dt>
+              <dt className="text-slate-400">Linked buyers</dt>
               <dd className="font-mono text-slate-300">{tenant.counts.customerLinks}</dd>
             </div>
           )}
           {sub?.periodEnd && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Next renewal</dt>
+              <dt className="text-slate-400">Next renewal</dt>
               <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
             </div>
           )}
           {paymentMethodLabel && (
             <div className="flex justify-between items-center">
-              <dt className="text-slate-500">Payment method</dt>
+              <dt className="text-slate-400">Payment method</dt>
               <dd className="text-slate-300">{paymentMethodLabel}</dd>
             </div>
           )}
@@ -512,7 +486,7 @@ function OverviewTab({
             ).map(([label, count]) => (
               <div key={label} className="rounded-lg bg-slate-700/50 p-3 text-center">
                 <p className="text-lg font-bold text-white">{count}</p>
-                <p className="text-xs text-slate-500">{label}</p>
+                <p className="text-xs text-slate-400">{label}</p>
               </div>
             ))}
           </div>
@@ -544,26 +518,14 @@ function OverviewTab({
             </button>
           )}
 
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedPlan}
-              onChange={(e) => setSelectedPlan(e.target.value)}
-              className="h-9 rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
-            >
-              {PLANS.map((p) => (
-                <option key={p} value={p}>
-                  {planLabel(p)}
-                </option>
-              ))}
-            </select>
-            <button
-              disabled={actionLoading === "plan" || selectedPlan === tenant.plan}
-              onClick={() => onAction("change-plan", { plan: selectedPlan })}
-              className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-            >
-              Change Plan
-            </button>
-          </div>
+          <TierChangeControl
+            tenantId={tenant.id}
+            currentPlan={currentPlan}
+            plans={withCurrentPlan(planOptions.planKeys, currentPlan)}
+            planLabel={planLabel}
+            disabled={actionLoading === "change-plan"}
+            onChangePlan={(plan) => onAction("change-plan", { plan })}
+          />
 
           {tenant.status !== "CANCELLED" && (
             <button
@@ -604,12 +566,13 @@ function OverviewTab({
 
         {/* Extend Trial */}
         <div className="mt-5 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Extend Trial
           </h3>
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400">Days</label>
             <input
+              aria-label="Days"
               type="number"
               min={1}
               max={365}
@@ -629,7 +592,7 @@ function OverviewTab({
 
         {/* Reset Admin Password */}
         <div className="mt-4 border-t border-slate-700 pt-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
             Admin Password Reset
           </h3>
           {!showResetConfirm ? (
@@ -704,7 +667,7 @@ function OverviewTab({
         actions={
           <Link
             href={`/admin/audit-logs?tenantId=${tenant.id}`}
-            className="text-xs text-indigo-400 hover:text-indigo-300"
+            className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
           >
             View all
           </Link>
@@ -712,12 +675,17 @@ function OverviewTab({
         noPadding
       >
         {recentLogs.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-slate-500">No audit log entries for this tenant.</p>
+          <p className="px-5 py-6 text-sm text-slate-400">No audit log entries for this tenant.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Recent audit log entries"
+            tabIndex={0}
+          >
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                   <th className="px-4 py-2.5 text-left">Action</th>
                   <th className="px-4 py-2.5 text-left">Entity</th>
                   <th className="px-4 py-2.5 text-left">User</th>
@@ -742,12 +710,12 @@ function OverviewTab({
                           )}
                         </span>
                       ) : (
-                        <span className="font-mono text-slate-500">
+                        <span className="font-mono text-slate-400">
                           {log.userId?.slice(0, 8) ?? "—"}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-slate-500">
+                    <td className="px-4 py-2 text-slate-400">
                       {new Date(log.createdAt).toLocaleString()}
                     </td>
                   </tr>
@@ -787,15 +755,15 @@ function BillingTab({
   onRefreshTenant: () => void;
 }) {
   const [portalLoading, setPortalLoading] = React.useState(false);
-  const [checkoutLoading, setCheckoutLoading] = React.useState(false);
   const [msg, setMsg] = React.useState<{ type: "success" | "error" | "info"; text: string } | null>(
     null,
   );
 
   // Manual activation form state
   const [activating, setActivating] = React.useState(false);
+  const planOptions = usePlanOptions();
   const [manualForm, setManualForm] = React.useState({
-    plan: tenant.plan as string,
+    plan: (tenant.planKey ?? tenant.plan) as string,
     paymentMethod: "ZELLE" as string,
     paymentRef: "",
     billingPeriodDays: 30,
@@ -823,25 +791,6 @@ function BillingTab({
       });
     } finally {
       setPortalLoading(false);
-    }
-  };
-
-  const createCheckout = async () => {
-    setCheckoutLoading(true);
-    try {
-      const res = await superAdminClient.post(
-        `/platform-admin/tenants/${tenant.id}/billing/checkout`,
-      );
-      setMsg({ type: "info", text: `Checkout URL: ${res.data.checkoutUrl}` });
-    } catch (err: unknown) {
-      setMsg({
-        type: "error",
-        text:
-          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-          "Failed to create checkout session",
-      });
-    } finally {
-      setCheckoutLoading(false);
     }
   };
 
@@ -882,7 +831,7 @@ function BillingTab({
       {/* Current Plan */}
       <AdminCard title="Current Plan">
         <div className="flex items-center gap-4 mb-4">
-          <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+          <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
           <AdminBadge>{tenant.status}</AdminBadge>
         </div>
         {daysLeft !== null && (
@@ -912,36 +861,36 @@ function BillingTab({
               </div>
             )}
             <div className="flex justify-between">
-              <dt className="text-slate-500">Plan</dt>
+              <dt className="text-slate-400">Plan</dt>
               <dd className="text-white">{sub.currentPlan}</dd>
             </div>
             {sub.periodStart && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Period Start</dt>
+                <dt className="text-slate-400">Period Start</dt>
                 <dd className="text-slate-300">{new Date(sub.periodStart).toLocaleDateString()}</dd>
               </div>
             )}
             {sub.periodEnd && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Period End</dt>
+                <dt className="text-slate-400">Period End</dt>
                 <dd className="text-slate-300">{new Date(sub.periodEnd).toLocaleDateString()}</dd>
               </div>
             )}
             <div className="flex justify-between">
-              <dt className="text-slate-500">Cancel Pending</dt>
+              <dt className="text-slate-400">Cancel Pending</dt>
               <dd className={sub.cancelAtPeriodEnd ? "text-red-400" : "text-green-400"}>
                 {sub.cancelAtPeriodEnd ? "Yes" : "No"}
               </dd>
             </div>
             {sub.externalPaymentRef && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Payment Ref</dt>
+                <dt className="text-slate-400">Payment Ref</dt>
                 <dd className="font-mono text-xs text-slate-300">{sub.externalPaymentRef}</dd>
               </div>
             )}
             {sub.externalPaymentNotes && (
               <div className="flex flex-col gap-1">
-                <dt className="text-slate-500">Notes</dt>
+                <dt className="text-slate-400">Notes</dt>
                 <dd className="rounded bg-slate-700/50 px-3 py-2 text-xs text-slate-300">
                   {sub.externalPaymentNotes}
                 </dd>
@@ -949,13 +898,13 @@ function BillingTab({
             )}
             {sub.stripeCustomerId && (
               <div className="flex justify-between">
-                <dt className="text-slate-500">Stripe ID</dt>
+                <dt className="text-slate-400">Stripe ID</dt>
                 <dd className="font-mono text-xs text-slate-400">{sub.stripeCustomerId}</dd>
               </div>
             )}
           </dl>
         ) : (
-          <p className="text-sm text-slate-500">No subscription record yet.</p>
+          <p className="text-sm text-slate-400">No subscription record yet.</p>
         )}
       </AdminCard>
 
@@ -988,22 +937,29 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Plan</label>
             <select
+              aria-label="Plan"
               value={manualForm.plan}
               onChange={(e) => setManualForm((f) => ({ ...f, plan: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
             >
-              {PLANS.map((p) => (
+              {withCurrentPlan(planOptions.planKeys, manualForm.plan).map((p) => (
                 <option key={p} value={p}>
                   {planLabel(p)}
                 </option>
               ))}
             </select>
+            {planOptions.unavailable && (
+              <p className="mt-1 text-xs text-amber-400">
+                Plan catalog unavailable — showing all plans without live pricing.
+              </p>
+            )}
           </div>
 
           {/* Payment method */}
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Payment Method</label>
             <select
+              aria-label="Payment method"
               value={manualForm.paymentMethod}
               onChange={(e) => setManualForm((f) => ({ ...f, paymentMethod: e.target.value }))}
               className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
@@ -1020,6 +976,7 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">Billing Period</label>
             <select
+              aria-label="Billing period"
               value={manualForm.billingPeriodDays}
               onChange={(e) =>
                 setManualForm((f) => ({ ...f, billingPeriodDays: Number(e.target.value) }))
@@ -1038,9 +995,10 @@ function BillingTab({
           <div>
             <label className="mb-1 block text-xs font-medium text-slate-400">
               Transaction / Confirmation Reference{" "}
-              <span className="text-slate-600">(optional)</span>
+              <span className="text-slate-400">(optional)</span>
             </label>
             <input
+              aria-label="Transaction / confirmation reference"
               type="text"
               value={manualForm.paymentRef}
               onChange={(e) => setManualForm((f) => ({ ...f, paymentRef: e.target.value }))}
@@ -1052,9 +1010,10 @@ function BillingTab({
           {/* Notes */}
           <div className="sm:col-span-2">
             <label className="mb-1 block text-xs font-medium text-slate-400">
-              Notes <span className="text-slate-600">(optional)</span>
+              Notes <span className="text-slate-400">(optional)</span>
             </label>
             <input
+              aria-label="Notes"
               type="text"
               value={manualForm.notes}
               onChange={(e) => setManualForm((f) => ({ ...f, notes: e.target.value }))}
@@ -1072,7 +1031,7 @@ function BillingTab({
             >
               {activating ? "Activating..." : "Activate Subscription"}
             </button>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-400">
               This will set the tenant status to <strong className="text-slate-300">ACTIVE</strong>{" "}
               and record the selected payment method.
             </p>
@@ -1080,7 +1039,7 @@ function BillingTab({
         </form>
       </AdminCard>
 
-      {/* Stripe Actions */}
+      {/* Stripe Actions — checkout now lives on the Pricing card below (interval-aware) */}
       <AdminCard title="Stripe Actions" className="lg:col-span-2">
         <div className="flex flex-wrap gap-3">
           <button
@@ -1090,138 +1049,512 @@ function BillingTab({
           >
             {portalLoading ? "Opening..." : "Open Billing Portal"}
           </button>
-          <button
-            disabled={checkoutLoading}
-            onClick={createCheckout}
-            className="rounded-lg bg-slate-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-500 disabled:opacity-50"
-          >
-            {checkoutLoading ? "Creating..." : "Create Checkout Session"}
-          </button>
         </div>
       </AdminCard>
+
+      {/* Pricing — resolved catalog/custom price + the sole checkout entry point */}
+      <TenantPricingCard tenantId={tenant.id} />
     </div>
   );
 }
 
 // ─── Addons Tab ────────────────────────────────────────────────────────────────
 
-function AddonsTab({ tenant }: { tenant: TenantDetail }) {
-  const [addons, setAddons] = React.useState<Addon[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [toggling, setToggling] = React.useState<string | null>(null);
-  const [showEnableModal, setShowEnableModal] = React.useState<string | null>(null);
+function AddonsTab({
+  tenant,
+  onAction,
+  actionLoading,
+}: {
+  tenant: TenantDetail;
+  onAction: (action: string, payload?: unknown) => Promise<void>;
+  actionLoading: string | null;
+}) {
+  const overridesRef = React.useRef<FeatureOverridesSectionHandle>(null);
 
-  const fetchAddons = React.useCallback(() => {
+  return (
+    <>
+      <FeatureConsole
+        tenant={tenant}
+        tenantLabel={tenant.businessName ?? tenant.slug}
+        onChangePlan={(plan) => onAction("change-plan", { plan })}
+        changePlanLoading={actionLoading === "change-plan"}
+        onCustomise={(featureKey) => overridesRef.current?.openFor(featureKey)}
+      />
+
+      <FeatureOverridesSection ref={overridesRef} tenant={tenant} />
+    </>
+  );
+}
+
+// ─── Feature Overrides (within the Addons & Features tab) ─────────────────────
+
+interface FeatureOverrideRow {
+  id: string;
+  tenantId: string;
+  featureKey: string;
+  effect: "GRANT" | "DENY";
+  reason: string;
+  expiresAt: string | null;
+  createdById: string | null;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+const OVERRIDE_EXPIRY_PRESETS = [
+  { value: "none", label: "No expiry (standing)" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+] as const;
+
+// Plain-English labels for the Kind select — values stay the raw FeatureOverrideKind enum.
+const OVERRIDE_KIND_LABELS: Record<FeatureOverrideKind, string> = {
+  PILOT: "Pilot",
+  SUPPORT: "Support",
+  COMP: "Complimentary",
+  TRIAL: "Trial",
+  GRANDFATHER: "Grandfathered",
+};
+
+/** Imperative handle so the Feature Console's per-row "Customise" button can open this
+ * drawer prefilled for one key, without a second overrides UI (brief D done-checklist item 1). */
+export interface FeatureOverridesSectionHandle {
+  openFor: (featureKey: string) => void;
+}
+
+export const FeatureOverridesSection = React.forwardRef<
+  FeatureOverridesSectionHandle,
+  { tenant: TenantDetail }
+>(function FeatureOverridesSection({ tenant }, ref) {
+  const [overrides, setOverrides] = React.useState<FeatureOverrideRow[]>([]);
+  const [registry, setRegistry] = React.useState<FeatureRegistryRow[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+  const [showForm, setShowForm] = React.useState(false);
+  const [form, setForm] = React.useState({
+    featureKey: "",
+    effect: "GRANT" as "GRANT" | "DENY",
+    kind: "COMP" as FeatureOverrideKind,
+    reason: "",
+    expiryPreset: "none" as "none" | "30" | "90",
+  });
+  const [submitting, setSubmitting] = React.useState(false);
+  const [revokingId, setRevokingId] = React.useState<string | null>(null);
+  // Owner rule: EVERY override write goes through preview — the "+ New Override" button and
+  // the Feature Console's "Customise" action share this ONE drawer and this ONE preview → confirm
+  // → apply flow (brief D item 3). `pendingCreate` freezes the exact payload the preview was run
+  // against, so Confirm applies precisely what was previewed even if the form underneath changes.
+  const [previewResponse, setPreviewResponse] = React.useState<FeaturePreviewResponse | null>(null);
+  const [previewing, setPreviewing] = React.useState(false);
+  const [previewError, setPreviewError] = React.useState<string | null>(null);
+  const [pendingCreate, setPendingCreate] = React.useState<{
+    featureKey: string;
+    effect: "GRANT" | "DENY";
+    kind: FeatureOverrideKind;
+    reason: string;
+    expiresAt: string | null;
+  } | null>(null);
+  // Only ONE AdminModal is ever open at a time (form OR preview) so Escape closes just the top
+  // one instead of both stacked dialogs; when the preview closes back to the form, focus returns
+  // to the form (Opus review of 73668ac2, item 6c).
+  const featureKeySelectRef = React.useRef<HTMLSelectElement>(null);
+  const wasPreviewOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (wasPreviewOpen.current && !previewResponse && showForm) {
+      featureKeySelectRef.current?.focus();
+    }
+    wasPreviewOpen.current = !!previewResponse;
+  }, [previewResponse, showForm]);
+
+  const fetchOverrides = React.useCallback(() => {
     setLoading(true);
+    setError(null);
     superAdminClient
-      .get(`/platform-admin/tenants/${tenant.id}/addons`)
-      .then((res) => setAddons(res.data))
-      .catch(() => {})
+      .get(`/platform-admin/tenants/${tenant.id}/feature-overrides`)
+      .then((res) => setOverrides(res.data))
+      .catch(() => setError("Failed to load feature overrides."))
       .finally(() => setLoading(false));
   }, [tenant.id]);
 
   React.useEffect(() => {
-    fetchAddons();
-  }, [fetchAddons]);
+    fetchOverrides();
+    superAdminClient
+      .get("/platform-admin/features/registry")
+      .then((res) => setRegistry(res.data))
+      .catch(() => setRegistry([]));
+  }, [fetchOverrides]);
 
-  const toggleAddon = async (key: string, currentlyActive: boolean) => {
-    setToggling(key);
+  function closeForm() {
+    setShowForm(false);
+    setPreviewResponse(null);
+    setPendingCreate(null);
+    setPreviewError(null);
+  }
+
+  function openForm() {
+    setForm({
+      featureKey: registry[0]?.key ?? "",
+      effect: "GRANT",
+      kind: "COMP",
+      reason: "",
+      expiryPreset: "none",
+    });
+    setPreviewError(null);
+    setPreviewResponse(null);
+    setShowForm(true);
+  }
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      openFor: (featureKey: string) => {
+        setForm({ featureKey, effect: "GRANT", kind: "COMP", reason: "", expiryPreset: "none" });
+        setPreviewError(null);
+        setPreviewResponse(null);
+        setShowForm(true);
+      },
+    }),
+    [],
+  );
+
+  /** Step 1 of preview → confirm → apply: previews the override, writes nothing. Every override
+   * write goes through this — both "+ New Override" and the console's "Customise" action. */
+  async function handlePreview(e: React.FormEvent) {
+    e.preventDefault();
+    setPreviewing(true);
+    setPreviewError(null);
     try {
-      if (currentlyActive) {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/disable`, {
-          addonKey: key,
-        });
-      } else {
-        await superAdminClient.post(`/platform-admin/tenants/${tenant.id}/addons/enable`, {
-          addonKey: key,
-        });
-      }
-      fetchAddons();
-    } catch {}
-    setToggling(null);
-    setShowEnableModal(null);
-  };
+      const expiresAt =
+        form.expiryPreset === "none"
+          ? null
+          : new Date(Date.now() + Number(form.expiryPreset) * 24 * 60 * 60 * 1000).toISOString();
+      const payload = {
+        featureKey: form.featureKey,
+        effect: form.effect,
+        kind: form.kind,
+        reason: form.reason,
+        expiresAt,
+      };
+      const response = await previewTenantFeatures(tenant.id, { overrides: [payload] });
+      setPendingCreate(payload);
+      setPreviewResponse(response);
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string | string[] } } };
+      const message = err?.response?.data?.message;
+      setPreviewError(
+        Array.isArray(message)
+          ? message.join("; ")
+          : (message ?? "Could not preview that override. Try again."),
+      );
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
-  const activeKeys = new Set(addons.filter((a) => a.active).map((a) => a.addonKey));
+  /** Step 2: the actual write, run only after preview and an explicit Confirm. */
+  async function handleConfirmCreate() {
+    if (!pendingCreate) return;
+    setSubmitting(true);
+    setPreviewError(null);
+    try {
+      // B524 prep: this form has no missing-requires warning UI yet (unlike EnableAddonModal's
+      // amber-box + checkbox), so there is nothing here for an operator to ever acknowledge —
+      // omit `acknowledgeUnmetRequires` entirely rather than hardcoding `false`, which would
+      // audit-log "the operator acknowledged nothing" on every single override create and assert
+      // a user action that never happened. Mirrors how EnableAddonModal/enableTenantAddon only
+      // ever include the field when an operator actually ticked the warning's checkbox (see
+      // `features.ts`'s `...(acknowledgeUnmetRequires ? { acknowledgeUnmetRequires } : {})`).
+      // The full parity UI (effectiveKeys fetch + missingRequires computation + warning box +
+      // real acknowledgment state) is tracked as its own follow-up; only then does this form gain
+      // something to conditionally include.
+      await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/feature-overrides`,
+        pendingCreate,
+      );
+      setPreviewResponse(null);
+      setPendingCreate(null);
+      setShowForm(false);
+      fetchOverrides();
+    } catch (e: unknown) {
+      // Opus review of 8130b204, item 7c: a class-validator 400 (e.g. EXPIRES_AT_MUST_BE_FUTURE,
+      // or a DTO field failing multiple rules) sends `message` as string[], not string — join it
+      // into one readable line rather than rendering an array where text is expected.
+      const err = e as { response?: { data?: { message?: string | string[] } } };
+      const message = err?.response?.data?.message;
+      setPreviewError(
+        Array.isArray(message)
+          ? message.join("; ")
+          : (message ?? "Could not create that override. Try again."),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRevoke(id: string) {
+    setRevokingId(id);
+    try {
+      await superAdminClient.post(
+        `/platform-admin/tenants/${tenant.id}/feature-overrides/${id}/revoke`,
+      );
+      fetchOverrides();
+    } catch {
+      setError("Could not revoke that override. Try again.");
+    } finally {
+      setRevokingId(null);
+    }
+  }
+
+  const activeOverrides = overrides.filter((o) => !o.revokedAt);
+  const selectedRegistryEntry = registry.find((r) => r.key === form.featureKey);
 
   return (
-    <>
+    <div className="mt-6">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-300">Overrides</h3>
+        <button
+          onClick={openForm}
+          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500"
+        >
+          + New Override
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-3 rounded-lg bg-red-900/30 px-4 py-3 text-sm text-red-300 ring-1 ring-red-600/30">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-8 text-center text-slate-400">Loading overrides...</div>
+      ) : (
+        <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
+          <div
+            className="overflow-x-auto"
+            role="region"
+            aria-label="Feature overrides"
+            tabIndex={0}
+          >
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
+                  <th className="px-4 py-3 text-left">Feature Key</th>
+                  <th className="px-4 py-3 text-left">Effect</th>
+                  <th className="px-4 py-3 text-left">Reason</th>
+                  <th className="px-4 py-3 text-left">Expires</th>
+                  <th className="px-4 py-3 text-left">Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-700/50">
+                {activeOverrides.map((o) => {
+                  const expired = o.expiresAt
+                    ? new Date(o.expiresAt).getTime() <= Date.now()
+                    : false;
+                  return (
+                    <tr key={o.id} className="hover:bg-slate-700/20">
+                      <td className="px-4 py-2 font-mono text-slate-300">{o.featureKey}</td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                            o.effect === "GRANT"
+                              ? "bg-emerald-500/20 text-emerald-300"
+                              : "bg-red-500/20 text-red-300"
+                          }`}
+                        >
+                          {o.effect}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-slate-400" title={o.reason}>
+                        {o.reason}
+                      </td>
+                      <td className="px-4 py-2 text-slate-400">
+                        {o.expiresAt ? new Date(o.expiresAt).toLocaleDateString() : "Standing"}
+                      </td>
+                      <td className="px-4 py-2">
+                        {expired ? (
+                          <span className="text-amber-400">Expired</span>
+                        ) : (
+                          <span className="text-emerald-400">Active</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          disabled={revokingId === o.id}
+                          onClick={() => handleRevoke(o.id)}
+                          className="rounded px-2 py-1 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+                        >
+                          {revokingId === o.id ? "Revoking..." : "Revoke"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {activeOverrides.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
+                      No active overrides.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Only one of these two AdminModals is ever open at a time (never stacked) — the form
+          hides while the preview is up, so Escape always closes exactly the top dialog. */}
       <AdminModal
-        open={!!showEnableModal}
-        onClose={() => setShowEnableModal(null)}
-        title={`Enable ${AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name ?? showEnableModal}`}
+        open={showForm && !previewResponse}
+        onClose={closeForm}
+        title="New Feature Override"
         footer={
           <>
             <button
-              onClick={() => setShowEnableModal(null)}
+              onClick={closeForm}
               className="rounded-lg px-4 py-2 text-sm text-slate-400 hover:bg-slate-700"
             >
               Cancel
             </button>
             <button
-              disabled={toggling === showEnableModal}
-              onClick={() => showEnableModal && toggleAddon(showEnableModal, false)}
+              type="submit"
+              form="feature-override-form"
+              disabled={previewing || !form.featureKey || !form.reason}
+              aria-describedby={
+                !form.featureKey || !form.reason ? "feature-override-hint" : undefined
+              }
               className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
-              {toggling === showEnableModal ? "Enabling..." : "Enable Addon"}
+              {previewing ? "Loading preview..." : "Preview Override"}
             </button>
           </>
         }
       >
-        <p className="text-sm text-slate-300">
-          This will enable{" "}
-          <strong>{AVAILABLE_ADDONS.find((a) => a.key === showEnableModal)?.name}</strong> for
-          tenant <strong>{tenant.businessName ?? tenant.slug}</strong>.
-        </p>
-        <p className="mt-2 text-xs text-slate-500">
-          If Stripe is configured, a subscription item will be created for billing.
-        </p>
+        <form id="feature-override-form" onSubmit={handlePreview} className="flex flex-col gap-4">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Feature Key</label>
+            <select
+              ref={featureKeySelectRef}
+              aria-label="Feature Key"
+              value={form.featureKey}
+              onChange={(e) => setForm((f) => ({ ...f, featureKey: e.target.value }))}
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="" disabled>
+                Select a feature key…
+              </option>
+              {registry.map((r) => (
+                <option key={r.key} value={r.key}>
+                  {r.label} ({r.key}){r.internal ? " — internal" : ""}
+                </option>
+              ))}
+            </select>
+            {selectedRegistryEntry?.gate?.via === "none" && (
+              <p className="mt-1 text-xs text-amber-400">
+                This key has no wired gate (catalog metadata only) — an override here will have no
+                effect.
+              </p>
+            )}
+            {form.featureKey === "flag.credit_limits" && (
+              <p className="mt-1 text-xs text-amber-400">
+                Polarity trap: holding this flag TURNS ON the customer credit-limit check. GRANT
+                enforces the limit; DENY disables it (removes a financial safety check), not the
+                other way around.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Effect</label>
+            <select
+              aria-label="Effect"
+              value={form.effect}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, effect: e.target.value as "GRANT" | "DENY" }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              <option value="GRANT">Grant</option>
+              <option value="DENY">Deny</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Kind</label>
+            <select
+              aria-label="Kind"
+              value={form.kind}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, kind: e.target.value as FeatureOverrideKind }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {FEATURE_OVERRIDE_KIND_VALUES.map((k) => (
+                <option key={k} value={k}>
+                  {OVERRIDE_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Reason</label>
+            <textarea
+              aria-label="Reason"
+              value={form.reason}
+              onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+              rows={3}
+              className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none"
+              placeholder="Why does this override exist?"
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Expires</label>
+            <select
+              aria-label="Expires"
+              value={form.expiryPreset}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, expiryPreset: e.target.value as "none" | "30" | "90" }))
+              }
+              className="h-9 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none"
+            >
+              {OVERRIDE_EXPIRY_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {previewError && !previewResponse && (
+            <p className="text-xs text-red-400">{previewError}</p>
+          )}
+          <DisabledHint id="feature-override-hint" show={!form.featureKey || !form.reason}>
+            Choose a feature and enter a reason to enable Preview Override.
+          </DisabledHint>
+        </form>
       </AdminModal>
 
-      {loading ? (
-        <div className="py-8 text-center text-slate-500">Loading addons...</div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {AVAILABLE_ADDONS.map((addon) => {
-            const isActive = activeKeys.has(addon.key);
-            return (
-              <div
-                key={addon.key}
-                className={`rounded-xl p-4 ring-1 transition-colors ${
-                  isActive ? "bg-indigo-900/20 ring-indigo-600/30" : "bg-slate-800 ring-white/5"
-                }`}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-white">{addon.name}</h3>
-                  <button
-                    disabled={toggling === addon.key}
-                    onClick={() => {
-                      if (isActive) {
-                        toggleAddon(addon.key, true);
-                      } else {
-                        setShowEnableModal(addon.key);
-                      }
-                    }}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                      isActive ? "bg-indigo-600" : "bg-slate-600"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        isActive ? "translate-x-4" : "translate-x-0.5"
-                      }`}
-                    />
-                  </button>
-                </div>
-                <p className="text-xs text-slate-400">{addon.description}</p>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </>
+      <PreviewDrawer
+        open={!!previewResponse}
+        title="Preview override"
+        response={previewResponse}
+        registryByKey={Object.fromEntries(registry.map((r) => [r.key, r]))}
+        confirming={submitting}
+        error={previewResponse ? previewError : null}
+        onConfirm={handleConfirmCreate}
+        onClose={() => {
+          setPreviewResponse(null);
+          setPendingCreate(null);
+          setPreviewError(null);
+        }}
+      />
+    </div>
   );
-}
+});
+FeatureOverridesSection.displayName = "FeatureOverridesSection";
 
 // ─── Configuration Tab ─────────────────────────────────────────────────────────
 
@@ -1274,7 +1607,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
       <dl className="mb-6 flex flex-col gap-3 text-sm">
         {readOnlyFields.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between">
-            <dt className="text-slate-500">{label}</dt>
+            <dt className="text-slate-400">{label}</dt>
             <dd className="text-white">
               {label === "Primary Color" && value ? (
                 <span className="flex items-center gap-2">
@@ -1285,7 +1618,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
                   {value}
                 </span>
               ) : (
-                (value ?? <span className="text-slate-600">Not set</span>)
+                (value ?? <span className="text-slate-400">Not set</span>)
               )}
             </dd>
           </div>
@@ -1301,6 +1634,7 @@ function ConfigTab({ tenant }: { tenant: TenantDetail }) {
           <div key={key} className="flex flex-col gap-1">
             <label className="text-xs text-slate-400">{label}</label>
             <input
+              aria-label={label}
               className="rounded border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               value={form[key]}
               onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
@@ -1340,15 +1674,15 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
       .finally(() => setLoading(false));
   }, [tenantId, page]);
 
-  if (loading) return <div className="py-8 text-center text-slate-500">Loading audit logs...</div>;
+  if (loading) return <div className="py-8 text-center text-slate-400">Loading audit logs...</div>;
 
   return (
     <div>
       <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" role="region" aria-label="Audit log entries" tabIndex={0}>
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+              <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                 <th className="px-4 py-3 text-left">Action</th>
                 <th className="px-4 py-3 text-left">Entity Type</th>
                 <th className="px-4 py-3 text-left">Entity ID</th>
@@ -1364,7 +1698,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
                     {log.actionLabel ?? log.action}
                   </td>
                   <td className="px-4 py-2 text-slate-400">{log.entityType}</td>
-                  <td className="px-4 py-2 font-mono text-slate-500">
+                  <td className="px-4 py-2 font-mono text-slate-400">
                     {log.entityId?.slice(0, 8) ?? "—"}
                   </td>
                   <td className="px-4 py-2 text-slate-400">
@@ -1378,20 +1712,20 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
                         )}
                       </span>
                     ) : (
-                      <span className="font-mono text-slate-500">
+                      <span className="font-mono text-slate-400">
                         {log.userId?.slice(0, 8) ?? "—"}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 text-slate-500">
+                  <td className="px-4 py-2 text-slate-400">
                     {new Date(log.createdAt).toLocaleString()}
                   </td>
-                  <td className="px-4 py-2 text-slate-500">{log.ip ?? "—"}</td>
+                  <td className="px-4 py-2 text-slate-400">{log.ip ?? "—"}</td>
                 </tr>
               ))}
               {logs.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-10 text-center text-slate-400">
                     No audit log entries.
                   </td>
                 </tr>
@@ -1409,7 +1743,7 @@ function AuditLogTab({ tenantId }: { tenantId: string }) {
           >
             Prev
           </button>
-          <span className="text-sm text-slate-500">
+          <span className="text-sm text-slate-400">
             Page {page} of {meta.pages}
           </span>
           <button
@@ -1473,10 +1807,16 @@ export default function AdminTenantDetailPage() {
         case "impersonate": {
           try {
             const res = await superAdminClient.post(`/platform-admin/tenants/${id}/impersonate`);
-            // Store impersonation token in BOTH keys so every auth path finds it
-            localStorage.setItem("impersonationToken", res.data.accessToken);
-            localStorage.setItem("accessToken", res.data.accessToken);
-            localStorage.setItem("impersonationTenantSlug", tenant.slug);
+            // Impersonation state lives ONLY in lib/impersonation.ts. The old
+            // legacy "accessToken" write here leaked the impersonation token to
+            // legacy-key readers (e.g. the settings Google-link fetch) — the exact
+            // contamination that hijacked fresh logins. Cost of removal: realtime
+            // sockets (which read OP_KEYS directly) stay silent during impersonation.
+            setImpersonation(
+              res.data.accessToken,
+              tenant.slug,
+              res.data.impersonatedUser?.username,
+            );
             setTenantCookie(tenant.slug);
             window.location.href = "/dashboard";
           } catch (impErr: unknown) {
@@ -1515,22 +1855,30 @@ export default function AdminTenantDetailPage() {
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "Action failed",
       );
+      // The Feature Console's tier-change confirm (via onChangePlan) awaits this call and must
+      // observe the failure to keep its preview drawer open with the error, instead of silently
+      // closing as if the change applied — rethrow only for this action; every other call site
+      // here is a fire-and-forget onClick that already gets its feedback from statusMsg above.
+      if (action === "change-plan") throw err;
     } finally {
       setActionLoading(null);
     }
   };
 
-  if (loading) return <div className="p-6 text-center text-slate-500">Loading tenant...</div>;
+  if (loading) return <div className="p-6 text-center text-slate-400">Loading tenant...</div>;
 
   if (error || !tenant) {
     return (
       <div className="p-6">
-        <div className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error ?? "Tenant not found"}
         </div>
         <Link
           href="/admin/tenants"
-          className="mt-4 inline-block text-sm text-indigo-400 hover:underline"
+          className="admin-tap-text mt-4 inline-block text-sm text-indigo-400 hover:underline"
         >
           Back to Tenants
         </Link>
@@ -1542,15 +1890,18 @@ export default function AdminTenantDetailPage() {
     <div className="p-6">
       {/* Header */}
       <div className="mb-1 flex items-center gap-4">
-        <Link href="/admin/tenants" className="text-sm text-slate-400 hover:text-slate-300">
+        <Link
+          href="/admin/tenants"
+          className="admin-tap-text text-sm text-slate-400 hover:text-slate-300"
+        >
           Tenants
         </Link>
-        <span className="text-slate-600">/</span>
+        <span className="text-slate-400">/</span>
         <h1 className="text-xl font-bold text-white">{tenant.businessName ?? tenant.name}</h1>
         <AdminBadge>{tenant.status}</AdminBadge>
-        <AdminBadge variant="plan">{tenant.plan}</AdminBadge>
+        <AdminBadge variant="plan">{tenant.planKey ?? tenant.plan}</AdminBadge>
       </div>
-      <p className="mb-4 text-sm text-slate-500">
+      <p className="mb-4 text-sm text-slate-400">
         <span className="font-mono">{tenant.slug}</span>.routeflow.info · created{" "}
         {new Date(tenant.createdAt).toLocaleDateString()}
         {tenant.counts ? ` · ${tenant.counts.users} users` : ""}
@@ -1570,8 +1921,11 @@ export default function AdminTenantDetailPage() {
         />
       )}
       {activeTab === "billing" && <BillingTab tenant={tenant} onRefreshTenant={fetchTenant} />}
-      {activeTab === "addons" && <AddonsTab tenant={tenant} />}
+      {activeTab === "addons" && (
+        <AddonsTab tenant={tenant} onAction={handleAction} actionLoading={actionLoading} />
+      )}
       {activeTab === "config" && <ConfigTab tenant={tenant} />}
+      {activeTab === "snapshots" && <ConfigSnapshotsTab tenantId={tenant.id} />}
       {activeTab === "audit" && <AuditLogTab tenantId={tenant.id} />}
     </div>
   );

@@ -12,6 +12,10 @@ export class ListCustomersDto {
   @IsOptional() @IsString() customerType?: string;
   /** "1" = only customers authorized to sell regulated items (see customers.service.findAll). */
   @IsOptional() @IsString() regulated?: string;
+  /** "1" = only customers with no stop on a currently SCHEDULED route (REG-B156). */
+  @IsOptional() @IsString() unassigned?: string;
+  /** "1" = only soft-deleted (removed) customers — an explicit trash view (REG-B170). */
+  @IsOptional() @IsString() removed?: string;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortDir?: string;
 }

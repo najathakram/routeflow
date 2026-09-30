@@ -24,6 +24,10 @@ export interface MatrixCell {
   enabled: boolean;
   ruleId: string | null;
   locked: boolean;
+  /** Set when this cell can never fire (no transport, no consent writer, or no firing
+   * site yet) — mirrors `MatrixCell["unavailable"]` on the api's `MessagingConfigService`.
+   * Renders as a qualifier instead of a live switch (REG-B180). */
+  unavailable?: "NO_TRANSPORT" | "NO_CONSENT_WRITER" | "NO_TRIGGER";
   template: MessageTemplateInfo | null;
 }
 

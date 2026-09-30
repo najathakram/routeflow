@@ -1,0 +1,67 @@
+{
+  "mode": "bugfix",
+  "planPath": ".claude/pipeline/2026-09-10-train4-run-c/build-plan.md",
+  "testPlanPath": ".claude/pipeline/2026-09-10-train4-run-c/bug-test-plan.md",
+  "lessonsPath": ".claude/lessons/LESSONS.md",
+  "scale": "small",
+  "context": "B216: Stripe reinstatement (onPaymentSucceeded/onCheckoutCompleted) must disarm a pre-lapse downgrade ONLY when transitionAndEmit returns true; separate post-CAS prisma update; one disarmedDowngrade() helper (L-072); gate on the CAS verdict (L-081); never resume() (double emit); no tx change, no backfill. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "formatCommand": "npx prettier --write apps/api/src/billing/billing.service.ts apps/api/src/billing/billing.service.spec.ts",
+  "radiusFiles": [
+    "apps/api/src/billing/billing.service.ts",
+    "apps/api/src/billing/billing.service.spec.ts",
+    "apps/api/src/billing/subscription-mutation.service.ts",
+    "apps/api/src/billing/billing-cron.service.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "regex": "await this\\.transitionAndEmit\\(",
+      "note": "4 hits: 541/591 are the B216 sites; 657 already disarms; 764 is suspension (must NOT disarm). A new reinstatement site without a gated disarm = defect"
+    },
+    {
+      "regex": "downgradeToPlanKey:\\s*null",
+      "note": "after WP1 only disarmedDowngrade() in billing.service.ts; other files are separate flows (cron apply, admin, resume) - report, do not edit"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP1",
+      "title": "B216 red set + pins",
+      "files": ["apps/api/src/billing/billing.service.spec.ts"],
+      "brief": "build-plan TP1 / bug-test-plan T1-T6; append one describe; implement nothing"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/billing/billing.service.spec.ts --runInBand -t \"REG-B216\" --reporters=default"
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "WP1",
+      "title": "gated disarm on Stripe reinstatement + shared helper",
+      "files": ["apps/api/src/billing/billing.service.ts"],
+      "brief": "build-plan WP1 edits (1)-(4), exact code",
+      "effort": "high",
+      "satisfies": ["R1", "R2", "R3", "R4", "R5"],
+      "provenBy": ["T1", "T2", "T3", "T4", "T5", "T6"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "npm run check-types -w apps/api",
+      "cd apps/api && npx eslint src/billing/billing.service.ts src/billing/billing.service.spec.ts"
+    ],
+    "final": ["cd apps/api && npx jest src/billing --runInBand --reporters=default"]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/billing/billing.service.ts",
+        "behavior": "a won reinstatement CAS disarms the downgrade as a separate post-CAS write",
+        "test": "REG-B216-A REG-B216-B REG-B216-C",
+        "revertFix": true
+      }
+    ]
+  }
+}

@@ -13,6 +13,7 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { MessagingService } from "../messaging/messaging.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { ChangeRequestResolveAction } from "./dto/resolve-change-request.dto";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 
@@ -75,6 +76,23 @@ const PENDING_CR = {
   requestedByRole: "CUSTOMER",
 };
 
+// B655: a CHANGE_QTY request approved to the next delivery. `payload.newQty` is the line's NEW
+// ABSOLUTE qty (in pieces); the resolved delta must never ride into create() as a bare selling-unit
+// qty for a boxed pack line.
+const CHANGE_QTY_CR = {
+  id: "cr-2",
+  orderId: "ord-1",
+  orderItemId: "item-1",
+  productId: "prod-1",
+  type: "CHANGE_QTY" as const,
+  status: "PENDING" as const,
+  payload: { orderItemId: "item-1", newQty: 75 },
+  note: null,
+  requestedById: "user-op",
+  requestedByName: "operator1",
+  requestedByRole: "OPERATOR",
+};
+
 describe("ChangeRequestsService", () => {
   let service: ChangeRequestsService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -131,7 +149,7 @@ describe("ChangeRequestsService", () => {
     it("creates a PENDING ADD_ITEM change request on a dispatched order", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -165,7 +183,7 @@ describe("ChangeRequestsService", () => {
     it("fires ORDER_CHANGED_AT_DOOR via MessagingService on ADD_ITEM creation", async () => {
       prisma.order.findUnique.mockResolvedValue(dispatchedOrder);
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", name: "Tomatoes" });
       prisma.changeRequest.create.mockResolvedValue({ id: "cr-new", status: "PENDING" });
 
       await service.create(
@@ -262,7 +280,7 @@ describe("ChangeRequestsService", () => {
     });
 
     it("forbids a CUSTOMER listing another customer's order", async () => {
-      prisma.order.findUnique.mockResolvedValue({ id: "ord-1", customerId: "cust-1" });
+      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", customerId: "cust-1" });
       prisma.customer.findFirst.mockResolvedValue({ id: "cust-OTHER" });
       await expect(service.listForOrder("ord-1", customerUser)).rejects.toBeInstanceOf(
         ForbiddenException,
@@ -397,8 +415,8 @@ describe("ChangeRequestsService", () => {
         ...dispatchedOrder,
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
-      prisma.product.findUnique.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
-      prisma.customer.findUnique.mockResolvedValue({ userId: "user-cust" });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+      prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
     });
@@ -424,7 +442,9 @@ describe("ChangeRequestsService", () => {
           status: "DRAFT",
         }),
         expect.objectContaining({ role: "CUSTOMER", sub: "user-cust" }),
-        { skipAutoMerge: false },
+        // REG-B142-G: this draft path is the one exempt caller — it must
+        // pass allowArchived so a since-archived line can still roll over.
+        { skipAutoMerge: false, allowArchived: true },
       );
       expect(ordersService.assertCreditForProjectedOrder).toHaveBeenCalledWith(
         "cust-1",
@@ -470,6 +490,216 @@ describe("ChangeRequestsService", () => {
 
       expect(ordersService.deleteOrder).toHaveBeenCalledWith("draft-1");
       expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    // B655: rolling a CHANGE_QTY delta to the next delivery re-created the line through create()
+    // with a bare qty. For a BOX-AWARE line (li.boxes != null), OrderItem.qty is TOTAL PIECES, so
+    // that bare qty is a pieces delta re-read by create() as SELLING UNITS (boxes) — a 51-piece
+    // delta on a 24-pack product posted as 51 boxes (1,224 pieces) at the live price instead of
+    // 2 boxes + 3 pieces.
+    it("splits a box-aware CHANGE_QTY line's pieces delta using its own unitsPerBox snapshot (B655)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24, // total pieces (1 box of 24)
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 24,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      // delta = 75 - 24 = 51 pieces; upb 24 -> 2 boxes + 3 pieces (51 = 2*24 + 3).
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+      // Never re-derived from the live product — an existing line's rewrite uses only what the
+      // line itself stored (SA ruling).
+      expect(prisma.product.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ select: { id: true, trackedCategoryId: true } }),
+      );
+    });
+
+    // A box-aware line whose unitsPerBox snapshot predates the column (null) derives the pack
+    // EXACTLY from its own stored split — (qty - pieces) / boxes — never from the live product.
+    it("derives a box-aware line's pack from its own stored split when the snapshot is null", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24, // (24 - 0) / 1 = 24
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      // The live product's pack, if it were read, would derive a DIFFERENT (wrong) split —
+      // proves the derivation never touches it.
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // No snapshot AND no derivable pack (boxes: 0 — nothing to divide by) refuses rather than
+    // guessing at a factor.
+    it("refuses a box-aware line whose pack can't be derived, naming the line", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 5,
+        boxes: 0,
+        pieces: 5,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await expect(
+        service.resolve(
+          "ord-1",
+          "cr-2",
+          { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+          operatorUser,
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({
+          code: "LINE_PACK_UNDERIVABLE",
+          message: expect.stringContaining("item-1"),
+        }),
+      });
+      expect(ordersService.create).not.toHaveBeenCalled();
+    });
+
+    // A snapshot of 0 (or 1) is not a real pack — the "not case-packed" value, not a genuine
+    // factor. It must fall through to deriving from the line's own stored split exactly like a
+    // null snapshot, never reach normalizeBoxesPieces' non-boxed branch (which would post the
+    // pieces delta as a bare qty — the original B655 shape).
+    it("treats a box-aware line's unitsPerBox: 0 snapshot as absent and derives from its own split", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(CHANGE_QTY_CR);
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 24, // (24 - 0) / 1 = 24
+        boxes: 1,
+        pieces: 0,
+        unitsPerBox: 0,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          items: [expect.objectContaining({ productId: "prod-1", qty: 51, boxes: 2, pieces: 3 })],
+        }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // Control: a plain non-boxed line's rolled delta is a bare qty, unaffected — no boxes/pieces
+    // keys added.
+    it("does not split a non-boxed CHANGE_QTY line's delta (control)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...CHANGE_QTY_CR,
+        payload: { orderItemId: "item-1", newQty: 10 },
+      });
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 5,
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [{ productId: "prod-1", qty: 5 }] }),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // SA's exact under-charge example: a BOX-UNAWARE line's qty IS ALREADY the box count (no
+    // split stored), so its delta must post as bare boxes — splitting it against ANY pack (even
+    // the line's own unitsPerBox) would misread a boxes delta as pieces. A 3-box delta split
+    // against upb 24 would become 0 boxes + 3 pieces: an under-charge, not a fix.
+    it("keeps a box-unaware BOXED line's delta as bare boxes — never splits it against a pack", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...CHANGE_QTY_CR,
+        payload: { orderItemId: "item-1", newQty: 5 }, // 5 boxes total
+      });
+      prisma.orderItem.findFirst.mockResolvedValue({
+        id: "item-1",
+        productId: "prod-1",
+        qty: 2, // 2 boxes (box-unaware convention — no boxes/pieces split stored)
+        boxes: null,
+        pieces: null,
+        unitsPerBox: 24, // present on the line, but must never be used to split this shape
+        unitLabel: null,
+        status: "PENDING",
+      });
+      prisma.product.findFirst.mockResolvedValue({ id: "prod-1", trackedCategoryId: null });
+
+      await service.resolve(
+        "ord-1",
+        "cr-2",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+      // delta = 5 - 2 = 3 boxes; must stay a bare qty:3, never {qty, boxes:0, pieces:3}.
+      expect(ordersService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [{ productId: "prod-1", qty: 3 }] }),
+        expect.anything(),
+        expect.anything(),
+      );
     });
 
     it("400s INVALID_RESOLUTION_FOR_TYPE for REMOVE_ITEM and NOTE requests", async () => {
@@ -535,6 +765,12 @@ describe("ChangeRequestsService", () => {
         routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
       });
       prisma.driver.findFirst.mockResolvedValue({ id: "drv-1" });
+      // SA-434: the SA-429 predicate reads the ORDER's own stop chain (not order.routeRun).
+      prisma.order.findFirst.mockResolvedValue({ routeRunStopId: "stop-1" });
+      prisma.routeRunStop.findFirst.mockResolvedValue({
+        status: "PENDING",
+        routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
+      });
       prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
       prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "DECLINED" });
 
@@ -546,6 +782,229 @@ describe("ChangeRequestsService", () => {
           driverUser,
         ),
       ).resolves.toBeDefined();
+    });
+  });
+
+  // ─── B673: a door ADD_ITEM's box split must survive a next-delivery rollover ─────────────────
+
+  /**
+   * B673 (REG-B673). A driver adding 1 box of a 12-pack at the door files the ADD_ITEM as
+   * `{ qty: 12 (total pieces), boxes: 1, pieces: 0 }`. `approveNextDelivery` used to read only the
+   * bare `qty` and hand `{ productId, qty: 12 }` to `OrdersService.create()`, which — by house
+   * convention — reads a bare qty on a boxed product as a BOX count: 12 boxes, billed $480 for $40.
+   *
+   * The buyer portal files the other shape — a bare `qty` in selling units (boxes), no split — and
+   * that path must stay byte-identical. So the fix branches on "a split is present", never on who
+   * filed the request, and never reinterprets a bare qty.
+   *
+   * Harness: `create()` is replaced by a boundary fake that prices each item EXACTLY as create()
+   * does — its own split predicate (`orders.service.ts` ~:1995), `normalizeBoxesPieces`, then the
+   * real `computeLineSubtotal` from @routeflow/pricing at the $40 box price and the LIVE pack — and
+   * returns that as the draft's total. The service passes `Number(draft.total)` on to the credit
+   * re-check, so the billed figure is read where the service itself reads it. A plain jest.fn()
+   * here would hide the price entirely, which is how this shipped.
+   */
+  describe("B673 — APPROVE_NEXT_DELIVERY of an ADD_ITEM carrying a box split (REG-B673)", () => {
+    const BOX_PRICE = 40;
+    let livePack = 12;
+
+    /** What create() bills for one item: its split predicate, normalizeBoxesPieces, then pricing. */
+    const priceLikeCreate = (item: {
+      qty: number;
+      boxes?: number | null;
+      pieces?: number | null;
+    }): number => {
+      let qty = item.qty;
+      let boxes: number | null = null;
+      let pieces: number | null = null;
+      if ((item.boxes ?? 0) > 0 || (item.pieces ?? 0) > 0) {
+        const split = normalizeBoxesPieces({
+          boxes: item.boxes,
+          pieces: item.pieces,
+          qty: item.qty,
+          unitsPerBox: livePack,
+        });
+        qty = split.qty;
+        boxes = split.boxes;
+        pieces = split.pieces;
+      }
+      return computeLineSubtotal({
+        unitPrice: BOX_PRICE,
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox: livePack,
+      });
+    };
+
+    /** The draft total the service passed on to the credit re-check — i.e. what was billed. */
+    const billed = (): number => ordersService.assertCreditForProjectedOrder.mock.calls[0][2];
+    const createdItems = () => ordersService.create.mock.calls[0][0].items;
+
+    const doorAdd = (payload: Record<string, unknown>) => ({
+      ...PENDING_CR,
+      requestedById: "user-drv",
+      requestedByName: "driver1",
+      requestedByRole: "DRIVER",
+      payload: { productId: "prod-1", productName: "Sample Cola 12pk", ...payload },
+    });
+
+    const approveNextDelivery = () =>
+      service.resolve(
+        "ord-1",
+        "cr-1",
+        { action: ChangeRequestResolveAction.APPROVE_NEXT_DELIVERY },
+        operatorUser,
+      );
+
+    beforeEach(() => {
+      livePack = 12;
+      prisma.order.findUnique.mockResolvedValue({
+        ...dispatchedOrder,
+        routeRun: { driverId: "drv-1", status: "IN_PROGRESS" },
+      });
+      prisma.product.findFirst.mockImplementation(async () => ({
+        id: "prod-1",
+        name: "Sample Cola 12pk",
+        trackedCategoryId: null,
+        unitsPerBox: livePack,
+      }));
+      prisma.customer.findFirst.mockResolvedValue({ userId: "user-cust" });
+      prisma.changeRequest.updateMany.mockResolvedValue({ count: 1 });
+      prisma.changeRequest.findUnique.mockResolvedValue({ ...PENDING_CR, status: "APPROVED" });
+      ordersService.create.mockImplementation(async (dto: { items: any[] }) => ({
+        id: "draft-1",
+        total: dto.items.reduce((sum, item) => sum + priceLikeCreate(item), 0),
+      }));
+    });
+
+    it("REG-B673-1: 1 box of a 12-pack at $40 is billed $40, not $480 (12 boxes)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      await approveNextDelivery();
+
+      expect(billed()).toBe(40);
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }]);
+    });
+
+    it("REG-B673-4: 5 loose pieces of a 12-pack are billed $16.67, not $200 (5 boxes)", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 5, boxes: 0, pieces: 5 }));
+
+      await approveNextDelivery();
+
+      expect(billed()).toBe(16.67);
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 5, boxes: 0, pieces: 5 }]);
+    });
+
+    it("REG-B673-2: the pack changed since filing (12 → 6) — refused, naming BOTH packs; nothing drafted, CR stays PENDING", async () => {
+      livePack = 6;
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err).toBeInstanceOf(BadRequestException);
+      const body = err.getResponse();
+      expect(body.code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(body.message).toContain("12 per box");
+      expect(body.message).toContain("6 per box");
+      expect(body.message).toContain("Sample Cola 12pk");
+      // The advice: decline and re-add on the next order. Never approve-at-stop — the item was not
+      // on the truck, and that path's merge re-prices at 12x on an old box-unaware line (B753(a)).
+      expect(body.message).toContain("Decline it and re-add the item to the next order");
+      expect(body.message).not.toMatch(/approve at stop/i);
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B673-3: the product is no longer sold by the box — refused, naming the filed pack; nothing drafted", async () => {
+      livePack = 1;
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 12, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err).toBeInstanceOf(BadRequestException);
+      const body = err.getResponse();
+      expect(body.code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(body.message).toContain("12 per box");
+      expect(body.message).toContain("no longer sold by the box");
+      expect(prisma.changeRequest.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("REG-B673-3b: a filed pack that disagrees with the live one (1 box = 11 pieces vs 12) is a pack mismatch — refused, never billed", async () => {
+      // `(qty - pieces) / boxes` is the only record of the pack at filing; 11 is a valid pack, so
+      // this reads as "filed at 11 per box" and is refused naming both packs, like any pack change.
+      prisma.changeRequest.findFirst.mockResolvedValue(doorAdd({ qty: 11, boxes: 1, pieces: 0 }));
+
+      const err = await approveNextDelivery().catch((e) => e);
+
+      expect(ordersService.create).not.toHaveBeenCalled();
+      expect(err.getResponse().code).toBe("CHANGE_REQUEST_PACK_CHANGED");
+      expect(err.getResponse().message).toContain("11 per box");
+      expect(err.getResponse().message).toContain("12 per box");
+    });
+
+    it.each([
+      ["negative boxes", { qty: 12, boxes: -1, pieces: 0 }],
+      ["fractional boxes", { qty: 12, boxes: 1.5, pieces: 0 }],
+      ["negative pieces", { qty: 12, boxes: 1, pieces: -1 }],
+      ["an all-zero split", { qty: 12, boxes: 0, pieces: 0 }],
+      ["more loose pieces than the qty", { qty: 3, boxes: 0, pieces: 5 }],
+      ["a pack that is not a whole number", { qty: 13, boxes: 2, pieces: 0 }],
+    ])(
+      "REG-B673-5: an inconsistent split (%s) is refused as INVALID_LINE_SPLIT — never reinterpreted, never billed",
+      async (_label, payload) => {
+        prisma.changeRequest.findFirst.mockResolvedValue(doorAdd(payload));
+
+        const err = await approveNextDelivery().catch((e) => e);
+
+        expect(ordersService.create).not.toHaveBeenCalled();
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect(err.getResponse().code).toBe("INVALID_LINE_SPLIT");
+      },
+    );
+
+    it("PIN-B673-1: the buyer's bare qty (boxes, no split) is untouched — create() gets exactly { productId, qty }", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 3, productName: "Sample Cola 12pk" },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 3 }]);
+      expect(Object.keys(createdItems()[0])).toEqual(["productId", "qty"]);
+      expect(billed()).toBe(120); // 3 boxes at $40
+    });
+
+    it("PIN-B673-1b: a buyer's bare 1 (box) is still $40", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: { productId: "prod-1", qty: 1, productName: "Sample Cola 12pk" },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 1 }]);
+      expect(billed()).toBe(40);
+    });
+
+    it("PIN-B673-1c: an explicit null split (how the create path stores a buyer request) is still a bare qty", async () => {
+      prisma.changeRequest.findFirst.mockResolvedValue({
+        ...PENDING_CR,
+        payload: {
+          productId: "prod-1",
+          qty: 2,
+          boxes: null,
+          pieces: null,
+          productName: "Sample Cola 12pk",
+        },
+      });
+
+      await approveNextDelivery();
+
+      expect(createdItems()).toEqual([{ productId: "prod-1", qty: 2 }]);
+      expect(billed()).toBe(80);
     });
   });
 });

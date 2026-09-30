@@ -25,7 +25,7 @@ import { checkBadgeFor } from "../../../lib/check-badge";
 import { MoneyTextInput } from "../../../components/MoneyTextInput";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
-import { roundMoney } from "../../../lib/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 function fmtCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);

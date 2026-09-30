@@ -1,3 +1,8 @@
+> **Historical.** This guide predates the current setup and documents a GHCR-based CI/CD pipeline
+> that is no longer active. The staging design of record is
+> [ADR 0002](adr/0002-staging-environment.md); the live deploy flow is Railway's native GitHub
+> auto-deploy — see [`CLAUDE.md`](../CLAUDE.md).
+
 # Railway Deployment Guide
 
 Step-by-step instructions for deploying RouteFlow to [Railway](https://railway.app).
@@ -239,10 +244,10 @@ For the CI/CD pipelines in `.github/workflows/` to deploy automatically:
 1. Go to your GitHub repo → **Settings** → **Secrets and variables** → **Actions**
 2. Add the following repository secrets:
 
-| Secret                     | Value                            | Used by                 |
-| -------------------------- | -------------------------------- | ----------------------- |
-| `RAILWAY_TOKEN`            | Railway API token for staging    | `deploy-staging.yml`    |
-| `RAILWAY_TOKEN_PRODUCTION` | Railway API token for production | `deploy-production.yml` |
+| Secret                     | Value                            | Used by                                                             |
+| -------------------------- | -------------------------------- | ------------------------------------------------------------------- |
+| `RAILWAY_TOKEN`            | Railway API token for staging    | (historical — `deploy-staging.yml` deleted in wave D, see ADR 0002) |
+| `RAILWAY_TOKEN_PRODUCTION` | Railway API token for production | `deploy-production.yml`                                             |
 
 To generate a Railway token:
 

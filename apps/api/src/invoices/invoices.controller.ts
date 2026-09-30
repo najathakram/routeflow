@@ -32,9 +32,13 @@ import {
   WriteOffDto,
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
+import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
+import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
+import { UpdateInvoiceTermsDto } from "./dto/update-invoice-terms.dto";
 import { UpdateShipmentDto } from "../orders/dto/update-shipment.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 @Controller("invoices")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -73,6 +77,21 @@ export class InvoicesController {
     return this.invoicesService.findAll(query, user);
   }
 
+  /**
+   * B12: the invoices page's six KPI tiles, aggregated server-side over the
+   * whole OPEN set. Declared BEFORE any `:id` route — a literal segment
+   * ("kpi-summary") registered after `:id` would be swallowed as an id value.
+   *
+   * Open to CUSTOMER like `findAll` above: the bar renders on `/invoices`,
+   * which buyers are allowed to open, and the service scopes a buyer's
+   * summary to their OWN invoices.
+   */
+  @Get("kpi-summary")
+  @Roles(UserRole.OPERATOR, UserRole.CUSTOMER)
+  getKpiSummary(@Query() query: KpiSummaryDto, @CurrentUser() user: JwtPayload) {
+    return this.invoicesService.getKpiSummary(query.today, user);
+  }
+
   @Get("payments/export")
   async exportPayments(@Query() query: any, @Res() res: Response) {
     const csv = await this.invoicesService.exportPayments(query);
@@ -94,7 +113,7 @@ export class InvoicesController {
 
   @Post("payments/:paymentId/image")
   @Roles(UserRole.OPERATOR, UserRole.DRIVER)
-  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 10 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor("file", { limits: uploadLimits(MB(10)) }))
   uploadPaymentImage(
     @Param("paymentId") paymentId: string,
     @UploadedFile() file: Express.Multer.File,
@@ -151,7 +170,7 @@ export class InvoicesController {
     return this.invoicesService.findOne(id, user);
   }
 
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) {
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateInvoiceDto) {
     return this.invoicesService.update(id, dto);
   }
 
@@ -163,6 +182,17 @@ export class InvoicesController {
   @Patch(":id/shipment") updateShipment(@Param("id") id: string, @Body() dto: UpdateShipmentDto) {
     return this.invoicesService.updateInvoiceShipment(id, dto);
   }
+
+  /**
+   * WP3: narrow post-issue correction — dueDate/paymentTermsLabel/
+   * referenceNumber/subject only, never money. Allowed on any status except
+   * VOID/WRITTEN_OFF (see `InvoicesService.updateTerms`).
+   */
+  @Patch(":id/terms")
+  updateTerms(@Param("id") id: string, @Body() dto: UpdateInvoiceTermsDto) {
+    return this.invoicesService.updateTerms(id, dto);
+  }
+
   @Post(":id/send") send(@Param("id") id: string) {
     return this.invoicesService.send(id);
   }

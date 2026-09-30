@@ -47,6 +47,9 @@ export class AuditInterceptor implements NestInterceptor {
           .log({
             tenantId: user?.tenantId ?? null,
             userId: user?.sub ?? null,
+            // B165: the interceptor runs AFTER route guards, so this is the VERIFIED
+            // req.user (JwtStrategy output) — the durable trail names who really wrote.
+            impersonatedBy: user?.impersonatedBy ?? null,
             action,
             entityType,
             entityId,

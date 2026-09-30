@@ -2,7 +2,8 @@ import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { RegulatedVisibilityService } from "./regulated-visibility.service";
-import { getTierPrice } from "../utils/pricing";
+import { getTierPrice } from "@routeflow/pricing";
+import { firstSignableImageKey } from "../products/product-image-keys";
 
 @Injectable()
 export class BuyerDashboardService {
@@ -24,7 +25,7 @@ export class BuyerDashboardService {
     // Load customer pricing tier
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: customerId }, select: { pricingTier: true } });
+      .customer.findFirst({ where: { id: customerId }, select: { pricingTier: true } });
     const defaultTier = customer?.pricingTier ?? 1;
 
     // W7 gate: hide regulated products the buyer isn't licensed for on every product
@@ -32,7 +33,13 @@ export class BuyerDashboardService {
     // visibility service the catalog uses — so the dashboard can't drift and re-expose
     // a product the buyer would be blocked from buying at checkout.
     const { hiddenIds } = await this.visibility.computeGate(customerId, now);
-    const gateWhere = hiddenIds.size > 0 ? { trackedCategoryId: { notIn: [...hiddenIds] } } : {};
+    // NULL-safe form: `notIn` never matches NULL, so the old shape hid every
+    // UNTRACKED product from the dashboard rails once a license-gated
+    // category existed (see products.service.findAll for the full account).
+    const gateWhere =
+      hiddenIds.size > 0
+        ? { OR: [{ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } }] }
+        : {};
 
     // Run all queries in parallel
     const [
@@ -188,10 +195,8 @@ export class BuyerDashboardService {
         .map(async (f) => {
           const product = freqProductMap.get(f.productId!)!;
           const effectiveTier = cpMap.get(f.productId!) ?? defaultTier;
-          const thumbnailUrl =
-            product.imageKeys.length > 0
-              ? await this.storage.presignedUrl(product.imageKeys[0])
-              : null;
+          const thumbKey = firstSignableImageKey(f.productId!, product.imageKeys); // #2533
+          const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
           return {
             productId: product.id,
             name: product.name,
@@ -219,8 +224,8 @@ export class BuyerDashboardService {
     const newFromSeller = await Promise.all(
       newProducts.map(async (p) => {
         const effectiveTier = newCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,
@@ -246,8 +251,8 @@ export class BuyerDashboardService {
     const featuredItems = await Promise.all(
       featuredProducts.map(async (p) => {
         const effectiveTier = featCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,
@@ -317,8 +322,8 @@ export class BuyerDashboardService {
     const suggestedItems = await Promise.all(
       suggestedProducts.map(async (p) => {
         const effectiveTier = sugCpMap.get(p.id) ?? defaultTier;
-        const thumbnailUrl =
-          p.imageKeys.length > 0 ? await this.storage.presignedUrl(p.imageKeys[0]) : null;
+        const thumbKey = firstSignableImageKey(p.id, p.imageKeys); // #2533
+        const thumbnailUrl = thumbKey ? await this.storage.presignedUrl(thumbKey) : null;
         return {
           id: p.id,
           name: p.name,

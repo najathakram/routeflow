@@ -40,7 +40,7 @@ export type { SkeletonProps } from "./Skeleton";
 export { PageHeader } from "./PageHeader";
 export type { PageHeaderProps } from "./PageHeader";
 
-export { cn, mergeRefs } from "./utils";
+export { cn, mergeRefs, TAP_TARGET } from "./utils";
 
 export { Tabs } from "./Tabs";
 export type { TabsProps, Tab } from "./Tabs";

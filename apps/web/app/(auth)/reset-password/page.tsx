@@ -9,6 +9,7 @@ import { useSearchParams } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { PasswordInput, Button } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
+import { AuthShell } from "@/components/auth";
 
 // ─── Schema (matches the API's complexity policy) ─────────────────────────────
 
@@ -66,72 +67,58 @@ function ResetPasswordInner() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised p-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
-            RF
-          </div>
-          <h1 className="text-2xl font-bold text-navy">Choose a new password</h1>
+    <AuthShell audience="distributor" kicker="Distributor workspace" title="Choose a new password">
+      {!token ? (
+        <div className="flex flex-col gap-3 text-center">
+          <p className="text-sm text-navy">
+            This reset link is invalid or incomplete. Request a new one to continue.
+          </p>
+          <Link
+            href="/forgot-password"
+            className="text-sm font-medium text-brand-600 hover:underline"
+          >
+            Request a new reset link
+          </Link>
         </div>
-
-        <div className="rounded-xl bg-white p-6 shadow-card">
-          {!token ? (
-            <div className="flex flex-col gap-3 text-center">
-              <p className="text-sm text-navy">
-                This reset link is invalid or incomplete. Request a new one to continue.
-              </p>
-              <Link
-                href="/forgot-password"
-                className="text-sm font-medium text-brand-600 hover:underline"
-              >
-                Request a new reset link
+      ) : done ? (
+        <div className="rf-auth-success flex flex-col items-center gap-3 py-2 text-center">
+          <CheckCircle2 className="h-8 w-8 text-brand-500" />
+          <p className="text-sm font-medium text-navy">Password updated</p>
+          <p className="text-sm text-navy/70">
+            All previous sessions have been signed out. Sign in with your new password.
+          </p>
+          <Link href="/login" className="mt-1 text-sm font-medium text-brand-600 hover:underline">
+            Go to sign in
+          </Link>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
+          {apiError && (
+            <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+              {apiError}{" "}
+              <Link href="/forgot-password" className="font-medium underline">
+                Request a new link
               </Link>
-            </div>
-          ) : done ? (
-            <div className="flex flex-col items-center gap-3 py-2 text-center">
-              <CheckCircle2 className="h-8 w-8 text-brand-500" />
-              <p className="text-sm font-medium text-navy">Password updated</p>
-              <p className="text-sm text-navy/70">
-                All previous sessions have been signed out. Sign in with your new password.
-              </p>
-              <Link
-                href="/login"
-                className="mt-1 text-sm font-medium text-brand-600 hover:underline"
-              >
-                Go to sign in
-              </Link>
-            </div>
-          ) : (
-            <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4" noValidate>
-              {apiError && (
-                <p className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
-                  {apiError}{" "}
-                  <Link href="/forgot-password" className="font-medium underline">
-                    Request a new link
-                  </Link>
-                </p>
-              )}
-              <PasswordInput
-                label="New password"
-                autoComplete="new-password"
-                register={register("newPassword")}
-                error={errors.newPassword?.message}
-              />
-              <PasswordInput
-                label="Confirm new password"
-                autoComplete="new-password"
-                register={register("confirmPassword")}
-                error={errors.confirmPassword?.message}
-              />
-              <Button type="submit" loading={isSubmitting} className="mt-2 w-full">
-                Set new password
-              </Button>
-            </form>
+            </p>
           )}
-        </div>
-      </div>
-    </div>
+          <PasswordInput
+            label="New password"
+            autoComplete="new-password"
+            register={register("newPassword")}
+            error={errors.newPassword?.message}
+          />
+          <PasswordInput
+            label="Confirm new password"
+            autoComplete="new-password"
+            register={register("confirmPassword")}
+            error={errors.confirmPassword?.message}
+          />
+          <Button type="submit" loading={isSubmitting} className="rf-btn mt-2 w-full">
+            Set new password
+          </Button>
+        </form>
+      )}
+    </AuthShell>
   );
 }
 

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -20,14 +20,27 @@ import {
   Truck,
   Calendar,
   Download,
+  Printer,
   Mail,
   MessageCircle,
   Phone,
   Send,
   X,
 } from "lucide-react";
-import { Badge, Button, Card, cn, useToast, type BadgeStatus } from "@routeflow/ui/web";
+import {
+  Badge,
+  Button,
+  Card,
+  Modal,
+  Select,
+  cn,
+  TAP_TARGET,
+  useToast,
+  type BadgeStatus,
+} from "@routeflow/ui/web";
+import { orderLineName } from "@/lib/product-display";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useOrder,
   useUpdateOrderStatus,
@@ -38,11 +51,29 @@ import {
   useCustomerPriceHistory,
   useResolveChangeRequest,
   useCancelImpact,
+  usePatchOrderCommissionRate,
+  usePatchOrderFulfillPath,
   type OrderItem,
   type ItemUpdate,
   type CustomerPriceHistory,
+  type PriceType,
 } from "@/lib/api/orders";
+import { useAuth } from "@/lib/auth-context";
+import { useHasAddon } from "@/lib/api/tobacco";
+import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
+import {
+  OrderInlineReturnsSection,
+  type OrderInlineReturnsSectionHandle,
+} from "../_components/OrderInlineReturnsSection";
+import {
+  RETURN_SAVE_BLOCKED,
+  useOrderInlineReturnSave,
+} from "../_components/use-order-inline-return-save";
+import { OrderReturnsPanel } from "./_components/OrderReturnsPanel";
 import { describeCancelImpact } from "@/lib/cancel-impact";
+import { fmtCalendarDate, isInternalEmail } from "@/lib/formatting";
+import { formatMoney, formatQty } from "@/lib/format";
 import {
   describeChangeRequest,
   describeResolution,
@@ -51,25 +82,52 @@ import {
 } from "@/lib/change-requests";
 import { useCreateInvoiceFromOrder, useSendInvoice, useSendInvoiceEmail } from "@/lib/api/invoices";
 import { LicenseGuardModal } from "../_components/LicenseGuardModal";
+import { OrderLineItemsTable } from "./_components/OrderLineItemsTable";
+import { OrderLineItemCards } from "./_components/OrderLineItemCards";
+import { ActionTier } from "./_components/ActionTier";
+import { DemoteReasonModal } from "./_components/DemoteReasonModal";
+import { EditScanBar } from "./_components/EditScanBar";
+import {
+  findLockedUnitLineEdit,
+  LockedUnitLineBadge,
+  lockedUnitLineDisplay,
+  lockedUnitLineRefusal,
+  type LockedUnitLineDisplay,
+  LockedUnitLineError,
+  unitLineCount,
+} from "./_components/unit-line-lock";
 import { parseRegulatedAuthError, type BlockedCategory } from "@/lib/api/authorizations";
+import { parseSellingRestricted } from "@/lib/api/selling-restricted";
+import { BlockedLinesDialog } from "@/components/BlockedLinesDialog";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
+import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
 import {
   computeLineSubtotal,
-  formatQtySplit,
+  getTierPrice,
+  isSpecialTier,
+  needsOverrideReason,
   normalizeBoxesPieces,
   roundMoney,
-} from "@/lib/pricing";
+} from "@routeflow/pricing";
+import { useCustomer, useCustomerPrices } from "@/lib/api/customers";
 import { useMarginConfig, floorForCategory } from "@/lib/api/margin";
 import { MarginHint } from "@/components/MarginHint";
-import { MoneyInput } from "@/components/MoneyInput";
+import { MoneyInput, DecimalInput } from "@/components/MoneyInput";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
+import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import type { UnitOption } from "@/lib/unit-options";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -81,6 +139,13 @@ interface InvoiceModalData {
   customerPhone?: string | null;
   customerMobile?: string | null;
   customerEmail?: string | null;
+  /**
+   * #2089: true when `postDeliveryInvoicePrompt` returned "issue-and-send" — this
+   * is still a DRAFT, and `useSendInvoice`/`useSendInvoiceEmail` issue it
+   * (DRAFT → SENT) in the same call. The modal says so instead of "Mark as Sent",
+   * which would misleadingly imply it was already issued.
+   */
+  issuePrompt?: boolean;
 }
 
 function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
@@ -88,11 +153,12 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   const sendInvoice = useSendInvoice();
   const sendInvoiceEmail = useSendInvoiceEmail();
   const [pdfLoading, setPdfLoading] = React.useState(false);
+  const [printLoading, setPrintLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [emailSent, setEmailSent] = React.useState(false);
 
   const phone = data.customerMobile || data.customerPhone;
-  const totalFmt = `$${Number(data.total).toFixed(2)}`;
+  const totalFmt = formatMoney(data.total);
   const invoiceMsg = encodeURIComponent(
     `Hi ${data.customerName}, your invoice ${data.invoiceNumber} for ${totalFmt} is ready. Please let us know if you have any questions.`,
   );
@@ -133,14 +199,17 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
   async function handleDownload() {
     setPdfLoading(true);
     try {
-      // Two-step: ask the API to render the PDF, then fetch the bytes through
-      // the authenticated apiClient. Cannot `window.open(url)` directly — the
-      // storage endpoint requires a JWT (RF-075) and a top-level new-tab
-      // navigation has no token in localStorage scope, so it returns 401.
+      // Two-step: ask the API to render the PDF, then fetch the bytes.
+      // Cannot `window.open(url)` directly — the storage endpoint requires a
+      // JWT (RF-075) and a top-level new-tab navigation has no token in
+      // localStorage scope, so it returns 401. `fetchPdfBlob` (not bare
+      // apiClient — review finding F3) picks the right transport: same-origin
+      // → auth'd apiClient; external presigned URL → bare axios, so the JWT
+      // is never sent to a third-party host.
       const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
       if (!meta.data?.url) throw new Error("No PDF URL returned");
-      const pdfRes = await apiClient.get<Blob>(meta.data.url, { responseType: "blob" });
-      const blobUrl = URL.createObjectURL(pdfRes.data);
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = `invoice-${data.invoiceId}.pdf`;
@@ -156,20 +225,41 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
     }
   }
 
+  async function handlePrint() {
+    setPrintLoading(true);
+    try {
+      // Mirrors handleDownload's two-step fetch (RF-075 — the storage URL
+      // still requires a JWT; fetchPdfBlob, not bare apiClient — review
+      // finding F3), then hands the bytes to the shared print helper
+      // instead of triggering a download.
+      const meta = await apiClient.get<{ url: string }>(`/invoices/${data.invoiceId}/pdf`);
+      if (!meta.data?.url) throw new Error("No PDF URL returned");
+      const blob = await fetchPdfBlob(meta.data.url, apiClient);
+      printPdfBlob(blob);
+    } catch {
+      toast({ title: "Could not generate PDF", variant: "error" });
+    } finally {
+      setPrintLoading(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
       <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-start justify-between border-b border-surface-border px-5 py-4">
           <div>
-            <h2 className="text-base font-semibold text-navy">Invoice Ready</h2>
+            <h2 className="text-base font-semibold text-navy">
+              {data.issuePrompt ? "Issue & Send Invoice" : "Invoice Ready"}
+            </h2>
             <p className="mt-0.5 text-sm text-navy/70">
               {data.invoiceNumber} · {totalFmt} · {data.customerName}
             </p>
           </div>
           <button
             onClick={onClose}
-            className="rounded p-1 text-navy/70 hover:text-navy transition-colors"
+            title="Close"
+            className={cn(TAP_TARGET, "rounded text-navy/70 hover:text-navy transition-colors")}
           >
             <X className="h-4 w-4" />
           </button>
@@ -196,8 +286,14 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
                 )}
               </div>
               <div>
-                <p className="text-sm font-medium text-navy">Mark as Sent</p>
-                <p className="text-xs text-navy/70">Record invoice as sent to customer</p>
+                <p className="text-sm font-medium text-navy">
+                  {data.issuePrompt ? "Issue & Mark as Sent" : "Mark as Sent"}
+                </p>
+                <p className="text-xs text-navy/70">
+                  {data.issuePrompt
+                    ? "Issues the draft invoice and records it sent to customer"
+                    : "Record invoice as sent to customer"}
+                </p>
               </div>
             </button>
           )}
@@ -281,6 +377,25 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
               <p className="text-xs text-navy/70">Save a copy to your device</p>
             </div>
           </button>
+
+          {/* Print PDF */}
+          <button
+            onClick={handlePrint}
+            disabled={printLoading}
+            className="flex w-full items-center gap-3 rounded-xl border border-surface-border bg-white px-4 py-3 text-left transition-colors hover:bg-surface-raised disabled:opacity-50"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-raised">
+              {printLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin text-navy/70" />
+              ) : (
+                <Printer className="h-4 w-4 text-navy/70" />
+              )}
+            </div>
+            <div>
+              <p className="text-sm font-medium text-navy">Print</p>
+              <p className="text-xs text-navy/70">Open the print dialog</p>
+            </div>
+          </button>
         </div>
 
         {/* Footer */}
@@ -305,9 +420,15 @@ type ApiOrderStatus =
   | "CONFIRMED"
   | "OUT_FOR_DELIVERY"
   | "DELIVERED"
+  // Not (yet) rendered as its own status block below — included so the shared
+  // "Delete order" gate (renderDeleteOrderAction, further down this file) can
+  // compare against it without a type error; a route can leave an order
+  // PARTIALLY_DELIVERED and it must be treated as no-longer-open.
+  | "PARTIALLY_DELIVERED"
   | "CANCELLED";
 
-interface EditItemState {
+export interface EditItemState {
+  priceEdited?: boolean; // #2381: the operator typed this price (picker remounts keep it)
   id: string; // real DB id for existing items; temp "new-{uuid}" for new items
   isNew?: boolean;
   /** True for a free-text, non-catalog line (no productId; { name, qty, unitPrice }). */
@@ -315,6 +436,30 @@ interface EditItemState {
   originalProductId: string;
   originalProductName: string;
   originalQty: number;
+  /** SA-388 (unit-line-lock.tsx): no derivable count; lockedSubtotal = its stored money. */
+  countLocked?: boolean;
+  lockedDisplay?: LockedUnitLineDisplay; // #2266
+  lockedSubtotal?: number;
+  /** The line's own denomination, restored when a substitution is undone (a
+   *  substitute re-denominates the line against ITS case size). */
+  originalUnitsPerBox?: number | null;
+  originalBoxSplit?: boolean;
+  /** The line's own price, restored alongside the denomination when a
+   *  substitution is undone — otherwise the original product would save at the
+   *  SUBSTITUTE's price (the UPDATE branch sees `priceChanged` and sends it). */
+  originalUnitPrice?: number;
+  originalBasePrice?: number;
+  originalOverrideReason?: string;
+  /** B465 fix round 5: the reason-required baseline for THIS session, separate
+   *  from originalUnitPrice (which Undo restores the line's own price from —
+   *  see restoredPrice). Set to the substitute's own resolved tier price at
+   *  substitution time so needsSpecialTierReason compares against a fresh
+   *  starting point, not the REPLACED product's price; cleared on Undo so the
+   *  comparison falls back to originalUnitPrice again. Reusing
+   *  originalUnitPrice itself for this (round 4) broke Undo: restoring it to
+   *  the substitute's price left Undo unable to restore the pre-substitution
+   *  price, silently repricing the line. */
+  reasonBaselinePrice?: number;
   productId: string;
   productName: string;
   qty: number;
@@ -334,6 +479,22 @@ interface EditItemState {
   /** True when the loaded line was stored with a box/piece split (qty is in
    *  pieces). Gates boxed proration so selling-unit lines aren't misread. */
   boxSplit?: boolean;
+  /** BUY_N_GET_M snapshot on the loaded line + the whole selling-unit count it
+   *  was earned at. The preview MUST net these off or a BOGO line shows at full
+   *  price and disagrees with both the stored subtotal and the server on save. */
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+  /** units_v1: the product's PACK unit label (e.g. "Box") — the `OrderLineUnitPicker`'s
+   *  fallback pack-option label. Unrelated to `unitLabel` below. */
+  unit?: string;
+  /** units_v1, STAFF ONLY: set when this line sells by a named unit (Case, Pallet,
+   *  Piece…) — `qty` is then the COUNT of that unit (never expanded pieces) and
+   *  `boxSplit` is forced false (a unit line is a plain qty*unitPrice line, since
+   *  unitPrice is already per-unit). Undefined = the pack, today's behavior. */
+  unitLabel?: string;
+  /** Needed only by `OrderLineUnitPicker` (auto-refresh-on-tier-change effect) —
+   *  mirrors the server's stored `priceType`, not otherwise read on this page. */
+  priceType?: PriceType;
 }
 
 // ─── Boxed proration helpers ──────────────────────────────────────────────────
@@ -367,13 +528,299 @@ function boxedDtoFields(it: { qty: number; unitsPerBox?: number | null; boxSplit
   return boxes != null ? { boxes, pieces: pieces ?? 0 } : {};
 }
 
+/**
+ * The substitution payload — shared by BOTH save paths (Save Draft/Save and
+ * Save & Publish) so they can never drift apart again.
+ *
+ * Carries the box split (already re-denominated against the SUBSTITUTE's case
+ * size when the product was picked, so the split the server prices is the one
+ * the preview shows — a bare `qty` bills the substitute's BOX price per piece)
+ * plus any operator override in EITHER direction. Mirrors mobile's
+ * `buildOrderItemDiff` substitute branch exactly; the server maps below-base to
+ * DISCOUNTED and above-base to MANUAL, so dropping an upsell here would silently
+ * bill the substitute's list price.
+ */
+function substituteDtoUpdate(it: EditItemState): ItemUpdate {
+  return {
+    id: it.id,
+    substituteProductId: it.substituteProductId,
+    qty: it.qty,
+    ...boxedDtoFields(it),
+    ...(isPriceOverridden(it)
+      ? { unitPrice: it.unitPrice, overrideReason: it.overrideReason }
+      : {}),
+  };
+}
+
+/** An override is any net unit price DIVERGING from the line's base — a discount
+ *  below it or an operator upsell above it (same EPS test as `PriceEditRow` and
+ *  mobile's `buildOrderItemDiff`; a downward-only test drops upsells). */
+function isPriceOverridden(it: { unitPrice: number; basePrice: number }): boolean {
+  return Math.abs(it.unitPrice - it.basePrice) > 0.0001;
+}
+
+/**
+ * B465 (Opus BLOCK item 2, client half): a SPECIAL-tier line's price is this
+ * customer's documented contract price — the server now REFUSES a price
+ * CHANGE on one with no reason (400), so the client must never let the
+ * operator reach that refusal: catalog/unlisted lines keep an optional
+ * reason, a SPECIAL-tier line whose price is being CHANGED this session
+ * needs one before save.
+ *
+ * Fix round 3 (Opus BLOCK): this must key on `unitPrice !== originalUnitPrice`
+ * (this SESSION's own edit), never `isPriceOverridden` (`unitPrice !==
+ * basePrice`, the tier/list reference price) — a SPECIAL line's stored price
+ * is ALREADY below/above its `basePrice` by design (that's what "SPECIAL tier"
+ * means), so the old check flagged every untouched SPECIAL line as needing a
+ * fresh reason and blocked every save that merely touched a DIFFERENT line.
+ * `originalUnitPrice` is seeded to the line's own starting price for BOTH an
+ * existing line (its stored unitPrice, :1794/:1949) and a fresh add (its
+ * initial resolved price, :1062) — undefined only defensively, where there is
+ * no baseline to compare against and therefore nothing provably changed.
+ */
+export function needsSpecialTierReason(
+  it: {
+    unitPrice: number;
+    originalUnitPrice?: number;
+    /** B465 fix round 5: a substitution's own baseline, when set, wins over
+     *  originalUnitPrice (Undo's restore point for the REPLACED product's
+     *  price — never the comparison basis for a line that's since been
+     *  substituted). See reasonBaselinePrice on EditItemState. */
+    reasonBaselinePrice?: number;
+    overrideReason?: string;
+    isUnlisted?: boolean;
+  },
+  isSpecial: boolean,
+): boolean {
+  const baseline = it.reasonBaselinePrice ?? it.originalUnitPrice;
+  if (it.isUnlisted || baseline == null) return false;
+  // #2696(c) SA-558b(4): the server's own predicate with THIS act's baseline — the stored price
+  // (and the reason on file, seeded into overrideReason) for an existing line, the tier price for
+  // an add or a substitution; ½¢ tolerance, the server's.
+  return needsOverrideReason({
+    overridePrice: it.unitPrice,
+    baselinePrice: baseline,
+    isSpecialTier: isSpecial,
+    hasReason: !!(it.overrideReason ?? "").trim(),
+  });
+}
+
+/**
+ * The line's own price, for the Undo handlers. Substituting rewrites unitPrice /
+ * basePrice / overrideReason to the SUBSTITUTE's; without this an abandoned
+ * substitution leaves the original product carrying the substitute's price, and
+ * the plain UPDATE branch (which fires on `priceChanged`) saves it.
+ */
+function restoredPrice(it: EditItemState): Partial<EditItemState> {
+  return {
+    ...(it.originalUnitPrice != null ? { unitPrice: it.originalUnitPrice } : {}),
+    ...(it.originalBasePrice != null ? { basePrice: it.originalBasePrice } : {}),
+    overrideReason: it.originalOverrideReason,
+    // B465 fix round 5: undoing a substitution must drop the substitute's own
+    // reason-required baseline too — the comparison falls back to
+    // originalUnitPrice (just restored above), the REPLACED product's own
+    // stored price, exactly as if the substitution never happened.
+    reasonBaselinePrice: undefined,
+  };
+}
+
+/**
+ * Build one edit-state row from a loaded order line — shared by the DRAFT auto-enter effect and
+ * `enterEditMode` so the two seeding sites can never drift (A3-2).
+ *
+ * units_v1: a unit-aware line's COUNT lives in the server's `boxes` field (unit-line-build.ts
+ * stores `boxes: count, qty: count * unitsPerBox` — `boxes` is never a physical box for these
+ * lines). `qty` here is seeded to that COUNT, never the stored base-piece total, and `boxSplit`
+ * is forced false so `boxedDtoFields`/`editLineSubtotal` treat it as a plain qty*unitPrice line —
+ * correct, since `unitPrice` on a unit line is already PER UNIT (mirrors the existing "a boxed
+ * line added without a split keeps qty in selling units" convention just above).
+ */
+export function buildEditItemFromLine(li: OrderItem): EditItemState {
+  const isUnlisted = !li.productId;
+  const label = orderLineName(li) ?? li.productId ?? "Custom item";
+  const isUnitLine = li.unitLabel != null;
+  // SA-388: count ONLY from unitLineCount; null = LOCKED (seeded 0, never sent — see backstop).
+  const unitCount = isUnitLine ? unitLineCount(li) : null;
+  const countLocked = isUnitLine && unitCount == null;
+  const count = isUnitLine ? (unitCount ?? 0) : Math.round(Number(li.qty));
+  return {
+    id: li.id,
+    isUnlisted,
+    originalProductId: li.productId ?? "",
+    originalProductName: label,
+    originalQty: count,
+    ...(countLocked
+      ? {
+          countLocked: true,
+          lockedSubtotal: Number(li.subtotal ?? 0),
+          lockedDisplay: lockedUnitLineDisplay(li),
+        }
+      : {}),
+    productId: li.productId ?? "",
+    productName: label,
+    qty: count,
+    unitPrice: Number(li.unitPrice),
+    basePrice: Number(li.originalPrice ?? li.unitPrice),
+    originalUnitPrice: Number(li.unitPrice),
+    originalBasePrice: Number(li.originalPrice ?? li.unitPrice),
+    originalOverrideReason: li.overrideReason ?? undefined,
+    cancelled: false,
+    notes: li.notes,
+    overrideReason: li.overrideReason ?? undefined,
+    unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
+    // Prefer the line's sale-time box-size snapshot over the live product.
+    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    originalUnitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+    category: li.product?.category ?? null,
+    boxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    originalBoxSplit: isUnitLine ? false : li.boxes != null || li.pieces != null,
+    // BUY_N_GET_M snapshot + the whole-unit count it was earned at.
+    promoFreeUnits: li.promoFreeUnits ?? null,
+    // SA-378/388: unit line = unitLineCount (0 if LOCKED); PACK keeps boxes (boxes:0+pieces ⇒ 0).
+    promoBaseUnits: li.promoFreeUnits
+      ? Math.trunc(Number(isUnitLine ? unitCount : li.boxes != null ? li.boxes : li.qty) || 0)
+      : null,
+    unit: li.product?.unit ?? "",
+    unitLabel: li.unitLabel ?? undefined,
+    priceType: li.priceType,
+  };
+}
+
+/**
+ * The line-item diff for the edit builder — the ONE payload builder both save paths use ("Save
+ * Draft"/"Save Changes" and "Save & Publish"), so publishing can never bill differently from
+ * saving. Deletes are added by the caller. `original` is the order's own stored lines (money-
+ * critical: never re-derive this from `items`, which is this SESSION's edited copy).
+ *
+ * units_v1 (A3-2): a unit line's `qty` is seeded (buildEditItemFromLine) and edited as the COUNT
+ * of the named unit, never expanded pieces — so its UPDATE payload sends `{ id, qty, unitLabel }`
+ * with `boxes`/`pieces` omitted (boxedDtoFields already returns {} once boxSplit is false) and
+ * `productId` alongside `unitLabel` so the server preloads the product/ladder for the edit (a
+ * bare `{id, qty, unitLabel}` against a line the server doesn't already know is unit-aware would
+ * otherwise silently discard the label — filed separately, not fixed here). `qtyChanged` compares
+ * against the STORED line's own count (`unitLineCount(orig)`) for a unit line, never its
+ * base-piece `qty`.
+ */
+export function buildItemUpdates(items: EditItemState[], original: OrderItem[]): ItemUpdate[] {
+  const updates: ItemUpdate[] = [];
+
+  for (const edited of items) {
+    // A line is overridden when its net unit price diverges from the list/base
+    // price in EITHER direction (discount or upsell) — see isPriceOverridden.
+    const overridden = isPriceOverridden(edited);
+    const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
+    if (edited.isNew) {
+      if (edited.isUnlisted) {
+        // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
+        updates.push({
+          name: edited.productName.trim(),
+          qty: edited.qty,
+          unitPrice: edited.unitPrice,
+          ...newNote,
+        });
+      } else {
+        // New catalog item: no id — API will create it. Carry the override when present.
+        updates.push({
+          productId: edited.productId,
+          qty: edited.qty,
+          ...boxedDtoFields(edited),
+          ...(edited.unitLabel ? { unitLabel: edited.unitLabel } : {}),
+          ...(overridden
+            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+            : {}),
+          ...newNote,
+        });
+      }
+      continue;
+    }
+    const orig = original.find((li) => li.id === edited.id);
+    if (!orig) continue;
+
+    // SA-388 backstop: a LOCKED line's edit never becomes a request (cancel is fine: no qty).
+    if (!edited.cancelled && findLockedUnitLineEdit([edited], [orig])) {
+      throw new LockedUnitLineError(edited.productName || "This line");
+    }
+    const origQty =
+      orig.unitLabel != null ? (unitLineCount(orig) ?? edited.originalQty) : Number(orig.qty);
+    const qtyChanged = Math.abs(edited.qty - origQty) > 0.0001;
+    const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
+    const nameChanged = edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
+    // "" clears an existing note (the API only applies notes when defined).
+    const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
+    const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
+
+    if (edited.cancelled) {
+      updates.push({ id: edited.id, action: "CANCEL" });
+    } else if (edited.substituteProductId) {
+      updates.push(substituteDtoUpdate(edited));
+    } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
+      // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
+      updates.push({
+        id: edited.id,
+        qty: edited.qty,
+        ...(nameChanged ? { name: edited.productName.trim() } : {}),
+        ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
+        ...notePatch,
+      });
+    } else if (qtyChanged || priceChanged || noteChanged) {
+      updates.push({
+        id: edited.id,
+        action: "UPDATE",
+        qty: edited.qty,
+        ...boxedDtoFields(edited),
+        ...(edited.unitLabel ? { unitLabel: edited.unitLabel, productId: edited.productId } : {}),
+        ...(priceChanged
+          ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
+          : {}),
+        ...notePatch,
+      });
+    }
+  }
+  return updates;
+}
+
+/**
+ * BUY_N_GET_M free units for the edit preview, rescaled when the operator edits
+ * the qty: the snapshot was earned at `promoBaseUnits` whole selling units, so a
+ * shrunk line earns proportionally fewer and a grown one never earns MORE than
+ * was agreed (mirrors the order engine's `rescaleBogoFreeUnits` fallback and the
+ * invoice edit form). Capped at units − 1 — the buyer always pays the N in every
+ * (N + M). A pending SUBSTITUTION earns nothing: the snapshot belongs to the
+ * product being replaced, and undoing the substitution restores it.
+ */
+export function editLineFreeUnits(it: {
+  qty: number;
+  unitsPerBox?: number | null;
+  boxSplit?: boolean;
+  substituteProductId?: string;
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+}): number {
+  if (it.substituteProductId) return 0;
+  const stored = Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0));
+  if (stored <= 0) return 0;
+  const { boxes } = editBoxedSplit(it);
+  const units = Math.trunc(Number(boxes != null ? boxes : it.qty) || 0);
+  if (units <= 0) return 0;
+  const base = Math.max(0, Math.trunc(Number(it.promoBaseUnits ?? units) || 0));
+  const earned = base > 0 ? Math.floor((stored * units) / base) : stored;
+  return Math.min(stored, earned, units - 1);
+}
+
 /** Boxed-aware line subtotal for the edit preview (matches server pricing). */
 function editLineSubtotal(it: {
   unitPrice: number;
   qty: number;
   unitsPerBox?: number | null;
   boxSplit?: boolean;
+  substituteProductId?: string;
+  promoFreeUnits?: number | null;
+  promoBaseUnits?: number | null;
+  countLocked?: boolean;
+  lockedSubtotal?: number;
 }): number {
+  // SA-388: a LOCKED line previews its stored money, never a qty-0 recompute (order total).
+  if (it.countLocked) return it.lockedSubtotal ?? 0;
   const { boxes, pieces } = editBoxedSplit(it);
   return computeLineSubtotal({
     unitPrice: it.unitPrice,
@@ -381,87 +828,118 @@ function editLineSubtotal(it: {
     boxes,
     pieces,
     unitsPerBox: it.unitsPerBox ?? null,
+    // BUY_N_GET_M: free whole units come off before pricing, exactly like the
+    // server — a plain qty*unitPrice previews a BOGO line at full price.
+    freeUnits: editLineFreeUnits(it),
   });
 }
 
-// ─── Demote reason modal ──────────────────────────────────────────────────────
+// ─── Commission rate override (staff + sales_agents addon only) ───────────────
 
-function DemoteReasonModal({
+function CommissionEditModal({
   open,
   onClose,
-  onConfirm,
-  loading,
-  targetStatus,
+  orderId,
+  currentValue,
 }: {
   open: boolean;
   onClose: () => void;
-  onConfirm: (reason: string) => void;
-  loading: boolean;
-  targetStatus: string;
+  orderId: string;
+  currentValue: number | null;
 }) {
-  const [reason, setReason] = React.useState("");
-
-  const label: Record<string, string> = {
-    PENDING: "Return to Pending",
-    CONFIRMED: "Return to Confirmed",
-  };
-  const description: Record<string, string> = {
-    PENDING: "Why is this order being returned to pending?",
-    CONFIRMED: "Why is this order being returned to confirmed?",
-  };
+  const { toast } = useToast();
+  const patchCommission = usePatchOrderCommissionRate();
+  const [value, setValue] = React.useState<number | null>(currentValue);
 
   React.useEffect(() => {
-    if (open) setReason("");
-  }, [open]);
+    if (open) setValue(currentValue);
+  }, [open, currentValue]);
 
-  if (!open) return null;
+  // The server resyncs every issued invoice of the order in the same tx
+  // (setCommissionRate → syncOrderInvoices) — this just refetches via the
+  // hook's invalidation; it never predicts the ledger effect client-side.
+  const save = (commissionRatePct: number | null) => {
+    patchCommission.mutate(
+      { id: orderId, commissionRatePct },
+      {
+        onSuccess: () => {
+          toast({ title: "Commission rate updated", variant: "success" });
+          onClose();
+        },
+      },
+    );
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl">
-        <div className="border-b border-surface-border px-5 py-4">
-          <h2 className="text-base font-semibold text-navy">
-            {label[targetStatus] ?? "Change Status"}
-          </h2>
-          <p className="mt-1 text-sm text-navy/70">
-            {description[targetStatus] ?? "Reason for this status change."}
-          </p>
-        </div>
-        <div className="px-5 py-4">
-          <label className="block text-sm font-medium text-navy/80 mb-1.5">Reason</label>
-          <textarea
-            className="w-full resize-none rounded-lg border border-surface-border bg-surface-raised px-3 py-2 text-sm text-navy placeholder:text-navy/30 focus:outline-none focus:ring-2 focus:ring-brand-500"
-            rows={3}
-            placeholder="e.g. Customer called to request a change..."
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-        </div>
-        <div className="flex justify-end gap-2 border-t border-surface-border px-5 py-3">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={loading}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Commission rate override"
+      description="Percent of the goods subtotal for this order only. 0 = exempt (no commission); blank = the customer/agent default rate."
+      className="max-w-sm"
+      footer={
+        <>
+          <Button variant="ghost" size="sm" onClick={onClose} disabled={patchCommission.isPending}>
             Cancel
           </Button>
           <Button
+            variant="secondary"
             size="sm"
-            onClick={() => onConfirm(reason)}
-            disabled={!reason.trim()}
-            loading={loading}
+            onClick={() => save(null)}
+            disabled={patchCommission.isPending}
           >
-            Confirm
+            Clear override
           </Button>
-        </div>
+          <Button size="sm" onClick={() => save(value)} loading={patchCommission.isPending}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-1">
+        <label className="block text-xs font-medium text-navy/70" htmlFor="order-commission-rate">
+          Commission rate %
+        </label>
+        <DecimalInput
+          id="order-commission-rate"
+          value={value}
+          onChange={setValue}
+          decimals={2}
+          min={0}
+          max={100}
+          placeholder="Agent / customer default"
+          className="h-10 w-full rounded border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
       </div>
-    </div>
+    </Modal>
   );
 }
 
 // ─── Substitute product picker ────────────────────────────────────────────────
 
+/**
+ * A picker row. `unitsPerBox` comes along so the caller can re-denominate the
+ * line against the SUBSTITUTE's case size (the server prices the split with it,
+ * not the replaced product's), and the tier ladder so it can resolve THIS
+ * customer's price for the substitute instead of billing list.
+ */
+interface SubstituteOption {
+  id: string;
+  name: string;
+  sku?: string;
+  pricePerUnit: number;
+  unitsPerBox?: number | null;
+  priceTier2?: number | string | null;
+  priceTier3?: number | string | null;
+  priceTier4?: number | string | null;
+  priceTier5?: number | string | null;
+}
+
 function SubstitutePicker({
   onSelect,
   onClose,
 }: {
-  onSelect: (product: { id: string; name: string; sku?: string; pricePerUnit: number }) => void;
+  onSelect: (product: SubstituteOption) => void;
   onClose: () => void;
 }) {
   const [search, setSearch] = React.useState("");
@@ -490,7 +968,7 @@ function SubstitutePicker({
         {data?.data?.length === 0 && (
           <p className="px-3 py-2 text-sm text-navy/70">No products found.</p>
         )}
-        {data?.data?.map((p: { id: string; name: string; sku?: string; pricePerUnit: number }) => (
+        {data?.data?.map((p: SubstituteOption) => (
           <button
             key={p.id}
             className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-surface-raised"
@@ -503,7 +981,7 @@ function SubstitutePicker({
               <span className="font-medium text-navy">{p.name}</span>
               {p.sku && <span className="ml-2 text-xs text-navy/70">{p.sku}</span>}
             </div>
-            <span className="text-xs text-navy">${Number(p.pricePerUnit).toFixed(2)}</span>
+            <span className="text-xs text-navy">{formatMoney(p.pricePerUnit)}</span>
           </button>
         ))}
       </div>
@@ -525,21 +1003,32 @@ function SubstitutePicker({
 function PriceEditRow({
   basePrice,
   unitPrice,
+  originalUnitPrice,
   overrideReason,
   onPriceChange,
   onReasonChange,
   unitCost,
   unitsPerBox,
   floor,
+  isSpecial,
 }: {
   basePrice: number;
   unitPrice: number;
+  /** B465 fix round 3: this line's OWN price when the edit session started —
+   *  the reason-required check keys on THIS diverging from `unitPrice`, never
+   *  on `overridden` (unitPrice vs `basePrice`, the tier/list reference) — a
+   *  SPECIAL line's stored price is already below/above basePrice by design,
+   *  so that comparison flagged every untouched SPECIAL line. */
+  originalUnitPrice?: number;
   overrideReason?: string;
   onPriceChange: (netPrice: number) => void;
   onReasonChange: (reason: string) => void;
   unitCost?: number | null;
   unitsPerBox?: number | null;
   floor?: number;
+  /** B465: this customer's documented contract price for the product — a
+   *  reason is REQUIRED to override it, never optional like a plain line. */
+  isSpecial?: boolean;
 }) {
   // "Sell anyway" acknowledges a below-floor price for this session; the override
   // is logged via overrideReason so reports can isolate below-floor sales.
@@ -571,6 +1060,20 @@ function PriceEditRow({
 
   const overridden = Math.abs(unitPrice - basePrice) > 0.0001;
   const isUpsell = unitPrice > basePrice + 0.0001;
+  // B465 fix round 3: the reason-REQUIRED state is scoped to a price this
+  // session actually changed — never to `overridden` alone, which a SPECIAL
+  // line trips just by being priced at its (correct, untouched) tier rate.
+  const priceChangedThisSession =
+    originalUnitPrice != null && Math.abs(unitPrice - originalUnitPrice) > 0.0001;
+  const reasonRequired = !!isSpecial && priceChangedThisSession;
+  // #815 proof-run finding: the block below (was-$X/upsell badge + reason input) used
+  // to render ONLY on `overridden` (vs basePrice) — so repricing a SPECIAL line to
+  // EXACTLY the list price made `overridden` false and hid the reason field entirely,
+  // even though `reasonRequired` (vs originalUnitPrice, a DIFFERENT baseline) was still
+  // true and the server still 400s without one. The render gate below is
+  // `overridden || reasonRequired`; the was-$X/upsell badge itself stays scoped to
+  // `overridden` alone (showing "was $10.00" when the price literally is $10.00 would
+  // be nonsensical).
 
   return (
     <div className="ml-11 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
@@ -597,25 +1100,40 @@ function PriceEditRow({
           />
         </span>
       </label>
-      {overridden && (
+      {(overridden || reasonRequired) && (
         <>
-          {isUpsell ? (
-            // Upsell: green "+$X" instead of a struck-through "was" (which would
-            // read as a discount). The base is hidden from the customer server-side.
-            <span className="font-medium text-emerald-600">
-              Upsell +${(unitPrice - basePrice).toFixed(2)}
-            </span>
-          ) : (
-            <span className="text-navy/50">
-              was <span className="line-through">${basePrice.toFixed(2)}</span>
-            </span>
-          )}
+          {overridden &&
+            (isUpsell ? (
+              // Upsell: green "+$X" instead of a struck-through "was" (which would
+              // read as a discount). The base is hidden from the customer server-side.
+              <span className="font-medium text-emerald-600">
+                Upsell +${(unitPrice - basePrice).toFixed(2)}
+              </span>
+            ) : (
+              <span className="text-navy/50">
+                was <span className="line-through">${basePrice.toFixed(2)}</span>
+              </span>
+            ))}
           <input
             type="text"
             value={overrideReason ?? ""}
             onChange={(e) => onReasonChange(e.target.value)}
-            placeholder="reason (optional)"
-            className="min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            // B465: a SPECIAL-tier line's contract price can only be CHANGED
+            // with a documented reason — the server refuses the save
+            // otherwise (400), so this reads as required, never optional,
+            // but ONLY while this session is actually changing the price
+            // (reasonRequired) — an untouched SPECIAL line, or one whose
+            // price reverted back to its original value, is not a repricing
+            // attempt and keeps the reason optional like any other line.
+            placeholder={reasonRequired ? "reason (required)" : "reason (optional)"}
+            required={reasonRequired}
+            aria-required={reasonRequired}
+            aria-invalid={reasonRequired && !overrideReason?.trim() ? true : undefined}
+            className={
+              reasonRequired && !overrideReason?.trim()
+                ? "min-w-0 flex-1 rounded border border-danger bg-danger-bg/30 px-2 py-1 text-navy outline-none ring-1 ring-danger placeholder:text-danger/70"
+                : "min-w-0 flex-1 rounded border border-surface-border bg-white px-2 py-1 text-navy outline-none placeholder:text-navy/40"
+            }
           />
         </>
       )}
@@ -642,13 +1160,17 @@ function PriceEditRow({
   );
 }
 
-function EditableLineItems({
+export function EditableLineItems({
   items,
   onChange,
   onAdd,
   onDelete,
   canEditPrice,
   priceHistory,
+  tierPriceFor,
+  isSpecialTierFor,
+  tierForProductId,
+  pricingReady,
 }: {
   items: EditItemState[];
   onChange: (items: EditItemState[]) => void;
@@ -660,7 +1182,21 @@ function EditableLineItems({
   canEditPrice: boolean;
   /** Remembered per-customer prices — pre-fills a scanned line's price. */
   priceHistory?: CustomerPriceHistory;
+  /** This customer's contracted price for a product (per-product tier override,
+   *  else the customer's tier). Mirrors mobile's `tierPriceFor`. */
+  tierPriceFor: (product: SubstituteOption) => number;
+  /** True when this customer's effective tier for the product is not tier 1 — a
+   *  contracted price a stale remembered price must never outrank. */
+  isSpecialTierFor: (product: SubstituteOption) => boolean;
+  /** units_v1: the EFFECTIVE numeric tier (1-5) for a product — `OrderLineUnitPicker` resolves
+   *  the ladder price at this tier, same source as `isSpecialTierFor`. */
+  tierForProductId: (productId: string) => number;
+  /** B62 (REG-B62): false while customer/customer-price queries are in flight —
+   *  gates the add-product control and the Substitute trigger so neither can
+   *  bake a list price before the customer's contracted tier is known. */
+  pricingReady: boolean;
 }) {
+  const { toast } = useToast();
   // Scroll the just-scanned/added row into view so rapid scanning stays visible.
   const rowRefs = React.useRef<Map<string, HTMLDivElement>>(new Map());
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
@@ -698,11 +1234,23 @@ function EditableLineItems({
   });
   const products: any[] = (productsData as any)?.data ?? [];
 
-  // Auto-focus the scan input when the component mounts (edit mode opened)
+  // Auto-focus the scan input when the component mounts (edit mode opened) so a
+  // wedge scanner's keystrokes land in it straight away. B62 (REG-B62): the
+  // input is `disabled` until `pricingReady`, and focus() on a disabled input
+  // is a no-op — so this re-runs when pricing settles. It only claims focus
+  // while nothing else holds it (ux-spec: no focus stealing when the controls
+  // enable), so an operator who clicked elsewhere during the wait keeps it.
   React.useEffect(() => {
-    const t = setTimeout(() => addInputRef.current?.focus(), 100);
+    if (!pricingReady) return;
+    const t = setTimeout(() => {
+      const el = addInputRef.current;
+      if (!el || el.disabled) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== el) return;
+      el.focus();
+    }, 100);
     return () => clearTimeout(t);
-  }, []);
+  }, [pricingReady]);
 
   React.useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -719,11 +1267,20 @@ function EditableLineItems({
       onChange(items.map((it) => (it.id === existing.id ? { ...it, qty: it.qty + 1 } : it)));
       setScrollToId(existing.id);
     } else {
-      // Pre-fill the remembered price for this customer + product (carry a prior
-      // discount OR upsell forward); fall back to catalog.
-      const catalog = Number(p.pricePerUnit ?? 0);
+      // This customer's contracted price is the line's BASE — pinning the base
+      // to list made every tier add look like an operator override, so the
+      // server stored it MANUAL instead of resolving the tier as SPECIAL.
+      // Pre-fill the remembered price over it only when it is a genuine
+      // discount (below the tier price) or upsell (above list) and no
+      // contracted tier applies — a stale memory must never outrank a tier
+      // price. Mirrors mobile's `addPickedToDraft`.
+      const list = Number(p.pricePerUnit ?? 0);
+      const base = tierPriceFor(p);
       const hist = priceHistory?.[p.id];
-      const startPrice = hist ? hist.lastPrice : catalog;
+      const startPrice =
+        !isSpecialTierFor(p) && hist != null && (hist.lastPrice < base || hist.lastPrice > list)
+          ? hist.lastPrice
+          : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
       onAdd({
         id: newId,
@@ -735,20 +1292,31 @@ function EditableLineItems({
         productName: p.name,
         qty: 1,
         unitPrice: startPrice,
-        basePrice: catalog,
+        basePrice: base,
+        originalUnitPrice: startPrice,
+        originalBasePrice: base,
+        // Carry the case size so a later substitution re-denominates this
+        // line's selling-unit qty correctly (boxSplit stays unset — a plain
+        // new line still bills in selling units and sends no split).
+        unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
+        originalUnitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
         cancelled: false,
+        // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
+        unit: p.unit ?? "",
+        priceType: isSpecialTierFor(p) ? "SPECIAL" : "STANDARD",
       });
       setScrollToId(newId);
     }
     setAddSearch("");
     setAddOpen(false);
-    // Refocus for next scan — use two timeouts: first after state settles, second as fallback
-    setTimeout(() => addInputRef.current?.focus(), 80);
-    setTimeout(() => addInputRef.current?.focus(), 200);
+    // Refocus for next scan — two tries: first after state settles, second as fallback. Each
+    // is guarded on its own (B744): never taken from a note or qty field the operator is in.
+    scheduleScannerRefocus(addInputRef, [80, 200]);
   }
 
-  async function handleScanEnter() {
-    const code = addSearch.trim();
+  // #2715 PR-1: one resolve path for the field's Enter AND the shared scanner button (camera + wedge).
+  async function handleScanCode(raw: string) {
+    const code = raw.trim();
     if (!code) return;
     setAddLoading(true);
     try {
@@ -756,6 +1324,17 @@ function EditableLineItems({
       // Replaces the inline copy that swallowed 5xx/network as "not found" and
       // skipped unitSku on the exact-match check.
       const result = await resolveProductByCode(code);
+      if (result.archived) {
+        // F30 / R5: resolved, but retired. Don't add it, and don't offer
+        // "create product" for something the catalog already has — say what it
+        // is and keep the code selected for the next scan.
+        toast({
+          variant: "error",
+          title: `${result.product?.name || "Item"} is archived — reactivate to sell`,
+        });
+        scheduleScannerRefocus(addInputRef, 50, { select: true });
+        return;
+      }
       if (!result.notFound && result.product) {
         if (result.ambiguous) {
           // Several substring hits — this surface has always offered the
@@ -763,7 +1342,7 @@ function EditableLineItems({
           // next wedge scan (which types) overwrites it instead of appending:
           // the operator can pick a row OR just scan the next label.
           setAddOpen(true);
-          setTimeout(() => addInputRef.current?.select(), 50);
+          scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
         addProduct(result.product);
@@ -775,7 +1354,7 @@ function EditableLineItems({
     } catch {
       // Network / 5xx: keep the code selected for an easy rescan; don't treat
       // a transient failure as "product doesn't exist".
-      setTimeout(() => addInputRef.current?.select(), 50);
+      scheduleScannerRefocus(addInputRef, 50, { select: true });
     } finally {
       setAddLoading(false);
     }
@@ -783,6 +1362,39 @@ function EditableLineItems({
 
   function update(id: string, patch: Partial<EditItemState>) {
     onChange(items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+
+  /**
+   * units_v1 (A3-2): apply a `OrderLineUnitPicker` choice. `qty` becomes the COUNT of the chosen
+   * unit (never expanded pieces — buildItemUpdates sends it straight through as `qty`), `boxSplit`
+   * is forced false (a unit line is a plain qty*unitPrice line), and any pack-line override is
+   * cleared (a fresh unit assignment starts at the ladder's own price, matching CreateOrderModal's
+   * `applyLineUnit`). "Back to pack" (`option.kind === "pack"`) is a deliberate no-op here: this
+   * row was loaded from the server with no pack-price snapshot to restore (no client pricing math
+   * — reconstructing one would need the product's own ladder here, not just this line's state).
+   *
+   * `reasonBaselinePrice` is set to the NEW unit's own resolved price — same B465 pattern
+   * substitution already uses (see `restoredPrice`/`needsSpecialTierReason`): a unit switch jumps
+   * `unitPrice` from the pack's price to a differently-priced unit's, which is not an operator
+   * override and must never demand a reason on its own; only a manual price typed ON TOP of this
+   * new baseline (via `PriceEditRow`) should.
+   */
+  function setLineUnit(id: string, option: UnitOption, refresh: boolean) {
+    if (option.kind === "pack") return;
+    const current = items.find((it) => it.id === id);
+    if (!current) return;
+    update(id, {
+      unitLabel: option.value,
+      unit: option.label,
+      unitsPerBox: option.factorToBase,
+      boxSplit: false,
+      qty: refresh && current.unitLabel === option.value ? current.qty : 1,
+      unitPrice: option.price,
+      basePrice: option.listPrice,
+      overrideReason: undefined,
+      reasonBaselinePrice: option.price,
+      priceEdited: false, // #2381: a unit change prices from the ladder
+    });
   }
 
   function addCustom() {
@@ -814,6 +1426,8 @@ function EditableLineItems({
       qty,
       unitPrice: price,
       basePrice: price,
+      originalUnitPrice: price,
+      originalBasePrice: price,
       cancelled: false,
     });
     setScrollToId(newId);
@@ -833,13 +1447,21 @@ function EditableLineItems({
             if (el) rowRefs.current.set(item.id, el);
             else rowRefs.current.delete(item.id);
           }}
+          // #2715 PR-1: the WHOLE line (row + price-edit row + note + substitute picker) is ONE
+          // bordered card — the price row and the note used to be bare ml-11 siblings under it.
+          className={cn(
+            "rounded-lg border px-3 py-2.5 transition-colors",
+            item.cancelled
+              ? "border-surface-border bg-surface-raised opacity-60"
+              : "border-surface-border bg-white",
+          )}
         >
           <div
             className={cn(
-              "flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors",
-              item.cancelled
-                ? "border-surface-border bg-surface-raised opacity-60"
-                : "border-surface-border bg-white",
+              // REG-B521: flex-wrap so Qty/price/actions overflow to a second line under
+              // pressure instead of starving the name column to its min-w-0 floor (390px,
+              // a long custom item name) — the name column below gets a real minimum instead.
+              "flex flex-wrap items-center gap-x-3 gap-y-2",
             )}
           >
             {/* Product icon */}
@@ -848,7 +1470,7 @@ function EditableLineItems({
             </div>
 
             {/* Product name */}
-            <div className="flex-1 min-w-0">
+            <div className="min-w-[140px] flex-1">
               {item.substituteProductId ? (
                 <div>
                   <span className="line-through text-xs text-navy/70 mr-1">
@@ -884,8 +1506,13 @@ function EditableLineItems({
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
             </div>
 
+            {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}
+            {!item.cancelled && item.countLocked && (
+              <LockedUnitLineBadge display={item.lockedDisplay} />
+            )}
+
             {/* Qty input */}
-            {!item.cancelled && (
+            {!item.cancelled && !item.countLocked && (
               <label className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.06em] text-navy/40">
                 Qty
                 <input
@@ -902,10 +1529,49 @@ function EditableLineItems({
               </label>
             )}
 
+            {/* units_v1 (A3-2): renders nothing unless flag.units_v1 is on AND this product has
+                levels (OrderLineUnitPicker/UnitPicker self-gate) — every other tenant/product sees
+                today's row byte for byte. Excluded for a substitution in progress (re-denominates
+                against the SUBSTITUTE's case size instead — a separate, untouched concern). */}
+            {!item.cancelled &&
+              !item.isUnlisted &&
+              !item.substituteProductId &&
+              !item.countLocked && (
+                <OrderLineUnitPicker
+                  line={{
+                    productId: item.productId,
+                    productName: item.productName,
+                    unit: item.unit ?? "",
+                    unitsPerBox: item.unitsPerBox ?? undefined,
+                    listPrice: item.basePrice,
+                    unitPrice: item.unitPrice,
+                    // PROMO (server-only, never client-set) has no picker-relevant meaning —
+                    // the picker only branches on DISCOUNTED/MANUAL to skip its tier-refresh.
+                    priceType:
+                      item.priceType === "SPECIAL" ||
+                      item.priceType === "DISCOUNTED" ||
+                      item.priceType === "MANUAL"
+                        ? item.priceType
+                        : "STANDARD",
+                    unitLabel: item.unitLabel,
+                    priceEdited: item.priceEdited,
+                  }}
+                  tier={tierForProductId(item.productId)}
+                  onChange={(option, refresh) => setLineUnit(item.id, option, refresh)}
+                />
+              )}
+
+            {/* BUY_N_GET_M: name the units the live total below nets off. */}
+            {!item.cancelled && editLineFreeUnits(item) > 0 && (
+              <span className="shrink-0 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+                {editLineFreeUnits(item)} free
+              </span>
+            )}
+
             {/* Live line total */}
             {!item.cancelled && (
               <span className="money w-20 shrink-0 text-right text-sm font-semibold text-navy">
-                ${editLineSubtotal(item).toFixed(2)}
+                {formatMoney(editLineSubtotal(item))}
               </span>
             )}
 
@@ -917,10 +1583,21 @@ function EditableLineItems({
                   onClick={() =>
                     update(item.id, {
                       cancelled: false,
-                      productId: item.originalProductId,
-                      productName: item.originalProductName,
-                      qty: item.originalQty,
-                      substituteProductId: undefined,
+                      // "Not available" only set cancelled:true, so undo just
+                      // clears it — restoring product/qty/denomination/price
+                      // here would discard edits made before the mis-click.
+                      // Only a substituted-then-cancelled line reverts fully.
+                      ...(item.substituteProductId
+                        ? {
+                            productId: item.originalProductId,
+                            productName: item.originalProductName,
+                            qty: item.originalQty,
+                            unitsPerBox: item.originalUnitsPerBox ?? null,
+                            boxSplit: item.originalBoxSplit ?? false,
+                            ...restoredPrice(item),
+                            substituteProductId: undefined,
+                          }
+                        : {}),
                     })
                   }
                 >
@@ -929,9 +1606,10 @@ function EditableLineItems({
                 </button>
               ) : (
                 <>
-                  {!item.substituteProductId && !item.isUnlisted && (
+                  {!item.substituteProductId && !item.isUnlisted && !item.countLocked && (
                     <button
-                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy"
+                      className="rounded px-2 py-1 text-xs text-navy/70 hover:bg-surface-raised hover:text-navy disabled:opacity-50"
+                      disabled={!pricingReady}
                       onClick={() => setSubstituteOpenId((p) => (p === item.id ? null : item.id))}
                     >
                       Substitute
@@ -945,6 +1623,12 @@ function EditableLineItems({
                           productId: item.originalProductId,
                           productName: item.originalProductName,
                           qty: item.originalQty,
+                          // Back to the original product's own denomination —
+                          // otherwise the line would keep the substitute's case
+                          // size and re-price the original against it on save.
+                          unitsPerBox: item.originalUnitsPerBox ?? null,
+                          boxSplit: item.originalBoxSplit ?? false,
+                          ...restoredPrice(item),
                           substituteProductId: undefined,
                         })
                       }
@@ -960,7 +1644,10 @@ function EditableLineItems({
                     Not available
                   </button>
                   <button
-                    className="rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors"
+                    className={cn(
+                      TAP_TARGET,
+                      "rounded p-1 text-navy/30 hover:text-danger hover:bg-danger-bg transition-colors",
+                    )}
                     title="Delete item"
                     onClick={() => onDelete(item.id)}
                   >
@@ -977,25 +1664,35 @@ function EditableLineItems({
             <PriceEditRow
               basePrice={item.basePrice}
               unitPrice={item.unitPrice}
+              // B465 fix round 5: a substitution's own baseline wins over the
+              // REPLACED product's originalUnitPrice — same resolution as
+              // needsSpecialTierReason, so the required-field styling and the
+              // save-time check never disagree.
+              originalUnitPrice={item.reasonBaselinePrice ?? item.originalUnitPrice}
               overrideReason={item.overrideReason}
-              onPriceChange={(net) => update(item.id, { unitPrice: net })}
+              onPriceChange={(net) => update(item.id, { unitPrice: net, priceEdited: true })}
               onReasonChange={(reason) => update(item.id, { overrideReason: reason || undefined })}
               unitCost={item.unitCost}
               unitsPerBox={item.unitsPerBox}
               floor={floorForCategory(marginConfig, item.category)}
+              isSpecial={
+                !item.isUnlisted &&
+                item.productId != null &&
+                isSpecialTierFor({ id: item.productId } as SubstituteOption)
+              }
             />
           )}
 
           {/* Per-line note — carried onto the invoice line (buyer-visible). */}
           {!item.cancelled && (
             <div className="ml-11 mt-1">
-              <input
-                type="text"
-                maxLength={500}
+              <textarea
+                rows={2}
+                maxLength={2000}
                 value={item.notes ?? ""}
                 onChange={(e) => update(item.id, { notes: e.target.value })}
                 placeholder="Note for this line (prints on invoice)"
-                className="w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+                className="w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
             </div>
           )}
@@ -1004,18 +1701,46 @@ function EditableLineItems({
           {substituteOpenId === item.id && (
             <SubstitutePicker
               onSelect={(p) => {
+                // Re-denominate the line against the SUBSTITUTE's case size, the
+                // same way mobile's buildSubstituteLine does: the ordered PIECE
+                // count carries across the swap and boxes/pieces are re-derived
+                // from the substitute's unitsPerBox. Keeping the replaced
+                // product's split would preview one case size while the server
+                // (which prices the split with the substitute's) bills another —
+                // and on a loose substitute it would send boxes for a product
+                // that has none.
+                const upb = p.unitsPerBox == null ? null : Number(p.unitsPerBox);
+                const lineUpb = Number(item.unitsPerBox ?? 0);
+                // A box-split line's qty is already in pieces; a boxed line
+                // without a split counts SELLING UNITS (boxes).
+                const pieces = item.boxSplit || lineUpb <= 1 ? item.qty : item.qty * lineUpb;
+                const split = normalizeBoxesPieces({ qty: pieces, unitsPerBox: upb });
                 update(item.id, {
                   substituteProductId: p.id,
                   productId: p.id,
                   productName: p.name,
-                  unitPrice: Number(p.pricePerUnit ?? 0),
+                  // The customer's contracted price for the SUBSTITUTE, over its
+                  // list price as the strikethrough base — same split mobile's
+                  // buildSubstituteLine stores. Pinning both to list made every
+                  // substitution look un-overridden, so no unitPrice reached the
+                  // server and a tier customer silently lost their price.
+                  unitPrice: tierPriceFor(p),
+                  // B465 fix round 5 (Opus BLOCK item 1): reset the reason-required
+                  // baseline to the SUBSTITUTE's own resolved price via
+                  // reasonBaselinePrice, NEVER originalUnitPrice — that field is
+                  // Undo's own restore point (restoredPrice) for the REPLACED
+                  // product's price, and round 4 briefly overwrote it here, which
+                  // broke Undo: restoring "originalUnitPrice" after a substitute
+                  // just put the substitute's own price back, so Undo silently
+                  // repriced the line instead of reverting it. A substitution is a
+                  // fresh reason-required starting point, not a reprice — only a
+                  // price edit AFTER this substitution should trip the guard.
+                  reasonBaselinePrice: tierPriceFor(p),
                   basePrice: Number(p.pricePerUnit ?? 0),
                   overrideReason: undefined,
-                  // The substitute's box split is resolved server-side and the
-                  // substitute push omits boxes/pieces, so the server charges
-                  // unitPrice*qty. Clear boxSplit so the preview matches (no
-                  // proration with the ORIGINAL product's unitsPerBox).
-                  boxSplit: false,
+                  qty: split.qty,
+                  unitsPerBox: upb,
+                  boxSplit: split.boxes != null,
                 });
                 setSubstituteOpenId(null);
               }}
@@ -1027,38 +1752,27 @@ function EditableLineItems({
 
       {/* ── Add Item / Scan row ── */}
       <div ref={addRef} className="relative">
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-brand-300 bg-brand-50 px-3 py-2">
-          {addLoading ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-400" />
-          ) : (
-            <Search className="h-4 w-4 shrink-0 text-brand-400" />
-          )}
-          <input
-            ref={addInputRef}
-            type="text"
-            placeholder="Scan barcode or type name…"
-            value={addSearch}
-            onChange={(e) => {
-              setAddSearch(e.target.value);
-              if (e.target.value) setAddOpen(true);
-              else setAddOpen(false);
-            }}
-            onFocus={() => {
-              if (addSearch) setAddOpen(true);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleScanEnter();
-              } else if (e.key === "Escape") {
-                setAddSearch("");
-                setAddOpen(false);
-              }
-            }}
-            className="flex-1 bg-transparent text-sm text-navy placeholder:text-navy/70 outline-none"
-          />
-        </div>
+        <EditScanBar
+          inputRef={addInputRef}
+          value={addSearch}
+          loading={addLoading}
+          pricingReady={pricingReady}
+          onChange={(v) => {
+            setAddSearch(v);
+            setAddOpen(Boolean(v));
+          }}
+          onFocus={() => addSearch && setAddOpen(true)}
+          onEnter={() => handleScanCode(addSearch)}
+          onEscape={() => {
+            setAddSearch("");
+            setAddOpen(false);
+          }}
+          onScan={(code) => {
+            setAddSearch(code);
+            void handleScanCode(code);
+          }}
+          onError={(message) => toast({ variant: "error", title: message })}
+        />
         {addOpen && products.length > 0 && (
           <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-surface-border bg-white shadow-lg">
             <ul className="max-h-52 overflow-y-auto py-1">
@@ -1066,8 +1780,9 @@ function EditableLineItems({
                 <li key={p.id}>
                   <button
                     type="button"
+                    disabled={!pricingReady}
                     onMouseDown={() => addProduct(p)}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-50 flex items-center justify-between gap-2 disabled:opacity-50"
                   >
                     <span className="font-medium text-navy">{p.name}</span>
                     <span className="text-xs text-navy/70">{p.unit}</span>
@@ -1090,7 +1805,10 @@ function EditableLineItems({
                 setCustomFormOpen(false);
                 setCustomError("");
               }}
-              className="rounded p-1 text-navy/40 hover:text-danger transition-colors"
+              className={cn(
+                TAP_TARGET,
+                "rounded p-1 text-navy/40 hover:text-danger transition-colors",
+              )}
               title="Cancel"
             >
               <X className="h-3.5 w-3.5" />
@@ -1190,29 +1908,6 @@ function EditableLineItems({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 /**
- * Displayed fulfillment status for an order line. `OrderItem.status` only advances to
- * DELIVERED/PARTIAL via the route delivery flow (completeStop); when an order is marked
- * delivered another way (operator status change, van sale, `/routes` stop-complete) the
- * lines stay at their PENDING default. Derive the shown label from real delivery data
- * (deliveredQty) or the order's terminal state so the page reads consistently — WITHOUT
- * mutating the stored item status (item status stays route-authoritative).
- */
-function displayLineStatus(
-  li: { status: string; deliveredQty?: number; qty: number },
-  orderStatus: string,
-): BadgeStatus {
-  // A real line-level outcome (route-recorded or explicitly set) always wins.
-  if (li.status === "CANCELLED" || li.status === "DELIVERED" || li.status === "PARTIAL")
-    return li.status as BadgeStatus;
-  // Line still at its PENDING/CONFIRMED default:
-  const delivered = Number(li.deliveredQty ?? 0);
-  if (delivered > 0) return delivered + 1e-6 >= Number(li.qty) ? "DELIVERED" : "PARTIAL";
-  // No per-line delivery recorded, but the whole order is delivered → reflect that.
-  if (orderStatus === "DELIVERED") return "DELIVERED";
-  return li.status as BadgeStatus;
-}
-
-/**
  * Render a date-only field (stored midnight UTC) as its calendar day. Parsing the
  * parts by hand avoids the day-behind shift `new Date(iso)` causes west of UTC.
  */
@@ -1235,10 +1930,66 @@ function creditSelectionsFromOrder(o: {
   }));
 }
 
-export default function OrderDetailPage({ params }: { params: { id: string } }) {
+export default function OrderDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const { setTitle } = usePageTitle();
-  const { data: order, isLoading, isError } = useOrder(params.id);
+  const { data: order, isLoading, isError } = useOrder(id);
+  // `order_ui_v2` (dark): card-list lines instead of the table.
+  const orderUiV2 = useOrderUiV2();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
+  // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
+  // line prices off the customer's effective tier, not the raw list price.
+  const {
+    data: customerDetail,
+    isPending: customerPending,
+    isError: customerFailed,
+  } = useCustomer(order?.customerId ?? "");
+  const {
+    data: customerPrices,
+    isPending: pricesPending,
+    isError: pricesFailed,
+  } = useCustomerPrices(order?.customerId);
+  // B62 (REG-B62): tier defaults to 1 while these queries are in flight, so any
+  // line added/substituted in that window bakes the LIST price (the substitute
+  // path even SENDS it). Gate pricing-dependent controls until both settle.
+  // NOTE: a disabled query is isPending forever — short-circuit when there is no
+  // customer. An errored fetch falls back to today's tier-1 degraded mode.
+  const pricingReady =
+    !order?.customerId ||
+    ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+  const cpMap = React.useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const cp of (customerPrices ?? []) as Array<{
+      productId: string;
+      pricingTier: number | null;
+    }>) {
+      m.set(cp.productId, cp.pricingTier);
+    }
+    return m;
+  }, [customerPrices]);
+  const customerTier = (customerDetail as { pricingTier?: number } | undefined)?.pricingTier ?? 1;
+  const tierPriceFor = React.useCallback(
+    (p: SubstituteOption) => getTierPrice(p, cpMap.get(p.id) ?? customerTier ?? 1),
+    [cpMap, customerTier],
+  );
+  const isSpecialTierFor = React.useCallback(
+    (p: SubstituteOption) => isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1),
+    [cpMap, customerTier],
+  );
+  // B465: id-only variant for call sites that only have `productId` (an
+  // EditItemState line, not a full SubstituteOption/product row) — same rule,
+  // shared so the save-time guard below and the row's own render never drift.
+  const isSpecialTierForProductId = React.useCallback(
+    (productId: string) => isSpecialTier(cpMap.get(productId) ?? customerTier ?? 1),
+    [cpMap, customerTier],
+  );
+  // units_v1: the EFFECTIVE numeric tier `OrderLineUnitPicker` needs (it resolves the ladder
+  // price at this tier, same source as isSpecialTierForProductId above).
+  const tierForProductId = React.useCallback(
+    (productId: string) => cpMap.get(productId) ?? customerTier ?? 1,
+    [cpMap, customerTier],
+  );
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
   const updateItems = useUpdateOrderItems();
@@ -1246,6 +1997,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   const deleteOrder = useDeleteOrder();
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
+  const patchFulfillPath = usePatchOrderFulfillPath();
+  // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
+  // tracking-entry dialog open — see openSignal prop below.
+  const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
+
+  // Order-level commission override (staff + sales_agents addon only — the
+  // server independently re-checks both via PlanFlagGuard/parseCommissionRatePct).
+  const { user } = useAuth();
+  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  const [commissionEditOpen, setCommissionEditOpen] = React.useState(false);
 
   // P5-11: change-request resolution (office side; driver-at-stop is P10 mobile).
   const resolveCr = useResolveChangeRequest();
@@ -1255,14 +2017,27 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // License guard (W6b): the edit/promote guard can 409 REGULATED_AUTH_REQUIRED.
   const [licenseBlock, setLicenseBlock] = React.useState<BlockedCategory[] | null>(null);
   const licenseRetryRef = React.useRef<(() => void) | null>(null);
+  // Selling restrictions: lines the API refused for this customer (a dialog, not a raw toast).
+  const [restrictedBlock, setRestrictedBlock] = React.useState<BlockedLine[] | null>(null);
+  // Credit limit: the server's numbers + a "collect a payment" exit (no override exists).
+  const [creditBlock, setCreditBlock] = React.useState<CreditLimitInfo | null>(null);
   // Opens the guard modal on a REGULATED_AUTH_REQUIRED 409; other errors fall
   // through to the global mutation toast.
   const guardError = (retry: () => void) => (err: unknown) => {
+    const restricted = parseSellingRestricted(err);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const blocked = parseRegulatedAuthError(err);
     if (blocked && blocked.length > 0) {
       licenseRetryRef.current = retry;
       setLicenseBlock(blocked);
+      return;
     }
+    // A credit-limit 409 gets its own dialog (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(err);
+    if (credit) setCreditBlock(credit);
   };
 
   // Status tracking — use actual API status directly
@@ -1281,6 +2056,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   // (undefined on the wire = leave the server's stored intents untouched).
   const [editCredits, setEditCredits] = React.useState<CreditSelection[]>([]);
   const [creditsTouched, setCreditsTouched] = React.useState(false);
+  // #2406: an inline return started in edit mode, folded into the SAME updateOrderItems write.
+  const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
+  const returnSave = useOrderInlineReturnSave(returnsRef, (why) =>
+    toast({ title: RETURN_SAVE_BLOCKED[why], variant: "error" }),
+  );
 
   // Demotion modal
   const [demoteTarget, setDemoteTarget] = React.useState<ApiOrderStatus | null>(null);
@@ -1313,32 +2093,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       if (order.status === "DRAFT" && !draftAutoEntered) {
         setDraftAutoEntered(true);
         setEditItems(
-          order.lineItems
-            .filter((li) => li.status !== "CANCELLED")
-            .map((li) => {
-              const isUnlisted = !li.productId;
-              const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
-              return {
-                id: li.id,
-                isUnlisted,
-                originalProductId: li.productId ?? "",
-                originalProductName: label,
-                originalQty: Math.round(Number(li.qty)),
-                productId: li.productId ?? "",
-                productName: label,
-                qty: Math.round(Number(li.qty)),
-                unitPrice: Number(li.unitPrice),
-                basePrice: Number(li.originalPrice ?? li.unitPrice),
-                cancelled: false,
-                notes: li.notes,
-                overrideReason: li.overrideReason ?? undefined,
-                unitCost: li.product?.averageCost != null ? Number(li.product.averageCost) : null,
-                // Prefer the line's sale-time box-size snapshot over the live product.
-                unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                category: li.product?.category ?? null,
-                boxSplit: li.boxes != null || li.pieces != null,
-              };
-            }),
+          order.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
         );
         setPendingDeletes([]);
         setEditShippingFee(Number(order.shippingFee ?? 0));
@@ -1378,6 +2133,13 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     order?.editWindow?.editable ??
     (localStatus === "DRAFT" || localStatus === "PENDING" || localStatus === "CONFIRMED");
 
+  // Fulfillment path can only change while the order is open — mirrors the
+  // server's PATCH /orders/:id/fulfill-path rejection rule exactly.
+  const fulfillPathLocked =
+    localStatus === "OUT_FOR_DELIVERY" ||
+    localStatus === "DELIVERED" ||
+    localStatus === "CANCELLED";
+
   const changeRequests = order.changeRequests ?? [];
   const pendingChangeRequests = changeRequests.filter((cr) => cr.status === "PENDING");
 
@@ -1388,8 +2150,8 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
    * lost race: toast what happened and let the hook's onSettled invalidation
    * refetch the winning state. REGULATED_AUTH_REQUIRED routes into the
    * existing license-guard modal with a retry, like every other guarded 409
-   * on this page. INSUFFICIENT_STOCK / CREDIT_LIMIT_EXCEEDED carry a server
-   * message and surface via the global mutation toast — no handling needed.
+   * on this page. CREDIT_LIMIT_EXCEEDED opens the credit guard dialog via guardError;
+   * INSUFFICIENT_STOCK carries a server message and surfaces via the global mutation toast.
    */
   function handleResolve(cr: ChangeRequest, action: ChangeRequestResolveAction, reason?: string) {
     const run = () =>
@@ -1451,32 +2213,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
 
   function enterEditMode() {
     setEditItems(
-      order!.lineItems
-        .filter((li) => li.status !== "CANCELLED")
-        .map((li) => {
-          const isUnlisted = !li.productId;
-          const label = li.product?.name ?? li.name ?? li.productId ?? "Custom item";
-          return {
-            id: li.id,
-            isUnlisted,
-            originalProductId: li.productId ?? "",
-            originalProductName: label,
-            originalQty: Math.round(Number(li.qty)),
-            productId: li.productId ?? "",
-            productName: label,
-            qty: Math.round(Number(li.qty)),
-            unitPrice: Number(li.unitPrice),
-            basePrice: Number(li.originalPrice ?? li.unitPrice),
-            cancelled: false,
-            notes: li.notes,
-            overrideReason: li.overrideReason ?? undefined,
-            // unitsPerBox + boxSplit drive boxed proration on save (money fix).
-            // Prefer the line's sale-time snapshot over the live product so a later
-            // packaging change can't re-price an existing line.
-            unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-            boxSplit: li.boxes != null || li.pieces != null,
-          };
-        }),
+      order!.lineItems.filter((li) => li.status !== "CANCELLED").map(buildEditItemFromLine),
     );
     setPendingDeletes([]);
     setEditShippingFee(Number(order!.shippingFee ?? 0));
@@ -1504,96 +2241,60 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     }
   }
 
+  /** SA-388: refuse visibly, sending nothing, a save editing a LOCKED line (both save paths). */
+  function refuseLockedUnitLineEdit(): boolean {
+    const locked = findLockedUnitLineEdit(editItems, order!.lineItems);
+    if (!locked) return false;
+    toast({
+      title: lockedUnitLineRefusal(locked.productName || "This line", locked.lockedDisplay),
+      variant: "error",
+    });
+    return true;
+  }
+
   function handleSaveItems() {
-    const original = order!.lineItems;
-    const updates: ItemUpdate[] = [];
+    if (refuseLockedUnitLineEdit()) return;
+    // B465: refuse client-side before the server has to — a SPECIAL-tier line
+    // whose price was overridden with no reason would otherwise round-trip a
+    // 400 "A reason is required to change a special-price line" with no
+    // indication of WHICH line to fix.
+    const missingReasonLine = editItems.find(
+      (it) =>
+        !it.cancelled &&
+        it.productId != null &&
+        needsSpecialTierReason(it, isSpecialTierForProductId(it.productId)),
+    );
+    if (missingReasonLine) {
+      toast({
+        title: `A reason is required to change ${missingReasonLine.productName || "this"} — it's this customer's special price`,
+        variant: "error",
+      });
+      return;
+    }
 
     // Hard-delete (or CANCEL fallback) for lines the user removed with the trash button.
-    for (const id of pendingDeletes) {
-      updates.push({ id, action: "DELETE" });
-    }
-
-    for (const edited of editItems) {
-      // A line is "discounted" when its net unit price sits below the list/base price.
-      const overridden = edited.unitPrice < edited.basePrice - 0.0001;
-      const newNote = edited.notes?.trim() ? { notes: edited.notes.trim() } : {};
-      if (edited.isNew) {
-        if (edited.isUnlisted) {
-          // New unlisted (ad-hoc) line: no id, no productId — { name, qty, unitPrice }.
-          updates.push({
-            name: edited.productName.trim(),
-            qty: edited.qty,
-            unitPrice: edited.unitPrice,
-            ...newNote,
-          });
-        } else {
-          // New catalog item: no id — API will create it. Carry the override when present.
-          updates.push({
-            productId: edited.productId,
-            qty: edited.qty,
-            ...boxedDtoFields(edited),
-            ...(overridden
-              ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
-              : {}),
-            ...newNote,
-          });
-        }
-        continue;
-      }
-      const orig = original.find((li) => li.id === edited.id);
-      if (!orig) continue;
-
-      const qtyChanged = Math.abs(edited.qty - Number(orig.qty)) > 0.0001;
-      const priceChanged = Math.abs(edited.unitPrice - Number(orig.unitPrice)) > 0.0001;
-      const nameChanged =
-        edited.isUnlisted && edited.productName.trim() !== (orig.name ?? "").trim();
-      // "" clears an existing note (the API only applies notes when defined).
-      const noteChanged = (edited.notes ?? "").trim() !== ((orig.notes as string) ?? "").trim();
-      const notePatch = noteChanged ? { notes: (edited.notes ?? "").trim() } : {};
-
-      if (edited.cancelled) {
-        updates.push({ id: edited.id, action: "CANCEL" });
-      } else if (edited.substituteProductId) {
-        updates.push({
-          id: edited.id,
-          substituteProductId: edited.substituteProductId,
-          qty: edited.qty,
-        });
-      } else if (edited.isUnlisted && (qtyChanged || priceChanged || nameChanged || noteChanged)) {
-        // Rename / reprice an existing unlisted line: { id, name?, qty, unitPrice? }.
-        updates.push({
-          id: edited.id,
-          qty: edited.qty,
-          ...(nameChanged ? { name: edited.productName.trim() } : {}),
-          ...(priceChanged ? { unitPrice: edited.unitPrice } : {}),
-          ...notePatch,
-        });
-      } else if (qtyChanged || priceChanged || noteChanged) {
-        updates.push({
-          id: edited.id,
-          action: "UPDATE",
-          qty: edited.qty,
-          ...boxedDtoFields(edited),
-          ...(priceChanged
-            ? { unitPrice: edited.unitPrice, overrideReason: edited.overrideReason }
-            : {}),
-          ...notePatch,
-        });
-      }
-    }
+    const updates: ItemUpdate[] = [
+      ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+      ...buildItemUpdates(editItems, order!.lineItems),
+    ];
 
     // Only send shippingFee when it actually changed — avoids no-op churn (and
     // matches the API's "no dto.shippingFee ⇒ keep the stored fee" rule).
     const feeChanged = Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
 
-    if (updates.length === 0 && !feeChanged && !creditsTouched) {
+    // #2406: fold in whatever the operator has typed into the edit-mode Returns section.
+    const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+    if (inlineReturn === null) return;
+
+    if (updates.length === 0 && !feeChanged && !creditsTouched && !inlineReturn) {
       setIsEditing(false);
       return;
     }
 
     // replaceAll:false — this screen sends an incremental diff (new items have no
-    // id). Without it the API's legacy heuristic would treat an add-only payload
-    // as a full replace and delete the untouched lines.
+    // id). F30/R10 (B198) made the flag explicit-only, so omitting it would merge
+    // too; sending false states the intent at the call site rather than relying on
+    // the server default.
     updateItems.mutate(
       {
         id: order!.id,
@@ -1604,6 +2305,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         // the picker — undefined on the wire leaves the server's stored
         // intents untouched (see CreditNotePicker / syncOrderCreditSelections).
         ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+        ...(inlineReturn ? { inlineReturn } : {}),
       },
       {
         onSuccess: () => {
@@ -1611,8 +2313,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           setEditItems([]);
           setEditCredits([]);
           setCreditsTouched(false);
+          returnSave.onSuccess();
         },
-        onError: guardError(() => handleSaveItems()),
+        onError: returnSave.chainError(
+          inlineReturn,
+          guardError(() => handleSaveItems()),
+        ),
       },
     );
   }
@@ -1630,7 +2336,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     updateStatus.mutate(
       { id: order.id, status: "OUT_FOR_DELIVERY" },
       {
-        onSuccess: () => setLocalStatus("OUT_FOR_DELIVERY"),
+        onSuccess: () => {
+          setLocalStatus("OUT_FOR_DELIVERY");
+          // Nudge the operator straight into tracking entry for a SHIP order —
+          // there's nowhere else on this screen prompting for it.
+          if (order.fulfillPath === "SHIP") setShipmentOpenSignal((n) => n + 1);
+        },
         onError: guardError(() => handleLock()),
       },
     );
@@ -1670,8 +2381,28 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     updateStatus.mutate(
       { id: order.id, status: "DELIVERED" },
       {
+        // Delivery can be refused for credit (B585 gate): open the guard, not a bare toast.
+        onError: guardError(() => handleDeliver()),
         onSuccess: () => {
           setLocalStatus("DELIVERED");
+          // #2089 (owner ruling): "automatically open the invoice, then ask if you
+          // want to send it" — offline is checked FIRST and unconditionally
+          // (postDeliveryInvoicePrompt's own contract), before ever attempting the
+          // network call below, since a dropped connection right after delivery
+          // must read as "try again once synced," never as "no invoice."
+          if (
+            postDeliveryInvoicePrompt({
+              invoice: undefined,
+              online: typeof navigator === "undefined" ? true : navigator.onLine,
+            }) === "offline-later"
+          ) {
+            toast({
+              title: "Order delivered",
+              description: "The invoice will be ready to send once you're back online.",
+              variant: "warning",
+            });
+            return;
+          }
           // Create the invoice (idempotent — returns existing if already there)
           // then show the send-invoice prompt.
           const invoiceNow = () =>
@@ -1680,7 +2411,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                 // W4: a mixed regulated order returns sibling invoices; prompt to send
                 // the primary (standard/first) one — the rest show on the order detail.
                 const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
-                if (!invoice) return;
+                // #2089: same shared decision — a DRAFT invoice still gets the prompt
+                // (sendEmail issues DRAFT → SENT atomically on send, so "issue and
+                // send" is one action, not two), only VOID/no-invoice skips silently.
+                const outcome = postDeliveryInvoicePrompt({
+                  invoice: invoice ? { status: invoice.status } : null,
+                  online: true,
+                });
+                if (outcome === "skip" || outcome === "offline-later") return;
                 setInvoiceModal({
                   invoiceId: invoice.id,
                   invoiceNumber: invoice.invoiceNumber,
@@ -1688,7 +2426,12 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   customerName: order.customer?.businessName ?? "Customer",
                   customerPhone: order.customer?.phone,
                   customerMobile: order.customer?.mobile,
-                  customerEmail: order.customer?.email,
+                  // Import sentinels aren't real inboxes — hide the Email option
+                  // rather than offer a send that can only fail.
+                  customerEmail: isInternalEmail(order.customer?.email)
+                    ? undefined
+                    : order.customer?.email,
+                  issuePrompt: outcome === "issue-and-send",
                 });
               },
               onError: (err: unknown) => {
@@ -1727,6 +2470,63 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
     );
   };
 
+  /**
+   * Shared "Delete order" trigger + inline two-tap confirm, reused across every
+   * still-open status block below. The server also 409s if a linked invoice has
+   * recorded payments — that's a distinct, deeper backstop (e.g. a DRAFT order
+   * whose invoice somehow already has a payment); no local onError toast here,
+   * an error just collapses the confirm back to the trigger and the global
+   * mutation-error toast (app/providers.tsx) already surfaces the server's
+   * message (e.g. "void the invoice first"), which a hand-written
+   * `error.message` here would only shadow with a generic HTTP status string.
+   *
+   * Delivered orders (and any order past a real invoice, not just its DRAFT
+   * pending-mirror) are no longer "operationally open" — deleting them would
+   * destroy a fulfilled/billed record. "Reopen Order" is the sanctioned undo
+   * for those; hide the trigger entirely rather than let it 409. Reuses the
+   * same `order.invoices` the Invoice card below already renders — no new query.
+   */
+  const hasPostedInvoice = order.invoices?.some((inv) => inv.status !== "DRAFT") ?? false;
+  const orderOperationallyOpen =
+    localStatus !== "DELIVERED" && localStatus !== "PARTIALLY_DELIVERED";
+  const renderDeleteOrderAction = (confirmMessage: string, successTitle = "Order deleted") =>
+    !orderOperationallyOpen || hasPostedInvoice ? null : showDeleteConfirm ? (
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-danger font-medium">{confirmMessage}</span>
+        <Button
+          size="sm"
+          variant="danger"
+          loading={deleteOrder.isPending}
+          onClick={() => {
+            deleteOrder.mutate(order.id, {
+              onSuccess: () => {
+                toast({ title: successTitle, variant: "success" });
+                router.push("/orders");
+              },
+              onError: () => setShowDeleteConfirm(false),
+            });
+          }}
+        >
+          Confirm Delete
+        </Button>
+        <button
+          onClick={() => setShowDeleteConfirm(false)}
+          className="text-sm text-navy/70 hover:text-navy transition-colors"
+        >
+          No
+        </button>
+      </div>
+    ) : (
+      <Button
+        size="sm"
+        variant="ghost"
+        leftIcon={<Trash2 className="h-4 w-4" />}
+        onClick={() => setShowDeleteConfirm(true)}
+      >
+        Delete order
+      </Button>
+    );
+
   // ── Estimated totals in edit mode ──────────────────────────────────────────
 
   const editSubtotal = isEditing
@@ -1748,6 +2548,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
   );
   const editTotal = editSubtotal + editTax + orderCategoryTax + editShippingFee;
 
+  // B64: cancelling an order now marks every surviving line CANCELLED, so the
+  // usual "active lines" filter would report "Line items 0 / Total quantity 0"
+  // beside the order's real money totals. On a cancelled order every line IS
+  // cancelled, so the filter carries no information there — show what the order
+  // contained instead of nothing.
+  const summaryLineItems =
+    order.status === "CANCELLED"
+      ? order.lineItems
+      : order.lineItems.filter((li) => li.status !== "CANCELLED");
+
   return (
     <div className="space-y-5 p-6">
       {/* Back */}
@@ -1763,9 +2573,9 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
+            <h2 className="mono text-2xl font-bold tracking-[-0.01em] text-navy">
               {order.orderNumber}
-            </h1>
+            </h2>
             {order.urgent && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-danger-bg px-2.5 py-1 text-xs font-semibold text-danger">
                 <AlertTriangle className="h-3.5 w-3.5" />
@@ -1802,20 +2612,38 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         <div className="flex flex-wrap items-center gap-2">
           {/* Edit Items button */}
           {canEdit && !isEditing && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<Pencil className="h-4 w-4" />}
-              onClick={enterEditMode}
-            >
-              Edit Items
-            </Button>
+            <ActionTier tier="secondary">
+              <Button
+                size="sm"
+                variant="secondary"
+                leftIcon={<Pencil className="h-4 w-4" />}
+                onClick={enterEditMode}
+              >
+                Edit Items
+              </Button>
+            </ActionTier>
           )}
 
-          {/* P5-08: editing closed once the order is out for delivery (dispatched). */}
-          {!canEdit && order?.editWindow?.closedReason === "DISPATCHED" && !isEditing && (
+          {/* Record return (Returns Inside Order Creation, PR 1 — office web capture).
+              Any order, no cap — never gated on order status, unlike the buttons below. */}
+          {!isEditing && (
+            <ActionTier tier="secondary">
+              <RecordReturnAction
+                customerId={order.customerId}
+                customerName={order.customer?.businessName}
+                orderId={order.id}
+              />
+            </ActionTier>
+          )}
+
+          {/* P5-08 / R1: staff editing closes only once the order is CANCELLED
+              ("STATUS"); the buyer-facing window instead closes once dispatched
+              ("DISPATCHED") — see the canEdit comment above. Either reason shows here. */}
+          {!canEdit && order?.editWindow?.closedReason && !isEditing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
-              Out for delivery — editing closed
+              {order.editWindow.closedReason === "DISPATCHED"
+                ? "Out for delivery — editing closed"
+                : "Order cancelled — editing closed"}
             </span>
           )}
 
@@ -1826,7 +2654,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               title={order!
                 .revisions!.map(
                   (r) =>
-                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · $${r.snapshot.total.toFixed(2)}`,
+                    `v${r.revisionNumber} · ${r.editedByName ?? r.editedByRole ?? "system"} · ${new Date(r.createdAt).toLocaleString()} · ${formatMoney(r.snapshot.total)}`,
                 )
                 .join("\n")}
             >
@@ -1845,273 +2673,319 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* DRAFT actions */}
           {localStatus === "DRAFT" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={() => {
-                  const publish = () =>
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" as any },
-                      {
-                        onSuccess: () => setLocalStatus("PENDING"),
-                        onError: guardError(() => publish()),
-                      },
-                    );
-                  publish();
-                }}
-                loading={updateStatus.isPending}
-              >
-                Publish Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Draft deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={() => {
+                    const publish = () =>
+                      updateStatus.mutate(
+                        { id: order.id, status: "PENDING" as any },
+                        {
+                          onSuccess: () => setLocalStatus("PENDING"),
+                          onError: guardError(() => publish()),
+                        },
+                      );
+                    publish();
+                  }}
+                  loading={updateStatus.isPending}
                 >
-                  Delete Draft
+                  Publish Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Draft deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete Draft
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* PENDING actions */}
           {localStatus === "PENDING" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleConfirm}
-                loading={updateStatus.isPending}
-              >
-                Confirm Order
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
-                  >
-                    Confirm Delete
-                  </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
+              <ActionTier tier="primary">
                 <Button
                   size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleConfirm}
+                  loading={updateStatus.isPending}
                 >
-                  Delete
+                  Confirm Order
                 </Button>
-              )}
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
+                  >
+                    Delete
+                  </Button>
+                )}
+              </ActionTier>
             </>
           )}
 
           {/* CONFIRMED actions */}
           {localStatus === "CONFIRMED" && !isEditing && (
             <>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<Truck className="h-4 w-4" />}
-                onClick={handleLock}
-                loading={updateStatus.isPending}
-              >
-                Out for Delivery
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Unconfirm this order? It will return to Pending status.")) {
-                    updateStatus.mutate(
-                      { id: order.id, status: "PENDING" },
-                      { onSuccess: () => setLocalStatus("PENDING") },
-                    );
-                  }
-                }}
-                loading={updateStatus.isPending}
-              >
-                Unconfirm
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("PENDING")}
-              >
-                Return to Pending
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
+              <ActionTier tier="primary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant={orderUiV2.enabled ? undefined : "secondary"}
+                    leftIcon={<Truck className="h-4 w-4" />}
+                    onClick={handleLock}
+                    loading={updateStatus.isPending}
+                  >
+                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
+                  </Button>
+                  {order.fulfillPath === "SHIP" && (
+                    <p className="text-[11px] text-navy/50">
+                      Sets the order to Out for Delivery — the customer is notified it&apos;s on the
+                      way.
+                    </p>
+                  )}
+                </div>
+              </ActionTier>
+              {/* CONFIRMED→PENDING is a demotion — the server rejects it without a
+                  reason, so the ONLY path is the DemoteReasonModal. A second
+                  "Unconfirm" button used to submit directly (predating the
+                  reason rule) and guaranteed a 400 with nowhere to type one. */}
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("PENDING")}
+                  loading={updateStatus.isPending}
+                >
+                  Unconfirm
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction("Delete this order? This can't be undone.")}
+              </ActionTier>
             </>
           )}
 
           {/* OUT_FOR_DELIVERY actions */}
           {localStatus === "OUT_FOR_DELIVERY" && (
             <>
-              <Button
-                size="sm"
-                leftIcon={<CheckCircle2 className="h-4 w-4" />}
-                onClick={handleDeliver}
-                loading={updateStatus.isPending}
-              >
-                Mark as Delivered
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<RefreshCcw className="h-4 w-4" />}
-                onClick={() => setDemoteTarget("CONFIRMED")}
-              >
-                Return to Confirmed
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                leftIcon={<XCircle className="h-4 w-4" />}
-                onClick={handleCancel}
-              >
-                Cancel Order
-              </Button>
+              <ActionTier tier="primary">
+                <Button
+                  size="sm"
+                  leftIcon={<CheckCircle2 className="h-4 w-4" />}
+                  onClick={handleDeliver}
+                  loading={updateStatus.isPending}
+                >
+                  {order.fulfillPath === "SHIP" ? "Mark delivered" : "Mark as Delivered"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="secondary">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<RefreshCcw className="h-4 w-4" />}
+                  onClick={() => setDemoteTarget("CONFIRMED")}
+                >
+                  {order.fulfillPath === "SHIP" ? "Unmark shipped" : "Return to Confirmed"}
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                <Button
+                  size="sm"
+                  variant="danger"
+                  leftIcon={<XCircle className="h-4 w-4" />}
+                  onClick={handleCancel}
+                >
+                  Cancel Order
+                </Button>
+                {renderDeleteOrderAction(
+                  "Delete this order? It's out for delivery — this can't be undone.",
+                )}
+              </ActionTier>
             </>
           )}
 
-          {/* DELIVERED actions */}
+          {/* DELIVERED actions — owner reversed policy 2026-08-25: reopening a
+              delivered order is now a legal staff-only reasoned demotion
+              (DELIVERED → CONFIRMED), wired through the same DemoteReasonModal
+              as every other one-step-back transition. A route-delivered order
+              (routeRunStopId on a COMPLETED stop) 409s server-side — that
+              surfaces via the standard error toast (app/providers.tsx), no
+              special-cased UI needed here. */}
           {localStatus === "DELIVERED" && (
-            <Button
-              size="sm"
-              variant="secondary"
-              leftIcon={<RefreshCcw className="h-4 w-4" />}
-              onClick={() => setDemoteTarget("CONFIRMED")}
-            >
-              Reopen Order
-            </Button>
+            <>
+              <ActionTier tier="secondary">
+                <div className="flex flex-col items-start gap-1">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    leftIcon={<RotateCcw className="h-4 w-4" />}
+                    onClick={() => setDemoteTarget("CONFIRMED")}
+                  >
+                    Reopen Order
+                  </Button>
+                  <p className="text-[11px] text-navy/50">
+                    Reopening keeps the invoice in sync while you edit. Orders delivered on a route
+                    reopen at their original stop.
+                  </p>
+                </div>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {renderDeleteOrderAction(
+                  "Delete this DELIVERED order? Its delivery record is removed permanently.",
+                )}
+              </ActionTier>
+            </>
           )}
 
           {/* CANCELLED */}
           {localStatus === "CANCELLED" && (
             <>
-              <Button
-                variant="secondary"
-                size="sm"
-                leftIcon={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  if (confirm("Reopen this order? It will return to Pending status.")) {
-                    reopenOrder.mutate(order.id, {
-                      onSuccess: () => setLocalStatus("PENDING"),
-                    });
-                  }
-                }}
-                loading={reopenOrder.isPending}
-              >
-                Reopen Order
-              </Button>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-danger font-medium">Delete order?</span>
+              <ActionTier tier="secondary">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leftIcon={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => {
+                    if (confirm("Reopen this order? It will return to Pending status.")) {
+                      reopenOrder.mutate(order.id, {
+                        onSuccess: () => setLocalStatus("PENDING"),
+                      });
+                    }
+                  }}
+                  loading={reopenOrder.isPending}
+                >
+                  Reopen Order
+                </Button>
+              </ActionTier>
+              <ActionTier tier="danger">
+                {showDeleteConfirm ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-danger font-medium">Delete order?</span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      loading={deleteOrder.isPending}
+                      onClick={() => {
+                        deleteOrder.mutate(order.id, {
+                          onSuccess: () => {
+                            toast({ title: "Order deleted", variant: "success" });
+                            router.push("/orders");
+                          },
+                          onError: (e) => {
+                            toast({ title: e.message, variant: "error" });
+                            setShowDeleteConfirm(false);
+                          },
+                        });
+                      }}
+                    >
+                      Confirm Delete
+                    </Button>
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-sm text-navy/70 hover:text-navy transition-colors"
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
                   <Button
                     size="sm"
-                    variant="danger"
-                    loading={deleteOrder.isPending}
-                    onClick={() => {
-                      deleteOrder.mutate(order.id, {
-                        onSuccess: () => {
-                          toast({ title: "Order deleted", variant: "success" });
-                          router.push("/orders");
-                        },
-                        onError: (e) => {
-                          toast({ title: e.message, variant: "error" });
-                          setShowDeleteConfirm(false);
-                        },
-                      });
-                    }}
+                    variant="ghost"
+                    leftIcon={<Trash2 className="h-4 w-4" />}
+                    onClick={() => setShowDeleteConfirm(true)}
                   >
-                    Confirm Delete
+                    Delete
                   </Button>
-                  <button
-                    onClick={() => setShowDeleteConfirm(false)}
-                    className="text-sm text-navy/70 hover:text-navy transition-colors"
-                  >
-                    No
-                  </button>
-                </div>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  leftIcon={<Trash2 className="h-4 w-4" />}
-                  onClick={() => setShowDeleteConfirm(true)}
-                >
-                  Delete
-                </Button>
-              )}
+                )}
+              </ActionTier>
             </>
           )}
         </div>
@@ -2152,22 +3026,26 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   onDelete={handleDeleteItem}
                   canEditPrice={canEdit}
                   priceHistory={priceHistory}
+                  tierPriceFor={tierPriceFor}
+                  isSpecialTierFor={isSpecialTierFor}
+                  tierForProductId={tierForProductId}
+                  pricingReady={pricingReady}
                 />
 
                 {/* Live total preview */}
                 <div className="ml-auto w-full max-w-xs rounded-lg border border-surface-border bg-surface-raised px-4 py-3">
                   <div className="flex justify-between text-sm text-navy/70">
                     <span>Subtotal</span>
-                    <span className="money text-navy/70">${editSubtotal.toFixed(2)}</span>
+                    <span className="money text-navy/70">{formatMoney(editSubtotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-navy/70 mt-1">
                     <span>Tax ({(taxRate * 100).toFixed(0)}%)</span>
-                    <span className="money text-navy/70">${editTax.toFixed(2)}</span>
+                    <span className="money text-navy/70">{formatMoney(editTax)}</span>
                   </div>
                   {orderCategoryTax > 0 && (
                     <div className="flex justify-between text-sm text-navy/70 mt-1">
                       <span>Regulated tax</span>
-                      <span className="money text-navy/70">${orderCategoryTax.toFixed(2)}</span>
+                      <span className="money text-navy/70">{formatMoney(orderCategoryTax)}</span>
                     </div>
                   )}
                   {/* Staff-editable shipping fee — never taxed, added after tax. */}
@@ -2185,7 +3063,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   </div>
                   <div className="flex justify-between text-base font-semibold text-navy border-t border-surface-border mt-2 pt-2">
                     <span>New total</span>
-                    <span className="money text-[15px] text-navy">${editTotal.toFixed(2)}</span>
+                    <span className="money text-[15px] text-navy">{formatMoney(editTotal)}</span>
                   </div>
                 </div>
 
@@ -2200,6 +3078,17 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                     setCreditsTouched(true);
                   }}
                   estimatedOrderTotal={editTotal}
+                  appliedOnOrder={appliedOnOrderRows(order)}
+                />
+
+                {/* Returns Inside Order Creation, edit mode (#2406) — quoted here, captured
+                    in the SAME save as the item edits below. */}
+                <OrderInlineReturnsSection
+                  ref={returnsRef}
+                  customerId={order.customerId}
+                  entryOrderId={order.id}
+                  refusalMessage={returnSave.refusalMessage}
+                  refusalReturn={returnSave.refusalReturn}
                 />
 
                 <div className="flex gap-2 flex-wrap">
@@ -2217,50 +3106,14 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         size="sm"
                         leftIcon={<CheckCircle2 className="h-4 w-4" />}
                         onClick={() => {
-                          // Save items first, then publish
-                          const original = order!.lineItems;
-                          const updates: any[] = [];
-                          for (const edited of editItems) {
-                            const noteChanged =
-                              (edited.notes ?? "").trim() !==
-                              (
-                                (original.find((li) => li.id === edited.id)?.notes as string) ?? ""
-                              ).trim();
-                            if (edited.isNew) {
-                              updates.push({
-                                productId: edited.productId,
-                                qty: edited.qty,
-                                ...boxedDtoFields(edited),
-                                ...(edited.notes?.trim() ? { notes: edited.notes.trim() } : {}),
-                              });
-                              continue;
-                            }
-                            const orig = original.find((li) => li.id === edited.id);
-                            if (!orig) continue;
-                            if (edited.cancelled) {
-                              updates.push({ id: edited.id, action: "CANCEL" });
-                            } else if (edited.substituteProductId) {
-                              // Substitute proration is keyed to the SUBSTITUTE product's
-                              // unitsPerBox (resolved server-side), not this line's — so we
-                              // don't derive boxes/pieces from the original product here.
-                              updates.push({
-                                id: edited.id,
-                                substituteProductId: edited.substituteProductId,
-                                qty: edited.qty,
-                              });
-                            } else if (
-                              Math.abs(edited.qty - Number(orig.qty)) > 0.0001 ||
-                              noteChanged
-                            ) {
-                              updates.push({
-                                id: edited.id,
-                                action: "UPDATE",
-                                qty: edited.qty,
-                                ...boxedDtoFields(edited),
-                                ...(noteChanged ? { notes: (edited.notes ?? "").trim() } : {}),
-                              });
-                            }
-                          }
+                          // Save items first, then publish. Exactly the payload
+                          // "Save Draft" sends — deletes and prices included — so
+                          // publishing straight from edit mode can't bill differently.
+                          if (refuseLockedUnitLineEdit()) return;
+                          const updates: ItemUpdate[] = [
+                            ...pendingDeletes.map((id): ItemUpdate => ({ id, action: "DELETE" })),
+                            ...buildItemUpdates(editItems, order!.lineItems),
+                          ];
                           const doPublish = () =>
                             updateStatus.mutate(
                               { id: order!.id, status: "PENDING" as any },
@@ -2280,8 +3133,16 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                           // from edit mode silently drops the fee the operator typed.
                           const feeChanged =
                             Math.abs(editShippingFee - Number(order!.shippingFee ?? 0)) > 0.0001;
+                          // #2406: the Returns section rides this save too, never silently dropped.
+                          const inlineReturn = returnSave.prepare(order!.customerId, order!.id);
+                          if (inlineReturn === null) return;
                           const saveThenPublish = () => {
-                            if (updates.length > 0 || feeChanged || creditsTouched) {
+                            if (
+                              updates.length > 0 ||
+                              feeChanged ||
+                              creditsTouched ||
+                              inlineReturn
+                            ) {
                               updateItems.mutate(
                                 {
                                   id: order!.id,
@@ -2293,16 +3154,20 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                                   // lines. Mirrors handleSaveItems.
                                   replaceAll: false,
                                   ...(feeChanged ? { shippingFee: editShippingFee } : {}),
-                                  // Same dual-path threading as handleSaveItems — this
-                                  // Publish flow builds its own `updates` array rather
-                                  // than reusing handleSaveItems, so credits need the
-                                  // same explicit carry-through (shippingFee had this
-                                  // exact miss last PR — do not repeat it).
+                                  // Same dual-path threading as handleSaveItems — the
+                                  // line payload is shared (buildItemUpdates) but this
+                                  // flow still assembles its own mutation, so credits
+                                  // need the explicit carry-through (shippingFee had
+                                  // this exact miss last PR — do not repeat it).
                                   ...(creditsTouched ? { appliedCreditNotes: editCredits } : {}),
+                                  ...(inlineReturn ? { inlineReturn } : {}),
                                 },
                                 {
-                                  onSuccess: doPublish,
-                                  onError: guardError(() => saveThenPublish()),
+                                  onSuccess: () => (returnSave.onSuccess(), doPublish()),
+                                  onError: returnSave.chainError(
+                                    inlineReturn,
+                                    guardError(() => saveThenPublish()),
+                                  ),
                                 },
                               );
                             } else {
@@ -2341,163 +3206,18 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                   )}
                 </div>
               </div>
+            ) : orderUiV2.enabled ? (
+              <OrderLineItemCards
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             ) : (
-              <div className="-mx-6 -mb-6 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-surface-border bg-surface-raised">
-                    <tr>
-                      <th className="overline px-6 py-2.5 text-left">Product</th>
-                      <th className="overline px-4 py-2.5 text-right">Qty</th>
-                      <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-                      <th className="overline px-4 py-2.5 text-right">Line Total</th>
-                      <th className="overline px-6 py-2.5 text-left">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-surface-border">
-                    {order.lineItems.map((li) => (
-                      <tr
-                        key={li.id}
-                        className={cn(
-                          "hover:bg-surface-raised",
-                          li.status === "CANCELLED" && "opacity-50",
-                        )}
-                      >
-                        <td className="px-6 py-3">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-raised">
-                              <Package className="h-4 w-4 text-navy/30" />
-                            </div>
-                            <div className="min-w-0">
-                              <span
-                                className={cn(
-                                  "font-medium text-navy",
-                                  li.status === "CANCELLED" && "line-through",
-                                )}
-                              >
-                                {li.product?.name ?? li.name ?? "Custom item"}
-                              </span>
-                              {li.notes && (
-                                <p className="mt-0.5 text-xs italic text-navy/60">{li.notes}</p>
-                              )}
-                            </div>
-                            {!li.productId && (
-                              <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">
-                                Custom
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right text-navy/70">
-                          {li.boxes != null || li.pieces != null ? (
-                            <span title={`${Number(li.qty)} pcs total`}>
-                              {formatQtySplit({
-                                qty: li.qty,
-                                boxes: li.boxes,
-                                pieces: li.pieces,
-                              })}
-                            </span>
-                          ) : (
-                            <span className="mono">{formatQtySplit({ qty: li.qty })}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <div className="flex flex-col items-end gap-0.5">
-                            {li.priceType === "SPECIAL" ? (
-                              <>
-                                <span className="strike text-xs">
-                                  ${Number(li.originalPrice).toFixed(2)}
-                                </span>
-                                <span className="money text-emerald-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
-                                </span>
-                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                  Special
-                                </span>
-                              </>
-                            ) : li.priceType === "MANUAL" &&
-                              li.originalPrice != null &&
-                              Number(li.unitPrice) > Number(li.originalPrice) ? (
-                              <>
-                                {/* Upsell: sold above list. Operator-only green badge;
-                                    no strikethrough — the base is redacted before the
-                                    customer ever sees this line. */}
-                                <span className="money text-emerald-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
-                                </span>
-                                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                                  Upsell
-                                </span>
-                              </>
-                            ) : (li.priceType === "DISCOUNTED" ||
-                                li.priceType === "MANUAL" ||
-                                li.priceType === "PROMO") &&
-                              li.originalPrice != null ? (
-                              <>
-                                <span className="strike text-xs">
-                                  ${Number(li.originalPrice).toFixed(2)}
-                                </span>
-                                <span className="money text-amber-600">
-                                  ${Number(li.unitPrice).toFixed(2)}
-                                </span>
-                                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                                  {li.priceType === "MANUAL"
-                                    ? "Adjusted"
-                                    : li.priceType === "PROMO"
-                                      ? "Promo"
-                                      : "Discounted"}
-                                </span>
-                              </>
-                            ) : (
-                              <span className="money text-navy/70">
-                                ${Number(li.unitPrice).toFixed(2)}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {li.status === "CANCELLED" ? (
-                            <span className="text-navy/40">—</span>
-                          ) : (
-                            <span className="money text-navy">
-                              $
-                              {(li.subtotal != null
-                                ? Number(li.subtotal)
-                                : computeLineSubtotal({
-                                    unitPrice: Number(li.unitPrice),
-                                    qty: Number(li.qty),
-                                    boxes: li.boxes ?? null,
-                                    pieces: li.pieces ?? null,
-                                    // Snapshot upb, never the live product.
-                                    unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-                                  })
-                              ).toFixed(2)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-3">
-                          <Badge status={displayLineStatus(li, order.status)} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t-2 border-surface-border">
-                    <tr>
-                      <td
-                        colSpan={3}
-                        className="px-6 py-3 text-right text-sm font-semibold text-navy"
-                      >
-                        Order Total
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <span className="money text-[15px] font-semibold text-navy">
-                          ${total.toFixed(2)}
-                        </span>
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
+              <OrderLineItemsTable
+                lineItems={order.lineItems}
+                orderStatus={order.status}
+                total={total}
+              />
             )}
           </div>
 
@@ -2665,10 +3385,72 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-navy/70">Fulfillment</dt>
+                <dd className="flex flex-col items-end gap-0.5">
+                  <div className="w-40">
+                    <Select
+                      options={[
+                        { value: "ROUTE", label: "Delivery route" },
+                        { value: "SHIP", label: "Ship via carrier" },
+                      ]}
+                      value={order.fulfillPath}
+                      disabled={fulfillPathLocked || patchFulfillPath.isPending}
+                      title={
+                        fulfillPathLocked
+                          ? "Fulfillment path can only be changed while the order is open"
+                          : undefined
+                      }
+                      onChange={(e) => {
+                        const fulfillPath = e.target.value as "ROUTE" | "SHIP";
+                        patchFulfillPath.mutate(
+                          { id: order.id, fulfillPath },
+                          {
+                            onSuccess: () =>
+                              toast({ title: "Fulfillment updated", variant: "success" }),
+                            onError: (err: any) =>
+                              toast({
+                                title: "Could not update fulfillment",
+                                description: err?.response?.data?.message,
+                                variant: "error",
+                              }),
+                          },
+                        );
+                      }}
+                    />
+                  </div>
+                  {order.fulfillPath === "SHIP" && (
+                    <span className="text-[11px] text-navy/50">
+                      Ships via carrier — won&apos;t appear on delivery routes.
+                    </span>
+                  )}
+                </dd>
+              </div>
               {order.orderDate && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Order date</dt>
                   <dd className="font-medium text-navy">{formatDateOnly(order.orderDate)}</dd>
+                </div>
+              )}
+              {hasSalesAgents && (
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-navy/70">Commission</dt>
+                  <dd className="flex items-center gap-2 font-medium text-navy">
+                    {order.commissionRatePct == null
+                      ? "Default"
+                      : Number(order.commissionRatePct) === 0
+                        ? "Exempt (0%)"
+                        : `${Number(order.commissionRatePct)}% (override)`}
+                    {isStaff && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-brand-700 hover:underline"
+                        onClick={() => setCommissionEditOpen(true)}
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </dd>
                 </div>
               )}
               {order.requestedDeliveryDate && (
@@ -2681,105 +3463,62 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
               )}
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Line items</dt>
-                <dd className="mono font-medium text-navy">
-                  {order.lineItems.filter((li) => li.status !== "CANCELLED").length}
-                </dd>
+                <dd className="mono font-medium text-navy">{summaryLineItems.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Total quantity</dt>
                 <dd className="mono font-medium text-navy">
-                  {order.lineItems
-                    .filter((li) => li.status !== "CANCELLED")
-                    .reduce((s, li) => s + Number(li.qty), 0)
-                    .toFixed(1)}
+                  {formatQty(summaryLineItems.reduce((s, li) => s + Number(li.qty), 0))}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Subtotal</dt>
-                <dd className="money text-navy">${Number(order.subtotal).toFixed(2)}</dd>
+                <dd className="money text-navy">{formatMoney(order.subtotal)}</dd>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <dt className="text-navy/70">Tax</dt>
-                <dd className="money text-navy">${Number(order.tax).toFixed(2)}</dd>
+                <dd className="money text-navy">{formatMoney(order.tax)}</dd>
               </div>
               {orderCategoryTax > 0 && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Regulated tax</dt>
-                  <dd className="money text-navy">${orderCategoryTax.toFixed(2)}</dd>
+                  <dd className="money text-navy">{formatMoney(orderCategoryTax)}</dd>
                 </div>
               )}
               {shippingFee > 0 && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Shipping</dt>
-                  <dd className="money text-navy">${shippingFee.toFixed(2)}</dd>
+                  <dd className="money text-navy">{formatMoney(shippingFee)}</dd>
                 </div>
               )}
               <div className="flex items-center justify-between gap-3 border-t border-surface-border pt-2.5">
                 <dt className="font-semibold text-navy">Order total</dt>
-                <dd className="money text-[15px] font-semibold text-navy">${total.toFixed(2)}</dd>
+                <dd className="money text-[15px] font-semibold text-navy">{formatMoney(total)}</dd>
               </div>
             </dl>
 
-            {/* Applied credits — intent (order.orderCreditNotes) vs money already
-                moved (Σ CREDIT_NOTE payments across this order's invoices). Credits
-                reduce the invoice balance due, never this order total above. */}
-            {(order.orderCreditNotes?.length ?? 0) > 0 && (
-              <div className="mt-3 space-y-2 border-t border-surface-border pt-3">
-                <p className="text-xs font-semibold uppercase tracking-wider text-navy/70">
-                  Applied credits
-                </p>
-                {order.orderCreditNotes!.map((oc) => {
-                  const appliedSoFar = (order.invoices ?? []).reduce((sum, inv) => {
-                    const pays = inv.payments ?? [];
-                    return (
-                      sum +
-                      pays
-                        .filter((p) => p.creditNoteId === oc.creditNoteId)
-                        .reduce((s, p) => s + Number(p.amount), 0)
-                    );
-                  }, 0);
-                  return (
-                    <div key={oc.id} className="flex items-start justify-between gap-2 text-xs">
-                      <div className="min-w-0">
-                        <Link
-                          href={`/credit-notes/${oc.creditNoteId}`}
-                          className="font-mono font-medium text-brand-600 hover:underline"
-                        >
-                          {oc.creditNote?.creditNoteNumber ?? oc.creditNoteId.slice(0, 8)}
-                        </Link>
-                        {oc.creditNote?.reason && (
-                          <span
-                            className="ml-1.5 truncate text-navy/70"
-                            title={oc.creditNote.reason}
-                          >
-                            {oc.creditNote.reason}
-                          </span>
-                        )}
-                        <div className="text-navy/50">
-                          {oc.amount != null
-                            ? `Requested $${Number(oc.amount).toFixed(2)}`
-                            : "Up to remaining"}
-                        </div>
-                      </div>
-                      <span className="shrink-0 font-medium text-navy">
-                        ${appliedSoFar.toFixed(2)} applied
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <AppliedCreditsPanel order={order} role={user?.role} />
           </Card>
 
+          {/* Returns on this order (#2406) — server figures only, never the quote's. */}
+          <OrderReturnsPanel orderId={order.id} />
+
           {/* Carrier shipment — operator records carrier + tracking when goods ship
-              via a carrier instead of our own route. */}
-          <ShipmentCard
-            carrier={order.shippingCarrier}
-            trackingNumber={order.shippingTrackingNumber}
-            shippedAt={order.shippedAt}
-            isSaving={updateShipment.isPending}
-            onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
-          />
+              via a carrier instead of our own route. Gated so it doesn't render on
+              every order: only carrier-shipped (fulfillPath === "SHIP") orders, or
+              historical rows that already carry tracking data. */}
+          {(order.fulfillPath === "SHIP" ||
+            order.shippingCarrier ||
+            order.shippingTrackingNumber) && (
+            <ShipmentCard
+              carrier={order.shippingCarrier}
+              trackingNumber={order.shippingTrackingNumber}
+              shippedAt={order.shippedAt}
+              isSaving={updateShipment.isPending}
+              onSave={(values) => updateShipment.mutateAsync({ id: order.id, ...values })}
+              openSignal={shipmentOpenSignal}
+            />
+          )}
 
           {/* Invoice card — show for any non-draft, non-cancelled order so the operator
               can split into multiple invoices any time after the order is confirmed. */}
@@ -2821,7 +3560,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
                         <Badge status={inv.status as BadgeStatus} />
                         {inv.dueDate && (
                           <span className="text-xs text-navy/70">
-                            Due {new Date(inv.dueDate).toLocaleDateString()}
+                            Due {fmtCalendarDate(inv.dueDate)}
                           </span>
                         )}
                       </div>
@@ -2904,7 +3643,7 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         orderNumber={order.orderNumber ?? null}
         items={(order.lineItems ?? []).map((li: any) => ({
           id: li.id,
-          productName: li.product?.name ?? li.name ?? "Custom item",
+          productName: orderLineName(li) ?? "Custom item",
           qty: Number(li.qty),
           invoicedQty: Number((li as any).invoicedQty ?? 0),
           unitPrice: Number(li.unitPrice),
@@ -2955,8 +3694,19 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
         <SendInvoiceModal data={invoiceModal} onClose={() => setInvoiceModal(null)} />
       )}
 
+      {/* Commission rate override — staff + sales_agents addon only */}
+      {hasSalesAgents && isStaff && (
+        <CommissionEditModal
+          open={commissionEditOpen}
+          onClose={() => setCommissionEditOpen(false)}
+          orderId={order.id}
+          currentValue={order.commissionRatePct == null ? null : Number(order.commissionRatePct)}
+        />
+      )}
+
       {/* License guard (W6b): an edit/promote hit a 409 REGULATED_AUTH_REQUIRED.
           Lines are removed via the edit UI here, so the remove exit is omitted. */}
+      <BlockedLinesDialog lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
       {licenseBlock && order && (
         <LicenseGuardModal
           open
@@ -2971,6 +3721,11 @@ export default function OrderDetailPage({ params }: { params: { id: string } }) 
           onClose={() => setLicenseBlock(null)}
         />
       )}
+      <CreditLimitGuardDialog
+        info={creditBlock}
+        customerId={order?.customerId}
+        onClose={() => setCreditBlock(null)}
+      />
     </div>
   );
 }

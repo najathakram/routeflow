@@ -1,0 +1,27 @@
+{
+  "task": {
+    "id": "WP9",
+    "title": "web: Settings → Billing \"Complete payment\"",
+    "type": "feature",
+    "files": ["apps/web/app/(dashboard)/settings/billing/page.tsx"],
+    "tests": ["apps/web/app/(dashboard)/settings/billing/billing-page.test.tsx"],
+    "brief": "Satisfies R2.5, R2.8; provenBy T21.\nBeside the plan header (page.tsx:214): when s.paymentRequired render\n  <Button loading={checkout.isPending} onClick={() => checkout.mutate()}>Complete payment</Button>\nwith the price line \"Lite · $99/mo\" composed from s.planName / money(s.monthlyPrice) — never the literal.\nNo other change.",
+    "dependsOn": ["WP7"],
+    "blocked": true,
+    "blockerFindings": [
+      {
+        "file": "(scope)",
+        "severity": "blocker",
+        "phase": "Author tests",
+        "summary": "test author touched non-test files: .claude/pipeline/2026-09-13-F27-build, .claude/pipeline/2026-09-14-743-fix-round, .claude/pipeline/2026-09-15-lite-L2-plan/, .claude/pipeline/agent-log.jsonl",
+        "detail": "Task WP9's declared tests are [\"apps/web/app/(dashboard)/settings/billing/billing-page.test.tsx\"]; per-path rule matched: .claude/pipeline/2026-09-13-F27-build (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-14-743-fix-round (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/2026-09-15-lite-L2-plan/ (untracked and not in any task's files/tests -- unplanned); .claude/pipeline/agent-log.jsonl (untracked and not in any task's files/tests -- unplanned). Revert attempt did NOT confirm success (exitCode=null) -- treat the tree as suspect."
+      }
+    ],
+    "redRun": {
+      "ran": false,
+      "results": [],
+      "cwd": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-lite-L2"
+    }
+  },
+  "progressLine": "Task WP9: blocked (1 blocker(s))"
+}

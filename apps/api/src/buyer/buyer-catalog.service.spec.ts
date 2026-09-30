@@ -101,6 +101,107 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     await expect(service.getProductDetail("p1", "c1")).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  // The detail payload must carry every field the listing does, or the buyer
+  // detail page silently degrades: a boxed Add drops to 1 loose piece and an
+  // out-of-stock product reads "In stock" with an enabled Add button.
+  it("getProductDetail returns the listing's box/stock/merch fields (tile↔detail parity)", async () => {
+    gated([]);
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      category: "Snacks",
+      pricePerUnit: 10,
+      unitsPerBox: 24,
+      isDeal: true,
+      currentStock: 0,
+      lowStockThreshold: 5,
+      isActive: true,
+      trackedCategoryId: null,
+      imageKeys: ["a.jpg", "b.jpg"],
+      imageUrls: ["https://signed/a.jpg", "https://signed/b.jpg"],
+      variants: [
+        {
+          id: "v1",
+          variantName: "Large",
+          sku: "V1",
+          unit: "ea",
+          pricePerUnit: 12,
+          category: "Snacks",
+          unitsPerBox: 6,
+        },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.unitsPerBox).toBe(24); // boxed Add puts 1 box in the cart, not 1 piece
+    expect(res.stockStatus).toBe("OUT_OF_STOCK"); // Notify-me reachable
+    expect(res.inStock).toBe(false);
+    expect(res.stockLeft).toBeNull();
+    expect(res.isDeal).toBe(true);
+    expect(res.thumbnailUrl).toBe("https://signed/a.jpg");
+    // Variant rows carry the promo inputs deriveTilePrice needs
+    expect(res.variants[0]).toMatchObject({ category: "Snacks", unitsPerBox: 6 });
+  });
+
+  // A variant with its own CustomerPrice row must price off ITS tier, not the
+  // parent's — otherwise the parent's Variants list and the variant's own
+  // tile/detail page quote two different prices for the same product.
+  it("getProductDetail prices each variant off its own tier override", async () => {
+    gated([]);
+    prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      pricePerUnit: 20,
+      priceTier3: 15,
+      isActive: true,
+      trackedCategoryId: null,
+      variants: [
+        { id: "v1", variantName: "Large", sku: "V1", unit: "ea", pricePerUnit: 10, priceTier3: 8 },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.buyerPrice).toBe(20); // parent has no override — customer default tier 1
+    expect(res.variants[0].buyerPrice).toBe(8); // variant's own tier-3 override
+  });
+
+  // A discontinued variant must not be listed with a price: its row links to a
+  // detail page that 404s on isActive, so the buyer is quoted a dead end.
+  it("getProductDetail omits deactivated variants", async () => {
+    gated([]);
+    prisma.customer.findUnique.mockResolvedValue({ pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    products.findOne.mockResolvedValue({
+      id: "p1",
+      name: "Widget",
+      unit: "ea",
+      pricePerUnit: 20,
+      isActive: true,
+      trackedCategoryId: null,
+      variants: [
+        { id: "v1", variantName: "Large", unit: "ea", pricePerUnit: 10, isActive: true },
+        { id: "v2", variantName: "Discontinued", unit: "ea", pricePerUnit: 10, isActive: false },
+      ],
+    });
+
+    const res = (await service.getProductDetail("p1", "c1")) as any;
+
+    expect(res.variants.map((v: any) => v.id)).toEqual(["v1"]);
+    // The tier-override lookup must not widen to the hidden variant either
+    expect(prisma.customerPrice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ productId: { in: ["p1", "v1"] } }),
+      }),
+    );
+  });
+
   it("getFavorites filters out products in a locked category", async () => {
     gated([{ id: "cat-alc", name: "Alcohol" }]);
     auths([]);
@@ -168,7 +269,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
             pricePerUnit: 10,
             currentStock: 3.5,
             lowStockThreshold: 5,
-            imageKeys: ["a-fp50x50.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"],
+            imageKeys: ["a-fp50x50.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"].map(
+              (k) => `products/p1/${k}`,
+            ),
             isNew: true,
             isDeal: true,
           },
@@ -191,10 +294,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       expect(p1.isNew).toBe(true);
       expect(p1.isDeal).toBe(true);
       expect(p1.imageUrls).toEqual([
-        "https://signed/a-fp50x50.jpg",
-        "https://signed/b.jpg",
-        "https://signed/c.jpg",
-        "https://signed/d.jpg",
+        "https://signed/products/p1/a-fp50x50.jpg",
+        "https://signed/products/p1/b.jpg",
+        "https://signed/products/p1/c.jpg",
+        "https://signed/products/p1/d.jpg",
       ]);
       expect(p1.imageUrls.length).toBe(4); // 5th key never presigned
       expect(p1.stockStatus).toBe("LOW");
@@ -205,6 +308,27 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
 
       expect(p3.stockStatus).toBe("IN_STOCK");
       expect(p3.stockLeft).toBeNull();
+    });
+
+    it("ids filters via andWhere and fetches ALL of them (never a truncated page)", async () => {
+      gated([]);
+      await service.getCatalog({ ids: ["p9", "p42"], limit: 20 }, "c1");
+      expect(products.findAll).toHaveBeenCalledWith(
+        // limit 0 = fetch-all: a page boundary would drop cart lines, and the
+        // cart prices anything missing at 0.
+        expect.objectContaining({ page: 1, limit: 0 }),
+        { andWhere: [{ id: { in: ["p9", "p42"] } }] },
+      );
+    });
+
+    it("ids composes with the regulated-visibility gate rather than bypassing it", async () => {
+      gated([{ id: "cat-alc", name: "Alcohol" }]);
+      auths([]);
+      await service.getCatalog({ ids: ["p9"] }, "c1");
+      expect(products.findAll).toHaveBeenCalledWith(expect.anything(), {
+        excludeTrackedCategoryIds: ["cat-alc"],
+        andWhere: [{ id: { in: ["p9"] } }],
+      });
     });
 
     it("collection=new filters via andWhere [{ isNew: true }]", async () => {
@@ -324,14 +448,25 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
 
         const res = await service.getCatalogCounts("c1", "ba1");
 
-        // Every count/groupBy where carries the regulated-gate exclusion.
+        // Every count/groupBy where carries the regulated-gate exclusion — in
+        // its NULL-SAFE form. This assertion previously pinned the bare
+        // `{ notIn: [...] }` shape, which Prisma evaluates as excluding NULL
+        // rows too: with one license-gated category, every UNTRACKED product
+        // dropped out of all rail counts (and the catalog itself). The gate
+        // must always be (trackedCategoryId IS NULL OR notIn hidden).
+        const NULL_SAFE_GATE = [
+          { trackedCategoryId: null },
+          { trackedCategoryId: { notIn: ["cat-x"] } },
+        ];
         for (const call of productCount.mock.calls as any[]) {
           const where = call[0].where;
-          const gate = where.AND ? where.AND[0].trackedCategoryId : where.trackedCategoryId;
-          expect(gate).toEqual({ notIn: ["cat-x"] });
+          const gate = where.OR ?? where.AND?.[0]?.OR;
+          expect(gate).toEqual(NULL_SAFE_GATE);
+          expect(where.trackedCategoryId).toBeUndefined();
         }
         const groupByWhere = (productGroupBy.mock.calls[0] as any[])[0].where;
-        expect(groupByWhere.trackedCategoryId).toEqual({ notIn: ["cat-x"] });
+        expect(groupByWhere.OR).toEqual(NULL_SAFE_GATE);
+        expect(groupByWhere.trackedCategoryId).toBeUndefined();
 
         expect(res.lockedCategories).toEqual([{ id: "cat-x", name: "Tobacco", status: "NONE" }]);
         expect(res.categories).toEqual([

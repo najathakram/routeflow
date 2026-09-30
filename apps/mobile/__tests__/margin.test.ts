@@ -3,9 +3,9 @@ import {
   computeMarginFraction,
   priceForMarginFloor,
   classifyMargin,
-} from "../lib/pricing";
+} from "@routeflow/pricing";
 
-describe("margin helpers (mirrors apps/api/src/common/pricing.spec.ts)", () => {
+describe("margin helpers (@routeflow/pricing)", () => {
   it("costPerSellingUnit scales piece cost to the box for boxed products", () => {
     expect(costPerSellingUnit(0.58, 24)).toBeCloseTo(13.92, 5);
     expect(costPerSellingUnit(0.58, 1)).toBe(0.58);

@@ -5,18 +5,60 @@
  *
  * Role: OPERATOR (pre-authed via the "operator" Playwright project storage state).
  * Runs against the seeded e2e tenant, which has customers + products; the
- * draft-resume tests mock every draft endpoint so they write to no tenant.
+ * draft-resume tests mock every draft endpoint so they write to no tenant. The
+ * ESC tests DO park real drafts (that's the behavior under test) — afterEach
+ * deletes them via the API so the tenant's dock doesn't accumulate residue.
  */
 
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { setTenantCookie } from "./helpers/auth";
+import { TENANT_SLUG } from "./helpers/constants";
+import { apiBase, operatorAccessToken } from "./helpers/api";
 
 const BASE = process.env.PLAYWRIGHT_BASE_URL ?? "https://routeflowweb-production.up.railway.app";
 
 test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
+  // Both ESC tests dismiss a STARTED order, so each parks one real draft on the
+  // e2e tenant (the auto-park net is the behavior under test). Capture the ids
+  // from the builder's POST /drafts and delete them in afterEach — before this,
+  // every run left two more rows in the operator's dock forever (and GET /drafts
+  // caps at 50, so the residue would eventually mask real fixtures).
+  const parkedDraftIds: string[] = [];
+  const pendingParks: Array<Promise<void>> = [];
+
   test.beforeEach(async ({ page, context }) => {
     await setTenantCookie(context, BASE);
+    page.on("response", (resp) => {
+      if (resp.request().method() !== "POST") return;
+      if (!/\/api\/v1\/drafts(\?.*)?$/.test(resp.url())) return;
+      pendingParks.push(
+        resp
+          .json()
+          .then((body: { id?: string }) => {
+            if (resp.ok() && body?.id) parkedDraftIds.push(body.id);
+          })
+          .catch(() => {}),
+      );
+    });
     await page.goto("/orders");
+  });
+
+  test.afterEach(async ({ page, request }) => {
+    // The park toast each test waits for guarantees the POST response landed;
+    // this only flushes the listener's json() parse.
+    await Promise.all(pendingParks.splice(0));
+    const ids = parkedDraftIds.splice(0);
+    if (ids.length === 0) return;
+    const token = await operatorAccessToken(page);
+    if (!token) return;
+    const api = apiBase(page.url());
+    for (const id of ids) {
+      await request
+        .delete(`${api}/api/v1/drafts/${id}`, {
+          headers: { authorization: `Bearer ${token}`, "x-tenant-slug": TENANT_SLUG },
+        })
+        .catch(() => {});
+    }
   });
 
   async function openBuilderWithCustomer(page: import("@playwright/test").Page) {
@@ -26,11 +68,12 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
       .click();
     const title = page.getByRole("heading", { name: "Create Order" });
     await expect(title).toBeVisible({ timeout: 10_000 });
-    // Pick the first customer so the product search renders. "e" matches most
-    // seeded business names on the e2e tenant. The suggestion list is a
+    // Pick a known seeded customer (e2e-seed.js FIXTURE_CUSTOMERS) BY EXACT NAME so the product
+    // search renders — never "the first result for 'e'", which depended on customer creation order
+    // (the seeded approved buyer's customer also contains an "e"). The suggestion list is a
     // SIBLING of the search input — a page-wide "ul li button" grabs the
     // sidebar nav toggle first (the selector this replaces did exactly that).
-    await page.getByPlaceholder("Search by business name…").fill("e");
+    await page.getByPlaceholder("Search by business name…").fill("E2E Fixture Deli Three");
     await page
       .locator('input[placeholder="Search by business name…"] ~ ul li button')
       .first()
@@ -52,9 +95,14 @@ test.describe("Operator — Create Order Escape scoping (WP-1)", () => {
     await expect(productSearch).toHaveValue("");
     await expect(title).toBeVisible();
 
-    // Second Escape (no active sub-flow) dismisses the builder.
+    // Second Escape (no active sub-flow) dismisses the builder. A customer is
+    // selected, so the dismissal auto-parks — wait for the toast so the park's
+    // POST has definitely landed before afterEach deletes the draft.
     await page.keyboard.press("Escape");
     await expect(title).toBeHidden({ timeout: 10_000 });
+    await expect(page.getByText(/saved as draft|draft parked/i).first()).toBeVisible({
+      timeout: 10_000,
+    });
   });
 
   test("ESC-02 dismissing a started order auto-parks it as a draft (nothing lost)", async ({
@@ -219,5 +267,107 @@ test.describe("Operator — order date survives a parked draft (WP-4)", () => {
     await expect(page.getByRole("button", { name: /Merge into/ })).toBeDisabled();
     await expect(page.getByText(/backdated order has to be created separately/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Create as separate/ })).toBeEnabled();
+  });
+});
+
+// B499 — the product-search row's scan button, at a real phone width. No customer is picked
+// (the Products section renders unconditionally, and dismissing WITHOUT a selected customer
+// never auto-parks a draft — see ESC-02 above — so this needs no draft cleanup).
+test.describe("Operator — Create Order product search scan button, mobile (B499)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("MOBILE-01 the scan button renders beside the search input, ≥44px, no horizontal overflow", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    await page.goto("/orders");
+    await page
+      .getByRole("button", { name: /new order/i })
+      .first()
+      .click();
+    await expect(page.getByRole("heading", { name: "Create Order" })).toBeVisible({
+      timeout: 10_000,
+    });
+
+    const search = page.getByPlaceholder("Search by name, SKU or scan barcode…");
+    const scanButton = page.getByRole("button", { name: "Scan barcode" });
+    await expect(search).toBeVisible();
+    await expect(scanButton).toBeVisible();
+
+    // The button is measured while the Create Order modal is still animating in: its box reads
+    // ~42.5px at +0ms and settles at exactly 44x44 by ~+300ms (B572). Poll until the size
+    // settles — a one-shot read raced the animation — but still FAIL if it never reaches 44.
+    const scanSize = async (dim: "width" | "height") =>
+      (await scanButton.boundingBox())?.[dim] ?? 0;
+    await expect.poll(() => scanSize("width"), { timeout: 5_000 }).toBeGreaterThanOrEqual(44);
+    await expect.poll(() => scanSize("height"), { timeout: 5_000 }).toBeGreaterThanOrEqual(44);
+
+    const scanBox = await scanButton.boundingBox();
+    expect(scanBox).not.toBeNull();
+
+    // Neither control extends past the 390px viewport — the classic "add a button, blow the
+    // row out to the right" mobile regression.
+    const searchBox = await search.boundingBox();
+    expect(searchBox).not.toBeNull();
+    expect(scanBox!.x + scanBox!.width).toBeLessThanOrEqual(390);
+    expect(searchBox!.x).toBeGreaterThanOrEqual(0);
+
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  });
+});
+
+// B506 — the orders list's delivery date-range filter, at a real phone width.
+// Every other filter control on this row already wraps at 390px; the date
+// range was the one block that didn't wrap internally, so its "to" field ran
+// past the right edge.
+test.describe("Operator — Orders list delivery date-range filter, mobile (B506)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("MOBILE-02 both date inputs are visible, interactive, and stay inside the viewport", async ({
+    page,
+    context,
+  }) => {
+    await setTenantCookie(context, BASE);
+    await page.goto("/orders");
+    // level: 2 — at 390px the mobile top bar's own "Orders" chrome (an h1) also
+    // matches this name, which made the bare locator ambiguous (strict-mode
+    // violation). The page's own heading is the h2.
+    await expect(page.getByRole("heading", { name: "Orders", level: 2 })).toBeVisible({
+      timeout: 10_000,
+    });
+
+    const from = page.getByTitle("Delivery date from");
+    const to = page.getByTitle("Delivery date to");
+    await expect(from).toBeVisible();
+    await expect(to).toBeVisible();
+
+    const fromBox = await from.boundingBox();
+    const toBox = await to.boundingBox();
+    expect(fromBox).not.toBeNull();
+    expect(toBox).not.toBeNull();
+    // The regression this pins: the "to" field's right edge ran off past 390px
+    // (unreachable without an unhinted horizontal scroll) instead of wrapping
+    // to a second line the way every other filter control on this row does.
+    expect(fromBox!.x + fromBox!.width).toBeLessThanOrEqual(390);
+    expect(toBox!.x + toBox!.width).toBeLessThanOrEqual(390);
+    expect(fromBox!.x).toBeGreaterThanOrEqual(0);
+    expect(toBox!.x).toBeGreaterThanOrEqual(0);
+
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+
+    // Both fields actually take input, not just visually present.
+    await from.fill("2026-10-01");
+    await expect(from).toHaveValue("2026-10-01");
+    await to.fill("2026-10-15");
+    await expect(to).toHaveValue("2026-10-15");
   });
 });

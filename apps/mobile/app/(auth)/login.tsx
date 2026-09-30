@@ -12,6 +12,7 @@ import { BrandGlyph, GoogleButton } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
 import { useTenantStore } from "../../lib/tenant-store";
 import { getLastUsername } from "../../lib/last-username";
+import { buildLabel } from "../../lib/build-info";
 
 const schema = z.object({
   username: z.string().min(1, "Username is required"),
@@ -40,7 +41,6 @@ export default function LoginScreen() {
   const tenantSlug = useTenantStore((s) => s.slug);
   const tenantBranding = useTenantStore((s) => s.branding);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(true);
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const {
@@ -107,6 +107,10 @@ export default function LoginScreen() {
         // user dismissed — no banner
       } else if (code === "unauthorized" || code === "google_email_is_staff") {
         setApiError("This Google account is not authorised for this company.");
+      } else if (code === "google_account_mismatch") {
+        setApiError(
+          "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
+        );
       } else if (code === "google_unavailable") {
         setApiError("Google sign-in is not available for this company.");
       } else {
@@ -185,17 +189,9 @@ export default function LoginScreen() {
             ) : null}
           </View>
 
+          {/* #1508 (B01): the stay-signed-in checkbox is gone — it changed nothing. The
+              session is always kept (tokens in SecureStore, restored on launch), as on web. */}
           <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={styles.rememberRow}
-              onPress={() => setRememberMe((v) => !v)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
-                {rememberMe ? <Text style={styles.checkmark}>✓</Text> : null}
-              </View>
-              <Text style={styles.rememberText}>Remember me</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => router.push("/(auth)/forgot-password")}
               activeOpacity={0.7}
@@ -237,6 +233,10 @@ export default function LoginScreen() {
             New driver? <Text style={styles.footerLink}>Get setup code</Text>
           </Text>
         </TouchableOpacity>
+
+        {/* B202: diagnostic build stamp — lets us and the client tell which
+            deploy a browser/phone is actually on (see lib/build-info.ts). */}
+        <Text style={styles.buildStamp}>{buildLabel()}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -326,39 +326,10 @@ const styles = StyleSheet.create({
   },
   optionsRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     alignItems: "center",
     paddingHorizontal: 2,
     marginTop: 2,
-  },
-  rememberRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: ios.gray[3],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: {
-    backgroundColor: ios.brand,
-    borderColor: ios.brand,
-  },
-  checkmark: {
-    color: "#ffffff",
-    fontSize: 11,
-    fontFamily: "Inter_700Bold",
-    lineHeight: 14,
-  },
-  rememberText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
   },
   forgotText: {
     fontSize: 14,
@@ -410,5 +381,15 @@ const styles = StyleSheet.create({
   footerLink: {
     color: ios.brand,
     fontFamily: "Inter_500Medium",
+  },
+  buildStamp: {
+    textAlign: "center",
+    fontSize: 11,
+    fontFamily: "Inter_400Regular",
+    // label2, not the fainter label3: this stamp exists to be READ ALOUD by a
+    // client confirming which deploy they're on, so it has to clear a contrast
+    // floor. label3 (30% opacity) sits near 2:1 on this background.
+    color: ios.label2,
+    marginTop: 8,
   },
 });

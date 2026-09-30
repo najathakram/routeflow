@@ -11,7 +11,12 @@
  * Exits 0 when every check passes, 1 otherwise (CI-friendly).
  */
 
+import { assertTestTenant } from "./lib/test-tenants.cjs";
+import { checkGoogleSignIn } from "./lib/google-signin-check.mjs";
+
 const BASE = (process.env.SMOKE_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+// Only approved test tenants may be smoke-tested — never a live client tenant.
+const TENANT = assertTestTenant(process.env.SMOKE_TENANT_SLUG || "e2e-routeflow", "smoke");
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS || 15000);
 
 /** @type {{ name: string, path: string, expect: (res: Response, body: string) => boolean }[]} */
@@ -58,6 +63,29 @@ async function run() {
       console.log(`  ❌ ${check.name} — ${err?.name === "AbortError" ? "timeout" : err?.message}`);
       failures++;
     }
+  }
+
+  try {
+    const result = await checkGoogleSignIn({
+      baseUrl: BASE,
+      tenant: TENANT,
+      timeoutMs: TIMEOUT_MS,
+    });
+    for (const door of result.doors) {
+      if (door.status === "ok") {
+        console.log(`  ✅ google-signin: ${door.name} — reachable`);
+      } else if (door.status === "skipped") {
+        console.log(`  ⚠️  google-signin: ${door.name} — skipped (${door.reason})`);
+      } else {
+        console.log(
+          `  ❌ google-signin: ${door.name} — ${door.reason}${door.finalPage ? ` (${door.finalPage})` : ""}`,
+        );
+        failures++;
+      }
+    }
+  } catch (err) {
+    console.log(`  ❌ google-signin: ${err?.message ?? err}`);
+    failures++;
   }
 
   console.log("");

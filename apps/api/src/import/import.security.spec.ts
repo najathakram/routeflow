@@ -14,7 +14,14 @@ import { BadRequestException } from "@nestjs/common";
 import { ImportService } from "./import.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
+import { CustomersService } from "../customers/customers.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { NumberingService } from "./numbering.service";
+import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — security (F8-003 / F9-008)", () => {
   let service: ImportService;
@@ -27,6 +34,50 @@ describe("ImportService — security (F8-003 / F9-008)", () => {
         ImportService,
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: { create: jest.fn(), receive: jest.fn() } },
+        {
+          provide: CustomersService,
+          useValue: {
+            assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
+            maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // Harness: ImportService injects NumberingService (B267/B269);
+        // these suites never exercise a mint, so the mock only satisfies DI.
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("INV-2026-0001") },
+        },
+        // Harness: ImportService injects ExternalRefService (B268/D4 re-import
+        // idempotency for source-numberless rows). Mocked at the module boundary;
+        // `findLocalId` → null means "never imported before", the state every
+        // suite here assumes.
+        {
+          provide: ExternalRefService,
+          useValue: {
+            findLocalId: jest.fn().mockResolvedValue(null),
+            record: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // B858/B859 harness note: not yet consumed by ImportService's constructor (RC1) — added
+        // here so this module keeps compiling once FIX2 wires them in (module boot dependency
+        // only; this spec's own assertions are unaffected).
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(ImportService);

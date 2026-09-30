@@ -14,15 +14,14 @@ import {
   Search as SearchIcon,
 } from "lucide-react";
 import { Card, Input, cn } from "@routeflow/ui/web";
-import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 
 /**
  * Settings hub — the grouped-card landing for /settings (full-hub redesign). Every
  * setting screen is reachable from here; clicking a link opens that screen (an
  * existing `?tab=` panel or a standalone /settings sub-page) with a back link. Kept
  * data-driven so the hub, search, and "frequently used" chips stay in sync, and so
- * role/addon-gated screens (Regulated = admin-only, Tobacco = addon) are hidden the
- * same way the sidebar hides them.
+ * role-gated screens (Regulated = admin-only) are hidden the same way the sidebar
+ * hides them.
  */
 
 type HubItem = {
@@ -30,7 +29,7 @@ type HubItem = {
   desc: string;
   href: string;
   /** When set, the item is only shown if the flag is true (preserves gating). */
-  show?: "admin" | "tobacco";
+  show?: "admin";
 };
 
 type HubGroup = {
@@ -132,6 +131,11 @@ const GROUPS: HubGroup[] = [
         desc: "API key for invoice/bill scanning",
         href: "/settings?tab=integrations",
       },
+      {
+        label: "GoHighLevel",
+        desc: "Create customers from won leads",
+        href: "/settings?tab=gohighlevel",
+      },
     ],
   },
   {
@@ -147,10 +151,16 @@ const GROUPS: HubGroup[] = [
         show: "admin",
       },
       {
-        label: "Tobacco",
-        desc: "Tobacco dealer settings & reporting",
-        href: "/tobacco",
-        show: "tobacco",
+        label: "Selling restrictions",
+        desc: "Block restricted products by the customer's state",
+        href: "/settings/restrictions",
+        show: "admin",
+      },
+      {
+        label: "Product labels",
+        desc: "Restriction categories applied to products",
+        href: "/settings/product-categories",
+        show: "admin",
       },
     ],
   },
@@ -189,13 +199,11 @@ function HubLink({ item }: { item: HubItem }) {
 }
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
-  const hasTobacco = useHasAddon(TOBACCO_ADDON);
   const [query, setQuery] = React.useState("");
 
   const canShow = React.useCallback(
-    (item: HubItem) =>
-      item.show === "admin" ? isAdmin : item.show === "tobacco" ? hasTobacco : true,
-    [isAdmin, hasTobacco],
+    (item: HubItem) => (item.show === "admin" ? isAdmin : true),
+    [isAdmin],
   );
 
   const q = query.trim().toLowerCase();

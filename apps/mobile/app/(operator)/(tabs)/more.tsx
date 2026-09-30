@@ -6,13 +6,35 @@ import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../../lib/auth-store";
 import { useTenantStore } from "../../../lib/tenant-store";
-import { useHasAddon, TOBACCO_ADDON } from "../../../lib/api/tobacco";
+import { useDeliveryAccess, useDeveloperMode, useRoutesAccess } from "../../../lib/api/addons";
+import { usePlanFlag } from "../../../lib/api/billing";
+import { planFlagVisible } from "../../../lib/plan-flags";
 
 export default function OperatorMoreScreen() {
   const router = useRouter();
   const { user, logout, setActiveRole } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
-  const hasTobacco = useHasAddon(TOBACCO_ADDON);
+  // Owner split 2026-08-25: the MANAGE rows below mirror (operator)/_layout.tsx's
+  // section sets, so a tenant that bought only one addon still reaches its own
+  // surfaces — Routes/Fleet are recurring-routes screens, Drivers is shared by
+  // both features (EITHER_SECTIONS). Owner decision 2026-08-28: the helpers no
+  // longer fold in developer_mode — these rows follow the feature addons alone.
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  const driversAccess = routesAccess.enabled || deliveryAccess.enabled;
+  // Drive mode keeps the RAW dev switch: the (driver) app is still gated on
+  // developer_mode in app/_layout.tsx, so widening this row would hand an
+  // addon-only operator a button that bounces them straight back.
+  const { enabled: devMode } = useDeveloperMode();
+  // Lite-L2 (WP12/R4.4): rows for a plan-gated section are wrapped in planFlagVisible —
+  // same three-valued rule as the web sidebar (lib/plan-flags.ts).
+  const estimatesVisible = planFlagVisible(usePlanFlag("flag.estimates"));
+  const recurringInvoicesVisible = planFlagVisible(usePlanFlag("flag.recurring_invoices"));
+  const creditNotesVisible = planFlagVisible(usePlanFlag("flag.credit_notes"));
+  const returnsVisible = planFlagVisible(usePlanFlag("flag.returns"));
+  const analyticsVisible = planFlagVisible(usePlanFlag("flag.analytics"));
+  const reportsVisible = planFlagVisible(usePlanFlag("flag.reports"));
+  const messagingVisible = planFlagVisible(usePlanFlag("flag.messaging"));
 
   const initials =
     user?.username
@@ -94,30 +116,36 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/payments")}
             chevron
           />
-          <ListRow
-            icon={<Ionicons name="repeat-outline" size={16} color={ios.system.orangeInk} />}
-            iconBg={ios.system.orangeWash}
-            title="Recurring Invoices"
-            subtitle="Scheduled auto-billing"
-            onPress={() => router.push("/(operator)/recurring-invoices")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="reader-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Estimates"
-            subtitle="Quotes & proposals"
-            onPress={() => router.push("/(operator)/estimates")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="cash-outline" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Credit Notes"
-            subtitle="Refunds & adjustments"
-            onPress={() => router.push("/(operator)/credit-notes")}
-            chevron
-          />
+          {recurringInvoicesVisible ? (
+            <ListRow
+              icon={<Ionicons name="repeat-outline" size={16} color={ios.system.orangeInk} />}
+              iconBg={ios.system.orangeWash}
+              title="Recurring Invoices"
+              subtitle="Scheduled auto-billing"
+              onPress={() => router.push("/(operator)/recurring-invoices")}
+              chevron
+            />
+          ) : null}
+          {estimatesVisible ? (
+            <ListRow
+              icon={<Ionicons name="reader-outline" size={16} color={ios.system.purpleInk} />}
+              iconBg={ios.system.purpleWash}
+              title="Estimates"
+              subtitle="Quotes & proposals"
+              onPress={() => router.push("/(operator)/estimates")}
+              chevron
+            />
+          ) : null}
+          {creditNotesVisible ? (
+            <ListRow
+              icon={<Ionicons name="cash-outline" size={16} color={ios.system.greenInk} />}
+              iconBg={ios.system.greenWash}
+              title="Credit Notes"
+              subtitle="Refunds & adjustments"
+              onPress={() => router.push("/(operator)/credit-notes")}
+              chevron
+            />
+          ) : null}
           <ListRow
             icon={<Ionicons name="cube-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
@@ -126,14 +154,18 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/shipments")}
             chevron
           />
-          <ListRow
-            icon={<Ionicons name="return-down-back-outline" size={16} color={ios.system.redInk} />}
-            iconBg={ios.system.redWash}
-            title="Returns"
-            subtitle="Approvals & credits"
-            onPress={() => router.push("/(operator)/returns")}
-            chevron
-          />
+          {returnsVisible ? (
+            <ListRow
+              icon={
+                <Ionicons name="return-down-back-outline" size={16} color={ios.system.redInk} />
+              }
+              iconBg={ios.system.redWash}
+              title="Returns"
+              subtitle="Approvals & credits"
+              onPress={() => router.push("/(operator)/returns")}
+              chevron
+            />
+          ) : null}
           <ListRow
             icon={<Ionicons name="cart-outline" size={16} color={ios.system.orangeInk} />}
             iconBg={ios.system.orangeWash}
@@ -150,30 +182,36 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/expenses")}
             chevron
           />
-          <ListRow
-            icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Routes"
-            subtitle="Templates & stops"
-            onPress={() => router.push("/(operator)/routes")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Fleet"
-            subtitle="Live map & driver tracking"
-            onPress={() => router.push("/(operator)/fleet")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Drivers"
-            subtitle="Team management"
-            onPress={() => router.push("/(operator)/drivers")}
-            chevron
-          />
+          {routesAccess.enabled ? (
+            <ListRow
+              icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Routes"
+              subtitle="Templates & stops"
+              onPress={() => router.push("/(operator)/routes")}
+              chevron
+            />
+          ) : null}
+          {routesAccess.enabled ? (
+            <ListRow
+              icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
+              iconBg={ios.system.purpleWash}
+              title="Fleet"
+              subtitle="Live map & driver tracking"
+              onPress={() => router.push("/(operator)/fleet")}
+              chevron
+            />
+          ) : null}
+          {driversAccess ? (
+            <ListRow
+              icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
+              iconBg={ios.system.greenWash}
+              title="Drivers"
+              subtitle="Team management"
+              onPress={() => router.push("/(operator)/drivers")}
+              chevron
+            />
+          ) : null}
         </ListGroup>
 
         <ListGroup header="WAREHOUSE">
@@ -196,22 +234,26 @@ export default function OperatorMoreScreen() {
         </ListGroup>
 
         <ListGroup header="INSIGHTS">
-          <ListRow
-            icon={<Ionicons name="stats-chart-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Analytics"
-            subtitle="Revenue, top items, margins"
-            onPress={() => router.push("/(operator)/analytics")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="document-text-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Reports"
-            subtitle="P&L, sales, AR aging, cash flow"
-            onPress={() => router.push("/(operator)/reports")}
-            chevron
-          />
+          {analyticsVisible ? (
+            <ListRow
+              icon={<Ionicons name="stats-chart-outline" size={16} color={ios.system.purpleInk} />}
+              iconBg={ios.system.purpleWash}
+              title="Analytics"
+              subtitle="Revenue, top items, margins"
+              onPress={() => router.push("/(operator)/analytics")}
+              chevron
+            />
+          ) : null}
+          {reportsVisible ? (
+            <ListRow
+              icon={<Ionicons name="document-text-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Reports"
+              subtitle="P&L, sales, AR aging, cash flow"
+              onPress={() => router.push("/(operator)/reports")}
+              chevron
+            />
+          ) : null}
           <ListRow
             icon={<Ionicons name="shield-checkmark-outline" size={16} color={ios.brand} />}
             iconBg={ios.brandWash}
@@ -220,16 +262,6 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/compliance")}
             chevron
           />
-          {hasTobacco ? (
-            <ListRow
-              icon={<Ionicons name="leaf-outline" size={16} color={ios.system.orangeInk} />}
-              iconBg={ios.system.orangeWash}
-              title="Tobacco"
-              subtitle="Compliance tracking & monthly reports"
-              onPress={() => router.push("/(operator)/tobacco")}
-              chevron
-            />
-          ) : null}
           <ListRow
             icon={<Ionicons name="settings-outline" size={16} color={ios.gray[1]} />}
             iconBg={ios.fill3}
@@ -241,14 +273,16 @@ export default function OperatorMoreScreen() {
         </ListGroup>
 
         <ListGroup header="COMMUNICATION">
-          <ListRow
-            icon={<Ionicons name="chatbubbles-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Messages"
-            subtitle="Dispatch & drivers"
-            onPress={() => router.push("/(operator)/messages")}
-            chevron
-          />
+          {messagingVisible ? (
+            <ListRow
+              icon={<Ionicons name="chatbubbles-outline" size={16} color={ios.brand} />}
+              iconBg={ios.brandWash}
+              title="Messages"
+              subtitle="Dispatch & drivers"
+              onPress={() => router.push("/(operator)/messages")}
+              chevron
+            />
+          ) : null}
         </ListGroup>
 
         <ListGroup header="ACCOUNT">
@@ -266,7 +300,7 @@ export default function OperatorMoreScreen() {
             onPress={() => router.push("/(operator)/change-password")}
             chevron
           />
-          {user?.canActAsDriver ? (
+          {devMode && user?.canActAsDriver ? (
             <ListRow
               icon={<Ionicons name="car-outline" size={16} color={ios.system.orangeInk} />}
               iconBg={ios.system.orangeWash}

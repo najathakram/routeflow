@@ -112,3 +112,36 @@ describe("AuthController — refresh cookie (SEC-4 / F11-002)", () => {
     expect(authService.logout).toHaveBeenCalledWith("user-1");
   });
 });
+
+describe("AuthController.logout under impersonation (B138)", () => {
+  it("REG-B138 an impersonated caller's logout clears the cookie and revokes NOTHING", async () => {
+    const authService = {
+      logout: jest.fn().mockResolvedValue({ message: "Logged out successfully" }),
+    };
+    const controller = makeController(authService);
+    const res = makeRes();
+
+    const result = await controller.logout({ id: "ta1", impersonatedBy: "sa1" } as any, res);
+
+    expect(res.clearCookie).toHaveBeenCalledWith(
+      "rf_refresh",
+      expect.objectContaining({ path: "/api/v1/auth" }),
+    );
+    expect(authService.logout).not.toHaveBeenCalled();
+    expect(result).toEqual({ message: "Impersonation session ended" });
+  });
+
+  it("pin (B138): an ordinary logout still revokes the caller's refresh tokens", async () => {
+    const authService = {
+      logout: jest.fn().mockResolvedValue({ message: "Logged out successfully" }),
+    };
+    const controller = makeController(authService);
+    const res = makeRes();
+
+    await controller.logout({ id: "u1" } as any, res);
+
+    expect(authService.logout).toHaveBeenCalledTimes(1);
+    expect(authService.logout).toHaveBeenCalledWith("u1");
+    expect(res.clearCookie).toHaveBeenCalledWith("rf_refresh", expect.anything());
+  });
+});

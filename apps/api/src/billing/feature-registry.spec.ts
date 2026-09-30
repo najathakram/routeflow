@@ -1,0 +1,558 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import {
+  ADDON_GATE_REGISTRY,
+  addonGateState,
+  checkFeatureRequires,
+  describeUnmetFeatureRequirement,
+  featureDefByKey,
+  FEATURE_REGISTRY,
+  type FeatureDef,
+} from "./feature-registry";
+
+const SRC_ROOT = path.resolve(__dirname, "..");
+const PRISMA_ROOT = path.resolve(__dirname, "..", "..", "prisma");
+
+/** Verbatim copy of today's addon-gate-registry.ts literal (this file's parent commit) — the
+ * zero-diff proof below fails loudly if a future edit changes a RequireAddon row's routes/
+ * grantPath/backfill without updating BOTH this const and the registry together. */
+const EXPECTED_LEGACY_REGISTRY = {
+  ocr: {
+    state: "dark",
+    added: "2026-08-29",
+    routes: [
+      "POST /vendor-bills/scan-invoice",
+      "POST /bookkeeping/expenses/:id/extract-items",
+      "POST /import/batch/:id/scan",
+      "POST /supplier-statements/scan",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "ocr")',
+    backfill:
+      "Owner decision 2026-09-05: OCR available to all tenants; gate stays dark until OCR is " +
+      "monetized; no grants required",
+    reviewBy: "2027-03-31",
+  },
+  tobacco_dealer: {
+    state: "enforced",
+    added: "2026-07-04",
+    routes: [
+      "GET /regulated/ledger",
+      "GET /regulated/reports/preview",
+      "GET /regulated/reports/csv",
+      "GET /regulated/filings",
+      "POST /regulated/filings/prepare",
+      "GET /regulated/filings/:id/csv",
+      "GET /regulated/filings/:id/pdf",
+      "GET /regulated/parked-reversals",
+      "POST /regulated/parked-reversals/:id/resolve",
+      "ALL /tobacco/* (class-level)",
+    ],
+    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "tobacco_dealer")',
+    backfill: "Live before the registry existed (regulated program); no change.",
+  },
+  recurring_routes: {
+    state: "enforced",
+    added: "2026-08-29",
+    routes: [
+      "ALL /route-runs/* (route-optimization.controller.ts, class-level, any-of order_delivery/developer_mode)",
+      "ALL /routes/* (route-optimization.controller.ts, class-level, any-of order_delivery/developer_mode)",
+      "ALL /routes/* (routes.controller.ts, class-level, any-of order_delivery/developer_mode)",
+      "ALL /route-runs/* (routes.controller.ts, class-level, any-of order_delivery/developer_mode)",
+      "PATCH /trips/routes/:routeId/planning (any-of order_delivery/developer_mode)",
+      "ALL /drivers/* (class-level, any-of order_delivery/developer_mode)",
+    ],
+    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "recurring_routes")',
+    backfill:
+      "Live before the registry existed; any-of with order_delivery/developer_mode; no change.",
+  },
+  order_delivery: {
+    state: "enforced",
+    added: "2026-08-29",
+    routes: [
+      "ALL /route-runs/* (route-optimization.controller.ts, class-level, any-of recurring_routes/developer_mode)",
+      "ALL /routes/* (route-optimization.controller.ts, class-level, any-of recurring_routes/developer_mode)",
+      "ALL /routes/* (routes.controller.ts, class-level, any-of recurring_routes/developer_mode)",
+      "ALL /route-runs/* (routes.controller.ts, class-level, any-of recurring_routes/developer_mode)",
+      "ALL /trips/* (class-level, any-of developer_mode)",
+      "PATCH /trips/routes/:routeId/planning (any-of recurring_routes/developer_mode)",
+      "ALL /drivers/* (class-level, any-of recurring_routes/developer_mode)",
+    ],
+    grantPath: 'Platform Admin → Tenants → [tenant] → add-ons (addonKey "order_delivery")',
+    backfill: "Live before the registry existed; no change.",
+  },
+  crm_gohighlevel: {
+    state: "dark",
+    added: "2026-09-11",
+    routes: [
+      "GET /crm/gohighlevel",
+      "PATCH /crm/gohighlevel/connection",
+      "POST /crm/gohighlevel/connection/test",
+      "DELETE /crm/gohighlevel/connection",
+      "GET /crm/gohighlevel/pipelines",
+      "PATCH /crm/gohighlevel/config",
+      "POST /crm/gohighlevel/sync",
+      "GET /crm/gohighlevel/handoffs",
+      "POST /crm/gohighlevel/handoffs/:id/retry",
+      "POST /crm/gohighlevel/handoffs/:id/dismiss",
+      "POST /crm/gohighlevel/import-existing/preview",
+      "POST /crm/gohighlevel/import-existing",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "crm_gohighlevel")',
+    backfill:
+      "New feature 2026-09-11: no tenant has a connection; gate stays dark through the pilot. " +
+      "Owner ruling 2026-09-12: BILLABLE add-on at $9.99/month — a follow-up publishes the sellable " +
+      "AddonSku (FLAT, granting this key) in the next catalog version; flip to enforced only after that " +
+      "SKU exists, the pilot tenant holds it, and the blast-radius report is clean",
+    reviewBy: "2027-03-11",
+  },
+  "email.connected_mailbox": {
+    state: "dark",
+    added: "2026-09-17",
+    routes: [
+      "GET /settings/email/mailbox",
+      "GET /settings/email/mailbox/google/start",
+      "GET /settings/email/mailbox/microsoft/start",
+      "GET /settings/email/mailbox/confirm/:token/preview",
+      "POST /settings/email/mailbox/confirm",
+      "POST /settings/email/mailbox/confirm/cancel",
+      "DELETE /settings/email/mailbox",
+    ],
+    grantPath:
+      'Platform Admin → Tenants → [tenant] → add-ons (AddonService.enableAddon writes addonKey "email.connected_mailbox")',
+    backfill:
+      "New feature 2026-09-17: no tenant has a connection; gate stays dark through the pilot " +
+      "(owner review window for Google gmail.send verification — see local-assets/handoff/" +
+      "2026-09-17/email-connect/design.md §5).",
+    reviewBy: "2027-03-17",
+  },
+  developer_mode: {
+    state: "enforced",
+    added: "2026-08-21",
+    routes: [
+      "ALL /route-runs/* (route-optimization.controller.ts, class-level, any-of recurring_routes/order_delivery)",
+      "ALL /routes/* (route-optimization.controller.ts, class-level, any-of recurring_routes/order_delivery)",
+      "ALL /routes/* (routes.controller.ts, class-level, any-of recurring_routes/order_delivery)",
+      "ALL /route-runs/* (routes.controller.ts, class-level, any-of recurring_routes/order_delivery)",
+      "ALL /trips/* (class-level, any-of order_delivery)",
+      "PATCH /trips/routes/:routeId/planning (any-of recurring_routes/order_delivery)",
+      "ALL /drivers/* (class-level, any-of recurring_routes/order_delivery)",
+    ],
+    grantPath:
+      "Platform Admin internal switch (never named in tenant-facing text — see INTERNAL_ADDON_KEYS).",
+    backfill: "Internal flag; no change.",
+  },
+  orders_inline_returns: {
+    state: "enforced",
+    added: "2026-09-16",
+    routes: [
+      "POST /returns/inline/quote",
+      "POST /orders/:id/inline-returns (PR-1d)",
+      "POST /returns/inline/:id/* (PR-1c/1d)",
+    ],
+    // Owner ruling 2026-09-28 ("On for everyone"): default-granted; text re-pinned with it.
+    grantPath:
+      "Default-granted to every tenant whose plan carries flag.returns (owner ruling " +
+      '2026-09-28); remove per tenant with a DENY override (addonKey "orders_inline_returns")',
+    backfill:
+      'New feature 2026-09-16; zero existing users. Owner ruling 2026-09-28 ("On for ' +
+      'everyone"): defaultGranted, so no TenantAddon row is needed and none is backfilled — ' +
+      "isDefaultGrantedAddon() grants it at runtime; flag.returns still gates it (requires).",
+  },
+};
+
+/** key -> files that carry a string-literal `@Decorator("key")` call, by decorator name. */
+function decoratorSites(decorator: "RequireAddon" | "RequirePlanFlag"): Map<string, string[]> {
+  const files = (fs.readdirSync(SRC_ROOT, { recursive: true }) as string[])
+    .map(String)
+    .filter((f) => f.endsWith(".controller.ts"))
+    .map((f) => path.join(SRC_ROOT, f));
+  const sites = new Map<string, string[]>();
+  const callRe = new RegExp(`@${decorator}\\(([^)]*)\\)`, "g");
+  for (const file of files) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const call of text.matchAll(callRe)) {
+      for (const lit of call[1].matchAll(/"([^"]+)"/g)) {
+        const list = sites.get(lit[1]) ?? [];
+        list.push(path.relative(SRC_ROOT, file));
+        sites.set(lit[1], list);
+      }
+    }
+  }
+  return sites;
+}
+
+/** A `reviewBy` that is missing, malformed, unparseable, or in the past counts as expired. */
+function reviewByExpired(reviewBy: string | undefined, todayUtc: number): boolean {
+  if (!reviewBy || !/^\d{4}-\d{2}-\d{2}$/.test(reviewBy)) return true;
+  const t = new Date(`${reviewBy}T00:00:00Z`).getTime();
+  return !(t >= todayUtc);
+}
+
+describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
+  const byKey = new Map(FEATURE_REGISTRY.map((f) => [f.key, f]));
+
+  it("zero-diff: ADDON_GATE_REGISTRY still equals today's literal, byte for byte", () => {
+    expect(ADDON_GATE_REGISTRY).toEqual(EXPECTED_LEGACY_REGISTRY);
+  });
+
+  it("addonGateState behaves exactly as before", () => {
+    expect(addonGateState("not_in_registry")).toBe("enforced");
+    expect(addonGateState("ocr")).toBe("dark");
+  });
+
+  it("no duplicate keys", () => {
+    const keys = FEATURE_REGISTRY.map((f) => f.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  // Non-vacuity floors (mirrors addon-gate-registry.spec.ts's P1e): a scanner that silently
+  // finds zero call sites (wrong root dir, decorator renamed, regex broken by a refactor)
+  // would otherwise make every "missing" check below pass by having nothing to check.
+  // Counts are the real repo-wide totals measured when this spec was written — a drop below
+  // them means either a real call site vanished (investigate) or the scanner broke (fix it).
+  const REQUIRE_ADDON_MIN_SITES: Record<string, number> = {
+    ocr: 4,
+    tobacco_dealer: 8,
+    recurring_routes: 6,
+    order_delivery: 7,
+    developer_mode: 7,
+    crm_gohighlevel: 12,
+  };
+  const REQUIRE_PLAN_FLAG_MIN_SITES: Record<string, number> = {
+    "flag.msrp": 1,
+    "flag.sales_agents": 2,
+    "flag.analytics": 1,
+    "flag.forecasting": 2,
+    "flag.reports": 1,
+    "flag.returns": 1,
+    "flag.ap_bills": 1,
+    "flag.pricing_tiers": 3,
+    "flag.import_integrations": 1,
+  };
+
+  describe("@RequireAddon call sites", () => {
+    const sites = decoratorSites("RequireAddon");
+
+    it("the scanner is not vacuous (found at least the expected key counts)", () => {
+      expect(sites.size).toBeGreaterThanOrEqual(Object.keys(REQUIRE_ADDON_MIN_SITES).length);
+      for (const [key, min] of Object.entries(REQUIRE_ADDON_MIN_SITES)) {
+        expect(sites.get(key)?.length ?? 0).toBeGreaterThanOrEqual(min);
+      }
+    });
+
+    it("every @RequireAddon literal found in a controller has a matching FEATURE_REGISTRY row", () => {
+      const missing = [...sites.keys()].filter((key) => {
+        const row = byKey.get(key);
+        return !row || row.gate.via !== "RequireAddon";
+      });
+      expect(missing).toEqual([]);
+    });
+
+    it("every FEATURE_REGISTRY RequireAddon row is actually found by the scanner (reverse check)", () => {
+      const registryKeys = FEATURE_REGISTRY.filter((f) => f.gate.via === "RequireAddon").map(
+        (f) => f.key,
+      );
+      const unscanned = registryKeys.filter((key) => !sites.has(key));
+      expect(unscanned).toEqual([]);
+    });
+  });
+
+  describe("@RequirePlanFlag call sites", () => {
+    const sites = decoratorSites("RequirePlanFlag");
+
+    it("the scanner is not vacuous (found at least the expected key counts)", () => {
+      expect(sites.size).toBeGreaterThanOrEqual(Object.keys(REQUIRE_PLAN_FLAG_MIN_SITES).length);
+      for (const [key, min] of Object.entries(REQUIRE_PLAN_FLAG_MIN_SITES)) {
+        expect(sites.get(key)?.length ?? 0).toBeGreaterThanOrEqual(min);
+      }
+    });
+
+    it("every @RequirePlanFlag literal found in a controller has a matching FEATURE_REGISTRY row", () => {
+      const missing = [...sites.keys()].filter((key) => {
+        const row = byKey.get(key);
+        return !row || row.gate.via !== "RequirePlanFlag";
+      });
+      expect(missing).toEqual([]);
+    });
+
+    it("every FEATURE_REGISTRY RequirePlanFlag row is actually found by the scanner (reverse check)", () => {
+      const registryKeys = FEATURE_REGISTRY.filter((f) => f.gate.via === "RequirePlanFlag").map(
+        (f) => f.key,
+      );
+      const unscanned = registryKeys.filter((key) => !sites.has(key));
+      expect(unscanned).toEqual([]);
+    });
+  });
+
+  it("every RequireAddon/RequirePlanFlag row has at least one live call site listed", () => {
+    const stale = FEATURE_REGISTRY.filter(
+      (f) =>
+        (f.gate.via === "RequireAddon" || f.gate.via === "RequirePlanFlag") &&
+        f.gate.routes.length === 0,
+    ).map((f) => f.key);
+    expect(stale).toEqual([]);
+  });
+
+  it("every dark row's reviewBy is not expired (UTC)", () => {
+    const now = new Date();
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const expired = FEATURE_REGISTRY.filter((f) => f.gate.state === "dark")
+      .filter((f) => reviewByExpired(f.gate.reviewBy, todayUtc))
+      .map((f) => `${f.key}:${f.gate.reviewBy ?? "missing"}`);
+    expect(expired).toEqual([]);
+  });
+
+  it("catalog-key coverage: every flag/addon literal in publish-plan-catalog-v8..v11 resolves to a key or catalogFlag", () => {
+    const catalogFiles = ["v8", "v9", "v10", "v11"].map((v) =>
+      path.join(PRISMA_ROOT, `publish-plan-catalog-${v}.ts`),
+    );
+    const literalRe = /"((?:flag|addon)\.[a-zA-Z0-9_]+)"/g;
+    const found = new Set<string>();
+    for (const file of catalogFiles) {
+      const text = fs.readFileSync(file, "utf8");
+      for (const m of text.matchAll(literalRe)) found.add(m[1]);
+    }
+    expect(found.size).toBeGreaterThan(0);
+
+    const knownKeys = new Set(FEATURE_REGISTRY.map((f) => f.key));
+    const knownCatalogFlags = new Set(
+      FEATURE_REGISTRY.map((f) => f.billing.catalogFlag).filter(
+        (v): v is string => v !== undefined,
+      ),
+    );
+    const unresolved = [...found].filter(
+      (lit) => !knownKeys.has(lit) && !knownCatalogFlags.has(lit),
+    );
+    expect(unresolved).toEqual([]);
+  });
+
+  it("DARK_PLAN_FLAGS (plan-flag-policy.ts) parity: exactly the dark RequirePlanFlag keys", () => {
+    // DARK_PLAN_FLAGS is DEFINED in plan-flag-policy.ts (split out of plan-flag.guard.ts for the
+    // 2026-08-23/Lite-L2 rollout, REMOVE by 2026-10-01) and RE-EXPORTED from plan-flag.guard.ts —
+    // scan the file that actually declares the literal, not the re-export. Do not point this back
+    // at plan-flag.guard.ts; it no longer contains the `new Set([...])` text.
+    const policyText = fs.readFileSync(
+      path.join(SRC_ROOT, "billing", "plan-flag-policy.ts"),
+      "utf8",
+    );
+    // Tolerate an optional `: ReadonlySet<string>` type annotation between the identifier and `=`.
+    const setMatch = policyText.match(/DARK_PLAN_FLAGS(?::[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
+    expect(setMatch).not.toBeNull();
+    const guardKeys = [...(setMatch?.[1].matchAll(/"([^"]+)"/g) ?? [])].map((m) => m[1]).sort();
+    expect(guardKeys.length).toBeGreaterThan(0); // guard against a bad regex silently vacuous-passing
+
+    const registryDarkPlanFlagKeys = FEATURE_REGISTRY.filter(
+      (f) => f.gate.via === "RequirePlanFlag" && f.gate.state === "dark",
+    )
+      .map((f) => f.key)
+      .sort();
+
+    expect(registryDarkPlanFlagKeys).toEqual(guardKeys);
+  });
+
+  it("PREPIN_DARK_FLAGS (P0 2026-09-17) parity: every prepinned key is a real RequirePlanFlag registry key", () => {
+    // PREPIN_DARK_FLAGS is a SEPARATE literal from DARK_PLAN_FLAGS in the same file (unconditional
+    // courtesy allow until #777's flags are re-pinned into the v11 catalog) — same
+    // read-the-source-text approach as the DARK_PLAN_FLAGS parity check above, so a typo'd or
+    // renamed key fails loudly instead of silently no-op'ing the prepin.
+    const policyText = fs.readFileSync(
+      path.join(SRC_ROOT, "billing", "plan-flag-policy.ts"),
+      "utf8",
+    );
+    const setMatch = policyText.match(
+      /PREPIN_DARK_FLAGS(?::[^=]+)?\s*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    );
+    expect(setMatch).not.toBeNull();
+    const prepinKeys = [...(setMatch?.[1].matchAll(/"([^"]+)"/g) ?? [])].map((m) => m[1]);
+    expect(prepinKeys.length).toBeGreaterThan(0);
+
+    const requirePlanFlagKeys = new Set(
+      FEATURE_REGISTRY.filter((f) => f.gate.via === "RequirePlanFlag").map((f) => f.key),
+    );
+    for (const key of prepinKeys) {
+      expect(requirePlanFlagKeys.has(key)).toBe(true);
+    }
+  });
+
+  it("key convention: non-dotted keys are lower_snake_case, <= 50 chars", () => {
+    const bad = FEATURE_REGISTRY.filter(
+      // "email." (email-connect-google, 2026-09-17): a RequireAddon key, not RequirePlanFlag —
+      // dotted on purpose per the owner's literal task spec ("email.connected_mailbox"), so it
+      // joins "flag."/"addon." in the allowed dotted-namespace exclusion here.
+      (f) =>
+        !f.key.startsWith("flag.") && !f.key.startsWith("addon.") && !f.key.startsWith("email."),
+    )
+      .filter((f) => !/^[a-z][a-z0-9_]*$/.test(f.key) || f.key.length > 50)
+      .map((f) => f.key);
+    expect(bad).toEqual([]);
+  });
+
+  it("requires/conflicts reference real keys and requires.allOf/anyOf never cycles back", () => {
+    const keys = new Set(FEATURE_REGISTRY.map((f) => f.key));
+    const badRefs: string[] = [];
+    for (const f of FEATURE_REGISTRY) {
+      const refs = [
+        ...(f.requires?.allOf ?? []),
+        ...(f.requires?.anyOf ?? []),
+        ...(f.conflicts ?? []),
+      ];
+      for (const ref of refs) {
+        if (!keys.has(ref)) badRefs.push(`${f.key} -> ${ref}`);
+      }
+    }
+    expect(badRefs).toEqual([]);
+
+    function reaches(start: string, target: string, seen = new Set<string>()): boolean {
+      if (seen.has(start)) return false;
+      seen.add(start);
+      const row = byKey.get(start);
+      if (!row?.requires) return false;
+      const next = [...(row.requires.allOf ?? []), ...(row.requires.anyOf ?? [])];
+      if (next.includes(target)) return true;
+      return next.some((n) => reaches(n, target, seen));
+    }
+    const cycles = FEATURE_REGISTRY.filter((f) => reaches(f.key, f.key)).map((f) => f.key);
+    expect(cycles).toEqual([]);
+  });
+
+  // B524 (landing-time note on #899): an empty `anyOf: []` is treated as "satisfied" by both
+  // this file's `checkFeatureRequires` and the web app's parallel `checkRequires` copy — that's
+  // surprising for anyone reading a `requires` block, so a genuine "no anyOf constraint" must
+  // omit the key entirely, not declare an empty array. Closes the ambiguous input from the data
+  // side instead of leaving two hand-kept implementations to agree on it by accident.
+  it("requires.anyOf is never declared as an empty array — omit the key instead", () => {
+    const offenders = FEATURE_REGISTRY.filter((f) => f.requires?.anyOf?.length === 0).map(
+      (f) => f.key,
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("config.fallbackMode is always a real key in config.modes", () => {
+    const bad = FEATURE_REGISTRY.filter(
+      (f) => f.config && !(f.config.fallbackMode in f.config.modes),
+    ).map((f) => f.key);
+    expect(bad).toEqual([]);
+  });
+
+  it("config mode requires.allOf references real FEATURE_REGISTRY keys", () => {
+    const keys = new Set(FEATURE_REGISTRY.map((f) => f.key));
+    const badRefs: string[] = [];
+    for (const f of FEATURE_REGISTRY) {
+      for (const [modeName, mode] of Object.entries(f.config?.modes ?? {})) {
+        for (const ref of mode.requires?.allOf ?? []) {
+          if (!keys.has(ref)) badRefs.push(`${f.key}.config.modes.${modeName} -> ${ref}`);
+        }
+      }
+    }
+    expect(badRefs).toEqual([]);
+  });
+
+  it("orders_inline_returns registers enforced from day one (owner-answers.md Q-A) with its first call site (PR-1b)", () => {
+    const row = byKey.get("orders_inline_returns");
+    expect(row).toBeDefined();
+    expect(row?.gate.via).toBe("RequireAddon");
+    expect(row?.gate.state).toBe("enforced");
+    // Q-A is an owner exception to "new gates ship dark" specifically because zero
+    // tenants use the surface yet — an enforced row with no reviewBy deadline (that
+    // field only applies to dark rows awaiting a flip) is the correct shape here,
+    // never a silent omission.
+    expect(row?.gate.reviewBy).toBeUndefined();
+    expect(row?.gate.routes).toContain("POST /returns/inline/quote");
+  });
+});
+
+describe("B524 — checkFeatureRequires / describeUnmetFeatureRequirement / featureDefByKey", () => {
+  it("featureDefByKey returns the row for a registered key and undefined for an unknown one", () => {
+    expect(featureDefByKey("driver_payments")?.label).toBe("At-door payment collection");
+    expect(featureDefByKey("not-a-real-key")).toBeUndefined();
+  });
+
+  it("no requires block is always satisfied", () => {
+    expect(checkFeatureRequires(undefined, new Set())).toEqual({
+      satisfied: true,
+      missingAllOf: [],
+      unmetAnyOf: null,
+    });
+  });
+
+  it("allOf: every listed key must be present", () => {
+    const requires = { allOf: ["a", "b"] };
+    expect(checkFeatureRequires(requires, new Set(["a", "b"]))).toMatchObject({
+      satisfied: true,
+      missingAllOf: [],
+    });
+    expect(checkFeatureRequires(requires, new Set(["a"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: ["b"],
+    });
+  });
+
+  it("anyOf: at least one listed key must be present", () => {
+    const requires = { anyOf: ["a", "b"] };
+    expect(checkFeatureRequires(requires, new Set(["b"]))).toMatchObject({
+      satisfied: true,
+      unmetAnyOf: null,
+    });
+    expect(checkFeatureRequires(requires, new Set())).toMatchObject({
+      satisfied: false,
+      unmetAnyOf: ["a", "b"],
+    });
+  });
+
+  // Pinned deliberately — see the "requires.anyOf is never declared as an empty array" spec
+  // above for why this input never actually occurs in the real registry, and the function's
+  // own doc comment for why the behavior still matches the web app's parallel copy exactly.
+  it("an empty anyOf array is treated as satisfied (matches the web copy's quirk)", () => {
+    expect(checkFeatureRequires({ anyOf: [] }, new Set())).toMatchObject({ satisfied: true });
+  });
+
+  it("allOf and anyOf combine — both must hold", () => {
+    const requires = { allOf: ["a"], anyOf: ["b", "c"] };
+    expect(checkFeatureRequires(requires, new Set(["a", "b"]))).toMatchObject({ satisfied: true });
+    expect(checkFeatureRequires(requires, new Set(["b"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: ["a"],
+      unmetAnyOf: null,
+    });
+    expect(checkFeatureRequires(requires, new Set(["a"]))).toMatchObject({
+      satisfied: false,
+      missingAllOf: [],
+      unmetAnyOf: ["b", "c"],
+    });
+  });
+
+  it("describeUnmetFeatureRequirement resolves keys to labels and joins allOf/anyOf phrases", () => {
+    expect(
+      describeUnmetFeatureRequirement(
+        checkFeatureRequires({ anyOf: ["recurring_routes", "order_delivery"] }, new Set()),
+      ),
+    ).toBe(
+      featureDefByKey("recurring_routes")!.label +
+        " or " +
+        featureDefByKey("order_delivery")!.label,
+    );
+  });
+
+  it("describeUnmetFeatureRequirement returns undefined when satisfied", () => {
+    expect(
+      describeUnmetFeatureRequirement(checkFeatureRequires(undefined, new Set())),
+    ).toBeUndefined();
+  });
+
+  it("driver_payments (a real registry row) is unmet against an empty tenant and met with either prerequisite", () => {
+    const driverPayments = featureDefByKey("driver_payments")!;
+    expect(checkFeatureRequires(driverPayments.requires, new Set()).satisfied).toBe(false);
+    expect(
+      checkFeatureRequires(driverPayments.requires, new Set(["recurring_routes"])).satisfied,
+    ).toBe(true);
+    expect(
+      checkFeatureRequires(driverPayments.requires, new Set(["order_delivery"])).satisfied,
+    ).toBe(true);
+  });
+});
+
+// Type-only assertion: keeps this file failing to compile if FeatureDef's shape changes without
+// the spec being revisited.
+type _AssertFeatureDefShape = FeatureDef;

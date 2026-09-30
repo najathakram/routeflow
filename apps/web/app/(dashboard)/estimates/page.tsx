@@ -14,6 +14,9 @@ import {
   Badge,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
   useEstimates,
   useCreateEstimate,
@@ -22,10 +25,11 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal } from "@/lib/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
-import { getTierPrice } from "@/lib/pricing";
-import { fmt, fmtDate } from "@/lib/formatting";
+import { useTierLabels } from "@/lib/api/tier-labels";
+import { tierLabel } from "@/lib/tier-label";
+import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 
 // ─── KPI chip ─────────────────────────────────────────────────────────────────
 
@@ -79,7 +83,6 @@ const STATUS_OPTIONS = [
   { value: "SENT", label: "Sent" },
   { value: "ACCEPTED", label: "Accepted" },
   { value: "DECLINED", label: "Declined" },
-  { value: "EXPIRED", label: "Expired" },
 ];
 
 // ─── Estimate Line Item ───────────────────────────────────────────────────────
@@ -109,10 +112,24 @@ interface SelectedEstimateCustomer {
 
 // ─── Create Estimate modal ────────────────────────────────────────────────────
 
-function defaultExpiryDate() {
+// The operator's own local calendar date, not the UTC one — `.toISOString()`
+// would show tomorrow's date once local time crosses midnight UTC (e.g. any
+// evening in a timezone west of UTC). This is the input's default only; the
+// value itself stays a plain calendar-date string, storage unaffected.
+export function defaultIssueDate() {
   const d = new Date();
-  d.setDate(d.getDate() + 30);
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// 30 local-calendar days after the (already-local) issue date — takes the
+// computed issueDate rather than re-deriving "today" independently, so the
+// two defaults can never drift apart at a midnight boundary. The multi-arg
+// Date constructor is always local (unlike parsing an ISO string), and
+// correctly rolls month/year over for a day value past the month's end.
+export function defaultExpiryDate(fromIssueDate: string) {
+  const [y, m, day] = fromIssueDate.split("-").map(Number);
+  const d = new Date(y, m - 1, day + 30);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function CreateEstimateModal({
@@ -126,6 +143,7 @@ function CreateEstimateModal({
 }) {
   const { toast } = useToast();
   const createEstimate = useCreateEstimate();
+  const { data: tierLabels } = useTierLabels();
 
   // Customer search
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -143,8 +161,8 @@ function CreateEstimateModal({
   const [lineItems, setLineItems] = React.useState<EstimateLineItem[]>([]);
 
   // Dates & notes
-  const [issueDate, setIssueDate] = React.useState(new Date().toISOString().slice(0, 10));
-  const [expiryDate, setExpiryDate] = React.useState(defaultExpiryDate());
+  const [issueDate, setIssueDate] = React.useState(defaultIssueDate());
+  const [expiryDate, setExpiryDate] = React.useState(() => defaultExpiryDate(issueDate));
   const [notes, setNotes] = React.useState("");
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
@@ -192,8 +210,9 @@ function CreateEstimateModal({
       setProductSearch("");
       setDebouncedProductSearch("");
       setLineItems([]);
-      setIssueDate(new Date().toISOString().slice(0, 10));
-      setExpiryDate(defaultExpiryDate());
+      const today = defaultIssueDate();
+      setIssueDate(today);
+      setExpiryDate(defaultExpiryDate(today));
       setNotes("");
       setErrors({});
     }
@@ -207,7 +226,7 @@ function CreateEstimateModal({
       );
       setProductSearch("");
       setDebouncedProductSearch("");
-      setTimeout(() => productSearchRef.current?.focus(), 50);
+      scheduleScannerRefocus(productSearchRef, 50);
       return;
     }
     const upb: number | undefined = product.unitsPerBox ? Number(product.unitsPerBox) : undefined;
@@ -216,7 +235,7 @@ function CreateEstimateModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {
@@ -240,7 +259,7 @@ function CreateEstimateModal({
       const { items: _, ...rest } = e;
       return rest;
     });
-    setTimeout(() => productSearchRef.current?.focus(), 50);
+    scheduleScannerRefocus(productSearchRef, 50);
   };
 
   // Barcode / Enter handler
@@ -339,6 +358,7 @@ function CreateEstimateModal({
 
     const dto = {
       customerId: selectedCustomer!.id,
+      issueDate,
       expiresAt: expiryDate,
       notes: notes.trim() || undefined,
       items: lineItems.map((li) => ({
@@ -352,7 +372,7 @@ function CreateEstimateModal({
       })),
     };
 
-    createEstimate.mutate(dto as any, {
+    createEstimate.mutate(dto, {
       onSuccess: (est) => {
         toast({ title: "Estimate created", description: est.estimateNumber, variant: "success" });
         onClose();
@@ -399,7 +419,7 @@ function CreateEstimateModal({
                   <span className="ml-2 text-xs text-navy/70">{selectedCustomer.contactName}</span>
                 )}
                 <span className="ml-2 text-xs text-navy/70">
-                  Tier {selectedCustomer.pricingTier ?? 1}
+                  {tierLabel(tierLabels, selectedCustomer.pricingTier ?? 1)}
                 </span>
               </div>
               <button
@@ -446,7 +466,7 @@ function CreateEstimateModal({
                           <span className="text-xs text-navy/70">{c.contactName}</span>
                         )}
                         <span className="ml-auto text-xs text-navy/70">
-                          Tier {c.pricingTier ?? 1}
+                          {tierLabel(tierLabels, c.pricingTier ?? 1)}
                         </span>
                       </button>
                     </li>
@@ -676,16 +696,16 @@ export default function EstimatesPage() {
   }, [setTitle]);
 
   const [statusFilter, setStatusFilter] = React.useState("");
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
   const LIMIT = 20;
 
   const { data, isLoading, isError } = useEstimates({
     status: statusFilter || undefined,
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     dateFrom: dateFrom || undefined,
     dateTo: dateTo || undefined,
     page,
@@ -694,18 +714,18 @@ export default function EstimatesPage() {
 
   const estimates = data?.data ?? [];
   const meta = data?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const { data: allData } = useEstimates({ limit: 999 });
   const all = allData?.data ?? [];
 
   const kpiCounts = React.useMemo(() => {
-    const counts = { total: all.length, draft: 0, sent: 0, accepted: 0, declined: 0, expired: 0 };
+    const counts = { total: all.length, draft: 0, sent: 0, accepted: 0, declined: 0 };
     for (const est of all) {
       if (est.status === "DRAFT") counts.draft++;
       if (est.status === "SENT") counts.sent++;
       if (est.status === "ACCEPTED") counts.accepted++;
       if (est.status === "DECLINED") counts.declined++;
-      if (est.status === "EXPIRED") counts.expired++;
     }
     return counts;
   }, [all]);
@@ -771,16 +791,6 @@ export default function EstimatesPage() {
             setPage(1);
           }}
         />
-        <KpiChip
-          label="Expired"
-          value={kpiCounts.expired}
-          danger
-          active={statusFilter === "EXPIRED"}
-          onClick={() => {
-            setStatusFilter("EXPIRED");
-            setPage(1);
-          }}
-        />
       </div>
 
       {/* Filter bar */}
@@ -815,7 +825,7 @@ export default function EstimatesPage() {
               setDateFrom(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -827,7 +837,7 @@ export default function EstimatesPage() {
               setDateTo(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
@@ -848,108 +858,114 @@ export default function EstimatesPage() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Expiry Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        {/* #2211: the bare table clipped at 320-430px; the inner wrapper scrolls it, the outer
+            div keeps overflow-hidden only for its rounded corners (same pattern as B750). */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Expiry Date
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                <th className="w-10 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load estimates. Please try again.
-                </td>
-              </tr>
-            ) : estimates.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching estimates"
-                      description="No estimates match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setDateFrom("");
-                            setDateTo("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No estimates yet"
-                      description="Create an estimate to quote a customer before converting it to an invoice."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          New estimate
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              estimates.map((est: Estimate) => (
-                <tr
-                  key={est.id}
-                  onClick={() => router.push(`/estimates/${est.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-surface-raised"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {est.estimateNumber}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {est.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtDate((est as any).issueDate ?? est.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtDate((est as any).expiresAt ?? (est as any).expiryDate)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt(Number(est.total))}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={est.status} />
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      title="View estimate"
-                      onClick={() => router.push(`/estimates/${est.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load estimates. Please try again.
+                  </td>
+                </tr>
+              ) : estimates.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching estimates"
+                        description="No estimates match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setStatusFilter("");
+                              setDateFrom("");
+                              setDateTo("");
+                              setPage(1);
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No estimates yet"
+                        description="Create an estimate to quote a customer before converting it to an invoice."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            New estimate
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                estimates.map((est: Estimate) => (
+                  <tr
+                    key={est.id}
+                    onClick={() => router.push(`/estimates/${est.id}`)}
+                    className="cursor-pointer transition-colors hover:bg-surface-raised"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {est.estimateNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {est.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate(est.issueDate ?? est.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">
+                      {fmt(Number(est.total))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={est.status} />
+                    </td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="View estimate"
+                        onClick={() => router.push(`/estimates/${est.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

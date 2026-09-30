@@ -11,6 +11,8 @@ import {
 } from "react-native";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
+import { createSkipStopHandler } from "../../../../../lib/skip-stop";
+import { useDriverPayments } from "../../../../../lib/api/addons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
@@ -20,12 +22,14 @@ import { ListGroup, NavAction, NavBackButton, NavBar, Pill } from "@routeflow/ui
 import {
   useActiveRouteRun,
   useRouteRun,
+  useUpdateStopStatus,
   IDENTITY_TYPES,
   IDENTITY_TYPE_LABELS,
   type RouteRunStop,
 } from "../../../../../lib/api/routes";
 import { usePodStore } from "../../../../../store/podStore";
 import { openInMaps } from "../../../../../components/openInMaps";
+import { stopAmountDue } from "../../../../../lib/run-money";
 
 function initialsFrom(name: string): string {
   return (
@@ -64,6 +68,9 @@ function itemsFromStop(stop: RouteRunStop): Array<{
 
 export default function StopDetailScreen() {
   const router = useRouter();
+  // At-door money collection is a per-tenant opt-in; without it the same flow
+  // completes the stop on account, so the CTA must not promise "collect".
+  const { enabled: canCollect } = useDriverPayments();
   const params = useLocalSearchParams<{ stopId: string; runId?: string }>();
   const stopId = params.stopId;
 
@@ -73,9 +80,33 @@ export default function StopDetailScreen() {
   const runId = params.runId ?? runIdFromActive;
   const { data: run, isLoading: runLoading } = useRouteRun(runId ?? "");
 
+  // F11 (B34): Skip actually PATCHes the stop. The handler is memoised so its
+  // in-flight guard survives a second tap on the button while the first PATCH
+  // is still outstanding (a fresh closure per press would reset it).
+  const updateStopStatus = useUpdateStopStatus();
+  const onSkipConfirm = useMemo(
+    () =>
+      createSkipStopHandler({
+        runId,
+        stopId,
+        mutate: updateStopStatus.mutate,
+        navigateBack: () => router.replace("/(driver)/route" as any),
+        toast: showToast,
+      }),
+    [runId, stopId, updateStopStatus.mutate, router],
+  );
+
   const stop = useMemo(() => run?.stops?.find((s) => s.id === stopId), [run, stopId]);
   const pod = usePodStore((s) => s.pods[stopId ?? ""] ?? undefined);
   const setRegulated = usePodStore((s) => s.setRegulated);
+  // NEW-m1-1: memoize items so itemsFromStop is not called on every render.
+  // Without this, tapping any checkbox on a DELIVERED stop triggers
+  // React error #185 (max update depth exceeded) because itemsFromStop
+  // returns a new array reference on each render cycle, causing downstream
+  // effects that depend on `items` to re-run indefinitely.
+  // #2257: declared ABOVE the early returns below — every hook runs on every render, or the
+  // loading → loaded toggle changes the hook count and React throws #310.
+  const items = useMemo(() => (stop ? itemsFromStop(stop) : []), [stop]);
 
   if (activeLoading || runLoading) {
     return (
@@ -156,22 +187,12 @@ export default function StopDetailScreen() {
   const photoCount = pod?.photoUrls?.length ?? 0;
   const hasSig = !!pod?.signatureUri;
   const hasNote = !!pod?.note;
-  // NEW-m1-1: memoize items so itemsFromStop is not called on every render.
-  // Without this, tapping any checkbox on a DELIVERED stop triggers
-  // React error #185 (max update depth exceeded) because itemsFromStop
-  // returns a new array reference on each render cycle, causing downstream
-  // effects that depend on `items` to re-run indefinitely.
-  const items = useMemo(() => itemsFromStop(stop), [stop]);
   const itemCount = items.length;
   // R1e: the stop's order for the direct "Edit items" flow. A stop usually has one
   // order (a delivery); a consolidated multi-order stop edits the first.
   const editOrderId = stop.orders?.[0]?.id;
-  const dollarTotal = (stop.orders ?? []).reduce(
-    (sum, o) =>
-      sum +
-      (o.lineItems ?? []).reduce((s, li) => s + Number(li.qty ?? 0) * Number(li.unitPrice ?? 0), 0),
-    0,
-  );
+  // REG-B305: the driver "amount due" is the server's tax-inclusive total.
+  const dollarTotal = stopAmountDue(stop);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -330,10 +351,14 @@ export default function StopDetailScreen() {
             <SecondaryBtn
               label="Skip stop"
               onPress={() =>
+                // scan-ok: confirm-navigate — onSkipConfirm PATCHes SKIPPED, navigates only onSuccess (T21/T25)
                 confirm(
                   "Skip stop",
-                  "Mark this stop as skipped? You can reopen it later.",
-                  () => router.replace("/(driver)/route" as any),
+                  // F11 (B211): the promise is bounded on purpose — once the run
+                  // is completed, the skipped stop's orders are released to
+                  // dispatch and the server refuses to reopen the stop.
+                  "Mark this stop as skipped? It can be reopened until this run is completed.",
+                  onSkipConfirm,
                   { confirmText: "Skip", destructive: true },
                 )
               }
@@ -381,7 +406,9 @@ export default function StopDetailScreen() {
             style={styles.greenBtn}
             onPress={() => router.push(`/route/stop/${stopId}/short-pick`)}
           >
-            <Text style={styles.greenBtnText}>Complete & collect →</Text>
+            <Text style={styles.greenBtnText}>
+              {canCollect ? "Complete & collect →" : "Complete stop →"}
+            </Text>
           </Pressable>
         </View>
         <View style={{ height: 20 }} />

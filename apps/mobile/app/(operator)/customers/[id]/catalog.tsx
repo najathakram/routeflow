@@ -15,13 +15,16 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import {
+  useCustomer,
   useCustomerPrices,
   useUpsertCustomerPrice,
   useDeleteCustomerPrice,
   type CustomerPrice,
 } from "../../../../lib/api/customers";
 import { useAdminProducts, type AdminProduct } from "../../../../lib/api/admin";
-import { getTierPrice } from "../../../../lib/pricing";
+import { useTierLabels } from "../../../../lib/api/tier-labels";
+import { isSpecialTier, getTierPrice } from "@routeflow/pricing";
+import { tierLabel } from "../../../../lib/tier-label";
 import { showToast } from "../../../../lib/toast";
 import { confirm } from "../../../../lib/confirm";
 
@@ -32,7 +35,7 @@ function fmt(n: number | string | undefined | null): string {
 
 /** True when the product's tier column is unset (0/null) — that tier inherits the list price. */
 function tierUnset(product: any, tier: number): boolean {
-  return !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+  return !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 }
 
 // ─── Add / Edit modal ─────────────────────────────────────────────────────────
@@ -55,9 +58,16 @@ function EditTierOverrideModal({
   const [productId, setProductId] = useState(existing?.productId ?? "");
   const [productSearch, setProductSearch] = useState(existing?.product?.name ?? "");
   const [showPicker, setShowPicker] = useState(false);
-  const [tier, setTier] = useState<number>(existing?.pricingTier ?? 1);
+  // null = "no tier override" (row prices at the customer's default tier). An
+  // existing msrp-only row MUST open as null — seeding `?? 1` here silently
+  // converted it into a Tier-1 override on save, repricing the customer to list.
+  const [tier, setTier] = useState<number | null>(existing ? (existing.pricingTier ?? null) : 1);
+  // Only a row that keeps an MSRP override may drop its tier — a row cleared of
+  // both fields is a DELETE server-side (and mobile deletes via the trash icon).
+  const allowNoTier = existing?.msrp != null;
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const upsert = useUpsertCustomerPrice();
+  const { data: tierLabels } = useTierLabels();
 
   const selectedProduct = useMemo(
     () => allProducts.find((p) => p.id === productId) ?? null,
@@ -73,7 +83,7 @@ function EditTierOverrideModal({
   }, [allProducts, productSearch]);
 
   const save = () => {
-    if (!productId || !tier) {
+    if (!productId || (tier == null && !allowNoTier)) {
       showToast("Pick a product and a tier.");
       return;
     }
@@ -151,6 +161,25 @@ function EditTierOverrideModal({
           <View style={{ gap: 6 }}>
             <Text style={styles.label}>Pricing Tier</Text>
             <View style={styles.tierRow}>
+              {allowNoTier ? (
+                <Pressable
+                  style={[styles.tierBtn, tier == null && styles.tierBtnActive]}
+                  onPress={() => setTier(null)}
+                >
+                  <Text
+                    style={[
+                      styles.tierBtnLabel,
+                      // "Default" is 7 chars in a 6-across chip row — smaller face so it
+                      // doesn't wrap or clip on narrow phones.
+                      { fontSize: 12 },
+                      tier == null && styles.tierBtnLabelActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    Default
+                  </Text>
+                </Pressable>
+              ) : null}
               {[1, 2, 3, 4, 5].map((t) => {
                 const active = tier === t;
                 const price = selectedProduct ? getTierPrice(selectedProduct, t) : null;
@@ -172,9 +201,9 @@ function EditTierOverrideModal({
                 );
               })}
             </View>
-            {selectedProduct ? (
+            {selectedProduct && tier != null ? (
               <Text style={styles.tierHint}>
-                Price at Tier {tier}:{" "}
+                Price at {tierLabel(tierLabels, tier)}:{" "}
                 <Text style={styles.tierHintPrice}>{fmt(getTierPrice(selectedProduct, tier))}</Text>
                 {tierUnset(selectedProduct, tier) ? " (list)" : ""}
               </Text>
@@ -220,11 +249,16 @@ export default function CustomerCatalogScreen() {
   const customerId = id ?? "";
 
   const { data: prices, isLoading: pricesLoading } = useCustomerPrices(customerId);
+  // An msrp-only override row (created on web) has pricingTier null — it prices
+  // at the customer's default tier, so that tier is needed for the row's price.
+  const { data: customerDetail } = useCustomer(customerId);
+  const customerTier = customerDetail?.pricingTier ?? 1;
   const { data: productsData, isLoading: productsLoading } = useAdminProducts({
     isActive: true,
     limit: 200,
   });
   const deleteMut = useDeleteCustomerPrice();
+  const { data: tierLabels } = useTierLabels();
 
   const [editing, setEditing] = useState<CustomerPrice | null>(null);
   const [showAdd, setShowAdd] = useState(false);
@@ -280,7 +314,8 @@ export default function CustomerCatalogScreen() {
           ) : (
             <View style={styles.list}>
               {priceList.map((cp, i) => {
-                const tierPrice = cp.product ? getTierPrice(cp.product, cp.pricingTier) : 0;
+                const effectiveTier = cp.pricingTier ?? customerTier;
+                const tierPrice = cp.product ? getTierPrice(cp.product, effectiveTier) : 0;
                 const listPrice = cp.product?.pricePerUnit;
                 const isLast = i === priceList.length - 1;
                 return (
@@ -301,11 +336,15 @@ export default function CustomerCatalogScreen() {
                     </View>
                     <View style={styles.priceCol}>
                       <View style={styles.tierBadge}>
-                        <Text style={styles.tierBadgeText}>Tier {cp.pricingTier}</Text>
+                        <Text style={styles.tierBadgeText} numberOfLines={1}>
+                          {cp.pricingTier != null
+                            ? tierLabel(tierLabels, cp.pricingTier)
+                            : "Default"}
+                        </Text>
                       </View>
                       <Text style={styles.tierPriceText}>
                         {fmt(tierPrice)}
-                        {tierUnset(cp.product, cp.pricingTier) ? (
+                        {cp.pricingTier != null && tierUnset(cp.product, cp.pricingTier) ? (
                           <Text style={styles.tierPriceListSuffix}> (list)</Text>
                         ) : null}
                       </Text>

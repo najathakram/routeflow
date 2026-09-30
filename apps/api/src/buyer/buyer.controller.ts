@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   Patch,
   Post,
@@ -13,7 +14,8 @@ import {
   UseInterceptors,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
-import { OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { Throttle } from "@nestjs/throttler";
+import { InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -26,7 +28,7 @@ import { BuyerSellerContextGuard } from "./guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "./buyer-tenant.interceptor";
 import { CurrentBuyer, CurrentBuyerCustomer } from "./decorators/current-buyer.decorator";
 import type { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
-import { ForbiddenException, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RequestSellerDto } from "./dto/request-seller.dto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -47,16 +49,38 @@ import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
+import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
+import {
+  foldMergeItems,
+  normalizeBareIncomingSellingUnits,
+  normalizeBoxUnawareSnapshots,
+} from "../orders/merge-items";
+import { withAdvisoryLock } from "../common/db-locks";
+import {
+  LOCK_UNAVAILABLE,
+  LOCK_UNAVAILABLE_MESSAGE,
+  isMergeContention,
+  mapLockError,
+} from "../orders/merge-contention";
+
+/** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
+const MAX_PRODUCT_IDS = 200;
+
+/** #2142: every invoice status a buyer may see — all of them but DRAFT (derived, never re-typed). */
+const BUYER_VISIBLE_INVOICE_STATUSES: InvoiceStatus[] = Object.values(InvoiceStatus).filter(
+  (s) => s !== InvoiceStatus.DRAFT,
+);
 
 /**
  * Builds a JwtPayload that looks like a tenant user.
  * Used so existing tenant services can scope their queries correctly:
  *   - `sub`      → User.id (the Customer's user account; may be null for portal-only buyers)
  *   - `role`     → defaults to CUSTOMER; pass OPERATOR to skip userId-lookup paths in services
+ *   - `type`     → ALWAYS "BUYER", whatever the role: the restrictions channel is BUYER_PORTAL
  *   - `tenantId` → from BuyerSellerContextGuard (set by BuyerTenantInterceptor ALS run)
  */
-function makePseudoUser(ctx: {
+export function makePseudoUser(ctx: {
   userId?: string | null;
   tenantId: string;
   tenantSlug: string;
@@ -70,6 +94,7 @@ function makePseudoUser(ctx: {
     forcePasswordChange: false,
     tenantId: ctx.tenantId,
     tenantSlug: ctx.tenantSlug,
+    type: "BUYER",
   };
 }
 
@@ -78,6 +103,8 @@ function makePseudoUser(ctx: {
 @UseGuards(BuyerJwtAuthGuard)
 @ApiBearerAuth()
 export class BuyerController {
+  private readonly logger = new Logger(BuyerController.name);
+
   constructor(
     private readonly buyerService: BuyerService,
     private readonly catalogService: BuyerCatalogService,
@@ -123,6 +150,10 @@ export class BuyerController {
 
   @Post("sellers/request")
   @HttpCode(HttpStatus.OK)
+  // F4: this endpoint is an email-enumeration surface (a matching customer at the
+  // seller is a connect request; a non-match is a 404). Tighten beyond the global
+  // throttle. 10/min still comfortably covers a buyer connecting to several sellers.
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
   @ApiOperation({ summary: "Request to connect with a seller by slug" })
   requestSeller(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: RequestSellerDto) {
     return this.buyerService.requestSeller(buyer.sub, dto);
@@ -172,22 +203,31 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's invoices at the selected seller" })
-  getInvoices(@CurrentBuyerCustomer() ctx: any, @Query() query: ListInvoicesDto) {
+  async getInvoices(@CurrentBuyerCustomer() ctx: any, @Query() query: ListInvoicesDto) {
     // Inject customerId directly; pass OPERATOR role so invoicesService.findAll()
-    // uses the where.customerId path rather than the userId-lookup path.
-    // Buyers must never see DRAFT invoices — exclude them unless caller specified a status.
-    const buyerQuery: ListInvoicesDto = { ...query, customerId: ctx.customerId };
-    if (!buyerQuery.status && (!buyerQuery.statuses || buyerQuery.statuses.length === 0)) {
-      buyerQuery.statuses = [
-        "SENT",
-        "VIEWED",
-        "PARTIAL",
-        "OVERDUE",
-        "PAID",
-        "VOID",
-        "WRITTEN_OFF",
-      ] as any;
+    // uses the where.customerId path rather than the userId-lookup path (which also skips its
+    // CUSTOMER-role DRAFT filter, so the buyer boundary applies it here).
+    // #2142: buyers never see a DRAFT, WHATEVER status filter they send. The request's filter
+    // (statuses first, as findAll reads it, else status, else everything) is narrowed to the
+    // buyer-visible statuses; a filter that names only DRAFT matches nothing. `status` is
+    // dropped so findAll reads the narrowed `statuses` alone.
+    const requested: InvoiceStatus[] = query.statuses?.length
+      ? query.statuses
+      : query.status
+        ? [query.status]
+        : BUYER_VISIBLE_INVOICE_STATUSES;
+    const visible = requested.filter((s) => s !== InvoiceStatus.DRAFT);
+    if (visible.length === 0) {
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 20;
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
+    const buyerQuery: ListInvoicesDto = {
+      ...query,
+      status: undefined,
+      statuses: visible,
+      customerId: ctx.customerId,
+    };
     return this.invoicesService.findAll(
       buyerQuery,
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
@@ -204,6 +244,11 @@ export class BuyerController {
     // Ownership check: invoice must belong to this buyer's customer
     if ((invoice as any).customerId !== ctx.customerId) {
       throw new ForbiddenException("This invoice does not belong to your account");
+    }
+    // #2142 N1: a DRAFT is the seller's unissued working copy: to the buyer it does not exist yet
+    // (the same 404 as a missing id), and opening it must not mark it viewed.
+    if ((invoice as any).status === InvoiceStatus.DRAFT) {
+      throw new NotFoundException("Invoice not found");
     }
     // Mark as viewed if not already
     if (!(invoice as any).viewedAt) {
@@ -351,14 +396,28 @@ export class BuyerController {
     @Query("limit") limit?: string,
     @Query("sort") sort?: string,
     @Query("collection") collection?: string,
+    @Query("ids") ids?: string,
   ) {
     const parsedPage = page ? Number(page) : undefined;
     const parsedLimit = limit ? Number(limit) : undefined;
     const validCollections = ["usuals", "favorites", "new", "deals"];
+    // Explicit id filter (cart pricing): resolve exactly these products rather
+    // than paging the catalog. Capped so a crafted query can't fetch-all.
+    const parsedIds = ids
+      ? [
+          ...new Set(
+            ids
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, MAX_PRODUCT_IDS)
+      : undefined;
     return this.catalogService.getCatalog(
       {
         search,
         category,
+        ids: parsedIds?.length ? parsedIds : undefined,
         page: Number.isFinite(parsedPage) && parsedPage! >= 1 ? parsedPage : undefined,
         limit: Number.isFinite(parsedLimit) && parsedLimit! >= 1 ? parsedLimit : undefined,
         sort,
@@ -379,6 +438,60 @@ export class BuyerController {
   async getProduct(@Param("id") id: string, @CurrentBuyerCustomer() ctx: any) {
     const detail = await this.catalogService.getProductDetail(id, ctx.customerId);
     const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, id);
+    return { ...detail, alertSubscribed };
+  }
+
+  // F30/R12 (B200): customer-role scanning had NO reachable rung at all —
+  // GET /products and GET /products/barcode are @Roles(OPERATOR, DRIVER), so
+  // every buyer-side scan attempt 403'd on both. This reuses the SAME
+  // normalize/match functions ProductsService.findByBarcode is built on
+  // (normalizeScanCode's candidate-set match across barcode/sku/unitSku, so a
+  // scan resolves regardless of which symbology the decoder picked, then
+  // pickBestScanMatch's deterministic tie-break) — called here directly
+  // against this.prisma (already injected) rather than via ProductsService,
+  // so this endpoint adds no new constructor dependency. The result is routed
+  // through getProductDetail — the SAME isActive + regulated-category
+  // visibility gate every other buyer-catalog surface on this controller
+  // already enforces — so a scan can never surface a product this buyer isn't
+  // allowed to see.
+  @Get("products/scan/:code")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "Resolve a scanned barcode/sku/unitSku against the buyer's catalog" })
+  async scanProduct(@Param("code") code: string, @CurrentBuyerCustomer() ctx: any) {
+    const candidates = normalizeScanCode(code);
+    if (candidates.length === 0) throw new NotFoundException("Product not found");
+
+    const db = this.prisma.forTenant();
+    // Tier 1 — exact (mirrors ProductsService.findByBarcode).
+    let matches = await db.product.findMany({
+      where: {
+        OR: [
+          { barcode: { in: candidates } },
+          { sku: { in: candidates } },
+          { unitSku: { in: candidates } },
+        ],
+      },
+    });
+    // Tier 2 — case-insensitive, MISS ONLY (typed/lowercased alpha SKUs).
+    if (matches.length === 0) {
+      matches = await db.product.findMany({
+        where: {
+          OR: candidates.flatMap((c) => [
+            { barcode: { equals: c, mode: "insensitive" as const } },
+            { sku: { equals: c, mode: "insensitive" as const } },
+            { unitSku: { equals: c, mode: "insensitive" as const } },
+          ]),
+        },
+        take: 25,
+      });
+    }
+    if (matches.length === 0) throw new NotFoundException("Product not found");
+    const match = pickBestScanMatch(matches, candidates);
+
+    const detail = await this.catalogService.getProductDetail(match.id, ctx.customerId);
+    const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, match.id);
     return { ...detail, alertSubscribed };
   }
 
@@ -440,43 +553,177 @@ export class BuyerController {
   async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
-      const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId);
-      if (activeOrder) {
-        // Merge: combine existing items with new cart items
-        const mergedMap = new Map<string, number>();
-        // Preserve any operator-added unlisted (catalog-free) lines through the merge.
-        const unlisted: Array<{ name?: string; qty: number; unitPrice: number }> = [];
-        for (const li of activeOrder.lineItems) {
-          if (!li.productId) {
-            unlisted.push({
-              name: li.name ?? undefined,
-              qty: Number(li.qty),
-              unitPrice: Number(li.unitPrice),
+      // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
+      // section the staff merge guards, over the SAME rows — findActiveOrder →
+      // foldMergeItems → updateOrderItems({ replaceAll: true }) writes ABSOLUTE
+      // totals folded from the snapshot read at the top. Without the lock a staff
+      // merge (or a second buyer submit) committing between that read and this
+      // write is silently overwritten — a lost update on money, on ONE replica.
+      // Same family + customer key as the staff path and OrdersService's sweeps,
+      // so all of them serialize against each other across replicas.
+      //
+      // ⚠️ The sibling sweep and the response read below stay OUTSIDE the lock on
+      // purpose: `mergeAllPendingForCustomer` takes this very (family, key) itself,
+      // and a nested acquire runs on a DIFFERENT pooled connection — nested, it can
+      // only lose to the lock this call already holds (under `wait`, by blocking until
+      // lock_timeout and 409-ing every buyer merge; under the `try` the sweep now uses,
+      // by deferring every single time, so the sweep would never run at all). This
+      // mirrors the staff controller, which likewise sweeps and re-reads after its lock
+      // has been released.
+      let mergedOrderId: string | null = null;
+      try {
+        const lock = await withAdvisoryLock(
+          // 10s, not the module default of 20s: the mobile api client aborts every request
+          // at 15s (apps/mobile/lib/api-client.ts), so a 20s wait can only ever be seen by
+          // the operator as a client-side timeout — the 409 that tells them to retry must be
+          // reachable inside that budget. This PRE-commit acquire is the only one on this path
+          // that waits at all: both POST-COMMIT consolidations below pass `{ lockMode: "try" }`,
+          // and only the sweep/force paths (no client attached) take the service's 20s wait.
+          { family: "order-merge", key: ctx.customerId, mode: "wait", waitMs: 10_000 },
+          async () => {
+            const activeOrder = await this.ordersService.findActiveOrder(ctx.customerId, {
+              forMerge: true,
             });
-            continue;
-          }
-          mergedMap.set(li.productId, Number(li.qty));
-        }
-        for (const item of dto.items) {
-          mergedMap.set(item.productId, (mergedMap.get(item.productId) ?? 0) + item.qty);
-        }
-        const mergedItems = [
-          ...Array.from(mergedMap.entries()).map(([productId, qty]) => ({ productId, qty })),
-          ...unlisted,
-        ];
+            if (!activeOrder) return null;
+            // REG-B47: denomination-aware fold (F30's staff exemplar, shared module) over
+            // LIVE-normalized snapshots — a box-unaware line of a boxed product counts
+            // selling units, so give the fold its real box split before summing.
+            // REG-B51: unlisted lines are server-preserved by updateOrderItems now —
+            // filter them out of the payload entirely (single owner).
+            const lineItems = activeOrder.lineItems ?? [];
+            const incomingItems = dto.items ?? [];
+            // REG-B47, denomination convention: on every BUYER path a bare `{productId,
+            // qty}` counts SELLING UNITS, never loose pieces — create() stores such a
+            // line box-unaware and bills qty x the BOX price, and both cart builders say
+            // so out loud (shelf.service.ts lowItems(), mobile shelf-logic.ts's header).
+            // foldMergeItems was written for the STAFF scan path, where a bare incoming
+            // qty IS a loose piece, so the two halves of the fold must be reconciled per
+            // denomination pair (see merge-items.ts): a box-UNAWARE stored line is
+            // rewritten only when its incoming counterpart carries a split, and a bare
+            // incoming item is expanded only when the STORED line is box-split (where
+            // the accumulator is in pieces). Where both sides are bare they already
+            // agree in selling units and neither is touched.
+            const boxAwareIncoming = new Set(
+              incomingItems
+                .filter((i) => i.boxes != null || i.pieces != null)
+                .map((i) => i.productId),
+            );
+            const productIds = lineItems
+              .map((li: { productId?: string | null }) => li.productId)
+              .filter((id: string | null | undefined): id is string => !!id);
+            const products = productIds.length
+              ? await this.prisma.forTenant().product.findMany({
+                  where: { id: { in: productIds } },
+                  select: { id: true, unitsPerBox: true },
+                })
+              : [];
+            const upbByProduct = new Map(products.map((p) => [p.id, Number(p.unitsPerBox ?? 0)]));
+            const upbForStoredSnapshots = new Map(
+              [...upbByProduct].filter(([id]) => boxAwareIncoming.has(id)),
+            );
+            // ⚠️ The fold's R0/R11 price-survival contract ("a merge is never where an
+            // operator's price override silently disappears") does NOT hold on THIS
+            // caller, and not because of anything here: `updateOrderItems`' CUSTOMER
+            // branch re-prices every catalog line through `resolveBuyerLinePrice` and
+            // never reads `item.unitPrice`, so a preserved MANUAL override is dropped
+            // and the line re-prices at the tier ladder. That is pre-existing (the
+            // naive merge dropped it too) and B13-correct in posture — a buyer payload
+            // must never set a price — but it means an operator's courtesy price on the
+            // buyer's active order does not survive the buyer adding to it. Filed as a
+            // register entry rather than fixed here: the fix belongs in the CUSTOMER
+            // branch (honour a STORED override, still never a client-supplied one),
+            // which is F07's file region.
+            const foldResult = foldMergeItems(
+              normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
+              normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
+              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
+              // already built above for the denomination normalizers.
+              upbByProduct,
+            );
+            if (foldResult.livePackFallbackProductIds.length > 0) {
+              this.logger.warn(
+                `foldMergeItems: order ${activeOrder.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+              );
+            }
+            const mergedItems = foldResult.items.filter((i) => i.productId);
+            await this.ordersService.updateOrderItems(
+              activeOrder.id,
+              { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
+              makePseudoUser(ctx),
+            );
+            // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
+            // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
+            // BEST-EFFORT ON PURPOSE: the line write above has already COMMITTED (it runs in
+            // its own transaction), so a throw here would report a merge that DID land as a
+            // failure. The cart clears only on success, so the buyer would re-submit — and
+            // the fold above computes ABSOLUTE totals, so the same cart would be added a
+            // second time. Losing a note/urgent flag is far cheaper than a double order; the
+            // realistic failure is a concurrent sweep consolidating this order away between
+            // the two calls, which the sweep below reconciles anyway.
+            try {
+              await this.ordersService.applyBuyerMergeHeader(
+                activeOrder.id,
+                {
+                  notes: dto.notes,
+                  urgent: dto.urgent,
+                  requestedDeliveryDate: dto.requestedDeliveryDate,
+                },
+                makePseudoUser(ctx),
+              );
+            } catch (err) {
+              this.logger.error(
+                `Buyer merge header (notes/urgent/date) not applied to order ${activeOrder.id}: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            }
 
-        // Update existing order items with merged list
-        await this.ordersService.updateOrderItems(
-          activeOrder.id,
-          { items: mergedItems } as any,
-          makePseudoUser(ctx),
+            return activeOrder.id;
+          },
         );
+        // `wait` mode either acquires or throws, so this is defensive only — but it must NOT
+        // collapse into `null`. That is the same value "this customer has no active order"
+        // produces, and it would fall through to the create path below: a buyer whose merge
+        // never ran would silently get a SECOND order instead of the retryable signal. Same
+        // coded body as mapLockError's 503, so `isMergeContention` recognises it downstream
+        // exactly as it does on the staff path and in the service.
+        if (!lock.acquired) {
+          throw new ServiceUnavailableException({
+            code: LOCK_UNAVAILABLE,
+            message: LOCK_UNAVAILABLE_MESSAGE,
+          });
+        }
+        mergedOrderId = lock.value;
+      } catch (lockErr) {
+        mapLockError(lockErr);
+      }
 
-        // Sweep any other PENDING orders for this customer into the winner.
-        await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+      if (mergedOrderId) {
+        // Sweep any other PENDING orders for this customer into the winner. The
+        // buyer drove this, so a merged BUY_N_GET_M line earns the free units the
+        // combined quantity qualifies for (split carts keep the promo).
+        //
+        // POST-COMMIT (see ../orders/merge-contention.ts): the fold inside the lock has already
+        // committed and the buyer's cart clears on success, so a 409 here would send them back
+        // to a cart they already submitted — and the fold is ABSOLUTE, so re-submitting doubles
+        // the order. Contention is deferred: warn and return the merged order.
+        // `lockMode: "try"`: this consolidation is deferrable by construction, so it must not
+        // wait out another holder's turn inside a request whose write already landed.
+        try {
+          await this.ordersService.mergeAllPendingForCustomer(
+            ctx.customerId,
+            { buyerInitiated: true },
+            { lockMode: "try" },
+          );
+        } catch (e) {
+          if (!isMergeContention(e)) throw e;
+          this.logger.warn(
+            `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
+          );
+        }
 
         // Return the updated order
-        return this.ordersService.findOne(activeOrder.id, makePseudoUser(ctx));
+        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
       }
     }
 
@@ -496,8 +743,26 @@ export class BuyerController {
     };
     const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
     // Newly-created order may share a customer with pre-existing PENDINGs —
-    // consolidate them so the customer ends up with a single PENDING.
-    const merged = await this.ordersService.mergeAllPendingForCustomer(ctx.customerId);
+    // consolidate them so the customer ends up with a single PENDING (buyer-driven,
+    // so the merged quantity earns its own BUY_N_GET_M free units).
+    //
+    // POST-COMMIT (see ../orders/merge-contention.ts): `created` exists already, so contention
+    // must not become the response — the buyer would be told their order failed and would place
+    // a second one. Return the unconsolidated order; the hourly sweep folds it later.
+    let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
+    try {
+      merged = await this.ordersService.mergeAllPendingForCustomer(
+        ctx.customerId,
+        { buyerInitiated: true },
+        // POST-COMMIT: never wait — see the sibling sweep above.
+        { lockMode: "try" },
+      );
+    } catch (e) {
+      if (!isMergeContention(e)) throw e;
+      this.logger.warn(
+        `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
+      );
+    }
     return merged ?? created;
   }
 
@@ -720,12 +985,17 @@ export class BuyerController {
     // Ownership check: verify the template belongs to this buyer's customer
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    return this.templatesService.generateOrder(id);
+    // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser (there
+    // is no JwtPayload here — ownership is already verified above against ctx.customerId),
+    // so it must pass isStaffRole=false itself, or it silently keeps the old hardcoded-true
+    // oversell posture. A buyer's "Reorder" gets the SAME hard block their own checkout
+    // (orders.service.ts create()) gives them — never the operator/cron warn-and-oversell.
+    return this.templatesService.generateOrder(id, false);
   }
 
   @Patch("templates/:id")
@@ -740,7 +1010,7 @@ export class BuyerController {
   ) {
     const template = await this.prisma
       .forTenant()
-      .orderTemplate.findUnique({ where: { id }, select: { customerId: true } });
+      .orderTemplate.findFirst({ where: { id }, select: { customerId: true } });
     if (!template) throw new NotFoundException("Template not found");
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");

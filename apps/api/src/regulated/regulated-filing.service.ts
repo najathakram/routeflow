@@ -5,10 +5,11 @@ import { StorageService } from "../storage/storage.service";
 import { AuditService } from "../audit/audit.service";
 import { RegulatedService } from "./regulated.service";
 import { RegulatedReportService } from "./regulated-report.service";
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 import { filingPeriod, FilingCadence } from "./period";
 import { buildFilingCsv } from "./filing-csv";
 import { serializeReportCsv } from "./report-csv";
+import { assertNoParkedReversals, listParkedReversals } from "./parked-reversals";
 
 /** Round a quantity to 3 decimals — matches Decimal(12,3) + the CSV's .toFixed(3). */
 const roundQty = (n: number) => Math.round(n * 1000) / 1000;
@@ -100,6 +101,17 @@ export class RegulatedFilingService {
         "Filings can only be prepared for completed periods — the period must be in the past.",
       );
     }
+
+    // FILING GATE: a return reversal the ledger could not book (pack unknown) is parked and NOT in these
+    // figures. Refuse BEFORE anything is uploaded or upserted (a regeneration too), so a period with an
+    // unresolved parked row can never be filed around; the nightly cron retries and logs.
+    assertNoParkedReversals(
+      await listParkedReversals(this.prisma.forTenant(), {
+        trackedCategoryId: params.trackedCategoryId,
+        buckets,
+      }),
+      { categoryName: category.name, periodKey },
+    );
 
     // Reuse the netting-correct read model, then defensively keep only rows whose
     // periodBucket is in this filing's bucket set. getLedger's from/to is a soldAt

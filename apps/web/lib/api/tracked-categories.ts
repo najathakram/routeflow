@@ -1,5 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type {
+  RegulatedFilingStatus,
+  RegulatedLedgerResponse,
+  RegulatedReportPreview,
+  ReportTemplateDef,
+} from "@routeflow/types";
+export type {
+  RegulatedFilingStatus,
+  RegulatedLedgerResponse,
+  RegulatedLedgerRow,
+  RegulatedReportColumn,
+  RegulatedReportPreview,
+  RegulatedReportWarning,
+  RegulatedReportWarningCode,
+  ReportTemplateDef,
+  TemplateColumn,
+  TemplateItemType,
+  TemplateUomOption,
+} from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +55,8 @@ export interface TrackedCategory {
   txUom: string | null;
   /** Saved custom report column layout, keyed by template code. */
   reportColumnPrefs?: Record<string, string[]> | null;
+  /** Computed server-side: name is "Tobacco" (ci) — the compliance-pack anchor. */
+  isTobaccoCategory?: boolean;
 }
 
 export interface TrackedCategoryInput {
@@ -119,9 +140,19 @@ export function useToggleTrackedCategory() {
   });
 }
 
+/**
+ * `assigned` counts MOVERS only — rows already in the target type are excluded
+ * from it although they were processed. `processed` is every requested row the
+ * tenant can see; use it (not `assigned`) to decide what was skipped. Optional
+ * because a browser tab open across a deploy can still hit the older API.
+ */
 export function useAssignProductsToCategory() {
   const qc = useQueryClient();
-  return useMutation<{ assigned: number }, Error, { id: string; productIds: string[] }>({
+  return useMutation<
+    { assigned: number; processed?: number },
+    Error,
+    { id: string; productIds: string[] }
+  >({
     mutationFn: ({ id, productIds }) =>
       apiClient
         .post(`/tracked-categories/${id}/products/assign`, { productIds })
@@ -218,8 +249,6 @@ export function useToggleSubcategory() {
 
 // ─── Filings (W5b) ──────────────────────────────────────────────────────────────
 
-export type RegulatedFilingStatus = "GENERATED" | "FAILED";
-
 export interface RegulatedFiling {
   id: string;
   trackedCategoryId: string;
@@ -247,13 +276,14 @@ export interface PrepareFilingInput {
 
 const FILINGS_KEY = ["regulated", "filings"] as const;
 
-export function useRegulatedFilings(categoryId?: string) {
+export function useRegulatedFilings(categoryId?: string, options?: { enabled?: boolean }) {
   return useQuery<RegulatedFiling[]>({
     queryKey: [...FILINGS_KEY, categoryId ?? null],
     queryFn: () =>
       apiClient
         .get("/regulated/filings", { params: categoryId ? { category: categoryId } : {} })
         .then((r) => r.data),
+    enabled: options?.enabled ?? true,
   });
 }
 
@@ -271,22 +301,6 @@ export async function fetchRegulatedFilingUrl(id: string, format: "csv" | "pdf" 
 }
 
 // ─── Ledger (per-section sales/tax by period) ─────────────────────────────────────
-
-export interface RegulatedLedgerRow {
-  trackedCategoryId: string;
-  categoryName: string;
-  periodBucket: string; // "YYYY-MM" (UTC month)
-  qty: number;
-  unitBasisQty: number;
-  netSales: number; // signed net (reversals net it down)
-  categoryTax: number; // signed net — snapshot 0 until the W3 tax engine lands
-}
-
-export interface RegulatedLedgerResponse {
-  rows: RegulatedLedgerRow[];
-  /** Note: `totals` intentionally omits `unitBasisQty` (sum the rows for that). */
-  totals: { qty: number; netSales: number; categoryTax: number };
-}
 
 const LEDGER_KEY = ["regulated", "ledger"] as const;
 
@@ -315,61 +329,6 @@ export function useRegulatedLedger(
 }
 
 // ─── Reports (arbitrary-range preview + CSV, WP11) ─────────────────────────────
-
-export type RegulatedReportWarningCode =
-  | "MISSING_WHOLESALER_LICENSE"
-  | "MISSING_ITEM_TYPE"
-  | "MISSING_UOM"
-  | "MISSING_TAXPAYER_ID"
-  | "INVALID_TAXPAYER_ID"
-  | "MISSING_RETAILER_LICENSE"
-  | "INVALID_RETAILER_LICENSE"
-  | "INVALID_WHOLESALER_LICENSE"
-  | "MISSING_ADDRESS"
-  | "NEGATIVE_NET_INVOICE"
-  | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS"
-  | "UNMATCHED_LEDGER_LINE"
-  | "UNLISTED_PRODUCT_LINE";
-
-export interface RegulatedReportWarning {
-  code: RegulatedReportWarningCode;
-  /** A complete human sentence, ready to render in the UI. */
-  message: string;
-  invoiceId?: string;
-  customerName?: string;
-  productId?: string;
-}
-
-export interface RegulatedReportColumn {
-  key: string;
-  label: string;
-  align?: "right";
-}
-
-/**
- * Mirrors the API's `RegulatedReport` shape (`apps/api/src/regulated/report-types.ts`).
- * `rows` holds fully formatted cells in `columns` order, so the preview table and the
- * downloaded CSV can't drift.
- */
-export interface RegulatedReportPreview {
-  template: string;
-  title: string;
-  categoryId: string;
-  categoryName: string;
-  /** Inclusive YYYY-MM-DD range, echoed back for display. */
-  from: string;
-  to: string;
-  columns: RegulatedReportColumn[];
-  rows: string[][];
-  /** Aggregate templates only; null for per-sale templates like TX. */
-  totalsRow: string[] | null;
-  /** Headline figures for the preview UI (not necessarily in the CSV). */
-  displayTotals: { label: string; value: string }[];
-  warnings: RegulatedReportWarning[];
-  /** True when the column layout deviates from the template's official default. */
-  custom?: boolean;
-}
 
 export interface RegulatedReportParams {
   category: string;
@@ -422,31 +381,6 @@ export async function fetchRegulatedReportCsv(params: RegulatedReportParams): Pr
 }
 
 // ─── Report templates (registry-driven vocabulary + columns) ──────────────────
-
-export interface TemplateUomOption {
-  code: string;
-  label: string;
-}
-export interface TemplateItemType {
-  code: string;
-  label: string;
-  uoms: TemplateUomOption[];
-}
-export interface TemplateColumn {
-  key: string;
-  label: string;
-  align?: "right";
-  /** In the template's official/default layout. Non-default columns make a report "custom". */
-  default: boolean;
-}
-export interface ReportTemplateDef {
-  key: string;
-  label: string;
-  kind: "per-sale" | "aggregate";
-  /** null ⇒ this template needs no per-product config. */
-  productConfig: { itemTypes: TemplateItemType[]; caseUomSupported: boolean } | null;
-  columns: TemplateColumn[];
-}
 
 /** Report-template metadata; static per deploy, so cache it for the session. */
 export function useRegulatedTemplates() {

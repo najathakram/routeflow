@@ -24,23 +24,23 @@ import {
 } from "../../../../../lib/api/change-requests";
 import {
   buildAtDoorChangeRequests,
+  dropSucceededAddedLine,
+  leftoverAddedMessage,
   type AtDoorAddedLine,
   type AtDoorEditedLine,
 } from "../../../../../lib/at-door-diff";
-import { computeLineSubtotal, normalizeBoxesPieces } from "../../../../../lib/pricing";
+import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
+import { adjustLineFreeUnits, lineUnitsPerBox } from "../../../../../lib/at-door-line-units";
+import { invoiceLineUnitNoun } from "../../../../../lib/invoice-line-display";
+import { freeUnitsLabel } from "../../../../../lib/buyer-cart-logic";
 import { sanitizeIntInput, parseIntQty } from "../../../../../lib/qty";
-import { resolveProductByCode } from "../../../../../lib/barcode-resolve";
+import { archivedMessage, resolveProductByCode } from "../../../../../lib/barcode-resolve";
 import { BarcodeFab } from "../../../../../components/BarcodeFab";
 import { LicenseGuardModal } from "../../../../../components/LicenseGuardModal";
 import { CreditLimitGuardModal } from "../../../../../components/CreditLimitGuardModal";
-import {
-  parseRegulatedAuthError,
-  type BlockedCategory,
-} from "../../../../../lib/api/authorizations";
-import {
-  parseCreditLimitError,
-  type CreditLimitExceededInfo,
-} from "../../../../../lib/credit-limit-error";
+import { type BlockedCategory } from "../../../../../lib/api/authorizations";
+import { type CreditLimitExceededInfo } from "../../../../../lib/credit-limit-error";
+import { classifyAtStopResolveError } from "../../../../../lib/at-stop-cr-outcome";
 import { showToast } from "../../../../../lib/toast";
 import { useOfflineQueue } from "../../../../../store/offlineQueue";
 
@@ -109,9 +109,17 @@ export default function AdjustOrderScreen() {
   const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const pendingRef = useRef<{ diff: CreateChangeRequestInput[]; index: number } | null>(null);
   // Id of a CR that was created (buyer already notified) but blocked at resolve
-  // by the regulated guard — remembered so it can be declined (cleaned up) when
-  // the driver removes the offending line or cancels, instead of lingering PENDING.
+  // BY THE REGULATED GUARD SPECIFICALLY — remembered so it can be declined (cleaned
+  // up) when the driver removes the offending line or cancels, instead of lingering
+  // PENDING. Deliberately deferred (not declined immediately like every other resolve
+  // failure below, B790): removing the line or getting an override are both real next
+  // steps here, not just "retry the same thing again".
   const blockedCrRef = useRef<string | null>(null);
+  // Set by processDiff right after a batch finishes successfully — the actual
+  // toast/navigate decision waits for the effect below, which reads `added`
+  // only once React has settled it to its TRUE latest value (never a value
+  // read mid-function, which could miss a concurrent re-scan's own setAdded).
+  const batchJustCompletedRef = useRef(false);
 
   const createCr = useCreateChangeRequest(orderId ?? "");
   const resolveCr = useResolveChangeRequestAtStop(orderId ?? "");
@@ -141,7 +149,10 @@ export default function AdjustOrderScreen() {
     for (const li of adjustable) {
       const qty = qtyById[li.id] ?? li.qty;
       if (qty <= 0) continue;
-      const upb = Number(li.product?.unitsPerBox ?? 0);
+      const upb = lineUnitsPerBox(li);
+      // BUY_N_GET_M: the agreed line already has free units off — bill them off
+      // the estimate too, or the door total over-states what the buyer owes.
+      const freeUnits = adjustLineFreeUnits(li, qty);
       if (upb > 1) {
         const split = normalizeBoxesPieces({ qty, unitsPerBox: upb });
         sum += computeLineSubtotal({
@@ -150,9 +161,10 @@ export default function AdjustOrderScreen() {
           boxes: split.boxes,
           pieces: split.pieces,
           unitsPerBox: upb,
+          freeUnits,
         });
       } else {
-        sum += computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty });
+        sum += computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, freeUnits });
       }
     }
     return sum;
@@ -163,6 +175,12 @@ export default function AdjustOrderScreen() {
     if (!trimmed) return;
     try {
       const result = await resolveProductByCode<ScannedProduct>(trimmed);
+      if (result.archived) {
+        // F30 / R5: the product exists but the tenant retired it — a sellable
+        // at-door line is exactly what it must NOT silently become.
+        showToast(archivedMessage(result.product));
+        return;
+      }
       if (result.notFound || !result.product?.id) {
         showToast(`No product for "${trimmed}"`);
         return;
@@ -232,38 +250,60 @@ export default function AdjustOrderScreen() {
       qc.invalidateQueries({ queryKey: ["route-runs"] });
       return true;
     } catch (e: any) {
-      // Connection dropped mid-batch: the two-step create→resolve can't complete
-      // offline (resolve needs the create's server id), so stop honestly rather
-      // than echo the interceptor's reassuring "Action queued." The driver must
-      // retry once back online (handleSave also refuses to start while offline).
-      if (e?.isOfflineQueued) {
-        showToast("Connection lost — reconnect and save again.");
-        return false;
+      const outcome = classifyAtStopResolveError(e);
+      switch (outcome.action) {
+        case "offline":
+          // Connection dropped mid-batch: the two-step create→resolve can't complete
+          // offline (resolve needs the create's server id), so stop honestly rather
+          // than echo the interceptor's reassuring "Action queued." The driver must
+          // retry once back online (handleSave also refuses to start while offline).
+          // The create itself may have landed — its own queued resolve will settle
+          // it once reconnected, so this is NOT a decline-worthy failure (B790).
+          showToast("Connection lost — reconnect and save again.");
+          if (createdCrId && entry.type === "ADD_ITEM" && entry.productId) {
+            // The create already succeeded and the resolve is now queued for
+            // offline replay — it WILL land once reconnected, so drop the
+            // draft now, or the next Save resends this ADD_ITEM on top of the
+            // queued replay (B795, #1302 round 1 finding 2).
+            setAdded((prev) => dropSucceededAddedLine(prev, entry));
+          }
+          return false;
+        case "regulated":
+          // The CR was created (and the buyer notified) but the regulated guard
+          // rejected it at resolve — remember it so the Remove/Cancel exits can
+          // decline the otherwise-orphaned PENDING request (deferred — see
+          // blockedCrRef above for why this one stays deferred, B790).
+          blockedCrRef.current = createdCrId;
+          setLicenseBlock(outcome.blocked);
+          return false;
+        case "already-resolved":
+          // Name a DECLINED resolution distinctly (#1302 round 1 finding 3) — an
+          // APPROVED-elsewhere race and an office decline read very differently to
+          // the driver. No status from the server => the generic toast.
+          showToast(
+            outcome.status === "DECLINED"
+              ? "That line was declined by the office — refreshed."
+              : "That line changed elsewhere — refreshed.",
+          );
+          return true; // don't block the rest of the batch on a benign race
+        case "credit":
+          // B790: decline immediately, unlike the regulated case above — there is
+          // no driver-safe next step that resolves THIS CR (Cancel is the only
+          // exit; see CreditLimitGuardModal below), so leaving it PENDING would
+          // just accumulate a duplicate on every retry.
+          if (createdCrId) declineCr.mutate({ crId: createdCrId, reason: outcome.reason });
+          setCreditBlock(outcome.info);
+          return false;
+        case "decline":
+          // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED /
+          // any other or future code (B753) — decline immediately (B790: this used
+          // to just toast and return false, leaving the CR PENDING forever while a
+          // bare retry created a second one for the same edit) and surface the
+          // server's message. Never a partial silent failure.
+          if (createdCrId) declineCr.mutate({ crId: createdCrId, reason: outcome.reason });
+          showToast(outcome.reason);
+          return false;
       }
-      const blocked = parseRegulatedAuthError(e);
-      if (blocked && blocked.length > 0) {
-        // The CR was created (and the buyer notified) but the regulated guard
-        // rejected it at resolve — remember it so the Remove/Cancel exits can
-        // decline the otherwise-orphaned PENDING request.
-        blockedCrRef.current = createdCrId;
-        setLicenseBlock(blocked);
-        return false;
-      }
-      const code = e?.response?.data?.code;
-      if (code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
-        showToast("That line changed elsewhere — refreshed.");
-        return true; // don't block the rest of the batch on a benign race
-      }
-      const creditInfo = parseCreditLimitError(e);
-      if (creditInfo) {
-        setCreditBlock(creditInfo);
-        return false;
-      }
-      // LINE_ALREADY_DELIVERED / STOP_ALREADY_COMPLETED / CHANGE_WINDOW_CLOSED /
-      // generic — surface the server message, stop the batch (never a partial
-      // silent failure).
-      showToast(e?.response?.data?.message ?? e?.message ?? "Couldn't save that change.");
-      return false;
     }
   }
 
@@ -272,18 +312,44 @@ export default function AdjustOrderScreen() {
   // (still present in local `added` state) is never re-diffed and resent.
   async function processDiff(diff: CreateChangeRequestInput[], startIndex: number) {
     for (let i = startIndex; i < diff.length; i++) {
-      const ok = await submitEntry(diff[i]!);
+      const entry = diff[i]!;
+      const ok = await submitEntry(entry);
       if (!ok) {
         pendingRef.current = { diff, index: i };
         setSaving(false);
         return;
       }
+      // B795: a bare re-tap of "Save changes" (the credit-block Cancel, a
+      // message-less 409, an offline drop, and the license modal's Cancel all
+      // leave the driver here) rebuilds a FRESH diff from `added` at index 0 --
+      // drop this entry's draft now, or a succeeded ADD_ITEM gets re-diffed and
+      // double-adds the line server-side.
+      setAdded((prev) => dropSucceededAddedLine(prev, entry));
     }
     pendingRef.current = null;
     setSaving(false);
+    // B795 review round 2: the toast/navigate decision below waits for the
+    // effect (reads the TRUE latest `added`) rather than deciding here --
+    // a concurrent re-scan's own setAdded may not have committed yet.
+    batchJustCompletedRef.current = true;
+  }
+
+  // Fires once the batch-completion flag is set AND `saving` has settled to
+  // false, reading whatever `added` React has ACTUALLY committed by then. A
+  // concurrent re-scan mid-batch can leave units here that were never part of
+  // the diff just processed -- never silently discard them by navigating away
+  // (Opus review, #1302 round 2: router.back() used to fire unconditionally).
+  useEffect(() => {
+    if (!batchJustCompletedRef.current || saving) return;
+    batchJustCompletedRef.current = false;
+    const leftover = leftoverAddedMessage(added);
+    if (leftover) {
+      showToast(leftover);
+      return;
+    }
     showToast("Order updated");
     router.back();
-  }
+  }, [saving, added, router]);
 
   async function handleSave() {
     if (!orderId) return;
@@ -436,7 +502,10 @@ export default function AdjustOrderScreen() {
         </View>
       </ScrollView>
 
-      <BarcodeFab onScanned={handleScanned} hidden={!!licenseBlock} />
+      {/* B795 review round 2: hide the scanner while saving too, not just
+          during the license block -- a scan landing mid-batch grows a draft
+          past what a just-sent ADD_ITEM already covers. */}
+      <BarcodeFab onScanned={handleScanned} hidden={saving || !!licenseBlock} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the
@@ -512,7 +581,7 @@ function AdjustLineRow({
   qty: number;
   onChangeQty: (qty: number) => void;
 }) {
-  const upb = Number(li.product?.unitsPerBox ?? 0);
+  const upb = lineUnitsPerBox(li);
   const isBoxed = upb > 1;
   // Seed once from the line's STORED split — never re-derive on every render,
   // so an in-flight refetch (pre-save) doesn't reset an in-progress edit.
@@ -538,9 +607,18 @@ function AdjustLineRow({
   const applyQty = (n: number) => onChangeQty(Math.max(0, Math.trunc(n)));
 
   const removed = qty <= 0;
+  const freeUnits = adjustLineFreeUnits(li, qty);
+  const freeLabel = freeUnitsLabel(freeUnits);
   const lineTotal = isBoxed
-    ? computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, boxes, pieces, unitsPerBox: upb })
-    : computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty });
+    ? computeLineSubtotal({
+        unitPrice: Number(li.unitPrice),
+        qty,
+        boxes,
+        pieces,
+        unitsPerBox: upb,
+        freeUnits,
+      })
+    : computeLineSubtotal({ unitPrice: Number(li.unitPrice), qty, freeUnits });
 
   return (
     <View style={[styles.card, removed && styles.cardRemoved]}>
@@ -551,8 +629,14 @@ function AdjustLineRow({
           </Text>
           <Text style={styles.cardMeta}>
             ${Number(li.unitPrice).toFixed(2)}
-            {isBoxed ? ` / box of ${upb}` : ""}
+            {/* #2055: the price suffix names the LINE's own unit (Case, Pallet), never the
+                hardcoded word "box" — upb is already line-snapshot-first via lineUnitsPerBox
+                above (B657); only the noun itself was still hardcoded. */}
+            {isBoxed ? ` / ${invoiceLineUnitNoun(li)} of ${upb}` : ""}
           </Text>
+          {/* BUY_N_GET_M: name the free units, or the reduced line total reads
+              as a pricing error at the door. */}
+          {freeLabel ? <Text style={styles.cardFreeLabel}>{freeLabel}</Text> : null}
         </View>
         <Text style={[styles.cardTotal, removed && styles.cardTotalRemoved]}>
           {removed ? "Removed" : `$${lineTotal.toFixed(2)}`}
@@ -725,6 +809,7 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
   cardName: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: ios.label },
   cardMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  cardFreeLabel: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: ios.brand, marginTop: 2 },
   cardTotal: {
     fontSize: 15,
     fontFamily: "Inter_700Bold",

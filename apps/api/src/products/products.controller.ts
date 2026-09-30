@@ -18,6 +18,8 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
 import { CreateProductDto } from "./dto/create-product.dto";
 import { UpdateProductDto } from "./dto/update-product.dto";
@@ -25,6 +27,8 @@ import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkDeleteProductsDto } from "./dto/bulk-delete-products.dto";
+import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
+import { MB, uploadLimits } from "../common/upload-limits";
 
 @Controller("products")
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -77,13 +81,32 @@ export class ProductsController {
     return this.productsService.bulkAssignParent(dto);
   }
 
-  // Must be declared before :id to avoid route collision
+  // Must be declared before :id to avoid route collision. The primary MSRP
+  // bulk-edit path — gated on flag.msrp itself (unlike create/update, which
+  // gate only when the DTO carries an msrp key, this route has no other
+  // purpose a flag-less tenant needs).
+  @Post("msrp/bulk")
+  @Roles(UserRole.OPERATOR)
+  @UseGuards(PlanFlagGuard)
+  @RequirePlanFlag("flag.msrp")
+  bulkSetMsrp(@Body() dto: BulkSetMsrpDto) {
+    return this.productsService.bulkSetMsrp(dto);
+  }
+
+  // Must be declared before :id to avoid route collision.
+  //
+  // R1: this is no longer a wipe. clearAll() runs every product through
+  // bulkDelete()'s classification, so the confirmation text describes the three
+  // real outcomes and the response carries the {deleted, softDeleted, skipped}
+  // breakdown rather than a bare count that would under-report the result.
   @Delete("clear-all")
   @Roles(UserRole.OPERATOR)
   clearAll(@Query("confirm") confirm?: string) {
     if (confirm !== "true") {
       throw new BadRequestException(
-        "This action permanently deletes ALL products and cascades to orders, invoices, and inventory. Pass ?confirm=true to proceed.",
+        "This action clears the whole catalog: reference-free products are permanently deleted, " +
+          "products referenced by an order, invoice or stock record are deactivated instead, and " +
+          "products with active order items are skipped. Pass ?confirm=true to proceed.",
       );
     }
     return this.productsService.clearAll();
@@ -115,7 +138,7 @@ export class ProductsController {
   @UseInterceptors(
     FilesInterceptor("files", 10, {
       storage: memoryStorage(),
-      limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB per file
+      limits: uploadLimits(MB(10)), // 10 MB per file
       fileFilter: (_req, file, cb) => {
         // RF-076/RF-157: Strict MIME allowlist — only safe raster image types accepted.
         // SVG is explicitly blocked (can embed JS). Any other type is also rejected.

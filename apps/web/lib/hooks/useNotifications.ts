@@ -1,12 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { connectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
+import { pendingApprovalsKey } from "../api/portal-approvals";
+import { useTenant } from "@/components/tenant-provider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type NotificationType = "urgent" | "route" | "driver" | "stock";
+export type NotificationType = "urgent" | "route" | "driver" | "stock" | "buyer" | "crm";
 
 export interface AppNotification {
   id: string;
@@ -15,26 +18,36 @@ export interface AppNotification {
   description: string;
   timestamp: number;
   read: boolean;
+  /** Optional deep link — when set, the bell renders the item as a link (e.g. crm.lead.handoff). */
+  href?: string;
 }
 
 // ─── LocalStorage persistence ─────────────────────────────────────────────────
 
-const STORAGE_KEY = "rf_notifications";
+// Pre-tenant-scoping key: its data can't be attributed to a tenant, so it is
+// deleted on load rather than migrated (migrating IS the cross-tenant leak).
+const LEGACY_STORAGE_KEY = "rf_notifications";
 const MAX_NOTIFICATIONS = 50;
 
-function loadFromStorage(): AppNotification[] {
-  if (typeof window === "undefined") return [];
+function storageKey(slug: string): string {
+  return `rf_notifications:${slug}`;
+}
+
+function loadFromStorage(slug: string | null): AppNotification[] {
+  if (typeof window === "undefined" || !slug) return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey(slug));
     return raw ? (JSON.parse(raw) as AppNotification[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveToStorage(notifications: AppNotification[]) {
+function saveToStorage(slug: string | null, notifications: AppNotification[]) {
+  if (!slug) return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notifications));
+    localStorage.setItem(storageKey(slug), JSON.stringify(notifications));
   } catch {
     // ignore quota / security errors
   }
@@ -44,11 +57,20 @@ function saveToStorage(notifications: AppNotification[]) {
 
 export function useNotifications() {
   const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
+  const queryClient = useQueryClient();
+  // TenantProvider owns slug resolution (JWT wins over cookie, self-heals, and
+  // re-resolves on tab focus after a multi-tab impersonation switch).
+  const { slug } = useTenant();
+  // Mirrors `slug` so push/markAllRead/clear keep stable identities (the socket
+  // effect depends on `push`) while still writing to the current tenant's key.
+  const slugRef = React.useRef<string | null>(null);
 
-  // Hydrate from localStorage on mount (client only)
+  // (Re)hydrate whenever the tenant resolves or switches — per-tenant keys mean
+  // a switch must drop the previous tenant's history, not carry it over.
   React.useEffect(() => {
-    setNotifications(loadFromStorage());
-  }, []);
+    slugRef.current = slug;
+    setNotifications(loadFromStorage(slug));
+  }, [slug]);
 
   const push = React.useCallback((n: Omit<AppNotification, "id" | "timestamp" | "read">) => {
     setNotifications((prev) => {
@@ -61,7 +83,7 @@ export function useNotifications() {
         },
         ...prev,
       ].slice(0, MAX_NOTIFICATIONS);
-      saveToStorage(next);
+      saveToStorage(slugRef.current, next);
       return next;
     });
   }, []);
@@ -98,37 +120,77 @@ export function useNotifications() {
         description: `${data.driverName} is now ${data.status.toLowerCase()}`,
       });
 
-    const onLowStock = (data: { productName: string; stockLevel: number }) =>
+    // Buyer-connect: sign-in email didn't match the customer record, so the
+    // request needs seller review — actionable, and it also drives the
+    // pending-approvals query so the bell's pinned section picks it up
+    // immediately instead of waiting for its 60s poll.
+    const onBuyerConnectRequested = (data: {
+      customerId: string;
+      customerName: string;
+      buyerName: string;
+      buyerEmail: string;
+      requestedAt?: string;
+    }) => {
       push({
-        type: "stock",
-        title: "Low stock alert",
-        description: `${data.productName} — ${data.stockLevel} unit${data.stockLevel === 1 ? "" : "s"} remaining`,
+        type: "buyer",
+        title: "New buyer request",
+        description: `${data.buyerName} wants to connect to ${data.customerName}`,
+      });
+      void queryClient.invalidateQueries({ queryKey: pendingApprovalsKey });
+    };
+
+    // Buyer-connect: sign-in email matched, so it connected straight to
+    // ACTIVE — informational only, no pending-approvals row to invalidate.
+    const onBuyerAutoLinked = (data: {
+      customerId: string;
+      customerName: string;
+      buyerName: string;
+      buyerEmail: string;
+    }) =>
+      push({
+        type: "buyer",
+        title: "Buyer connected",
+        description: `${data.buyerName} connected to ${data.customerName}`,
+      });
+
+    // GoHighLevel lead handoff (spec R30) — a customer was just created/linked from a
+    // GoHighLevel lead; the bell entry links straight to the new customer record.
+    const onCrmHandoff = (data: { customerId: string; customerName: string }) =>
+      push({
+        type: "crm",
+        title: "New customer from GoHighLevel",
+        description: `${data.customerName} — finish onboarding`,
+        href: `/customers/${data.customerId}`,
       });
 
     socket.on("order.urgent.placed", onUrgentOrder);
     socket.on("route.stop.completed", onStopCompleted);
     socket.on("driver.status.updated", onDriverStatus);
-    socket.on("inventory.low.stock", onLowStock);
+    socket.on("buyer.connect.requested", onBuyerConnectRequested);
+    socket.on("buyer.connect.autolinked", onBuyerAutoLinked);
+    socket.on("crm.lead.handoff", onCrmHandoff);
 
     return () => {
       socket.off("order.urgent.placed", onUrgentOrder);
       socket.off("route.stop.completed", onStopCompleted);
       socket.off("driver.status.updated", onDriverStatus);
-      socket.off("inventory.low.stock", onLowStock);
+      socket.off("buyer.connect.requested", onBuyerConnectRequested);
+      socket.off("buyer.connect.autolinked", onBuyerAutoLinked);
+      socket.off("crm.lead.handoff", onCrmHandoff);
     };
-  }, [push]);
+  }, [push, queryClient]);
 
   const markAllRead = React.useCallback(() => {
     setNotifications((prev) => {
       const next = prev.map((n) => ({ ...n, read: true }));
-      saveToStorage(next);
+      saveToStorage(slugRef.current, next);
       return next;
     });
   }, []);
 
   const clear = React.useCallback(() => {
     setNotifications([]);
-    saveToStorage([]);
+    saveToStorage(slugRef.current, []);
   }, []);
 
   const unreadCount = notifications.filter((n) => !n.read).length;

@@ -185,6 +185,7 @@ export default function AdminBuyersPage() {
       {/* Search + segment chips */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <input
+          aria-label="Search buyers"
           type="text"
           placeholder="Buyer email or name..."
           value={search}
@@ -203,15 +204,18 @@ export default function AdminBuyersPage() {
           >
             {c.label}
             {typeof c.count === "number" && (
-              <span className="ml-1.5 text-slate-500">{c.count.toLocaleString()}</span>
+              <span className="ml-1.5 text-slate-400">{c.count.toLocaleString()}</span>
             )}
           </button>
         ))}
       </div>
 
-      {loading && <div className="py-12 text-center text-slate-500">Loading buyers...</div>}
+      {loading && <div className="py-12 text-center text-slate-400">Loading buyers...</div>}
       {error && (
-        <div className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700">
+        <div
+          role="alert"
+          className="mb-4 rounded-lg bg-red-900/40 px-4 py-3 text-sm text-red-400 ring-1 ring-red-700"
+        >
           {error}
         </div>
       )}
@@ -219,10 +223,10 @@ export default function AdminBuyersPage() {
       {data && (
         <>
           <div className="rounded-xl bg-slate-800 ring-1 ring-white/5 overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto" role="region" aria-label="Buyers" tabIndex={0}>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-slate-700 text-xs uppercase tracking-wider text-slate-400">
                     <th className="px-4 py-3 text-left">Buyer</th>
                     <th className="px-4 py-3 text-left">Business</th>
                     <th className="px-4 py-3 text-right">Sellers</th>
@@ -241,7 +245,7 @@ export default function AdminBuyersPage() {
                           {b.status !== "ACTIVE" && <AdminBadge>{b.status}</AdminBadge>}
                         </div>
                         {b.name && b.name !== b.email && (
-                          <div className="text-xs text-slate-500">{b.name}</div>
+                          <div className="text-xs text-slate-400">{b.name}</div>
                         )}
                       </td>
                       <td className="px-4 py-3 text-slate-300">{b.businessName ?? "—"}</td>
@@ -254,14 +258,14 @@ export default function AdminBuyersPage() {
                           <span className="text-xs text-yellow-500">Unverified</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-slate-500">
+                      <td className="px-4 py-3 text-slate-400">
                         {new Date(b.createdAt).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Link
                             href={`/admin/buyers/${b.id}`}
-                            className="rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
+                            className="admin-tap rounded px-2 py-1 text-xs font-medium text-indigo-400 hover:bg-indigo-900/30 hover:text-indigo-300"
                           >
                             Manage
                           </Link>
@@ -298,7 +302,7 @@ export default function AdminBuyersPage() {
                   ))}
                   {data.data.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="px-4 py-12 text-center text-slate-500">
+                      <td colSpan={7} className="px-4 py-12 text-center text-slate-400">
                         No buyer accounts match this view.
                       </td>
                     </tr>
@@ -317,7 +321,7 @@ export default function AdminBuyersPage() {
               >
                 Prev
               </button>
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-slate-400">
                 Page {data.meta.page} of {data.meta.pages}
               </span>
               <button
@@ -347,20 +351,20 @@ export default function AdminBuyersPage() {
                 <div className="grid grid-cols-1 items-center gap-3 sm:grid-cols-[1fr_auto_1fr]">
                   <div className="rounded-lg border border-slate-700 p-3">
                     <div className="font-medium text-white">{req.primary.email}</div>
-                    <div className="mt-0.5 text-xs text-slate-500">
+                    <div className="mt-0.5 text-xs text-slate-400">
                       kept · {plural(req.primary.sellers, "seller")} ·{" "}
                       {plural(req.primary.orders90d, "order")}
                     </div>
                   </div>
-                  <ArrowLeft className="mx-auto hidden h-4 w-4 text-slate-500 sm:block" />
+                  <ArrowLeft className="mx-auto hidden h-4 w-4 text-slate-400 sm:block" />
                   <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-3">
                     <div className="font-medium text-white">{req.secondary.email}</div>
-                    <div className="mt-0.5 text-xs text-slate-500">
+                    <div className="mt-0.5 text-xs text-slate-400">
                       absorbed · {plural(req.secondary.sellers, "seller")} ·{" "}
                       {plural(req.secondary.orders90d, "order")}
                     </div>
                     {req.initiatorNotes && (
-                      <div className="mt-1 text-xs italic text-slate-500">
+                      <div className="mt-1 text-xs italic text-slate-400">
                         &ldquo;{req.initiatorNotes}&rdquo;
                       </div>
                     )}
@@ -369,7 +373,7 @@ export default function AdminBuyersPage() {
                 <div className="mt-3 flex items-center justify-end gap-2">
                   <Link
                     href={`/admin/buyers/merge-requests/${req.id}`}
-                    className="rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
+                    className="admin-tap rounded px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-700"
                   >
                     View details
                   </Link>
@@ -395,7 +399,7 @@ export default function AdminBuyersPage() {
             <div className="border-t border-slate-700 px-5 py-2 text-center">
               <Link
                 href="/admin/buyers/merge-requests"
-                className="text-xs text-indigo-400 hover:text-indigo-300"
+                className="admin-tap-text text-xs text-indigo-400 hover:text-indigo-300"
               >
                 View all {merges.pendingCount} merge requests
               </Link>

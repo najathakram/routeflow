@@ -1,4 +1,12 @@
-import { IsArray, IsNumber, IsOptional, IsString, Min, ValidateNested } from "class-validator";
+import {
+  IsArray,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from "class-validator";
 import { Type } from "class-transformer";
 import { VendorBillItemDto } from "./create-vendor-bill.dto";
 
@@ -11,6 +19,9 @@ export class UpdateVendorBillDto {
   @IsOptional() @IsString() supplierId?: string;
   @IsOptional() @IsString() billDate?: string;
   @IsOptional() @IsString() dueDate?: string;
+  /** Net-terms label as entered on the bill. Persisted verbatim — see
+   * CreateVendorBillDto.termsLabel; the server does not derive dueDate from it. */
+  @IsOptional() @IsString() @MaxLength(40) termsLabel?: string;
   @IsOptional() @IsString() notes?: string;
   /** The supplier's own invoice number; stored normalized and used for dedup. */
   @IsOptional() @IsString() supplierInvoiceNumber?: string;

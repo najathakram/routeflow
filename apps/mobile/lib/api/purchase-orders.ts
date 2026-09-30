@@ -1,17 +1,33 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { PurchaseOrderStatus } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type POStatus = "DRAFT" | "SENT" | "PARTIALLY_RECEIVED" | "RECEIVED" | "CLOSED";
+/**
+ * Wave E / imp-10b, L-072: was a hand-typed local union with `"PARTIALLY_RECEIVED"`
+ * where the schema says `PARTIAL` — now imported (aliased to this file's historical
+ * local name) from `@routeflow/types`, pinned to the schema by `enum-parity.spec.ts`.
+ */
+export type POStatus = PurchaseOrderStatus;
 
 export interface POItem {
   id: string;
   productId: string;
-  product?: { id: string; name: string; unit: string };
-  qtyOrdered: number;
-  qtyReceived: number;
-  unitCost: number;
+  product?: { id: string; name: string; unit: string; unitsPerBox?: number | null };
+  // Prisma Decimals serialize as numeric strings over JSON — coerce with Number().
+  qtyOrdered: number | string;
+  qtyReceived: number | string;
+  /** Per-PIECE cost at 4 dp — for costing only. On a boxed line it is a ROUNDED figure (B698). */
+  unitCost: number | string;
+  /**
+   * The exact line total the server stored (`Decimal(10,2)`). B698: the document figure — render it,
+   * never `qtyOrdered x unitCost`, which re-multiplies the rounded per-piece cost (see
+   * `lib/po-line-subtotal.ts`). Optional only for rows older than the column.
+   */
+  totalCost?: number | string | null;
+  /** Non-null = the cost was entered per case of this size (B677); null = per piece. */
+  packSize?: number | null;
 }
 
 export interface PurchaseOrder {
@@ -23,12 +39,15 @@ export interface PurchaseOrder {
   items: POItem[];
   expectedDate?: string;
   notes?: string;
-  totalAmount?: number;
+  /** Prisma `Decimal(10,2)` — serializes as a numeric string; coerce with `Number()`. */
+  totalAmount?: number | string | null;
   createdAt: string;
 }
 
 export interface ReceivePODto {
-  items: { itemId: string; qtyReceived: number }[];
+  // Boxed lines send { boxes, pieces } (server converts to pieces);
+  // a bare qtyReceived KEEPS meaning pieces.
+  items: { itemId: string; qtyReceived?: number; boxes?: number; pieces?: number }[];
   notes?: string;
 }
 
@@ -46,7 +65,10 @@ export function usePurchaseOrders(status?: POStatus) {
 }
 
 export function useOpenPurchaseOrders() {
-  // Open = DRAFT or SENT or PARTIALLY_RECEIVED
+  // Open = DRAFT or SENT or PARTIAL. Wave E / imp-10b, L-072: this third leg used
+  // to send status: "PARTIALLY_RECEIVED", a value the server's PurchaseOrderStatus
+  // enum has never had — the request always returned zero rows, so every
+  // partially-received PO silently dropped out of the "Open" list.
   return useQuery<{ data: PurchaseOrder[]; meta: any }>({
     queryKey: ["purchase-orders", "open"],
     queryFn: async () => {
@@ -58,7 +80,7 @@ export function useOpenPurchaseOrders() {
           .get("/inventory/purchase-orders", { params: { status: "SENT" } })
           .then((r) => r.data),
         apiClient
-          .get("/inventory/purchase-orders", { params: { status: "PARTIALLY_RECEIVED" } })
+          .get("/inventory/purchase-orders", { params: { status: "PARTIAL" } })
           .then((r) => r.data),
       ]);
       const data = [...(draft.data ?? []), ...(sent.data ?? []), ...(partial.data ?? [])].sort(

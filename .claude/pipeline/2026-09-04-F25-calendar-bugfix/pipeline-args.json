@@ -1,0 +1,272 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-calendar-bugfix/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-04-F25-calendar-bugfix/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-04T13:15:00Z",
+  "mode": "bugfix",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "F25 calendar/date correctness batch A — B59 Critical, B90/B91/B118 Medium; no schema change; three apps; spec 34 deploy-only",
+  "formatCommand": "git ls-files -mo --exclude-standard | grep -E '\\.(ts|tsx|js|jsx|json|md)$' | grep -v '^\\.claude/pipeline/' | xargs -r npx prettier --write",
+
+  "radiusFiles": [
+    "apps/web/app/(dashboard)/routes/_components/EditRunModal.tsx",
+    "apps/web/app/(dashboard)/routes/page.tsx",
+    "apps/web/app/(dashboard)/routes/[id]/page.tsx",
+    "apps/web/lib/api/routes.ts",
+    "apps/api/src/routes/routes.service.ts",
+    "apps/mobile/app/(operator)/exceptions.tsx",
+    "apps/mobile/app/(driver)/route/index.tsx",
+    "apps/web/app/(dashboard)/dashboard/page.tsx",
+    "apps/web/app/(dashboard)/routes/my-runs/page.tsx",
+    "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+    "apps/web/app/(dashboard)/deliveries/page.tsx",
+    "apps/web/app/(dashboard)/customers/_components/AuthorizationsTab.tsx",
+    "apps/web/app/buyer/portal/[seller]/licenses/page.tsx",
+    "apps/web/app/(dashboard)/finance/reports/page.tsx",
+    "apps/mobile/app/(customer)/payments.tsx",
+    "apps/mobile/app/(auth)/role-picker.tsx",
+    "apps/mobile/app/(operator)/customers/[id]/licenses.tsx",
+    "apps/api/src/authorizations/authorizations.service.ts",
+    "apps/api/src/analytics/analytics.service.ts",
+    "apps/api/src/analytics/analytics.service.spec.ts",
+    "apps/api/src/invoices/invoices.service.ts",
+    "apps/api/src/invoices/invoices.service.spec.ts",
+    "apps/api/src/common/calendar-date.ts",
+    "apps/web/lib/formatting.ts",
+    "apps/web/lib/format.ts",
+    "apps/mobile/lib/format-date.ts",
+    "apps/web/lib/calendar-date.ts",
+    "apps/mobile/lib/calendar-date.ts",
+    "apps/mobile/lib/run-lateness.ts",
+    "apps/web/e2e/34-calendar-dates.spec.ts",
+    "apps/web/playwright.config.ts",
+    "scripts/report-f25-licence-dates.mjs",
+    "scripts/repair-f25-licence-dates.mjs",
+    "scripts/REPAIR-RUNBOOK.md",
+    "apps/api/src/analytics/demand-range.ts"
+  ],
+
+  "siblingPatterns": [
+    {
+      "pattern": "(scheduledDate|expiresAt|issueDate)[^\\n]{0,80}toLocaleDateString",
+      "note": "local render of a calendar field"
+    },
+    {
+      "pattern": "toLocaleDateString\\([^\\n]{0,80}(scheduledDate|expiresAt|issueDate)",
+      "note": "same, reversed order"
+    },
+    {
+      "pattern": "(scheduledDate|expiresAt|issueDate)[^\\n]{0,60}\\.get(FullYear|Month|Date)\\(",
+      "note": "local getters on a calendar field"
+    },
+    {
+      "pattern": "scheduledDate[\\s\\S]{0,160}setHours\\(0",
+      "note": "local day floor on a calendar field (B90 shape)"
+    },
+    {
+      "pattern": "T23:59:59",
+      "note": "a local end-of-day literal written to a calendar column (B91 writer shape)"
+    },
+    {
+      "pattern": "setUTCHours\\(23,\\s*59,\\s*59",
+      "note": "a UTC day-end cutoff compared with a real instant (B118 shape)"
+    }
+  ],
+  "siblingExclusions": [
+    "Promotion.startsAt/endsAt",
+    "verifiedAt",
+    "createdAt",
+    "paidAt",
+    "any date built from createdAt (bookkeeping.service.ts:2147/:2159, customers.service.ts:342/:355)",
+    "expiresAt < now instant comparisons in authorizations/credit-notes (POLICY question, filed to owner, not a defect this batch)"
+  ],
+
+  "testPackages": [
+    {
+      "id": "TP-WEB",
+      "title": "web seam extraction + REG tests",
+      "files": [
+        "apps/web/app/(dashboard)/routes/_components/edit-run-modal.logic.ts",
+        "apps/web/app/(dashboard)/routes/_components/edit-run-modal.logic.test.ts",
+        "apps/web/lib/formatting.test.ts"
+      ],
+      "tests": ["T1", "T2", "T6"],
+      "brief": "T1/T2 extract EditRunModal's current buggy read/write bodies verbatim into a named seam module the component calls (behaviour-preserving); T6 asserts fmtCalendarDate vs the local formatter on the same UTC-midnight input. Exact setup/oracle in bug-test-plan.md."
+    },
+    {
+      "id": "TP-MOB",
+      "title": "mobile seam extraction + REG tests",
+      "files": [
+        "apps/mobile/lib/run-lateness.ts",
+        "apps/mobile/__tests__/run-lateness.test.ts",
+        "apps/mobile/app/(operator)/customers/[id]/licenses.logic.ts",
+        "apps/mobile/__tests__/licence-expiry-iso.test.ts"
+      ],
+      "tests": ["T3", "T4", "T5"],
+      "brief": "T3/T4 extract exceptions.tsx's current device-local-floor predicate verbatim; T5 extracts licenses.tsx's current local-23:59:59 write verbatim. Both seams are called from their components unchanged (behaviour-preserving). Exact setup/oracle in bug-test-plan.md."
+    },
+    {
+      "id": "TP-API",
+      "title": "api REG tests + pins",
+      "files": [
+        "apps/api/src/analytics/analytics.service.calendar.spec.ts",
+        "apps/api/src/common/calendar-date.pins.spec.ts"
+      ],
+      "tests": ["T7", "T8", "T9", "T10", "T11"],
+      "brief": "T7-T9 tenant-tz on-time fixtures incl. a 2026-03-08 DST edge; T10 pins startOfCalendarDay byte-identical pre/post extraction (against invoices.service.spec.ts's existing DST/invalid-zone fixtures). T11 is verified against the EXISTING analytics.service.spec.ts, no new file."
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/analytics/analytics.service.calendar.spec.ts -t \"REG-B\" --runInBand",
+      "cd apps/web && npx jest edit-run-modal.logic.test authorizations-expiry.logic.test -t \"REG-B\"",
+      "cd apps/mobile && npx jest run-lateness.test licence-expiry-iso.test -t \"REG-B\""
+    ],
+    "expect": "fail"
+  },
+
+  "packages": [
+    {
+      "id": "WP-API-CAL",
+      "title": "shared api calendar-date helper + analytics wiring",
+      "files": [
+        "apps/api/src/common/calendar-date.ts",
+        "apps/api/src/invoices/invoices.service.ts",
+        "apps/api/src/analytics/analytics.service.ts"
+      ],
+      "brief": "NEW common/calendar-date.ts exports startOfCalendarDay(date, timeZone), endOfCalendarDay(date, timeZone), resolveTenantTimezone(config) [unused by analytics — see its own doc comment], recoverCalendarDay(storedIso, timeZone). invoices.service.ts deletes its private copy, updates 4 call sites to the new arg order. analytics.service.ts's accumulateRunMetrics gains a tenantTimezone param and calls endOfCalendarDay instead of setUTCHours(23,59,59,999); a new resolveCurrentTenantTimezone helper resolves it ONCE per call via prisma.tenantConfig.findUnique, returning cfg?.timezone ?? null (NEVER resolveTenantTimezone's America/New_York fallback) so an unconfigured tenant keeps today's exact UTC boundary. Doc comment at :319-334 rewritten to name the tenant timezone rule.",
+      "satisfies": ["B118"],
+      "provenBy": ["T7", "T8", "T9", "T10", "T11"],
+      "effort": "high"
+    },
+    {
+      "id": "WP-WEB",
+      "title": "EditRunModal fix + 7 web display sites",
+      "files": [
+        "apps/web/lib/calendar-date.ts",
+        "apps/web/lib/formatting.ts",
+        "apps/web/app/(dashboard)/routes/_components/edit-run-modal.logic.ts",
+        "apps/web/app/(dashboard)/dashboard/page.tsx",
+        "apps/web/app/(dashboard)/routes/my-runs/page.tsx",
+        "apps/web/app/(dashboard)/routes/[id]/dispatch/page.tsx",
+        "apps/web/app/(dashboard)/deliveries/page.tsx",
+        "apps/web/app/(dashboard)/customers/_components/AuthorizationsTab.tsx",
+        "apps/web/app/buyer/portal/[seller]/licenses/page.tsx",
+        "apps/web/app/(dashboard)/finance/reports/page.tsx"
+      ],
+      "brief": "NEW lib/calendar-date.ts (shared pure helpers + `export { fmtCalendarDate } from './formatting'`). edit-run-modal.logic.ts's two seam bodies replaced: readCalendarInput -> calendarDateFromIso; buildRunPatchBody gains initialDate and only sets scheduledDate when date !== initialDate. Seven display sites swap toLocaleDateString/local fmtDate for fmtCalendarDate at the cited lines; deliveries/page.tsx keeps its createdAt fallback branch untouched; finance/reports/page.tsx branches on r.type === \"INVOICE\".",
+      "satisfies": ["B59", "B91-web"],
+      "provenBy": ["T1", "T2", "T6"]
+    },
+    {
+      "id": "WP-MOB",
+      "title": "exceptions + licence-writer fix + 2 mobile display sites",
+      "files": [
+        "apps/mobile/lib/calendar-date.ts",
+        "apps/mobile/lib/run-lateness.ts",
+        "apps/mobile/app/(operator)/customers/[id]/licenses.logic.ts",
+        "apps/mobile/app/(customer)/payments.tsx",
+        "apps/mobile/app/(auth)/role-picker.tsx"
+      ],
+      "brief": "NEW lib/calendar-date.ts (same shared pure helpers + fmtCalendarDate re-export from ./format-date). run-lateness.ts's isRunPastDue body replaced with calendarDateFromIso(scheduledDateIso) < localYmd(now) (device-local). licenses.logic.ts's buildExpiresAtIso body replaced with isoFromCalendarDate(expiresAt.trim()). payments.tsx:145 and role-picker.tsx:103 swap to fmtCalendarDate.",
+      "satisfies": ["B90", "B91-mobile", "B91-writer"],
+      "provenBy": ["T3", "T4", "T5"]
+    },
+    {
+      "id": "WP-E2E",
+      "title": "spec 34 + playwright project entry",
+      "files": ["apps/web/e2e/34-calendar-dates.spec.ts", "apps/web/playwright.config.ts"],
+      "brief": "NEW calendar-dates project (dependencies:[setup], storageState operator.json, timezoneId America/Los_Angeles) appended AFTER the current last project entry (this sha's array runs to line 456 — NOT the stale 09-03 plan's cited :393-418). NEW spec follows 23-run-settlement-note.spec.ts's self-provisioning idiom for the B59 modal round-trip and a B91 licence render.",
+      "satisfies": ["B59-e2e", "B91-e2e"],
+      "provenBy": ["T1", "T2"],
+      "dependsOn": ["WP-WEB"],
+      "effort": "low"
+    },
+    {
+      "id": "WP-SCRIPTS",
+      "title": "licence-date report + gated repair script",
+      "files": [
+        "scripts/report-f25-licence-dates.mjs",
+        "scripts/repair-f25-licence-dates.mjs",
+        "scripts/REPAIR-RUNBOOK.md"
+      ],
+      "brief": "Read-only report of non-UTC-midnight CustomerAuthorization.expiresAt rows per tenant. Dry-run-by-default repair using recoverCalendarDay; test-tenant gated per CLAUDE.md policy; live tenant needs --live-tenant-override + type-back confirm. Duplicates recoverCalendarDay with a byte-identical comment. REPAIR-RUNBOOK.md gains a matching section.",
+      "satisfies": ["B91-data-repair"],
+      "provenBy": [],
+      "dependsOn": ["WP-API-CAL"]
+    },
+    {
+      "id": "WP-DOCS",
+      "title": "close-out bookkeeping",
+      "files": [
+        ".claude/campaign/status/F25.jsonl",
+        ".claude/code-map/api.md",
+        ".claude/code-map/web.md",
+        ".claude/code-map/mobile.md",
+        ".claude/code-map/_meta.json",
+        ".claude/code-map/CHANGELOG.md",
+        ".claude/lessons/LESSONS.md",
+        ".claude/lessons/_meta.json"
+      ],
+      "brief": "F25.jsonl: B90/B118 -> proven; B59/B91 -> proven-pending-deploy. Code-map surgical entries + _meta.json mappedSha/generatedAt/notes replaced + CHANGELOG bullet. LESSONS.md appends L-047 verbatim (text from the 09-03 plan); _meta.json nextId stays 58, activeCount 35 -> 36, updatedAt bumped.",
+      "satisfies": [],
+      "provenBy": [],
+      "dependsOn": ["WP-API-CAL", "WP-WEB", "WP-MOB", "WP-E2E", "WP-SCRIPTS"],
+      "effort": "low"
+    }
+  ],
+
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/common src/analytics src/drivers --runInBand",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest run-lateness.test licence-expiry-iso.test",
+      "cd apps/web && npx jest edit-run-modal.logic.test authorizations-expiry.logic.test formatting.calendar-date.test EditRunModal.test calendar-date.test",
+      "cd apps/web && npx tsc --noEmit"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "node scripts/campaign-check.mjs",
+      "node scripts/validate-lessons.mjs",
+      "cd apps/web && npx playwright test --list --reporter=list"
+    ]
+  },
+
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/mobile/lib/run-lateness.ts",
+        "revertFix": true,
+        "behavior": "isRunPastDue compares calendar days, not device-local floors",
+        "test": "REG-B90"
+      },
+      {
+        "file": "apps/web/lib/calendar-date.ts",
+        "revertFix": true,
+        "behavior": "calendarDateFromIso/isoFromCalendarDate round-trip UTC midnight",
+        "test": "REG-B59,REG-B91"
+      },
+      {
+        "file": "apps/mobile/lib/calendar-date.ts",
+        "revertFix": true,
+        "behavior": "isoFromCalendarDate feeds the licence writer, never a local 23:59:59 construction",
+        "test": "REG-B91"
+      },
+      {
+        "file": "apps/api/src/analytics/analytics.service.ts",
+        "revertFix": true,
+        "behavior": "on-time compares against the tenant-tz day end, not a fixed UTC cutoff",
+        "test": "REG-B118"
+      },
+      {
+        "file": "apps/api/src/common/calendar-date.ts",
+        "revertFix": true,
+        "behavior": "endOfCalendarDay is DST-safe",
+        "test": "REG-B118"
+      }
+    ]
+  }
+}

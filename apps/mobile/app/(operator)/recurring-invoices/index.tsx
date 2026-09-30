@@ -14,6 +14,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavAction, NavBar, Pill, SearchBar } from "@routeflow/ui/mobile/ios";
 import { useRecurringInvoices, type RecurringInvoice } from "../../../lib/api/recurring-invoices";
 import { freqLabel, recurringPillFor } from "../../../lib/recurring-invoices-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 const FILTERS = [
   { id: "ALL", label: "All" },
@@ -115,7 +116,7 @@ function Row({ template, onPress }: { template: RecurringInvoice; onPress: () =>
         </Pill>
       </View>
       <View style={styles.rowFoot}>
-        <Text style={styles.next}>Next {new Date(template.nextRunAt).toLocaleDateString()}</Text>
+        <Text style={styles.next}>Next {fmtCalendarDate(template.nextRunAt)}</Text>
         {template.autoSend ? <Text style={styles.totalText}>· Auto-send</Text> : null}
       </View>
     </Pressable>

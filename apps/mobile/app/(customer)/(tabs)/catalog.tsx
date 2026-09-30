@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -14,6 +13,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { RetryableImage } from "../../../components/RetryableImage";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import {
@@ -28,16 +28,19 @@ import {
   useUnsubscribeStockAlert,
   useBuyerReplenishment,
   type BuyerProduct,
+  type BuyerPromotion,
   type LockedCategory,
   type ReplenishmentEstimate,
 } from "../../../lib/api/buyer";
 import { useCartStore } from "../../../store/cartStore";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { QtyTextInput } from "../../../components/QtyStepper";
-import type { PromotionRule } from "../../../lib/pricing";
+import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
+import type { PromotionRule } from "@routeflow/pricing";
 import {
   alertIdSet,
   behaviorLabel,
+  bogoTileChip,
   computeTileChip,
   deriveTilePrice,
   stockLabel,
@@ -121,6 +124,20 @@ export default function CustomerCatalogScreen() {
         inlineTitle="Catalog"
         trailing={
           <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
+            {/* F30 / R12 (B200): the first customer-side scan affordance. Until
+                the buyer realm got its own resolve rung there was nothing to
+                open — the operator ladder's two rungs are
+                @Roles(OPERATOR, DRIVER), so every customer-token lookup 403'd.
+                A pushed screen, not an in-tab overlay: the camera has to cover
+                the tab bar. */}
+            <Pressable
+              onPress={() => router.push("/(customer)/scan")}
+              hitSlop={8}
+              style={styles.bellBtn}
+              accessibilityLabel="Scan barcode"
+            >
+              <Ionicons name="barcode-outline" size={22} color={ios.label} />
+            </Pressable>
             <Pressable
               onPress={() => router.push("/(customer)/favorites")}
               hitSlop={8}
@@ -199,6 +216,7 @@ export default function CustomerCatalogScreen() {
               })
             }
             promoRules={promoRules}
+            promotions={promotions}
             estimate={estimateByProduct.get(item.id)}
             isAlertSubscribed={alertIds.has(item.id)}
             onToggleStockAlert={() => toggleStockAlert(item.id)}
@@ -267,6 +285,7 @@ function ProductCard({
   isFavorite,
   onToggleFavorite,
   promoRules,
+  promotions,
   estimate,
   isAlertSubscribed,
   onToggleStockAlert,
@@ -275,6 +294,7 @@ function ProductCard({
   isFavorite: boolean;
   onToggleFavorite: () => void;
   promoRules: PromotionRule[];
+  promotions: BuyerPromotion[] | undefined;
   estimate?: ReplenishmentEstimate;
   isAlertSubscribed: boolean;
   onToggleStockAlert: () => void;
@@ -289,7 +309,10 @@ function ProductCard({
   const units = cartItem ? (boxed ? (cartItem.boxes ?? 0) : cartItem.qty) : 0;
 
   const priced = deriveTilePrice(product, promoRules, cartItem);
-  const chip = computeTileChip(product, priced, estimate);
+  // A matching BUY_N_GET_M promo always wins the chip slot — it's qty-agnostic
+  // (shown even before the buyer has added enough to earn a free unit) and
+  // never a fake percent, unlike the Deal/New/Low/Featured chip below it.
+  const chip = bogoTileChip(product, promotions) ?? computeTileChip(product, priced, estimate);
   const behavior = behaviorLabel(estimate);
   const stock = stockLabel(product);
   const cta = tileCta(product, units);
@@ -298,7 +321,12 @@ function ProductCard({
   return (
     <View style={styles.productCard}>
       {thumb ? (
-        <Image source={{ uri: thumb }} style={styles.thumb} resizeMode="cover" />
+        <RetryableImage
+          staleQueryKey={["buyer-products"]}
+          source={{ uri: thumb }}
+          style={styles.thumb}
+          resizeMode="cover"
+        />
       ) : (
         <View style={[styles.thumb, styles.thumbPlaceholder]}>
           <Ionicons name="cube-outline" size={22} color={ios.label3} />
@@ -345,7 +373,7 @@ function ProductCard({
             add({
               productId: product.id,
               name: product.name,
-              unitPrice: Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0,
+              unitPrice: product.buyerPrice,
               unit: product.unit,
               unitsPerBox: product.unitsPerBox ?? null,
               category: product.category ?? null,
@@ -576,7 +604,14 @@ const styles = StyleSheet.create({
     minWidth: 20,
     textAlign: "center",
   },
-  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
+  // #2727: a DEFINITE width (row-layout.ts), as in the cart — the web <input>'s UA intrinsic
+  // ~177px otherwise balloons this flexShrink:0 stepper row.
+  qtyInputReset: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    width: QTY_INPUT_WIDTH.buyerCatalog,
+    flexShrink: 0,
+  },
   // A horizontal ScrollView's base style is `{ flexGrow: 1, flexShrink: 1 }`, so
   // beside the `flex: 1` product grid it would otherwise both eat the spare space
   // on a short grid and collapse to nothing on a long one. Same guard as

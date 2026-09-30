@@ -9,14 +9,24 @@ import {
   normalizeBoxesPieces,
   type PromotionRule,
   type PromoResult,
-} from "./pricing";
-import type { BuyerProduct, BuyerStockAlerts, ReplenishmentEstimate } from "./api/buyer";
+} from "@routeflow/pricing";
+import { bogoBannerText, matchingBogoPromo, sellingUnits } from "./buyer-cart-logic";
+import type {
+  BuyerProduct,
+  BuyerPromotion,
+  BuyerStockAlerts,
+  ReplenishmentEstimate,
+} from "./api/buyer";
 import type { CartItem } from "../store/cartStore";
 
 export type TileCta = "stepper" | "notify" | "add";
 
 /** In-cart → stepper (even if now OOS); OOS → notify; else → add. */
-export function tileCta(product: Pick<BuyerProduct, "stockStatus">, inCartUnits: number): TileCta {
+// Partial: a missing stockStatus reads as IN_STOCK (cart/cached rows), though the catalog always sends it.
+export function tileCta(
+  product: Partial<Pick<BuyerProduct, "stockStatus">>,
+  inCartUnits: number,
+): TileCta {
   if (inCartUnits > 0) return "stepper";
   if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK") return "notify";
   return "add";
@@ -31,14 +41,11 @@ export function alertIdSet(alerts: BuyerStockAlerts | undefined): Set<string> {
  * to the cent (same inputs as buyer-cart-pricing.priceCart).
  */
 export function deriveTilePrice(
-  product: Pick<
-    BuyerProduct,
-    "id" | "buyerPrice" | "basePrice" | "price" | "category" | "unitsPerBox"
-  >,
+  product: Pick<BuyerProduct, "id" | "buyerPrice" | "category" | "unitsPerBox">,
   promoRules: PromotionRule[],
   cartItem: CartItem | undefined,
 ): PromoResult {
-  const base = Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0;
+  const base = product.buyerPrice;
   const upb = Number(product.unitsPerBox ?? 0);
   const unitsPerBox = cartItem?.unitsPerBox ?? product.unitsPerBox ?? null;
   const qtyPieces = normalizeBoxesPieces({
@@ -47,10 +54,27 @@ export function deriveTilePrice(
     qty: cartItem?.qty ?? (upb > 1 ? upb : 1),
     unitsPerBox,
   }).qty;
+  // The would-be-added quantity outside a cart is 1 whole selling unit (1 box
+  // or 1 piece) — mirrors how qtyPieces is sourced above.
+  const qtyUnits = cartItem
+    ? sellingUnits({
+        qty: cartItem.qty,
+        boxes: cartItem.boxes ?? null,
+        pieces: cartItem.pieces ?? null,
+        unitsPerBox,
+      })
+    : 1;
   return applyBestPromotion(base, promoRules, {
     productId: product.id,
     category: product.category ?? null,
     qtyPieces,
+    qtyUnits,
+    // REG-B109: the cart line's own denomination, so selection compares by the
+    // money the CART bills (loose pieces included) and the tile keeps matching
+    // it to the cent. No cart line yet => null, i.e. the 1-unit add above.
+    boxes: cartItem?.boxes ?? null,
+    pieces: cartItem?.pieces ?? null,
+    unitsPerBox,
   });
 }
 
@@ -80,6 +104,26 @@ export function computeTileChip(
   return null;
 }
 
+/**
+ * BUY_N_GET_M deal chip: shown whenever a matching promo exists for this
+ * product, regardless of the tile's current (pre-cart) quantity — so a
+ * shopper sees "Buy 5 get 1 free" before adding enough to actually earn a
+ * free unit. Takes priority over `computeTileChip` (call this FIRST); never a
+ * fake percent — this promo type never changes the unit price. Additive: does
+ * not alter `computeTileChip`'s existing Deal/New/Low/Featured behavior.
+ */
+export function bogoTileChip(
+  product: Pick<BuyerProduct, "id" | "category">,
+  promotions: BuyerPromotion[] | undefined,
+): TileChip | null {
+  const promo = matchingBogoPromo(promotions, {
+    productId: product.id,
+    category: product.category ?? null,
+  });
+  if (!promo) return null;
+  return { kind: "deal", label: bogoBannerText(promo) };
+}
+
 export function behaviorLabel(est?: ReplenishmentEstimate): string | null {
   if (!est || est.orderCount < 2) return null;
   const c = est.cadenceDays;
@@ -98,7 +142,9 @@ export interface StockLabelResult {
   tone: StockTone;
 }
 
-export function stockLabel(p: Pick<BuyerProduct, "stockStatus" | "stockLeft">): StockLabelResult {
+export function stockLabel(
+  p: Partial<Pick<BuyerProduct, "stockStatus" | "stockLeft">>,
+): StockLabelResult {
   const status = p.stockStatus ?? "IN_STOCK";
   if (status === "OUT_OF_STOCK") return { label: "Out of stock", tone: "danger" };
   if (status === "LOW")

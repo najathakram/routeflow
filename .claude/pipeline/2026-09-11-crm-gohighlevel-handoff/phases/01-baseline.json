@@ -1,0 +1,202 @@
+{
+  "seq": 1,
+  "idempotencyKey": "2026-09-11-crm-gohighlevel-handoff:Baseline:1",
+  "phase": {
+    "phase": "Baseline",
+    "ran": true,
+    "agents": 3,
+    "rawFindings": 4,
+    "tokens": 52653,
+    "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+    "effort": "low",
+    "estUsd": 0.26,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 3, "tokens": 52653, "estUsd": 0.26 },
+  "findingsBySeverity": { "blocker": 0, "major": 0, "minor": 0 },
+  "findingSummaries": [],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-12T03:58:27Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/spec.md",
+    "uxSpecPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/ux-spec.md",
+    "testPlanPath": ".claude/pipeline/2026-09-11-crm-gohighlevel-handoff/test-plan.md",
+    "designSystemPath": ".claude/pipeline/design-system.md",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm",
+    "runDir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-crm/.claude/pipeline/2026-09-11-crm-gohighlevel-handoff"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-12T03:58:27Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 4,
+        "tokens": 52653,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.26,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      {
+        "file": "(gate-command)",
+        "severity": "major",
+        "summary": "`npm test -w apps/api -- --maxWorkers=2` already fails on the unmodified baseline tree — the command is broken, not the code",
+        "detail": "Baseline output: FAIL common/ci-freshness-guard-script.spec.ts: Expected: \"true\" Received: undefined at line 201 (expect(outputs.run).toBe(\"true\")). A worker process failed to exit gracefully.. This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+        "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+        "phase": "Baseline",
+        "fixComplexity": "mechanical"
+      },
+      {
+        "file": "(gate-command)",
+        "severity": "major",
+        "summary": "`npm run format:check` already fails on the unmodified baseline tree — the command is broken, not the code",
+        "detail": "Baseline output: Prettier format check failed: 40+ files have formatting issues (e.g. .claude/handoffs/*.md, .claude/pipeline/**/*.md, apps/api/scripts/*.js, apps/web/lib/*.ts, docs/**/*.md). This command failed BEFORE any agent wrote anything, so its failures during this run are not evidence about the change. It is excluded from the pass/fail decision and cannot make the result unclean. It still runs every round, so a change in its behavior stays visible.",
+        "fixHint": "Fix this in the PLAN, not in the code: correct or drop the command in verifyCommands (wrong script name, wrong directory, wrong flags), or install the prerequisite it needs, then re-run.",
+        "phase": "Baseline",
+        "fixComplexity": "mechanical"
+      },
+      {
+        "file": "(artifact)",
+        "line": 524,
+        "severity": "major",
+        "summary": "Malformed Windows path in pipeline args JSON workdir field",
+        "detail": "In build-plan.md: Line 524 claims `\"workdir\": \"C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm\"` but the path is malformed. Missing backslash after C: and `.claudeworktrees` is concatenated. Should be `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm`. This path will not be recognized by the dev-pipeline engine.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Replace the malformed path string with proper Windows path syntax: change `C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm` to `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm`",
+        "phase": "Baseline"
+      },
+      {
+        "file": "(artifact)",
+        "line": 766,
+        "severity": "major",
+        "summary": "Malformed Windows path in pipeline args JSON runDir field",
+        "detail": "In build-plan.md: Line 766 claims `\"runDir\": \"C:ClaudeCode\\routeflow.claudeworktrees\\rf-crm.claudepipeline6-09-11-crm-gohighlevel-handoff\"` but the path is malformed with the same issues as line 524, plus `.claudepipeline6` instead of proper subdirectory structure. Should be `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm\\.claude\\pipeline\\2026-09-11-crm-gohighlevel-handoff`. This path will not be usable by the dev-pipeline engine.",
+        "fixComplexity": "mechanical",
+        "fixHint": "Replace with correct path: `C:\\ClaudeCode\\routeflow\\.claude\\worktrees\\rf-crm\\.claude\\pipeline\\2026-09-11-crm-gohighlevel-handoff`",
+        "phase": "Baseline"
+      }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": false
+}

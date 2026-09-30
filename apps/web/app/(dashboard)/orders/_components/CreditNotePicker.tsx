@@ -7,7 +7,10 @@ import {
   openCreditBalance,
   type CreditNote,
 } from "@/lib/api/credit-notes";
+import type { OrderAppliedCreditRow } from "@routeflow/types";
+import { formatMoney } from "@/lib/format";
 import { MoneyInput } from "@/components/MoneyInput";
+import { fmtCalendarDate } from "@/lib/formatting";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -25,6 +28,10 @@ export interface CreditNotePickerProps {
   /** When given, renders a display-only "Estimated balance due" line — credits
    *  never change the order/invoice total, only the invoice's balance due. */
   estimatedOrderTotal?: number;
+  /** #2404: credits already applied to this order's invoices (orderAppliedCredits, applied
+   *  rows). Those that are not picks — e.g. auto-applied on send — show read-only, so the
+   *  picker never hides a credit the order already carries. */
+  appliedOnOrder?: Array<Extract<OrderAppliedCreditRow, { kind: "applied" }>>;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -40,6 +47,7 @@ export function CreditNotePicker({
   value,
   onChange,
   estimatedOrderTotal,
+  appliedOnOrder,
 }: CreditNotePickerProps) {
   const { data } = useCreditNotes(customerId ? { customerId, limit: 100 } : undefined, {
     enabled: !!customerId,
@@ -267,7 +275,7 @@ export function CreditNotePicker({
                 ) : (
                   cn.expiresAt && (
                     <span className="ml-6 text-[11px] text-navy/50">
-                      Expires {new Date(cn.expiresAt).toLocaleDateString()}
+                      Expires {fmtCalendarDate(cn.expiresAt)}
                     </span>
                   )
                 )}
@@ -291,6 +299,30 @@ export function CreditNotePicker({
           })}
         </ul>
       )}
+      {(() => {
+        const notPicked = (appliedOnOrder ?? []).filter((r) => !selectedIds.has(r.creditNoteId));
+        if (notPicked.length === 0) return null;
+        return (
+          <div
+            data-testid="picker-applied-on-order"
+            className="space-y-1 rounded-lg border border-surface-border px-3 py-2 text-xs"
+          >
+            <p className="font-medium text-navy">Already on this order&apos;s invoices</p>
+            <ul className="space-y-0.5 text-navy/70">
+              {notPicked.map((r) => (
+                <li key={r.key}>
+                  <span className="font-mono text-navy">{r.creditNoteNumber}</span> ·{" "}
+                  {formatMoney(r.amount)} on {r.invoiceNumber} ·{" "}
+                  {r.source === "automatic" ? "Automatic" : "Applied"}
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] text-navy/50">
+              To take one back, use Remove in the order&apos;s Applied credits.
+            </p>
+          </div>
+        );
+      })()}
       {value.length > 0 && (
         <div className="space-y-0.5 rounded-lg bg-surface-raised px-3 py-2 text-xs">
           <div className="flex justify-between text-navy/70">

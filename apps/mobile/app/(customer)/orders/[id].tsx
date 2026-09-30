@@ -24,10 +24,15 @@ import {
 import {
   buildReorderItems,
   canReorder,
+  trackingHeadline,
   trackingStepIndex,
 } from "../../../lib/order-tracking-logic";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { showToast } from "../../../lib/toast";
 import { confirm } from "../../../lib/confirm";
+import { fmtCalendarDate } from "../../../lib/format-date";
 
 function orderPill(status: string) {
   switch (status) {
@@ -58,6 +63,10 @@ function friendlyChangeRequestError(e: any): string {
   }
   if (code === "CHANGE_WINDOW_CLOSED") {
     return "This order is no longer accepting change requests.";
+  }
+  // Transient, unlike the two above — the same request works on a retry.
+  if (code === "CONCURRENT_UPDATE") {
+    return e?.response?.data?.message ?? "Another update is in progress — try again in a moment.";
   }
   return e?.response?.data?.message ?? e?.message ?? "Try again.";
 }
@@ -118,6 +127,7 @@ export default function CustomerOrderDetailScreen() {
   const canEdit = orderEditable(order);
   const canRequest = !canEdit && canRequestChange(order);
   const canDoReorder = canReorder(order) && buildReorderItems(order).length > 0;
+  const headline = tracking?.tracking ? trackingHeadline(tracking.tracking) : null;
 
   const onReorder = () =>
     confirm(
@@ -214,12 +224,7 @@ export default function CustomerOrderDetailScreen() {
           <Text style={styles.total}>${total.toFixed(2)}</Text>
           {order.requestedDeliveryDate ? (
             <Text style={styles.deliveryDate}>
-              Delivery:{" "}
-              {new Date(order.requestedDeliveryDate).toLocaleDateString(undefined, {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
+              Delivery: {fmtCalendarDate(order.requestedDeliveryDate, "short")}
             </Text>
           ) : null}
           {order.notes ? <Text style={styles.notes}>{order.notes}</Text> : null}
@@ -256,14 +261,9 @@ export default function CustomerOrderDetailScreen() {
                   {tracking.tracking.driverName ? (
                     <Text style={styles.trackingLine}>Driver: {tracking.tracking.driverName}</Text>
                   ) : null}
-                  {tracking.tracking.runStatus === "IN_PROGRESS" ? (
-                    <Text style={styles.trackingLine}>
-                      {tracking.tracking.stopsAhead === 0
-                        ? "You're next on the route"
-                        : `${tracking.tracking.stopsAhead} stop${tracking.tracking.stopsAhead === 1 ? "" : "s"} ahead of you`}
-                    </Text>
-                  ) : null}
-                  {tracking.tracking.estimatedArrivalWindow.start ? (
+                  {headline ? <Text style={styles.trackingLine}>{headline}</Text> : null}
+                  {tracking.tracking.stopStatus !== "SKIPPED" &&
+                  tracking.tracking.estimatedArrivalWindow.start ? (
                     <Text style={styles.trackingLine}>
                       Estimated: {tracking.tracking.estimatedArrivalWindow.start}
                       {tracking.tracking.estimatedArrivalWindow.end
@@ -306,13 +306,30 @@ export default function CustomerOrderDetailScreen() {
                       {item.product?.name ?? "Product"}
                     </Text>
                     <Text style={styles.itemMeta}>
-                      {item.boxes != null
-                        ? `${item.boxes} box${item.boxes === 1 ? "" : "es"}${
-                            item.pieces ? ` + ${item.pieces}` : ""
-                          } × $${Number(item.unitPrice).toFixed(2)}`
+                      {item.boxes != null || usesUnitDisplay(item)
+                        ? // B759: a units_v1 named unit shows ITS label via the ONE shared formatter.
+                          `${invoiceLineQtyText(item)} × $${Number(item.unitPrice).toFixed(2)}`
                         : `${Number(item.qty)} × $${Number(item.unitPrice).toFixed(2)}`}
-                      {item.product?.unit ? ` / ${item.product.unit}` : ""}
+                      {/* #2046 r4: the price-suffix noun tracks the line's own unit, as on the
+                          customer invoice screen — a Case line no longer reads "/ box". */}
+                      {item.unitLabel?.trim()
+                        ? ` / ${invoiceLineUnitNoun(item)}`
+                        : item.product?.unit
+                          ? ` / ${item.product.unit}`
+                          : ""}
                     </Text>
+                    {item.notes?.trim() ? (
+                      <Text style={styles.itemNote} numberOfLines={4}>
+                        {item.notes}
+                      </Text>
+                    ) : null}
+                    {/* BUY_N_GET_M: name the free units, or the reduced line
+                        total reads as a pricing error (web parity). */}
+                    {freeUnitsLabel(item.promoFreeUnits) ? (
+                      <Text style={styles.itemFreeLabel}>
+                        {freeUnitsLabel(item.promoFreeUnits)}
+                      </Text>
+                    ) : null}
                   </View>
                   <Text style={styles.itemTotal}>
                     $
@@ -510,6 +527,13 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 15, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

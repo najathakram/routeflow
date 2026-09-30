@@ -1,0 +1,179 @@
+{
+  "planPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-06-F08-returns-end-to-end/build-plan.md",
+  "testPlanPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/pipeline/2026-09-06-F08-returns-end-to-end/bug-test-plan.md",
+  "lessonsPath": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25/.claude/lessons/LESSONS.md",
+  "startedAt": "2026-09-06T19:28:00Z",
+  "mode": "bugfix",
+  "scale": "major",
+  "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-F25",
+  "context": "F08 returns (10 bugs). Ruling: cause-ruling.md. NEVER edit apps/api/src/routes/routes.service.ts. Option-B bookkeeping: no map/lessons/ledger edits.",
+  "radiusFiles": [
+    "apps/api/src/credit-notes/credit-notes.service.ts",
+    "apps/api/src/orders/orders.service.ts",
+    "apps/api/src/routes/routes.service.ts",
+    "apps/mobile/lib/short-pick.ts"
+  ],
+  "siblingPatterns": [
+    {
+      "pattern": "\\.subtotal\\s*/\\s*\\w+\\.qty",
+      "note": "per-unit money from an order line"
+    },
+    {
+      "pattern": "status: \\{ not: \"REJECTED\" \\}",
+      "note": "single-status exclusion"
+    },
+    {
+      "pattern": "unitPrice \\?\\? 0\\) \\* ",
+      "note": "client qty x unitPrice"
+    },
+    {
+      "pattern": "restock: i\\.restock \\?\\? true",
+      "note": "restock default ignores reason"
+    }
+  ],
+  "testPackages": [
+    {
+      "id": "TP-API-REFUND",
+      "files": ["apps/api/src/returns/returns-refund.spec.ts"],
+      "tests": ["T1a", "T1b", "T1c", "T2", "T3", "T3b", "T9", "T16", "T1d", "T1e"],
+      "effort": "high",
+      "brief": "bug-test-plan.md + Harness notes; no impl"
+    },
+    {
+      "id": "TP-API-CREATE",
+      "files": ["apps/api/src/returns/returns-overreturn.spec.ts"],
+      "tests": ["T4", "T5", "T6", "T8", "T15"],
+      "effort": "high",
+      "brief": "bug-test-plan.md + Harness notes; no impl"
+    },
+    {
+      "id": "TP-MOBILE",
+      "files": ["apps/mobile/__tests__/returns-logic.test.ts"],
+      "tests": ["T7", "T10", "T11"],
+      "effort": "medium",
+      "brief": "bug-test-plan.md + Harness notes; no impl"
+    },
+    {
+      "id": "TP-E2E",
+      "files": ["apps/web/e2e/29-returns-lifecycle.spec.ts", "apps/web/playwright.config.ts"],
+      "tests": ["T12", "T13", "T14"],
+      "effort": "medium",
+      "brief": "bug-test-plan.md T2 rows; project entry; no local Playwright"
+    }
+  ],
+  "redGate": {
+    "commands": [
+      "cd apps/api && npx jest src/returns --runInBand -t \"REG-B(53|68|69|82|20|61|166|75)\"",
+      "cd apps/mobile && npx jest returns-logic -t \"REG-B(61|128|21)\""
+    ],
+    "expect": "fail"
+  },
+  "packages": [
+    {
+      "id": "P1",
+      "files": ["apps/api/src/returns/returns.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P1"
+    },
+    {
+      "id": "P2",
+      "files": ["apps/api/src/returns/returns.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P2",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P3",
+      "files": ["apps/api/src/returns/returns.service.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P3",
+      "dependsOn": ["P2"]
+    },
+    {
+      "id": "P4",
+      "files": ["apps/api/src/returns/returns.service.ts", "packages/types/api/returns.ts"],
+      "effort": "medium",
+      "brief": "build-plan.md P4"
+    },
+    {
+      "id": "P5",
+      "files": [
+        "apps/api/src/returns/returns.controller.ts",
+        "apps/api/src/returns/returns.service.ts"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P5",
+      "dependsOn": ["P1"]
+    },
+    {
+      "id": "P6",
+      "files": [
+        "apps/web/lib/api/returns.ts",
+        "apps/web/app/(dashboard)/returns/page.tsx",
+        "apps/web/app/(dashboard)/returns/[id]/page.tsx"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P6",
+      "dependsOn": ["P5"]
+    },
+    {
+      "id": "P7",
+      "files": ["apps/mobile/lib/returns-logic.ts"],
+      "effort": "high",
+      "brief": "build-plan.md P7"
+    },
+    {
+      "id": "P8",
+      "files": [
+        "apps/mobile/app/(driver)/route/stop/[stopId]/return/index.tsx",
+        "apps/mobile/app/(operator)/returns/[id].tsx",
+        "apps/mobile/app/(operator)/returns/new.tsx"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P8",
+      "dependsOn": ["P7"]
+    },
+    {
+      "id": "P9",
+      "files": [
+        "apps/web/e2e/29-returns-lifecycle.spec.ts",
+        "apps/web/playwright.config.ts",
+        ".claude/skills/bug-hunt/scan-ignore.json"
+      ],
+      "effort": "medium",
+      "brief": "build-plan.md P9",
+      "dependsOn": ["P6"]
+    }
+  ],
+  "verifyCommands": {
+    "perRound": [
+      "cd apps/api && npx tsc -p tsconfig.build.json --noEmit",
+      "cd apps/api && npx jest src/returns src/credit-notes --runInBand",
+      "cd apps/mobile && npx tsc --noEmit",
+      "cd apps/mobile && npx jest returns-logic",
+      "cd apps/web && npx tsc --noEmit -p tsconfig.json"
+    ],
+    "final": [
+      "cd apps/api && npx jest --silent",
+      "cd apps/mobile && npx jest --silent",
+      "cd apps/web && npx jest --silent",
+      "node scripts/validate-lessons.mjs"
+    ]
+  },
+  "mutationProbe": {
+    "targets": [
+      {
+        "file": "apps/api/src/returns/returns.service.ts",
+        "revertFix": true,
+        "behavior": "billed-basis refund; compensation",
+        "test": "REG-B53"
+      },
+      {
+        "file": "apps/mobile/lib/returns-logic.ts",
+        "revertFix": true,
+        "behavior": "undelivered lines; restock by reason",
+        "test": "REG-B128"
+      }
+    ]
+  }
+}

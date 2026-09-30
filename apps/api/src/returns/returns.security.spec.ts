@@ -13,11 +13,13 @@ import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { ExecutionContext, HttpStatus } from "@nestjs/common";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { ThrottlerExceptionFilter } from "../common/throttler-exception.filter";
 import { ThrottlerException } from "@nestjs/throttler";
+import { __resetLoginThrottleCache, resolveLoginThrottle } from "../auth/login-throttle.config";
 
 // ─── Shared fixtures ─────────────────────────────────────────────────────────
 
@@ -113,6 +115,10 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
         { provide: RouteFlowGateway, useValue: gateway },
         { provide: RegulatedLedgerService, useValue: ledger },
         { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        {
+          provide: NumberingService,
+          useValue: { reserveNext: jest.fn().mockResolvedValue("RET-2026-0001") },
+        },
       ],
     }).compile();
 
@@ -152,6 +158,78 @@ describe("RF-081 ReturnsService.findOneForUser – IDOR prevention", () => {
     await expect(service.findOneForUser("ret-nonexistent", OPERATOR_JWT as any)).rejects.toThrow(
       NotFoundException,
     );
+  });
+});
+
+// ─── B221: DRIVER list scoping ────────────────────────────────────────────────
+
+describe("REG-B221 ReturnsService.findAllForUser – DRIVER scoping", () => {
+  let service: ReturnsService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+
+  beforeEach(async () => {
+    prisma = createMockPrisma();
+
+    const gateway = { emitReturnCreated: jest.fn() } as unknown as RouteFlowGateway;
+    const ledger = {
+      reverseReturnEntries: jest.fn(),
+      unreverseReturnEntries: jest.fn(),
+    } as unknown as RegulatedLedgerService;
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ReturnsService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: RouteFlowGateway, useValue: gateway },
+        { provide: RegulatedLedgerService, useValue: ledger },
+        { provide: CreditNotesService, useValue: { create: jest.fn() } },
+        { provide: NumberingService, useValue: { reserveNext: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get(ReturnsService);
+
+    (prisma.forTenant() as any).return.findMany.mockResolvedValue([]);
+    (prisma.forTenant() as any).return.count.mockResolvedValue(0);
+  });
+
+  it("REG-B221-1: DRIVER's findAll is scoped to orders on their own route runs, not the tenant-wide list", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+    await service.findAllForUser(DRIVER_JWT as any, {});
+
+    expect((prisma.forTenant() as any).driver.findFirst).toHaveBeenCalledWith({
+      where: { userId: DRIVER_JWT.sub },
+    });
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.order).toEqual({ routeRun: { driverId: "drv-1" } });
+  });
+
+  it("REG-B221-2: a DRIVER user with no Driver row sees NOTHING — never the unscoped tenant-wide list", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue(null);
+
+    const result = await service.findAllForUser(DRIVER_JWT as any, {});
+
+    expect(result).toEqual({ data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } });
+    expect((prisma.forTenant() as any).return.findMany).not.toHaveBeenCalled();
+  });
+
+  it("REG-B221-3: OPERATOR's findAll carries no driverId scoping and never resolves a driver row", async () => {
+    await service.findAllForUser(OPERATOR_JWT as any, {});
+
+    expect((prisma.forTenant() as any).driver.findFirst).not.toHaveBeenCalled();
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.order).toBeUndefined();
+  });
+
+  it("REG-B221-4: a driverId filter combines with an explicit orderId as independent AND conditions", async () => {
+    (prisma.forTenant() as any).driver.findFirst.mockResolvedValue({ id: "drv-1" });
+
+    await service.findAllForUser(DRIVER_JWT as any, { orderId: "ord-1" });
+
+    const call = (prisma.forTenant() as any).return.findMany.mock.calls[0][0];
+    expect(call.where.orderId).toBe("ord-1");
+    expect(call.where.order).toEqual({ routeRun: { driverId: "drv-1" } });
   });
 });
 
@@ -199,8 +277,16 @@ describe("RF-160 ThrottlerExceptionFilter – Retry-After header", () => {
   let filter: ThrottlerExceptionFilter;
 
   beforeEach(() => {
+    // pB10: the filter reads the login window from the same config the @Throttle
+    // decorator uses. Clear the env knobs (and the memo) so this pin asserts the
+    // production default from the real source rather than a duplicated literal.
+    delete process.env.AUTH_LOGIN_THROTTLE_LIMIT;
+    delete process.env.AUTH_LOGIN_THROTTLE_TTL_MS;
+    __resetLoginThrottleCache();
     filter = new ThrottlerExceptionFilter();
   });
+
+  const defaultLoginRetryAfter = () => Math.ceil(resolveLoginThrottle().ttl / 1000);
 
   function makeHost(path: string): any {
     const res = {
@@ -221,7 +307,7 @@ describe("RF-160 ThrottlerExceptionFilter – Retry-After header", () => {
     const host = makeHost("/api/v1/auth/login");
     filter.catch(new ThrottlerException(), host);
     expect(host.res.status).toHaveBeenCalledWith(HttpStatus.TOO_MANY_REQUESTS);
-    expect(host.res.header).toHaveBeenCalledWith("Retry-After", "300");
+    expect(host.res.header).toHaveBeenCalledWith("Retry-After", String(defaultLoginRetryAfter()));
   });
 
   it("RF-160-2: sets Retry-After: 60 for other throttled routes", () => {

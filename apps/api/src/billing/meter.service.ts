@@ -20,8 +20,9 @@ interface Period {
 }
 
 /**
- * Usage metering for the four meters, with three distinct semantics:
- *  - SEATS  — live occupancy: a COUNT of active team users (never accumulated).
+ * Usage metering for the five meters, with three distinct semantics:
+ *  - SEATS / CUSTOMERS — live occupancy: a COUNT of active team users / non-deleted
+ *    customers (never accumulated; deleting a row frees headroom immediately).
  *  - ROUTES — daily concurrency: a COUNT of today's route runs.
  *  - SCANS / MSGS — cycle counters bucketed by the billing period; a new period
  *    reads 0 automatically (bucketed by periodStart), so "reset" is implicit.
@@ -49,6 +50,8 @@ export class MeterService {
 
     if (meter === "SEATS") {
       used = await this.seatsUsed(tenantId);
+    } else if (meter === "CUSTOMERS") {
+      used = await this.customersUsed(tenantId);
     } else if (meter === "ROUTES") {
       used = await this.routesToday(tenantId);
       resetsAt = this.endOfTodayUtc();
@@ -66,20 +69,22 @@ export class MeterService {
     return { meter, used, included, remaining, resetsAt };
   }
 
-  /** Read all four meters at once (for settings-billing usage bars). */
+  /** Read all five meters at once (for settings-billing usage bars). */
   async readAll(tenantId: string): Promise<MeterReading[]> {
     return Promise.all(
-      (["SEATS", "ROUTES", "SCANS", "MSGS"] as MeterKey[]).map((m) => this.read(tenantId, m)),
+      (["SEATS", "ROUTES", "SCANS", "MSGS", "CUSTOMERS"] as MeterKey[]).map((m) =>
+        this.read(tenantId, m),
+      ),
     );
   }
 
   /**
    * Increment a cycle meter (SCANS / MSGS) by `n` for the current period.
-   * Never throws — metering must never interrupt the metered action. SEATS/ROUTES
-   * are live-counted and ignore increments.
+   * Never throws — metering must never interrupt the metered action. SEATS/ROUTES/
+   * CUSTOMERS are live-counted and ignore increments.
    */
   async increment(tenantId: string, meter: MeterKey, n = 1): Promise<void> {
-    if (meter === "SEATS" || meter === "ROUTES") return; // live meters are not accumulated
+    if (meter === "SEATS" || meter === "ROUTES" || meter === "CUSTOMERS") return; // live meters are not accumulated
     // Metering is monotonic accumulation — a non-positive increment is a no-op
     // (never decrement, which would inflate reported remaining above the cap).
     if (!Number.isFinite(n) || n <= 0) return;
@@ -109,6 +114,17 @@ export class MeterService {
     });
   }
 
+  /**
+   * Live customer occupancy: non-deleted customers. Deleting a customer frees headroom.
+   * Supplier-only contacts (vendors imported from expense CSVs) are excluded — the
+   * Customers list hides them, so metering them would cap headroom the tenant cannot see.
+   */
+  async customersUsed(tenantId: string): Promise<number> {
+    return this.prisma.customer.count({
+      where: { tenantId, deletedAt: null, supplierOnly: false },
+    });
+  }
+
   /** Route runs scheduled for today (UTC) — the "concurrent routes / day" meter. */
   async routesToday(tenantId: string): Promise<number> {
     const start = this.startOfTodayUtc();
@@ -126,6 +142,7 @@ export class MeterService {
       routes: number | null;
       scans: number | null;
       msgs: number | null;
+      customers: number | null;
     },
     meter: MeterKey,
   ): number | null {
@@ -138,6 +155,8 @@ export class MeterService {
         return caps.scans;
       case "MSGS":
         return caps.msgs;
+      case "CUSTOMERS":
+        return caps.customers;
     }
   }
 

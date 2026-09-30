@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useTenant } from "./tenant-provider";
+import { BrandMark, type BrandTone } from "./brand/BrandMark";
 
 interface TenantLogoProps {
   /** Tailwind class for width/height, e.g. "h-8 w-8" */
@@ -11,8 +12,18 @@ interface TenantLogoProps {
   /** Show business name next to the logo */
   showName?: boolean;
   nameClassName?: string;
-  /** Fallback when tenant has no logo */
+  /**
+   * Historically selected between separate buyer/seller logo files. Both now
+   * fall back to the one shared brand mark (R4); kept for caller compatibility.
+   */
   fallback?: "seller" | "buyer";
+  /**
+   * Surface tone for the fallback RouteFlow mark (no tenant logo uploaded).
+   * `"light"` inverts the mark to white ink for dark surfaces (e.g. the
+   * navy dashboard sidebar). Defaults to `"dark"`. The tenant's own
+   * uploaded logo is unaffected. See fix-round-4 ruling H3.
+   */
+  tone?: BrandTone;
 }
 
 /**
@@ -25,21 +36,29 @@ export function TenantLogo({
   alt,
   showName = false,
   nameClassName = "text-lg font-bold text-white",
-  fallback = "seller",
+  tone = "dark",
 }: TenantLogoProps) {
   const { branding } = useTenant();
 
-  const logoSrc = branding?.logoUrl ?? (fallback === "buyer" ? "/logo-buyer.svg" : "/logo.svg");
   const displayName = branding?.businessName ?? "RouteFlow";
   const imgAlt = alt ?? displayName;
 
   return (
     <>
-      <img
-        src={logoSrc}
-        alt={imgAlt}
-        className={`${className} shrink-0 rounded-lg object-contain`}
-      />
+      {branding?.logoUrl ? (
+        <img
+          src={branding.logoUrl}
+          alt={imgAlt}
+          className={`${className} shrink-0 rounded-lg object-contain`}
+        />
+      ) : (
+        // BrandMark is alt=""/aria-hidden (decorative by design), so the
+        // fallback carries the accessible name itself — otherwise the `alt`
+        // prop would be silently dropped here (fix-round-5 ruling R4).
+        <span role="img" aria-label={imgAlt} className="shrink-0">
+          <BrandMark tone={tone} className={`${className} rounded-lg object-contain`} />
+        </span>
+      )}
       {showName && <span className={nameClassName}>{displayName}</span>}
     </>
   );

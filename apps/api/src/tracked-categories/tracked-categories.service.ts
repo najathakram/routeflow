@@ -12,6 +12,11 @@ import { ListTrackedCategoriesDto } from "./dto/list-tracked-categories.dto";
 import { CreateSubcategoryDto } from "./dto/create-subcategory.dto";
 import { UpdateSubcategoryDto } from "./dto/update-subcategory.dto";
 import { templateByKey, allColumnKeys } from "../regulated/template-registry";
+import { isTobaccoCategoryName } from "../common/tobacco-category";
+import {
+  assertNoOpenRecipe,
+  lockProductsForCategoryWrite,
+} from "../products/recipe-category-guard";
 
 /**
  * CRUD for tenant-defined regulated ("tracked") categories — the generic system
@@ -31,7 +36,12 @@ export class TrackedCategoriesService {
 
   private serialize<T extends object>(row: WithCount<T>) {
     const { _count, ...rest } = row;
-    return { ...rest, productCount: _count.products };
+    return {
+      ...rest,
+      productCount: _count.products,
+      // Computed, never stored: the compliance-pack anchor flag clients key on.
+      isTobaccoCategory: isTobaccoCategoryName((rest as { name?: string }).name),
+    };
   }
 
   async findAll(query: ListTrackedCategoriesDto) {
@@ -188,66 +198,107 @@ export class TrackedCategoriesService {
 
   /**
    * Bulk-assign products to this category (one category max per product — this
-   * overwrites any prior assignment). Sets ONLY the new generic
-   * `Product.trackedCategoryId` pointer. During the shadow-column period the
-   * legacy `isTobacco` flag stays owned by the product flow (+ its addon gate),
-   * and tobacco reports still key off `isTobacco`, so they are unaffected here
-   * until they are re-pointed to the category in a later release.
+   * overwrites any prior assignment). Sets `Product.trackedCategoryId` and, at
+   * the end, syncs the `isTobacco` mirror on the full id set — membership in
+   * the Tobacco type IS the flag (2026-08-24 write-sync consolidation).
    */
   async assignProducts(id: string, productIds: string[]) {
-    await this.findOne(id);
-    // Movers/new assignees get the section AND a cleared subcategory (a
-    // subcategory's parent must equal the product's section — leaving the old
-    // one behind strands an invariant violation that 400s later product
-    // updates). Rows already in this section are untouched.
-    const moverWhere = { id: { in: productIds }, NOT: { trackedCategoryId: id } };
-    // One-category-axis rule: a mover's free-text Product.category is cleared
-    // too, but ONLY when it was synced to its OLD subcategory's name — a
-    // diverged free-text category (legacy) survives the move. updateMany can't
-    // join, so partition the movers first.
-    const movers = await this.prisma.forTenant().product.findMany({
-      where: moverWhere,
-      select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
-    });
-    const syncedIds = movers
-      .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
-      .map((p) => p.id);
-    if (syncedIds.length > 0) {
-      await this.prisma.forTenant().product.updateMany({
-        where: { id: { in: syncedIds } },
-        data: { category: null },
+    const category = await this.findOne(id);
+    const tenantId = this.tenantIdOrThrow();
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      await lockProductsForCategoryWrite(tx, tenantId, productIds);
+      // Movers/new assignees get the section AND a cleared subcategory (a
+      // subcategory's parent must equal the product's section — leaving the old
+      // one behind strands an invariant violation that 400s later product
+      // updates). Rows already in this section are untouched.
+      const moverWhere = { id: { in: productIds }, NOT: { trackedCategoryId: id } };
+      // One-category-axis rule: a mover's free-text Product.category is cleared
+      // too, but ONLY when it was synced to its OLD subcategory's name — a
+      // diverged free-text category (legacy) survives the move. updateMany can't
+      // join, so partition the movers first.
+      const movers = await tx.product.findMany({
+        where: moverWhere,
+        select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
       });
-    }
-    const { count } = await this.prisma.forTenant().product.updateMany({
-      where: moverWhere,
-      data: { trackedCategoryId: id, trackedSubcategoryId: null },
+      // I6 (SA-587a): decided after the locks; a 409 here has written nothing.
+      await assertNoOpenRecipe(
+        tx,
+        movers.map((p: { id: string }) => p.id),
+      );
+      const syncedIds = movers
+        .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
+        .map((p) => p.id);
+      if (syncedIds.length > 0) {
+        await tx.product.updateMany({
+          where: { id: { in: syncedIds } },
+          data: { category: null },
+        });
+      }
+      const { count } = await tx.product.updateMany({
+        where: moverWhere,
+        data: { trackedCategoryId: id, trackedSubcategoryId: null },
+      });
+      // Compliance-pack sync: isTobacco mirrors membership in the Tobacco type.
+      // Applied to the full id set (movers AND rows already in this category) so
+      // a drifted mirror is healed by any re-assign.
+      const { count: processed } = await tx.product.updateMany({
+        where: { id: { in: productIds } },
+        data: { isTobacco: isTobaccoCategoryName((category as { name?: string }).name) },
+      });
+      // `assigned` is MOVERS ONLY — rows already in this category are excluded by
+      // the NOT clause though they were processed just the same. `processed` is
+      // every requested row this tenant can see (the mirror sync above spans the
+      // full id set), so a caller can tell "already in this type" from "not in
+      // this tenant" instead of reporting the first as a skip.
+      return { assigned: count, processed };
     });
-    return { assigned: count };
   }
 
   /** Remove the given products from this category (revert to standard). */
   async unassignProducts(id: string, productIds: string[]) {
     await this.findOne(id);
-    const targetWhere = { id: { in: productIds }, trackedCategoryId: id };
-    // Same synced-category clear as assignProducts — see comment there.
-    const targets = await this.prisma.forTenant().product.findMany({
-      where: targetWhere,
-      select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
-    });
-    const syncedIds = targets
-      .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
-      .map((p) => p.id);
-    if (syncedIds.length > 0) {
-      await this.prisma.forTenant().product.updateMany({
-        where: { id: { in: syncedIds } },
-        data: { category: null },
+    const tenantId = this.tenantIdOrThrow();
+    return this.prisma.tenantTransaction(async (tx: any) => {
+      await lockProductsForCategoryWrite(tx, tenantId, productIds);
+      const targetWhere = { id: { in: productIds }, trackedCategoryId: id };
+      // Same synced-category clear as assignProducts — see comment there.
+      const targets = await tx.product.findMany({
+        where: targetWhere,
+        select: { id: true, category: true, trackedSubcategory: { select: { name: true } } },
       });
-    }
-    const { count } = await this.prisma.forTenant().product.updateMany({
-      where: targetWhere,
-      data: { trackedCategoryId: null, trackedSubcategoryId: null },
+      await assertNoOpenRecipe(
+        tx,
+        targets.map((p: { id: string }) => p.id),
+      );
+      const syncedIds = targets
+        .filter((p) => p.category != null && p.category === p.trackedSubcategory?.name)
+        .map((p) => p.id);
+      if (syncedIds.length > 0) {
+        await tx.product.updateMany({
+          where: { id: { in: syncedIds } },
+          data: { category: null },
+        });
+      }
+      const { count } = await tx.product.updateMany({
+        where: targetWhere,
+        data: { trackedCategoryId: null, trackedSubcategoryId: null },
+      });
+      const targetIds = targets.map((t) => t.id);
+      if (targetIds.length > 0) {
+        // Unassigned products are in no regulated type — never tobacco.
+        await tx.product.updateMany({
+          where: { id: { in: targetIds } },
+          data: { isTobacco: false },
+        });
+      }
+      return { unassigned: count };
     });
-    return { unassigned: count };
+  }
+
+  private tenantIdOrThrow(): string {
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("A tenant context is required.");
+    return tenantId;
   }
 
   // ── Subcategories (classification children of a section) ──────────────────

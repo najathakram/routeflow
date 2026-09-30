@@ -1,0 +1,1276 @@
+[
+  {
+    "id": "B26",
+    "batch": "F00/F01/cleared",
+    "sev": "—",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B30",
+    "batch": "F00/F01/cleared",
+    "sev": "—",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B35",
+    "batch": "F00/F01/cleared",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B40",
+    "batch": "F00/F01/cleared",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B24",
+    "batch": "F02",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B96",
+    "batch": "F02",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B101",
+    "batch": "F02",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B126",
+    "batch": "F02",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B127",
+    "batch": "F02",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B130",
+    "batch": "F02",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B154",
+    "batch": "F02",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B11",
+    "batch": "F03",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B57",
+    "batch": "F03",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B74",
+    "batch": "F03",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B81",
+    "batch": "F03",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B84",
+    "batch": "F03",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B85",
+    "batch": "F03",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B97",
+    "batch": "F03",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B102",
+    "batch": "F03",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B103",
+    "batch": "F03",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B50",
+    "batch": "F04",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B109",
+    "batch": "F04",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B122",
+    "batch": "F04",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B49",
+    "batch": "F05",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B83",
+    "batch": "F05",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B148",
+    "batch": "F05",
+    "sev": "High",
+    "worstStatus": "FILE_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B152",
+    "batch": "F05",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B167",
+    "batch": "F05",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B47",
+    "batch": "F06",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B51",
+    "batch": "F06",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B60",
+    "batch": "F06",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B62",
+    "batch": "F06",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B63",
+    "batch": "F06",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B78",
+    "batch": "F06",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B56",
+    "batch": "F07",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B64",
+    "batch": "F07",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B65",
+    "batch": "F07",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B105",
+    "batch": "F07",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B108",
+    "batch": "F07",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B116",
+    "batch": "F07",
+    "sev": "Medium",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B20",
+    "batch": "F08",
+    "sev": "High",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B21",
+    "batch": "F08",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B53",
+    "batch": "F08",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B61",
+    "batch": "F08",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B68",
+    "batch": "F08",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B69",
+    "batch": "F08",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B75",
+    "batch": "F08",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B82",
+    "batch": "F08",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B128",
+    "batch": "F08",
+    "sev": "Critical",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B166",
+    "batch": "F08",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B13",
+    "batch": "F09",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B18",
+    "batch": "F09",
+    "sev": "Low",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B19",
+    "batch": "F09",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B66",
+    "batch": "F09",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B67",
+    "batch": "F09",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B54",
+    "batch": "F10",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B55",
+    "batch": "F10",
+    "sev": "Critical",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B71",
+    "batch": "F10",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B72",
+    "batch": "F10",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B120",
+    "batch": "F10",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B121",
+    "batch": "F10",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B32",
+    "batch": "F11",
+    "sev": "Medium",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B34",
+    "batch": "F11",
+    "sev": "High",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B129",
+    "batch": "F11",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B146",
+    "batch": "F11",
+    "sev": "High",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B29",
+    "batch": "F12",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B31",
+    "batch": "F12",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B147",
+    "batch": "F12",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B161",
+    "batch": "F12",
+    "sev": "Medium",
+    "worstStatus": "FILE_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B177",
+    "batch": "F12",
+    "sev": "Low",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B09",
+    "batch": "F13",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B46",
+    "batch": "F13",
+    "sev": "Critical",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B48",
+    "batch": "F13",
+    "sev": "Critical",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B92",
+    "batch": "F13",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B106",
+    "batch": "F13",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B52",
+    "batch": "F14",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B132",
+    "batch": "F14",
+    "sev": "High",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B133",
+    "batch": "F14",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B138",
+    "batch": "F14",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B155",
+    "batch": "F14",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B165",
+    "batch": "F14",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B168",
+    "batch": "F14",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B131",
+    "batch": "F15",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B141",
+    "batch": "F15",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B156",
+    "batch": "F15",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B157",
+    "batch": "F15",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B158",
+    "batch": "F15",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B159",
+    "batch": "F15",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B170",
+    "batch": "F15",
+    "sev": "Medium",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B12",
+    "batch": "F16",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B80",
+    "batch": "F16",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B89",
+    "batch": "F16",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B100",
+    "batch": "F16",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B110",
+    "batch": "F16",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B117",
+    "batch": "F16",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B144",
+    "batch": "F16",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B169",
+    "batch": "F16",
+    "sev": "Medium",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B08",
+    "batch": "F17",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B98",
+    "batch": "F17",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B99",
+    "batch": "F17",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B112",
+    "batch": "F17",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B58",
+    "batch": "F18",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B73",
+    "batch": "F18",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B107",
+    "batch": "F18",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B01",
+    "batch": "F19",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B02",
+    "batch": "F19",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B111",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B136",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B137",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B140",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B143",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B150",
+    "batch": "F19",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B04",
+    "batch": "F20",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B23",
+    "batch": "F20",
+    "sev": "Low",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B94",
+    "batch": "F20",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B95",
+    "batch": "F20",
+    "sev": "Low",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B142",
+    "batch": "F20",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B151",
+    "batch": "F20",
+    "sev": "High",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B172",
+    "batch": "F20",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B76",
+    "batch": "F21",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B77",
+    "batch": "F21",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B86",
+    "batch": "F21",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B93",
+    "batch": "F21",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B104",
+    "batch": "F21",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B113",
+    "batch": "F21",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B114",
+    "batch": "F21",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B115",
+    "batch": "F21",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B139",
+    "batch": "F21",
+    "sev": "High",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B149",
+    "batch": "F22",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B171",
+    "batch": "F22",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B186",
+    "batch": "F22",
+    "sev": "Low",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B37",
+    "batch": "F23",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B145",
+    "batch": "F23",
+    "sev": "High",
+    "worstStatus": "FILE_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B160",
+    "batch": "F23",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B180",
+    "batch": "F23",
+    "sev": "Low",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B181",
+    "batch": "F23",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B182",
+    "batch": "F23",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B183",
+    "batch": "F23",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B134",
+    "batch": "F24",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B135",
+    "batch": "F24",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B162",
+    "batch": "F24",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B163",
+    "batch": "F24",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B164",
+    "batch": "F24",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B59",
+    "batch": "F25",
+    "sev": "Critical",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B90",
+    "batch": "F25",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B91",
+    "batch": "F25",
+    "sev": "Medium",
+    "worstStatus": "AMBIGUOUS_FILE",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B118",
+    "batch": "F25",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B185",
+    "batch": "F25",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B14",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B25",
+    "batch": "F26",
+    "sev": "High",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B27",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B28",
+    "batch": "F26",
+    "sev": "Low",
+    "worstStatus": "TOKEN_NOT_FOUND",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B41",
+    "batch": "F26",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B42",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B87",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B88",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B119",
+    "batch": "F26",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B15",
+    "batch": "F27",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B16",
+    "batch": "F27",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B17",
+    "batch": "F27",
+    "sev": "High",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B70",
+    "batch": "F27",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B79",
+    "batch": "F27",
+    "sev": "High",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B43",
+    "batch": "F28",
+    "sev": "Low",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B44",
+    "batch": "F28",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B45",
+    "batch": "F28",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B153",
+    "batch": "F28",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B175",
+    "batch": "F28",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B176",
+    "batch": "F28",
+    "sev": "Low",
+    "worstStatus": "MOVED",
+    "category": "RE-ANCHORED"
+  },
+  {
+    "id": "B03",
+    "batch": "F29",
+    "sev": "Medium",
+    "worstStatus": "MOVED",
+    "category": "NEEDS_DISCOVERY_CHECK (multi-candidate)"
+  },
+  {
+    "id": "B05",
+    "batch": "F29",
+    "sev": "Medium",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B06",
+    "batch": "F29",
+    "sev": "High",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B07",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "OK",
+    "category": "VERIFIED_OK"
+  },
+  {
+    "id": "B22",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B36",
+    "batch": "F29",
+    "sev": "Medium",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B38",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B39",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B173",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "OUT_OF_BOUNDS",
+    "category": "NEEDS_DISCOVERY_CHECK"
+  },
+  {
+    "id": "B174",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B178",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B179",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B184",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  },
+  {
+    "id": "B187",
+    "batch": "F29",
+    "sev": "Low",
+    "worstStatus": "NO_TOKEN_UNVERIFIED",
+    "category": "UNVERIFIED (routine discovery)"
+  }
+]

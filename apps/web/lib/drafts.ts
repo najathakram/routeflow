@@ -1,5 +1,6 @@
-import { computeLineSubtotal } from "@/lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 import type { SaleDraft } from "@/lib/api/drafts";
+import type { PackBase } from "@/lib/order-line-unit";
 
 /**
  * Minimize & resume drafts (pos-cost-roles-spec §2). The order builder serializes
@@ -26,6 +27,17 @@ export interface DraftLineItem {
   unitCost?: number;
   category?: string;
   isUnlisted?: boolean;
+  /** units_v1: the non-pack unit this line sells by (`undefined` = the pack). Web only for now:
+   *  mobile's parked-draft mapper does not read it yet (see the flag-grant blocker on #938). */
+  unitLabel?: string;
+  /** UI-only: the pack fields a unit switch overwrote. Web only. */
+  packBase?: PackBase;
+  /**
+   * Per-line note. Round-tripped only by mobile's parked drafts
+   * (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the shapes stay
+   * identical, but never reads or writes it.
+   */
+  note?: string;
 }
 
 export interface DraftCustomer {
@@ -48,6 +60,18 @@ export interface OrderDraftPayload {
   urgent: boolean;
   /** tempIds the operator chose "Sell anyway" on (below-floor acks). */
   floorAcked: string[];
+  /**
+   * Staff-only per-order commission override (0 = exempt; null/absent = the
+   * agent/customer default rate). Optional so previously parked drafts (which
+   * predate this field) still hydrate fine.
+   */
+  commissionRatePct?: number | null;
+  /**
+   * Credit notes the operator picked to apply. Round-tripped only by mobile's
+   * parked drafts (`apps/mobile/lib/drafts-payload.ts`); web keeps the field so the
+   * shapes stay identical, but never reads or writes it.
+   */
+  selectedCreditIds?: string[];
 }
 
 /** A short, human label for the device a draft was last touched on. */

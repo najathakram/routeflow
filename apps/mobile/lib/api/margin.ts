@@ -1,17 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-
-/**
- * Tenant cost/margin config (pos-cost-roles-spec §1) — drives the order
- * builder's live cost/margin hint. Mirror of apps/web/lib/api/margin.ts.
- */
-export interface MarginConfig {
-  costingMethod: "WEIGHTED_AVERAGE" | "FIFO" | "LAST_COST";
-  /** Default minimum margin as a fraction (0.15 = 15%). */
-  defaultMarginFloor: number;
-  /** Per-category floor overrides, keyed by Product.category. */
-  categoryFloors: Record<string, number>;
-}
+import type { MarginConfig } from "@routeflow/types";
+export type { MarginConfig } from "@routeflow/types";
 
 export function useMarginConfig() {
   return useQuery<MarginConfig>({

@@ -1,4 +1,4 @@
-import { IsBoolean, IsOptional, IsString } from "class-validator";
+import { IsBoolean, IsIn, IsOptional, IsString } from "class-validator";
 
 export class UpdateAddressDto {
   @IsOptional() @IsString() label?: string;
@@ -8,4 +8,5 @@ export class UpdateAddressDto {
   @IsOptional() @IsString() state?: string;
   @IsOptional() @IsString() zip?: string;
   @IsOptional() @IsBoolean() isDefault?: boolean;
+  @IsOptional() @IsIn(["BILLING", "SHIPPING", "DELIVERY"]) addressType?: string;
 }

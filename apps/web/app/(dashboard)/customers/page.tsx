@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Pencil,
@@ -35,6 +35,7 @@ import {
 } from "@routeflow/ui/web";
 import { useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerFormModal } from "./_components/CustomerFormModal";
 import {
   useCustomers,
@@ -44,14 +45,17 @@ import {
   useCustomerTags,
   useExportCustomers,
   useMergeCustomers,
-  usePendingPortalApprovals,
-  useApprovePortalFromList,
+  useRestoreCustomer,
 } from "@/lib/api/customers";
+import { usePendingPortalApprovals, useApprovePortalRequest } from "@/lib/api/portal-approvals";
 import { apiClient } from "@/lib/api-client";
 import { useCustomerRouteAssignments } from "@/lib/api/routes";
-import { useDebounce } from "@/lib/hooks/useDebounce";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
+import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
+import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
 import { fmt, isInternalEmail } from "@/lib/formatting";
+import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -69,62 +73,27 @@ interface Customer {
   tagAssignments?: Array<{ tag: { id: string; name: string; color: string } }>;
   user: { id: string; email: string; username: string; status: string };
   addresses: any[];
+  /** REG-B170: set when the customer has been removed (soft-deleted). */
+  deletedAt?: string | null;
 }
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
-function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const { toast } = useToast();
-  const [file, setFile] = React.useState<File | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<{
-    created: number;
-    updated: number;
-    skipped: number;
-    errors: string[];
-  } | null>(null);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && f.name.endsWith(".csv")) {
-      setFile(f);
-      setResult(null);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await apiClient.post("/import/contacts", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300_000,
-      });
-      setResult(res.data);
-      toast({
-        title: "Customers imported",
-        description: `${res.data.created} created, ${res.data.updated} updated, ${res.data.skipped} skipped`,
-        variant: "success",
-      });
-      onDone();
-    } catch (err: any) {
-      toast({
-        title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+function ImportCustomersModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  /** M7: fired once after a successful (non-dry-run) import — refetches the list, does NOT
+   *  close the modal, so the result table (row plan, skip reasons, warnings) stays visible
+   *  until the user closes it themselves. */
+  onImported: () => void;
+}) {
+  const [imported, setImported] = React.useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Import Customers</h2>
@@ -146,60 +115,18 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             </span>
           </div>
 
-          {/* Drop zone */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
-            onClick={() => inputRef.current?.click()}
-            className={cn(
-              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors",
-              file
-                ? "border-brand-300 bg-brand-50"
-                : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-            )}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  setFile(f);
-                  setResult(null);
-                }
-              }}
-            />
-            <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
-            {file ? (
-              <div className="text-center">
-                <p className="text-sm font-medium text-brand-600">{file.name}</p>
-                <p className="text-xs text-navy/70">
-                  {(file.size / 1024).toFixed(1)} KB · Click to change
-                </p>
-              </div>
-            ) : (
-              <div className="text-center">
-                <p className="text-sm text-navy/70">
-                  Drop CSV file here or <span className="text-brand-500">browse</span>
-                </p>
-                <p className="text-xs text-navy/70 mt-0.5">Zoho Contacts CSV format</p>
-              </div>
-            )}
-          </div>
-
-          {/* Result */}
-          {result && (
-            <div className="rounded-lg border border-success/30 bg-success-bg/50 px-3 py-2.5 text-sm">
-              <p className="font-medium text-success">Import complete</p>
-              <p className="text-xs text-navy/70 mt-0.5">
-                {result.created} created · {result.updated} updated · {result.skipped} skipped
-                {result.errors.length > 0 &&
-                  ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
-              </p>
-            </div>
-          )}
+          {/* B858/B859 (FIX5): same preview-then-import panel as settings/import — one renderer
+           *  for one result shape, so the modal shows the same plan/diff before writing. */}
+          <ImportCsvPanel
+            endpoint="/import/contacts"
+            title="Customers"
+            columns={CUSTOMER_IMPORT_COLUMNS}
+            testIdPrefix="import-customers-modal"
+            onImported={() => {
+              setImported(true);
+              onImported();
+            }}
+          />
         </div>
 
         {/* Footer */}
@@ -208,21 +135,7 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             onClick={onClose}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
           >
-            {result ? "Close" : "Cancel"}
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={!file || loading}
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Importing…
-              </span>
-            ) : (
-              "Import Customers"
-            )}
+            {imported ? "Close" : "Cancel"}
           </button>
         </div>
       </div>
@@ -241,42 +154,86 @@ export default function CustomersPage() {
   }, [setTitle]);
 
   // ── Local state ──────────────────────────────────────────────────────────
-  const [search, setSearch] = React.useState("");
+  const [search, setSearch, debouncedSearch] = useUrlSearch();
   // status + regulated are URL-synced so filtered views are shareable (house pattern — see
   // products/inventory/invoices pages). Both live in the same hook instance so neither
   // clobbers the other's query param on change.
   const [urlFilters, setUrlFilter, clearUrlFilters] = useUrlFilters({
     status: "",
     regulated: false,
+    unassigned: false,
+    removed: false,
   });
   const statusFilter = urlFilters.status;
   const regulatedFilter = urlFilters.regulated;
+  // REG-B156: URL-synced like status/regulated, and sent to the server (see
+  // customersQueryParams) instead of filtering client-side over one page.
+  const unassignedFilter = urlFilters.unassigned;
+  // REG-B170: an explicit trash view — never mixed with live customers.
+  const removedFilter = urlFilters.removed;
   const [typeFilter, setTypeFilter] = React.useState("");
   const [tagFilter, setTagFilter] = React.useState("");
-  const [unassignedOnly, setUnassignedOnly] = React.useState(false);
+  // Seed the tag filter from ?tag= (bell notification deep-links, e.g. the
+  // GoHighLevel handoff card's "routeflow-customer" tag chip) — read-once per
+  // param change, never overwrites an operator's own in-page selection.
+  const searchParams = useSearchParams();
+  React.useEffect(() => {
+    const t = searchParams.get("tag");
+    if (t) setTagFilter(t);
+  }, [searchParams]);
   const [isAddOpen, setIsAddOpen] = React.useState(false);
   const [isImportOpen, setIsImportOpen] = React.useState(false);
   const [editingCustomer, setEditingCustomer] = React.useState<any>(null);
   const [selectMode, setSelectMode] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = React.useState(false);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = React.useState(false);
   const [deactivatingCustomer, setDeactivatingCustomer] = React.useState<{
     id: string;
     name: string;
   } | null>(null);
-  const [page, setPage] = React.useState(1);
+  const [page, setPage] = useUrlPage();
   const [limit, setLimit] = React.useState(20);
   const [sortBy, setSortBy] = React.useState("");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
   const { toast } = useToast();
 
-  // Debounce search to avoid firing API on every keystroke
-  const debouncedSearch = useDebounce(search, 300);
+  // Reset page when filters change — but not on mount: page now lives in the
+  // URL (useUrlPage), so a mount-time reset would clobber the ?page= just
+  // restored when the operator presses Back from a customer.
+  useResetPageOnChange(setPage, [
+    debouncedSearch,
+    statusFilter,
+    typeFilter,
+    tagFilter,
+    regulatedFilter,
+    unassignedFilter,
+    removedFilter,
+  ]);
 
-  // Reset page when filters change
+  // REG-B154 class fix: selection used to accumulate across page/search/filter
+  // changes with no reset (toggleSelect only ever adds/removes one id — see
+  // below), so a bulk action could silently include ids from a page/filter the
+  // operator is no longer looking at. Reset whenever the visible set changes —
+  // deps must cover EVERY input of customersQueryParams below (page size and
+  // sort re-fetch a different set without ever changing `page`).
   React.useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, statusFilter, typeFilter, tagFilter, regulatedFilter]);
+    setSelected(new Set());
+    setShowBulkDeleteConfirm(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    limit,
+    debouncedSearch,
+    statusFilter,
+    typeFilter,
+    tagFilter,
+    regulatedFilter,
+    unassignedFilter,
+    removedFilter,
+    sortBy,
+    sortDir,
+  ]);
 
   // ── API data ─────────────────────────────────────────────────────────────
   // Built as a separate variable (not an inline literal) so the extra `regulated` param —
@@ -292,10 +249,15 @@ export default function CustomersPage() {
     sortBy: sortBy || undefined,
     sortDir: sortBy ? sortDir : undefined,
     regulated: regulatedFilter ? "1" : undefined,
+    // REG-B156: sent to the server (customers.service's shared where-builder)
+    // instead of filtered client-side over one page.
+    unassigned: unassignedFilter ? "1" : undefined,
+    removed: removedFilter ? "1" : undefined,
   };
   const { data: result, isLoading, isError, refetch } = useCustomers(customersQueryParams);
   const customers: Customer[] = result?.data ?? [];
   const meta = result?.meta;
+  useClampPage(setPage, page, meta?.totalPages);
 
   const { data: assignments } = useCustomerRouteAssignments();
   const { data: tags } = useCustomerTags();
@@ -305,17 +267,28 @@ export default function CustomersPage() {
   const updateStatus = useUpdateCustomerStatus();
   const deleteCustomer = useDeleteCustomer();
   const batchDelete = useBatchDeleteCustomers();
+  const restoreCustomer = useRestoreCustomer();
 
   // ── Pending portal approvals ──────────────────────────────────────────────
   const { data: pendingApprovals = [] } = usePendingPortalApprovals();
-  const approveFromList = useApprovePortalFromList();
+  const approveFromList = useApprovePortalRequest();
   const [approvalsExpanded, setApprovalsExpanded] = React.useState(true);
 
-  // ── Filter: unassigned only ───────────────────────────────────────────────
-  const visibleCustomers = React.useMemo(() => {
-    if (!unassignedOnly) return customers;
-    return customers.filter((c) => !assignments?.[c.id]?.length);
-  }, [customers, assignments, unassignedOnly]);
+  // REG-B158: export now shares the list's own filters (search/status/type/tag/regulated/
+  // unassigned/removed) — page/limit/sortBy/sortDir are dropped, the export always dumps every
+  // matching row, not one page. Previously this sent {} and exported the whole tenant regardless
+  // of the screen's filters.
+  const exportParams = {
+    search: debouncedSearch || undefined,
+    status: statusFilter || undefined,
+    tag: tagFilter || undefined,
+    customerType: typeFilter || undefined,
+    regulated: regulatedFilter ? "1" : undefined,
+    unassigned: unassignedFilter ? "1" : undefined,
+    removed: removedFilter ? "1" : undefined,
+  };
+
+  const visibleCustomers = customers;
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -329,6 +302,13 @@ export default function CustomersPage() {
     setSelected(new Set());
   };
 
+  // F3: the trash view never offers bulk actions — a selection carried in from the live
+  // view (or made before toggling into trash) must not survive the switch.
+  React.useEffect(() => {
+    if (removedFilter) exitSelectMode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [removedFilter]);
+
   const handleBulkDelete = async () => {
     if (isDeleting || selected.size === 0) return;
     setIsDeleting(true);
@@ -340,14 +320,25 @@ export default function CustomersPage() {
           variant: "success",
         });
       } else {
+        // R5/REG-B130: surface the 409/failed[] breakdown by reason instead of
+        // a bare count — the per-customer ConflictException message names the
+        // blocking relation (PAID/SENT invoices, etc).
         toast({
-          title: `Deleted ${res.deleted}, failed ${res.failed.length}`,
+          title: `Deleted ${res.deleted}, ${res.failed.length} failed`,
+          description: res.failed.map((f) => f.reason).join("; "),
           variant: res.deleted > 0 ? "success" : "error",
         });
       }
       exitSelectMode();
-    } catch {
-      toast({ title: "Failed to delete customers", variant: "error" });
+    } catch (err: any) {
+      // R5/REG-B130: batchDelete's PAID/SENT pre-flight throws a ConflictException
+      // for the WHOLE batch, so the per-customer breakdown arrives as a 409 message
+      // rather than in failed[]. Surface it, same shape as the branch above.
+      toast({
+        title: "Failed to delete customers",
+        description: err?.response?.data?.message,
+        variant: "error",
+      });
     } finally {
       setIsDeleting(false);
     }
@@ -565,9 +556,12 @@ export default function CustomersPage() {
         id: "status",
         header: "Status",
         accessorFn: (row) => row.user?.status ?? "ACTIVE",
-        cell: ({ row }) => (
-          <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
-        ),
+        cell: ({ row }) =>
+          row.original.deletedAt ? (
+            <Badge variant="danger" label="Removed" />
+          ) : (
+            <Badge status={(row.original.user?.status ?? "ACTIVE") as BadgeStatus} />
+          ),
       },
       {
         id: "actions",
@@ -575,6 +569,31 @@ export default function CustomersPage() {
         enableSorting: false,
         cell: ({ row }) => {
           const status = row.original.user?.status ?? "ACTIVE";
+          // REG-B170: a removed row offers Restore (+ View, reads still work) instead of
+          // Edit/toggle-status — those would 409 server-side ("Restore the customer first").
+          if (row.original.deletedAt) {
+            return (
+              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                <button
+                  title="Restore customer"
+                  aria-label="Restore customer"
+                  onClick={() => restoreCustomer.mutate({ id: row.original.id })}
+                  disabled={restoreCustomer.isPending}
+                  className="rounded p-1.5 text-brand-600 hover:bg-brand-50 transition-colors"
+                >
+                  <UserCheck className="h-4 w-4" />
+                </button>
+                <button
+                  title="View customer"
+                  aria-label="View customer"
+                  onClick={() => router.push(`/customers/${row.original.id}`)}
+                  className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                >
+                  <Eye className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          }
           return (
             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
               <button
@@ -619,6 +638,7 @@ export default function CustomersPage() {
     [
       router,
       toggleStatus,
+      restoreCustomer,
       assignments,
       selectMode,
       selected,
@@ -635,11 +655,15 @@ export default function CustomersPage() {
         title="Customers"
         subtitle={
           meta?.total != null
-            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · filters live in the URL, so views are shareable.`
-            : "Filters live in the URL, so views are shareable."
+            ? `${meta.total} customer${meta.total !== 1 ? "s" : ""} · your current filters are saved in the page link — copy the URL to share this view.`
+            : "Your current filters are saved in the page link — copy the URL to share this view."
         }
         action={
-          <div className="flex items-center gap-2">
+          // B749: overflowed at 390px because PageHeader's own action wrapper (shrink-0, no
+          // max-w-full) never actually shrank enough for THIS flex-wrap to trigger — fixed at
+          // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
+          // wrap is still needed so the content itself has somewhere to go once it can.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
@@ -650,27 +674,30 @@ export default function CustomersPage() {
             <Button
               variant="secondary"
               leftIcon={<Download className="h-4 w-4" />}
-              onClick={() => exportCustomers.mutate({})}
+              onClick={() => exportCustomers.mutate(exportParams)}
               loading={exportCustomers.isPending}
             >
               Export
             </Button>
-            <Button
-              variant="secondary"
-              leftIcon={
-                selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
-              }
-              onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-            >
-              {selectMode ? "Cancel" : "Select"}
-            </Button>
+            {!removedFilter && (
+              <Button
+                variant="secondary"
+                leftIcon={
+                  selectMode ? <X className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />
+                }
+                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
+              >
+                {selectMode ? "Cancel" : "Select"}
+              </Button>
+            )}
             <Button onClick={() => setIsAddOpen(true)}>New Customer</Button>
           </div>
         }
       />
 
-      {/* Selection action bar */}
-      {selectMode && selected.size > 0 && (
+      {/* Selection action bar — never shown in the trash view (F3): the operator can only
+          View + inline Restore a removed row, never bulk-act on it. */}
+      {!removedFilter && selectMode && selected.size > 0 && (
         <div className="flex items-center justify-between rounded-lg border border-danger/30 bg-danger-bg px-4 py-3">
           <span className="text-sm font-medium text-navy">
             {selected.size} customer{selected.size !== 1 ? "s" : ""} selected
@@ -696,7 +723,7 @@ export default function CustomersPage() {
               variant="danger"
               leftIcon={<Trash2 className="h-4 w-4" />}
               loading={isDeleting}
-              onClick={handleBulkDelete}
+              onClick={() => setShowBulkDeleteConfirm(true)}
             >
               Delete {selected.size}
             </Button>
@@ -859,10 +886,10 @@ export default function CustomersPage() {
 
           {/* Unassigned only toggle chip */}
           <button
-            onClick={() => setUnassignedOnly((v) => !v)}
+            onClick={() => setUrlFilter("unassigned", !unassignedFilter)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
-              unassignedOnly
+              unassignedFilter
                 ? "border-brand-500 bg-brand-50 text-brand-600"
                 : "border-surface-border bg-white text-navy hover:bg-surface-raised",
             )}
@@ -870,12 +897,26 @@ export default function CustomersPage() {
             <span
               className={cn(
                 "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border text-[10px]",
-                unassignedOnly ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
+                unassignedFilter ? "border-brand-500 bg-brand-500 text-white" : "border-navy/30",
               )}
             >
-              {unassignedOnly && "✓"}
+              {unassignedFilter && "✓"}
             </span>
             Unassigned only
+          </button>
+
+          {/* REG-B170: removed (soft-deleted) customers trash view */}
+          <button
+            onClick={() => setUrlFilter("removed", !removedFilter)}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",
+              removedFilter
+                ? "border-danger bg-danger-bg text-danger"
+                : "border-surface-border bg-white text-navy hover:bg-surface-raised",
+            )}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Removed
           </button>
 
           {/* Search — pushed to the right */}
@@ -903,7 +944,7 @@ export default function CustomersPage() {
           </div>
         ) : (
           <Table
-            className="border-0 rounded-none"
+            className="border-0 rounded-none overflow-x-auto"
             data={visibleCustomers}
             columns={columns}
             onRowClick={(row) => {
@@ -911,13 +952,32 @@ export default function CustomersPage() {
               else router.push(`/customers/${row.original.id}`);
             }}
             emptyState={
-              unassignedOnly ? (
+              removedFilter ? (
+                <EmptyState
+                  variant="customers"
+                  title="No removed customers"
+                  description="Nothing is in the trash right now."
+                  action={
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setUrlFilter("removed", false)}
+                    >
+                      Show all customers
+                    </Button>
+                  }
+                />
+              ) : unassignedFilter ? (
                 <EmptyState
                   variant="customers"
                   title="No unassigned customers"
                   description="Every customer is already assigned to a route."
                   action={
-                    <Button variant="secondary" size="sm" onClick={() => setUnassignedOnly(false)}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setUrlFilter("unassigned", false)}
+                    >
                       Show all customers
                     </Button>
                   }
@@ -1029,6 +1089,30 @@ export default function CustomersPage() {
         )}
       </div>
 
+      {/* Bulk delete confirmation — names the selected customers where feasible
+          (REG-B130), falling back to a bare count past a readable cap. */}
+      <ConfirmDialog
+        open={showBulkDeleteConfirm}
+        onClose={() => setShowBulkDeleteConfirm(false)}
+        onConfirm={async () => {
+          await handleBulkDelete();
+          setShowBulkDeleteConfirm(false);
+        }}
+        title={`Delete ${selected.size} customer${selected.size !== 1 ? "s" : ""}?`}
+        description={(() => {
+          const names = customers.filter((c) => selected.has(c.id)).map((c) => c.businessName);
+          const preview =
+            names.length > 0
+              ? names.slice(0, 5).join(", ") +
+                (names.length > 5 ? `, and ${names.length - 5} more` : "")
+              : `${selected.size} customer${selected.size !== 1 ? "s" : ""}`;
+          return `${preview} will be deleted. Customers with orders, invoices, or returns are deactivated instead of hard-deleted; customers with PAID or SENT invoices cannot be deleted here.`;
+        })()}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={isDeleting}
+      />
+
       {/* Deactivate confirmation modal */}
       <Modal
         open={deactivatingCustomer !== null}
@@ -1070,10 +1154,7 @@ export default function CustomersPage() {
       {isImportOpen && (
         <ImportCustomersModal
           onClose={() => setIsImportOpen(false)}
-          onDone={() => {
-            setIsImportOpen(false);
-            refetch?.();
-          }}
+          onImported={() => refetch?.()}
         />
       )}
 

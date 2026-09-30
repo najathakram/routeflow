@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { ImportController } from "./import.controller";
 import { ImportService } from "./import.service";
 import { NumberingController } from "./numbering.controller";
-import { NumberingService } from "./numbering.service";
+import { NumberingModule } from "./numbering.module";
 import { AliasController } from "./alias.controller";
 import { ResolutionController } from "./resolution.controller";
 import { MigrationController } from "./migration.controller";
@@ -17,9 +17,32 @@ import { SourceConnectorRegistry } from "./connectors/source-connectors";
 import { PrismaModule } from "../prisma/prisma.module";
 import { VendorBillsModule } from "../vendor-bills/vendor-bills.module";
 import { ProductsModule } from "../products/products.module";
+// ImportService.importContacts() reuses CustomersService's CUSTOMERS soft-cap
+// gate so bulk import obeys the same plan cap as the single-create path.
+import { CustomersModule } from "../customers/customers.module";
+// EntitlementsModule depends only on the global PrismaService — it supplies
+// PlanFlagGuard for MigrationController's @RequirePlanFlag("flag.import_integrations") gate.
+import { EntitlementsModule } from "../billing/entitlements.module";
+// Supplies AddonGuard + AddonService for BatchController's @RequireAddon("ocr") scan gate
+// (EntitlementsModule does not export them).
+import { BillingModule } from "../billing/billing.module";
+// F-05 (#2093): ImportService.importInvoices flags (never blocks) restricted catalog lines.
+import { SellingRestrictionsModule } from "../selling-restrictions/selling-restrictions.module";
 
 @Module({
-  imports: [PrismaModule, VendorBillsModule, ProductsModule, DuplicateMatchModule],
+  imports: [
+    PrismaModule,
+    VendorBillsModule,
+    ProductsModule,
+    DuplicateMatchModule,
+    CustomersModule,
+    EntitlementsModule,
+    BillingModule,
+    SellingRestrictionsModule,
+    // B100/F16b: NumberingService now lives in its own module (numbering.module.ts)
+    // so InvoicesModule/EstimatesModule can consume it without importing ImportModule.
+    NumberingModule,
+  ],
   controllers: [
     ImportController,
     NumberingController,
@@ -30,7 +53,6 @@ import { ProductsModule } from "../products/products.module";
   ],
   providers: [
     ImportService,
-    NumberingService,
     ExternalRefService,
     ProductAliasService,
     VariantResolutionService,
@@ -38,10 +60,10 @@ import { ProductsModule } from "../products/products.module";
     BatchImportService,
     SourceConnectorRegistry,
   ],
-  // NumberingService is exported so the deferred invoices/orders wiring (which
-  // must call reserveNext at mint time) can consume it without duplicating it.
+  // NumberingModule is re-exported so any existing consumer of ImportModule's
+  // NumberingService export keeps working without duplicating the provider.
   // The idempotency substrate is exported for the migration (Phase 4) and batch
   // (Phase 5) flows built on top of it.
-  exports: [NumberingService, ExternalRefService, ProductAliasService, DuplicateMatchModule],
+  exports: [NumberingModule, ExternalRefService, ProductAliasService, DuplicateMatchModule],
 })
 export class ImportModule {}

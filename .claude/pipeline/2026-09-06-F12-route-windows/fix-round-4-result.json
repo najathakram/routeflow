@@ -1,0 +1,168 @@
+{
+  "api": {
+    "what": "Fixed round-4 hazard [0] in the ORS parser: `unassigned` entries are now filtered by `type` the way `steps` are, so only vroom `job` entries index into the stop list. In `callOrsOptimization` (route-optimization.service.ts) the response type's unassigned shape is now `Array<{ id?: number; type?: string }>` (with a comment noting shipment/break entries live in their own id spaces), and the mapping chain gained one leading `.filter((u) => u.type == null || u.type === \"job\")` before `.map((u) => u.id)`. Everything else in the parser is byte-identical: the `assignedIds` derivation, the ascending sort, the null/out-of-range drop, the `assigned` Set dedupe, `optimizedIds = [...assignedIds, ...unassignedIds]`, and the unchanged true-mismatch throw and its message. Hazard [3] is a web-side finding (templates/[id]/page.tsx) and was out of my file scope; [1] and [2] are the recorded residuals — none of the three was touched. PIN added to route-optimization.service.spec.ts as one new test, `REG-B177: only \\`job\\` entries of an ORS unassigned array index into the stop list`, driving `callOrsOptimization` directly with 3 stops and steps for jobs 1+2: (a) `unassigned: [{ id: 1, type: \"break\" }, { id: 3, type: \"job\" }]` resolves to `[\"stop-1\", \"stop-2\", \"stop-3\"]` — only the job entry is appended, once; (b) the same id on a NON-job entry, `unassigned: [{ id: 3, type: \"break\" }]`, is no report about job 3, so the true-mismatch throw still fires with `ORS stop count mismatch: expected 3, got 2`. Half (b) is the discriminating oracle: on the un-fixed parser the break id resolves onto stops[2] and the call succeeds instead of throwing.",
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.ts",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api/src/route-optimization/route-optimization.service.spec.ts"
+    ],
+    "pin": "REG-B177: only `job` entries of an ORS unassigned array index into the stop list — apps/api/src/route-optimization/route-optimization.service.spec.ts (in the \"optimizeTemplate — delivery windows (F12)\" describe, immediately after the existing \"an ORS response that neither schedules nor reports a stop still throws\"). Asserts (a) `{ id: 1, type: \"break\" }` + `{ id: 3, type: \"job\" }` → resolves to [\"stop-1\",\"stop-2\",\"stop-3\"] (only stop 3 appended, exactly once), and (b) `{ id: 3, type: \"break\" }` alone → rejects with \"ORS stop count mismatch: expected 3, got 2\". Proven red on the un-fixed parser (see notes).",
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "Exit 0, no output. Exit code captured directly (redirected to a scratchpad file, never piped) — an earlier run of this same command was piped to `tail`, which reported tail's status, so it was re-run unpiped."
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest src/route-optimization --runInBand",
+        "pass": true,
+        "summary": "Exit 0 — Test Suites: 5 passed, 5 total; Tests: 77 passed, 77 total (route-optimization.service.spec.ts, route-optimization.security.spec.ts, route-analysis.service.spec.ts, dto/apply-route-variant.dto.spec.ts, cost-matrix.spec.ts). 77 = 76 before this round + the 1 new pin. Run twice (before and after the self-probe below), green both times; final run 20.052 s."
+      }
+    ],
+    "notes": "SELF-PROBE (unrequested but cheap, ran under checksum control): to prove the new pin is a real oracle rather than a passing tautology, I backed the service file up to the scratchpad with its sha256, deleted ONLY the new `.filter((u) => u.type == null || u.type === \"job\")` line (by exact string match, never by line number), and ran `npx jest src/route-optimization/route-optimization.service.spec.ts --runInBand -t \"only \\`job\\` entries\"`. It went red on the value, not on an existence check: \"expect(received).rejects.toThrow() / Received promise resolved instead of rejected / Resolved to value: [\\\"stop-1\\\", \\\"stop-2\\\", \\\"stop-3\\\"]\" at spec line 1251 — i.e. without the filter the break entry's id 3 is silently mapped onto stops[2] and stands in for the unaccounted job. Half (a) of the pin does NOT discriminate on its own (a break id colliding with an already-scheduled stop is absorbed by the pre-existing `assigned` dedupe); it is kept because it is the scenario the brief named and it documents the intended shape. I then restored the file from the backup and `sha256sum -c` verified it byte-for-byte OK, and re-ran both gates green (numbers above). Prettier: the two `routes: [...]` fixtures with two step objects are hand-formatted to the broken-out multi-line shape prettier's array-of-objects heuristic produces (matching the existing REG-B177 fixture directly above); single-object `routes: [{ steps: [...] }]` stays inline, as elsewhere in the file. File is LF-only and stayed LF (git shows 1 deleted line in the spec, i.e. no wholesale rewrite; CR count 0). No client identifiers; fixtures use stop-1/2/3 and stop-late. No git write commands, no install, no docker/playwright, no full `npx jest` — and `git status` confirms the only files I changed are the two named ones (the other dirty paths in the tree are pre-existing round-3 engine output)."
+  },
+  "web": {
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web/app/(dashboard)/routes/page.tsx",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web/app/(dashboard)/routes/templates/[id]/page.tsx"
+    ],
+    "what": "Fixed round-3 hazard [3]: the tenant-default seed effect in both dispatch modals (routes/page.tsx and routes/templates/[id]/page.tsx) now also requires the departure-time field to be currently empty before seeding, so a time the operator chose survives a modal close/reopen (while an emptied field still stays empty from round 3). Implemented via a `startTimeRef` mirror of `startTime`, updated in the render body each render (and additionally set to \\\"\\\" synchronously inside routes/page.tsx's reset-on-open effect, so the seed effect — which runs right after it in the same commit — sees the just-cleared value instead of a stale pre-open one). The seed effect's dependency array is unchanged: `[open, routeSettings?.defaultStartTime]`; `startTime` was never added to it, per the brief.",
+    "pin": "None added this round — no unit runner for these page components in apps/web (per fix-round-3.md D1); both effects are quoted in the response body for the reviewer to trace.",
+    "gates": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "Exit 0, no output."
+      }
+    ],
+    "notes": "Only the two briefed files were edited, both via targeted Edit calls; no git write command, install, docker, playwright, eslint, or full jest was run (eslint was deliberately skipped per the brief — this worktree's eslint 8.57.1 vs root 9.39.4 skew crashes it, as documented in round 3's result). Scope check: `git diff --stat` over apps/web shows only these two files touched by me in this round; the rest of the engine's uncommitted tree is untouched. Design note for the reviewer: the fix relies on effect *declaration order within one commit* — the reset effect in routes/page.tsx must run before the seed effect and must itself write `startTimeRef.current = \\\"\\\"` (not just call setStartTime) so the seed effect's same-pass read sees the cleared value rather than a stale closure/ref value captured at render time; this ordering dependency is called out inline in both effects' comments for anyone touching hook order later. templates/[id]/page.tsx has no reset effect, so its startTimeRef is simply the render-body mirror, and the guard now correctly preserves an operator-chosen time across close/reopen since the field is non-empty when the modal reopens."
+  },
+  "regate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx tsc -p tsconfig.build.json --noEmit",
+        "pass": true,
+        "summary": "TypeScript type check passed - no compilation errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest src/route-optimization src/routes --runInBand",
+        "pass": true,
+        "summary": "All tests passed: 13 test suites, 244 tests, 0 snapshots in 54.967 seconds",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript type check passed - no compilation errors",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry && npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint passed - 76 warnings (no errors; warnings: img element optimization, missing hook dependencies, ARIA attributes)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  },
+  "probe": {
+    "ran": true,
+    "bothRed": true,
+    "restoredVerified": true,
+    "shaBefore": "a3df5d4f927dbdcc5ca99ff41a6f39efc291bc7cb646998a9af56408179d4ae4",
+    "shaAfter": "a3df5d4f927dbdcc5ca99ff41a6f39efc291bc7cb646998a9af56408179d4ae4",
+    "redAssertions": [
+      "getRouteVariants > REG-B147: the solver-only fallback variant is window-feasible and reports its violations — spec:326 `expect(variant.stopIds[0]).toBe(\"stop-far\")` → Expected: \"stop-far\", Received: \"stop-near\"",
+      "getRouteVariants > REG-B147: every variant from the per-config Google loop is window-feasible — spec:359 `expect(variant.stopIds[0]).toBe(\"stop-far\")` → Expected: \"stop-far\", Received: \"stop-near\"",
+      "optimizeTemplate — delivery windows (F12) > REG-B147: persists a window-feasible order on the cost-matrix branch — spec:811 `expect(result.stopOrder[0].stopId).toBe(\"stop-far\")` → Expected: \"stop-far\", Received: \"stop-near\"",
+      "optimizeTemplate — delivery windows (F12) > REG-B161: reports a stop whose window closes before its reachable ETA under any order — spec:903 `expect(result.windowViolations).toHaveLength(1)` → Expected length: 1, Received length: 0, Received array: []",
+      "optimizeTemplate — delivery windows (F12) > REG-B147: when no order meets every window, never moves the violation onto an on-time stop — spec:954 `expect(result.windowViolations.map((v: any) => v.stopId)).toEqual([\"stop-c\"])` → Expected Array [\"stop-c\"], Received Array []",
+      "optimizeTemplate — delivery windows (F12) > REG-B147: repairing a late windowed stop never pushes another windowed stop out of its window — spec:1328 `expect(result.stopOrder.map((s: any) => s.stopId)).toEqual([\"stop-a\", \"stop-c\", \"stop-b\"])` → Received [\"stop-a\", \"stop-b\", \"stop-c\"]",
+      "optimizeRoute — delivery windows (F12) > REG-B147: a run that has not departed keeps its scheduled clock and is still window-repaired — spec:1457 `expect(etaSpy).toHaveBeenCalled()` → Expected number of calls: >= 1, Received number of calls: 0"
+    ],
+    "notes": "Mutation: single exact-string Edit inserting `return { order: orderedStops, violations: [] };` as the first statement of `applyWindowPass` (apps/api/src/route-optimization/route-optimization.service.ts), which makes the post-solve window pass a no-op at ALL of its call sites (optimizeTemplate cost-matrix branch, optimizeRoute, getRouteVariants solver-only + per-config Google loop, and the fallback path) without touching any line number. No other file was modified.\n\nMutant run: 7 of the 8 matching tests failed (1 passed), Test Suites 1 failed. Every failure is a VALUE oracle, not an existence check: three assert the repaired first stop is \"stop-far\" and get the raw cost order \"stop-near\"; REG-B161 asserts exactly one violation and gets an empty array (so its downstream value assertions on stopId/windowStart/windowEnd/eta never even run — the length oracle fires first); one asserts windowViolations == [\"stop-c\"] and gets []; one asserts the repaired order [\"stop-a\",\"stop-c\",\"stop-b\"] and gets the unrepaired [\"stop-a\",\"stop-b\",\"stop-c\"]; one asserts the ETA recompute actually happened (etaSpy called 0 times). So both REG-B147 (multiple cases, incl. order-value and violation-list-value oracles) and REG-B161 go red on their own values under the mutant — bothRed = true.\n\nThe single test that stayed green under the mutant is one of the 8 matched cases; it is a case whose expectation does not depend on the window pass producing a repair or a violation (an already-feasible/negative case), so it is not evidence of a weak oracle for the two pinned regressions but is worth noting as a case the mutant does not discriminate.\n\nRestore: byte-for-byte copy back from the scratchpad backup; sha256 shaAfter == shaBefore (a3df5d4f...4ae4). Re-run of the identical command: PASS, 8 passed / 69 skipped / 77 total, 1 suite passed. `git diff --stat` on the file shows only the round-3 engine output (345 insertions / 37 deletions, uncommitted, as it was before the probe) — no probe residue. No git write commands, no installs, no full jest run."
+  },
+  "recheck": {
+    "verdicts": [
+      {
+        "item": "Round-3 hazard [0] — `unassigned` entries not filtered by `type` the way `steps` are (route-optimization.service.ts:1388)",
+        "verdict": "fixed",
+        "evidence": "apps/api/src/route-optimization/route-optimization.service.ts:1388-1391 now reads `.filter((u) => u.type == null || u.type === \"job\")` before `.map((u) => u.id)`, and the response type at :1373 is `unassigned?: Array<{ id?: number; type?: string }>` with a comment naming the separate shipment/break id spaces. Everything downstream is unchanged: `assigned` Set dedupe (:1399-1403), ascending sort, `stops[id - 1]?.id` null-drop, `optimizedIds = [...assignedIds, ...unassignedIds]` (:1405) and the true-mismatch throw + message (:1409-1412)."
+      },
+      {
+        "item": "Refutation: can the new type filter drop a GENUINE job entry that omits `type`?",
+        "verdict": "fixed",
+        "evidence": "No. The predicate keeps `u.type == null`, so an untyped entry is retained, and the pre-existing green test at spec:1074 (`REG-B177: an ORS response with unassigned jobs keeps the primary solver`) drives exactly that shape — `unassigned: [{ id: 3 }]` with no `type` — and still resolves through the primary solver under the re-gate (`npx jest src/route-optimization src/routes` 244/244). Vroom can only report entries for what we sent, and `body.jobs` (:1347-1355) sends jobs only, so a type-less entry is necessarily a job. Worst case for a wrongly-dropped entry is a short count → the existing mismatch throw → nearest-neighbour fallback, never a wrong stop persisted."
+      },
+      {
+        "item": "Pin discrimination: `REG-B177: only \\`job\\` entries of an ORS unassigned array index into the stop list` (spec:1198)",
+        "verdict": "fixed",
+        "evidence": "Half (b) at spec:1245-1250 is a genuine value oracle: `unassigned: [{ id: 3, type: \"break\" }]` against 3 stops with steps for jobs 1+2 must reject with \"ORS stop count mismatch: expected 3, got 2\". Without the filter, break id 3 resolves onto stops[2] and the call resolves to [\"stop-1\",\"stop-2\",\"stop-3\"] instead — which is precisely what the executor's self-probe recorded (\"Received promise resolved instead of rejected / Resolved to value: [\\\"stop-1\\\", \\\"stop-2\\\", \\\"stop-3\\\"]\"). Half (a) is correctly declared non-discriminating (a break id colliding with an already-scheduled stop is absorbed by the `assigned` dedupe) and is kept as documentation only."
+      },
+      {
+        "item": "Round-3 hazard [3] — templates modal discards an operator-chosen departure time on reopen (templates/[id]/page.tsx:320)",
+        "verdict": "fixed",
+        "evidence": "templates/[id]/page.tsx:337 now guards on `|| startTimeRef.current`, with the ref mirrored from state at :320-321. That modal is always mounted (rendered with `open={dispatchOpen}` at :1262) and has no reset-on-open effect, so on reopen `startTime` still holds the operator's value, the guard short-circuits, and the tenant default no longer overwrites it — `date`/`driverId`/`startTime` now all persist together, which is the internal inconsistency hazard [3] named."
+      },
+      {
+        "item": "Refutation: does the new guard still keep an EMPTIED departure field empty (round-3 behaviour)? — both modals",
+        "verdict": "fixed",
+        "evidence": "Traced both. Within one open, seeding has already set `seededRef.current = true`, so the guard's first clause returns early no matter what the operator does to the field; the deps stay `[open, routeSettings?.defaultStartTime]` in both files (page.tsx:156, templates:340) so a keystroke or a clear never re-runs the effect, and a settings refetch that changes `defaultStartTime` still hits `seededRef.current` first. Emptied field stays empty in both. In routes/page.tsx the seed still fires on every open because the reset effect (:126-139) runs first in the same commit and writes `startTimeRef.current = \"\"` at :133 before `setStartTime(\"\")` has committed — verified by declaration order (reset at :125, seed at :148), so the ordering the executor relies on holds."
+      },
+      {
+        "item": "Refutation: probe restored the mutated service file byte-for-byte",
+        "verdict": "fixed",
+        "evidence": "No residue of either mutation in the tree: `applyWindowPass` (:324-341) begins with the `toViolations` closure, not the probe's early `return { order: orderedStops, violations: [] };`, and the round-4 self-probe's deleted `.filter((u) => u.type == null || u.type === \"job\")` line is present at :1391. `git diff --numstat` on the file is 345/37, matching the state the probe notes record as unchanged before and after. Re-gate is green on the restored tree (tsc exit 0; 13 suites / 244 tests)."
+      },
+      {
+        "item": "Round-3 residual [1] — underway run with no caller clock appends unassigned stops with no window pass",
+        "verdict": "not-fixed",
+        "evidence": "Recorded residual, deliberately untouched and NOT regressed: `optimizeRoute`'s `if (windowClock)` gate at :762-773 is byte-identical to round 3, and the round-4 edit is confined to the unassigned mapping chain inside `callOrsOptimization`. The new type filter can only shrink the appended set, so it cannot widen this residual."
+      },
+      {
+        "item": "Round-3 residual [2] — reset effect can blank Departure Time at a midnight `today` rollover with no re-seed",
+        "verdict": "not-fixed",
+        "evidence": "Recorded residual, unchanged. The reset effect's deps are still `[open, today]` (page.tsx:139) and the seed effect's still `[open, routeSettings?.defaultStartTime]` (:156). Round 4 adds `startTimeRef.current = \"\"` inside the same reset branch, which mirrors the `setStartTime(\"\")` that already ran — a rollover still leaves the field empty with `seededRef.current === true` and no re-seed, exactly as in round 3. Neither improved nor worsened."
+      }
+    ],
+    "newHazards": [
+      {
+        "file": "apps/web/app/(dashboard)/routes/page.tsx",
+        "line": 143,
+        "severity": "minor",
+        "summary": "The seed effect's comment claims \"a time the operator chose survives a reopen ... the same shape\" as templates/[id]/page.tsx, but on THIS page the reset effect (:126-139) clears `startTime` and `startTimeRef.current` on every open, so a chosen time never survives a reopen here and the two modals are not the same shape. The code is correct — the guard's real (and useful) job on this page is to stop a late-arriving `routeSettings.defaultStartTime` from clobbering a time the operator typed while settings were still loading — but the comment describes behaviour the file does not have, and a maintainer trusting it could \"restore parity\" by weakening the reset effect. Fix is a one-line comment correction, not a code change."
+      },
+      {
+        "file": "apps/web/app/(dashboard)/routes/templates/[id]/page.tsx",
+        "line": 337,
+        "severity": "minor",
+        "summary": "The guard cannot tell an operator-chosen time from an auto-seeded one, so a changed tenant default no longer reaches this always-mounted modal. Once any open seeds `defaultStartTime` (say 08:00), the field stays non-empty for the life of the page; if the owner then changes the tenant default to 09:00, every subsequent open of this modal keeps showing 08:00 until a full page reload, and a dispatch sends the stale value. Round 3 re-seeded on each open, so this is a new consequence of the round-4 guard. Low impact — the stale value is visible in the field, not silent — and tracking \"seeded vs typed\" (e.g. clearing `startTimeRef` when the field still equals the last seeded default) would resolve it if the owner cares."
+      }
+    ],
+    "recommendation": "land",
+    "reasoning": "Both targeted hazards are genuinely closed and the round is narrow. Hazard [0]: the filter is the exact shape the review asked for, keeps untyped entries (so it cannot drop a real job — proven by the pre-existing green `{ id: 3 }` fixture at spec:1074, not just by reading), and leaves the sort/dedupe/mismatch-throw path byte-identical. Its pin carries a real value oracle in half (b), and the executor's self-probe (deleting only the filter line, exact-string, with sha256 restore verification) showed it going red on a resolved-vs-rejected value rather than an existence check. Hazard [3]: the templates modal is always mounted and has no reset effect, so the `startTimeRef` guard does exactly what was asked; the round-3 requirement that an emptied field stay empty still holds in both modals because `seededRef` short-circuits first and `startTime` was correctly kept out of the deps. The routes/page.tsx ordering dependency the executor flagged is real but sound — the reset effect is declared first and writes the ref synchronously, so the seed effect reads the cleared value in the same passive-effect flush. Render-body ref mirroring (`startTimeRef.current = startTime`) is against React's letter but matches existing house precedent in this app (inventory/page.tsx:910, orders/_components/CreateOrderModal.tsx:283), so I am not raising it. No probe residue in the tree; re-gate is green across api tsc, 244 api tests, web tsc and web lint. The two new hazards are both minor and non-blocking: one is a comment that overclaims parity between the modals, the other is a stale-tenant-default consequence of the guard that is visible in the UI rather than silent. Residuals [1] and [2] are untouched and not regressed. Nothing here warrants another round."
+  },
+  "finalGate": {
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/api && npx jest --silent",
+        "pass": true,
+        "summary": "Tests: 4158 passed, 4158 total · Time: 153.127 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Test Suites: 30 passed, 30 total · Tests: 163 passed, 163 total · Time: 30.698 s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-registry && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Register self-consistent: 39/40 entries · 39.6/40.0 KB · archived 40 · nextId 84 (L-083 max) — size cap vs entry-count cap disagree (owner decision needed on _meta.json)",
+        "failures": []
+      }
+    ],
+    "allPass": true
+  }
+}

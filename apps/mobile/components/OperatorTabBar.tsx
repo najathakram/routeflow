@@ -3,8 +3,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { useNavigationContainerRef, useSegments } from "expo-router";
 import { StackActions } from "@react-navigation/native";
 import { IosTabBarView, type IosTabBarItem } from "@routeflow/ui/mobile/ios";
-import { activeOperatorTab, OPERATOR_TABS, type OperatorTabKey } from "../lib/operator-tabs";
+import { activeOperatorTab, visibleOperatorTabs, type OperatorTabKey } from "../lib/operator-tabs";
 import { findDeepTabStackKey } from "../lib/operator-tab-nav";
+import { useDeliveryAccess, useRoutesAccess } from "../lib/api/addons";
 
 const META: Record<OperatorTabKey, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
   home: { label: "Home", icon: "home-outline" },
@@ -27,6 +28,20 @@ export function OperatorTabBar() {
   const segments = useSegments() as string[];
   const navRef = useNavigationContainerRef();
   const active = activeOperatorTab(segments);
+  const routesAccess = useRoutesAccess();
+  const deliveryAccess = useDeliveryAccess();
+  // Owner split 2026-08-25: the Dispatch hub fronts BOTH recurring routes and
+  // ad-hoc order delivery, so EITHER addon earns the tab (owner decision
+  // 2026-08-28: each helper reads its feature addon alone — developer_mode no
+  // longer folds in). Gating on developer_mode alone would hide the tab from a
+  // tenant who bought only recurring_routes or only order_delivery, stranding
+  // them with no way into (operator)/_layout.tsx's now-widened sections.
+  //
+  // Default-hidden while loading: both helpers report `enabled: false` until
+  // the addons query resolves, so an entitled tenant must never see Dispatch
+  // flash then vanish on cold start. It appears a moment late on first load
+  // only — the addons query is cached afterwards.
+  const tabs = visibleOperatorTabs(routesAccess.enabled || deliveryAccess.enabled);
 
   const go = (tab: OperatorTabKey) => {
     if (!navRef.isReady()) return;
@@ -58,7 +73,7 @@ export function OperatorTabBar() {
     navRef.dispatch(StackActions.popTo("(tabs)", { screen: tab }));
   };
 
-  const items: IosTabBarItem[] = OPERATOR_TABS.map((tab) => ({
+  const items: IosTabBarItem[] = tabs.map((tab) => ({
     key: tab,
     label: META[tab].label,
     focused: active === tab,

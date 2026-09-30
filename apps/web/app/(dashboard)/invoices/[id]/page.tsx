@@ -29,8 +29,10 @@ import {
   Eye,
   Upload,
   X,
+  Clock,
+  Wallet,
 } from "lucide-react";
-import { Badge, Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Card, Modal, cn, TAP_TARGET, useToast } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import {
   useInvoice,
@@ -40,7 +42,6 @@ import {
   useVoidInvoice,
   useReopenInvoice,
   useRecordInvoicePayment,
-  useCreateInvoice,
   useWriteOffInvoice,
   useUpdateInvoicePayment,
   useDeleteInvoicePayment,
@@ -54,23 +55,41 @@ import {
   useUnvoidInvoice,
   useAdjustInvoicePrices,
   useUpdateInvoiceShipment,
+  useUpdateInvoiceTerms,
   useSetCheckStatus,
+  useApplyAdvanceToInvoice,
   type Invoice,
   type InvoiceStatus,
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
-import { fmt, fmtDate, todayIso } from "@/lib/formatting";
-import { formatQtySplit } from "@/lib/pricing";
+import { useCustomerAdvancePayments } from "@/lib/api/customers";
+import { fmt, fmtCalendarDate, fmtDate, isInternalEmail, todayIso } from "@/lib/formatting";
+import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
+import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
+import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
+import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
+import { CHECK_TRANSITIONS } from "@routeflow/types";
+import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
+import { RemoveCreditButton } from "./RemoveCreditButton";
+import {
+  SELECTABLE_PAYMENT_METHODS,
+  PAYMENT_METHOD_LABELS,
+  PAYMENT_METHOD_COLORS,
+  paymentMethodLabel,
+  type AnyPaymentMethod,
+  type SelectablePaymentMethod,
+} from "@/lib/payment-methods";
 import { TenantLogo } from "@/components/TenantLogo";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
+import { printPdfBlob } from "@/lib/print-pdf-blob";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -88,53 +107,19 @@ function creditNoteOf(pmt: InvoicePayment): PaymentCreditNoteInfo | null {
   return withCn.creditNote ?? null;
 }
 
-function methodLabel(method: string) {
-  switch (method) {
-    case "CASH":
-      return "Cash";
-    case "CHECK":
-      return "Check";
-    case "ACH":
-      return "ACH / Bank Transfer";
-    case "CREDIT_NOTE":
-      return "Credit Note";
-    case "ADVANCE":
-      return "Advance Payment";
-    default:
-      return method;
-  }
-}
+const methodLabel = paymentMethodLabel;
 
 function methodBadgeClass(method: string) {
-  switch (method) {
-    case "CREDIT_NOTE":
-      return "bg-purple-100 text-purple-700";
-    case "ADVANCE":
-      return "bg-teal-100 text-teal-700";
-    case "CASH":
-      return "bg-green-100 text-green-700";
-    case "CHECK":
-      return "bg-blue-100 text-blue-700";
-    case "ACH":
-      return "bg-indigo-100 text-indigo-700";
-    default:
-      return "bg-gray-100 text-gray-600";
-  }
+  return PAYMENT_METHOD_COLORS[method as AnyPaymentMethod] ?? "bg-gray-100 text-gray-600";
 }
 
 // ─── Check lifecycle (Recorded → Deposited → Cleared → Bounced) ───────────────
 
-/**
- * Legal FORWARD transitions for a CHECK payment — mirrors the server's
- * CHECK_TRANSITIONS map (invoices.service.ts) so the dropdown greys out
- * illegal jumps before the request round-trips.
- */
-const CHECK_TRANSITIONS: Record<CheckStatus, readonly CheckStatus[]> = {
-  RECORDED: ["DEPOSITED", "BOUNCED"],
-  DEPOSITED: ["CLEARED", "BOUNCED"],
-  CLEARED: ["BOUNCED"],
-  BOUNCED: [],
-};
+// P5-12 / post-dated check payments PR-1: `CHECK_TRANSITIONS` (legal FORWARD transitions for a
+// CHECK payment, so the dropdown greys out illegal jumps before the request round-trips) now
+// comes from `@routeflow/types` — the ONE canonical copy shared with the API
+// (`invoices.service.ts`) and mobile (`payments-logic.ts`), which used to each hand-maintain an
+// identical local const. See `packages/types/api/checks.ts` for the V1-only rule.
 
 const CHECK_STATUS_META: Record<CheckStatus, { label: string; className: string }> = {
   RECORDED: { label: "Check recorded", className: "bg-gray-100 text-gray-600" },
@@ -168,6 +153,25 @@ function CheckStatusBadge({ status }: { status: CheckStatus }) {
       {status === "BOUNCED" && <XCircle className="h-3 w-3" />}
       {status === "CLEARED" && <CheckCircle2 className="h-3 w-3" />}
       {meta.label}
+    </span>
+  );
+}
+
+/**
+ * F03/R2 (REG-B11) — a payment recorded with `status: "DRAFT"` has NOT been
+ * confirmed and is excluded from every CONFIRMED_PAYMENT sum on the server
+ * (balanceDue, dashboards, PDF, email — invoices.service.ts's payment
+ * predicate). Money still owed can otherwise look paid here, so the row must
+ * say so instead of rendering identically to a confirmed payment.
+ */
+function DraftPaymentBadge() {
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+      title="Not yet confirmed — this amount is not counted toward the balance due"
+    >
+      <Clock className="h-3 w-3" />
+      Draft — unconfirmed
     </span>
   );
 }
@@ -305,7 +309,7 @@ function WhatsNextBanner({
 // ─── Record payment modal ─────────────────────────────────────────────────────
 
 interface PaymentFormState {
-  method: "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD";
+  method: SelectablePaymentMethod;
   amount: string;
   /** YYYY-MM-DD. */
   paidAt: string;
@@ -402,11 +406,11 @@ function RecordPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
 
@@ -493,7 +497,10 @@ function RecordPaymentModal({
               <button
                 type="button"
                 onClick={() => setFile(null)}
-                className="shrink-0 text-navy/50 transition-colors hover:text-danger"
+                className={cn(
+                  TAP_TARGET,
+                  "shrink-0 text-navy/50 transition-colors hover:text-danger",
+                )}
                 title="Remove attachment"
               >
                 <X className="h-3.5 w-3.5" />
@@ -511,6 +518,102 @@ function RecordPaymentModal({
           )}
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ─── Apply advance modal (B13) ─────────────────────────────────────────────────
+
+/**
+ * Lists the customer's advance-payment wallet rows with a remaining balance
+ * and applies the picked one to this invoice — mirrors mobile's
+ * ApplyAdvanceSheet (apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx), the
+ * first client for this action. The server caps the applied amount at
+ * min(wallet balance, invoice balance) and writes the InvoicePayment
+ * (method ADVANCE, reference AP-<id8>); the client does no money math.
+ */
+function ApplyAdvanceModal({
+  isOpen,
+  onClose,
+  customerId,
+  invoiceId,
+  invoiceNumber,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  customerId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+}) {
+  const { toast } = useToast();
+  const { data, isLoading } = useCustomerAdvancePayments(customerId);
+  const applyAdvance = useApplyAdvanceToInvoice();
+  const open = (data ?? []).filter((ap) => Number(ap.balance) > 0.001);
+
+  // F7 (money discipline): the client does no money math — the server caps the
+  // applied amount at min(wallet balance, invoice balance) and is the only source of
+  // truth for what actually landed (the mutation resolves the server's own
+  // `appliedAmount`, reported in the success toast below).
+  const handleApply = (advancePaymentId: string) => {
+    if (
+      !window.confirm(
+        `Apply advance AP-${advancePaymentId.slice(0, 8)}? Up to the invoice's outstanding balance will be applied.`,
+      )
+    ) {
+      return;
+    }
+    applyAdvance.mutate(
+      { customerId, advancePaymentId, invoiceId },
+      {
+        onSuccess: (updated) => {
+          toast({
+            title: "Advance applied",
+            description: `${fmt(updated.appliedAmount)} applied to ${invoiceNumber}.`,
+            variant: "success",
+          });
+          onClose();
+        },
+        onError: (e: any) =>
+          toast({
+            title: "Could not apply advance",
+            description: e?.response?.data?.message ?? e?.message ?? "Try again.",
+            variant: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Modal open={isOpen} onClose={onClose} title="Apply advance">
+      {isLoading ? (
+        <p className="py-6 text-center text-sm text-navy/60">Loading…</p>
+      ) : open.length === 0 ? (
+        <p className="py-6 text-center text-sm text-navy/60">
+          No advance balance for this customer. Record one from the customer page, or an overpaid
+          standalone payment creates one automatically.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {open.map((ap) => {
+            const remaining = Number(ap.balance) || 0;
+            return (
+              <button
+                key={ap.id}
+                type="button"
+                disabled={applyAdvance.isPending}
+                onClick={() => handleApply(ap.id)}
+                className="flex w-full items-center justify-between rounded-lg border border-surface-border bg-white px-3 py-2.5 text-left text-sm transition-colors hover:bg-surface-raised disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2 text-navy/80">
+                  <Wallet className="h-3.5 w-3.5 text-navy/50" />
+                  {ap.reference || `Advance · ${fmtDate(ap.createdAt)}`}
+                </span>
+                <span className="font-medium text-navy">{fmt(remaining)}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -629,11 +732,11 @@ function EditPaymentModal({
             }
             className="h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           >
-            <option value="CASH">Cash</option>
-            <option value="CHECK">Check</option>
-            <option value="ACH">ACH / Bank Transfer</option>
-            <option value="CREDIT_CARD">Credit Card</option>
-            <option value="OTHER">Other</option>
+            {SELECTABLE_PAYMENT_METHODS.map((m) => (
+              <option key={m} value={m}>
+                {PAYMENT_METHOD_LABELS[m]}
+              </option>
+            ))}
           </select>
         </div>
         <div>
@@ -878,6 +981,160 @@ function WriteOffModal({
   );
 }
 
+// ─── Edit terms modal (WP3 PATCH /invoices/:id/terms) ─────────────────────────
+// Same TERMS_OPTIONS values as invoices/new/page.tsx and the DRAFT edit page —
+// kept local since none of the three share a lib module for it.
+const EDIT_TERMS_OPTIONS = [
+  { value: "", label: "Select terms…" },
+  { value: "Due on Receipt", label: "Due on Receipt" },
+  { value: "Net 15", label: "Net 15" },
+  { value: "Net 30", label: "Net 30" },
+  { value: "Net 45", label: "Net 45" },
+  { value: "Net 60", label: "Net 60" },
+];
+
+interface EditTermsFields {
+  dueDate?: string;
+  paymentTermsLabel?: string;
+  referenceNumber?: string;
+  subject?: string;
+}
+
+function EditTermsModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  invoice,
+  isPending,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: (fields: EditTermsFields) => void;
+  invoice: Invoice;
+  isPending: boolean;
+}) {
+  const [dueDate, setDueDate] = React.useState("");
+  const [paymentTermsLabel, setPaymentTermsLabel] = React.useState("");
+  const [referenceNumber, setReferenceNumber] = React.useState("");
+  const [subject, setSubject] = React.useState("");
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setDueDate(invoice.dueDate ? invoice.dueDate.slice(0, 10) : "");
+    setPaymentTermsLabel(invoice.paymentTermsLabel ?? "");
+    setReferenceNumber(invoice.referenceNumber ?? "");
+    setSubject(invoice.subject ?? "");
+  }, [isOpen, invoice]);
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onConfirm({
+      // dueDate stays undefined-when-empty: the DTO takes an ISO date and this
+      // modal never clears a due date.
+      dueDate: dueDate || undefined,
+      // The three text fields are sent even when empty: "" is how this modal
+      // CLEARS a stale label / reference / subject (the server maps it to null,
+      // same convention as the DRAFT edit page and the customer/supplier
+      // default-terms selects). Collapsing them to undefined would make the
+      // server treat a deliberately blanked field as "leave unchanged" and the
+      // old value would reappear on the next refetch.
+      paymentTermsLabel,
+      referenceNumber: referenceNumber.trim(),
+      subject: subject.trim(),
+    });
+  }
+
+  const inputCls =
+    "h-10 w-full rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500";
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title="Edit Terms"
+      description={`Correct the due date, payment terms, reference, or subject on invoice ${invoice.invoiceNumber}. Line items, discounts, and payments are untouched.`}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button type="submit" form="edit-terms-form" loading={isPending}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      <form id="edit-terms-form" onSubmit={handleSubmit} className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Due Date</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-sm font-medium text-navy/80">Terms</label>
+            <select
+              value={paymentTermsLabel}
+              onChange={(e) => {
+                const label = e.target.value;
+                setPaymentTermsLabel(label);
+                // The client-reported bug: changing the term used to leave the old due
+                // date in place, persisting "Net 60" over Net-30 arithmetic. A known term
+                // recomputes from the ISSUE date (the anchor the server itself uses);
+                // picking "Select terms…" leaves the date alone for a manual correction.
+                const days = getDaysForTerms(label);
+                if (days != null && invoice.issueDate) {
+                  setDueDate(addDaysIso(String(invoice.issueDate).slice(0, 10), days));
+                }
+              }}
+              className={inputCls}
+            >
+              {EDIT_TERMS_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {/* Only promise the recalculation when there IS an issue date to anchor
+            it — the onChange above is a no-op without one, so the copy would
+            otherwise describe behavior the user cannot get. */}
+        {invoice.issueDate ? (
+          <p className="text-xs text-navy/50">
+            Picking a term recalculates the due date from the issue date (
+            {fmtCalendarDate(invoice.issueDate)}).
+          </p>
+        ) : null}
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">
+            Reference / PO Number
+          </label>
+          <input
+            type="text"
+            value={referenceNumber}
+            onChange={(e) => setReferenceNumber(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block text-sm font-medium text-navy/80">Subject</label>
+          <input
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // ─── Delete payment confirm modal ─────────────────────────────────────────────
 
 function DeletePaymentModal({
@@ -991,10 +1248,10 @@ function MarkBouncedModal({
   );
 }
 
-// ─── No-email guard modal ─────────────────────────────────────────────────────
+// ─── Send-blocked recovery modal (no email on file / email send failed) ───────
 
 function NoEmailModal({
-  isOpen,
+  reason,
   onClose,
   customerName,
   onMarkSent,
@@ -1002,7 +1259,7 @@ function NoEmailModal({
   onPrint,
   isPending,
 }: {
-  isOpen: boolean;
+  reason: null | { kind: "no-email" } | { kind: "send-failed"; message: string };
   onClose: () => void;
   customerName: string;
   onMarkSent: () => void;
@@ -1010,12 +1267,17 @@ function NoEmailModal({
   onPrint: () => void;
   isPending: boolean;
 }) {
+  const sendFailed = reason?.kind === "send-failed";
   return (
     <Modal
-      open={isOpen}
+      open={reason !== null}
       onClose={onClose}
-      title="No email on file"
-      description={`${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`}
+      title={sendFailed ? "Email failed — invoice not sent" : "No email on file"}
+      description={
+        sendFailed
+          ? `${reason.message} You can download or print the invoice to deliver it another way, and mark it as sent to update its status.`
+          : `${customerName} has no email address saved. You can download or print the invoice to send it manually, or mark it as sent to update its status.`
+      }
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={isPending}>
@@ -1044,8 +1306,9 @@ function NoEmailModal({
       }
     >
       <p className="text-sm text-navy/70">
-        Add an email address to this customer&apos;s profile to send invoices by email in the
-        future.
+        {sendFailed
+          ? "Marking as sent only updates the invoice status — no email goes out."
+          : "Add an email address to this customer's profile to send invoices by email in the future."}
       </p>
     </Modal>
   );
@@ -1217,7 +1480,7 @@ function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: ()
               type="date"
               value={sinceDate}
               onChange={(e) => setSinceDate(e.target.value)}
-              className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-36 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <p className="mt-1 text-xs text-navy/70">
               All matching invoices created on or after this date will be updated.
@@ -1253,19 +1516,25 @@ function AdjustPricesPanel({ invoice, onClose }: { invoice: Invoice; onClose: ()
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function InvoiceDetailPage({ params }: { params: { id: string } }) {
+export default function InvoiceDetailPage() {
+  const params = useParams();
+  const id = params.id as string;
   const router = useRouter();
   const { setTitle } = usePageTitle();
   const { toast } = useToast();
 
-  const { data: invoice, isLoading, isError } = useInvoice(params.id);
+  const { data: invoice, isLoading, isError } = useInvoice(id);
+  // Sourced from the invoice payload, NOT useInvoiceSettings(): /settings/invoice
+  // is operator-only, and CUSTOMER-role users view this same document — the very
+  // audience the tenant is hiding the struck-through original price from.
+  const hideOriginal = invoice?.hideOriginalPrice === true;
   const sendInvoice = useSendInvoice();
   const sendInvoiceEmail = useSendInvoiceEmail();
   const sendInvoiceReminder = useSendInvoiceReminder();
   const voidInvoice = useVoidInvoice();
   const reopenInvoice = useReopenInvoice();
   const recordPayment = useRecordInvoicePayment();
-  const createInvoice = useCreateInvoice();
+  const { duplicate: duplicateInvoice } = useDuplicateInvoiceAction();
   const writeOffInvoice = useWriteOffInvoice();
   const updatePayment = useUpdateInvoicePayment();
   const deletePayment = useDeleteInvoicePayment();
@@ -1275,12 +1544,13 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const revertToDraft = useRevertInvoiceToDraft();
   const unvoid = useUnvoidInvoice();
   const updateShipment = useUpdateInvoiceShipment();
+  const updateTerms = useUpdateInvoiceTerms();
   const setCheckStatus = useSetCheckStatus();
   const unapplyCreditNote = useUnapplyCreditNote();
   const { user } = useAuth();
-  const isOperator = user?.role === "OPERATOR";
 
   const [isPaymentOpen, setIsPaymentOpen] = React.useState(false);
+  const [isAdvanceOpen, setIsAdvanceOpen] = React.useState(false);
   // Payment row whose "Remove credit" was clicked — confirm before un-applying.
   const [removingCreditPayment, setRemovingCreditPayment] = React.useState<InvoicePayment | null>(
     null,
@@ -1289,9 +1559,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const [isVoidOpen, setIsVoidOpen] = React.useState(false);
   const [isReopenOpen, setIsReopenOpen] = React.useState(false);
   const [isWriteOffOpen, setIsWriteOffOpen] = React.useState(false);
+  const [isEditTermsOpen, setIsEditTermsOpen] = React.useState(false);
   const [isRevertToDraftOpen, setIsRevertToDraftOpen] = React.useState(false);
   const [isUnvoidOpen, setIsUnvoidOpen] = React.useState(false);
-  const [isNoEmailOpen, setIsNoEmailOpen] = React.useState(false);
+  // Why the email path is blocked: no usable address on file, or the server refused
+  // the send (EMAIL_SEND_FAILED). Either way the operator gets the same recovery
+  // modal — Mark as Sent / Download / Print — instead of a dead-end toast that
+  // leaves the invoice stuck in DRAFT (and payments locked).
+  const [sendBlocked, setSendBlocked] = React.useState<
+    null | { kind: "no-email" } | { kind: "send-failed"; message: string }
+  >(null);
   const [editingPayment, setEditingPayment] = React.useState<InvoicePayment | null>(null);
   const [deletingPayment, setDeletingPayment] = React.useState<InvoicePayment | null>(null);
   const [bouncingPayment, setBouncingPayment] = React.useState<InvoicePayment | null>(null);
@@ -1361,11 +1638,30 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
   const total = Number(invoice.total);
   const payments: InvoicePayment[] = invoice.payments ?? [];
-  // P5-12: VOID payments (manually voided OR bounced checks) don't count
-  // toward the paid amount — a bounce must re-open the displayed balance.
-  const amountPaid = payments
-    .filter((p) => p.status !== "VOID")
-    .reduce((s, p) => s + Number(p.amount), 0);
+  // F03/R1: only CONFIRMED payments count toward the paid amount. VOID rows
+  // (manually voided OR bounced checks — P5-12) don't, and neither do DRAFT
+  // (unconfirmed) ones: the balance a bounce re-opens is the same balance an
+  // unconfirmed row must never close. Prefer the server's own paidAmount /
+  // balanceDue (invoices.service findOne, CONFIRMED_PAYMENT basis) so this page
+  // agrees to the cent with the invoices list, the PDF and the emails; the
+  // local sum is only a fallback for a payload that carries neither. The
+  // `payments` array itself stays unfiltered — Payment History must keep
+  // showing DRAFT rows so DraftPaymentBadge can mark them.
+  // B421: confirmed but non-cash — a credit note or advance applied to this
+  // invoice reduces balanceDue but must never render as "Paid"/cash received.
+  // The shared helper's field is `totalPaid`; this DTO's is `paidAmount`.
+  const {
+    cash: amountPaid,
+    creditApplied,
+    advanceApplied,
+  } = resolveConfirmedAmounts(
+    {
+      totalPaid: invoice.paidAmount,
+      creditApplied: invoice.creditApplied,
+      advanceApplied: invoice.advanceApplied,
+    },
+    payments,
+  );
   const status = invoice.status;
 
   // Draft/Final invoice-PDF stage. Default: DRAFT while it's still the
@@ -1375,7 +1671,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const defaultPdfVariant: InvoicePdfVariant = deriveInvoiceVariant(invoice);
   const pdfVariant: InvoicePdfVariant = pdfVariantOverride ?? defaultPdfVariant;
   const balanceDue =
-    status === "VOID" || status === "WRITTEN_OFF" ? 0 : Math.max(0, total - amountPaid);
+    invoice.balanceDue != null
+      ? Number(invoice.balanceDue)
+      : status === "VOID" || status === "WRITTEN_OFF"
+        ? 0
+        : Math.max(0, total - amountPaid - creditApplied - advanceApplied);
   const discount = Number(invoice.discount ?? 0);
   const shippingFee = Number(invoice.shippingFee ?? 0);
 
@@ -1399,20 +1699,39 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   // ── Action handlers ─────────────────────────────────────────────────────────
 
   const handleSend = () => {
-    const customerEmail = invoice.customer?.email;
+    // An import sentinel (`…@imported.local` / `…@placeholder.local`) is not a real
+    // inbox — treat it as "no email on file" so the operator gets the Mark-as-Sent
+    // path instead of a send that can only fail.
+    const rawEmail = invoice.customer?.email;
+    const customerEmail = rawEmail && !isInternalEmail(rawEmail) ? rawEmail : undefined;
     if (!customerEmail) {
-      setIsNoEmailOpen(true);
+      setSendBlocked({ kind: "no-email" });
       return;
     }
     sendInvoiceEmail.mutate(
       { id: invoice.id, email: customerEmail, variant: pdfVariant },
       {
-        onSuccess: (res) =>
+        onSuccess: (res) => {
+          // Resend rescued a tenant-SMTP failure — this is still a success (the
+          // invoice went out), but the operator needs to know their OWN mail is
+          // broken and that the From address silently changed. Distinct from the
+          // plain success toast, and never buried as a footnote.
+          if (res.warning) {
+            toast({
+              title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
+              description: `Sent via RouteFlow's mail service${
+                res.fromAddress ? ` (from ${res.fromAddress})` : ""
+              } — your own email couldn't send: ${res.warning}.`,
+              variant: "warning",
+            });
+            return;
+          }
           toast({
             title: `${pdfVariant === "draft" ? "Draft" : "Final"} invoice emailed`,
             description: `Sent to ${res.sentTo}`,
             variant: "success",
-          }),
+          });
+        },
         onError: (e: any) => {
           // R5: the API now refuses to claim "sent" when email isn't set up / the send
           // failed. On EMAIL_NOT_CONFIGURED, take the operator straight to Email settings.
@@ -1427,6 +1746,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             router.push("/settings?tab=email");
             return;
           }
+          if (code === "EMAIL_SEND_FAILED") {
+            // The invoice is still DRAFT (R5 honesty). Offer Mark as Sent so a broken
+            // mail transport can't leave the invoice stuck and payments locked.
+            setSendBlocked({ kind: "send-failed", message: description });
+            return;
+          }
           toast({ title: "Failed to send email", description, variant: "error" });
         },
       },
@@ -1436,7 +1761,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   const handleMarkAsSent = () => {
     sendInvoice.mutate(invoice.id, {
       onSuccess: () => {
-        setIsNoEmailOpen(false);
+        setSendBlocked(null);
         toast({
           title: "Invoice marked as sent",
           description: "Status updated — no email was sent.",
@@ -1451,20 +1776,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     downloadPdf.mutate(
       { id: invoice.id, variant: pdfVariant },
       {
-        onSuccess: ({ blob }) => {
-          const blobUrl = URL.createObjectURL(blob);
-          const iframe = document.createElement("iframe");
-          iframe.style.display = "none";
-          iframe.src = blobUrl;
-          document.body.appendChild(iframe);
-          iframe.onload = () => {
-            iframe.contentWindow?.print();
-            setTimeout(() => {
-              iframe.remove();
-              URL.revokeObjectURL(blobUrl);
-            }, 60_000);
-          };
-        },
+        onSuccess: ({ blob }) => printPdfBlob(blob),
         onError: () =>
           toast({
             title: "Failed to generate PDF",
@@ -1476,7 +1788,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
   };
 
   const handleReminder = () => {
-    const customerEmail = invoice.customer?.email;
+    // Import sentinels count as "no email" — they aren't real inboxes.
+    const rawReminderEmail = invoice.customer?.email;
+    const customerEmail =
+      rawReminderEmail && !isInternalEmail(rawReminderEmail) ? rawReminderEmail : undefined;
     if (!customerEmail) {
       toast({
         title: "No email on file",
@@ -1488,12 +1803,26 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     sendInvoiceReminder.mutate(
       { id: invoice.id, email: customerEmail },
       {
-        onSuccess: (res) =>
+        onSuccess: (res) => {
+          // Same disclosure as the send path — a reminder rescued by Resend must
+          // not stay silent about the operator's own mail being broken, or the
+          // warning would depend on which button they happened to press.
+          if (res.warning) {
+            toast({
+              title: "Reminder sent",
+              description: `Sent via RouteFlow's mail service${
+                res.fromAddress ? ` (from ${res.fromAddress})` : ""
+              } — your own email couldn't send: ${res.warning}.`,
+              variant: "warning",
+            });
+            return;
+          }
           toast({
             title: "Reminder sent",
             description: `Reminder emailed to ${res.sentTo}`,
             variant: "success",
-          }),
+          });
+        },
         onError: (e: any) =>
           toast({
             title: "Failed to send reminder",
@@ -1575,7 +1904,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     recordPayment.mutate(
       {
         id: invoice.id,
-        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        method: data.method,
         amount: parseFloat(data.amount),
         paidAt: data.paidAt || undefined,
         settledAt: data.settledAt || undefined,
@@ -1631,7 +1960,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       {
         invoiceId: invoice.id,
         paymentId: editingPayment.id,
-        method: data.method as "CASH" | "CHECK" | "ACH" | "OTHER" | "CREDIT_CARD",
+        method: data.method,
         amount: parseFloat(data.amount),
         paidAt: data.paidAt || undefined,
         // Explicit null so emptying the field clears the stored bank date.
@@ -1725,37 +2054,28 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
-  const handleDuplicate = () => {
-    const dto = {
-      customerId: invoice.customerId,
-      dueDate: (() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 30);
-        return d.toISOString().slice(0, 10);
-      })(),
-      items: (invoice.items ?? []).map((it) => ({
-        productId: it.productId,
-        description: it.description,
-        qty: Number(it.qty),
-        unitPrice: Number(it.unitPrice),
-      })),
-      notes: invoice.notes,
-      referenceNumber: invoice.referenceNumber,
-      subject: invoice.subject,
-    };
-    createInvoice.mutate(dto, {
-      onSuccess: (newInv) => {
-        toast({
-          title: "Invoice duplicated",
-          description: `New invoice ${newInv.invoiceNumber} created as a draft.`,
-          variant: "success",
-        });
-        router.push(`/invoices/${newInv.id}`);
+  // B644: the SERVER duplicates (it copies each line's stored boxes/pieces/subtotal verbatim). The web
+  // never rebuilds a line from { qty, unitPrice }: qty is in base pieces, a boxed line's unitPrice is per
+  // box, so that rebuild billed 6 boxes of 12 at $40 ($240) as 72 x $40 = $2,880.
+  const handleDuplicate = () => duplicateInvoice(invoice.id);
+
+  const handleUpdateTerms = (fields: EditTermsFields) => {
+    updateTerms.mutate(
+      { id: invoice.id, ...fields },
+      {
+        onSuccess: () => {
+          toast({ title: "Terms updated", variant: "success" });
+          setIsEditTermsOpen(false);
+        },
+        onError: (err: any) => {
+          toast({
+            title: "Failed to update terms",
+            description: err?.response?.data?.message ?? "Please try again.",
+            variant: "error",
+          });
+        },
       },
-      onError: () => {
-        toast({ title: "Failed to duplicate invoice", variant: "error" });
-      },
-    });
+    );
   };
 
   const handleDownloadPdf = () => {
@@ -1788,12 +2108,19 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
     );
   };
 
-  // For edit payment: max amount = total - (all other non-VOID payments)
+  // PR-2 (check-payments B1 hardening): mirrors the server guard's capacity
+  // check (invoices.service updatePayment), which moved from summing only
+  // CONFIRMED siblings to remainingCapacity() over every non-VOID sibling — a
+  // DRAFT sibling now reserves capacity on both sides, so the modal still
+  // refuses exactly what the API would refuse.
   const editPaymentMax = editingPayment
-    ? total -
-      payments
-        .filter((p) => p.id !== editingPayment.id && p.status !== "VOID")
-        .reduce((s, p) => s + Number(p.amount), 0)
+    ? Math.max(
+        0,
+        remainingCapacity(
+          total,
+          payments.filter((p) => p.id !== editingPayment.id),
+        ),
+      )
     : 0;
 
   return (
@@ -1819,8 +2146,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           <p className="mt-1 text-sm text-navy/70">
             {invoice.customer?.businessName ?? "—"}
             {(invoice as any).orderNumber ? ` · from ${(invoice as any).orderNumber}` : ""} · issued{" "}
-            {fmtDate(invoice.issueDate ?? invoice.createdAt)}
-            {invoice.dueDate ? ` · due ${fmtDate(invoice.dueDate)}` : ""}
+            {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
+            {invoice.dueDate ? ` · due ${fmtCalendarDate(invoice.dueDate)}` : ""}
           </p>
         </div>
 
@@ -1917,9 +2244,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             PDF
           </Button>
 
-          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payments */}
+          {/* Revert to Draft — SENT/VIEWED/OVERDUE with no payment ROWS at all:
+              revertInvoiceToDraft refuses on `invoicePayment.count > 0`, which
+              counts DRAFT and VOID rows too. Gating on amountPaid (a CONFIRMED
+              sum) would offer a button the server always rejects. */}
           {(status === "SENT" || status === "VIEWED" || status === "OVERDUE") &&
-            amountPaid === 0 && (
+            payments.length === 0 && (
               <Button
                 size="sm"
                 variant="secondary"
@@ -1948,7 +2278,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {canRecordPayment && (
             <DropdownMenu
               trigger={
-                <button className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised">
+                <button
+                  data-testid="record-payment-trigger"
+                  className="flex items-center gap-1.5 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-sm font-medium text-navy shadow-card transition-colors hover:bg-surface-raised"
+                >
                   <CreditCard className="h-3.5 w-3.5" />
                   Record Payment
                   <ChevronDown className="h-3.5 w-3.5" />
@@ -1956,6 +2289,12 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               }
               items={[
                 { label: "Record Payment", onClick: () => setIsPaymentOpen(true) },
+                // B13: web had no way to apply a customer's advance-payment wallet balance —
+                // only mobile could. Same gate as Record Payment; the server also refuses a
+                // settled/dead/forgiven invoice (CREDIT_NOT_APPLICABLE) regardless.
+                ...(invoice.customerId
+                  ? [{ label: "Apply Advance", onClick: () => setIsAdvanceOpen(true) }]
+                  : []),
                 { label: "Write Off", onClick: () => setIsWriteOffOpen(true), danger: true },
               ]}
             />
@@ -1984,12 +2323,25 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           {/* More actions (...) */}
           <DropdownMenu
             trigger={
-              <button className="flex items-center justify-center rounded-lg border border-surface-border bg-white p-1.5 shadow-card transition-colors hover:bg-surface-raised">
+              <button
+                title="More actions"
+                className={cn(
+                  TAP_TARGET,
+                  "rounded-lg border border-surface-border bg-white shadow-card transition-colors hover:bg-surface-raised",
+                )}
+              >
                 <MoreHorizontal className="h-4 w-4 text-navy/70" />
               </button>
             }
             items={[
               { label: "Duplicate", onClick: handleDuplicate },
+              {
+                // WP3: narrow post-issue correction of dueDate/paymentTermsLabel/
+                // reference/subject only — blocked exactly where the API blocks it.
+                label: "Edit Terms",
+                onClick: () => setIsEditTermsOpen(true),
+                disabled: status === "VOID" || status === "WRITTEN_OFF",
+              },
               {
                 label: "Reopen Invoice",
                 onClick: () => setIsReopenOpen(true),
@@ -2050,7 +2402,8 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <div>
                 <p className="font-display text-2xl text-navy">Invoice</p>
                 <p className="mt-1 font-mono text-xs text-navy/70">
-                  {invoice.invoiceNumber} · {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {invoice.invoiceNumber} ·{" "}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
               </div>
               <div className="flex flex-col items-end gap-2">
@@ -2061,7 +2414,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 />
                 {balanceDue > 0 && (
                   <div className="text-right">
-                    <p className="overline">Balance Due</p>
+                    <p className="eyebrow-label">Balance Due</p>
                     <p className="money text-2xl font-semibold text-danger">{fmt(balanceDue)}</p>
                   </div>
                 )}
@@ -2072,9 +2425,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
             </div>
 
             {/* Billing + dates */}
-            <div className="mb-6 grid grid-cols-2 gap-6 border-t border-surface-border pt-4">
+            <div className="mb-6 grid grid-cols-1 gap-6 border-t border-surface-border pt-4 sm:grid-cols-2">
               <div>
-                <p className="overline mb-1.5">Bill To</p>
+                <p className="eyebrow-label mb-1.5">Bill To</p>
                 <p className="text-sm font-semibold text-navy">
                   {invoice.customer?.businessName ?? "—"}
                 </p>
@@ -2088,22 +2441,38 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 )}
               </div>
               <div className="text-right space-y-1">
-                <p className="overline mb-1.5">Invoice Details</p>
+                <p className="eyebrow-label mb-1.5">Invoice Details</p>
                 <p className="text-sm text-navy/70">
                   <span className="font-medium text-navy">Issue Date:</span>{" "}
-                  {fmtDate(invoice.issueDate ?? invoice.createdAt)}
+                  {fmtCalendarDate(invoice.issueDate ?? invoice.createdAt)}
                 </p>
                 {invoice.dueDate && (
                   <p className="text-sm text-navy/70">
                     <span className="font-medium text-navy">Due Date:</span>{" "}
                     <span className={cn(status === "OVERDUE" && "font-medium text-danger")}>
-                      {fmtDate(invoice.dueDate)}
+                      {fmtCalendarDate(invoice.dueDate)}
+                    </span>
+                  </p>
+                )}
+                {/* Structured "Net 30"-style label — distinct from the long-form
+                    Terms & Conditions text below, which keeps its own line. */}
+                {invoice.paymentTermsLabel && (
+                  <p className="text-sm text-navy/70">
+                    <span className="font-medium text-navy">Terms:</span>{" "}
+                    {invoice.paymentTermsLabel}
+                  </p>
+                )}
+                {invoice.depositOverdue && (
+                  <p>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-semibold text-danger">
+                      Deposit overdue
                     </span>
                   </p>
                 )}
                 {(invoice as any).terms && (
                   <p className="text-sm text-navy/70">
-                    <span className="font-medium text-navy">Terms:</span> {(invoice as any).terms}
+                    <span className="font-medium text-navy">Terms &amp; Conditions:</span>{" "}
+                    {(invoice as any).terms}
                   </p>
                 )}
                 {(invoice as any).orderNumber && (
@@ -2120,10 +2489,10 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
               <table className="w-full text-sm">
                 <thead className="border-y border-surface-border bg-surface-raised">
                   <tr>
-                    <th className="overline px-8 py-2.5 text-left">Item</th>
-                    <th className="overline px-4 py-2.5 text-right">Qty</th>
-                    <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-                    <th className="overline px-8 py-2.5 text-right">Amount</th>
+                    <th className="eyebrow-label px-8 py-2.5 text-left">Item</th>
+                    <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
+                    <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+                    <th className="eyebrow-label px-8 py-2.5 text-right">Amount</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-surface-border">
@@ -2146,7 +2515,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                         <td className="px-8 py-3 font-medium text-navy">
                           {item.description}
                           {item.notes && (
-                            <p className="mt-0.5 text-xs font-normal italic text-navy/60">
+                            <p className="mt-0.5 whitespace-pre-line text-xs font-normal italic text-navy/60">
                               {item.notes}
                             </p>
                           )}
@@ -2160,15 +2529,18 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 : undefined
                             }
                           >
-                            {formatQtySplit({
-                              qty: item.qty,
-                              boxes: item.boxes,
-                              pieces: item.pieces,
-                            })}
+                            {invoiceLineQtyText(item)}
                           </span>
+                          {/* BUY_N_GET_M: name the free units, or the reduced
+                              subtotal reads as a pricing error. */}
+                          {Number(item.promoFreeUnits ?? 0) > 0 && (
+                            <p className="mt-0.5 text-[10px] font-medium text-amber-700">
+                              {Number(item.promoFreeUnits)} free
+                            </p>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          {item.priceType === "SPECIAL" ? (
+                          {item.priceType === "SPECIAL" && !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2180,7 +2552,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Special price
                               </span>
                             </div>
-                          ) : item.priceType === "DISCOUNTED" ? (
+                          ) : item.priceType === "DISCOUNTED" && !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2192,7 +2564,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Discounted price
                               </span>
                             </div>
-                          ) : item.priceType === "PROMO" && item.originalPrice != null ? (
+                          ) : item.priceType === "PROMO" &&
+                            item.originalPrice != null &&
+                            !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2217,7 +2591,9 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                 Upsell
                               </span>
                             </div>
-                          ) : item.priceType === "MANUAL" && item.originalPrice != null ? (
+                          ) : item.priceType === "MANUAL" &&
+                            item.originalPrice != null &&
+                            !hideOriginal ? (
                             <div className="flex flex-col items-end gap-0.5">
                               <span className="strike text-xs">
                                 {fmt(Number(item.originalPrice))}
@@ -2233,6 +2609,15 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                             <span className="money text-navy/70">
                               {fmt(Number(item.unitPrice))}
                             </span>
+                          )}
+                          {/* Suggested retail price, snapshotted at line creation — appears
+                              regardless of priceType. Keyed off data presence, not the flag,
+                              so an issued invoice keeps rendering it even if the tenant later
+                              loses the MSRP addon. */}
+                          {item.msrp != null && (
+                            <p className="mt-0.5 text-[10px] text-navy/50">
+                              MSRP {fmt(Number(item.msrp))}/pc
+                            </p>
                           )}
                         </td>
                         <td className="px-8 py-3 text-right">
@@ -2254,51 +2639,22 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
 
             {/* Totals footer */}
             <div className="mt-4 flex justify-end">
-              <div className="w-72 space-y-1.5 text-sm">
-                <div className="flex justify-between py-0.5">
-                  <span className="text-navy/70">Subtotal</span>
-                  <span className="money text-navy">{fmt(Number(invoice.subtotal))}</span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Discount</span>
-                    <span className="money">-{fmt(discount)}</span>
-                  </div>
-                )}
-                {Number(invoice.taxAmount ?? 0) > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Tax</span>
-                    <span className="money text-navy">{fmt(Number(invoice.taxAmount))}</span>
-                  </div>
-                )}
-                {shippingFee > 0 && (
-                  <div className="flex justify-between py-0.5">
-                    <span className="text-navy/70">Shipping</span>
-                    <span className="money text-navy">{fmt(shippingFee)}</span>
-                  </div>
-                )}
-                {amountPaid > 0 && (
-                  <div className="flex justify-between py-0.5 text-success">
-                    <span>Paid to date</span>
-                    <span className="money">-{fmt(amountPaid)}</span>
-                  </div>
-                )}
-                <div
-                  className={cn(
-                    "mt-1.5 flex items-center justify-between border-t border-navy pt-2.5 text-base font-semibold",
-                    balanceDue > 0 ? "text-danger" : "text-success",
-                  )}
-                >
-                  <span>Balance due</span>
-                  <span className="money">{fmt(balanceDue)}</span>
-                </div>
-              </div>
+              <InvoiceTotalsSummary
+                subtotal={Number(invoice.subtotal)}
+                discount={discount}
+                taxAmount={Number(invoice.taxAmount ?? 0)}
+                shippingFee={shippingFee}
+                amountPaid={amountPaid}
+                creditApplied={creditApplied}
+                advanceApplied={advanceApplied}
+                balanceDue={balanceDue}
+              />
             </div>
 
             {/* Notes */}
             {invoice.notes && (
               <div className="mt-6 border-t border-surface-border pt-4">
-                <p className="overline mb-1.5">Notes</p>
+                <p className="eyebrow-label mb-1.5">Notes</p>
                 <p className="text-sm text-navy/70 whitespace-pre-line">{invoice.notes}</p>
               </div>
             )}
@@ -2335,15 +2691,25 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
           )}
 
           {/* Carrier shipment — operator records carrier + tracking number; editable
-              on any non-void invoice (read-only once void / written off). */}
-          <ShipmentCard
-            carrier={invoice.shippingCarrier}
-            trackingNumber={invoice.shippingTrackingNumber}
-            shippedAt={invoice.shippedAt}
-            isSaving={updateShipment.isPending}
-            readOnly={status === "VOID" || status === "WRITTEN_OFF"}
-            onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
-          />
+              on any non-void invoice (read-only once void / written off). Gated so it
+              doesn't render on every invoice. The invoice payload's `order` selection
+              (invoices.service.ts findOne) does NOT carry fulfillPath — widening it is
+              out of scope for this package — so unlike the order detail page this can't
+              gate on fulfillPath === "SHIP". Order-linked invoices instead show the card
+              only once tracking exists: it's recorded on the ORDER, which mirrors carrier/
+              tracking onto every non-void invoice of that order (orders.service
+              updateShipment). A standalone invoice has no order to record it on, so it
+              always keeps the card — this is its only place to enter tracking. */}
+          {(!invoice.orderId || invoice.shippingCarrier || invoice.shippingTrackingNumber) && (
+            <ShipmentCard
+              carrier={invoice.shippingCarrier}
+              trackingNumber={invoice.shippingTrackingNumber}
+              shippedAt={invoice.shippedAt}
+              isSaving={updateShipment.isPending}
+              readOnly={status === "VOID" || status === "WRITTEN_OFF"}
+              onSave={(values) => updateShipment.mutateAsync({ id: invoice.id, ...values })}
+            />
+          )}
 
           {/* Payment history */}
           <Card title="Payment History">
@@ -2410,14 +2776,20 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                               <>
                                 <button
                                   onClick={() => setEditingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-brand-500 transition-all"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-brand-500",
+                                  )}
                                   title="Edit payment"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => setDeletingPayment(pmt)}
-                                  className="rounded p-1 text-navy/30 opacity-0 group-hover:opacity-100 hover:text-danger transition-all"
+                                  className={cn(
+                                    TAP_TARGET,
+                                    "touch-reveal rounded p-1 text-navy/30 opacity-0 transition-all group-hover:opacity-100 hover:text-danger",
+                                  )}
                                   title="Delete payment"
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
@@ -2435,6 +2807,7 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                           >
                             {methodLabel(pmt.method)}
                           </span>
+                          {pmt.status === "DRAFT" && <DraftPaymentBadge />}
                           {checkStatusForRow && <CheckStatusBadge status={checkStatusForRow} />}
                           {pmt.reference && (
                             <span className="text-xs text-navy/70">· {pmt.reference}</span>
@@ -2464,15 +2837,11 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                                   {cnInfo.creditNoteNumber}
                                 </Link>
                                 {cnInfo.reason && <span>— {cnInfo.reason}</span>}
-                                {isOperator && !isVoided && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setRemovingCreditPayment(pmt)}
-                                    className="font-medium text-danger hover:underline"
-                                  >
-                                    Remove credit
-                                  </button>
-                                )}
+                                <RemoveCreditButton
+                                  role={user?.role}
+                                  voided={isVoided}
+                                  onRemove={() => setRemovingCreditPayment(pmt)}
+                                />
                               </div>
                             );
                           })()}
@@ -2544,9 +2913,23 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
                 <dd className="money font-medium text-navy">{fmt(total)}</dd>
               </div>
               <div className="flex items-center justify-between">
-                <dt className="text-navy/70">Paid</dt>
+                <dt className="text-navy/70">Payments received</dt>
                 <dd className="money font-medium text-success">{fmt(amountPaid)}</dd>
               </div>
+              {/* B421: neutral styling — never text-success — a credit note or
+                  advance reduces the balance but isn't cash received. */}
+              {creditApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Credits applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(creditApplied)}</dd>
+                </div>
+              )}
+              {advanceApplied > 0 && (
+                <div className="flex items-center justify-between">
+                  <dt className="text-navy/70">Advance applied</dt>
+                  <dd className="money font-medium text-navy">{fmt(advanceApplied)}</dd>
+                </div>
+              )}
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-surface-border pt-2 font-semibold",
@@ -2569,6 +2952,16 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         balanceDue={balanceDue}
         isPending={recordPayment.isPending}
       />
+
+      {isAdvanceOpen && invoice.customerId && (
+        <ApplyAdvanceModal
+          isOpen={isAdvanceOpen}
+          onClose={() => setIsAdvanceOpen(false)}
+          customerId={invoice.customerId}
+          invoiceId={invoice.id}
+          invoiceNumber={invoice.invoiceNumber}
+        />
+      )}
 
       <EditPaymentModal
         isOpen={!!editingPayment}
@@ -2649,6 +3042,14 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
         onConfirm={handleWriteOff}
         invoiceNumber={invoice.invoiceNumber}
         isPending={writeOffInvoice.isPending}
+      />
+
+      <EditTermsModal
+        isOpen={isEditTermsOpen}
+        onClose={() => setIsEditTermsOpen(false)}
+        onConfirm={handleUpdateTerms}
+        invoice={invoice}
+        isPending={updateTerms.isPending}
       />
 
       <Modal
@@ -2740,17 +3141,17 @@ export default function InvoiceDetailPage({ params }: { params: { id: string } }
       </Modal>
 
       <NoEmailModal
-        isOpen={isNoEmailOpen}
-        onClose={() => setIsNoEmailOpen(false)}
+        reason={sendBlocked}
+        onClose={() => setSendBlocked(null)}
         customerName={invoice.customer?.businessName ?? "This customer"}
         onMarkSent={handleMarkAsSent}
         onDownload={() => {
           handleDownloadPdf();
-          setIsNoEmailOpen(false);
+          setSendBlocked(null);
         }}
         onPrint={() => {
           handlePrint();
-          setIsNoEmailOpen(false);
+          setSendBlocked(null);
         }}
         isPending={sendInvoice.isPending}
       />

@@ -30,6 +30,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       forcePasswordChange: payload.forcePasswordChange,
       tenantId: payload.tenantId ?? null,
       tenantSlug: payload.tenantSlug ?? null,
+      // B165 / B138: present only on platform-admin impersonation tokens
+      // (platform-admin.service.ts mints it). NOT an authorization input —
+      // RolesGuard ignores it; AuditInterceptor stamps it and AuthController.logout
+      // reads it. Absent stays absent (never a fabricated value).
+      impersonatedBy: payload.impersonatedBy ?? undefined,
+      // Capability claim minted at login — RolesGuard's dual-role branch reads it
+      // (operators/tenant-admins with canActAsDriver also satisfy DRIVER). A driver-permit
+      // change still needs re-login to take effect.
+      // `isAdmin` is deliberately NOT propagated: it is not a role-hierarchy input but the
+      // gate on PATCH /users/:id/admin (users.controller.ts — `user.isAdmin ||
+      // role === TENANT_ADMIN`), which today only TENANT_ADMINs pass. Surfacing it here would
+      // silently let any admin-flagged OPERATOR assign admin rights — an authorization change
+      // that needs its own decision, not a side effect of a claims fix.
+      canActAsDriver: payload.canActAsDriver ?? false,
       // Plans & Billing entitlement claims (client renders gates now; the
       // PlanFlagGuard re-resolves server-side once plan-gating ships).
       plan: payload.plan ?? null,

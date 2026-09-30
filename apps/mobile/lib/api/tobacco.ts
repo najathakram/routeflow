@@ -1,11 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { useTenantStore } from "../tenant-store";
+import type { TobaccoOverview } from "@routeflow/types";
+export type { TobaccoOverview } from "@routeflow/types";
 
 // ─── Tenant addons (feature flags) — mirrors web lib/api/tobacco.ts ───────────
 
 export function useTenantAddons() {
+  // Tenant-scoped key: the QueryClient outlives a logout (module-scoped in
+  // app/_layout.tsx, never cleared), so a bare ["tenant","addons"] key would
+  // serve the previous tenant's flags to the next session on a shared device.
+  const tenantSlug = useTenantStore((s) => s.slug);
   return useQuery<{ addons: string[] }>({
-    queryKey: ["tenant", "addons"],
+    queryKey: ["tenant", tenantSlug, "addons"],
     queryFn: () => apiClient.get("/tenants/me/addons").then((r) => r.data),
     staleTime: 5 * 60_000,
     retry: false,
@@ -19,15 +26,10 @@ export function useHasAddon(key: string): boolean {
 
 export const TOBACCO_ADDON = "tobacco_dealer";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// Mirrors web lib/api/addons.ts SALES_AGENTS_ADDON.
+export const SALES_AGENTS_ADDON = "sales_agents";
 
-export interface TobaccoOverview {
-  period: { from: string; to: string };
-  flaggedProductCount: number;
-  inventory: { totalQty: number; totalValue: number };
-  purchases: { count: number; totalQty: number; totalValue: number };
-  sales: { count: number; totalQty: number; totalValue: number; totalTax: number };
-}
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface TobaccoReport {
   id: string;
@@ -45,11 +47,15 @@ export interface TobaccoReport {
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
-export function useTobaccoOverview(month?: string) {
+export function useTobaccoOverview(month?: string, options?: { enabled?: boolean }) {
   return useQuery<TobaccoOverview>({
     queryKey: ["tobacco", "overview", month],
     queryFn: () =>
       apiClient.get("/tobacco/overview", { params: month ? { month } : {} }).then((r) => r.data),
+    // The endpoint is addon-guarded (403 without tobacco_dealer); callers that
+    // aren't already behind an addon gate should pass enabled to avoid a 403.
+    enabled: options?.enabled ?? true,
+    retry: false,
   });
 }
 

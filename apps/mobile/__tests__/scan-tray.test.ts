@@ -2,6 +2,8 @@
  * Split-view scan tray: the just-scanned line must be the FIRST row, and its
  * money must be the same money the builder footer already shows.
  */
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   bumpScanOrder,
   nextFlash,
@@ -9,7 +11,7 @@ import {
   type TrayLine,
   type TrayProduct,
 } from "../lib/scan-tray";
-import { computeLineSubtotal } from "../lib/pricing";
+import { computeLineSubtotal } from "@routeflow/pricing";
 
 const CASE_OF_6: TrayProduct = { id: "case6", name: "Acme Cola", unitsPerBox: 6 };
 const SINGLE: TrayProduct = { id: "single", name: "Acme Chips", unitsPerBox: null };
@@ -190,5 +192,175 @@ describe("trayRowsFrom", () => {
       priceFor: () => 3,
     });
     expect(out[0].name).toBe("Acme Cola - Cherry");
+  });
+
+  describe("freeUnitsFor (REG-shared-a2)", () => {
+    it("REG-shared-a2-01: without freeUnitsFor, subtotal is byte-identical to today", () => {
+      // Same boxed line as the "prices a boxed line" case above, with no
+      // freeUnitsFor supplied at all — the omitted-field default path.
+      const line: TrayLine = { qty: 7, boxes: 1, pieces: 1 };
+      const out = trayRowsFrom({ items: { case6: line }, scanOrder: ["case6"], lookup, priceFor });
+      expect(out[0].subtotal).toBe(
+        computeLineSubtotal({ unitPrice: 12, qty: 7, boxes: 1, pieces: 1, unitsPerBox: 6 }),
+      );
+      expect(out[0].subtotal).toBe(14);
+    });
+
+    it("REG-shared-a2-02: with freeUnitsFor returning n, subtotal nets n free units via computeLineSubtotal", () => {
+      const line: TrayLine = { qty: 12, boxes: 2, pieces: 0 };
+      const out = trayRowsFrom({
+        items: { case6: line },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor,
+        freeUnitsFor: () => 1,
+      });
+      expect(out[0].subtotal).toBe(
+        computeLineSubtotal({
+          unitPrice: 12,
+          qty: 12,
+          boxes: 2,
+          pieces: 0,
+          unitsPerBox: 6,
+          freeUnits: 1,
+        }),
+      );
+      // Sanity: the free unit actually changed the price versus the no-promo case.
+      expect(out[0].subtotal).not.toBe(
+        computeLineSubtotal({ unitPrice: 12, qty: 12, boxes: 2, pieces: 0, unitsPerBox: 6 }),
+      );
+    });
+
+    it("REG-shared-a2-03: freeUnitsFor receives the id and the line", () => {
+      const seen: Array<{ id: string; line: TrayLine }> = [];
+      const line: TrayLine = { qty: 3, unitPrice: 1.99 };
+      trayRowsFrom({
+        items: { single: line },
+        scanOrder: ["single"],
+        lookup,
+        priceFor,
+        freeUnitsFor: (id, l) => {
+          seen.push({ id, line: l });
+          return 0;
+        },
+      });
+      expect(seen).toEqual([{ id: "single", line }]);
+    });
+  });
+
+  /**
+   * SA-085h HIGH: a unit-sold line's qty is a COUNT of `unitLabel`, never pieces-in-a-box.
+   * `priceFor` now receives the line too, so a caller can price it off its OWN resolved
+   * level instead of the pack's tier price (the shipped bug: a Case line has no unitPrice,
+   * so `priceFor(product)` alone returned the pack's price for a $220 Case).
+   */
+  describe("units_v1 — a unit-sold line's qty/price never fold against the pack (SA-085h HIGH)", () => {
+    // A unit-aware `priceFor` mirrors lineUnitFor/unitPriceBase: it resolves off the LINE's
+    // own unitLabel, never the pack's tier price, for a unit-sold line ($220/Case here).
+    const unitAwarePriceFor = (p: TrayProduct, line: TrayLine) =>
+      line.unitLabel ? 220 : priceFor(p);
+
+    it("2 Cases at $220 total $440 in the tray, never $48 (2 x the pack's own price)", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: unitAwarePriceFor,
+      });
+      expect(out[0].subtotal).toBe(440);
+      expect(out[0].subtotal).not.toBe(48);
+    });
+
+    it("RED PROOF: a priceFor that ignores the line (the shipped shape) prices the Case at the pack's price, not $440", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: (p: TrayProduct) => priceFor(p), // old signature: no line, no unit-awareness
+      });
+      expect(out[0].subtotal).toBe(24); // 2 x $12, case6's own pack-price fixture — the shipped bug
+      expect(out[0].subtotal).not.toBe(440); // the fixed behaviour, proven above
+    });
+
+    it("a unit-sold line's qty never gets re-split against the pack's unitsPerBox", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: unitAwarePriceFor,
+      });
+      expect(out[0].qtySummary).toBe("2"); // never "0 cs + 2" or similar
+      expect(out[0].unitsPerBox).toBeNull();
+      expect(out[0].qty).toBe(2);
+    });
+  });
+});
+
+/**
+ * Source-text pin for `components/ScanTray.tsx`'s optional price-edit
+ * affordance (seed2-scan-tray-has-no-price-control). Mobile Jest is
+ * `testEnvironment: "node"` (jest.config.js) with no React renderer, so this
+ * reads the component as text rather than mounting it — the style of
+ * `edit-items-scan-price.test.ts`.
+ */
+describe("ScanTray.tsx price-edit affordance (REG-shared-scantray-price)", () => {
+  const SCAN_TRAY_PATH = join(__dirname, "..", "components", "ScanTray.tsx");
+  const scanTraySrc = readFileSync(SCAN_TRAY_PATH, "utf8");
+
+  it("REG-shared-scantray-price-01: ScanTrayProps declares an optional onEditPrice", () => {
+    expect(scanTraySrc).toMatch(/onEditPrice\?:\s*\(id:\s*string\)\s*=>\s*void/);
+  });
+
+  it("REG-shared-scantray-price-02: the row renders a tappable price affordance only when onEditPrice is supplied", () => {
+    // Guarded by the prop, not rendered unconditionally.
+    expect(scanTraySrc).toMatch(/onEditPrice\s*\?\s*\(/);
+    // The affordance is a real press target with the exact accessibility
+    // contract the design calls for.
+    expect(scanTraySrc).toMatch(/accessibilityRole="button"/);
+    expect(scanTraySrc).toMatch(/accessibilityLabel=\{`Edit price for \$\{name\}`\}/);
+  });
+
+  it("REG-shared-scantray-price-03: onEditPrice is threaded from ScanTray down to the row item", () => {
+    expect(scanTraySrc).toMatch(/onEditPrice,?\s*\}:\s*RowProps/);
+    // renderItem passes it through and lists it as a memo dependency.
+    expect(scanTraySrc).toMatch(/onEditPrice=\{onEditPrice\}/);
+    // #2694 appended the optional hideMoney to the same memo deps.
+    expect(scanTraySrc).toMatch(
+      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice(, hideMoney)?\]/,
+    );
+  });
+});
+
+/**
+ * Source-text pin for `packages/ui/src/mobile/ios/SearchBar.tsx` forwarding
+ * `autoFocus` and exposing a ref, in the same read-as-text style (no renderer
+ * under mobile Jest).
+ */
+describe("SearchBar.tsx autoFocus + forwardRef (REG-shared-searchbar-autofocus)", () => {
+  const SEARCH_BAR_PATH = join(
+    __dirname,
+    "..",
+    "..",
+    "..",
+    "packages",
+    "ui",
+    "src",
+    "mobile",
+    "ios",
+    "SearchBar.tsx",
+  );
+  const searchBarSrc = readFileSync(SEARCH_BAR_PATH, "utf8");
+
+  it("REG-shared-searchbar-autofocus-01: SearchBarProps declares an optional autoFocus", () => {
+    expect(searchBarSrc).toMatch(/autoFocus\?:\s*boolean/);
+  });
+
+  it("REG-shared-searchbar-autofocus-02: the underlying TextInput receives autoFocus", () => {
+    expect(searchBarSrc).toMatch(/autoFocus=\{autoFocus\}/);
+  });
+
+  it("REG-shared-searchbar-autofocus-03: SearchBar is wrapped in React.forwardRef<TextInput, SearchBarProps>", () => {
+    expect(searchBarSrc).toMatch(/React\.forwardRef<TextInput,\s*SearchBarProps>/);
+    expect(searchBarSrc).toMatch(/<TextInput\s*\n\s*ref=\{ref\}/);
   });
 });

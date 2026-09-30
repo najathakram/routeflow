@@ -4,6 +4,7 @@ import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Loader2, ShieldCheck } from "lucide-react";
+import { AuthShell } from "@/components/auth";
 
 // useSearchParams() requires Suspense — force dynamic rendering to avoid
 // Next.js static-generation export error at build time.
@@ -37,23 +38,30 @@ function VerifyMergeContent() {
       });
   }, [token]);
 
+  // The shell owns the page heading: it announces the state the card is showing,
+  // exactly as the old page's own per-state heading did (MED-1).
+  const title =
+    status === "success"
+      ? "Account Verified!"
+      : status === "error"
+        ? "Verification Failed"
+        : "Verifying...";
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-raised px-4">
-      <div className="w-full max-w-md rounded-2xl border border-surface-border bg-white p-8 shadow-sm text-center">
+    <AuthShell audience="retailer" kicker="Retailer account" title={title}>
+      <div className="text-center">
         {status === "loading" && (
           <>
             <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-brand-500" />
-            <h1 className="text-xl font-bold text-navy">Verifying...</h1>
             <p className="mt-2 text-sm text-navy/70">Please wait while we confirm your account.</p>
           </>
         )}
 
         {status === "success" && (
-          <>
+          <div className="rf-auth-success">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success-bg">
               <CheckCircle className="h-9 w-9 text-success" />
             </div>
-            <h1 className="text-xl font-bold text-navy">Account Verified!</h1>
             <p className="mt-2 text-sm text-navy/70">{message}</p>
             <div className="mt-6 rounded-lg bg-surface-raised p-4">
               <div className="flex items-start gap-3 text-left">
@@ -66,11 +74,11 @@ function VerifyMergeContent() {
             </div>
             <Link
               href="/buyer/login"
-              className="mt-6 inline-block rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+              className="rf-btn mt-6 inline-flex items-center justify-center"
             >
               Go to Login
             </Link>
-          </>
+          </div>
         )}
 
         {status === "error" && (
@@ -78,7 +86,6 @@ function VerifyMergeContent() {
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-danger-bg">
               <XCircle className="h-9 w-9 text-danger" />
             </div>
-            <h1 className="text-xl font-bold text-navy">Verification Failed</h1>
             <p className="mt-2 text-sm text-navy/70">{message}</p>
             <p className="mt-4 text-xs text-navy/70">
               If your verification link expired, please log in and submit a new merge request from
@@ -86,26 +93,20 @@ function VerifyMergeContent() {
             </p>
             <Link
               href="/buyer/login"
-              className="mt-6 inline-block rounded-lg bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-brand-700"
+              className="rf-btn mt-6 inline-flex items-center justify-center"
             >
               Go to Login
             </Link>
           </>
         )}
       </div>
-    </div>
+    </AuthShell>
   );
 }
 
 export default function VerifyMergePage() {
   return (
-    <React.Suspense
-      fallback={
-        <div className="flex min-h-screen items-center justify-center bg-surface-raised">
-          <Loader2 className="h-8 w-8 animate-spin text-brand-500" />
-        </div>
-      }
-    >
+    <React.Suspense fallback={null}>
       <VerifyMergeContent />
     </React.Suspense>
   );

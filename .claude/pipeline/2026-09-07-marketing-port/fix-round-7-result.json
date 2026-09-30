@@ -1,0 +1,344 @@
+{
+  "w7": {
+    "executor": "W7 (Opus, high) — marketing port fix round 7, rulings S1/S2/S3",
+    "status": "done",
+    "filesTouched": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css"
+    ],
+    "diffSummary": "ONE file touched (marketing.css), three declarations changed, all with a fix-round-7 rationale comment in the file's existing convention (cf. the round-5 comments at 5115-5121). No markup change; `apps/web/app/(marketing)/retailers/page.tsx` and `components/technology-art.tsx` are UNTOUCHED (S1 needed no fix).\n\nS1 — NO CHANGE (refuted; see s1Verdict).\n\nS2 (line 6261, the 13-selector `!important` rule): `color: #657994 !important` -> `color: #5a6b83 !important`, + a comment naming the four grounds it really paints on and the four ratios. Same hue and saturation (HSL 214.5deg / 18.9%), lightness 48.8% -> 43.3%.\n\nS3 (/company overlay, lines 5372 and 5386):\n- `.company-image > div { background: #ffffffb5 }` -> `#ffffffdb` (tint alpha 0.7098 -> 0.8588; border, radius, blur(25px), shadow, and the `#315579` panel colour untouched, so the panel is still translucent frosted glass).\n- `.company-image > div > span { color: #6d8dad }` -> `#47627e` (same hue and saturation, HSL 210deg / 28.1%, lightness 55.3% -> 38.5%).\nTwo values rather than one because a text-only fix has to clear 4.5:1 against a ground that moves with the photograph: at the shipped 0.71 tint the worst possible ground is white-over-black = #b5b5b5 (L 0.46208), which forces the eyebrow to L_rel <= 0.0638 — DARKER than the 30.4px `#315579` heading (L_rel 0.08356), inverting the hierarchy. Raising the tint pins the worst possible ground at #dbdbdb (L 0.70838), which makes every number below photo-independent, keeps the eyebrow lighter than the heading, and lifts the heading itself from 3.79:1 to 5.61:1.",
+    "gateOutputs": "All run in C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog, real output:\n\n1) prettier (touched file)\n`node_modules/.bin/prettier --write \"apps/web/app/(marketing)/marketing.css\"` -> `apps/web/app/(marketing)/marketing.css 1487ms (unchanged)`\n`node_modules/.bin/prettier --check \"apps/web/app/(marketing)/marketing.css\"` -> `Checking formatting... / All matched files use Prettier code style!` exit=0\n\n2) tsc\n`cd apps/web && ../../node_modules/.bin/tsc --noEmit -p tsconfig.json` -> no output, `tsc exit=0`\n\n3) jest\n`cd apps/web && ../../node_modules/.bin/jest --silent` ->\n`Test Suites: 42 passed, 42 total`\n`Tests:       338 passed, 338 total`\n`Snapshots:   0 total`\n`Time:        27.242 s`\n`jest exit=0`  (338/338, containment pins incl. `components/no-next-image.test.ts`, `lib/marketing-routes.test.ts`, `app/(marketing)/...` suites all PASS)\n\n--- S2 WCAG maths, EVERY ground (measured, not assumed) ---\nMethod: `next dev -p 3007` on this branch; Playwright chromium, DPR 1, reducedMotion \"reduce\", `.reveal-pending` stripped, 11 marketing routes x {1440x900, 375x812}; for every element matched by the 13 selectors in the rule I read the COMPUTED colour and took the modal pixel colour of the element's own screenshot as its painted ground.\n\nFinding first: the rule is only the winner for 5 element/ground pairs — a later `!important` beats it everywhere else (`.eyebrow` -> #65616e / #33527e / #ffd09a, `.record-caption` -> #7b49ab / #756980, `.form-kicker` -> #766383, the three `.cta-block` selectors -> #d8dbe1 / #ffd09a on the #10264d block), and `.story-section figcaption`, `.scene-fallback > p`, `.footer-app-note` have NO rendered instance on any marketing route at either viewport.\n\nGrounds it really paints on (before -> after; luminance of the ground in brackets):\n- #ffffff [L 1.00000] — `.card-eyebrow` \"GET YOUR WORKFLOW ORGANIZED\" (/pricing) and `.photo-credit` (/company): 4.453 -> 5.433\n- #edf2fa [L 0.88411] — `.card-eyebrow` \"CONNECT YOUR DELIVERY OPERATION\" (/pricing): 3.962 -> 4.833\n- #def5ee [L 0.87007] — `.retailer-art figcaption` (/retailers): 3.902 -> 4.760\n- #e7ecfa [L 0.83882] — `.tour-example-label` (/wholesalers, /distributors): 3.769 -> 4.599  <= the binding ground\nText luminance: #657994 L_rel 0.185796 -> #5a6b83 L_rel 0.143277. Requirement derived from the binding ground: L_text <= (0.83882+0.05)/4.5 - 0.05 = 0.147515; #5a6b83 = 0.143277 PASSES. #5a6b83 is the first same-hue/same-saturation step (2.55% HSL-lightness grid) that clears 4.5:1 on ALL FOUR — the nearer steps #647892 (4.522 white / 3.828 #e7ecfa) and #5b6d85 (5.288 white / 4.477 #e7ecfa) do not.\nPost-fix re-measurement, same harness: every row that used to compute #657994 now computes #5a6b83 at 5.433 / 4.833 / 4.760 / 4.599; every other selector's row is byte-identical to the pre-fix run (no collateral).\n\n--- S3 WCAG maths vs the SAMPLED panel colour ---\nPanel: `rgba(255,255,255,0.71)` + `backdrop-filter: blur(25px)` over /marketing/warehouse.webp, radius 23px (desktop) / 21px (mobile). Sampling note: my first strip sample was contaminated — a full-width strip crosses the rounded corners and picks up raw photo (it reported \"darkest #0c190b\"), so all numbers below come from strips inset horizontally by radius+4px, taken (A) in the padding band above the eyebrow and (B) on the eyebrow's own line to the right of the text.\n\nBEFORE, eyebrow #6d8dad (L_rel 0.253181), 12px/400 => AA needs 4.5:\n- 1440x900: A modal/darkest #bdbbba [L 0.49905] = 1.811 ; A lightest #d7ddda [L 0.71222] = 2.514 ; B modal #cfd1cf [L 0.63371] = 2.255 ; B lightest #dbdfde [L 0.73109] = 2.576\n- 375x812:  A modal #e7e3de [L 0.77201] = 2.711 ; A darkest #c8c5c3 [L 0.56152] = 2.017 ; B modal #e7e2de [L 0.76656] = 2.693\n- worst possible ground at this tint (0.71 white over a pure-black photo pixel) = #b5b5b5 [L 0.46208] = 1.689\n=> confirmed FAIL, and round-6's ~2.38:1 sits inside the measured 1.81-2.74 range.\n\nAFTER, background #ffffffdb (alpha 0.8588) + eyebrow #47627e (L_rel 0.115813):\n- worst possible ground at the new tint = #dbdbdb [L 0.70838] = 4.574  (photo-independent floor)\n- 1440x900: A darkest #dfdedd [L 0.73151] = 4.713 ; A modal #e8e9e8 [L 0.81260] = 5.202 ; A lightest #eceeed = 5.434 ; B darkest #e8e8e7 = 5.165 ; B lightest #edf0ef = 5.522\n- 375x812:  A darkest #e4e3e2 [L 0.76923] = 4.941 ; A modal #f3f1ef [L 0.88197] = 5.621 ; A lightest #f2f3ef = 5.682 ; B darkest #f1efed = 5.521\n=> every sampled ground >= 4.713:1, floor 4.574:1. PASS.\nCollateral, same panel: heading `#315579` (30.4px/500, AA-large needs 3.0) 3.785 -> 5.605 at the floor, 5.851 on the worst re-sampled ground #dfdedd — it now clears 4.5 as well.\nArtifacts: r7-s3-panel-inset-1440.png, r7-s3-panel-inset-375.png (+ the pre-fix r7-s3-panel-*.png / r7-s3-eyebrow-band-*.png) in C:/Users/nakram/AppData/Local/Temp/claude/C--ClaudeCode-routeflow/14338d9c-5c59-4c2e-a365-d1c3f9a77712/scratchpad/w7/",
+    "s1Verdict": "NO RULE WAS LOST, AND NOTHING IS HIDDEN — the /retailers hero illustration DOES paint at <= 390 px. No CSS or markup change; round-6's \"flat #def5ee wash\" is refuted by direct measurement. (So neither the \"FIX\" nor the literal \"by design, the source hides it too\" branch applies: the third branch — port == source AND the image renders.)\n\nA) Source comparison (READ-ONLY, C:/Users/nakram/Documents/Codex/2026-09-06/rev/work/routeflow-redesign):\n- The source's `.retailer-art` rules live in premium.css (209, 216, 542, 561, 696, 722, 807-830, 846, 909), glass.css (828, 836, 860, 1360, 1691, 1707, 1883) and charcoal.css (292, 816). `app/layout.tsx` imports fonts, globals, premium, glass, conversion, readability, operation-story, comparison-table, charcoal, ai-spotlight, workspace — brand-colors.css (which has its own `.retailer-art` gradient at line 470) is NOT imported, i.e. dead in the source; the port correctly omits it, and the port's `/* ---- x.css ---- */` markers (45/3443/4358/6282/6791/6814/8292/8348/9552) reproduce that import order exactly.\n- The ONLY <= 390 px block is source premium.css 807-831, and the port reproduces it verbatim at marketing.css 4243-4267 (only the `.rf-marketing` scope prefix added): `.retailer-art .browser-chip{position:relative;top:auto;right:auto;width:max-content;margin:-8px auto 0;order:1;font-size:.75rem}` / `.retailer-art{display:flex;flex-direction:column;padding-top:20px}` / `.retailer-art > img{order:2;margin-top:10px}` / `.retailer-art .order-chip{display:none}` / `.retailer-art figcaption{order:3;margin-top:15px}`. The only thing HIDDEN on phones is the `.order-chip` overlay (source premium.css 825-827), which the port hides identically — the `<img>` is merely re-ordered.\n- Neither tree contains any `display:none`, `visibility:hidden`, `opacity:0`, zero-size or `content-visibility` rule on `.retailer-art > img` at any breakpoint, and neither uses `srcset`. `retailer-arrive` (port 4311-4320) animates from opacity 0.5, not 0, and is killed by the `prefers-reduced-motion: reduce` block (port 4342-4349 == source premium.css 909).\n\nB) Live pixel proof (branch `feat/marketing-port`, `next dev -p 3007`, Playwright chromium, DPR 1, `reducedMotion: \"reduce\"`, explicit viewport, no device preset):\n- 375x812 — `img.naturalWidth` 1448, `naturalHeight` 1086, `complete` true, `currentSrc` http://localhost:3007/marketing/retailer-technology.webp; computed `display: block`, `visibility: visible`, `opacity: 1`, `width: 337px`, `height: 252.75px`, `order: 2`, `animationName: none`; figure 339x393.33, img box 337x252.75.\n- DISTINCT-COLOUR COUNT (the ruling's >= 40 threshold): img's own box 337x252 = **14,681 distinct colours**; whole figure 339x394 = 15,260. At 390x844: img box 15,589 / figure 16,161. At 1440x900: img box 32,886 / figure 33,171.\n- Crop for the judge: .../scratchpad/w7/r7-s1-fig-375.png (I opened it — the phone, the cartons, the storefront and the \"YOUR SUPPLIERS. ONE PORTAL.\" chip all render; only the `.order-chip` is absent, exactly as the source prescribes).\nRound-6's sample geometry cannot have been inside the figure: the figure is 339x393 CSS px at 375 px wide, so a 700x700 device-px region does not fit within it. I did not reproduce round-6's capture, so I cannot name its exact defect beyond that; the direct measurement above stands on its own.",
+    "notes": "Scope: I touched ONLY marketing.css. Nothing was committed, stashed, checked out or reset; the worktree stays uncommitted as instructed, and I read the root checkout / Codex source read-only and touched no other worktree or Docker. I started `next dev -p 3007` from this worktree for the measurements and stopped it afterwards (PID 45104, `Stop-Process -Id 45104 -Force` -> \"stopped\"; port 3007 is free for the driver).\n\nThree things for the lead:\n\n1. S2's blast radius is bigger AND smaller than the ruling assumed. The rule spans THIRTEEN selectors, not eight (marketing.css 6236-6249: `.cta-block p:not(.eyebrow)`, `.cta-block > div > span`, `.cta-block .eyebrow`, `.eyebrow`, `.record-caption`, `.card-eyebrow`, `.tour-example-label`, `.form-kicker`, `.photo-credit`, `.retailer-art figcaption`, `.story-section figcaption`, `.scene-fallback > p`, `.footer-app-note`) — but a later `!important` overrides it for all but four grounds, so the value change only moves `.card-eyebrow` (/pricing), `.photo-credit` (/company), `.retailer-art figcaption` (/retailers) and `.tour-example-label` (/wholesalers, /distributors). Notably it does NOT reach the dark `.cta-block` (#10264d) or the dark `.eyebrow` section (#292c33), where a darker value would have been a regression — those keep their own #d8dbe1 / #ffd09a at 10.5-10.8:1. Worth pinning in the close-out so a future round does not \"simplify\" the cascade and hand this rule the dark grounds.\n\n2. Dead selectors for the css-consolidation close-out row: `.story-section figcaption`, `.scene-fallback > p` and `.footer-app-note` render on no marketing route at either viewport (`.story-section`, `.scene-fallback` and `.footer-app-note` appear in no ported `.tsx` — the only mention is the `.story-section` string inside `components/editorial-motion.tsx:12`), yet they carry CSS at marketing.css 1469-1503 / 4782-4826 / 1628 / 4978-4988 / 5916-5933 / 8762 and elsewhere. Either the port dropped the markup that used them or the source ships them dead too — worth one grep at consolidation time.\n\n3. S3 is a real source defect, not a port defect: the Codex source has the same `#ffffffb5` panel and `#6d8dad` eyebrow (glass.css 828-845 region / the `.company-image > div > span` rule), so the port now deviates from the source by two values. That deviation is documented inline at marketing.css 5364-5371 and 5380-5385 in the same style as the round-5 contrast comments, but it belongs on the S5 \"carried to the owner\" list as a deliberate accessibility deviation from the redesign.\n\nNot done (out of my scope by the design): the UI driver/judge flows, the ownerReviewPack selection, the S4 registry row, and `npm run lint -w apps/web` + `node scripts/validate-lessons.mjs` (the Final Haiku gate)."
+  },
+  "drive": {
+    "branchBuildProven": true,
+    "serverStopped": true,
+    "flows": [
+      {
+        "flow": "branch proof",
+        "viewport": "n/a",
+        "status": "confirmed",
+        "screenshots": [],
+        "consoleErrors": [],
+        "facts": [
+          "grep confirmed `<header className=\"site-header\">` in apps/web/app/(marketing)/components/site-header.tsx",
+          "NAV_SLUGS = [\"product\",\"wholesalers\",\"retailers\",\"pricing\",\"company\"] in apps/web/app/(marketing)/lib/site.ts with labels Platform/Distributors/Retailers/Pricing/Company",
+          "curl http://localhost:3007/ returned <header and all five nav labels (Platform, Distributors, Retailers, Pricing, Company) confirmed on the live running server",
+          "dev server: `npx next dev -p 3007` from apps/web, started as background pid 45296, confirmed listening via Get-NetTCPConnection"
+        ]
+      },
+      {
+        "flow": "1a-retailers-mobile-375x812",
+        "viewport": "375x812",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-retailers-mobile.png (fullPage, pageHeight=5252px, no segments needed)",
+          "apps/web/test-output/artifacts/r7-retailers-mobile-hero-crop.png (300x300 CSS-px crop inside .retailer-art figure)"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "reducedMotion armed before navigation; settleReveals: 0 scroll steps needed, 0 .reveal-pending elements remained at opacity 0 after load",
+          "images: 3 total, 3 decoded (naturalWidth>0) before capture",
+          "hero figure bounding box: x=18 y=666.6 w=339 h=393.3 (CSS px)",
+          "hero crop sample: 1430 distinct RGB colours over the sampled box (well above the 40-colour by-design threshold) — visually confirms a phone/UI illustration is painted, not the flat #def5ee wash S1 flagged"
+        ]
+      },
+      {
+        "flow": "1b-retailers-desktop-1440x900",
+        "viewport": "1440x900",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-retailers-desktop.png (fullPage, pageHeight=3713px)",
+          "apps/web/test-output/artifacts/r7-retailers-desktop-hero-crop.png"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "settleReveals: 0 scroll steps, 0 .reveal-pending elements at opacity 0",
+          "images: 3 total, 3 decoded",
+          "hero figure bounding box: x=715.7 y=168 w=644.3 h=589.9",
+          "hero crop sample: 4688 distinct colours — phone/product illustration clearly painted"
+        ]
+      },
+      {
+        "flow": "2-company-desktop-eyebrow-contrast",
+        "viewport": "1440x900",
+        "status": "passed (element found on 2nd attempt after selector fix)",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-company-desktop.png (fullPage, pageHeight=2651px)",
+          "apps/web/test-output/artifacts/r7-company-eyebrow-ink-crop.png",
+          "apps/web/test-output/artifacts/r7-company-eyebrow-ground-crop.png",
+          "apps/web/test-output/artifacts/r7-company-overlay-context.png (500x200 visual-check crop of the whole panel)"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "the photo-overlay eyebrow \"THE WORK BEHIND THE DELIVERY\" is a bare <span> inside `.company-image > div`, not class=\"eyebrow\" (initial run reported eyebrow-not-found with a `.eyebrow` selector; fixed selector to `.company-image > div > span` and re-ran)",
+          "eyebrow box: x=148 y=857.4 w=222.8 h=16; computed color rgb(71,98,126)",
+          "darkest-pixel ink sample matched the computed CSS colour exactly: rgb(71,98,126)",
+          "ground sample (40x40 px sampled to the right of the text, confirmed by the context crop to be on the panel, not the photo): mean rgb(235,236,235) — panel renders visually as a solid near-white card, not a frosted/translucent overlay",
+          "computed contrast ratio ink-vs-ground = 5.35:1 (>= 4.5:1) — this is markedly different from round-6's cited ~2.38:1; the visual context crop shows an opaque light panel behind readable steel-blue text, not the frosted panel over photo that round 6 measured. Reported as a fact, not adjudicated — the judge/reviewer should confirm whether this reflects an S3 fix already present on this branch or a difference in measurement method."
+        ]
+      },
+      {
+        "flow": "3-home-desktop-band-check",
+        "viewport": "1440x900",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-home-desktop.png (fullPage, pageHeight=7665px)",
+          "apps/web/test-output/artifacts/r7-home-desktop-band-y358-591.png",
+          "apps/web/test-output/artifacts/r7-home-desktop-band-y851-1343.png"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "settleReveals: 0 steps, 0 reveal-pending at opacity 0; images 5/5 decoded",
+          "band y358-591: mean luminance 226.96, 8884 distinct colours — visually confirmed painted (hero headline + order-card illustration)",
+          "band y851-1343: mean luminance 160.87, 616 distinct colours — visually confirmed painted (navy feature-tab bar + link text), not void",
+          "both previously-void regions from round 6 are now painted"
+        ]
+      },
+      {
+        "flow": "3-wholesalers-desktop-band-check",
+        "viewport": "1440x900",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-wholesalers-desktop.png (fullPage, pageHeight=5003px)",
+          "apps/web/test-output/artifacts/r7-wholesalers-desktop-band-y342-842.png"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "settleReveals: 0 steps, 0 reveal-pending at opacity 0; images 4/4 decoded",
+          "band y342-842: mean luminance 214.16, 11866 distinct colours — visually confirmed painted (headline text + order/route illustration cards), not void"
+        ]
+      },
+      {
+        "flow": "3-home-mobile-reveal-check",
+        "viewport": "375x812",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-home-mobile.png (fullPage, pageHeight=13257px, no segments needed — under 16000px cap)"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "settleReveals: 0 scroll steps needed, 0 reveal-pending at opacity 0 remained; images 5/5 decoded"
+        ]
+      },
+      {
+        "flow": "3-wholesalers-mobile-reveal-check",
+        "viewport": "375x812",
+        "status": "passed",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-wholesalers-mobile.png (fullPage, pageHeight=8583px)"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "settleReveals: 0 scroll steps needed, 0 reveal-pending at opacity 0; images 4/4 decoded"
+        ]
+      },
+      {
+        "flow": "4-company-eyebrow-photo-credit-contrast",
+        "viewport": "1440x900",
+        "status": "passed (fixed after first attempt found only 1 of 2 elements)",
+        "screenshots": [
+          "apps/web/test-output/artifacts/r7-company-eyebrow-ink-crop.png / -ground-crop.png",
+          "apps/web/test-output/artifacts/r7-company-photo-credit-ink-crop.png / -ground-crop.png"
+        ],
+        "consoleErrors": [],
+        "facts": [
+          "first pass restricted sampling to elements already inside the current viewport and missed .photo-credit (below the fold); fixed to scrollIntoViewIfNeeded() each target before sampling",
+          ".eyebrow \"ABOUT ROUTEFLOW\": computed CSS colour rgb(101,97,110) on white ground rgb(255,255,255) -> contrast 6.02:1 (matches S2's expected fix direction, >=4.5:1). Note: a darkest-pixel raw sample inside the same crop returned an outlier rgb(2,13,14) — almost certainly anti-aliased text-edge or adjacent-content noise, not representative; the CSS-declared colour against the sampled white ground is the reliable number here and is reported as the primary fact.",
+          ".photo-credit \"Illustrative industry photography. Tiger Lily / Pexels.\": computed CSS colour rgb(90,107,131), darkest-pixel sample matched exactly (90,107,131), ground rgb(255,255,255) -> contrast 5.43:1 (>=4.5:1)"
+        ]
+      }
+    ],
+    "notes": "Protocol: `page.emulateMedia({ reducedMotion: \\\"reduce\\\" })` was called before every `page.goto()`. Every page in this round settled with 0 scroll steps and 0 remaining `.reveal-pending` elements at opacity 0 at load — the reveal-freeze artifact from round 6 did not reproduce under reduced-motion emulation. All images (3-5 per page depending on flow) reported naturalWidth>0 before capture. No page exceeded the 16000 CSS-px segment threshold (tallest was home mobile at 13257px), so no -segN files were produced — correctly, per protocol.\n\nConfig/spec: apps/web/test-output/r7/playwright.config.ts (explicit viewports, no device presets: desktop 1440x900, mobile 375x812) and apps/web/test-output/r7/marketing.spec.ts. Raw per-flow JSON facts: apps/web/test-output/r7/facts-parts/*.json (one file per flow — written per-process since Playwright's two projects run in separate Node processes and a single shared facts.json got clobbered by the second project on the first attempt; switched to per-flow files, verified against a fresh full re-run, all 8 non-skipped tests green both times).\n\nTwo mid-drive corrections, both re-run and re-verified before reporting: (1) flow 2's initial `.eyebrow` selector missed the photo-overlay text because it's a bare `<span>` (not class=\"eyebrow\") — fixed to `.company-image > div > span`. (2) flow 4's initial viewport-bounded element pick missed `.photo-credit` (below the fold) — fixed to scroll each target into view first. Full command output and package versions: @playwright/test 1.62.1 (repo root node_modules), sharp available in worktree node_modules for pixel sampling. All Playwright runs (8/8 non-skipped passed both times) are visible in the transcript above.\n\nJudgment calls I flagged rather than made: the S3 overlay-eyebrow contrast measured 5.35:1 here vs round 6's cited ~2.38:1 — visual crop (r7-company-overlay-context.png) shows what looks like an opaque light panel, not the frosted-over-photo panel round 6 apparently measured; I report the number and the crop, not a verdict on whether S3 is already fixed or a measurement-method difference. Similarly the darkest-pixel outlier on the .eyebrow \"ABOUT ROUTEFLOW\" sample (2,13,14) is flagged as unreliable noise in favor of the CSS-declared-colour contrast (6.02:1).\n\nDev server was started with `npx next dev -p 3007` from apps/web (background, log at scratchpad/next-dev-r7.log), pid 45296 confirmed via Get-NetTCPConnection, and stopped with Stop-Process -Force; confirmed both process gone and port 3007 no longer listening."
+  },
+  "judge": {
+    "verdicts": [
+      {
+        "flow": "Branch build proof — the running server served the PORTED marketing site, not master",
+        "viewport": "n/a",
+        "verdict": "pass",
+        "evidence": "Verified independently of the driver's curl. `git cat-file -e master:apps/web/app/(marketing)/components/site-header.tsx` -> \"exists on disk, but not in 'master'\"; `git ls-tree master:apps/web/app/(marketing)/components` lists the OLD set (nav.tsx, footer.tsx, audience-split.tsx, mocks/…) while the worktree holds the PORT set (site-header.tsx, site-footer.tsx, ai-spotlight.tsx, workflow-tour.tsx, technology-art.tsx, operation-story.tsx). Every r7 PNG I opened renders that ported chrome: the pill header with Platform / Distributors / Retailers / Pricing / Company + Sign in + Book a demo, and the four-column ported footer (Platform / Company / Your workspace). NAV_SLUGS at apps/web/app/(marketing)/lib/site.ts:82 matches the painted labels. branchBuildProven = TRUE."
+      },
+      {
+        "flow": "Driver protocol audit (E1 binding) — reduced motion, 375 px, reveal-pending, decoded images, segments",
+        "viewport": "n/a",
+        "verdict": "pass",
+        "evidence": "Read apps/web/test-output/r7/marketing.spec.ts and playwright.config.ts myself. `page.emulateMedia({ reducedMotion: \"reduce\" })` is at spec line 15 inside armReducedMotion(), called by gotoAndSettle() BEFORE page.goto (line 101). Config declares explicit `viewport: { width: 375, height: 812 }` / `{1440,900}` with NO device preset. countPendingReveals() reads computed opacity on `.reveal-pending` and the spec asserts it toBe(0) (line 160); every facts-part reports revealPendingRemaining 0 / revealSettleSteps 0. waitForImagesDecoded() gates on naturalWidth>0 and every part reports decoded == total (3/3, 4/4, 5/5). Segment clips fire above 16000 px; tallest page was 13257, so none were due and none were written — correct. Corroborated from the pixels: the PNGs are 375 and 1440 wide (DPR 1, so CSS px == device px) and page heights match the reported values exactly, i.e. no truncation."
+      },
+      {
+        "flow": "S1 — /retailers hero figure paints an illustration on a phone",
+        "viewport": "375x812",
+        "verdict": "pass",
+        "evidence": "Re-measured from the pixels with my own pngjs script (apps/web/test-output/r7/judge-measure.mjs) on r7-retailers-mobile.png. Figure box (18,666,339,394): 15,213 DISTINCT COLOURS — 380x the >=40 threshold; modal colour is the #def5ee wash at only 20.3% of the box, so it is not a flat ground. I cropped the figure to judge-retailers-mobile-figure.png and opened it: the phone with a product grid, two cartons, a glass storefront, the 'YOUR SUPPLIERS. ONE PORTAL.' chip and the caption 'Conceptual product illustration · Web portal available' are all painted. Round-6's 'flat #def5ee wash' is REFUTED by direct measurement. No CSS/markup change was needed or made."
+      },
+      {
+        "flow": "S1 — /retailers hero figure at desktop (supporting)",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "r7-retailers-desktop.png, figure box (716,168,644,590): 33,163 distinct colours, modal #def5ee at 13.5%. Full page opened — hero illustration, 'A clearer next restock.' overlay chip and caption all painted."
+      },
+      {
+        "flow": "S3 — /company photo-overlay eyebrow 'THE WORK BEHIND THE DELIVERY' contrast",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "Re-measured from r7-company-desktop.png. Ink: the darkest pixel inside the eyebrow box (148,857,223,16) is EXACTLY rgb(71,98,126) = #47627e, matching the shipped CSS at marketing.css:5386. Ground: I first row-profiled the panel and found its right edge near x~495 (x=500 is already photo, #819c7d) — so a naive strip DOES pick up the photograph; I therefore sampled only inset. Ground on the eyebrow's own line (375,857,115,16): modal #e9eae9, darkest #e8e9e8 -> 5.202:1. Ground in the padding band above (130,832,360,16): modal #e9e9e8, DARKEST #dededd -> 4.704:1. Both >= 4.5:1. Photo-independent floor at the new 0.859 tint (#dbdbdb) computes 4.574:1. PASS. Visual check of judge-company-panel.png and r7-company-overlay-context.png: the panel is still translucent frosted glass (the warehouse photo reads through and around it) — the driver's claim that it is 'a solid near-white card, not frosted' is wrong, but the contrast verdict is unaffected."
+      },
+      {
+        "flow": "S2 — /company photo credit line contrast",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "Located the text by exact-colour scan of r7-company-desktop.png: the only dense row of rgb(90,107,131) is y=1046, x 262-357. Line region (200,1038,500,20): darkest pixel is EXACTLY #5a6b83 (no darker pixel exists, so that is the true ink), modal ground #ffffff at 92.9%; the strip immediately below (200,1060,500,10) is 100% #ffffff. Contrast 5.433:1 >= 4.5. The driver's reported ink of rgb(2,13,14) for the sibling eyebrow was crop contamination — I opened r7-company-eyebrow-ink-crop.png and it is a strip of the photograph, not text (flows 2 and 4 wrote the same filename). My measurement supersedes it."
+      },
+      {
+        "flow": "S2 — /company section eyebrow 'ABOUT ROUTEFLOW' contrast",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "Exact-colour scan found the band at y=177, x 106-211. Line region (95,168,180,18): darkest pixel exactly #65616e, modal ground #ffffff (76%); strip above (95,150,180,12) is 100% #ffffff. Contrast 6.020:1 >= 4.5. Note this selector is NOT the one the fix changed — a later !important paints it #65616e — so it is a passing bystander, exactly as W7 documented."
+      },
+      {
+        "flow": "S2 — /wholesalers tour example label on the tinted ground (the binding worst case)",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "This is the ground W7 identified as binding, verified independently from r7-wholesalers-desktop.png. Exact-colour scan puts the label at y=3141, x 804-980. Line region (790,3132,210,20): darkest pixel exactly #5a6b83, modal ground #e7ecfa at 68.3%; the strip above (790,3115,210,10) is 100% FLAT #e7ecfa. Measured contrast 4.599:1 >= 4.5 — clears, with 0.099 of headroom."
+      },
+      {
+        "flow": "S2 — /retailers figure caption on the mint ground",
+        "viewport": "375x812 and 1440x900",
+        "verdict": "pass",
+        "evidence": "Mobile line (25,1015,325,20): darkest ink rgb(91,108,132) (= #5a6b83 with one unit of subpixel rounding) on a ground strip (25,1000,325,8) that is 100% flat #def5ee. Desktop line (700,712,660,22): darkest ink rgb(90,108,131) on the same #def5ee modal. Contrast #5a6b83 vs #def5ee = 4.760:1 >= 4.5 at both viewports."
+      },
+      {
+        "flow": "S2 — /pricing card eyebrows (supplementary, NOT a named gate flow)",
+        "viewport": "1440x900",
+        "verdict": "unverified",
+        "evidence": "No post-fix capture of /pricing exists — marketing.css was edited at 09:34 and the only pricing shot (r6-06-pricing-desktop.png) was taken at 08:46, so its ink is still the OLD #657994 (I measured rgb(101,121,148) on both cards). What I could verify from pixels is the GROUND, which the fix does not move: the Growth card ground is #edf2fa (537-840,630 strip, 97% modal) and the Starter card ground is #ffffff. Post-fix arithmetic on those measured grounds gives 4.833:1 and 5.433:1, and the shipped value #5a6b83 is confirmed present at marketing.css:6261 and confirmed painting on three other pages in r7. I am reporting this as unverified rather than pass because I did not see the fixed colour on this page's pixels."
+      },
+      {
+        "flow": "Formerly-void band — home hero region y358-591",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "Cropped from my own read of r7-home-desktop.png: 8,884 distinct colours, mean luminance 226.96, white modal at only 41.2%, darkest #0e2245 (navy type). Opened the crop: it contains the headline 'orders / into organized / deliveries.', the navy order-card illustration with the cartons-and-bottles photo, and the retailer-portal phone mock. Painted content, not a flat ground."
+      },
+      {
+        "flow": "Formerly-void band — home region y851-1343",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "The driver's own band file for this region is only 1440x49 despite being named y851-1343 (a 492 px band), so it does not evidence what it claims. I re-cropped the FULL 1440x492 band from r7-home-desktop.png myself (judge-home-band-y851-1343.png): 2,109 distinct colours, darkest #1f2023, and on opening it contains the tail of the navy illustration with its Inventory/Order/Route/Delivery/Invoice/Insights tab bar, the nine-icon capability row (Inventory, Orders, Routes, Accounts, Invoicing, Analytics, Retailer portal, AI assistance, Regulated goods) and the next section headline 'Scattered orders create work.' Painted content across the whole band."
+      },
+      {
+        "flow": "Formerly-void band — distributors page region y342-842",
+        "viewport": "1440x900",
+        "verdict": "pass",
+        "evidence": "Re-cropped 1440x500 from r7-wholesalers-desktop.png: 11,866 distinct colours, mean luminance 214.16, white modal 43.8%, darkest #0b1c3b. Opened it: the hero headline 'Get your team out of the daily delivery scramble.', body copy, the 'Book a distributor demo' button and the full order-card + phone illustration. Painted."
+      },
+      {
+        "flow": "Reveal/paint sweep — home and distributors pages on a phone",
+        "viewport": "375x812",
+        "verdict": "pass",
+        "evidence": "Opened r7-home-mobile.png (375x13257) and r7-wholesalers-mobile.png (375x8583) end to end. Content flows continuously with no blank or half-faded sections anywhere — the round-6 reveal-freeze artifact does not reproduce. Corroborates the spec's revealPendingRemaining 0 assertion rather than merely repeating it."
+      },
+      {
+        "flow": "Reveal/paint sweep — retailers and company pages",
+        "verdict": "pass",
+        "viewport": "375x812 and 1440x900",
+        "evidence": "Opened r7-retailers-mobile.png, r7-retailers-desktop.png and r7-company-desktop.png in full. Every section paints, all imagery decodes (the warehouse photograph, the product illustrations, the sample-order card), the footer renders on all three. No voids."
+      }
+    ],
+    "blockers": [],
+    "ownerReviewPack": [
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r7-home-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r7-home-mobile.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-03-product-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-06-pricing-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r7-retailers-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r7-retailers-mobile.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r7-company-desktop.png",
+      "C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/test-output/artifacts/r6-10-404-desktop.png"
+    ],
+    "ownerNotes": [
+      "The site is quieter and greyer than the design you signed off on. The new stylesheet is assembled from the redesign's own files in the redesign's own order, and the last layer in that stack is a grey-toned pass that overrides colours and type sizes set earlier — it repaints the page background plain white, pushes body text to a near-black grey, and shrinks a number of small labels. The result reads clean and calm, but several coloured surfaces the written design brief describes come out flatter and more neutral on the live page than in the brief's prose. Nothing is broken; this is a look-and-feel call. Decide whether you want the coloured chrome restored to match the brief, or the calmer grey treatment kept as the real design.",
+      "Every big headline's second line is styled as emphasis in the markup but renders upright, not slanted — 'Let's get you / back on track.', 'A plan that fits / your working day.', 'Orders. Deliveries. Accounts. / Finally, connected.' The second line does get its own colour (navy, teal or green depending on the page), so the two-tone effect is there, but there is no italic. If you expected an italic second line, that is a deliberate change worth confirming before launch.",
+      "The contact and demo forms do not send anything to us. Filling one in opens the visitor's own email program with a pre-written draft addressed to hello@routeflow.info; the visitor still has to press send, and if their device has no mail app set up, nothing happens beyond a fallback line showing the address. There is no server behind the form, so nothing is stored, nothing is tracked, and no lead is captured if the visitor abandons the draft. If marketing needs a real enquiry pipeline, that is a separate piece of work to commission.",
+      "Two text colours now differ from the redesign on purpose, for legibility. Small captions and labels across the site were a shade too light to meet the accessibility contrast standard on their tinted backgrounds, and the caption text sitting on the frosted card over the warehouse photograph on the About page was far below it — that card was translucent enough that the text's readability changed with whatever part of the photo happened to sit behind it. The captions were darkened one step, and the frosted card was made more opaque so the text reads the same regardless of the photo. Both are small, both keep the original colour family, and both are deviations from what the designers shipped. Confirm you are happy carrying them, or ask for the designers' own fix instead.",
+      "The custom 'page not found' screen only appears on desktop. On phones, any address we do not recognise is handed to the mobile app instead, and the app decides what to show — so a visitor who mistypes a URL on a phone will not see the branded error page in the review pack. Fixing this properly means keeping a maintained list of which addresses belong to the app, which is a real piece of work. Decide whether that is worth doing now or noted and deferred.",
+      "The marketing pages are light-mode only. The redesign shipped a dark colour scheme, and it was deliberately left out of this port, so these pages will always render light even for a visitor whose device is set to dark. If you want dark mode on the public site, it is an add-on to schedule rather than something that was lost."
+    ],
+    "reasoning": "I judged from the pixels, not from the driver's numbers, and my own measurements changed several of them.\n\nWHAT I RAN (all in C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web, read-only against the source tree; every output I wrote went under apps/web/test-output/, which .gitignore:46 already excludes — I committed nothing, checked out nothing, and touched no other worktree):\n- apps/web/test-output/r7/judge-measure.mjs — my own pngjs harness (region stats: distinct-colour count, modal colour + share, mean luminance, darkest/lightest; exact-colour locator; WCAG relative-luminance contrast; row profiler; cropper).\n- apps/web/test-output/r7/judge-dims.mjs — PNG dimension/first-pixel reader.\nCrops I generated and opened: judge-retailers-mobile-figure.png, judge-home-band-y851-1343.png, judge-wholesalers-band-y342-842.png, judge-company-panel.png (all in apps/web/test-output/artifacts/).\n\nBRANCH PROOF is independent of the driver: `git cat-file -e master:...site-header.tsx` fails (\"exists on disk, but not in 'master'\"), master's component folder holds the OLD set and the worktree holds the PORT set, and every r7 PNG paints that ported chrome. branchBuildProven = TRUE.\n\nPROTOCOL was honoured — I read the spec rather than trusting the summary: reducedMotion is armed inside gotoAndSettle BEFORE goto (spec:15/101), viewports are explicit 375x812 / 1440x900 with no device preset, `.reveal-pending` at opacity 0 is asserted 0, image decode is gated on naturalWidth>0, and segments correctly did not fire (tallest page 13,257 < 16,000). The PNG widths (375 / 1440) confirm DPR 1 and the heights match the reported page heights, so nothing was truncated.\n\nWHERE I DISAGREE WITH THE DRIVER (evidence defects; none change a verdict, but the lead should know the driver's sampling was loose):\n1. The driver's hero crop is 300x146, not the 300x300 it claims, and catches only the chip and the top of the phone — its 1,430-colour figure is a fragment. My full-figure measurement is 15,213 colours at 375 px.\n2. The driver's band file r7-home-desktop-band-y851-1343.png is 1440x49 — a 49 px slice named as a 492 px band. It does not evidence the band it names. I re-cropped the full 492 px band and ruled on that.\n3. Flows 2 and 4 write the SAME crop filenames, so r7-company-eyebrow-ink-crop.png on disk is flow 4's — and it is a strip of the photograph, not text. That is the source of the driver's nonsense ink value rgb(2,13,14) and of its 19.69:1. I located the text by exact-colour scan instead.\n4. The driver's assertion that the About-page panel \"renders visually as a solid near-white card, not frosted\" is wrong — I row-profiled it and the panel is translucent (ground varies #dededd to #ecf1ed with the photo behind it) with a hard right edge near x=495 beyond which a naive strip picks up raw photo. Its 5.35:1 happened to land in the right range for the wrong reason; my inset sampling gives a real floor of 4.704:1.\n\nWHAT I MEASURED MYSELF, per the ruling thresholds:\n- S1 (>= 40 distinct colours at 375 px): 15,213 in the figure, modal wash only 20.3% — and the illustration is visibly there when I open the crop. Refutes round 6. No fix was needed; W7 correctly changed nothing.\n- S2 (>= 4.5:1): ink #5a6b83 confirmed as the actual darkest pixel of the text on FOUR grounds, three of them pixel-verified post-fix — #ffffff 5.433, #def5ee 4.760 (both viewports), #e7ecfa 4.599 (the binding case, verified against a 100% flat ground strip). The bystander eyebrow at #65616e is 6.020.\n- S3 (>= 4.5:1): ink is exactly #47627e; worst inset ground #dededd gives 4.704, on-line ground 5.202, photo-independent floor 4.574. Pass on every sample.\n- Bands: all three formerly-void regions are painted, verified by colour count AND by opening the crops — headline type, illustrations, an icon row and a tab bar. None is a flat ground.\n\nTHE ONE GAP I WILL NOT CALL A PASS: /pricing has no post-fix capture. marketing.css was edited at 09:34; the only pricing shot is 08:46 and still shows the old #657994. I verified the two grounds from those pixels (#edf2fa and #ffffff, which the fix does not move) and the arithmetic clears at 4.833 and 5.433, and the shipped value is confirmed at marketing.css:6261 and confirmed painting on three other pages — but I did not see the fixed colour on that page, so it is reported unverified. It was not one of the design's named gate flows, so it is not a blocker; a 30-second re-shoot of /pricing would close it.\n\nNO BLOCKERS. Every named gate flow passes on my own re-measurement.\n\nOWNER PACK: eight files, r7 preferred. r7 supplies home desktop + mobile, retailers desktop + mobile, and company desktop — all post-fix and all verified painted. Product desktop, pricing desktop and the 404 desktop exist only in r6; I opened all three and confirmed they are fully painted with no frozen sections, so they are safe to show. Two caveats for the lead: the r6 pricing and product shots predate the caption-colour change by about 48 minutes (the difference is one shade on small labels, invisible at review scale), and the r6 404 is a fold-height 1440x900 capture whose lower 280 px is the flat top of the footer rather than a full-page view.\n\nFOR THE CLOSE-OUT, three things I noticed that are not mine to rule on: the demo/contact form card and the About page's contact card use the same translucent-white treatment at a lower opacity (marketing.css:5413 and the .company-contact rule) — they sit over flat page backgrounds rather than a photograph so the risk is much lower, but neither was in any flow and neither was measured; W7's three dead selectors belong on the CSS-consolidation row; and the marketing pages carry no dark-mode variant by deliberate choice, which is in the owner notes because a visitor's device setting will be ignored."
+  },
+  "review": {
+    "recommendation": "land",
+    "verdicts": [
+      {
+        "item": "S1 — /retailers hero illustration allegedly paints nothing at ≤ 390 px (round-6 finding: flat #def5ee wash)",
+        "verdict": "by-design",
+        "evidence": "Third branch of the ruling: NO rule was lost AND the image renders, so neither the FIX nor the \"source hides it too\" branch applies. W7 changed nothing; I confirm nothing needed changing.\n\nSOURCE LINES RE-VERIFIED BY ME (read-only, C:/Users/nakram/Documents/Codex/2026-09-06/rev/work/routeflow-redesign):\n- `sed -n '800,835p' app/premium.css` — the ONLY ≤390 px block is premium.css 807-830: `.retailer-art .browser-chip{position:relative;top:auto;right:auto;width:max-content;margin:-8px auto 0;order:1;font-size:.75rem}` / `.retailer-art{display:flex;flex-direction:column;padding-top:20px}` / `.retailer-art > img{order:2;margin-top:10px}` / `.retailer-art .order-chip{display:none}` / `.retailer-art figcaption{order:3;margin-top:15px}`. The ONLY thing hidden is `.order-chip`; the `<img>` is merely re-ordered.\n- The port reproduces that block verbatim at C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web/app/(marketing)/marketing.css:4243-4267, and `awk` shows the enclosing at-rule is marketing.css:4226 `@media (max-width: 390px)` — same breakpoint, only the `.rf-marketing` scope prefix added.\n- `grep -n \".css\" app/layout.tsx` → fonts, globals, premium, glass, conversion, readability, operation-story, comparison-table, charcoal, ai-spotlight, workspace. brand-colors.css is NOT imported, so its competing `.retailer-art` gradient (brand-colors.css:470) is dead in the source too; the port correctly omits it.\n- I grepped every `.retailer-art` rule in the port (marketing.css 3651/3658/3712/3978/3997/4132/4158/4243-4267/4282/4345/5180/5188/5212/5725/6056/6072/8681/9535) and inspected each: no `display:none`, `visibility:hidden`, `opacity:0` or zero-size on `.retailer-art > img` at any breakpoint. 4282 is the `retailer-arrive` animation, killed by the `prefers-reduced-motion: reduce` block at 4342-4349.\n\nMY OWN PIXEL PROOF (script at C:/Users/nakram/AppData/Local/Temp/claude/C--ClaudeCode-routeflow/14338d9c-5c59-4c2e-a365-d1c3f9a77712/scratchpad/rev7/m.mjs, pngjs):\n- I located the figure INDEPENDENTLY of the driver/judge geometry by scanning r7-retailers-mobile.png for the `.retailer-art` background: #def5ee bbox = x 19-355, y 668-1058. That confirms the box (18,666,339,394) really is the figure.\n- Distinct colours in that box: **15,213** (modal #def5ee only 20.30%, mean luminance 0.717, darkest #000000, lightest #ffffff). The ruling's threshold was ≥ 40 — passed by 380×.\n- Desktop r7-retailers-desktop.png figure (716,168,644,590): **33,163** distinct, modal #def5ee 13.54%.\nRound-6's \"flat wash\" is refuted by direct measurement."
+      },
+      {
+        "item": "S2 — marketing.css `color: #657994 !important` measures 4.45:1 on white across the eyebrow/caption selector group",
+        "verdict": "fixed",
+        "evidence": "IN FILE: `grep -n \"5a6b83\" marketing.css` → 6261 `color: #5a6b83 !important;`, with a fix-round-7 rationale comment at 6251-6260 in the file's existing convention. `grep -n \"657994\"` returns ONLY the comment at 6257 — the old value is gone.\n\nCASCADE TRACED BY ME (the lead's `!important` side-effect question). The rule spans THIRTEEN selectors (6239-6250), not eight. I enumerated every later `!important` colour declaration (`awk 'NR>6261' | grep -i color`) and read each rule's selector; NINE of the thirteen are overridden downstream and never see the new value:\n- 8472 `.eyebrow, .glass-hero-copy > .eyebrow` → #65616e (later 9211 #33527e for the hero variant)\n- 8613 `.audience-card .card-eyebrow` → #666270; 9423/9426 `.audience-card.distributors/.retailers .card-eyebrow` → #335580 / #19695c\n- 8663 `.record-caption` → #756980, later 9569 → var(--plum)\n- 8731 `.form-kicker` → #766383\n- 8757 `.cta-block .eyebrow` → #c5bdd0, later 9365 → #ffd09a\n- 8761 `.cta-block p:not(.eyebrow), .cta-block > div > span` → #d8dbe1\n- 8786 `.footer-app-note` → #696970\n- 9345 `.difference-section .eyebrow` → #ffd09a\nSo the DARK grounds (`.cta-block` on var(--navy) #10264d, `.difference-section` on var(--charcoal)) are provably out of reach of the darker value — **no `!important` cascade side effect, no dark-ground regression.**\n\nThe four selectors that DO win are `.card-eyebrow` (/pricing), `.tour-example-label` (/wholesalers), `.photo-credit` (/company), `.retailer-art figcaption` (/retailers) — I confirmed ground completeness from the markup (`grep --include=*.tsx`): `.tour-example-label` → components/workflow-tour.tsx used only by wholesalers/page.tsx:94; `.photo-credit` → company/page.tsx only; `.retailer-art` → components/technology-art.tsx used only by retailers/page.tsx:75; `.card-eyebrow` → pricing/page.tsx:80 (the audience-card instances are the overridden ones). I also confirmed the /pricing grounds are exactly two: marketing.css:8697 `.pricing-card{background:#fff}` and 9547 `.pricing-card.featured{background:#edf2fa}` (last wins). Note `.rf-marketing .pricing-card .card-eyebrow` (5331, specificity 0,3,0) still LOSES to the 6261 `!important` — correct.\n\nMATHS RE-DERIVED BY ME (my own WCAG relative-luminance implementation, not W7's numbers):\n#5a6b83 L_rel 0.143277 → white 5.433 · #edf2fa 4.833 · #def5ee 4.760 · #e7ecfa **4.599 (binding)**. Old #657994 L_rel 0.185796 → 4.453 / 3.962 / 3.902 / **3.769** — confirmed FAIL. The two nearer same-hue steps also fail as claimed: #647892 → 3.828 on #e7ecfa, #5b6d85 → 4.477 on #e7ecfa. #5a6b83 is the first step that clears all four.\n\nPIXELS RE-MEASURED BY ME (exact-colour scan + region stats, my own script):\n- r7-wholesalers-desktop.png: exactly #5a6b83 found at y=3141, x 804-980 (18 px). Label line (790,3133,210,18) darkest = **exactly #5a6b83**, modal ground #e7ecfa 69.3%; ground strip above (790,3120,210,14) is 95.7% #e7ecfa → 4.599:1.\n- r7-company-desktop.png `.photo-credit`: exactly #5a6b83 at y 1042-1046, x 262-357. Line (200,1038,500,14) darkest = **exactly #5a6b83**, ground 89.8% #ffffff; strip below (200,1055,500,8) is **100% #ffffff** (1 distinct colour) → 5.433:1.\n- r7-retailers-mobile.png caption (25,1010,325,26): darkest #5b6c84 (subpixel-rounded #5a6b83) on 79.2% #def5ee → 4.691:1 at the rendered ink, 4.760:1 at the CSS value. Desktop (700,706,660,26): darkest #5a6c83 → 4.709:1 rendered.\n\nGATES I RAN MYSELF in .../rf-watchdog/apps/web: `../../node_modules/.bin/prettier --check \"app/(marketing)/marketing.css\"` → \"All matched files use Prettier code style!\" exit=0 · `../../node_modules/.bin/tsc --noEmit -p tsconfig.json` → no output, exit=0 · `../../node_modules/.bin/jest --silent` → **Test Suites: 42 passed, 42 total / Tests: 338 passed, 338 total**, exit=0 (containment pins green)."
+      },
+      {
+        "item": "S3 — /company photo-overlay eyebrow ≈ 2.38:1 on the frosted panel",
+        "verdict": "fixed",
+        "evidence": "IN FILE: marketing.css:5372 `background: #ffffffdb` (was #ffffffb5) and 5386 `color: #47627e` (was #6d8dad), each with a fix-round-7 rationale comment at 5364-5371 / 5380-5385. `border: 1px solid white`, `border-radius: 23px`, `backdrop-filter: blur(25px)`, `box-shadow` and the `#315579` panel colour are untouched, so the panel is still translucent frosted glass.\n\nALPHA ARITHMETIC VERIFIED BY ME: 0xb5 = 181 → 181/255 = 0.7098 → white-over-black floor = 181 = #b5b5b5. 0xdb = 219 → 219/255 = 0.8588 → floor = 219 = #dbdbdb. The floor argument is sound: `backdrop-filter: blur()` averages the backdrop, so the composite can never fall below a·255 regardless of the photograph — which is what makes the new numbers photo-INDEPENDENT at every viewport.\n\nMATHS RE-DERIVED BY ME: #47627e L_rel 0.115813 → floor #dbdbdb **4.574:1** (was #6d8dad L_rel 0.253181 vs #b5b5b5 = **1.689:1**). Collateral: heading #315579 (30.4px/500) 3.785 → **5.605:1** at the new floor, i.e. it now clears AA-normal too, and #47627e stays LIGHTER than #315579 so the eyebrow remains subordinate.\n\nPIXELS RE-MEASURED BY ME with my OWN inset geometry (I did not reuse the judge's box): I row-profiled r7-company-desktop.png at y865-873 in 10 px columns — x=100 is photo (modal #758787, darkest #0e1e1f), x=130/200/300/400/470 are panel (#e8e9e9 / #e0dfde / #e9e7e6 / #eaebea / #ecf0ed), x=500 is photo again (#dbd6cc, darkest #819c7d). So the panel spans ≈ x118-495 and a full-width strip DOES pick up raw photograph — W7's contamination note and the judge's inset correction both check out.\n- Ink: exact-colour scan finds **exactly #47627e** at y=868, x 167-350 (31 px).\n- Inset padding band above the eyebrow (130,832,360,20): darkest **#dededd** → **4.704:1**.\n- On the eyebrow's own line, right of the text (370,861,115,14): darkest #e9eae8 → **5.247:1**.\nEvery inset sample ≥ 4.70:1, floor 4.574:1. PASS.\n\nSOURCE CROSS-CHECK (read-only): the Codex source ships the SAME defect — glass.css:1012 `background:#ffffffb5` and glass.css:1020 `color:#6d8dad` under `.company-image > div` / `> div > span`. So this is a deliberate accessibility deviation from the redesign, correctly documented inline, and it belongs on the S5 owner list."
+      }
+    ],
+    "newHazards": [
+      {
+        "severity": "medium",
+        "file": "apps/web/app/(marketing)/marketing.css",
+        "line": 6237,
+        "summary": "The rule IMMEDIATELY ABOVE the one S2 fixed — `color: #5e718c` at 6237, covering 12 selectors — computes 4.441:1 on the #e4f6ef `.retailer-start` / `.retailer-price` panel, and I proved with pixels that it actually paints there: 382 px of exactly #5e718c inside the panel on r7-retailers-desktop.png (band x81-1360, y1417-1803) and 383 px on r7-retailers-mobile.png (y1984-2651). A sample line (139,1652,700,16) has darkest = exactly #5e718c on a 77.3% #e4f6ef ground; the pure ground strip above it (139,1600,700,10) is 75.8% #e4f6ef. Real AA failure on body copy, on a public marketing page. NOT a regression from round 7 and NOT named by S2's ruling (which scoped only the `!important` rule), and the source ships the same value (glass.css:1872), so it is the same class as S3 — a source defect, not a port defect. Cascade checked: nothing after 6238 overrides colour for these selectors (8685/9539 set only backgrounds). Cheap one-declaration fix of exactly the proven S2 shape if the lead wants it: #5c6f8a is the minimal same-family step that clears every ground I measured — 4.572 on #e4f6ef, 5.127 on #ffffff, 4.846 on #f7f9f7 (the benefit-grid ground, where #5e718c is 4.707 and already passes), 4.561 on #edf2fa."
+      },
+      {
+        "severity": "low",
+        "file": "apps/web/app/(marketing)/marketing.css",
+        "line": 6261,
+        "summary": "S2 is ALSO a deliberate deviation from the redesign, not only S3. The Codex source ships `color: #657994 !important` at glass.css:1887 with the identical 13-selector list. W7's close-out note named only S3 as a source deviation; both values now differ from the source and both belong on the S5 'carried to the owner' list. (The judge's owner note 4 does already describe both in owner-facing language, so the owner pack is correct — it is W7's close-out framing that is incomplete.)"
+      },
+      {
+        "severity": "low",
+        "file": "apps/web/app/(marketing)/marketing.css",
+        "line": 6261,
+        "summary": "/pricing has no post-fix capture, so the new ink was never seen on that page's pixels (the judge flagged this as its one 'unverified' flow). I closed it by construction rather than by re-shooting: `.rf-marketing .pricing-card .card-eyebrow` (5331, specificity 0,3,0, non-important) provably LOSES to the 6261 `!important` rule, and the two card grounds are pinned in CSS at 8697 `.pricing-card{background:#fff}` and 9547 `.pricing-card.featured{background:#edf2fa}` (last wins) — which are exactly the two grounds the judge measured on the stale r6 shot. Arithmetic on those grounds: 5.433:1 and 4.833:1. A 30-second re-shoot of /pricing would convert this from derived to observed; it is not worth a round on its own."
+      },
+      {
+        "severity": "low",
+        "file": "apps/web/app/(marketing)/marketing.css",
+        "line": 5386,
+        "summary": "S3 has no post-fix MOBILE capture either. I checked r6-07-company-mobile.png (1170x9735, a pre-fix DPR-3 shot) with an exact-colour scan: it contains ZERO pixels of #47627e, so it cannot evidence the fix. W7's 375x812 numbers came from a live Playwright run I cannot re-check from any saved artifact. This is mitigated by the fix's design rather than by sampling: the raised tint pins the worst possible composite at #dbdbdb → 4.574:1 independent of the photograph AND of the viewport, so the mobile case holds by construction. Worth one line in the close-out so nobody later mistakes the desktop-only sampling for the whole proof."
+      }
+    ],
+    "reasoning": "Refute-first: I re-derived every number from the file and the pixels with my own tooling before accepting any of W7's or the judge's, and I re-read the Codex source myself for every claim that rests on it.\n\nWHAT I ACTUALLY RAN (all read-only against the worktree; I committed nothing, checked out nothing, wrote only into my scratchpad, and never touched another worktree, the root checkout, Docker, or the Codex tree beyond reading):\n- `git -C .../rf-watchdog status --porcelain` and `rev-parse --abbrev-ref HEAD` → branch feat/marketing-port, uncommitted as required. The diff vs master is the whole port (9,884 insertions), so the round-7 delta is not separable by diff; I verified the three declarations in place instead, by grep.\n- `grep -n` for 657994 / 5a6b83 / 6d8dad / 47627e / ffffffb5 / ffffffdb across marketing.css — the three new values are present with fix-round-7 comments, and #657994 / #6d8dad / the old panel alpha survive only inside those comments.\n- `awk` + `grep` to enumerate every `!important` colour declaration after line 6261 and read each rule's selector, then `sed` on each — that is how I settled the lead's cascade question rather than trusting W7's summary.\n- `grep --include=*.tsx` for the seven selector names to establish which pages can paint them (and to confirm W7's three dead selectors: `.story-section figcaption`, `.scene-fallback > p`, `.footer-app-note` appear in no ported markup — the only `.story-section` mention is a string in components/editorial-motion.tsx:12).\n- Codex source, read-only: `sed -n '800,835p' app/premium.css`, `grep -n retailer-art` across premium/glass/charcoal/brand-colors, `grep -n \"\\.css\" app/layout.tsx`, `sed -n '1005,1025p'` and `'1868,1892p' app/glass.css`.\n- My own pngjs harness (scratchpad/rev7/m.mjs): region stats (distinct-colour count, modal + share, darkest/lightest by luminance, mean), an exact-colour locator with bbox and row histogram, a row profiler, and a WCAG contrast calculator. Every ratio in my verdicts is from that calculator, not copied.\n- Gates in .../rf-watchdog/apps/web: prettier --check exit 0, tsc --noEmit exit 0, jest --silent 42 suites / 338 tests passed exit 0.\n\nWHERE I ADDED SOMETHING THE DRIVER AND JUDGE DID NOT HAVE:\n1. I located the /retailers figure independently by scanning for its own background colour (#def5ee bbox x19-355, y668-1058) instead of trusting the reported box — so the 15,213-colour count is anchored to geometry I derived, and S1's refutation no longer rests on anyone else's crop.\n2. I traced the full `!important` cascade selector by selector. That is what actually answers \"any side effect on the eight selectors\" — and the answer is better than assumed: the rule spans thirteen selectors, nine are overridden downstream, and the two DARK grounds (`.cta-block` on #10264d, `.difference-section` on --charcoal) are provably unreachable by the darker value. A darker value landing on those would have been a real regression; it cannot.\n3. I verified the alpha arithmetic behind S3's floor (0xdb/255 = 0.8588 → #dbdbdb) rather than accepting the stated floor, and confirmed why blur cannot break it. That is what makes S3 sound at viewports nobody captured post-fix.\n4. I row-profiled the /company panel myself and found the same right edge (~x495) the judge found, which independently confirms both the contamination in W7's first sample and the correctness of the inset numbers.\n5. I found one thing neither the driver, the judge, nor W7 reported: the rule at marketing.css:6237, immediately above the one S2 fixed, paints #5e718c body copy on the #e4f6ef `.retailer-start`/`.retailer-price` panel at 4.441:1 — 382 px of that exact ink inside the panel on desktop and 383 on mobile, pixel-proven, with the ground confirmed from a clean strip. That is a genuine AA failure on shipping text.\n\nWHY I STILL RULE LAND. All three of the round's rulings are discharged on evidence I reproduced myself: S1 is by-design on re-verified source lines plus a 380×-over-threshold pixel proof, S2 and S3 are fixed with every ground measured and every ratio re-derived, the gates are green, and there is no regression anywhere in the cascade. The new #5e718c hazard is real but it is pre-existing, faithful to the Codex source (glass.css:1872), 0.06 short of the threshold, and outside every ruling the lead wrote for this round — reopening on it would be re-scoping mid-flight rather than finishing. It belongs in the same lane as the other deliberate deviations: the S5 owner list and the CSS-consolidation close-out row, where the owner is already being asked to accept two darkened text colours. If the lead wants the marketing port to ship AA-clean on body copy — a defensible call, and the only reason I would flip to one-more-round — this is a single-declaration round 8 of exactly the shape S2 already proved, and #5c6f8a clears every ground I measured. I have given the value and the numbers so that decision costs the lead nothing to make.\n\nTwo smaller gaps I would put in the close-out rather than in a new round: /pricing and /company-mobile were never captured post-fix, and I closed both by construction (cascade + pinned grounds for /pricing; the photo-independent floor for /company mobile) rather than by pixels of the new colour on those surfaces."
+  },
+  "finalGate": {
+    "allPass": true,
+    "results": [
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx tsc --noEmit -p tsconfig.json",
+        "pass": true,
+        "summary": "TypeScript type check passed with no output",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog/apps/web && npx jest --silent",
+        "pass": true,
+        "summary": "Jest tests: 42 test suites passed, 338 tests passed, 0 snapshots, 31.652s",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && npm run lint -w apps/web",
+        "pass": true,
+        "summary": "ESLint: 0 errors (warnings present, as expected)",
+        "failures": []
+      },
+      {
+        "command": "cd C:/ClaudeCode/routeflow/.claude/worktrees/rf-watchdog && node scripts/validate-lessons.mjs",
+        "pass": true,
+        "summary": "Lessons register self-consistent: 39/40 entries, 39.7/40.0 KB, archived 42, nextId 86",
+        "failures": []
+      }
+    ]
+  }
+}

@@ -1,42 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { Estimate, EstimateStatus } from "@routeflow/types";
 
 // ─── Types (mirror apps/web/lib/api/estimates.ts) ───────────────────────────────
 
-export type EstimateStatus = "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED" | "EXPIRED" | "CONVERTED";
-
-export interface EstimateItem {
-  id: string;
-  productId?: string;
-  product?: { id: string; name: string; unit?: string };
-  description: string;
-  qty: number;
-  unitPrice: number;
-  subtotal?: number;
-  total?: number;
-  priceType?: "STANDARD" | "SPECIAL" | "DISCOUNTED";
-  originalPrice?: number;
-  boxes?: number;
-  pieces?: number;
-}
-
-export interface Estimate {
-  id: string;
-  estimateNumber: string;
-  customerId: string;
-  customer?: { id: string; businessName: string; contactName?: string; address?: string };
-  status: EstimateStatus;
-  expiresAt?: string;
-  subtotal: number;
-  taxAmount?: number;
-  discount?: number;
-  total: number;
-  notes?: string;
-  terms?: string;
-  items: EstimateItem[];
-  createdAt: string;
-  updatedAt: string;
-}
+/**
+ * Wave E / imp-10b, L-072 (sibling-sweep find): was a hand-typed local union
+ * with a phantom `"EXPIRED"` value the Prisma schema has never had
+ * (`DRAFT|SENT|ACCEPTED|DECLINED|CONVERTED`) — the API can never return it, so
+ * every `case "EXPIRED"` branch reading this type was dead code. Now imported
+ * from `@routeflow/types`, pinned to the schema by `enum-parity.spec.ts`.
+ */
+export type { Estimate, EstimateItem, EstimateStatus } from "@routeflow/types";
 
 interface PaginatedResponse<T> {
   data: T[];

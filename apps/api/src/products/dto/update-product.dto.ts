@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  Min,
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { CostingMethod } from "@prisma/client";
@@ -16,6 +17,18 @@ import {
   emptyToUndefined,
   toOptionalDecimalString,
 } from "../../common/dto-transforms";
+
+/**
+ * MSRP-specific transform: "" / null → null (explicit clear, same convention as
+ * unitSku's emptyToNull below) while still coercing a bare JS number (mobile
+ * sends msrp as a number, not a string) to the decimal string @IsDecimal() wants.
+ */
+const toOptionalMsrp = ({ value }: { value: unknown }) =>
+  value == null || (typeof value === "string" && value.trim() === "")
+    ? null
+    : typeof value === "number" && Number.isFinite(value)
+      ? String(value)
+      : value;
 
 export class UpdateProductDto {
   @IsOptional() @IsString() name?: string;
@@ -38,7 +51,14 @@ export class UpdateProductDto {
   @IsOptional() @IsArray() @IsString({ each: true }) imageKeys?: string[];
   @IsOptional() @IsEnum(CostingMethod) costingMethod?: CostingMethod;
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() standardCost?: string;
+  // MSRP (suggested retail price) — per PIECE, display-only, never money math.
+  // Flag-gated service-side (flag.msrp); "" clears an existing value (emptyToNull
+  // ⇒ an explicit null write); 0 is normalized to null service-side too.
+  @IsOptional() @Transform(toOptionalMsrp) @IsDecimal() msrp?: string | null;
   @IsOptional() @IsInt() unitsPerBox?: number;
+  // Low-stock thresholds (B858: the CSV import updates them through this DTO, never raw prisma).
+  @IsOptional() @IsInt() @Min(0) reorderPoint?: number;
+  @IsOptional() @IsInt() @Min(0) reorderQty?: number;
   // Tolerant tiers: "" → absent, numbers coerced to strings ("" used to 400 the
   // whole save — see fix/tier-pricing-save).
   @IsOptional() @Transform(toOptionalDecimalString) @IsDecimal() priceTier2?: string;

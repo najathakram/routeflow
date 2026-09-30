@@ -4,10 +4,16 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Clock, ChevronRight } from "lucide-react";
-import { PageHeader, Badge } from "@routeflow/ui/web";
+import { PageHeader, Badge, Button } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useRouteRuns, type RouteRun } from "@/lib/api/routes";
 import { useDrivers, type Driver } from "@/lib/api/drivers";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+// `scheduledDate` is a CALENDAR date stored at UTC midnight, so it must be
+// rendered with fmtCalendarDate (timeZone: "UTC"). A local-time render shows
+// the PREVIOUS day for every negative-offset viewer — which would make this
+// card lie about exactly the thing it was added to disambiguate.
+import { fmtCalendarDate } from "@/lib/formatting";
 
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
@@ -58,7 +64,7 @@ function CardShell({ title, children }: { title: string; children: React.ReactNo
   );
 }
 
-function ActiveNowCard() {
+function ActiveNowCard({ bothFeatures }: { bothFeatures: boolean }) {
   const { data, isLoading, isError } = useRouteRuns(
     { activeOnly: true, limit: 100 },
     { refetchInterval: 30_000 },
@@ -66,9 +72,9 @@ function ActiveNowCard() {
   const runs = data?.data ?? [];
 
   return (
-    <CardShell title="Active Now">
+    <CardShell title="Active & Upcoming Runs">
       {isLoading ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
           {[1, 2, 3].map((i) => (
             <div
               key={i}
@@ -83,7 +89,7 @@ function ActiveNowCard() {
       ) : runs.length === 0 ? (
         <p className="text-sm text-navy/70">No active runs right now.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
           {runs.map((run) => {
             const { done, total } = stopProgress(run);
             const driverName = run.driver?.contactName ?? "Unassigned";
@@ -96,7 +102,14 @@ function ActiveNowCard() {
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-navy">{routeName}</p>
+                    <p className="flex items-center font-semibold text-navy">
+                      <span className="min-w-0 truncate">{routeName}</span>
+                      {bothFeatures && run.route?.kind === "ADHOC" ? (
+                        <span className="ml-2 shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
+                          Delivery
+                        </span>
+                      ) : null}
+                    </p>
                     <p className="mt-0.5 truncate text-sm text-navy/70">{driverName}</p>
                   </div>
                   {statusBadge(run.status)}
@@ -112,6 +125,7 @@ function ActiveNowCard() {
                     </span>
                   )}
                 </div>
+                <p className="text-xs text-navy/70">{fmtCalendarDate(run.scheduledDate)}</p>
                 <Link
                   href={`/routes/${run.id}/dispatch`}
                   className="inline-flex items-center justify-center gap-1 rounded-lg border border-surface-border bg-white px-3 py-1.5 text-xs font-medium text-navy transition-colors hover:bg-surface-raised"
@@ -132,10 +146,14 @@ function TodaysScheduleCard({
   runs,
   isLoading,
   isError,
+  bothFeatures,
+  emptyCopy,
 }: {
   runs: RouteRun[];
   isLoading: boolean;
   isError: boolean;
+  bothFeatures: boolean;
+  emptyCopy: string;
 }) {
   const router = useRouter();
 
@@ -155,7 +173,7 @@ function TodaysScheduleCard({
           <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
         </div>
       ) : runs.length === 0 ? (
-        <p className="text-sm text-navy/70">Nothing scheduled today.</p>
+        <p className="text-sm text-navy/70">{emptyCopy}</p>
       ) : (
         <ul className="divide-y divide-surface-border">
           {runs.map((run) => {
@@ -176,7 +194,14 @@ function TodaysScheduleCard({
                 className="flex cursor-pointer items-center justify-between gap-3 py-3 transition-colors hover:bg-surface-raised/50"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-navy">{routeName}</p>
+                  <p className="flex items-center text-sm font-medium text-navy">
+                    <span className="min-w-0 truncate">{routeName}</span>
+                    {bothFeatures && run.route?.kind === "ADHOC" ? (
+                      <span className="ml-2 shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-600 ring-1 ring-brand-200">
+                        Delivery
+                      </span>
+                    ) : null}
+                  </p>
                   <div className="mt-0.5 flex items-center gap-2 text-xs text-navy/70">
                     {driverName ? (
                       <span className="truncate">{driverName}</span>
@@ -265,6 +290,21 @@ export default function DispatchPage() {
     setTitle("Dispatch");
   }, [setTitle]);
 
+  const router = useRouter();
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
+  const showRoutes = routesAccess;
+  const showDelivery = deliveryAccess;
+  const bothFeatures = showRoutes && showDelivery;
+
+  const subtitle = bothFeatures
+    ? "Today's routes, deliveries, and driver status."
+    : showDelivery
+      ? "Today's deliveries and driver status."
+      : "Today's runs and driver status across the operation.";
+  const scheduleEmptyCopy =
+    showDelivery && !showRoutes ? "No deliveries scheduled today." : "Nothing scheduled today.";
+
   const today = todayLocalISO();
   const {
     data: todaysData,
@@ -277,13 +317,24 @@ export default function DispatchPage() {
     <div className="space-y-6 p-6">
       <PageHeader
         title="Dispatch"
-        subtitle="Today's runs and driver status across the operation."
+        subtitle={subtitle}
+        action={
+          showDelivery ? (
+            <Button onClick={() => router.push("/deliveries/new")}>Plan delivery</Button>
+          ) : undefined
+        }
       />
 
-      <ActiveNowCard />
+      <ActiveNowCard bothFeatures={bothFeatures} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <TodaysScheduleCard runs={todaysRuns} isLoading={todaysLoading} isError={todaysError} />
+        <TodaysScheduleCard
+          runs={todaysRuns}
+          isLoading={todaysLoading}
+          isError={todaysError}
+          bothFeatures={bothFeatures}
+          emptyCopy={scheduleEmptyCopy}
+        />
         <DriversCard todaysRuns={todaysRuns} />
       </div>
     </div>

@@ -5,6 +5,7 @@ import { BullModule } from "@nestjs/bull";
 import { ScheduleModule } from "@nestjs/schedule";
 import { ThrottlerModule, ThrottlerGuard } from "@nestjs/throttler";
 import { RedisThrottlerStorage } from "./common/redis-throttler.storage";
+import { buildThrottlers } from "./common/throttlers";
 
 import { configuration } from "./config/configuration";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -20,6 +21,7 @@ import { DriversModule } from "./drivers/drivers.module";
 import { ProductsModule } from "./products/products.module";
 import { PromotionsModule } from "./promotions/promotions.module";
 import { RoutesModule } from "./routes/routes.module";
+import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
@@ -33,6 +35,7 @@ import { AnalyticsModule } from "./analytics/analytics.module";
 import { CreditNotesModule } from "./credit-notes/credit-notes.module";
 import { EstimatesModule } from "./estimates/estimates.module";
 import { VendorBillsModule } from "./vendor-bills/vendor-bills.module";
+import { SupplierStatementsModule } from "./supplier-statements/supplier-statements.module";
 import { ReturnsModule } from "./returns/returns.module";
 import { MessagesModule } from "./messages/messages.module";
 import { MessagingModule } from "./messaging/messaging.module";
@@ -41,15 +44,27 @@ import { SuppliersModule } from "./suppliers/suppliers.module";
 import { RecurringInvoicesModule } from "./recurring-invoices/recurring-invoices.module";
 import { ImportModule } from "./import/import.module";
 import { EmailModule } from "./email/email.module";
+import { MailboxModule } from "./email/mailbox/mailbox.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
 import { BillingModule } from "./billing/billing.module";
+import { FeatureConfigModule } from "./billing/feature-config.module"; // feature grants v2 brief C (PR-4)
+import { StripeConnectModule } from "./stripe-connect/stripe-connect.module";
+import { PaymentRequestsModule } from "./payment-requests/payment-requests.module";
 import { BuyerModule } from "./buyer/buyer.module";
 import { TobaccoModule } from "./tobacco/tobacco.module";
 import { DraftsModule } from "./drafts/drafts.module";
 import { TrackedCategoriesModule } from "./tracked-categories/tracked-categories.module";
+import { RestrictionsSettingsModule } from "./restrictions-settings/restrictions-settings.module";
+import { ProductCategoriesModule } from "./product-categories/product-categories.module";
+import { SellingRestrictionsAdminModule } from "./selling-restrictions-admin/selling-restrictions-admin.module";
 import { RegulatedModule } from "./regulated/regulated.module";
 import { AuthorizationsModule } from "./authorizations/authorizations.module";
+import { SellingRestrictionsModule } from "./selling-restrictions/selling-restrictions.module";
+import { CommissionsModule } from "./sales-agents/commissions.module";
+import { CrmModule } from "./crm/crm.module";
+import { DemoBookingModule } from "./demo-booking/demo-booking.module";
+import { OnboardingModule } from "./onboarding/onboarding.module";
 
 import { TenantStatusGuard } from "./tenant/tenant-status.guard";
 import { ImpersonationGuard } from "./auth/guards/impersonation.guard";
@@ -82,7 +97,7 @@ import { AppService } from "./app.service";
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        throttlers: [{ ttl: 60_000, limit: 100 }],
+        throttlers: buildThrottlers(config),
         storage: new RedisThrottlerStorage(config),
       }),
     }),
@@ -120,6 +135,7 @@ import { AppService } from "./app.service";
     ProductsModule,
     PromotionsModule,
     RoutesModule,
+    TripsModule,
     OrdersModule,
     BookkeepingModule,
     SystemConfigModule,
@@ -134,6 +150,7 @@ import { AppService } from "./app.service";
     CreditNotesModule,
     EstimatesModule,
     VendorBillsModule,
+    SupplierStatementsModule,
     ReturnsModule,
     MessagesModule,
     MessagingModule,
@@ -142,11 +159,16 @@ import { AppService } from "./app.service";
     RecurringInvoicesModule,
     ImportModule,
     EmailModule,
+    MailboxModule,
     // ─── Platform administration + audit (global) ─────────────────────────────
     PlatformAdminModule,
     AuditModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
+    FeatureConfigModule,
+    // ─── Stripe Connect (tenant's own account) + buyer payment requests ────────
+    StripeConnectModule,
+    PaymentRequestsModule,
     // ─── Buyer Portal (multi-tenant customer identity) ─────────────────────────
     BuyerModule,
     // ─── Tobacco compliance (tobacco_dealer addon) ─────────────────────────────
@@ -155,12 +177,31 @@ import { AppService } from "./app.service";
     DraftsModule,
     // ─── Regulated / tracked categories (Phase 4) ──────────────────────────────
     TrackedCategoriesModule,
+    RestrictionsSettingsModule,
+    ProductCategoriesModule,
+    SellingRestrictionsAdminModule,
     RegulatedModule,
     AuthorizationsModule,
+    SellingRestrictionsModule,
+    // ─── Sales agents & commissions (flag.sales_agents) ───────────────────────
+    CommissionsModule,
+    CrmModule,
+    DemoBookingModule,
+    OnboardingModule,
   ],
   controllers: [AppController],
   providers: [
     AppService,
+    // ─── Guard-order invariant (do not reorder without a security review) ─────
+    // These APP_GUARD providers are global and run on EVERY request, before
+    // JwtAuthGuard — which is applied per-route, by design, not globally. At
+    // this point in the pipeline any JWT claims are UNVERIFIED: a global guard
+    // may read them only to throttle or look up state (e.g. tenant status by
+    // an unverified tenantId), NEVER to authorize a request or grant access.
+    // Real authorization happens later, per-route, once JwtAuthGuard has
+    // verified the token. Changing this order, or adding a new global guard
+    // that authorizes based on unverified claims, is a security-sensitive
+    // change and must be reviewed as one.
     // Global throttle: 100 req / 60 s per IP on every endpoint
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Block SUSPENDED / CANCELLED tenants from making any API calls.

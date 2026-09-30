@@ -1,0 +1,354 @@
+{
+  "seq": 7,
+  "idempotencyKey": "2026-09-14-phase0-t12-t15:Mutation probe:1",
+  "phase": {
+    "phase": "Mutation probe",
+    "ran": true,
+    "agents": 6,
+    "rawFindings": 1,
+    "tokens": 36127,
+    "model": "claude-haiku-4-5 (checksums) + claude-sonnet-5 (probes) + claude-sonnet-5 (remediation on a surviving mutant)",
+    "effort": "low checksums / medium probes",
+    "estUsd": 0.36,
+    "overlappedWith": null,
+    "note": ""
+  },
+  "totals": { "agents": 50, "tokens": null, "estUsd": 10.64 },
+  "findingsBySeverity": { "blocker": 24, "major": 8, "minor": 8 },
+  "findingSummaries": [
+    "Test \"T14-6\" did not fail when apps/web/app/(platform-admin)/admin/dashboard/page.tsx was deliberately broken — it does not actually cover this behavior"
+  ],
+  "mode": "feature",
+  "scale": "major",
+  "startedAt": "2026-09-14T17:15:00Z",
+  "args": {
+    "planPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/build-plan.md",
+    "discoveryPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/discovery.md",
+    "specPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/spec.md",
+    "uxSpecPath": "",
+    "testPlanPath": ".claude/pipeline/2026-09-14-phase0-t12-t15/test-plan.md",
+    "designSystemPath": "",
+    "lessonsPath": ".claude/lessons/LESSONS.md",
+    "workdir": "C:/ClaudeCode/routeflow/.claude/worktrees/rf-phase0d",
+    "runDir": ".claude/pipeline/2026-09-14-phase0-t12-t15"
+  },
+  "resultSoFar": {
+    "mode": "feature",
+    "scale": "major",
+    "startedAt": "2026-09-14T17:15:00Z",
+    "phaseReport": [
+      {
+        "phase": "Baseline",
+        "ran": true,
+        "agents": 3,
+        "rawFindings": 1,
+        "tokens": 42837,
+        "model": "claude-haiku-4-5 (gate/grounding/manifest)",
+        "effort": "low",
+        "estUsd": 0.21,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Author tests",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 0,
+        "tokens": 119169,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 1.19,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Red gate",
+        "ran": true,
+        "agents": 5,
+        "rawFindings": 1,
+        "tokens": 95986,
+        "model": "claude-haiku-4-5 (run) + claude-opus-5 (audit/remediate)",
+        "effort": "low run / high audit / medium remediation",
+        "estUsd": 2.4,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Implement",
+        "ran": true,
+        "agents": 6,
+        "rawFindings": 0,
+        "tokens": 75398,
+        "model": "claude-sonnet-5",
+        "effort": "medium (a package's own effort wins)",
+        "estUsd": 0.75,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Gate & Review",
+        "ran": true,
+        "agents": 9,
+        "rawFindings": 32,
+        "tokens": 144455,
+        "model": "claude-haiku-4-5 (gate/regate) + claude-sonnet-5 (build-fix; claude-opus-5 when the manifest has a HIGH-risk file) + claude-opus-5 (lenses)",
+        "effort": "low gate / high build-fix / deep lenses high (xhigh when any file is HIGH risk) / pattern lenses high",
+        "estUsd": 3.61,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Verify",
+        "ran": true,
+        "agents": 14,
+        "rawFindings": 0,
+        "tokens": 84906,
+        "model": "claude-sonnet-5 (location check) + claude-sonnet-5 (refuters, per file; claude-opus-5 for a blocker/major finding on a HIGH-risk file) + claude-fable-5-1 (split-vote tie-break)",
+        "effort": "location check low / refuters high (high on HIGH-risk findings) / tie-break high",
+        "estUsd": 2.12,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "UI verify",
+        "ran": true,
+        "agents": 2,
+        "rawFindings": 5,
+        "tokens": null,
+        "model": "claude-sonnet-5 (driver) + claude-sonnet-5 (judge; claude-opus-5 when the manifest has a HIGH-risk file)",
+        "effort": "medium driver / high judge",
+        "estUsd": null,
+        "overlappedWith": "Verify",
+        "note": "ran concurrently with Verify; its tokens are counted under Verify"
+      },
+      {
+        "phase": "Mutation probe",
+        "ran": true,
+        "agents": 6,
+        "rawFindings": 1,
+        "tokens": 36127,
+        "model": "claude-haiku-4-5 (checksums) + claude-sonnet-5 (probes) + claude-sonnet-5 (remediation on a surviving mutant)",
+        "effort": "low checksums / medium probes",
+        "estUsd": 0.36,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Fix",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      },
+      {
+        "phase": "Final pass",
+        "ran": false,
+        "agents": 0,
+        "rawFindings": 0,
+        "tokens": 0,
+        "model": null,
+        "effort": null,
+        "estUsd": 0,
+        "overlappedWith": null,
+        "note": ""
+      }
+    ],
+    "remainingFindings": [
+      { "file": "(gate-command)", "severity": "major", "phase": "Baseline" },
+      { "file": "(red-gate)", "severity": "blocker", "phase": "Red gate" },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/tenant-mirror.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-config.service.spec.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/scripts/bootstrap-house-tenant.mjs",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.test.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/_components/AdminBadge.test.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.test.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-config.service.spec.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/tenant-mirror.service.spec.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/scripts/bootstrap-house-tenant.mjs",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/e2e/01-super-admin.spec.ts",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/tenant-mirror.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/scripts/bootstrap-house-tenant.mjs",
+        "severity": "major",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/tenant-mirror.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/tenant-mirror.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-admin.service.spec.ts",
+        "severity": "blocker",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/api/src/platform-admin/platform-admin.service.ts",
+        "severity": "minor",
+        "phase": "Gate & Review"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/tenants/new/page.tsx",
+        "severity": "blocker",
+        "phase": "UI verify"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "UI verify"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "UI verify"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/admin/dashboard/page.tsx",
+        "severity": "blocker",
+        "phase": "UI verify"
+      },
+      {
+        "file": "apps/web/app/(platform-admin)/_components/AdminBadge.tsx",
+        "severity": "major",
+        "phase": "UI verify"
+      },
+      { "file": "(mutation)", "severity": "blocker", "phase": "Mutation probe" }
+    ],
+    "clean": null
+  },
+  "resultSoFarTruncated": true
+}

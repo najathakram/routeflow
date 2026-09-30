@@ -1,27 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
+export type { CustomerAuthorization, ExpiringAuthorization } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type AuthorizationStatus = "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
 export type AuthorizationSource = "RETAILER_SUBMITTED" | "WHOLESALER_ADDED";
-
-export interface CustomerAuthorization {
-  id: string;
-  customerId: string;
-  trackedCategoryId: string;
-  status: AuthorizationStatus;
-  source: AuthorizationSource;
-  licenseNumber: string | null;
-  expiresAt: string | null;
-  documentKey: string | null;
-  verifiedById: string | null;
-  verifiedByName: string | null;
-  verifiedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  trackedCategory: { id: string; name: string; requiresLicense: boolean };
-}
 
 /** The shape of a blocked category inside a 409 REGULATED_AUTH_REQUIRED body. */
 export interface BlockedCategory {
@@ -172,28 +157,16 @@ export function useCreateAuthorizationOverride(customerId: string) {
   });
 }
 
-/** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
-export interface ExpiringAuthorization {
-  id: string;
-  customerId: string;
-  customerName: string;
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "VERIFIED" | "EXPIRED";
-  expiresAt: string | null;
-  bucket: 30 | 7 | 1 | null;
-  expired: boolean;
-}
-
 /**
  * Operator: the tenant's licenses expiring within 30 days or already expired.
  * Polled for the header expiry bell (the backend has no in-app notification store).
  */
-export function useExpiringAuthorizations() {
+export function useExpiringAuthorizations(options?: { enabled?: boolean }) {
   return useQuery<ExpiringAuthorization[]>({
     queryKey: ["authorizations", "expiring"],
     queryFn: () => apiClient.get("/authorizations/expiring-soon").then((r) => r.data),
     staleTime: 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
+    ...options,
   });
 }

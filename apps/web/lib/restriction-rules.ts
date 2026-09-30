@@ -1,0 +1,89 @@
+import {
+  US_STATES,
+  type RestrictionStatus,
+  type SellingRestrictionListItemDto,
+} from "@routeflow/types";
+import { fmtDate } from "./formatting";
+
+/** Pure display helpers for the rules list (plain language — never a raw enum or id). */
+
+const STATE_NAME = new Map(US_STATES.map((s) => [s.code, s.name]));
+export const stateName = (code: string): string => STATE_NAME.get(code) ?? code;
+
+export const STATUS_FILTERS: ReadonlyArray<{ value: RestrictionStatus | "ALL"; label: string }> = [
+  { value: "ALL", label: "All" },
+  { value: "ACTIVE", label: "Active" },
+  { value: "SCHEDULED", label: "Scheduled" },
+  { value: "EXPIRED", label: "Expired" },
+  { value: "LIFTED", label: "Lifted" },
+];
+
+export const STATUS_BADGE: Record<
+  RestrictionStatus,
+  { variant: "success" | "info" | "neutral" | "warning"; label: string }
+> = {
+  ACTIVE: { variant: "success", label: "Active" },
+  SCHEDULED: { variant: "info", label: "Scheduled" },
+  EXPIRED: { variant: "neutral", label: "Expired" },
+  LIFTED: { variant: "warning", label: "Lifted" },
+};
+
+/** What the rule covers: a whole category or one product. */
+export function ruleTarget(
+  r: Pick<SellingRestrictionListItemDto, "categoryName" | "productName">,
+): {
+  name: string;
+  kind: "Category" | "Product";
+} {
+  return r.productName
+    ? { name: r.productName, kind: "Product" }
+    : { name: r.categoryName ?? "Unknown item", kind: "Category" };
+}
+
+export function jurisdictionText(
+  r: Pick<SellingRestrictionListItemDto, "jurisdiction" | "states">,
+) {
+  if (r.jurisdiction === "FEDERAL") return "Banned everywhere (federal)";
+  return r.states.length ? "Banned in" : "Banned everywhere (no states listed)";
+}
+
+export const surfaceText = (s: SellingRestrictionListItemDto["surface"]) =>
+  s === "BUYER_PORTAL" ? "Buyer portal only (staff can still sell)" : "All sales";
+
+/**
+ * The window as an admin reads it. `effectiveTo` is EXCLUSIVE (the engine stops applying the rule AT
+ * that instant), so a rule the admin ended "on Dec 31" is stored as the start of Jan 1; showing
+ * that stored date would read one day late. Show the last day the rule is in force: the day
+ * containing the final millisecond before the end. This is right for any stored end (an API rule
+ * ending mid-afternoon still shows that same day).
+ */
+export const lastDayInForce = (effectiveTo: string): string => {
+  const t = new Date(effectiveTo).getTime();
+  // An unparseable end must not crash the page render (`toISOString` throws on NaN): hand it back
+  // untouched and let `fmtDate` show its usual dash.
+  return Number.isNaN(t) ? effectiveTo : new Date(t - 1).toISOString();
+};
+
+export function windowText(
+  r: Pick<SellingRestrictionListItemDto, "effectiveFrom" | "effectiveTo">,
+) {
+  const from = fmtDate(r.effectiveFrom);
+  return r.effectiveTo
+    ? `${from} – ${fmtDate(lastDayInForce(r.effectiveTo))}`
+    : `From ${from}, no end date`;
+}
+
+export function emptyText(filter: RestrictionStatus | "ALL"): {
+  title: string;
+  description: string;
+} {
+  if (filter === "ALL") {
+    return {
+      title: "No selling restrictions yet",
+      description:
+        "Rules you add here stop matching products from being sold where they are banned.",
+    };
+  }
+  const label = STATUS_FILTERS.find((f) => f.value === filter)!.label.toLowerCase();
+  return { title: `No ${label} rules`, description: "Try another filter to see the rest." };
+}

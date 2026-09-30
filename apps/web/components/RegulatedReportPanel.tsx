@@ -11,6 +11,7 @@ import {
   type RegulatedReportParams,
 } from "@/lib/api/tracked-categories";
 import { presetRange, type ReportRangePreset } from "@/lib/regulated-format";
+import { humanizeEnum } from "@/lib/format";
 import { DateRangePicker, type DateRangeValue } from "@/components/DateRangePicker";
 import {
   ReportColumnsPicker,
@@ -18,6 +19,21 @@ import {
 } from "@/components/ReportColumnsPicker";
 
 const TEMPLATE_OPTIONS_FALLBACK = ["TX_COMPTROLLER", "GENERIC", "CA_CDTFA", "CA_ABC", "CALRECYCLE"];
+
+// Known template enum values, mapped to a human label. Anything not listed here
+// (a template added server-side before the web fallback list catches up) falls
+// back to humanizeEnum rather than showing the raw enum string.
+const TEMPLATE_LABELS: Record<string, string> = {
+  TX_COMPTROLLER: "Texas Comptroller",
+  GENERIC: "Generic",
+  CA_CDTFA: "CA CDTFA",
+  CA_ABC: "CA ABC",
+  CALRECYCLE: "CalRecycle",
+};
+
+function templateLabel(key: string): string {
+  return TEMPLATE_LABELS[key] ?? humanizeEnum(key);
+}
 
 // Stable empty array so the seeding effect below doesn't re-fire every render
 // while the templates registry is still loading (a fresh `?? []` literal would
@@ -80,7 +96,7 @@ export function RegulatedReportPanel({
   const templateDefs = templatesQuery.data;
   const templateOptions: { value: string; label: string }[] = templateDefs
     ? templateDefs.map((t) => ({ value: t.key, label: t.label }))
-    : TEMPLATE_OPTIONS_FALLBACK.map((t) => ({ value: t, label: t }));
+    : TEMPLATE_OPTIONS_FALLBACK.map((t) => ({ value: t, label: templateLabel(t) }));
 
   const resolvedTemplate = template || categoryDefaultTemplate;
   const templateDef = React.useMemo(
@@ -230,7 +246,7 @@ export function RegulatedReportPanel({
             }}
             className={inputCls}
           >
-            <option value="">Category default ({categoryDefaultTemplate})</option>
+            <option value="">{templateLabel(categoryDefaultTemplate)} default</option>
             {templateOptions.map((t) => (
               <option key={t.value} value={t.value}>
                 {t.label}

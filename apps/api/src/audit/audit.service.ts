@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 
 export interface CreateAuditLogDto {
@@ -9,10 +9,14 @@ export interface CreateAuditLogDto {
   entityId?: string | null;
   ip?: string | null;
   meta?: Record<string, unknown>;
+  /** Platform-admin id when the write happened under impersonation (AuditLog.impersonatedBy, F01). */
+  impersonatedBy?: string | null;
 }
 
 @Injectable()
 export class AuditService {
+  private readonly logger = new Logger(AuditService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async log(dto: CreateAuditLogDto): Promise<void> {
@@ -25,11 +29,19 @@ export class AuditService {
           entityType: dto.entityType,
           entityId: dto.entityId ?? null,
           ip: dto.ip ?? null,
+          impersonatedBy: dto.impersonatedBy ?? null,
           meta: (dto.meta as any) ?? undefined,
         },
       });
-    } catch {
-      // Audit log failures must never crash the main request
+    } catch (err: any) {
+      // Audit log failures must never crash the main request — but a silent
+      // catch left a DB hiccup indistinguishable from "no action happened",
+      // on the exact trail (B138/B165) the impersonation audit chain relies
+      // on to name who really acted. Log it; still never rethrow.
+      this.logger.error(
+        `Failed to write audit log (action=${dto.action}, entityType=${dto.entityType}, ` +
+          `tenantId=${dto.tenantId ?? "null"}): ${err?.message ?? err}`,
+      );
     }
   }
 }

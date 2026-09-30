@@ -1,0 +1,10 @@
+{
+  "draft-payment-not-void": {
+    "fixedBy": "F09 (credit-notes wallet integrity — F03's B11 confirmed-payment sweep fenced credit-notes.service.ts off as F09's lane and left ONLY these sites; delete this block with F09's pass)",
+    "sites": [
+      "apps/api/src/credit-notes/credit-notes.service.ts::const pays = await tx.invoicePayment.findMany({",
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await tx.invoicePayment.findMany({",
+      "apps/api/src/credit-notes/credit-notes.service.ts::const payments = await db.invoicePayment.findMany({"
+    ]
+  }
+}

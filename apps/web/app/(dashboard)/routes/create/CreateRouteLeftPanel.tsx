@@ -3,8 +3,13 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import type { UseFormReturn } from "react-hook-form";
-import { Plus, X, GripVertical, AlertTriangle, Loader2, Sparkles } from "lucide-react";
+import { Plus, X, GripVertical, AlertTriangle, Loader2, Sparkles, ChevronDown } from "lucide-react";
 import { Input, Select, Button, cn } from "@routeflow/ui/web";
+import {
+  RoutePlanningControls,
+  type RoutePlanningValue,
+  type RoutePlanningDriverOption,
+} from "@/components/RoutePlanningControls";
 import type { StopEntry, CustomerForMap } from "./page";
 
 // ─── Props ─────────────────────────────────────────────────────────────────────
@@ -20,6 +25,17 @@ interface CreateRouteLeftPanelProps {
   onOptimize: () => void;
   onSubmit: () => void;
   isSubmitting: boolean;
+  /** Route planning (start/end/tolls/objective) — collapsed "Route options"
+   *  card above the save action. */
+  planningValue: RoutePlanningValue;
+  onPlanningChange: (value: RoutePlanningValue) => void;
+  planningDrivers: RoutePlanningDriverOption[];
+  planningOpen: boolean;
+  onTogglePlanning: () => void;
+  /** Gates the Create Route button — mirrors deliveries/new's originReady. */
+  originReady: boolean;
+  /** avoidTolls/optimizeBy changed since the last "Optimize Stop Order" run. */
+  settingsChanged: boolean;
 }
 
 // ─── Component ─────────────────────────────────────────────────────────────────
@@ -35,6 +51,13 @@ export function CreateRouteLeftPanel({
   onOptimize,
   onSubmit,
   isSubmitting,
+  planningValue,
+  onPlanningChange,
+  planningDrivers,
+  planningOpen,
+  onTogglePlanning,
+  originReady,
+  settingsChanged,
 }: CreateRouteLeftPanelProps) {
   const router = useRouter();
   const {
@@ -112,7 +135,7 @@ export function CreateRouteLeftPanel({
 
       {/* Optimize button — shown when 2+ stops have geocoded coordinates */}
       {stops.filter((s) => s.lat != null && s.lng != null).length >= 2 && (
-        <div className="shrink-0 border-b border-surface-border bg-white px-4 py-2">
+        <div className="shrink-0 space-y-1 border-b border-surface-border bg-white px-4 py-2">
           <Button
             type="button"
             variant="secondary"
@@ -123,8 +146,41 @@ export function CreateRouteLeftPanel({
           >
             Optimize Stop Order
           </Button>
+          {settingsChanged && (
+            <p className="text-center text-[11px] italic text-navy/70">
+              Re-optimize to apply the new settings
+            </p>
+          )}
         </div>
       )}
+
+      {/* Route planning (start/end/tolls/objective) — collapsed by default */}
+      <div className="shrink-0 border-b border-surface-border bg-white">
+        <button
+          type="button"
+          onClick={onTogglePlanning}
+          className="flex w-full items-center justify-between px-4 py-2.5 text-left"
+        >
+          <span className="text-xs font-semibold uppercase tracking-wider text-navy/70">
+            Route options
+          </span>
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 text-navy/50 transition-transform",
+              planningOpen && "rotate-180",
+            )}
+          />
+        </button>
+        {planningOpen && (
+          <div className="border-t border-surface-border bg-surface-raised p-3">
+            <RoutePlanningControls
+              value={planningValue}
+              onChange={onPlanningChange}
+              drivers={planningDrivers}
+            />
+          </div>
+        )}
+      </div>
 
       {/* Customer search */}
       <div className="shrink-0 border-b border-surface-border bg-white px-4 py-3">
@@ -251,7 +307,12 @@ export function CreateRouteLeftPanel({
           >
             Cancel
           </Button>
-          <Button type="submit" className="flex-1" disabled={isSubmitting}>
+          <Button
+            type="submit"
+            className="flex-1"
+            disabled={isSubmitting || !originReady}
+            title={!originReady ? "Choose a valid start point in Route options first" : undefined}
+          >
             {isSubmitting ? (
               <>
                 <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />

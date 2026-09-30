@@ -2,6 +2,12 @@ import * as React from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { gateScan, type ScanGateState, type ScanOutcome } from "../lib/scan-loop";
+import {
+  completeResolve,
+  createPendingBuffer,
+  pushScan,
+  type PendingBufferState,
+} from "../lib/scan-pending-buffer";
 
 export interface ScanCameraProps {
   /**
@@ -10,6 +16,12 @@ export interface ScanCameraProps {
    */
   onScanned: (code: string) => ScanOutcome | Promise<ScanOutcome>;
   onOutcome?: (outcome: ScanOutcome) => void;
+  /**
+   * Fires whenever the pending buffer's resolving state flips — lets a host
+   * sheet (ScanOrderSheet) show a "looking up…" indicator instead of dead
+   * frames while a scan resolves (F30 / R2, REG-B192).
+   */
+  onResolvingChange?: (isResolving: boolean) => void;
   /** Feed detections only while true — pause without tearing the camera down. */
   active?: boolean;
   /** Keep decoding after a scan. Single-shot latches after the first code. */
@@ -56,13 +68,17 @@ export function useScanCameraPermission(enabled = true): {
 export function ScanCamera({
   onScanned,
   onOutcome,
+  onResolvingChange,
   active = true,
   continuous = false,
   style,
 }: ScanCameraProps) {
   const firedRef = React.useRef(false);
   const gateRef = React.useRef<ScanGateState | null>(null);
-  const busyRef = React.useRef(false);
+  // Replaces the old drop-not-queue `busyRef` boolean (F30 / R2, REG-B192): a
+  // bounded, deduped queue behind the one code currently resolving, so a
+  // detection that arrives mid-resolve is buffered instead of silently lost.
+  const bufferRef = React.useRef<PendingBufferState>(createPendingBuffer());
   const [torchOn, setTorchOn] = React.useState(false);
   // Parents recreate these callbacks every render; route them through refs so
   // the handler identity never restarts the camera.
@@ -70,32 +86,51 @@ export function ScanCamera({
   onScannedRef.current = onScanned;
   const onOutcomeRef = React.useRef(onOutcome);
   onOutcomeRef.current = onOutcome;
+  const onResolvingChangeRef = React.useRef(onResolvingChange);
+  onResolvingChangeRef.current = onResolvingChange;
 
-  const handleBarcodeScanned = async ({ data }: { data: string }) => {
+  /**
+   * Resolves one accepted code, then drains whatever the buffer queued while
+   * it was in flight — recursing (not looping) so each queued code gets its
+   * own resolve/outcome cycle exactly like a fresh scan would.
+   *
+   * The buffer advances only once `onScanned` has actually SETTLED. The
+   * per-scan deadline that keeps a slow lookup from holding it open lives in
+   * the handler itself (`lib/scan-ladder`'s SCAN_RESOLVE_TIMEOUT_MS), where it
+   * can abort the request: racing a timer here would report a failure while
+   * the abandoned lookup still added the item AND would start the next
+   * buffered code alongside one still in flight.
+   */
+  const resolveCode = React.useCallback(async (code: string) => {
+    try {
+      onOutcomeRef.current?.(await onScannedRef.current(code));
+    } finally {
+      const result = completeResolve(bufferRef.current);
+      bufferRef.current = result.next;
+      if (!result.next.isResolving) onResolvingChangeRef.current?.(false);
+      if (result.startResolving) void resolveCode(result.startResolving);
+    }
+  }, []);
+
+  const handleBarcodeScanned = ({ data }: { data: string }) => {
     if (!continuous) {
       if (firedRef.current) return;
       firedRef.current = true;
       onScannedRef.current(data);
       return;
     }
-    if (busyRef.current) return;
+    // Every frame reaches the gate now — nothing is skipped while a previous
+    // scan resolves, so the gate's own cooldown/absence-gap clocks (scan-loop.ts)
+    // stay live throughout and need no post-hoc re-anchoring.
     const gated = gateScan(data, gateRef.current, Date.now());
     gateRef.current = gated.state;
     if (!gated.accept) return;
-    busyRef.current = true;
-    try {
-      onOutcomeRef.current?.(await onScannedRef.current(data));
-    } finally {
-      // While onScanned was awaited, every camera frame short-circuited at the
-      // busyRef guard WITHOUT calling gateScan, so the sliding window's lastAt
-      // stayed frozen at scan-start. If the lookup outran the cooldown, the next
-      // in-frame decode of the SAME code would be re-accepted → double-add.
-      // Re-anchor the cooldown to completion so a held item can't re-add until
-      // it leaves the frame for a full window. A different code still differs
-      // from `data` and is accepted immediately.
-      gateRef.current = { lastCode: data, lastAt: Date.now() };
-      busyRef.current = false;
-    }
+
+    const wasIdle = !bufferRef.current.isResolving;
+    const result = pushScan(bufferRef.current, data);
+    bufferRef.current = result.next;
+    if (wasIdle && result.next.isResolving) onResolvingChangeRef.current?.(true);
+    if (result.startResolving) void resolveCode(result.startResolving);
   };
 
   return (

@@ -4,6 +4,8 @@ import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { superAdminClient } from "@/lib/admin-api";
+import { DisabledHint } from "../../../../_components/DisabledHint";
+import { useConfirmFocus } from "../../../../_components/useConfirmFocus";
 import {
   ArrowLeft,
   Loader2,
@@ -66,20 +68,20 @@ function AccountCard({ account, label }: { account: BuyerInfo; label: string }) 
     <div className="rounded-xl border border-slate-700/50 bg-slate-800/40 p-5">
       <div className="mb-3 flex items-center gap-2">
         <User className="h-4 w-4 text-slate-400" />
-        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
           {label}
         </span>
       </div>
       <p className="text-base font-semibold text-white">{account.name ?? account.email}</p>
       <p className="text-sm text-slate-400">{account.email}</p>
-      <p className="mt-1 text-xs text-slate-500">Status: {account.status}</p>
-      {account.googleId && <p className="mt-1 text-xs text-slate-500">Has Google account linked</p>}
+      <p className="mt-1 text-xs text-slate-400">Status: {account.status}</p>
+      {account.googleId && <p className="mt-1 text-xs text-slate-400">Has Google account linked</p>}
       <div className="mt-3">
-        <p className="mb-1 text-xs font-medium text-slate-500">
+        <p className="mb-1 text-xs font-medium text-slate-400">
           Seller connections ({account.customerLinks.length})
         </p>
         {account.customerLinks.length === 0 ? (
-          <p className="text-xs text-slate-600">None</p>
+          <p className="text-xs text-slate-400">None</p>
         ) : (
           <ul className="space-y-1">
             {account.customerLinks.map((l) => (
@@ -88,7 +90,7 @@ function AccountCard({ account, label }: { account: BuyerInfo; label: string }) 
                   className={`h-1.5 w-1.5 rounded-full ${l.status === "ACTIVE" ? "bg-green-400" : "bg-slate-500"}`}
                 />
                 <span className="text-slate-300">{l.tenant.name}</span>
-                <span className="text-slate-500">({l.customer.businessName})</span>
+                <span className="text-slate-400">({l.customer.businessName})</span>
               </li>
             ))}
           </ul>
@@ -106,6 +108,8 @@ export default function MergeRequestDetailPage() {
   const [actionLoading, setActionLoading] = React.useState<"execute" | "reject" | null>(null);
   const [adminNotes, setAdminNotes] = React.useState("");
   const [confirmExecute, setConfirmExecute] = React.useState(false);
+  // Clicking "Execute Merge" swaps that button for the confirm strip; keep focus in it (A3 F9).
+  const { triggerRef, confirmRef } = useConfirmFocus(confirmExecute);
   const [resultMsg, setResultMsg] = React.useState<{
     type: "success" | "error";
     text: string;
@@ -175,7 +179,10 @@ export default function MergeRequestDetailPage() {
     <div className="p-6 md:p-8">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
-        <Link href="/admin/buyers/merge-requests" className="text-slate-400 hover:text-white">
+        <Link
+          href="/admin/buyers/merge-requests"
+          className="admin-tap-text text-slate-400 hover:text-white"
+        >
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <GitMerge className="h-5 w-5 text-indigo-400" />
@@ -232,7 +239,7 @@ export default function MergeRequestDetailPage() {
 
       {req.initiatorNotes && (
         <div className="mb-4 rounded-lg bg-slate-700/40 px-4 py-3 text-sm text-slate-300">
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             Initiator notes:{" "}
           </span>
           {req.initiatorNotes}
@@ -259,7 +266,7 @@ export default function MergeRequestDetailPage() {
               </span>
             </div>
             {req.preview.linksToTransfer.length === 0 ? (
-              <p className="text-xs text-slate-500">None</p>
+              <p className="text-xs text-slate-400">None</p>
             ) : (
               <ul className="space-y-1">
                 {req.preview.linksToTransfer.map((l) => (
@@ -278,7 +285,7 @@ export default function MergeRequestDetailPage() {
               </span>
             </div>
             {req.preview.conflictingLinks.length === 0 ? (
-              <p className="text-xs text-slate-500">None</p>
+              <p className="text-xs text-slate-400">None</p>
             ) : (
               <ul className="space-y-1">
                 {req.preview.conflictingLinks.map((l) => (
@@ -315,18 +322,26 @@ export default function MergeRequestDetailPage() {
           Admin Notes
         </h2>
         <textarea
+          aria-label="Admin Notes"
           value={adminNotes}
           onChange={(e) => setAdminNotes(e.target.value)}
           rows={2}
           disabled={!canAct}
+          aria-describedby={!canAct ? "mr-notes-hint" : undefined}
           placeholder="Internal notes (optional)..."
           className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
         />
+
+        <DisabledHint id="mr-notes-hint" show={!canAct} className="mt-2 text-xs text-slate-400">
+          Read-only: this request is {req.status.toLowerCase().replace(/_/g, " ")}, so notes can no
+          longer be edited.
+        </DisabledHint>
 
         {canAct && (
           <div className="mt-4 flex flex-wrap gap-3">
             {!confirmExecute ? (
               <button
+                ref={triggerRef}
                 onClick={() => setConfirmExecute(true)}
                 className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
               >
@@ -338,6 +353,7 @@ export default function MergeRequestDetailPage() {
                   Confirm merge? This cannot be undone.
                 </span>
                 <button
+                  ref={confirmRef}
                   disabled={actionLoading === "execute"}
                   onClick={handleExecute}
                   className="flex items-center gap-1 rounded px-3 py-1 text-xs font-bold text-indigo-300 hover:bg-indigo-800 disabled:opacity-50"

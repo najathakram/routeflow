@@ -41,4 +41,40 @@ describe("AuditInterceptor — F9-006 spoof-resistant client IP", () => {
     interceptor.intercept(makeCtx(req), nextHandler());
     expect(auditService.log).not.toHaveBeenCalled();
   });
+
+  it("REG-B165 forwards req.user.impersonatedBy into the audit row (who really wrote)", async () => {
+    const auditService = { log: jest.fn().mockResolvedValue(undefined) };
+    const interceptor = new AuditInterceptor(auditService as any);
+    const req = {
+      method: "POST",
+      url: "/api/v1/orders",
+      ip: "203.0.113.9",
+      headers: {},
+      socket: {},
+      user: { sub: "ta1", tenantId: "t1", impersonatedBy: "sa1" },
+    };
+    interceptor.intercept(makeCtx(req), nextHandler());
+    await new Promise((r) => setImmediate(r));
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "ta1", tenantId: "t1", impersonatedBy: "sa1" }),
+    );
+  });
+
+  it("REG-B165 a plain (non-impersonated) user is stamped impersonatedBy: null", async () => {
+    const auditService = { log: jest.fn().mockResolvedValue(undefined) };
+    const interceptor = new AuditInterceptor(auditService as any);
+    const req = {
+      method: "PATCH",
+      url: "/api/v1/orders/o1",
+      ip: "203.0.113.9",
+      headers: {},
+      socket: {},
+      user: { sub: "u1", tenantId: "t1" },
+    };
+    interceptor.intercept(makeCtx(req), nextHandler());
+    await new Promise((r) => setImmediate(r));
+    expect(auditService.log).toHaveBeenCalledWith(
+      expect.objectContaining({ impersonatedBy: null }),
+    );
+  });
 });

@@ -123,5 +123,41 @@ describe("VariantResolutionService", () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(service.completeSetup("nope", {})).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    // #2728 M1 F1: unitsPerBox feeds planBarcodeRows, so confirming it on a product that already
+    // has a barcode must re-sync ProductBarcode rows — a product with barcode X and upb null going
+    // to upb 12 must land BOX (ENTERED) + UNIT (COPIED) rows, not leave the single legacy UNIT row.
+    it("syncs ProductBarcode rows (BOX ENTERED + UNIT COPIED) when unitsPerBox is confirmed on a barcoded product", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: "n1",
+        barcode: "0000000000012",
+        unitsPerBox: null,
+      });
+      prisma.product.update.mockResolvedValue({
+        id: "n1",
+        barcode: "0000000000012",
+        unitsPerBox: 12,
+      });
+      prisma.productBarcode.findMany.mockResolvedValue([]);
+      await service.completeSetup("n1", { unitsPerBox: 12 });
+      expect(prisma.productBarcode.createMany).toHaveBeenCalledWith({
+        data: [
+          expect.objectContaining({
+            productId: "n1",
+            code: "0000000000012",
+            level: "BOX",
+            origin: "ENTERED",
+            primaryFor: "BOX",
+          }),
+          expect.objectContaining({
+            productId: "n1",
+            code: "0000000000012",
+            level: "UNIT",
+            origin: "COPIED",
+            primaryFor: "UNIT",
+          }),
+        ],
+      });
+    });
   });
 });

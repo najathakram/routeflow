@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
-import { useBuyerTemplates, useBuyerReorder, type OrderTemplate } from "@/lib/api/buyer";
+import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,7 +38,7 @@ function TemplateRow({
   onReorder,
   isReordering,
 }: {
-  template: OrderTemplate;
+  template: BuyerOrderTemplate;
   onReorder: () => void;
   isReordering: boolean;
 }) {
@@ -109,26 +109,28 @@ function TemplateRow({
         <div className="bg-surface-raised/50 px-4 pb-4 pl-[4.75rem]">
           {template.notes && <p className="mb-3 text-xs text-navy/70 italic">{template.notes}</p>}
           <div className="rounded-lg border border-surface-border bg-white overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
-                  <th className="px-3 py-2 text-left">Product</th>
-                  <th className="px-3 py-2 text-left w-20">Unit</th>
-                  <th className="px-3 py-2 text-right w-16">Qty</th>
-                  <th className="px-3 py-2 text-left">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {template.items.map((item) => (
-                  <tr key={item.id} className="text-sm">
-                    <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
-                    <td className="px-3 py-2 text-navy/70">{item.product.unit}</td>
-                    <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
-                    <td className="px-3 py-2 text-navy/70 text-xs">{item.notes ?? "N/A"}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px]">
+                <thead>
+                  <tr className="border-b border-surface-border text-[11px] text-navy/70 uppercase tracking-wider">
+                    <th className="px-3 py-2 text-left">Product</th>
+                    <th className="px-3 py-2 text-left w-20">Unit</th>
+                    <th className="px-3 py-2 text-right w-16">Qty</th>
+                    <th className="px-3 py-2 text-left">Notes</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {template.items.map((item) => (
+                    <tr key={item.id} className="text-sm">
+                      <td className="px-3 py-2 font-medium text-navy">{item.product.name}</td>
+                      <td className="px-3 py-2 text-navy/70">{item.product.unit}</td>
+                      <td className="px-3 py-2 text-right text-navy">{item.qty}</td>
+                      <td className="px-3 py-2 text-navy/70 text-xs">{item.notes ?? "N/A"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

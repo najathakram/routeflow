@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -25,6 +25,8 @@ import {
   type OrderStatus,
 } from "../../../../lib/api/orders";
 import { describeCancelImpact } from "../../../../lib/cancel-impact";
+import { isInternalEmail } from "../../../../lib/internal-email";
+import { fmtCalendarDate } from "../../../../lib/format-date";
 import {
   useCreateInvoiceFromOrder,
   useInvoicePdf,
@@ -32,16 +34,43 @@ import {
 } from "../../../../lib/api/invoices";
 import {
   invoiceReadyMessage,
+  nextPdfSharePhase,
+  planWhatsAppSend,
   preferredPhone,
   smsUrl,
-  whatsappUrl,
+  smtpFallbackNotice,
+  type PdfSharePhase,
 } from "../../../../lib/invoice-send-logic";
 import { showToast } from "../../../../lib/toast";
-import { confirm } from "../../../../lib/confirm";
-import { formatQtySplit } from "../../../../lib/pricing";
-import { sharePdf } from "../../../../lib/share-pdf";
+import { BlockedLinesModal } from "../../../../components/BlockedLinesModal";
+import { CreditLimitGuardModal } from "../../../../components/CreditLimitGuardModal";
+import {
+  parseCreditLimitError,
+  type CreditLimitExceededInfo,
+} from "../../../../lib/credit-limit-error";
+import { parseSellingRestricted } from "../../../../lib/selling-restricted";
+import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
+import { useOfflineQueue } from "../../../../store/offlineQueue";
+import { alertInfo, confirm } from "../../../../lib/confirm";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../../lib/invoice-line-display";
+import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
+import { OrderLineCard } from "../../../../components/OrderLineCard";
+import { OrderAppliedCredits } from "../../../../components/OrderAppliedCredits";
+import { orderLineCardModel } from "../../../../lib/order-line-display";
+import { useOrderUiV2 } from "../../../../lib/api/addons";
+import {
+  ACTIVATION_BUDGET_MS,
+  canShareFilesHere,
+  openPdfInTab,
+  sharePdf,
+} from "../../../../lib/share-pdf";
 import { ShipmentSection, ShipmentEditModal } from "../../../../components/ShipmentSection";
 import { SendInvoiceSheet } from "../../../../components/SendInvoiceSheet";
+import { ReasonSheet } from "../../../../components/ReasonSheet";
+import { canDeleteOrder, demotionRequiresReason } from "../../../../lib/order-status-flow";
+import { statusActions, type StatusAction } from "../../../../lib/order-actions";
+import { useRecordReturn } from "../../../../hooks/useRecordReturn";
 
 function formatCurrency(n: number | string | undefined): string {
   const v = typeof n === "string" ? Number(n) : (n ?? 0);
@@ -72,152 +101,18 @@ function statusPill(status: string): {
   }
 }
 
-interface StatusAction {
-  label: string;
-  toStatus: OrderStatus;
-  style: "primary" | "secondary" | "warning" | "danger";
-  icon: string;
-  confirmMessage?: string;
-  /** Passed to PATCH /status (e.g. the demote-to-CONFIRMED reason). */
-  reason?: string;
-  /** Route through POST /orders/:id/reopen (CANCELLED → PENDING) instead of /status. */
-  reopenCancelled?: boolean;
-}
-
-function statusActions(current: string): StatusAction[] {
-  switch (current) {
-    case "DRAFT":
-      return [
-        {
-          label: "Submit for review",
-          toStatus: "PENDING",
-          style: "primary",
-          icon: "arrow-forward-circle-outline",
-        },
-      ];
-    case "PENDING":
-      return [
-        {
-          label: "Confirm order",
-          toStatus: "CONFIRMED",
-          style: "primary",
-          icon: "checkmark-circle-outline",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order? It cannot be undone easily.",
-        },
-      ];
-    case "CONFIRMED":
-      return [
-        {
-          label: "Send for delivery",
-          toStatus: "OUT_FOR_DELIVERY",
-          style: "primary",
-          icon: "car-outline",
-        },
-        {
-          label: "Quick deliver",
-          toStatus: "DELIVERED",
-          style: "secondary",
-          icon: "flash-outline",
-          confirmMessage: "Mark as delivered without going through dispatch?",
-        },
-        {
-          label: "Back to pending",
-          toStatus: "PENDING",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert order back to Pending?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    case "OUT_FOR_DELIVERY":
-      return [
-        {
-          label: "Mark delivered",
-          toStatus: "DELIVERED",
-          style: "primary",
-          icon: "checkmark-done-circle-outline",
-        },
-        {
-          label: "Partial delivery",
-          toStatus: "PARTIALLY_DELIVERED",
-          style: "secondary",
-          icon: "git-branch-outline",
-        },
-        {
-          label: "Back to confirmed",
-          toStatus: "CONFIRMED",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert order back to Confirmed?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    case "PARTIALLY_DELIVERED":
-      return [
-        {
-          label: "Mark fully delivered",
-          toStatus: "DELIVERED",
-          style: "primary",
-          icon: "checkmark-done-circle-outline",
-        },
-        {
-          label: "Back out for delivery",
-          toStatus: "OUT_FOR_DELIVERY",
-          style: "warning",
-          icon: "arrow-back-circle-outline",
-          confirmMessage: "Revert back to Out for delivery?",
-        },
-        {
-          label: "Cancel order",
-          toStatus: "CANCELLED",
-          style: "danger",
-          icon: "close-circle-outline",
-          confirmMessage: "Cancel this order?",
-        },
-      ];
-    // Note: DELIVERED has NO reopen — the API deliberately blocks
-    // DELIVERED→CONFIRMED (removed as BUG-ORD-01); it would always 400. Only a
-    // CANCELLED order can be reopened, via the dedicated /reopen endpoint below.
-    case "CANCELLED":
-      // POST /orders/:id/reopen → PENDING (OPERATOR-only; server 400s if a
-      // paid/partial/written-off invoice exists).
-      return [
-        {
-          label: "Reopen order",
-          toStatus: "PENDING",
-          style: "primary",
-          icon: "refresh-outline",
-          confirmMessage: "Reopen this cancelled order back to Pending?",
-          reopenCancelled: true,
-        },
-      ];
-    default:
-      return [];
-  }
-}
-
 export default function OrderDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { data: order, isLoading, isError, refetch } = useAdminOrder(id ?? "");
+  // #2420: before any early return (rules of hooks) — null until the add-on resolves allowed.
+  const recordReturn = useRecordReturn({
+    customerId: order?.customerId ?? order?.customer?.id,
+    orderId: order?.id,
+    customerName: order?.customer?.businessName,
+  });
+  // `order_ui_v2` (dark): card rows instead of the legacy item row.
+  const orderUiV2 = useOrderUiV2();
   const changeMut = useChangeOrderStatus();
   const reopenMut = useReopenOrder();
   const deleteMut = useDeleteOrder();
@@ -227,11 +122,40 @@ export default function OrderDetailScreen() {
   const sendMut = useSendInvoice();
   const pdfMut = useInvoicePdf();
   const [shipmentModal, setShipmentModal] = useState(false);
+  // Selling restrictions: the lines a status change (e.g. promoting a draft) was refused for.
+  const [restrictedBlock, setRestrictedBlock] = useState<BlockedLine[] | null>(null);
+  // Credit limit: a status change (send out for delivery) the server refused with the customer's
+  // real limit/exposure; no server-side override exists, so the exit is "collect a payment".
+  const [creditBlock, setCreditBlock] = useState<CreditLimitExceededInfo | null>(null);
   const [sendSheet, setSendSheet] = useState<{
     invoiceId: string;
     invoiceNumber: string;
     totalFmt: string;
+    // #2089: threads postDeliveryInvoicePrompt's "issue-and-send" outcome into
+    // the sheet's copy — see SendInvoiceSheet's own issuePrompt doc.
+    issuePrompt: boolean;
   } | null>(null);
+  // #2089: the ONE offline signal (store/offlineQueue.ts, fed by the app's
+  // NetInfo listener) — postDeliveryInvoicePrompt checks it before ever
+  // attempting the createInvoiceMut network call below.
+  const isOnline = useOfflineQueue((s) => s.isOnline);
+  // WhatsApp (file-share mode) and Share PDF each run their own prepare →
+  // (maybe) tap-again → share dance against ACTIVATION_BUDGET_MS — see
+  // share-pdf.ts. The ref holds the already-prepared sharePdf() args so a
+  // "PDF ready — tap to share" retap shares synchronously instead of
+  // re-fetching the signed url.
+  const [whatsAppPhase, setWhatsAppPhase] = useState<PdfSharePhase>("idle");
+  const [pdfSharePhase, setPdfSharePhase] = useState<PdfSharePhase>("idle");
+  const whatsAppShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  const pdfShareRef = useRef<Parameters<typeof sharePdf>[0] | null>(null);
+  // A1: "Open PDF" — the guaranteed-visible fallback when Share PDF is
+  // unavailable/fails. Own pending flag rather than piggybacking on the
+  // Share-PDF phase dance (pdfSharePhase/pdfShareRef), which owns the
+  // separate prepare→tap-again→share budget contract.
+  const [openPdfPending, setOpenPdfPending] = useState(false);
+  // The demotion awaiting a reason. The server rejects a blank one, so the sheet
+  // holds the action until the operator supplies it.
+  const [reasonFor, setReasonFor] = useState<StatusAction | null>(null);
 
   if (isLoading) {
     return (
@@ -259,7 +183,11 @@ export default function OrderDetailScreen() {
   }
 
   const s = statusPill(order.status);
-  const actions = statusActions(order.status);
+  // `AdminOrder.status` is a plain string (server-shaped payload); `order-actions`
+  // pins its signature to the narrower `OrderStatus` union so a typo'd status
+  // string is caught at the call site instead of silently falling through to
+  // the switch's `default: []`.
+  const actions = statusActions(order.status as OrderStatus, order.fulfillPath);
   // R1: trust the server edit-window — items are now editable at every live stage
   // (incl. OUT_FOR_DELIVERY / DELIVERED); only CANCELLED closes it. Fall back to a
   // non-cancelled check for older API responses that don't send editWindow.
@@ -267,6 +195,18 @@ export default function OrderDetailScreen() {
   const isTerminal = order.status === "DELIVERED" || order.status === "CANCELLED";
 
   const toastError = (e: unknown, fallback = "Try again.") => {
+    // A credit-limit 409 gets the guard modal (real numbers + a way out), not a bare toast.
+    const credit = parseCreditLimitError(e);
+    if (credit) {
+      setCreditBlock(credit);
+      return;
+    }
+    // A selling-restriction 409 gets its own modal, not the raw server message.
+    const restricted = parseSellingRestricted(e);
+    if (restricted) {
+      setRestrictedBlock(restricted);
+      return;
+    }
     const err = e as { response?: { data?: { message?: string } }; message?: string };
     showToast(err?.response?.data?.message ?? err?.message ?? fallback);
   };
@@ -279,17 +219,41 @@ export default function OrderDetailScreen() {
    * the first; the rest are reachable from the Invoices list.
    */
   const openSendForOrder = () => {
+    // #2089 (owner ruling): "automatically open the invoice, then ask if you
+    // want to send it" — offline is checked FIRST and unconditionally
+    // (postDeliveryInvoicePrompt's own contract), before the network call
+    // below, since a dropped connection right after delivery must read as
+    // "try again once synced," never as "no invoice."
+    if (postDeliveryInvoicePrompt({ invoice: undefined, online: isOnline }) === "offline-later") {
+      showToast("Invoice will be ready to send once you're back online.");
+      return;
+    }
     createInvoiceMut.mutate(order.id, {
       onSuccess: (invoices) => {
         const inv = invoices[0];
-        if (!inv) {
-          showToast("Invoice created — open it from Invoices to send.");
+        // #2089: same shared decision as web/driver — a DRAFT invoice still
+        // gets the prompt (sendEmail issues DRAFT → SENT atomically on send,
+        // so "issue and send" is one action, not two); only VOID/no-invoice
+        // skips silently.
+        const outcome = postDeliveryInvoicePrompt({
+          invoice: inv ? { status: inv.status } : null,
+          online: true,
+        });
+        if (outcome === "skip" || outcome === "offline-later") {
+          if (!inv) showToast("Invoice created — open it from Invoices to send.");
           return;
         }
+        // Reset any leftover share phase/cache from a previous open — a
+        // stale "ready" tap-again would otherwise share the wrong PDF.
+        setWhatsAppPhase("idle");
+        setPdfSharePhase("idle");
+        whatsAppShareRef.current = null;
+        pdfShareRef.current = null;
         setSendSheet({
           invoiceId: inv.id,
           invoiceNumber: inv.invoiceNumber,
           totalFmt: formatCurrency(inv.total),
+          issuePrompt: outcome === "issue-and-send",
         });
       },
       onError: (e) => toastError(e, "Couldn't prepare the invoice. Create it from Invoices."),
@@ -297,10 +261,11 @@ export default function OrderDetailScreen() {
   };
 
   /**
-   * R4: after confirming an order, jump straight to its (draft) invoice for
-   * convenience — the operator can tap back to return to the order. from-order is
-   * idempotent get-or-create; `push` (not `replace`) keeps the order underneath so
-   * the invoice screen's back button returns here.
+   * Get-or-create the invoice for this order and navigate to it. Used by the
+   * explicit "Generate invoice" tile only — PR-4 removed the auto-fire on
+   * confirm, which used to dump the operator onto a locked pending-mirror
+   * invoice. `push` (not `replace`) keeps the order underneath so the invoice
+   * screen's back button returns here.
    */
   const openInvoiceForOrder = () => {
     createInvoiceMut.mutate(order.id, {
@@ -309,11 +274,16 @@ export default function OrderDetailScreen() {
         if (inv) router.push(`/(operator)/invoices/${inv.id}` as any);
         else showToast("Invoice ready — open it from the Invoices tab.");
       },
-      onError: (e) => toastError(e, "Order confirmed. Open the invoice from the Invoices tab."),
+      onError: (e) => toastError(e, "Couldn't prepare the invoice. Open it from Invoices."),
     });
   };
 
-  const handleStatusChange = (action: StatusAction) => {
+  /**
+   * Perform the status change. Split out of `handleStatusChange` so the demote
+   * flow can re-enter it once the ReasonSheet has supplied the reason the server
+   * insists on.
+   */
+  const runStatusChange = (action: StatusAction) => {
     const onDone = (msg: string) => ({
       onSuccess: () => {
         showToast(msg);
@@ -321,26 +291,32 @@ export default function OrderDetailScreen() {
       },
       onError: (e: unknown) => toastError(e),
     });
-    const doChange = () => {
-      if (action.reopenCancelled) {
-        reopenMut.mutate(order.id, onDone("Order reopened"));
-        return;
-      }
-      changeMut.mutate(
-        { id: order.id, status: action.toStatus, reason: action.reason },
-        {
-          onSuccess: () => {
-            showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
-            refetch();
-            // Post-delivery: offer to send the invoice (any path into DELIVERED).
-            if (action.toStatus === "DELIVERED") openSendForOrder();
-            // R4: on confirm, auto-open the (draft) invoice for convenience.
-            else if (action.toStatus === "CONFIRMED") openInvoiceForOrder();
-          },
-          onError: (e: unknown) => toastError(e),
+    if (action.reopenCancelled) {
+      reopenMut.mutate(order.id, onDone("Order reopened"));
+      return;
+    }
+    changeMut.mutate(
+      { id: order.id, status: action.toStatus, reason: action.reason },
+      {
+        onSuccess: () => {
+          // Only close the sheet once the server accepted it; on failure it stays
+          // open with the text intact so the reason isn't retyped.
+          setReasonFor(null);
+          showToast(`Order ${action.toStatus.toLowerCase().replace(/_/g, " ")}`);
+          refetch();
+          // Post-delivery: offer to send the invoice (any path into DELIVERED).
+          // PR-4: confirming just toasts and stays — it no longer auto-opens the
+          // invoice, which used to push the operator onto a locked
+          // pending-mirror invoice they couldn't edit or send.
+          if (action.toStatus === "DELIVERED") openSendForOrder();
         },
-      );
-    };
+        onError: (e: unknown) => toastError(e),
+      },
+    );
+  };
+
+  const handleStatusChange = (action: StatusAction) => {
+    const doChange = () => runStatusChange(action);
 
     // Cancelling voids live invoices and hands applied credits back, so the
     // operator is told exactly what moves — and which payment blocks it —
@@ -350,7 +326,10 @@ export default function OrderDetailScreen() {
         .then((impact) => {
           const copy = describeCancelImpact(impact);
           if (copy.blockedReason) {
-            confirm("Can't cancel yet", copy.blockedReason, () => {}, { confirmText: "OK" });
+            // B56: the title is reason-aware ("Can't cancel yet" for money that
+            // must be refunded, "Can't cancel" for goods already delivered) — a
+            // hardcoded title contradicts the body copy it sits above.
+            confirm(copy.title, copy.blockedReason, () => {}, { confirmText: "OK" });
             return;
           }
           const body = [`Order ${order.orderNumber ?? ""} will be cancelled.`, ...copy.lines]
@@ -368,6 +347,14 @@ export default function OrderDetailScreen() {
       return;
     }
 
+    // A demotion without a reason is a guaranteed 400 ("A reason is required
+    // when demoting an order"). The sheet collects it and doubles as the
+    // confirmation, so the plain yes/no prompt is skipped here.
+    if (demotionRequiresReason(order.status, action.toStatus)) {
+      setReasonFor(action);
+      return;
+    }
+
     if (action.confirmMessage) {
       confirm("Confirm action", action.confirmMessage, doChange, { confirmText: "Confirm" });
     } else {
@@ -379,7 +366,8 @@ export default function OrderDetailScreen() {
   // no status change (mirrors web); Email is a real server send; Share PDF pushes
   // the file bytes through the OS share sheet.
   const sendPhone = preferredPhone(order.customer?.mobile, order.customer?.phone);
-  const sendEmail = order.customer?.email;
+  // Import sentinels aren't real inboxes — hide the Email channel (mirrors web).
+  const sendEmail = isInternalEmail(order.customer?.email) ? undefined : order.customer?.email;
   const buildMessage = () =>
     sendSheet
       ? invoiceReadyMessage(
@@ -389,11 +377,101 @@ export default function OrderDetailScreen() {
         )
       : "";
 
+  /**
+   * Runs the shared "prepare → (maybe) tap-again → share" dance for a PDF
+   * channel (WhatsApp file-share mode, or the plain Share PDF row).
+   *
+   * THE TRAP (binding, see share-pdf.ts): never `await` a fetch between the
+   * tap and calling `sharePdf` — that includes the presigned-url mutation
+   * below. So this never does `await pdfMut.mutateAsync(...)` before calling
+   * `sharePdf`; instead it measures how much of ACTIVATION_BUDGET_MS the
+   * mutation itself spent and hands `sharePdf` only what's left, so the
+   * TOTAL tap→share() latency — url fetch + PDF fetch combined — never
+   * silently exceeds the browser's activation window.
+   *
+   * A SECOND tap (ref already holds a prepared call, from a first tap that
+   * timed out) skips the mutation entirely and re-tries `sharePdf` with a
+   * fresh full budget — this tap's own activation — against the SAME url,
+   * so it shares synchronously once the earlier fetch has finished caching.
+   */
+  const runPdfShare = (
+    ref: typeof whatsAppShareRef,
+    setPhase: (phase: PdfSharePhase) => void,
+    text: string | undefined,
+  ) => {
+    if (!sendSheet) return;
+
+    const cached = ref.current;
+    if (cached) {
+      ref.current = null;
+      setPhase("preparing");
+      sharePdf({ ...cached, budgetMs: ACTIVATION_BUDGET_MS })
+        .then((outcome) => {
+          if (outcome === "ready-await-tap") ref.current = cached;
+          setPhase(nextPdfSharePhase(outcome));
+        })
+        .catch((e) => {
+          setPhase("idle");
+          toastError(e, "Couldn't share the PDF.");
+        });
+      return;
+    }
+
+    const filename = `${sendSheet.invoiceNumber || "invoice"}.pdf`;
+    const dialogTitle = `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim();
+    const startedAt = Date.now();
+    setPhase("preparing");
+    pdfMut.mutate(
+      { id: sendSheet.invoiceId, variant: "final" },
+      {
+        onSuccess: async (data) => {
+          if (!data?.url) {
+            setPhase("idle");
+            showToast("PDF is still generating, try again in a moment.");
+            return;
+          }
+          const remaining = ACTIVATION_BUDGET_MS - (Date.now() - startedAt);
+          // retapHandled: this screen flips its own control to "PDF ready —
+          // tap to share", so share-pdf.ts must not also raise a dialog.
+          const opts = {
+            url: data.url,
+            filename,
+            dialogTitle,
+            text,
+            budgetMs: remaining,
+            retapHandled: true,
+          };
+          try {
+            const outcome = await sharePdf(opts);
+            if (outcome === "ready-await-tap") ref.current = opts;
+            setPhase(nextPdfSharePhase(outcome));
+          } catch (e) {
+            setPhase("idle");
+            toastError(e, "Couldn't share the PDF.");
+          }
+        },
+        onError: (e) => {
+          setPhase("idle");
+          toastError(e);
+        },
+      },
+    );
+  };
+
   const handleWhatsApp = () => {
     if (!sendSheet || !sendPhone) return;
-    Linking.openURL(whatsappUrl(sendPhone, buildMessage())).catch(() =>
-      showToast("Couldn't open WhatsApp."),
-    );
+    const plan = planWhatsAppSend({
+      phone: sendPhone,
+      message: buildMessage(),
+      canShareFiles: canShareFilesHere(),
+    });
+    if (plan.mode === "share-file") {
+      runPdfShare(whatsAppShareRef, setWhatsAppPhase, plan.text);
+      return;
+    }
+    Linking.openURL(plan.url)
+      .then(() => showToast("Opened WhatsApp with a text message — share the PDF separately."))
+      .catch(() => showToast("Couldn't open WhatsApp."));
   };
   const handleSms = () => {
     if (!sendSheet || !sendPhone) return;
@@ -407,43 +485,97 @@ export default function OrderDetailScreen() {
     sendMut.mutate(
       { id: sendSheet.invoiceId, email: sendEmail },
       {
-        onSuccess: () => {
-          showToast("Invoice emailed");
-          setSendSheet(null);
+        onSuccess: (res) => {
+          const notice = "warning" in res ? smtpFallbackNotice(res) : null;
+          // Resend rescued a broken tenant SMTP: the invoice DID go out, so this
+          // is not an error — but the operator must learn their own mailbox is
+          // dead and that the From address changed. A toast is the wrong surface
+          // for it (nowrap, 2.2s, and a no-op on iOS), so disclose it in the
+          // single-button info dialog instead. Plain successes stay a toast.
+          if (notice) alertInfo("Invoice emailed", notice);
+          else showToast("Invoice emailed");
+          closeSendSheet();
         },
         onError: (e) => toastError(e),
       },
     );
   };
   const handleSharePdf = () => {
+    runPdfShare(pdfShareRef, setPdfSharePhase, undefined);
+  };
+  /**
+   * A1: explicit "Open PDF" row — reuses `openPdfInTab` (share-pdf.ts), the
+   * same window.open fallback `sharePdf` itself falls back to. Independent of
+   * the share dance/budget above: no transient-activation window to protect
+   * since it never calls `navigator.share`, so a plain await-then-act is fine
+   * here. Always visible in the sheet, so it never depends on the share API
+   * being available or having just failed.
+   */
+  const handleOpenPdf = () => {
     if (!sendSheet) return;
+    setOpenPdfPending(true);
     pdfMut.mutate(
       { id: sendSheet.invoiceId, variant: "final" },
       {
-        onSuccess: async (data) => {
+        onSuccess: (data) => {
+          setOpenPdfPending(false);
           if (!data?.url) {
             showToast("PDF is still generating, try again in a moment.");
             return;
           }
-          try {
-            await sharePdf({
-              url: data.url,
-              filename: `${sendSheet.invoiceNumber || "invoice"}.pdf`,
-              dialogTitle: `Invoice ${sendSheet.invoiceNumber ?? ""}`.trim(),
-            });
-          } catch (e) {
-            toastError(e, "Couldn't share the PDF.");
-          }
+          openPdfInTab(data.url);
+        },
+        onError: (e) => {
+          setOpenPdfPending(false);
+          toastError(e, "Couldn't open the PDF.");
+        },
+      },
+    );
+  };
+  /**
+   * A1: "Mark as Sent" — the SAME bodyless `/invoices/:id/send` mutation
+   * (useSendInvoice called without `email`) the invoice-detail dialog already
+   * uses for its own Mark as Sent action. Always visible in the sheet: the
+   * guaranteed "I delivered it myself" path so the sheet can never dead-end.
+   */
+  // Email and Mark-as-Sent ride the SAME useSendInvoice instance, so a bare
+  // `isPending` lights up both rows at once. The in-flight variables tell them
+  // apart: `email` present = the email send, absent = the bodyless mark-as-sent.
+  const emailSending = sendMut.isPending && sendMut.variables?.email != null;
+  const markingSent = sendMut.isPending && sendMut.variables?.email == null;
+  const handleMarkAsSent = () => {
+    if (!sendSheet) return;
+    sendMut.mutate(
+      { id: sendSheet.invoiceId },
+      {
+        onSuccess: () => {
+          showToast("Invoice marked as sent");
+          closeSendSheet();
+          refetch();
         },
         onError: (e) => toastError(e),
       },
     );
   };
+  const closeSendSheet = () => {
+    setSendSheet(null);
+    setWhatsAppPhase("idle");
+    setPdfSharePhase("idle");
+    setOpenPdfPending(false);
+    whatsAppShareRef.current = null;
+    pdfShareRef.current = null;
+  };
 
   const handleDelete = () => {
+    // Staff can delete an order in ANY status now (owner: "delete any order")
+    // — the server's only remaining block is a linked invoice with recorded
+    // payments, which 409s and is toasted below via the same err-message read
+    // every other mutation on this screen uses.
     confirm(
-      "Delete order?",
-      "This permanently removes the order.",
+      order.status === "DELIVERED" ? "Delete this delivered order?" : "Delete order?",
+      order.status === "DELIVERED"
+        ? "Its delivery record is removed permanently. This cannot be undone."
+        : "This permanently removes the order.",
       () =>
         deleteMut.mutate(order.id, {
           onSuccess: () => {
@@ -519,6 +651,16 @@ export default function OrderDetailScreen() {
                 {s.label}
               </Pill>
               {order.urgent ? <Pill variant="red">Urgent</Pill> : null}
+              {/* ROUTE (the vast majority) gets no badge — a badge on every row would
+                  be noise. SHIP is the exception worth calling out. */}
+              {order.fulfillPath === "SHIP" ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 3 }}>
+                  <Ionicons name="cube-outline" size={12} color="#636366" />
+                  <Pill variant="gray" small>
+                    Ship
+                  </Pill>
+                </View>
+              ) : null}
             </View>
             <Text style={styles.customerName}>{order.customer?.businessName ?? "Customer"}</Text>
             {order.customer?.contactName || order.customer?.phone ? (
@@ -528,7 +670,7 @@ export default function OrderDetailScreen() {
             ) : null}
             {order.requestedDeliveryDate ? (
               <Text style={styles.customerSub}>
-                Requested {new Date(order.requestedDeliveryDate).toLocaleDateString()}
+                Requested {fmtCalendarDate(order.requestedDeliveryDate)}
               </Text>
             ) : null}
             {order.deliveredAt ? (
@@ -558,16 +700,30 @@ export default function OrderDetailScreen() {
               <Text style={styles.empty}>No items on this order.</Text>
             ) : (
               order.lineItems.map((li, i) => {
-                const upbRaw = (li as any).product?.unitsPerBox;
+                if (orderUiV2.enabled) {
+                  return (
+                    <OrderLineCard
+                      key={li.id}
+                      model={orderLineCardModel(li, order.status)}
+                      first={i === 0}
+                    />
+                  );
+                }
+                // #2046 review (B757): the pack size is the LINE's own snapshot first — the
+                // live product is only a fallback for an old line sold before the snapshot
+                // existed — and the suffix shows only for an actual boxes/pieces split, never
+                // for a factor-1 unit line (a Case/Piece line has no "per box" to name).
+                const upbRaw = li.unitsPerBox ?? (li as any).product?.unitsPerBox;
                 const upb = upbRaw == null ? 0 : Number(upbRaw);
-                const isBoxed = upb > 1;
+                const hasSplit = li.boxes != null || li.pieces != null;
                 // Show "1 box + 2 pcs · $30 / box of 12" when split, otherwise the
                 // existing "8 ea · $5.00" form. Shared formatter — reads the
                 // same on web order/invoice detail and the PDF.
-                const qtyLine =
-                  li.boxes != null || li.pieces != null
-                    ? formatQtySplit({ qty: li.qty, boxes: li.boxes, pieces: li.pieces })
-                    : `${li.qty} ${li.product?.unit ?? "ea"}`;
+                const qtyLine = usesUnitDisplay(li)
+                  ? // B757: a units_v1 named unit (Case, Pallet, a factor-1 "5 Piece") shows ITS
+                    // label via the ONE shared formatter; a pack line is unchanged.
+                    invoiceLineQtyText(li)
+                  : `${li.qty} ${li.product?.unit ?? "ea"}`;
                 return (
                   <View
                     key={li.id}
@@ -592,10 +748,17 @@ export default function OrderDetailScreen() {
                       </View>
                       <Text style={styles.itemSub}>
                         {qtyLine} · {formatCurrency(li.unitPrice)}
-                        {isBoxed ? ` / box of ${upb}` : ""}
+                        {hasSplit && upb > 1 ? ` / ${invoiceLineUnitNoun(li)} of ${upb}` : ""}
                       </Text>
+                      {/* BUY_N_GET_M: name the free units, or the reduced line
+                          total reads as a pricing error (web parity). */}
+                      {freeUnitsLabel(li.promoFreeUnits) ? (
+                        <Text style={styles.itemFreeLabel}>
+                          {freeUnitsLabel(li.promoFreeUnits)}
+                        </Text>
+                      ) : null}
                       {li.notes?.trim() ? (
-                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={4}>
                           {li.notes}
                         </Text>
                       ) : null}
@@ -671,50 +834,7 @@ export default function OrderDetailScreen() {
             </View>
           </View>
 
-          {/* Applied credits — order-scoped credit-note intents (server:
-              OrderCreditNote). "Applied so far" sums this credit's CREDIT_NOTE
-              payments across the order's invoices; the reason renders via the
-              relation so a later edit shows up here automatically. */}
-          {(order.orderCreditNotes?.length ?? 0) > 0 ? (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>Applied credits</Text>
-              {order.orderCreditNotes!.map((oc, i) => {
-                const appliedSoFar = (order.invoices ?? [])
-                  .flatMap((inv) => inv.payments ?? [])
-                  .filter((p) => p.creditNoteId === oc.creditNoteId)
-                  .reduce((s, p) => s + Number(p.amount ?? 0), 0);
-                return (
-                  <View
-                    key={oc.id}
-                    style={[
-                      styles.invoiceRow,
-                      i > 0 && {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: ios.separator,
-                      },
-                    ]}
-                  >
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <Text style={styles.invoiceNumber} numberOfLines={1}>
-                        {oc.creditNote?.creditNoteNumber ?? "Credit"}
-                      </Text>
-                      {oc.creditNote?.reason ? (
-                        <Text style={styles.itemSub} numberOfLines={2}>
-                          {oc.creditNote.reason}
-                        </Text>
-                      ) : null}
-                      <Text style={styles.itemSub}>
-                        {oc.amount != null
-                          ? `Requested ${formatCurrency(oc.amount)}`
-                          : "Up to remaining balance"}
-                      </Text>
-                    </View>
-                    <Text style={styles.itemTotal}>{formatCurrency(appliedSoFar)}</Text>
-                  </View>
-                );
-              })}
-            </View>
-          ) : null}
+          <OrderAppliedCredits order={order} />
 
           {/* R3: Invoice — mirror web's Invoice card. A CONFIRMED (or later) order
               can already have a draft invoice; surface it so mobile can open it, or
@@ -765,8 +885,11 @@ export default function OrderDetailScreen() {
             </View>
           ) : null}
 
-          {/* Carrier shipment */}
-          <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          {/* Carrier shipment — only for carrier-shipped orders, or rows that
+              already carry tracking data recorded before this gate existed. */}
+          {order.fulfillPath === "SHIP" || order.shippingCarrier || order.shippingTrackingNumber ? (
+            <ShipmentSection shipment={order} onEdit={() => setShipmentModal(true)} />
+          ) : null}
 
           {/* Status transitions */}
           {actions.length > 0 ? (
@@ -813,6 +936,12 @@ export default function OrderDetailScreen() {
                   </Pressable>
                 ))}
               </View>
+              {order.fulfillPath === "SHIP" &&
+              actions.some((a) => a.toStatus === "OUT_FOR_DELIVERY") ? (
+                <Text style={styles.shipHint}>
+                  Sets the order to Out for delivery — the customer is notified it's on the way.
+                </Text>
+              ) : null}
             </View>
           ) : null}
 
@@ -820,6 +949,18 @@ export default function OrderDetailScreen() {
           <View style={styles.card}>
             <Text style={styles.cardTitle}>More</Text>
             <View style={styles.actionsCol}>
+              {/* #2420: Record return — web's RecordReturnAction twin. Any order status (never
+                  gated on it); hidden without the orders_inline_returns add-on. */}
+              {recordReturn ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.secondaryAction]}
+                  onPress={recordReturn}
+                  accessibilityRole="button"
+                >
+                  <Ionicons name="return-down-back-outline" size={18} color={ios.brand} />
+                  <Text style={styles.actionBtnText}>Record return</Text>
+                </Pressable>
+              ) : null}
               {/* Split into multiple invoices — available once the order has items
                   and isn't a draft / cancelled. The screen prevents over-invoicing via
                   OrderItem.invoicedQty. */}
@@ -873,14 +1014,23 @@ export default function OrderDetailScreen() {
                   <Text style={styles.actionBtnText}>View customer</Text>
                 </Pressable>
               ) : null}
-              <Pressable
-                style={[styles.actionBtn, styles.dangerAction]}
-                onPress={handleDelete}
-                disabled={deleteMut.isPending}
-              >
-                <Ionicons name="trash-outline" size={18} color={ios.system.red} />
-                <Text style={[styles.actionBtnText, { color: ios.system.red }]}>Delete order</Text>
-              </Pressable>
+              {/* 2026-08-25: staff may delete an order in any status now — the
+                  server only blocks a linked invoice with recorded payments
+                  (409, toasted in handleDelete). `canDeleteOrder` always
+                  returns true today; kept as the gate so a future
+                  client-visible block has somewhere to slot in. */}
+              {canDeleteOrder(order.status) ? (
+                <Pressable
+                  style={[styles.actionBtn, styles.dangerAction]}
+                  onPress={handleDelete}
+                  disabled={deleteMut.isPending}
+                >
+                  <Ionicons name="trash-outline" size={18} color={ios.system.red} />
+                  <Text style={[styles.actionBtnText, { color: ios.system.red }]}>
+                    Delete order
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           </View>
         </View>
@@ -897,18 +1047,48 @@ export default function OrderDetailScreen() {
 
       <SendInvoiceSheet
         open={sendSheet !== null}
-        onClose={() => setSendSheet(null)}
+        onClose={closeSendSheet}
         customerName={order.customer?.businessName ?? "Customer"}
         invoiceNumber={sendSheet?.invoiceNumber ?? ""}
         totalFmt={sendSheet?.totalFmt ?? ""}
         phone={sendPhone}
         email={sendEmail}
-        emailSending={sendMut.isPending}
-        pdfSending={pdfMut.isPending}
+        emailSending={emailSending}
+        whatsAppPhase={whatsAppPhase}
+        pdfPhase={pdfSharePhase}
         onWhatsApp={handleWhatsApp}
         onSms={handleSms}
         onEmail={handleEmailInvoice}
         onSharePdf={handleSharePdf}
+        onOpenPdf={handleOpenPdf}
+        openPdfPending={openPdfPending}
+        onMarkAsSent={handleMarkAsSent}
+        markingSent={markingSent}
+        issuePrompt={sendSheet?.issuePrompt}
+      />
+
+      <ReasonSheet
+        visible={reasonFor !== null}
+        title={reasonFor?.label ?? "Reason"}
+        message={reasonFor?.confirmMessage}
+        submitLabel="Confirm"
+        submitting={changeMut.isPending}
+        onCancel={() => setReasonFor(null)}
+        onSubmit={(reason) => reasonFor && runStatusChange({ ...reasonFor, reason })}
+      />
+
+      <BlockedLinesModal lines={restrictedBlock} onClose={() => setRestrictedBlock(null)} />
+
+      <CreditLimitGuardModal
+        open={!!creditBlock}
+        info={creditBlock}
+        onCollectPayment={() => {
+          setCreditBlock(null);
+          // push, not replace: this screen stays on the stack; no auto-retry — the operator
+          // re-taps the action after recording the payment.
+          router.push(`/(operator)/invoices?customerId=${order.customerId ?? ""}` as any);
+        }}
+        onCancel={() => setCreditBlock(null)}
       />
     </SafeAreaView>
   );
@@ -951,6 +1131,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   itemSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   invoiceRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   invoiceNumber: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: ios.label },
   itemTotal: {
@@ -997,4 +1183,5 @@ const styles = StyleSheet.create({
   dangerAction: { backgroundColor: ios.fill3 },
   actionBtnText: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   actionDisabled: { opacity: 0.5 },
+  shipHint: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 8 },
 });

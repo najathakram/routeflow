@@ -39,6 +39,13 @@ export class PublicTenantsController {
       slug: result.tenant.slug,
       adminUsername: result.user.username,
       trialEndsAt: result.tenant.trialEndsAt,
+      // Honest signal for the web check-email screen: the account is always
+      // created regardless (so this response is always 201), but when the
+      // verification email itself failed to go out there is nothing for the
+      // user to click — the frontend must say so instead of promising an
+      // email that never arrives. TenantsService.register() has already
+      // logged the underlying transport reason server-side.
+      emailSent: result.emailSent,
     };
   }
 

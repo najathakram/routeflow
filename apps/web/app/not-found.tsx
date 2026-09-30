@@ -1,51 +1,30 @@
-"use client";
-
 import Link from "next/link";
-import { Home, ArrowLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { Brand } from "@/components/brand";
 
+// Restyled per ux-spec.md §3 (spec.md R1, R4): eyebrow, H1, body, one CTA.
+// Not under the `(marketing)` route group, so the mark/wordmark and the
+// `.rf-marketing` scope are applied directly here rather than inherited from
+// `app/(marketing)/layout.tsx`.
 export default function NotFound() {
-  const router = useRouter();
-
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-surface-base px-4">
-      <div className="flex flex-col items-center gap-6 text-center">
-        {/* Logo */}
-        <div className="flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500 text-white font-bold text-lg select-none">
-            RF
-          </div>
-          <span className="text-xl font-semibold text-navy">RouteFlow</span>
-        </div>
-
-        {/* Error code */}
-        <div className="space-y-2">
-          <p className="text-8xl font-extrabold text-brand-500 leading-none">404</p>
-          <h1 className="text-2xl font-bold text-navy">Page not found</h1>
-          <p className="max-w-sm text-sm text-navy/70">
-            The page you&apos;re looking for doesn&apos;t exist or may have been moved.
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-brand-600 transition-colors"
-          >
-            <Home className="h-4 w-4" />
-            Back to Dashboard
-          </Link>
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="inline-flex items-center gap-2 rounded-lg border border-surface-border bg-white px-5 py-2.5 text-sm font-medium text-navy hover:bg-surface-raised transition-colors"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Go back
-          </button>
-        </div>
-      </div>
+    <div className="rf-marketing">
+      <main id="main-content" className="not-found wrap">
+        <Brand size={40} className="not-found-brand" />
+        <p className="eyebrow">
+          <span />
+          404 · PAGE NOT FOUND
+        </p>
+        <h1>
+          Let’s get you <br />
+          <em>back on track.</em>
+        </h1>
+        <p>
+          The page you’re looking for isn’t here. Explore the platform or return to the homepage.
+        </p>
+        <Link href="/" className="button">
+          Back to RouteFlow <span aria-hidden="true">→</span>
+        </Link>
+      </main>
     </div>
   );
 }

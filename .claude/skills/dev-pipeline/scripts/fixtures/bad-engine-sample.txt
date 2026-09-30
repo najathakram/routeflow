@@ -1,0 +1,6 @@
+// A synthetic bad-engine fragment used only to self-test the dry-run source
+// scanners in scripts/dry-run.mjs. It is never executed as a Workflow script.
+function capFableBrief(text, cap) {
+  return Buffer.from(text).slice(0, cap)
+}
+const bad·Identifier = 1 // the middle dot above sits in CODE, not this comment, on purpose

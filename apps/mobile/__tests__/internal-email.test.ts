@@ -2,7 +2,7 @@ import { isInternalEmail } from "../lib/internal-email";
 
 describe("isInternalEmail (mobile mirror)", () => {
   it("flags the CSV-import sentinel domain", () => {
-    expect(isInternalEmail("flash_mart@imported.local")).toBe(true);
+    expect(isInternalEmail("acme_store@imported.local")).toBe(true);
   });
 
   it("flags the no-email placeholder sentinel domain", () => {

@@ -14,6 +14,22 @@ import { sharePdf } from "../../../lib/share-pdf";
 import { showToast } from "../../../lib/toast";
 import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
+import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
+import { fmtCalendarDate } from "../../../lib/format-date";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
+
+// buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
+// server now snapshots it onto every InvoiceItem (display-only, per PIECE)
+// and GET /buyer/invoices/:id returns it already. Widen locally rather than
+// touching buyer.ts's canonical type (out of scope for this change).
+type ItemMsrpField = { msrp?: number | null };
+
+// Same reason as ItemMsrpField above: buyer.ts's BuyerInvoice doesn't declare
+// `paymentTermsLabel` yet even though the server now persists it on every
+// Invoice and GET /buyer/invoices/:id returns it already. Null/undefined
+// (historical invoices predating this field) renders nothing.
+type InvoiceTermsLabelField = { paymentTermsLabel?: string | null };
 
 function invoicePill(status: string, isOverdue?: boolean) {
   if (isOverdue) return { variant: "gray" as const, label: "Overdue" };
@@ -32,6 +48,9 @@ function invoicePill(status: string, isOverdue?: boolean) {
   }
 }
 
+// Real timestamp (has a meaningful time-of-day) — kept in the viewer's local
+// time, unlike the invoice issue/due dates below which are UTC-midnight
+// calendar dates routed through the shared fmtCalendarDate helper.
 function fmtDate(s?: string | null) {
   if (!s) return null;
   return new Date(s).toLocaleDateString(undefined, {
@@ -63,7 +82,27 @@ export default function CustomerInvoiceDetailScreen() {
   const p = invoicePill(invoice.status, invoice.isOverdue);
   const balanceDue = Number(invoice.balanceDue ?? invoice.amountDue ?? 0);
   const paidAmount = Number(invoice.paidAmount ?? invoice.amountPaid ?? 0);
+  // B421: confirmed but non-cash — a credit note or advance applied to this
+  // invoice reduces balanceDue but must never render as "Paid".
+  const creditApplied = Number(invoice.creditApplied ?? 0);
+  const advanceApplied = Number(invoice.advanceApplied ?? 0);
+  const showPaid = paidAmount > 0;
+  const showCredit = creditApplied > 0;
+  const showAdvance = advanceApplied > 0;
+  const showBalance = balanceDue > 0 && invoice.status !== "PAID";
+  // Which Summary row renders last (so only IT drops the bottom border) —
+  // whichever of these is true, checked in display order.
+  const lastSummaryRow = showBalance
+    ? "balance"
+    : showAdvance
+      ? "advance"
+      : showCredit
+        ? "credit"
+        : showPaid
+          ? "paid"
+          : "total";
   const pdfUrl = (invoice as any).pdfUrl as string | undefined;
+  const paymentTermsLabel = (invoice as typeof invoice & InvoiceTermsLabelField).paymentTermsLabel;
 
   const handleSharePdf = async () => {
     if (!pdfUrl) return;
@@ -97,7 +136,9 @@ export default function CustomerInvoiceDetailScreen() {
             <View style={{ flex: 1 }}>
               <Text style={styles.invoiceNum}>#{invoice.invoiceNumber}</Text>
               {invoice.issueDate ? (
-                <Text style={styles.issuedDate}>Issued: {fmtDate(invoice.issueDate)}</Text>
+                <Text style={styles.issuedDate}>
+                  Issued: {fmtCalendarDate(invoice.issueDate, "short")}
+                </Text>
               ) : null}
             </View>
             <Pill variant={p.variant} dot>
@@ -115,7 +156,10 @@ export default function CustomerInvoiceDetailScreen() {
           <Text style={styles.total}>${Number(invoice.total).toFixed(2)}</Text>
 
           {invoice.dueDate ? (
-            <Text style={styles.dueDate}>Due: {fmtDate(invoice.dueDate)}</Text>
+            <Text style={styles.dueDate}>Due: {fmtCalendarDate(invoice.dueDate, "short")}</Text>
+          ) : null}
+          {paymentTermsLabel ? (
+            <Text style={styles.dueDate}>Terms: {paymentTermsLabel}</Text>
           ) : null}
         </View>
 
@@ -160,7 +204,7 @@ export default function CustomerInvoiceDetailScreen() {
             <Text style={styles.sectionTitle}>Payments</Text>
             <View style={styles.detailCard}>
               {invoice.payments.map((pmt, i) => {
-                const method = pmt.method ?? pmt.paymentMethod;
+                const method = pmt.method; // #2703: the API sends `method` (the old `paymentMethod` never existed)
                 const badge = checkBadgeFor({
                   method,
                   status: pmt.status,
@@ -210,9 +254,33 @@ export default function CustomerInvoiceDetailScreen() {
           <View style={styles.detailCard}>
             <DetailRow label="Invoice #" value={`#${invoice.invoiceNumber}`} />
             <DetailRow label="Status" value={p.label} />
-            <DetailRow label="Total" value={`$${Number(invoice.total).toFixed(2)}`} />
-            {paidAmount > 0 ? <DetailRow label="Paid" value={`$${paidAmount.toFixed(2)}`} /> : null}
-            {balanceDue > 0 && invoice.status !== "PAID" ? (
+            <DetailRow
+              label="Total"
+              value={`$${Number(invoice.total).toFixed(2)}`}
+              last={lastSummaryRow === "total"}
+            />
+            {showPaid ? (
+              <DetailRow
+                label="Paid"
+                value={`$${paidAmount.toFixed(2)}`}
+                last={lastSummaryRow === "paid"}
+              />
+            ) : null}
+            {showCredit ? (
+              <DetailRow
+                label="Credit issued"
+                value={`$${creditApplied.toFixed(2)}`}
+                last={lastSummaryRow === "credit"}
+              />
+            ) : null}
+            {showAdvance ? (
+              <DetailRow
+                label="Advance applied"
+                value={`$${advanceApplied.toFixed(2)}`}
+                last={lastSummaryRow === "advance"}
+              />
+            ) : null}
+            {showBalance ? (
               <DetailRow label="Balance due" value={`$${balanceDue.toFixed(2)}`} last />
             ) : null}
           </View>
@@ -227,6 +295,7 @@ export default function CustomerInvoiceDetailScreen() {
 function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) {
   const label = item.product?.name ?? item.description;
   const unit = item.product?.unit;
+  const itemMsrp = (item as typeof item & ItemMsrpField).msrp;
   return (
     <View style={[styles.itemRow, last && { borderBottomWidth: 0 }]}>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -234,10 +303,32 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {label}
         </Text>
         <Text style={styles.itemMeta}>
-          {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
-          {unit ? ` / ${unit}` : ""}
+          {/* B758 review: a units_v1 line (Case, Pallet, a factor-1 "5 Piece") shows ITS
+              label via the ONE shared formatter — a bare Number(item.qty) read "36" for a
+              3-Case line instead of "3 Cases". A pack line is unchanged. */}
+          {usesUnitDisplay(item) ? invoiceLineQtyText(item) : Number(item.qty)} × $
+          {Number(item.unitPrice).toFixed(2)}
+          {/* #2046 REQUIRED (Opus): a units_v1 line's own unit noun (Case, Piece), never
+              the fallen-through product.unit — a Case line read "/ ea" and a factor-1
+              Piece line could read "/ box" here despite the qty text above already
+              naming it correctly. The operator invoice screen already does this. */}
+          {item.unitLabel?.trim() ? ` / ${invoiceLineUnitNoun(item)}` : unit ? ` / ${unit}` : ""}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
+        {item.notes?.trim() ? (
+          <Text style={styles.itemNote} numberOfLines={4}>
+            {item.notes}
+          </Text>
+        ) : null}
+        {/* Suggested retail price snapshot — per PIECE, display-only. */}
+        {itemMsrp != null ? (
+          <Text style={styles.itemMsrp}>MSRP ${Number(itemMsrp).toFixed(2)}/pc</Text>
+        ) : null}
+        {/* BUY_N_GET_M: name the free units, or the reduced line subtotal
+            reads as a pricing error (web parity). */}
+        {freeUnitsLabel(item.promoFreeUnits) ? (
+          <Text style={styles.itemFreeLabel}>{freeUnitsLabel(item.promoFreeUnits)}</Text>
+        ) : null}
       </View>
       <Text style={styles.itemTotal}>${Number(item.subtotal).toFixed(2)}</Text>
     </View>
@@ -316,6 +407,14 @@ const styles = StyleSheet.create({
   },
   itemName: { fontSize: 14, fontFamily: "Inter_500Medium", color: ios.label },
   itemMeta: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2, marginTop: 2 },
+  itemMsrp: { fontSize: 11, fontFamily: "Inter_400Regular", color: ios.label3, marginTop: 2 },
+  itemFreeLabel: {
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: ios.brand,
+    marginTop: 2,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

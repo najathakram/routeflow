@@ -1,0 +1,168 @@
+# ─── Migration replay ───────────────────────────────────────────────────────────
+# Replays the whole Prisma migration history against a FRESH Postgres.
+#
+# WHY THIS IS ITS OWN WORKFLOW (2026-08-30). This step used to live in ci.yml's
+# Test job, which is why that job carried `services: postgres + redis`. Nothing
+# else there needed them: all 181 api specs mock at the module boundary — not one
+# constructs a PrismaClient or reads DATABASE_URL — so the containers cost every
+# CI run a measured 23s of "Initialize containers" to serve a single 4-second
+# check. Splitting it out lets the consolidated `verify` job run with no services
+# at all, and lets this run only when it can actually find something: a `paths:`
+# filter is native to `on:`, so a workflow file is the cheapest way to express it.
+#
+# WHY IT EXISTS AT ALL. `prisma db push` applies the schema directly and so never
+# exercises the migration files. Production has no such shortcut — the only way
+# schema reaches it is `prisma migrate deploy` (CLAUDE.md: applied manually,
+# BEFORE the merge, never from the Docker CMD). A migration that cannot replay
+# from zero is therefore a production incident that CI can catch for ~3 minutes,
+# a handful of times a month. Do not fold it back into `verify`.
+#
+# The former `prisma db push` step is gone with it — it only ever set up a
+# database that no test read.
+# ────────────────────────────────────────────────────────────────────────────────
+
+name: Migration replay
+
+on:
+  pull_request:
+    # No `branches:` filter (was `[master]`): it filtered on the PR's BASE, so a stacked PR that
+    # adds a migration got no lint/replay at all. `--base` below is the PR's own base.sha, so a
+    # stacked PR is linted on its own migrations only. See ci.yml's `on:` note for the caveat that
+    # the workflow file is read from the PR's merge ref.
+    paths:
+      - "apps/api/prisma/**"
+      # The tenancy engine itself. `prisma.service.ts` is what the DB-backed
+      # tenant-findunique pins below actually exercise, and the *OrThrow
+      # fail-closed fix (L-055) landed there — a PR that touches it must run
+      # this lane, not just the one that touches the spec files.
+      - "apps/api/src/prisma/**"
+      - "apps/api/prisma.config.ts"
+      - "apps/api/scripts/schema-drift.mjs"
+      - "apps/api/scripts/lib/**"
+      - "apps/api/jest.db.config.js"
+      - "apps/api/package.json"
+      - "apps/api/src/**/*.db.spec.ts"
+      - "apps/api/src/common/testing/**"
+      # B100/F16b (2026-09-08): invoice/estimate number reservation now runs in
+      # its own short transaction (NumberingService.reserveNext) and is proven
+      # only by the DB-lane pin (invoice-numbering.db.spec.ts) — a PR touching
+      # these three files must run this lane, not just the one that touches
+      # the spec file itself.
+      - "apps/api/src/billing/config-snapshot-flag.service.ts"
+      - "apps/api/src/import/numbering.service.ts"
+      - "apps/api/src/invoices/invoices.service.ts"
+      # B667 (#1185 review round 4): recomputeOrderFromInvoices' coverage/orphan-cancel logic
+      # lives here, proven only by recompute-order-partial.db.spec.ts -- an edit to this file
+      # ALONE (not invoices.service.ts) must still run this lane.
+      - "apps/api/src/invoices/finalize-order-recompute.ts"
+      # #1274 round 7 (SA-093a/SA-113b): the evidence-keyed delivered basis these two modules
+      # compute is proven only by recompute-order-partial.db.spec.ts's real-Postgres pins -- a
+      # solo edit to either (not invoices.service.ts or finalize-order-recompute.ts) must still
+      # run this lane.
+      - "apps/api/src/invoices/delivered-basis-by-line.ts"
+      - "apps/api/src/invoices/order-item-provenance.ts"
+      - "apps/api/src/estimates/estimates.service.ts"
+      # B660a: reverseReturnEntries's box/piece axis math is proven for real by
+      # returns/return-reversal-unit-axis.db.spec.ts, not by any mocked-Prisma
+      # spec — a PR touching this file must run this lane even when it doesn't
+      # touch the .db.spec.ts itself.
+      - "apps/api/src/regulated/regulated-ledger.service.ts"
+      # #2095 / #2142: the buyer socket rooms, the shared buyer-link predicate (portal guard and
+      # gateway alike) and the tracking read are proven against real SQL only by
+      # gateways/buyer-rooms.db.spec.ts; an edit to any of them alone must run this lane.
+      - "apps/api/src/gateways/routeflow.gateway.ts"
+      - "apps/api/src/buyer/buyer-link-scope.ts"
+      - "apps/api/src/buyer/guards/buyer-seller-context.guard.ts"
+      - "apps/api/src/orders/order-tracking.ts"
+      - "apps/api/.squawk.toml"
+      - "scripts/lint-migrations.mjs"
+      - ".github/workflows/db-migrations.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: migrations-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  replay:
+    name: Replay migrations on a fresh database
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: routeflow_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d routeflow_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history, because the lint step below resolves a RANGE
+          # (<base>...HEAD) to find the migrations this PR actually adds. The
+          # default depth-1 clone contains neither the PR base commit nor an
+          # `origin/master` remote-tracking ref; fetch-depth: 0 is what makes the
+          # range resolvable. Without it the script exits 2 ("could not resolve
+          # range") and fails the job on purpose — it will never report a clean
+          # run off a range it could not compute.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --engine-strict=false
+
+      # ── Destructive-migration gate (item 3B) ────────────────────────────────
+      # Squawk (squawk-cli, a root devDependency — hence AFTER the install) over
+      # the migration.sql files added in this PR's range. The rule set in
+      # apps/api/.squawk.toml is destructive-only: Prisma emits the lock-hygiene
+      # shapes (concurrent index creation, NOT VALID constraints, timestamp vs
+      # timestamptz) by design, so those rules are excluded as advisory and only
+      # the drop/rename/retype/required-column family fails the job. Whitelist a
+      # single statement with `-- reason: <why>` immediately above a
+      # `-- squawk-ignore <rule>` line; the reason line is enforced by the script.
+      #
+      # Before the replay on purpose: a destructive statement is a review
+      # decision, and there is no point spending three minutes replaying history
+      # to prove that a migration nobody should merge does apply.
+      #
+      # A step, not a job — see ci.yml's minutes budget: a second job here would
+      # mean a second checkout and a second `npm ci`.
+      - name: Destructive-migration lint (squawk)
+        run: node scripts/lint-migrations.mjs --base "${{ github.event.pull_request.base.sha || 'origin/master' }}"
+
+      - name: Verify migrations apply to a fresh database
+        working-directory: apps/api
+        run: npx prisma migrate deploy
+
+      - name: Schema drift (history → datamodel)
+        working-directory: apps/api
+        run: node scripts/schema-drift.mjs
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+
+      - name: DB-backed specs
+        run: npm run test:db -w apps/api
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/routeflow_test
+          RUN_DB_SPECS: ci

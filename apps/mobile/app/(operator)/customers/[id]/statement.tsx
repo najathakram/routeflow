@@ -133,6 +133,15 @@ export default function CustomerStatementScreen() {
               </View>
             </View>
 
+            {/* B110: the ledger is a capped read — say so when the server flags it,
+                and stay silent (no scary label) when the ledger IS complete. */}
+            {data.transactionsTruncated === true ? (
+              <Text style={styles.truncNote}>
+                Showing the most recent transactions only — older entries are not listed in this
+                ledger.
+              </Text>
+            ) : null}
+
             {transactions.length === 0 ? (
               <View style={styles.center}>
                 <Text style={styles.empty}>No activity yet.</Text>
@@ -213,6 +222,7 @@ const styles = StyleSheet.create({
     fontVariant: ["tabular-nums"],
   },
   tileDanger: { color: ios.system.redInk },
+  truncNote: { fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },
   row: { backgroundColor: ios.bgElev, borderRadius: 12, padding: 12 },
   rowHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   rowDate: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: ios.label2 },

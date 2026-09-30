@@ -6,136 +6,74 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { buyerApiClient, type BuyerSeller } from "../buyer-auth";
+import { trackingRefetchInterval } from "../order-tracking-logic";
+import type {
+  ChangeRequestResolution,
+  ChangeRequestStatus,
+  ChangeRequestType,
+} from "./change-requests";
+import type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderListItem,
+  BuyerPayment,
+  BuyerProduct,
+  ChangeRequest,
+  BuyerProductDetailExtras,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStockAlerts,
+  ExpiringAuthorization,
+  LockedCategory,
+  OrderTrackingResponse,
+  ReplenishmentEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
+export type {
+  BuyerAnalytics,
+  BuyerAuthorizationRow,
+  BuyerCreateChangeRequestInput,
+  BuyerPayment,
+  BuyerPromotion,
+  BuyerRemittance,
+  BuyerStatement,
+  BuyerStatementTransaction,
+  BuyerStockAlerts,
+  ExpiringAuthorization,
+  LockedCategory,
+  ReplenishmentEstimate,
+  ShelfActiveOrder,
+  ShelfEstimate,
+  ShelfResponse,
+  SubmitBuyerAuthorizationInput,
+} from "@routeflow/types";
+export type { ChangeRequestStatus, ChangeRequestType } from "./change-requests";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description?: string;
-  category?: string;
-  unit?: string;
-  /** Legacy field — may be absent. Prefer buyerPrice then basePrice. */
-  price?: number;
-  buyerPrice?: number;
-  basePrice?: number;
-  imageUrl?: string;
-  isFavorite?: boolean;
-  /** Box packaging: when > 1 the buyerPrice/basePrice is the BOX price. */
-  unitsPerBox?: number | null;
-  // Catalogue v2 merch/stock fields (P5-02 DTO; optional so older cached shapes
-  // still type-check). Mirrors buyer-catalog.service.ts BuyerProduct.
-  sku?: string | null;
-  barcode?: string | null;
-  thumbnailUrl?: string | null;
-  imageUrls?: string[];
-  isFeatured?: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): the catalog row + favorites shapes are ONE declaration in @routeflow/types.
+export type {
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+  ChangeRequest,
+} from "@routeflow/types";
 
-// ─── Change requests (P5-09/10 twin — P5-16b) ─────────────────────────────────
-export type ChangeRequestType = "ADD_ITEM" | "CHANGE_QTY" | "REMOVE_ITEM" | "NOTE";
-export type ChangeRequestStatus = "PENDING" | "APPROVED" | "DECLINED";
-export type ChangeRequestResolution = "MERGED_AT_STOP" | "NEXT_DELIVERY" | "DECLINED";
-
-export interface ChangeRequest {
-  id: string;
-  orderId: string;
-  orderItemId: string | null;
-  productId: string | null;
-  type: ChangeRequestType;
-  status: ChangeRequestStatus;
-  payload: {
-    productId?: string;
-    qty?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    productName?: string;
-    orderItemId?: string;
-    newQty?: number;
-    text?: string;
-  };
-  note: string | null;
-  requestedByName: string | null;
-  requestedByRole: string | null;
-  resolvedByName: string | null;
-  resolvedByRole: string | null;
-  resolution: ChangeRequestResolution | null;
-  resolutionReason: string | null;
-  nextOrderId: string | null;
-  resolvedAt: string | null;
-  createdAt: string;
-}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber?: string;
-  status: string;
-  createdAt: string;
-  requestedDeliveryDate?: string;
-  notes?: string;
-  urgent?: boolean;
-  subtotal?: number;
-  tax?: number;
-  total?: number;
-  lineItems: Array<{
-    id: string;
-    productId: string;
-    qty: number;
-    unitPrice: number;
-    subtotal?: number;
-    boxes?: number | null;
-    pieces?: number | null;
-    status?: string;
-    deliveredQty?: number;
-    categoryTaxAmount?: number; // RF-4: regulated category tax folded into order.total
-    product?: { id: string; name: string; unit?: string };
-  }>;
-  /** P5-09: post-dispatch change requests, newest first. */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
-
-export interface BuyerInvoiceItem {
-  id: string;
-  description: string;
-  qty: number;
-  unitPrice: number;
-  discount?: number;
-  subtotal: number;
-  product?: { id: string; name: string; unit?: string };
-}
-
-/** Check lifecycle states (P5-12). Only ever set when method = CHECK. */
-export type BuyerCheckStatus = "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED";
-
-/** Raw InvoicePayment row from GET /buyer/invoices/:id (no DTO mapping). Field
- *  is `method`; `paymentMethod` kept only for older cached shapes. Decimal
- *  fields may arrive as strings — render via Number(), never do arithmetic. */
-export interface BuyerInvoicePayment {
-  id: string;
-  amount: number;
-  createdAt: string;
-  method?: string;
-  /** @deprecated the API returns `method` — kept for older cached shapes. */
-  paymentMethod?: string;
-  reference?: string;
-  notes?: string;
-  status?: "DRAFT" | "PAID" | "VOID" | string;
-  checkStatus?: BuyerCheckStatus | null;
-  nsfFeeAmount?: number | string | null;
-  paidAt?: string;
-}
+// ─── Orders + change requests: shared (#2703) ─────────────────────────────────
+// BuyerOrder / BuyerOrderListItem and the buyer-facing ChangeRequest row are ONE declaration in
+// @routeflow/types (SA-562). `./change-requests`' ChangeRequest is the narrower DRIVER-flow shape
+// and stays separate.
 
 export interface BuyerInvoice {
   id: string;
@@ -150,6 +88,11 @@ export interface BuyerInvoice {
   paidAmount?: number;
   amountDue?: number;
   balanceDue?: number;
+  /** Confirmed credit-note applications (B421) — reduces balanceDue but is
+   *  never cash the buyer paid. */
+  creditApplied?: number;
+  /** Confirmed advance-payment applications (B421) — same treatment. */
+  advanceApplied?: number;
   isOverdue?: boolean;
   customer?: { id: string; businessName: string };
   items?: BuyerInvoiceItem[];
@@ -209,13 +152,6 @@ export interface BuyerDashboard {
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────
 
-/** A regulated category hidden from this buyer pending license verification (W7b). */
-export interface LockedCategory {
-  id: string;
-  name: string;
-  status: "NONE" | "PENDING_REVIEW" | "EXPIRED" | "REJECTED";
-}
-
 export function useBuyerProducts(params?: {
   search?: string;
   category?: string;
@@ -269,22 +205,47 @@ export function useBuyerProductsInfinite(params?: {
   });
 }
 
-// ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
-
-/** An active, in-window promotion (GET /buyer/promotions). Mirrors web's shape. */
-export interface BuyerPromotion {
-  id: string;
-  name: string;
-  bannerText: string | null;
-  type: "PERCENT" | "FIXED" | "QTY_BREAK";
-  value: number;
-  minQty: number | null;
-  scope: "ALL" | "CATEGORY" | "PRODUCTS";
-  category: string | null;
-  startsAt: string;
-  endsAt: string;
-  productIds: string[];
+/**
+ * F30 / R12 (B200): resolve a scanned code against THIS buyer's catalog.
+ *
+ * The operator ladder in `lib/barcode-resolve.ts` is unusable from the buyer
+ * realm — both its rungs (`/products/barcode/:code` and `/products?scanCode=`)
+ * are `@Roles(OPERATOR, DRIVER)`, so a customer 403s on both. This is the
+ * buyer realm's own rung (`BuyerController.scanProduct`), which runs the same
+ * `normalizeScanCode` candidate match the operator rung does — so an iOS
+ * 13-digit decode of a 12-digit label still resolves — behind the isActive +
+ * regulated-visibility gate every other buyer-catalog surface uses.
+ *
+ * A 404 is the MISS outcome, not a failure: it covers both "no candidate
+ * matched" and "matched a product this buyer may not see", and the two must
+ * be indistinguishable to the buyer. Anything else (network / 5xx) propagates
+ * so the caller can say "try again" instead of lying with "not found"
+ * (`resolveProductByCode`'s convention).
+ */
+export async function resolveBuyerProductByCode(
+  code: string,
+  signal?: AbortSignal,
+): Promise<{ product: BuyerProduct; notFound?: false } | { notFound: true; product?: undefined }> {
+  const trimmed = code.trim();
+  if (!trimmed) return { notFound: true };
+  try {
+    const res = await buyerApiClient.get<BuyerProduct>(
+      `/buyer/products/scan/${encodeURIComponent(trimmed)}`,
+      { signal },
+    );
+    if (res.data?.id) return { product: res.data };
+  } catch (err: any) {
+    if (err?.response?.status !== 404) throw err;
+  }
+  return { notFound: true };
 }
+
+// ─── Promotions (P5-04, buyer cart) ────────────────────────────────────────────
+// `BuyerPromotion` now imported from @routeflow/types (wave E / imp-10b, L-072):
+// this local copy's `type` field omitted "BUY_N_GET_M", which the schema, web,
+// and this app's own lib/pricing.ts PromotionType already carried — see
+// matchingBogoPromo in buyer-cart-logic.ts, whose compensating `as PromotionType`
+// cast is now removed.
 
 /**
  * Active promotions for the current seller — feeds the mobile cart's per-line
@@ -299,19 +260,6 @@ export function useBuyerPromotions() {
   });
 }
 
-/** A license expiring soon (30/7/1) or already expired — W7b expiry bell. */
-export interface ExpiringAuthorization {
-  id: string;
-  customerId: string;
-  customerName: string;
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "VERIFIED" | "EXPIRED";
-  expiresAt: string | null;
-  bucket: 30 | 7 | 1 | null;
-  expired: boolean;
-}
-
 /** Buyer: the caller's own expiring/expired licenses at this seller (W7b bell). */
 export function useBuyerExpiringAuthorizations() {
   return useQuery<ExpiringAuthorization[]>({
@@ -323,29 +271,6 @@ export function useBuyerExpiringAuthorizations() {
 }
 
 // ─── License self-serve (submit / renew) ───────────────────────────────────────
-
-/** One regulated-category authorization row for the buyer's licenses screen. */
-export interface BuyerAuthorizationRow {
-  trackedCategoryId: string;
-  categoryName: string;
-  status: "NONE" | "PENDING_REVIEW" | "VERIFIED" | "EXPIRED" | "REJECTED";
-  source: "RETAILER_SUBMITTED" | "WHOLESALER_ADDED" | null;
-  licenseNumber: string | null;
-  expiresAt: string | null;
-  documentKey: string | null;
-  submittedAt: string | null;
-  verifiedAt: string | null;
-}
-
-export interface SubmitBuyerAuthorizationInput {
-  trackedCategoryId: string;
-  licenseNumber: string;
-  /** ISO 8601 (@IsISO8601 server-side). */
-  expiresAt: string;
-  documentKey?: string;
-  /** Must be true (@Equals(true) server-side). */
-  shareConsent: boolean;
-}
 
 /** Per-category license status for the buyer's self-serve screen (GET /buyer/authorizations). */
 export function useBuyerAuthorizations() {
@@ -378,7 +303,7 @@ export function useBuyerCategories() {
 }
 
 export function useBuyerFavorites() {
-  return useQuery<BuyerProduct[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer-favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
     staleTime: 60_000,
@@ -399,11 +324,32 @@ export function useToggleFavorite() {
   });
 }
 
-// ─── Stock alerts / Notify-me (P5-03 twin — P5-16a) ───────────────────────────
+// ─── Product detail (#2345, W>M: web portal/[seller]/shop/[productId]) ─────────
 
-export interface BuyerStockAlerts {
-  productIds: string[];
+/** GET /buyer/products/:id — the catalog row plus images, variants, alert state. */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
+
+/**
+ * Keyed under "buyer-products" so the favorite toggle's existing invalidation
+ * refreshes an open detail too. A 404/403 is "not available" to the screen
+ * (see product-detail-logic `productDetailState`) — never retried.
+ */
+export function useBuyerProduct(productId: string) {
+  return useQuery<BuyerProductDetail>({
+    queryKey: ["buyer-products", "detail", productId],
+    queryFn: () =>
+      buyerApiClient.get(`/buyer/products/${encodeURIComponent(productId)}`).then((r) => r.data),
+    enabled: !!productId,
+    retry: (failureCount, err: any) => {
+      const status = err?.response?.status;
+      if (status === 404 || status === 403) return false;
+      return failureCount < 2;
+    },
+  });
 }
+
+// ─── Stock alerts / Notify-me (P5-03 twin — P5-16a) ───────────────────────────
 
 export function useBuyerStockAlerts() {
   return useQuery<BuyerStockAlerts>({
@@ -439,22 +385,6 @@ export function useUnsubscribeStockAlert() {
 
 // ─── Replenishment (P5-05 twin — behavioral tile chips) ───────────────────────
 
-export interface ReplenishmentEstimate {
-  productId: string;
-  name: string;
-  unit: string;
-  unitsPerBox: number | null;
-  imageKey: string | null;
-  lastOrderedAt: string;
-  orderCount: number;
-  cadenceDays: number | null;
-  daysSinceLast: number;
-  estDaysLeft: number | null;
-  typicalQty: number;
-  suggestedQty: number;
-  state: "low" | "due-soon" | "ok";
-}
-
 export function useBuyerReplenishment() {
   return useQuery<ReplenishmentEstimate[]>({
     queryKey: ["buyer-replenishment"],
@@ -464,22 +394,6 @@ export function useBuyerReplenishment() {
 }
 
 // ─── Your Shelf (P5-06/07 twin — P5-16b) ──────────────────────────────────────
-export interface ShelfEstimate extends ReplenishmentEstimate {
-  imageUrl: string | null;
-  snoozed: boolean;
-  snoozedUntil: string | null;
-}
-export interface ShelfActiveOrder {
-  id: string;
-  orderNumber: string | null;
-  itemCount: number;
-  total: number;
-}
-export interface ShelfResponse {
-  estimates: ShelfEstimate[];
-  activeOrder: ShelfActiveOrder | null;
-}
-
 export function useBuyerShelf() {
   return useQuery<ShelfResponse>({
     queryKey: ["buyer-shelf"],
@@ -529,7 +443,8 @@ export function useAddAllLow() {
 // ─── Orders ───────────────────────────────────────────────────────────────────
 
 export function useBuyerOrders(params?: { status?: string; page?: number; limit?: number }) {
-  return useQuery<{ data: BuyerOrder[]; meta: any }>({
+  // #2703 lead fold: GET /buyer/orders returns LIST rows (OrdersService.findAll), not the detail.
+  return useQuery<{ data: BuyerOrderListItem[]; meta: any }>({
     queryKey: ["buyer-orders", params],
     queryFn: () =>
       buyerApiClient.get("/buyer/orders", { params: { limit: 30, ...params } }).then((r) => r.data),
@@ -545,34 +460,22 @@ export function useBuyerOrder(id: string) {
   });
 }
 
-export interface BuyerOrderTracking {
-  status: string;
-  tracking: {
-    runId: string;
-    routeName: string | null;
-    driverName: string | null;
-    runStatus: string;
-    stopNumber: number;
-    stopStatus: string;
-    stopsAhead: number;
-    estimatedArrivalWindow: { start: string | null; end: string | null };
-  } | null;
-}
+/** GET /buyer/orders/:id/tracking — the shared wire shape (#2095), never redeclared here. */
+export type BuyerOrderTracking = OrderTrackingResponse;
 
 /** Live-ish: polls while the order can still move. There is no per-stop push
  *  to the buyer socket namespace today — only order.statusChanged is wired
  *  (useBuyerSocket.ts), which covers status transitions but not driver
- *  progress WITHIN a status (stopsAhead ticking down). Paused (no interval)
- *  once DELIVERED/CANCELLED or before dispatch. TanStack v5 function form. */
+ *  progress WITHIN a status (stopsAhead ticking down). Paused once
+ *  DELIVERED/CANCELLED or before dispatch. ALSO polls while the run is
+ *  IN_PROGRESS so a CONFIRMED order can observe its own skip (F11). TanStack
+ *  v5 function form. */
 export function useBuyerOrderTracking(id: string) {
   return useQuery<BuyerOrderTracking>({
     queryKey: ["buyer-order-tracking", id],
     queryFn: () => buyerApiClient.get(`/buyer/orders/${id}/tracking`).then((r) => r.data),
     enabled: !!id,
-    refetchInterval: (query) => {
-      const s = query.state.data?.status;
-      return s === "OUT_FOR_DELIVERY" || s === "PARTIALLY_DELIVERED" ? 20_000 : false;
-    },
+    refetchInterval: (query) => trackingRefetchInterval(query.state.data),
   });
 }
 
@@ -650,20 +553,6 @@ export function useBuyerDashboard() {
 
 // ─── Finances / analytics (mirrors web useBuyerAnalytics) ─────────────────────
 
-export interface BuyerAnalytics {
-  monthlySpend: Array<{ month: string; spend: number; orderCount: number }>;
-  summary: {
-    totalOrders: number;
-    totalSpend: number;
-    avgOrderValue: number;
-    unpaidInvoiceCount: number;
-    /** Server-truth outstanding total — render VERBATIM, never re-derive. */
-    unpaidInvoiceTotal: number;
-  };
-  invoiceBreakdown: { paid: number; unpaid: number; overdue: number };
-  recentPayments: Array<{ date: string; amount: number; method: string; invoiceNumber: string }>;
-}
-
 export function useBuyerAnalytics() {
   return useQuery<BuyerAnalytics>({
     queryKey: ["buyer", "analytics"],
@@ -677,28 +566,6 @@ export function useBuyerAnalytics() {
 // keys so useBuyerSocket prefix-invalidation covers them. ALL money figures are
 // server values — render verbatim, NEVER recompute.
 
-export interface BuyerStatementTransaction {
-  type: "INVOICE" | "CREDIT_NOTE" | "ADVANCE_PAYMENT";
-  id: string;
-  description: string;
-  date: string;
-  amount: number;
-  /** Server-computed OPEN/remaining amount (CREDIT_NOTE = amount − amountUsed). */
-  runningBalance: number;
-  status: string;
-  expiresAt?: string | null;
-}
-
-export interface BuyerStatement {
-  outstandingAmount: number;
-  overdueAmount: number;
-  /** Wallet balance (server Σ roundMoney(amount − amountUsed) over open credits). NEVER re-derive. */
-  availableCredit: number;
-  advanceBalance: number;
-  pendingOrdersAmount: number;
-  transactions: BuyerStatementTransaction[];
-}
-
 export function useBuyerStatement() {
   return useQuery<BuyerStatement>({
     queryKey: ["buyer-statement"],
@@ -707,17 +574,6 @@ export function useBuyerStatement() {
   });
 }
 
-export interface BuyerPayment {
-  id: string;
-  invoiceId: string;
-  invoiceNumber: string;
-  amount: number;
-  method: string;
-  status: "DRAFT" | "PAID" | "VOID";
-  checkStatus: BuyerCheckStatus | null;
-  nsfFeeAmount: number | null;
-  paidAt: string;
-}
 export interface BuyerPaymentsMeta {
   total: number;
   page: number;
@@ -735,19 +591,6 @@ export function useBuyerPayments(params?: { page?: number; limit?: number }) {
     // every pagination tap (mirrors web scoping the load gate to the history).
     placeholderData: keepPreviousData,
   });
-}
-
-export interface BuyerRemittance {
-  payToName?: string;
-  bankName?: string;
-  accountName?: string;
-  accountNumber?: string;
-  routingNumber?: string;
-  achInstructions?: string;
-  wireInstructions?: string;
-  checkInstructions?: string;
-  mailingAddress?: string;
-  notes?: string;
 }
 
 export function useBuyerRemittance() {
@@ -822,15 +665,6 @@ export function useBuyerUpdateOrderItems() {
 }
 
 // ─── Post-dispatch change requests (P5-10 twin — P5-16b) ──────────────────────
-export interface BuyerCreateChangeRequestInput {
-  orderId: string;
-  type: ChangeRequestType;
-  productId?: string;
-  orderItemId?: string;
-  qty?: number;
-  note?: string;
-}
-
 export function useBuyerCreateChangeRequest() {
   const qc = useQueryClient();
   return useMutation<ChangeRequest, Error, BuyerCreateChangeRequestInput>({

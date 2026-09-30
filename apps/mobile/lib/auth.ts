@@ -3,30 +3,32 @@ import { Platform } from "react-native";
 import * as Notifications from "expo-notifications";
 import * as WebBrowser from "expo-web-browser";
 import { apiClient } from "./api-client";
+import { getPushEnabled } from "./notification-prefs";
 import { OP_KEYS, DRIVER_KEYS, BUYER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { setLastUsername } from "./last-username";
 import { generateOAuthState, isValidReturnedState, OAUTH_STATE_KEY } from "./oauth-state";
+import { toSecureStoreKey } from "./secure-key";
 
 // ─── Web-safe storage (SecureStore is native-only) ────────────────────────────
 
 const storage = {
   async get(key: string): Promise<string | null> {
     if (Platform.OS === "web") return localStorage.getItem(key);
-    return SecureStore.getItemAsync(key);
+    return SecureStore.getItemAsync(toSecureStoreKey(key));
   },
   async set(key: string, value: string): Promise<void> {
     if (Platform.OS === "web") {
       localStorage.setItem(key, value);
       return;
     }
-    await SecureStore.setItemAsync(key, value);
+    await SecureStore.setItemAsync(toSecureStoreKey(key), value);
   },
   async del(key: string): Promise<void> {
     if (Platform.OS === "web") {
       localStorage.removeItem(key);
       return;
     }
-    await SecureStore.deleteItemAsync(key);
+    await SecureStore.deleteItemAsync(toSecureStoreKey(key));
   },
 };
 
@@ -67,33 +69,6 @@ function keysForRole(role: string): typeof OP_KEYS | typeof DRIVER_KEYS {
 
 function currentRoleFromJwtRole(role: string): CurrentRole {
   return DRIVER_ROLE_SET.has(role) ? "driver" : "operator";
-}
-
-// ─── Legacy key migration (NEW-m2-1 / RF-077) ────────────────────────────────
-
-const LEGACY_ACCESS = "accessToken";
-const LEGACY_REFRESH = "refreshToken";
-
-/**
- * One-time migration: if the legacy `accessToken` key exists, move it to the
- * role-appropriate namespaced key then delete the legacy entry. Idempotent.
- */
-export async function migrateLegacyToken(): Promise<void> {
-  const legacy = await storage.get(LEGACY_ACCESS);
-  if (!legacy) return;
-
-  const payload = parseJwtPayload(legacy);
-  const role = (payload?.role as string) ?? "";
-  const keys = keysForRole(role);
-
-  const existing = await storage.get(keys.accessToken);
-  if (!existing) {
-    await storage.set(keys.accessToken, legacy);
-    const legacyRefresh = await storage.get(LEGACY_REFRESH);
-    if (legacyRefresh) await storage.set(keys.refreshToken, legacyRefresh);
-  }
-  await storage.del(LEGACY_ACCESS);
-  await storage.del(LEGACY_REFRESH);
 }
 
 function authUserFromToken(token: string): AuthUser | null {
@@ -143,10 +118,19 @@ export async function getStoredUser(): Promise<AuthUser | null> {
 
 // ─── Auth functions ───────────────────────────────────────────────────────────
 
-async function registerPushToken(): Promise<void> {
+export async function registerPushToken(): Promise<void> {
   // Expo push token only works on physical device (not simulator)
   if (Platform.OS === "web") return;
   try {
+    // B04: a user who toggled push off shouldn't have this login silently
+    // re-enable delivery — the server also no-ops registerToken for a
+    // disabled user (defense in depth), but skipping the OS permission
+    // prompt + network round-trip here is the visible half of the fix.
+    // REG-B04-B: the preference fetch fails OPEN — an enabled user (the
+    // common case) must still register even if this read errors, so a
+    // rejection is treated as "enabled", never as a silent skip.
+    if (!(await getPushEnabled().catch(() => true))) return;
+
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
     if (existingStatus !== "granted") {
@@ -168,7 +152,7 @@ async function registerPushToken(): Promise<void> {
   }
 }
 
-async function deregisterPushToken(): Promise<void> {
+export async function deregisterPushToken(): Promise<void> {
   if (Platform.OS === "web") return;
   try {
     const token = await storage.get("pushToken");
@@ -206,14 +190,23 @@ const GOOGLE_REDIRECT_URI = "routeflow://auth/callback";
  *   4. Parse the tokens out of the resolved URL, persist them, register push token.
  */
 export async function loginWithGoogle(tenantSlug: string): Promise<AuthResponse> {
-  // Web (the mobile-web build phones are proxied to) cannot use the native
-  // routeflow:// deep-link flow — a browser can't open a custom URL scheme, so the
-  // sign-in silently hangs. Use the same full-page-redirect + one-time-code exchange
-  // the desktop web uses: the API redirects to ${WEB_URL}/auth/google/callback?code=…,
-  // handled by app/(auth)/auth/google/callback.tsx.
+  // Web (this Expo mobile-web build, e.g. opened via the driver-app link on
+  // www's /login or dashboard — B825/mobile-web-proxy-redesign; phones are no
+  // longer proxied here automatically) cannot use the native routeflow://
+  // deep-link flow — a browser can't open a custom URL scheme, so the sign-in
+  // would silently hang. Use the same full-page-redirect + one-time-code
+  // exchange the desktop web uses, but pass OUR OWN origin as `return_origin`
+  // (B825) so the API's callback redirects back HERE instead of always
+  // landing on the Next web app — the API validates it against an exact
+  // allow-list (WEB_URL/MOBILE_WEB_URL) server-side, never trusts it as-is.
+  // Handled by app/(auth)/auth/google/callback.tsx.
   if (Platform.OS === "web") {
     const { data: web } = await apiClient.get<{ url: string }>("/auth/google", {
-      params: { tenant: tenantSlug, context: "staff" }, // no mobile=1 → web exchange-code flow
+      params: {
+        tenant: tenantSlug,
+        context: "staff", // no mobile=1 → web exchange-code flow
+        return_origin: window.location.origin,
+      },
     });
     if (!web?.url) throw new Error("google_unavailable");
     window.location.assign(web.url); // full-page redirect to Google consent

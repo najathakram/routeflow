@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
+import { LeaderCron } from "../common/cron-lock";
 import { NotificationEvent } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
@@ -8,6 +8,7 @@ import { EmailService } from "../email/email.service";
 import { AuditService } from "../audit/audit.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate } from "../messaging/messaging.helpers";
+import { escapeHtml } from "../common/html-escape";
 
 type WarnBucket = 30 | 7 | 1;
 
@@ -54,7 +55,7 @@ export class AuthorizationExpiryService {
     return null;
   }
 
-  @Cron("0 3 * * *") // 03:00 UTC daily (offset from tobacco's 02:00)
+  @LeaderCron("0 3 * * *", "authorization-expiry.runExpirySweep") // 03:00 UTC daily (offset from tobacco's 02:00)
   async runExpirySweep(): Promise<void> {
     const [activeTenants, gatedRows] = await Promise.all([
       this.prisma.tenant.findMany({ where: { status: "ACTIVE" }, select: { id: true } }),
@@ -95,10 +96,37 @@ export class AuthorizationExpiryService {
     now = new Date(),
   ): Promise<{ expired: number; warned: number }> {
     const operators = await this.loadOperators(tenantId);
+    // Far edge of the expiring-soon window; it also bounds the suppressed count below, which
+    // therefore covers BOTH windows (an already-expired row's expiresAt is < now < soonCutoff).
+    const soonCutoff = new Date(now.getTime() + 31 * 86_400_000);
+
+    // REG-B131: a removed (soft-deleted) customer gets no expiry notice from this sweep — no
+    // push/SMS/WhatsApp/email and no `expiringSoonNotifiedBucket` write — so restoreCustomer()
+    // resumes them with the idempotency markers untouched. A row the filter drops enters neither
+    // counter, so count the suppressed set once per tenant per sweep: otherwise a tenant whose
+    // only due rows belong to removed customers logs "0 expired, 0 warned" — indistinguishable
+    // from a tenant with nothing due.
+    const suppressed =
+      (await this.prisma.forTenant().customerAuthorization.count({
+        where: {
+          status: "VERIFIED",
+          expiresAt: { lt: soonCutoff },
+          customer: { deletedAt: { not: null } },
+          // Both loops below `continue` on a non-gated category, so a row without
+          // requiresLicense would never have notified anyone — counting it would
+          // overstate what the removal actually suppressed.
+          trackedCategory: { requiresLicense: true },
+        },
+      })) ?? 0;
+    if (suppressed > 0) {
+      this.logger.warn(
+        `[tenant:${tenantId}] REG-B131: ${suppressed} authorization expiry notice(s) suppressed — customer removed`,
+      );
+    }
 
     // 1. Flip VERIFIED → EXPIRED (past expiresAt) + notify once.
     const toExpire = await this.prisma.forTenant().customerAuthorization.findMany({
-      where: { status: "VERIFIED", expiresAt: { lt: now } },
+      where: { status: "VERIFIED", expiresAt: { lt: now }, customer: { deletedAt: null } },
       include: { trackedCategory: { select: { name: true, requiresLicense: true } } },
     });
     let expired = 0;
@@ -141,7 +169,8 @@ export class AuthorizationExpiryService {
     const soon = await this.prisma.forTenant().customerAuthorization.findMany({
       where: {
         status: "VERIFIED",
-        expiresAt: { gte: now, lt: new Date(now.getTime() + 31 * 86_400_000) },
+        expiresAt: { gte: now, lt: soonCutoff },
+        customer: { deletedAt: null },
       },
       include: { trackedCategory: { select: { name: true, requiresLicense: true } } },
     });
@@ -196,7 +225,7 @@ export class AuthorizationExpiryService {
   ): Promise<void> {
     const customer = await this.prisma
       .forTenant()
-      .customer.findUnique({ where: { id: auth.customerId }, select: { businessName: true } });
+      .customer.findFirst({ where: { id: auth.customerId }, select: { businessName: true } });
     const who = customer?.businessName ?? "A customer";
     const body = `Your license ${detail}`;
 
@@ -207,7 +236,11 @@ export class AuthorizationExpiryService {
       await this.notifications.sendToUser(op.id, { title: subject, body: opBody }).catch(() => {});
       if (op.email && !op.email.startsWith("no-email+")) {
         await this.email
-          .send({ to: op.email, subject: `${who} — ${subject}`, html: `<p>${opBody}</p>` })
+          .send({
+            to: op.email,
+            subject: `${who} — ${subject}`,
+            html: `<p>${escapeHtml(opBody)}</p>`,
+          })
           .catch(() => {});
       }
     }

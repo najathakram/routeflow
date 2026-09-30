@@ -1,4 +1,4 @@
-import { roundMoney } from "../common/pricing";
+import { roundMoney } from "@routeflow/pricing";
 
 /**
  * Subscription money math (Plans & Billing). This is a BILLING-only concern —
@@ -7,10 +7,12 @@ import { roundMoney } from "../common/pricing";
  * `pricing.ts`, which the three app mirrors keep in sync). Every result is routed
  * through {@link roundMoney} for cent discipline.
  *
- * Anchors (docs/design-package/project/unified/pricing.html):
- *   Starter  $59/mo  → $590/yr  → "$49/mo billed annually"
- *   Team     $149/mo → $1490/yr → "$124/mo billed annually"
- *   Business $349/mo → $3490/yr → "$291/mo billed annually"
+ * Anchors (catalog v8 — plan-catalog.constants.ts PLAN_KEYS; the live prices live
+ * in the database PlanDefinition rows, these are documentation only):
+ *   Starter $99/mo  → $990/yr  → "$83/mo billed annually"
+ *   Growth  $249/mo → $2490/yr → "$208/mo billed annually"
+ *   Scale   $499/mo → $4990/yr → "$416/mo billed annually"
+ *   Enterprise: custom (no anchor)
  */
 
 export type Cycle = "MONTHLY" | "ANNUAL";
@@ -55,8 +57,61 @@ export function prorateDaily(monthly: number, daysRemaining: number, daysInCycle
   return roundMoney((monthly * d) / daysInCycle);
 }
 
+/**
+ * How many MONTHLY charges a non-annual billing period covers (SA-383, #2187):
+ * `max(1, round(days / (365.25 / 12)))`. A 90-day manual row is 3 months, 180 is 6;
+ * any 28–31-day period or calendar month is 1, so monthly proration is unchanged.
+ * The ANNUAL cycle never uses this — it is priced by {@link annualPrice} (10-for-12).
+ */
+export function periodMonths(start: Date, end: Date): number {
+  const days = (end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000);
+  return Math.max(1, Math.round(days / (365.25 / 12)));
+}
+
 /** Whole-day count between two instants (UTC), never negative. */
 export function daysBetween(from: Date, to: Date): number {
   const ms = to.getTime() - from.getTime();
   return Math.max(0, Math.ceil(ms / (24 * 60 * 60 * 1000)));
+}
+
+/**
+ * Add whole months (or, via {@link addCycle}, a year) to a UTC date, clamping the
+ * day to the target month's length (Jan 31 + 1mo → Feb 28/29, never overflowing
+ * into March) and preserving `from`'s time-of-day (hours/minutes/seconds/ms)
+ * exactly — a rolled period boundary must not collapse to midnight.
+ *
+ * `anchorDay`, when given, is the tenant's ORIGINAL, never-clamped billing anchor
+ * day (1-31) to clamp toward. Pass it explicitly whenever chaining calls across
+ * cycles (a nightly roll, one call per tick) so a short month's clip does not
+ * permanently ratchet the anchor down — `from.getUTCDate()` alone re-derives the
+ * day from the PREVIOUS (already-clamped) result, which is exactly the B329 bug:
+ * a 31st anchor clipped to 28 in February then stayed on 28 forever after, even in
+ * a 31-day month. Omitting `anchorDay` uses `from`'s own day, correct for a single,
+ * non-repeating add (e.g. `subscribe()` computing one period end from "now").
+ */
+export function addMonthsUtc(from: Date, months: number, anchorDay?: number): Date {
+  const day = anchorDay ?? from.getUTCDate();
+  const d = new Date(
+    Date.UTC(
+      from.getUTCFullYear(),
+      from.getUTCMonth() + months,
+      1,
+      from.getUTCHours(),
+      from.getUTCMinutes(),
+      from.getUTCSeconds(),
+      from.getUTCMilliseconds(),
+    ),
+  );
+  const lastDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, lastDay));
+  return d;
+}
+
+/** One cycle's worth of {@link addMonthsUtc} — 12 months for ANNUAL, 1 otherwise.
+ *  `cycle` is typed as `string` (rather than the narrower {@link Cycle}) so both the
+ *  plans-as-data `Cycle` literal and Prisma's generated `BillingCycle` enum widen
+ *  into it without a cast at either call site. See {@link addMonthsUtc} for
+ *  `anchorDay`. */
+export function addCycle(from: Date, cycle: string, anchorDay?: number): Date {
+  return addMonthsUtc(from, cycle === "ANNUAL" ? 12 : 1, anchorDay);
 }

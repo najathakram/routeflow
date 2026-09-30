@@ -1,5 +1,5 @@
 # ─── Dependencies ────────────────────────────────────────────────────────────
-node_modules/
+node_modules
 .pnp
 .pnp.js
 
@@ -42,6 +42,8 @@ tsconfig.tsbuildinfo
 # ─── Testing ─────────────────────────────────────────────────────────────────
 coverage/
 .nyc_output/
+test-output.txt
+apps/web/test-output/
 
 # ─── Playwright ──────────────────────────────────────────────────────────────
 playwright-report/
@@ -76,9 +78,82 @@ backups/
 # ─── Claude Code internals ───────────────────────────────────────────────────
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+# Per-machine permission cache rewritten by Claude Code on every machine — never source.
+# Tracking it kept every worktree permanently "dirty" (M .claude/settings.local.json).
+.claude/settings.local.json
 
 # ─── Security audit report (lists unfixed vulns; repo goes public for CI) ────
 SECURITY_AUDIT.md
 
+# ─── Stale QA dumps (603KB, ephemeral run output — never source) ─────────────
+QA_RESULTS.md
+docs/QA_RESULTS.md
+
 # ─── QA / audit manifests (ephemeral, contain production IDs) ───────────────
 apps/api/scripts/*-manifest-*.json
+
+# ─── Personal working files (live-tenant repair reports — never commit) ──────
+.personal/
+
+# ─── Audit reports (list unfixed security findings; repo goes public for CI) ─
+docs/audit/
+
+# ─── Generated fuzz fixtures (reproduce via docs/qa/workers/w6-fuzz-pack/generate.js;
+#     the 26MB f20-huge.pdf alone was 84% of the repo pack) ──────────────────
+docs/qa/workers/w6-fuzz-pack/f20-huge.pdf
+
+# ─── Machine-local heavy assets (docs binaries, screenshots, media) ─────────
+# Repo policy (owner, 2026-08-23): no images/videos/office binaries in git —
+# they live in local-assets/ on the dev machine. The repo goes public briefly
+# for CI, and clones should stay lean.
+local-assets/
+
+# ─── Bug-register campaign run artifacts (jest/Playwright JSON read by ────────
+#     scripts/campaign-check.mjs; regenerated per run, never committed) ───────
+.campaign/
+
+# ─── Bug-registry lock directories (scripts/campaign/bugs.mjs) ────────────────
+#     Ephemeral mkdir-based locks under the TRACKED .claude/campaign/ tree
+#     (shards + the catalogue live there and ARE committed) — a lockdir left
+#     behind by a crash must never end up in a commit.
+.claude/campaign/**/*.lock/
+.claude/campaign/bugs.jsonl.lock/
+
+# ─── Plane BUGS mirror digest (scripts/campaign/plane-sync.mjs) ───────────────
+#     sha256 short-circuit over the registry; regenerated per run, not source.
+.claude/campaign/.plane-sync-digest
+.claude/campaign/.plane-writes.jsonl
+.claude/campaign/.plane-sync-state.json
+
+# ─── dev-pipeline mutation-probe scratch (throwaway jest config + probe spec) ──
+#     Written by a probe run, never part of the suite; without this a `git add -A`
+#     from any session commits another session's throwaway probes.
+apps/mobile/.tmpjest/
+
+# ─── Design-hook cache (written by the impeccable PostToolUse hook on any edit) ─
+#     Per-machine tool state, not source. Same reason as .tmpjest above: it lands
+#     in whichever workspace was last edited and gets swept up by `git add -A`.
+**/.impeccable/
+
+# ─── Strix security-scan output (generated) ────────────────────────────────────
+#     Heavy scan artifacts, not source -- belongs in local-assets/ per the heavy
+#     files policy, never in git.
+strix_runs/
+
+# ─── dev-pipeline run-wide bookkeeping (engine-owned, not source) ─────────────
+#     agent-log.jsonl and approach-rotation.json are per-machine runtime state
+#     the engine/router write and read every session -- unlike the durable,
+#     committed cost-ledger.jsonl, these were always meant to be gitignored
+#     per the task-loop-rebuild plan's own Part C scope; dry-run.mjs's fixtures
+#     already treat agent-log.jsonl as untracked engine-owned state.
+.claude/pipeline/agent-log.jsonl
+.claude/pipeline/approach-rotation.json
+.claude/approach.json
+
+# The committed throwaway TLS pair for the local mailpit (docker/mailpit-tls/README.md) — the
+# blanket *.pem rule above would otherwise hide it.
+!docker/mailpit-tls/cert.pem
+!docker/mailpit-tls/key.pem
+
+# #2671: per-worktree Jest caches (each workspace's cacheDirectory) — never source.
+.jest-cache/

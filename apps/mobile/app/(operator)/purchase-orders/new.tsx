@@ -7,14 +7,23 @@ import { ios } from "@routeflow/ui/tokens";
 import { FormField, FormSection, FormSheet, FormTextInput } from "../../../components/FormSheet";
 import { OptionPickerSheet } from "../../../components/OptionPickerSheet";
 import { useCreatePO, useSuppliers } from "../../../lib/api/purchase-orders";
-import { useProductPickerStore } from "../../../store/productPickerStore";
+import { normalizeBoxesPieces, roundUnitCost } from "@routeflow/pricing";
+import { useProductPickerStore, type PickedProduct } from "../../../store/productPickerStore";
 import { showToast } from "../../../lib/toast";
 
 interface LineItem {
   productId: string;
   productName: string;
+  /** Base units (pieces) ordered — only used when `unitsPerBox` <= 1. */
   qtyOrdered: string;
+  /** Whole boxes ordered — only used when `unitsPerBox` > 1. */
+  boxes: string;
+  /** Loose pieces beyond whole boxes — pairs with `boxes`. */
+  pieces: string;
+  /** Cost per SELLING UNIT: per box on a boxed line, per piece otherwise. */
   unitCost: string;
+  unitsPerBox: number;
+  unit: string;
   pickerKey: string;
 }
 
@@ -26,9 +35,54 @@ const EMPTY_ITEM = (index: number): LineItem => ({
   productId: "",
   productName: "",
   qtyOrdered: "",
+  boxes: "",
+  pieces: "",
   unitCost: "",
+  unitsPerBox: 0,
+  unit: "",
   pickerKey: makeKey(index),
 });
+
+/** The operator-editable (free-text) line fields. */
+type LineTextField = "qtyOrdered" | "boxes" | "pieces" | "unitCost";
+
+/**
+ * A boxed line is entered as boxes + loose pieces at a cost per BOX. It is posted as those ENTERED figures
+ * (packSize, caseCost, cases, loosePieces): the server computes the pieces, the 4 dp per-piece cost (for
+ * costing only) and the exact total roundMoney(caseCost x pieces / packSize), so 1,000 boxes at $11.00 is
+ * $11,000.00 (the old client-side per-piece route stored $11,000.40). No money math lives here. Non-boxed
+ * lines are pieces and a per-piece cost, as before.
+ */
+function resolvePOLine(item: LineItem): { qty: number } {
+  const upb = item.unitsPerBox;
+  if (upb > 1) {
+    const boxes = Math.max(0, Math.trunc(Number(item.boxes) || 0));
+    const pieces = Math.max(0, Math.trunc(Number(item.pieces) || 0));
+    return { qty: normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb }).qty };
+  }
+  return { qty: Number(item.qtyOrdered) || 0 };
+}
+
+function toPOItem(item: LineItem) {
+  const upb = item.unitsPerBox;
+  if (upb > 1) {
+    const boxes = Math.max(0, Math.trunc(Number(item.boxes) || 0));
+    const pieces = Math.max(0, Math.trunc(Number(item.pieces) || 0));
+    const split = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: upb });
+    return {
+      productId: item.productId,
+      packSize: upb,
+      caseCost: Number(item.unitCost) || 0,
+      cases: split.boxes ?? 0,
+      loosePieces: split.pieces ?? 0,
+    };
+  }
+  return {
+    productId: item.productId,
+    qtyOrdered: Number(item.qtyOrdered) || 0,
+    unitCost: Number(item.unitCost) || 0,
+  };
+}
 
 export default function NewPurchaseOrderScreen() {
   const router = useRouter();
@@ -44,9 +98,7 @@ export default function NewPurchaseOrderScreen() {
 
   const getSelection = useProductPickerStore((s) => s.selections);
   const clearSelection = useProductPickerStore((s) => s.clearSelection);
-  const prevSelectionsRef = useRef<
-    Record<string, { id: string; name: string; standardCost?: number }>
-  >({});
+  const prevSelectionsRef = useRef<Record<string, PickedProduct>>({});
 
   // When navigating back from supplier/product pickers, refresh data and
   // apply any pending product selections.
@@ -80,11 +132,17 @@ export default function NewPurchaseOrderScreen() {
         const prevSel = prev[item.pickerKey];
         if (sel && sel !== prevSel) {
           clearSelection(item.pickerKey);
+          const upb = Math.max(0, Math.trunc(Number(sel.unitsPerBox ?? 0)));
+          // `standardCost` is per PIECE; scale it up when the cost field
+          // collects a per-BOX price (same convention as Quick Receive).
+          const prefill = sel.standardCost != null ? sel.standardCost * (upb > 1 ? upb : 1) : null;
           return {
             ...item,
             productId: sel.id,
             productName: sel.name,
-            unitCost: sel.standardCost != null ? String(sel.standardCost) : item.unitCost,
+            unitsPerBox: upb,
+            unit: sel.unit ?? "",
+            unitCost: prefill != null ? String(roundUnitCost(prefill)) : item.unitCost,
           };
         }
         return item;
@@ -102,7 +160,9 @@ export default function NewPurchaseOrderScreen() {
     });
   };
 
-  const updateItem = (index: number, field: keyof LineItem, value: string) => {
+  // Only the free-text fields are operator-editable; `unitsPerBox`/`unit` come
+  // from the picked product and must never take a raw string.
+  const updateItem = (index: number, field: LineTextField, value: string) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [field]: value } : it)));
   };
 
@@ -115,19 +175,17 @@ export default function NewPurchaseOrderScreen() {
       return;
     }
 
-    const parsedItems = items
-      .filter((it) => it.productId)
-      .map((it) => ({
-        productId: it.productId,
-        qtyOrdered: Number(it.qtyOrdered) || 0,
-        unitCost: Number(it.unitCost) || 0,
-      }));
+    // Boxed lines convert to a piece total + per-piece cost here: the PO row is
+    // stored in PIECES and receiving trusts it at face value (an over-receipt is
+    // now rejected, not clamped — a box-denominated PO cannot be received).
+    const picked = items.filter((it) => it.productId);
+    const parsedItems = picked.map(toPOItem);
 
     if (parsedItems.length === 0) {
       showToast("Add at least one product.");
       return;
     }
-    if (parsedItems.some((it) => it.qtyOrdered <= 0)) {
+    if (picked.some((it) => resolvePOLine(it).qty <= 0)) {
       showToast("Each item needs a quantity greater than 0.");
       return;
     }
@@ -206,19 +264,36 @@ export default function NewPurchaseOrderScreen() {
                 </View>
               </Pressable>
             </FormField>
-            <View style={styles.row2}>
-              <View style={{ flex: 1 }}>
-                <FormField label="Qty ordered">
-                  <FormTextInput
-                    value={item.qtyOrdered}
-                    onChangeText={(v) => updateItem(index, "qtyOrdered", v)}
-                    placeholder="0"
-                    keyboardType="number-pad"
-                  />
-                </FormField>
-              </View>
-              <View style={{ flex: 1 }}>
-                <FormField label="Unit cost ($)">
+            {item.unitsPerBox > 1 ? (
+              <>
+                <View style={styles.row2}>
+                  <View style={{ flex: 1 }}>
+                    <FormField label="Boxes ordered">
+                      <FormTextInput
+                        value={item.boxes}
+                        onChangeText={(v) => updateItem(index, "boxes", v)}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                      />
+                    </FormField>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <FormField label="+ Pieces">
+                      <FormTextInput
+                        value={item.pieces}
+                        onChangeText={(v) => updateItem(index, "pieces", v)}
+                        placeholder="0"
+                        keyboardType="number-pad"
+                      />
+                    </FormField>
+                  </View>
+                </View>
+                <FormField
+                  label="Cost per box ($)"
+                  hint={`1 box = ${item.unitsPerBox} ${item.unit || "units"} · ${
+                    resolvePOLine(item).qty
+                  } pcs total`}
+                >
                   <FormTextInput
                     value={item.unitCost}
                     onChangeText={(v) => updateItem(index, "unitCost", v)}
@@ -226,8 +301,31 @@ export default function NewPurchaseOrderScreen() {
                     keyboardType="decimal-pad"
                   />
                 </FormField>
+              </>
+            ) : (
+              <View style={styles.row2}>
+                <View style={{ flex: 1 }}>
+                  <FormField label="Qty ordered">
+                    <FormTextInput
+                      value={item.qtyOrdered}
+                      onChangeText={(v) => updateItem(index, "qtyOrdered", v)}
+                      placeholder="0"
+                      keyboardType="number-pad"
+                    />
+                  </FormField>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <FormField label="Unit cost ($)">
+                    <FormTextInput
+                      value={item.unitCost}
+                      onChangeText={(v) => updateItem(index, "unitCost", v)}
+                      placeholder="0.00"
+                      keyboardType="decimal-pad"
+                    />
+                  </FormField>
+                </View>
               </View>
-            </View>
+            )}
           </View>
         ))}
 
