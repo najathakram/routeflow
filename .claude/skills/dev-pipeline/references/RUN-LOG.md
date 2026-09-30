@@ -10,12 +10,27 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 
 ---
 
+## 2026-09-30-control-system (run 1, aborted) + engine fix B907 · feature · major · $n/a (closeout pending run 2) · ~1:30 · 2026-09-30
+
+- Caught: nothing in-product. Run 1 found three ENGINE defects by failing: (1) scopeCheckPrompt ran `git status --porcelain` without `--untracked-files=all`, so a new dir (`?? apps/control/`) read as a non-test file; all 10 test stages were blocked and the remediation reverted the authored tests; (2) the wave loop never read dependency results, so UI1 ran its full fix loop with WP7 blocked; (3) a Haiku sha-capture step (fix-base:UI1:r4) wrote and committed a 12-file scaffold (evidence tag ctl-haiku-backup).
+- Wasted: a whole run (~160 agent calls, 0 implementers), including the final gate and final read on a blocked graph. Also run 0 aborted in validateTasks: a missing `type` was rejected though SKILL.md documents feature as the default.
+- Engine change (proved test-first; dry-run BF1/BF1b/BF2/BF3a/BF3c + a Haiku-guard audit went RED then GREEN; selftest-all PASS): --untracked-files=all + a dir-prefix exemption; blockedTaskFromUpstream skips dependents; MECHANICAL_GUARD on every Haiku call; plus 3 lead-accepted extras (09-30): args.waveBatchSize override, a missing type defaults to feature (per SKILL.md), meta.description names Opus. Patches (pipeline.js + a dry-run.mjs diff rebuilt from the agent transcript, which applies byte-exactly): routeflow local-assets/engine-patch-2026-09-30/.
+- Knob candidate (evidence: this run's zero-implementer run was reported only at the end): abort the run once every task in wave 1 is blocked, instead of spending the remaining waves plus the final gate and final read.
+- Deviations: run 2 (wf_425f0441-447) uses the Mac engine's PRE-09-29 routing: Sonnet 5 (claude-sonnet-5) implementers, and Opus review only on HIGH tasks (WP3/WP5/WP7), Sonnet reviewers elsewhere. The PC engine is canonical (Sonnet 5.5 builds, Opus 5.5 reviews every task), and the Mac syncs from the lead's docs-only branch (sha256 + selftest-all). Observed cost: run 2's 12 mechanical agents used ~907K tokens (~75K each), which looks like the session's full MCP tool list loading into every subagent. That's an owner call (disable non-RouteFlow connectors for fleet sessions) and is not yet measured per call. Run 2 also lost one resume to a Haiku brief agent that answered in text without calling StructuredOutput. The planner's per-task model/effort args are ignored by the engine (the implementer is hard-coded Sonnet), so they were dropped from the args. The final gate was scoped to `-w apps/control` because the Mac runs one full verify at a time, by Mac Lead slot; the full verify runs by hand.
+
 ## 2026-09-30-session-a8447f3a · light-loop · unknown-scale · $0.36 · 0:00 · 2026-09-30
 
 - Caught: (no confirmedByPhase data in result.json)
 - Wasted: (none identified from result.json fields)
 - Knob candidate: TODO (one change WITH evidence)
 - Deviation: TODO
+
+## 2026-09-28-B889-buyer-edit-custom-lines · light-loop · small · $n/a (multi-task session) · ~2:55 · 2026-09-28
+
+- Caught: the runtime repro (not the code read) settled both halves: mobile Save's {productId:null} got a 200 and was silently ignored; the server's buyer replace preserves custom lines, so the fix was client-only (tier 2). The lead's Opus + SA-566 review caught the one real defect in my first cut: `isCustomLine` also matched a catalog line with a missing product relation, which the replace-by-product Save would then DELETE (fold: custom = !productId only; pinned red-first).
+- Wasted: the first Expo-web "before" capture served the FIX code: `expo start` with CI=1 disables Metro's file watching, so restoring files mid-session changes nothing. Restart Metro per phase.
+- Knob candidate (evidence: this run's wrong before-capture): the UI-verify/capture step should restart Metro per code state (before/after) and assert the served state (e.g. the DOM carries or lacks the fix's marker) before shooting.
+- Deviation: no ledger row. This lane session ran #2631/#2639/#2656/#2699/#2703/#2709/#2720 since 09-26, so session-usage can't be split per run, and closeout.mjs would stamp `--telemetry true` even with `--no-usage`. result.json was written by hand (light-loop). Bookkeeping (lesson + map) is Option B, with the coordinator.
 
 ## 2026-09-28-session-f9f7517a · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
 
@@ -51,6 +66,22 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Wasted: (none identified from result.json fields)
 - Knob candidate: TODO (one change WITH evidence)
 - Deviation: TODO
+
+## 2026-09-25-B861-numbering-continuity · light-loop · major · $51.17 · 1:31 · 2026-09-25
+
+- Caught: S2 Opus refutation widened the bug (PAYMENT row dead too; unescaped prefix = latent tx abort; year-less scan wedges at 5 attempts; stale-card rewind) → all became SA-274 rulings. In-lane Opus review: BLOCKER `updateMany({where:{...compoundKey}})` — passes tsc + every mock, 500s against real Prisma on every second save. Independent pre-merge (Opus): BLOCK `(\d{1,9})` w/o `0*` hid zero-padded migrated numbers → mint below existing. Red gate: REG-B861-Z first went red on a TypeError (wrong reason) — fixed before push. Revert probes 2/2 caught. F2 DB lane red 12/15 → green 15/15, full lane 319/319.
+- Wasted: engine never launched (see Deviation) — no ~$ saving, but parallel write-only agents avoided idle slot waits; ~6 commitlint rejections (uppercase "B861"/"REG" subject starts) and one combined commit to split; a fix commit swept the tests in after a failed test commit.
+- Knob candidate (evidence: this run — both BLOCKs were real-DB/real-data shapes a mocked unit fixture cannot see): for HIGH-risk bug runs whose fix adds raw SQL or a new where/CAS shape, schedule the DB-lane red/green BEFORE the independent pre-merge verdict rather than after, and brief the reviewer with "what the NEW namespace actually holds" (padding range, empty prefix) — the in-lane review checked escaping but not the data shape.
+- Later rounds (same run): independent pre-merge BLOCK (0-padding scan) → fixed; fleet-lead Opus SHIP-W/N + SA-287b folds (row lock FOR UPDATE, token required, two concurrency pins) → fixed, red-first, in-lane refute CLEAN. Owner's Q4 prod count = 0. Wasted: one full `npm run verify` — a SCOPED web jest run inside the burst left `.campaign/runs/web.json` PARTIAL and verify's freshness pre-step failed before the (cache-replayed) full web run could rewrite it. Rule for burst plans: run scoped jest for red/green, then the FULL web/api suites (or skip scoped runs) before `npm run verify`.
+- SA-306 round: the red check caught a VACUOUS repro: REG-B861-AD matched `/reload/`, but the neighbouring 409's copy also said "reload", so it passed on the pre-fix code. Rule: a repro asserting a refusal matches the exception CLASS (or status), never a message regex shared by a sibling error. F2 caught a test-setup save missing the now-required token (P-6).
+- Deviation: HIGH-risk lane but pipeline.js NOT launched — the fleet grants HEAVY slots per burst with gaps (Mac Lead), and the engine cannot pause between bursts. Ran the same bugfix stages by hand: write-only Sonnet agents (tests ∥ fix) → burst 1 red-on-master + green → Opus in-lane review + sibling sweep (light) → burst 2 revert probes → burst 3 verify+push → pre-merge BLOCK → burst 4. Design ruling from the SA seat (SA-274), not a Fable S3 call. DB lane run only by the prover. Session cost $51 (> $40/major guide): Opus reviews ×4 + 5 Sonnet authors + long coordination waits.
+
+## 2026-09-25-f51-billing-mrr-ledger · bugfix · major · $44.62 · 0:48 · 2026-09-25
+
+- Caught: Gate & Review (24 raw) found the real seams: subscribe() as a 5th ledger writer (the gate itself created an under-book), a lock-upgrade deadlock, admin booking revenue with Stripe unconfigured. The independent pre-merge-review (Opus) then found 2 concurrency double-books (pre-lock reads in subscribe/admin enable) that every in-engine review missed. The SA caught none of these in advance; its ruling premise on the lock was wrong (SA-E23).
+- Wasted: all 7 "Mutation probe" findings were false. The engine probes via `git show HEAD:<file>`, but the repro tests were left UNCOMMITTED, so HEAD already held the fix. Hand probes bit on 5/5. Baseline flagged tsc/npm test "broken on baseline" (pre-existing), which excluded the final gate. result.json carried a placeholder runId, so closeout needed --wf.
+- Knob candidate (evidence: this run's 7/7 false probe blockers): the engine must commit each repro-test task's tests before any revert-probe runs, or probe against the pre-fix commit (`git show <baselineSha>:<file>`) instead of HEAD. Also write the real Workflow runId into result.json/RESUME.
+- Deviation: engine ended clean:false. The fix round (6 commits) and the concurrency fix (1) ran as hand-briefed Sonnet agents outside the engine, reviewed by two independent Opus passes. Bookkeeping (L-217, L-211 archive, map) parked as an Option B patch.
 
 ## 2026-09-25-mimo-4x2 · in-session (dev-pipeline, owner choice) · major · $19.81 · 1:13 · 2026-09-25
 
