@@ -3770,6 +3770,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
                 });
+                assertSellableLines([product]); // WS8: a FAMILY is never a substitute line
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
                   // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
@@ -4913,6 +4914,7 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: (cr.productId ?? payload.productId) as string },
           });
           if (!product) throw new BadRequestException("Product no longer exists");
+          assertSellableLines([product]); // WS8: a door ADD_ITEM never lands a FAMILY line
           // B297 (SA-098a): only reached below when this is a genuinely NEW line —
           // an existing-line quantity bump preserves its stored trio untouched.
           const addItemCategoryMap = await loadCategoryMapForProducts(tx, [product]);

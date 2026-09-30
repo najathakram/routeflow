@@ -227,6 +227,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     if (dto.supplierId) {
       const supplier = await this.prisma
@@ -340,6 +341,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = effectiveDateOf(dto.effectiveDate);

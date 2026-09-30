@@ -1343,7 +1343,8 @@ export class ImportService {
         }
         if (!productId && description && description !== "Item") {
           const product = await this.prisma.forTenant().product.findFirst({
-            where: { name: { equals: description, mode: "insensitive" } },
+            // WS8: families have no codes, so the NAME is the only path that could link a FAMILY; never link one.
+            where: { name: { equals: description, mode: "insensitive" }, kind: { not: "FAMILY" } },
           });
           if (product) productId = product.id;
         }
