@@ -42,6 +42,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import { deactivateFailureToast } from "@/lib/product-reactivation-refusal";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1111,8 +1112,8 @@ export default function ProductsPage() {
         description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
-    } catch {
-      toast({ title: "Failed to delete products", variant: "error" });
+    } catch (err) {
+      toast(deactivateFailureToast(err, "Failed to delete products"));
     }
   };
 

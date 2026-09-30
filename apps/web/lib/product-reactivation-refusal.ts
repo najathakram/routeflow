@@ -92,3 +92,21 @@ export function reactivationResolveLabel(names: string[]): string {
   if (names.length === 2) return `Deactivate "${names[0]}" and "${names[1]}" and reactivate this`;
   return `Deactivate ${names.length} products and reactivate this`;
 }
+
+const CODES_CHANGED_LINE =
+  "Someone changed this product's codes at the same time. Refresh and try again.";
+
+/**
+ * The toast for a failed deactivate / archive / delete. `CODES_CHANGED` (a live code the writer had
+ * not locked up front) gets one fixed retry sentence; anything else is the bare `title` — the server
+ * message is never shown.
+ */
+export function deactivateFailureToast(
+  err: unknown,
+  title: string,
+): { title: string; description?: string; variant: "error" } {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code;
+  return code === API_ERROR_CODES.CODES_CHANGED
+    ? { title, description: CODES_CHANGED_LINE, variant: "error" }
+    : { title, variant: "error" };
+}

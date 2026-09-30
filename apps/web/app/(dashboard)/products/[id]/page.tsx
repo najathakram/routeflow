@@ -67,6 +67,7 @@ import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
 import { useReactivateFlow } from "./useReactivateFlow";
+import { deactivateFailureToast } from "@/lib/product-reactivation-refusal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductLabelsCard } from "./ProductLabelsCard";
@@ -599,11 +600,8 @@ export default function ProductDetailPage() {
       toast({ title: "Product deleted", variant: "success" });
       router.push("/products");
     } catch (err: any) {
-      toast({
-        title: "Failed to delete product",
-        description: err?.response?.data?.message,
-        variant: "error",
-      });
+      const t = deactivateFailureToast(err, "Failed to delete product");
+      toast({ ...t, description: t.description ?? err?.response?.data?.message });
     } finally {
       setShowDeleteConfirm(false);
     }
@@ -800,7 +798,10 @@ export default function ProductDetailPage() {
       if (!window.confirm("Deactivate this variant?")) return;
       updateProduct.mutate(
         { id: variant.id, isActive: false },
-        { onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }) },
+        {
+          onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }),
+          onError: (err) => toast(deactivateFailureToast(err, "Couldn't deactivate this variant")),
+        },
       );
     } else {
       reactivateFlow.start(variant.id);
@@ -1052,7 +1053,11 @@ export default function ProductDetailPage() {
           setShowDeactivateConfirm(false);
           updateProduct.mutate(
             { id, isActive: false },
-            { onSuccess: () => toast({ title: "Product deactivated", variant: "success" }) },
+            {
+              onSuccess: () => toast({ title: "Product deactivated", variant: "success" }),
+              onError: (err) =>
+                toast(deactivateFailureToast(err, "Couldn't deactivate this product")),
+            },
           );
         }}
         title="Deactivate product?"

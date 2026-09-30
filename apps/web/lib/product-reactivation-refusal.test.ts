@@ -1,4 +1,8 @@
-import { getReactivationRefusal, reactivationResolveLabel } from "./product-reactivation-refusal";
+import {
+  deactivateFailureToast,
+  getReactivationRefusal,
+  reactivationResolveLabel,
+} from "./product-reactivation-refusal";
 
 const err = (data: unknown) => ({ response: { status: 409, data } });
 const holder = (over: Record<string, unknown> = {}) => ({
@@ -113,5 +117,45 @@ describe("reactivationResolveLabel", () => {
     expect(reactivationResolveLabel(["A", "B", "C"])).toBe(
       "Deactivate 3 products and reactivate this",
     );
+  });
+});
+
+describe("deactivateFailureToast — CODES_CHANGED on the deactivate/delete paths (#2860)", () => {
+  it("CODES_CHANGED -> the fixed retry sentence, never the server message", () => {
+    const t = deactivateFailureToast(
+      err({ code: "CODES_CHANGED", message: "RAW SERVER TEXT" }),
+      "Failed to delete product",
+    );
+    expect(t).toEqual({
+      title: "Failed to delete product",
+      description: "Someone changed this product's codes at the same time. Refresh and try again.",
+      variant: "error",
+    });
+  });
+
+  it.each([
+    ["another 409", err({ code: "CODE_TAKEN", message: "RAW" })],
+    ["a 500", { response: { status: 500, data: { message: "boom" } } }],
+    ["a network error", new Error("Network Error")],
+    ["null", null],
+  ])("%s -> just the title, no server text", (_n, e) => {
+    const t = deactivateFailureToast(e, "Couldn't deactivate this product");
+    expect(t).toEqual({ title: "Couldn't deactivate this product", variant: "error" });
+  });
+});
+
+describe("the deactivate / delete call sites use deactivateFailureToast (source pin)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("fs") as typeof import("fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require("path") as typeof import("path");
+  const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), "utf8");
+
+  it("product detail: header Deactivate, variant deactivate and Delete", () => {
+    const src = read("../app/(dashboard)/products/[id]/page.tsx");
+    expect((src.match(/deactivateFailureToast\(/g) ?? []).length).toBeGreaterThanOrEqual(3);
+  });
+  it("products list: bulk delete", () => {
+    expect(read("../app/(dashboard)/products/page.tsx")).toMatch(/deactivateFailureToast\(/);
   });
 });
