@@ -2838,15 +2838,16 @@ export class ImportService {
           await this.prisma.tenantTransaction(async (tx: any) => {
             // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same pattern as
             // products.service.ts create().
-            // SA-603a: a code an INACTIVE product still holds is released here (audited), an ACTIVE holder is a 409.
-            await claimCodes(tx, {
-              tenantId: tenantIdForZoho,
-              productId: null,
-              actorId: null,
-              codes: codeClaims({ barcode: zohoBarcode, sku: rawSku || null }, null),
-            });
             if (zohoBarcode) {
               await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              // SA-603a: lock -> claim -> check -> create. A code an INACTIVE product still holds is released here
+              // (audited); an ACTIVE holder is a 409. (barcode and sku are the same code on this path.)
+              await claimCodes(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                actorId: null,
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+              });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
                 productId: null,
