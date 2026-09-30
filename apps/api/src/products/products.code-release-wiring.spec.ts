@@ -174,4 +174,31 @@ describe("ProductsService — code release wiring (SA-603a)", () => {
     });
     expect(prisma.product.create).not.toHaveBeenCalled();
   });
+
+  it("update({isActive:true}) against an ACTIVE same-name holder is a 409 NAME_TAKEN naming it; nothing is written", async () => {
+    const self = { ...BASE, isActive: false };
+    prisma.product.findUnique.mockResolvedValue(self as any);
+    prisma.product.findFirst.mockImplementation((args: any) => {
+      if (args?.where?.id === "prod-1" && args?.where?.tenantId) return Promise.resolve(self);
+      if (args?.where?.isActive === true && args?.where?.name)
+        return Promise.resolve({ id: "holder", name: "Cherry Tomatoes" });
+      return Promise.resolve(null);
+    });
+
+    await expect(service.update("prod-1", { isActive: true } as any)).rejects.toMatchObject({
+      response: { code: "NAME_TAKEN", productId: "holder" },
+    });
+    expect(prisma.product.update).not.toHaveBeenCalled();
+  });
+
+  it("create(): the name pre-check only counts ACTIVE products", async () => {
+    prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.findMany.mockResolvedValue([]);
+    prisma.product.create.mockResolvedValue({ ...BASE, id: "prod-new" } as any);
+
+    await service.create({ name: "New", unit: "punnet", pricePerUnit: 1 } as any);
+
+    const nameCheck = prisma.product.findFirst.mock.calls.find(([a]: any) => a?.where?.name);
+    expect(nameCheck?.[0].where).toMatchObject({ isActive: true });
+  });
 });

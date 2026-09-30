@@ -54,6 +54,7 @@ import {
   releaseProductCodes,
   restoreProductCodes,
 } from "./product-code-release";
+import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -912,6 +913,13 @@ export class ProductsService {
         actorId: options?.actorId ?? null,
         codes: codeClaims(dto, null),
       });
+      // SA-603a (a): the active-only name check again, under the name lock (code locks first, house order).
+      await assertNameFree(tx, {
+        tenantId,
+        parentProductId: dto.parentProductId ?? null,
+        name: dto.name,
+        excludeId: null,
+      });
       if (dto.barcode) {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
@@ -972,7 +980,11 @@ export class ProductsService {
           include: { variants: true, parent: true },
         });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name, dto.parentProductId != null);
+        }
       }
       await syncProductBarcodesFromLegacy(tx, {
         tenantId,
@@ -1238,6 +1250,18 @@ export class ProductsService {
         actorId: options?.actorId ?? null,
         codes: claims,
       });
+      // SA-603a (a): a name or parent change, or a reactivation, re-checks the active-only name under its lock;
+      // reactivating against an ACTIVE same-name holder is a 409 naming it.
+      if (dto.name || dto.parentProductId !== undefined || reactivating) {
+        await assertNameFree(tx, {
+          tenantId,
+          parentProductId:
+            dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+          name: dto.name ?? existing.name,
+          excludeId: id,
+          reactivating,
+        });
+      }
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
@@ -1262,7 +1286,11 @@ export class ProductsService {
       try {
         row = await tx.product.update({ where: { id }, data });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name ?? existing.name, !!existing.parentProductId);
+        }
       }
       if (deactivating) {
         await releaseProductCodes(tx, { tenantId, productId: id });
@@ -1708,7 +1736,7 @@ export class ProductsService {
       try {
         // Check for duplicate name
         const nameTaken = await this.prisma.forTenant().product.findFirst({
-          where: { name: { equals: item.name, mode: "insensitive" } },
+          where: { name: { equals: item.name, mode: "insensitive" }, isActive: true },
           select: { id: true },
         });
         if (nameTaken) {
