@@ -147,4 +147,97 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     expect([subA, subB]).toContain(after?.googleId);
     expect(emailSend).not.toHaveBeenCalled(); // the staff link sends no email
   });
+
+  it("SA-599b (linkGoogleAccount, forced interleave): two callers linking DIFFERENT subs to one user both pass the read, and exactly one wins the CAS", async () => {
+    // Drives GoogleOAuthService.linkGoogleAccount against real Postgres. A barrier on the first two
+    // `user.findUnique` calls (each caller's initial read, before either writes) forces both past
+    // the "not linked yet" pre-check, so only the shared CAS `updateMany({ id, tenantId,
+    // googleId: null })` decides the winner. A bare check-then-update lets both land -> RED.
+    const subA = `google-sub-${run}-link-a`;
+    const subB = `google-sub-${run}-link-b`;
+    const user = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `link-${run}@example.test`,
+        username: `link-${run}`,
+        role: "OPERATOR",
+      },
+    });
+
+    // Barrier: releases once BOTH callers have arrived; a lone arrival fails fast (< 5 s). Later
+    // findUnique calls (the loser's post-CAS refetch) pass straight through.
+    let arrived = 0;
+    let release!: () => void;
+    const both = new Promise<void>((resolve) => (release = resolve));
+    const gate = async () => {
+      arrived += 1;
+      if (arrived > 2) return;
+      if (arrived === 2) release();
+      await Promise.race([
+        both,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("barrier: the second caller never arrived")), 3000),
+        ),
+      ]);
+    };
+    const prismaShim = {
+      user: {
+        findUnique: async (args: Prisma.UserFindUniqueArgs) => {
+          const row = await raw.user.findUnique(args);
+          await gate();
+          return row;
+        },
+        findFirst: (args: Prisma.UserFindFirstArgs) => raw.user.findFirst(args),
+        updateMany: (args: Prisma.UserUpdateManyArgs) => raw.user.updateMany(args),
+      },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const config = {
+      get: (k: string) =>
+        k === "jwt"
+          ? { secret: "s", refreshSecret: "r", expiresIn: "15m", refreshExpiresIn: "30d" }
+          : undefined,
+    } as unknown as ConfigService;
+    const service = new GoogleOAuthService(
+      prismaShim as any,
+      { sign: jest.fn(), decode: jest.fn() } as unknown as JwtService,
+      config,
+      { send: emailSend } as any,
+      { claimsFor: jest.fn().mockResolvedValue(null) } as any,
+    );
+    (service as any).redis?.disconnect?.();
+    (service as any).redis = {
+      set: async () => "OK",
+      getdel: async () => null,
+      eval: async () => null,
+      on: () => undefined,
+      disconnect: () => undefined,
+    };
+
+    const results = await Promise.allSettled([
+      service.linkGoogleAccount({
+        linkUserId: user.id,
+        googleId: subA,
+        email: user.email,
+        type: "tenant",
+      } as any),
+      service.linkGoogleAccount({
+        linkUserId: user.id,
+        googleId: subB,
+        email: user.email,
+        type: "tenant",
+      } as any),
+    ]);
+
+    const won = results.filter((r) => r.status === "fulfilled");
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(arrived).toBeGreaterThanOrEqual(2); // the interleave really happened
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(lost[0].reason).toBeInstanceOf(ConflictException);
+    expect((lost[0].reason as ConflictException).message).toBe("google_account_mismatch");
+    const after = await raw.user.findUnique({ where: { id: user.id } });
+    expect([subA, subB]).toContain(after?.googleId);
+    expect(emailSend).toHaveBeenCalledTimes(1); // only the winner sends the linked email
+  });
 });

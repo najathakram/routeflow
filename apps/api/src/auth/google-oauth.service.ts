@@ -326,6 +326,8 @@ export class GoogleOAuthService {
   async linkGoogleAccount(profile: GoogleProfile): Promise<void> {
     const { linkUserId, googleId, email } = profile;
     if (!linkUserId) throw new BadRequestException("linkUserId required");
+    // SA-599b: a falsy sub refuses before ANY query (mirrors linkAppleAccount).
+    if (!googleId) throw new ForbiddenException("unauthorized");
 
     const user = await this.prisma.user.findUnique({ where: { id: linkUserId } });
     if (!user || user.deletedAt) throw new ForbiddenException("unauthorized");
@@ -337,10 +339,18 @@ export class GoogleOAuthService {
     if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: linkUserId },
-      data: { googleId, forcePasswordChange: false },
+    // SA-599b: CAS link (tenantId + id + googleId:null), mirroring linkAppleAccount; a lost race
+    // to a different sub is a 409, and only the winning call logs/notifies.
+    const cas = await casLinkProviderId({
+      updateMany: (args) => this.prisma.user.updateMany(args),
+      findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+      row: user,
+      column: "googleId",
+      sub: googleId,
+      data: { forcePasswordChange: false },
+      extraWhere: { tenantId: user.tenantId },
     });
+    if (!cas.linked) return;
 
     this.logger.log(`Google account linked for user ${linkUserId}`);
 
@@ -631,6 +641,8 @@ export class GoogleOAuthService {
           row: staffUser,
           column: "googleId",
           sub: profile.googleId,
+          // SA-599b: defence in depth — the staff row is tenant-scoped, so is its link write.
+          extraWhere: { tenantId: staffUser.tenantId },
           // Clear forcePasswordChange — Google users cannot use the password
           // change form, so the flag must not redirect them to /change-password.
           data: { forcePasswordChange: false },

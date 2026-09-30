@@ -132,7 +132,8 @@ describe("GoogleOAuthService.handleTenantAuth — INACTIVE staff is rejected, ne
     const result: any = await service.findOrCreateUser(baseProfile as any);
 
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: "user-active", googleId: null },
+      // SA-599b: the staff CAS is tenant-scoped (mechanical follow-up to the same pin).
+      where: { id: "user-active", tenantId: TENANT.id, googleId: null },
       data: { googleId: "google-real-id", forcePasswordChange: false },
     });
     expect(result.kind).toBe("staff");

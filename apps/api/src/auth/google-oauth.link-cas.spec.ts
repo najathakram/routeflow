@@ -111,7 +111,7 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
     });
 
-    it("the email fallback is ordered createdAt,id, tenant-scoped, and links by CAS on id + googleId:null", async () => {
+    it("the email fallback is ordered createdAt,id, tenant-scoped, and links by CAS on id + tenantId + googleId:null", async () => {
       const { service, prisma } = build();
       prisma.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...STAFF });
       prisma.user.updateMany.mockResolvedValue({ count: 1 });
@@ -122,8 +122,9 @@ describe("GoogleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 f
         where: { tenantId: "tenant-1", deletedAt: null, email: STAFF.email },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
+      // SA-599b (deliberate flip of the #2664 pin): the staff CAS is tenant-scoped, defence in depth.
       expect(prisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: "user-1", googleId: null },
+        where: { id: "user-1", tenantId: "tenant-1", googleId: null },
         data: { googleId: "google-sub-1", forcePasswordChange: false },
       });
     });

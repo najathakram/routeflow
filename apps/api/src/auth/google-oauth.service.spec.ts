@@ -416,6 +416,8 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        // SA-599b: linkGoogleAccount writes through the shared CAS (updateMany).
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     } as any;
 
