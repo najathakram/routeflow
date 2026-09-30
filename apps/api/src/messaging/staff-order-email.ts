@@ -125,7 +125,13 @@ export class StaffOrderEmailService {
     return out;
   }
 
-  /** Fire-and-forget safe: NEVER rejects. */
+  /**
+   * Fire-and-forget safe: NEVER rejects.
+   *
+   * NOTE for whoever wires this from a job/outbox worker: there is no ambient tenant there, and this
+   * method REFUSES without one (it must equal `order.tenantId`). Wrap the call in the tenant context
+   * runner — `ctx.run(order.tenantId, () => notifyStaffEvent(...))` — never call it bare from a job.
+   */
   async notifyStaffEvent(event: NotificationEvent, ctx: { orderId: string }): Promise<void> {
     try {
       if (!(event in OPT_OUT_KEY)) return;

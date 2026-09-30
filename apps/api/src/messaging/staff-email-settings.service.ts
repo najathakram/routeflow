@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { isInternalEmail } from "../common/internal-email";
 import { maskEmail } from "./messaging-deliveries.service";
 import { StaffOrderEmailService } from "./staff-order-email";
+import { requireTenantContext } from "./require-tenant-context";
 
 /** Local literal copy (the API never value-imports `@routeflow/types`); mirrors the shared
  *  `STAFF_CC_MAX`, pinned by the `staff-email-settings` spec and the parity spec. */
@@ -31,6 +32,7 @@ export class StaffEmailSettingsService {
   ) {}
 
   async get(role: string): Promise<StaffEmailSettings> {
+    requireTenantContext(this.prisma);
     const list = await this.read();
     return {
       staffCc: role === "TENANT_ADMIN" ? list : list.map(maskEmail),
@@ -40,6 +42,7 @@ export class StaffEmailSettingsService {
 
   /** Only `staffCc` is read from the body; any other field is ignored. */
   async update(body: UpdateStaffEmailSettingsRequest): Promise<StaffEmailSettings> {
+    requireTenantContext(this.prisma);
     const staffCc = this.validate(body?.staffCc);
     const db = this.prisma.forTenant();
     const value = JSON.stringify(staffCc);

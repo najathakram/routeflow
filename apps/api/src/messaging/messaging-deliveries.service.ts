@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { requireTenantContext } from "./require-tenant-context";
 import { EmailDeliveryStatus } from "@prisma/client";
 import { EMAIL_KINDS, type EmailKind } from "../email/email-kinds";
 import type { DeliveryFixKey, DeliveryHealth, DeliveryList } from "@routeflow/types";
@@ -57,6 +58,7 @@ export class MessagingDeliveriesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(role: string, query: ListDeliveriesQuery): Promise<DeliveryList> {
+    requireTenantContext(this.prisma);
     const page = Math.max(1, Math.floor(Number(query.page) || 1));
     const pageSize = Math.min(
       MAX_PAGE_SIZE,
@@ -99,6 +101,7 @@ export class MessagingDeliveriesService {
   }
 
   async health(): Promise<DeliveryHealth> {
+    requireTenantContext(this.prisma);
     const since = { gte: new Date(Date.now() - HEALTH_WINDOW_DAYS * DAY_MS) };
     const db = this.prisma.forTenant();
     const [grouped, failedRows] = await Promise.all([

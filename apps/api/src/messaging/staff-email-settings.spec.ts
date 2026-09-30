@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import { BadRequestException, type ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -40,7 +41,11 @@ function makeHarness(stored?: unknown, env?: string) {
       .mockResolvedValue([{ id: "u1", email: "boss@acme.test", role: "TENANT_ADMIN" }]),
   };
   const models = { systemConfig, user };
-  const prisma = { forTenant: jest.fn().mockReturnValue(models), systemConfig: undefined };
+  const prisma = {
+    forTenant: jest.fn().mockReturnValue(models),
+    getTenantId: jest.fn().mockReturnValue("t1"),
+    systemConfig: undefined,
+  };
   const staff = new StaffOrderEmailService(prisma as never, {} as never, {} as never);
   const svc = new StaffEmailSettingsService(prisma as never, staff);
   if (env === undefined) delete process.env.STAFF_ORDER_EMAIL;
@@ -273,5 +278,19 @@ describe("MessagingController staff-email-settings routes", () => {
     expect(settings.get).toHaveBeenCalledWith("OPERATOR");
     expect(await c.updateStaffEmailSettings({ staffCc: ["a@b.co"] })).toBe("u");
     expect(settings.update).toHaveBeenCalledWith({ staffCc: ["a@b.co"] });
+  });
+
+  describe("no tenant context (SUPER_ADMIN / job): refused, nothing read or written", () => {
+    it.each([
+      ["GET", (h: ReturnType<typeof makeHarness>) => h.svc.get("TENANT_ADMIN")],
+      ["PUT", (h: ReturnType<typeof makeHarness>) => h.svc.update({ staffCc: ["a@example.com"] })],
+    ])("%s throws a coded 403 and never touches the unscoped client", async (_l, call) => {
+      const h = makeHarness();
+      (h.prisma.getTenantId as jest.Mock).mockReturnValue(null);
+      const err: any = await call(h).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CONTEXT_REQUIRED" });
+      expect(h.prisma.forTenant).not.toHaveBeenCalled();
+    });
   });
 });

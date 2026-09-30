@@ -1,3 +1,4 @@
+import { ForbiddenException } from "@nestjs/common";
 import {
   DELIVERY_FIX_KEY_VALUES,
   MessagingDeliveriesService,
@@ -70,7 +71,11 @@ describe("MessagingDeliveriesService", () => {
       groupBy: jest.fn().mockResolvedValue([]),
     };
     const models = { emailDelivery };
-    const prisma = { ...models, forTenant: jest.fn().mockReturnValue(models) } as any;
+    const prisma = {
+      ...models,
+      forTenant: jest.fn().mockReturnValue(models),
+      getTenantId: jest.fn().mockReturnValue("t1"),
+    } as any;
     return { svc: new MessagingDeliveriesService(prisma), emailDelivery, prisma };
   }
 
@@ -219,6 +224,20 @@ describe("MessagingDeliveriesService", () => {
       const { svc } = make([]);
       const h = await svc.health();
       expect(h.failures).toEqual([]);
+    });
+  });
+
+  describe("no tenant context (SUPER_ADMIN / job): refused", () => {
+    it.each([
+      ["list", (svc: MessagingDeliveriesService) => svc.list("TENANT_ADMIN", {})],
+      ["health", (svc: MessagingDeliveriesService) => svc.health()],
+    ])("%s throws a coded 403 and never touches the unscoped client", async (_l, call) => {
+      const { svc, prisma } = make();
+      prisma.getTenantId.mockReturnValue(null);
+      const err: any = await call(svc).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse()).toMatchObject({ code: "TENANT_CONTEXT_REQUIRED" });
+      expect(prisma.forTenant).not.toHaveBeenCalled();
     });
   });
 });
