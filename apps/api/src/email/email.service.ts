@@ -1135,30 +1135,6 @@ export class EmailService {
   }
 
   /**
-   * #2854 Opus B4+r2: ONE refusal shared by BOTH public send paths — `send()` and
-   * `sendPlatform()` (which is called directly by set-password / tenant-welcome /
-   * email-change / role-change, billing-notification and onboarding, so a guard in
-   * `send()` alone left an admin resetPassword mailing an @imported.local user).
-   * Import sentinels (@imported.local / @placeholder.local) are non-routable;
-   * refusing is treated exactly like "no email on file". Honest result (R5).
-   * The warn log carries the sentinel DOMAIN only, never the full address.
-   */
-  private refuseSentinel(
-    to: string,
-  ): { delivered: false; transport: "none"; error: string } | null {
-    if (!isInternalEmail(to)) return null;
-    const domain = to.slice(to.lastIndexOf("@"));
-    this.logger.warn(
-      `send refused: recipient is at the internal sentinel domain ${domain} (no real email on file)`,
-    );
-    return {
-      delivered: false,
-      transport: "none",
-      error: "Recipient is an internal placeholder address (no real email on file).",
-    };
-  }
-
-  /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
    * (auth password-reset, account-merge) are never turned into a 500 by an
