@@ -107,6 +107,10 @@ export function createMockPrisma(): MockPrisma {
     // .findMany.mockResolvedValue([...]) same as any other model.
     productBarcode: modelProxy(),
     productImage: modelProxy(),
+    // #2717 M2: recipe versions and their component lines. Default findMany() -> [] / findFirst()
+    // -> null ("no recipe"); a spec that seeds one stubs the method like any other model.
+    recipe: modelProxy(),
+    recipeComponent: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
     orderRevision: modelProxy(),
@@ -228,6 +232,8 @@ export function createMockPrisma(): MockPrisma {
     productUnit: modelProxy(),
     productBarcode: modelProxy(),
     productImage: modelProxy(),
+    recipe: modelProxy(),
+    recipeComponent: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
     orderRevision: modelProxy(),

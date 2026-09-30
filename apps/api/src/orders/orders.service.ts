@@ -15,7 +15,10 @@ import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
-import { attachPaymentCreditNotes } from "./order-payment-credit-notes";
+import {
+  attachPaymentCreditNotes,
+  ORDER_CREDIT_PAYMENT_SELECT,
+} from "./order-payment-credit-notes";
 import { prepareInlineReturn, replayAfterCheck } from "./order-inline-return";
 import { reserveInlineReturnNumber as reserveReturnNo } from "./order-inline-return";
 import { applyInlineReturnInTx as applyReturn } from "./order-inline-return";
@@ -480,7 +483,7 @@ export class OrdersService implements OnApplicationBootstrap {
             payments: {
               where: { method: "CREDIT_NOTE", status: { not: "VOID" } },
               // #2404: autoApplied (SA-436 PR-1) labels each credit Automatic / Manual.
-              select: { id: true, amount: true, creditNoteId: true, autoApplied: true },
+              select: ORDER_CREDIT_PAYMENT_SELECT,
             },
           },
         },

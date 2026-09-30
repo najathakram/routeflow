@@ -2219,6 +2219,9 @@ function makeBulkDeleteReferenceStore() {
     deliveryMutation: noopDeleteManyModel(),
     stockLot: noopDeleteManyModel(),
     stockMovement: noopDeleteManyModel(),
+    // #2717 M2: bulkDelete also probes the recipe tables for references.
+    recipe: noopDeleteManyModel(),
+    recipeComponent: noopDeleteManyModel(),
   };
 
   const prisma = {
