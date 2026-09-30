@@ -9,9 +9,18 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const app = JSON.parse(readFileSync(join(__dirname, "..", "app.json"), "utf8")) as {
+// The config EAS actually builds is app.config.js's RESOLVED output (it wraps app.json and could
+// override version/runtimeVersion), so pin that, not the raw app.json.
+const rawApp = JSON.parse(readFileSync(join(__dirname, "..", "app.json"), "utf8")) as {
   expo: { version: string; runtimeVersion?: { policy?: string } };
 };
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const buildResolvedConfig = require("../app.config.js") as (ctx: { config: unknown }) => {
+  version: string;
+  runtimeVersion?: { policy?: string };
+};
+const resolved = buildResolvedConfig({ config: rawApp.expo });
+const app = { expo: resolved };
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
   dependencies: Record<string, string>;
 };
@@ -31,6 +40,11 @@ describe("app.json runtime version (#2653 hybrid shell)", () => {
     const [a, b, c] = semver(app.expo.version);
     const [x, y, z] = semver(PRE_WEBVIEW_RUNTIME);
     expect(a * 1e6 + b * 1e3 + c).toBeGreaterThan(x * 1e6 + y * 1e3 + z);
+  });
+
+  it("app.config.js does not override the version or runtime policy from app.json", () => {
+    expect(resolved.version).toBe(rawApp.expo.version);
+    expect(resolved.runtimeVersion).toEqual(rawApp.expo.runtimeVersion);
   });
 
   it("the runtime policy is still appVersion (so the new version is a new runtime)", () => {
