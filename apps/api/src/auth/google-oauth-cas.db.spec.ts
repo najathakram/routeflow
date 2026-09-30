@@ -502,4 +502,63 @@ describeDb("#2775 (SA-598 P1) — Google link CAS on real Postgres", () => {
     expect((await raw.user.findUnique({ where: { id: u1.id } }))?.googleId).toBe(sub);
     expect(emailSend).not.toHaveBeenCalled();
   });
+
+  it("SA-599b (b) (cross-tenant): the linkGoogleAccount CAS is scoped by the read row's tenantId, so a mis-scoped row writes nothing", async () => {
+    // U lives in tenant A (googleId null). The shim's FIRST `user.findUnique` (the pre-check read)
+    // returns U's real row with tenantId rewritten to tenant B; later findUnique calls (the CAS
+    // lost-race re-read) hit the real DB. The CAS is `updateMany({ id: U.id, tenantId: B,
+    // googleId: null })` -> 0 rows -> re-read shows googleId null (no mismatch) -> linked=false:
+    // the call resolves, googleId stays null, tenantId stays A, nothing is emailed. Removing
+    // `extraWhere: { tenantId }` from linkGoogleAccount's CAS makes the write match on
+    // { id, googleId: null } alone and land -> the null assertion goes RED (F2 verifies).
+    const slugB = assertTestTenant(`qa-google-${run}-b2`, "google-oauth-cas.db.spec.ts");
+    const tenantBId = (
+      await raw.tenant.create({ data: { slug: slugB, name: `Google QA B2 ${run}` } })
+    ).id;
+    extraTenantIds.push(tenantBId);
+    const sub = `google-sub-${run}-xtenant-link`;
+    const user = await raw.user.create({
+      data: {
+        tenantId: tenantAId,
+        email: `xtenantlink-${run}@example.test`,
+        username: `xtenantlink-${run}`,
+        role: "OPERATOR",
+      },
+    });
+
+    let findUniqueCalls = 0;
+    const updateManyWheres: unknown[] = [];
+    const prismaShim = {
+      user: {
+        findUnique: async (args: Prisma.UserFindUniqueArgs) => {
+          findUniqueCalls += 1;
+          const row = await raw.user.findUnique(args);
+          return findUniqueCalls === 1 && row ? { ...row, tenantId: tenantBId } : row;
+        },
+        findFirst: (args: Prisma.UserFindFirstArgs) => raw.user.findFirst(args),
+        updateMany: (args: Prisma.UserUpdateManyArgs) => {
+          updateManyWheres.push(args.where);
+          return raw.user.updateMany(args);
+        },
+      },
+    };
+    const emailSend = jest.fn().mockResolvedValue(undefined);
+    const service = buildService(prismaShim, emailSend);
+
+    await expect(
+      service.linkGoogleAccount({
+        linkUserId: user.id,
+        googleId: sub,
+        email: user.email,
+        type: "tenant",
+      } as any),
+    ).resolves.toBeUndefined();
+
+    expect(updateManyWheres).toEqual([{ id: user.id, tenantId: tenantBId, googleId: null }]);
+    expect(findUniqueCalls).toBe(2); // pre-check read + the CAS lost-race re-read
+    const after = await raw.user.findUnique({ where: { id: user.id } });
+    expect(after?.googleId).toBeNull(); // the scoped CAS matched 0 rows: no link written
+    expect(after?.tenantId).toBe(tenantAId);
+    expect(emailSend).not.toHaveBeenCalled();
+  });
 });
