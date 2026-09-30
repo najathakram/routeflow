@@ -274,7 +274,7 @@ export class ProductFamiliesService {
         id: string;
         kind: string;
         pricePerUnit: unknown;
-        standardCost: unknown;
+        standardCost: Prisma.Decimal | null;
       } | null = await tx.product.findFirst({
         where: { id: familyId, tenantId },
         select: { id: true, kind: true, pricePerUnit: true, standardCost: true },
@@ -379,7 +379,7 @@ export class ProductFamiliesService {
             familyId,
             v,
             authority ? money(String(family.pricePerUnit)) : undefined,
-            family.standardCost == null ? null : String(family.standardCost),
+            family.standardCost == null ? null : family.standardCost.toString(),
           ),
         });
         added.push(created.id);
