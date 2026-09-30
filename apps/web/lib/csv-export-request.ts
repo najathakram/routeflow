@@ -16,9 +16,12 @@ function blobText(b: Blob): Promise<string> {
   });
 }
 
+/** Fixed line for an error body that is a Blob but not JSON (a proxy's HTML page, say). */
+const EXPORT_FAILED_LINE = "The export failed. Please try again or contact support.";
+
 /** Toast description for a failed export: a friendly line for the throttle, else the server's
  *  message, else the client error's own. With `responseType: "blob"` an error body arrives as a
- *  Blob, so it is parsed as JSON first (a non-JSON body falls through to the client message). */
+ *  Blob, so it is parsed as JSON first (a non-JSON body gets the fixed friendly line). */
 export async function exportErrorMessage(err: unknown): Promise<string> {
   const e = err as { message?: string; response?: { status?: number; data?: unknown } };
   if (e?.response?.status === 429) return "Too many exports — try again in a minute.";
@@ -27,7 +30,7 @@ export async function exportErrorMessage(err: unknown): Promise<string> {
     try {
       data = JSON.parse(await blobText(data)) as { message?: unknown };
     } catch {
-      data = undefined;
+      return EXPORT_FAILED_LINE;
     }
   }
   const msg = (data as { message?: unknown } | undefined)?.message;
