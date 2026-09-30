@@ -535,7 +535,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     for (const p of [f.P, f.V1, f.V2, f.S]) expectSurfaces(f, v, p, true);
     expect(v.counts.total).toBe(4);
     expect(v.countCategoryNames.sort()).toEqual(["Acme Family", "Acme Solo"]);
-    expect(v.counts.categories.find((c: any) => c.name === "Acme Family").count).toBe(3);
+    expect(v.counts.categories.find((c: any) => c.name === "Acme Family")?.count).toBe(3);
     expect([...v.categories].sort()).toEqual(["Acme Family", "Acme Solo"]);
     // Point reads + the two writes (positive control that the harness can subscribe / favourite).
     await expectProbe(f, f.S, true, true);
