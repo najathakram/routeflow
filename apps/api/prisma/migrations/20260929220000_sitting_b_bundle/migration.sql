@@ -1,23 +1,39 @@
--- Sitting-B schema bundle (SA-603 / SA-603a): one migration for the owner's second sitting.
---   1. "Product"."portalVisible" (spec 06: hide a product from the buyer portal), a constant-default
+-- Sitting-B schema bundle (SA-603 / 603a / 603b / 603c): ONE migration for the owner's second sitting.
+--   1. "Product"."portalVisible" (spec 06: hide a product from the buyer portal): a constant-default
 --      NOT NULL ADD COLUMN (metadata-only on Postgres 11+, no table rewrite).
 --   2. Released-code columns: "Product"."retiredSku"/"retiredBarcode"/"retiredUnitSku" and
 --      "ProductBarcode"."retiredCode" (nullable, no default), and "ProductBarcode"."code" DROP NOT NULL.
 --      The app releases a deactivated product's codes into the retired* columns (the full uniques stay
---      exactly as they are; NO partial index, NO backfill: an inactive product keeps its codes until a
---      create/update/reactivate collides with it and releases them in the same transaction).
---   2b. Product NAME uniqueness among ACTIVE products (two partial unique indexes, SA-603b; gated).
---   3. "EmailDelivery" (spec 08): the transactional-email log: new enum + table + 3 indexes + a tenant FK
---      (ON DELETE CASCADE); no subject/body column (PII minimal). Retention (90 days) is an app cron.
--- Purely additive except the single DROP NOT NULL above and the two prod-only index drops (IF EXISTS); every existing-table statement is metadata-only
--- (no index build on "Product" or "ProductBarcode"). Each ALTER takes a brief ACCESS EXCLUSIVE lock,
--- bounded by lock_timeout below (SET LOCAL: scoped to this migration's transaction). If the wait
--- exceeds 5s the migration rolls back and is recorded FAILED: recover with
+--      exactly as they are; NO backfill: an inactive product keeps its codes until a create/update/
+--      reactivate collides with it and releases them in the same transaction).
+--   3. Product NAME uniqueness among ACTIVE products (SA-603b option i): DROP INDEX IF EXISTS on the two
+--      prod-only all-rows partial uniques ("Product_tenantId_name_root_key",
+--      "Product_tenantId_parent_name_key": names CONFIRMED by the owner's STEP 0 against prod, which
+--      also recorded 0 active duplicate roots, 0 active duplicate variants) + two active-only partial
+--      unique indexes. Raw SQL: Prisma cannot declare a partial unique index.
+--   4. "EmailDelivery" (spec 08: the transactional-email log): 6-value status enum + table + 3 indexes +
+--      a tenant FK (ON DELETE CASCADE); no subject/body column (PII minimal); contentFingerprint is a
+--      SHA-256 hash, never content. Retention (90 days) is an app cron.
+--   5. "PolicyValue" + "PolicyScopeType" (#1337 folded in, SA-603c): new, empty table, 2 indexes, a tenant FK.
+--   6. "NotificationEvent" += STAFF_NEW_ORDER, BUYER_ORDER_EDITED, BUYER_ORDER_CANCELLED. ADD VALUE inside
+--      the wrap is legal (PG >= 12); a value added in a transaction cannot be USED in it, and nothing here
+--      uses them (only app code, after the commit).
+--
+-- LOCK PROFILE per table (every acquisition is bounded by lock_timeout below):
+--   "Product":         ADD COLUMN x4 metadata-only (brief ACCESS EXCLUSIVE); the two partial unique index
+--                      builds hold a SHARE lock (writes blocked, reads fine) for the build, about a second
+--                      at today's catalog size (partial, small keys); run off-peak.
+--   "ProductBarcode":  ADD COLUMN + DROP NOT NULL, metadata-only (brief ACCESS EXCLUSIVE).
+--   "EmailDelivery", "PolicyValue": new and empty; the FKs reference "Tenant" (brief SHARE ROW EXCLUSIVE).
+--   "NotificationEvent": a lock on the type only, no table.
+--
+-- Everything is additive except the ONE DROP NOT NULL (reason below) and the two IF EXISTS index drops.
+-- If a lock wait exceeds 5s the migration rolls back and is recorded FAILED: recover with
 --   prisma migrate resolve --rolled-back 20260929220000_sitting_b_bundle
 -- from apps/api, then re-run. NEVER `--applied`.
 --
--- Pre-checks (read-only): the columns/table/enum are absent, no failed migration is pending, and
--- "ProductBarcode"."code" is currently NOT NULL (see SA-603 / SA-603a).
+-- Pre-checks (read-only): the columns/tables/enums are absent, no failed migration is pending, and
+-- "ProductBarcode"."code" is currently NOT NULL.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -50,13 +66,11 @@ ADD COLUMN     "retiredUnitSku" TEXT;
 -- prod AND on fresh databases. Raw SQL: Prisma cannot declare a partial unique index (the schema keeps
 -- @@index([tenantId, name])). The two DROPs remove the ALL-rows partial uniques that exist only on
 -- prod (created 2026-05-04 by the migration folder 20260504000000_variant_name_per_parent, which is not
--- in this repo); their names below come from that commit and MUST be confirmed by the owner's STEP 0
--- (SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'Product' AND indexdef ILIKE '%name%')
--- before the sitting. IF EXISTS makes the drops a no-op on a database that never had them; drop and
+-- in this repo); their names below were CONFIRMED against prod by the owner's STEP 0. IF EXISTS makes the drops a no-op on a database that never had them; drop and
 -- create sit in this ONE transaction so there is no window without a constraint. Both new indexes are
 -- partial on small keys (a SHARE lock on "Product" for about a second at today's catalog size).
--- GATED (SA-603b): executed NO-DRIFT proof on fresh + seeded DBs and a count-only duplicate check = 0;
--- if either fails these four statements are removed and the name check stays app-only.
+-- Gates (SA-603b): the owner's count-only duplicate check returned 0 (STEP 0); F2's NO-DRIFT proof on fresh +
+-- seeded DBs runs on the final sha; if it fails these four statements are removed and the name check stays app-only.
 DROP INDEX IF EXISTS "Product_tenantId_name_root_key";
 DROP INDEX IF EXISTS "Product_tenantId_parent_name_key";
 CREATE UNIQUE INDEX "Product_tenant_root_name_active_key" ON "Product"("tenantId", "name") WHERE "parentProductId" IS NULL AND "isActive";
