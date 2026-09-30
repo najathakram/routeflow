@@ -142,6 +142,8 @@ const MODEL_DOMAIN = {
   ProductUnit: "catalog",
   ProductBarcode: "catalog",
   ProductImage: "catalog",
+  Recipe: "catalog",
+  RecipeComponent: "catalog",
   SupplierProduct: "catalog",
   ProductCategory: "catalog",
   ProductCategoryLabel: "catalog",
