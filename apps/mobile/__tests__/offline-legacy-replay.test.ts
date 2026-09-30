@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import { drainQueue } from "../lib/queue-drain";
 
 /**
@@ -35,5 +37,22 @@ describe("drainQueue does not consult the offline allow-list", () => {
     );
     expect(request).toHaveBeenCalledTimes(2);
     expect(res.delivered).toEqual(expect.arrayContaining(["l1", "a1"]));
+  });
+});
+
+describe("the one-time legacy replay count is wired into the drain (ruling 5)", () => {
+  const hook = fs.readFileSync(path.resolve(__dirname, "../hooks/useNetworkSync.ts"), "utf8");
+
+  it("useNetworkSync counts the non-allow-listed entries once per session, BEFORE drainQueue runs", () => {
+    expect(hook).toMatch(/countLegacyNonAllowlisted\(/);
+    expect(hook.indexOf("countLegacyNonAllowlisted(")).toBeLessThan(
+      hook.indexOf("await drainQueue("),
+    );
+    expect(hook).toMatch(/legacyReplayLogged/);
+  });
+
+  it("the drain itself never imports the allow-list (replay is unrestricted)", () => {
+    const drain = fs.readFileSync(path.resolve(__dirname, "../lib/queue-drain.ts"), "utf8");
+    expect(drain).not.toMatch(/offline-allowlist/);
   });
 });

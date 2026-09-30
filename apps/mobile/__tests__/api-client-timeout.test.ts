@@ -193,10 +193,11 @@ describe("api-client — offline-enqueue hardening (REG-B196)", () => {
     await expect(
       responseRejectedHandler()(
         fakeTimeout({
-          url: "/customers",
-          method: "post",
+          // B923: only allow-listed endpoints queue; the stop-status PATCH carries no Idempotency-Key.
+          url: "/route-runs/run-1/stops/stop-1",
+          method: "patch",
           headers: AxiosHeaders.from({ Authorization: "Bearer x" }),
-          data: JSON.stringify({ name: "Acme" }),
+          data: JSON.stringify({ status: "SKIPPED" }),
         }),
       ),
     ).rejects.toMatchObject({ isOfflineQueued: true });

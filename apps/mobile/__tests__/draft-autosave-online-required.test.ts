@@ -19,12 +19,11 @@ describe("draft autosave when the write is refused offline", () => {
       .mockRejectedValueOnce(offline())
       .mockResolvedValue({ id: "draft-1" });
     const updateDraft = jest.fn().mockResolvedValue(undefined);
-    const onSaveError = jest.fn();
-    const engine = createDraftAutosave({ createDraft, updateDraft, onSaveError });
+    const engine = createDraftAutosave({ createDraft, updateDraft });
 
     engine.update({ note: "first" }, META, true);
-    await engine.flush();
-    expect(onSaveError).toHaveBeenCalledTimes(1);
+    // flush() surfaces the refused write to its caller (the timer path swallows and logs it)
+    await expect(engine.flush()).rejects.toMatchObject({ isOnlineRequired: true });
 
     engine.update({ note: "first and more typed offline" }, META, true);
     await engine.flush();
@@ -38,14 +37,12 @@ describe("draft autosave when the write is refused offline", () => {
   it("a refused UPDATE is retried with the latest payload, never silently marked saved", async () => {
     const createDraft = jest.fn().mockResolvedValue({ id: "draft-1" });
     const updateDraft = jest.fn().mockRejectedValueOnce(offline()).mockResolvedValue(undefined);
-    const onSaveError = jest.fn();
-    const engine = createDraftAutosave({ createDraft, updateDraft, onSaveError });
+    const engine = createDraftAutosave({ createDraft, updateDraft });
 
     engine.update({ v: 1 }, META, true);
     await engine.flush(); // create ok
     engine.update({ v: 2 }, META, true);
-    await engine.flush(); // update refused
-    expect(onSaveError).toHaveBeenCalledTimes(1);
+    await expect(engine.flush()).rejects.toMatchObject({ isOnlineRequired: true }); // update refused
 
     // same payload again (connectivity back, nothing new typed): it MUST still be sent
     engine.update({ v: 2 }, META, true);
