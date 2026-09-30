@@ -71,6 +71,8 @@ export type LineState = {
    * `submitOrder`'s catalogPayload builder.
    */
   unitLabel?: string | null;
+  /** #2784 UI-only: a NEW line from the picker tap starts on the product's default selling unit (UnitPickerRow applies it once). */
+  startOnDefaultUnit?: boolean;
   /**
    * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
    * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's

@@ -760,7 +760,12 @@ function ProductPickView({
    * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
    * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, productSnapshot?: Product, level: SellLevel = "BOX") => {
+  const addOne = (
+    id: string,
+    productSnapshot?: Product,
+    level: SellLevel = "BOX",
+    startOnDefault?: boolean,
+  ) => {
     const p = productSnapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
@@ -788,6 +793,7 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
+      if (isNew && startOnDefault) line.startOnDefaultUnit = true;
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
@@ -1261,7 +1267,7 @@ function ProductPickView({
    * always holds the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: addOne,
+    add: (id: string) => addOne(id, undefined, "BOX", true),
     remove: removeOne,
     setQty,
     setBoxes,

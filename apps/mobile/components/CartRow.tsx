@@ -238,6 +238,7 @@ export function CartRow({
         }}
         product={product}
         tier={tier}
+        startOnDefaultUnit={line.startOnDefaultUnit}
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />

@@ -170,6 +170,22 @@ export function defaultUnitValue(
   return offered?.value ?? "";
 }
 
+/**
+ * #2784: the picker option a NEW line should be moved onto, or null (stay on the pack). Null when the line already holds
+ * a unit or the operator typed its price, when nothing is flagged, or the flagged level is not offered.
+ */
+export function defaultStartOption(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string,
+  line: { hasUnit: boolean; priceEdited?: boolean },
+): UnitOption | null {
+  if (line.hasUnit || line.priceEdited) return null;
+  const value = defaultUnitValue(product, units, tier);
+  if (!value) return null;
+  return buildUnitOptions(product, units, tier).find((o) => o.value === value) ?? null;
+}
+
 /** The picker row's detail line, e.g. "240 pcs · $220.00" — everything `unitOptionText` shows
  *  after the label. A factor-1 unit (Piece) omits the piece count: "$1.75". */
 export function unitOptionDetail(o: UnitOption): string {
