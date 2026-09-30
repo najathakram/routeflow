@@ -1,6 +1,6 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
-import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel } from "./enums";
+import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
 
 /** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
  *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
@@ -232,4 +232,26 @@ export interface ProductCategoryDto {
   id: string;
   name: string;
   archivedAt: string | null;
+}
+
+/** #2717 M2: one component line of a recipe version. */
+export interface RecipeComponentDto {
+  id: string;
+  componentProductId: string;
+  qty: number;
+  position: number;
+}
+
+/** #2717 M2: one recipe version as the recipes API returns it. Dates are ISO strings on the wire. */
+export interface RecipeDto {
+  id: string;
+  productId: string;
+  familyProductId: string;
+  version: number;
+  unitsPerPack: number;
+  status: RecipeStatus;
+  activeFor: string | null;
+  effectiveFrom: string | null;
+  retiredAt: string | null;
+  components: RecipeComponentDto[];
 }
