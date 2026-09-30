@@ -5,10 +5,10 @@
  * these and never render one to a user — treat one exactly like "no email on
  * file".
  *
- * ONE implementation (B910): the former api/web/mobile triple-mirror files
- * (`apps/api/src/common/internal-email.ts`, `apps/web/lib/formatting.ts`,
- * `apps/mobile/lib/internal-email.ts`) re-export from here, so the three
- * surfaces can no longer drift.
+ * ONE implementation for web and mobile (B910): `apps/web/lib/formatting.ts` and
+ * `apps/mobile/lib/internal-email.ts` re-export from here. The api keeps a LOCAL copy
+ * (`apps/api/src/common/internal-email.ts`) — runtime source cannot value-import this
+ * package — pinned functionally equal to this one by `internal-email.spec.ts`.
  */
 
 /**

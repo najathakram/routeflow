@@ -2097,3 +2097,91 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     expect(call.text).toContain("WID-001");
   });
 });
+
+describe("EmailService — send() logs never carry a full recipient address; Resend messages are redacted (B927, #2873)", () => {
+  const TO = "owner@acme.example";
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.example.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+  ];
+  const logged = (svc: EmailService) => {
+    const logger = (svc as any).logger;
+    const spies = (["log", "warn", "error"] as const).map((l) => jest.spyOn(logger, l));
+    return () => spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).join("\n");
+  };
+  const noFullAddress = (text: string) => {
+    expect(text).toContain("@acme.example");
+    expect(text).not.toContain("owner@");
+  };
+
+  it("tenant SMTP success log is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("platform SMTP success log inside send() is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m2" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      smtpHost: "smtp.platform.example",
+      smtpUser: "noreply@platform.example",
+      smtpPass: "pw",
+    });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend rejection and throw logs in send() are domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: "rejected" } })
+      .mockRejectedValueOnce(new Error("boom"));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend success log in send() is domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "e1" }, error: null });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("the no-transport 'EMAIL NOT SENT' warning is domain-only", async () => {
+    const svc = makeService();
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend error text is redacted of address literals in both send() and sendPlatform() logs", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 via ::1:587";
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: leaky } });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    (svc as any).resend.emails.send = jest.fn().mockRejectedValue(new Error(leaky));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    const text = read();
+    expect(text).not.toContain("10.0.1.4");
+    expect(text).not.toContain("::1:587");
+    expect(text).toContain("[address]");
+  });
+});

@@ -126,7 +126,7 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 
 export * from "./trip-grouping";
 
-// ─── Sentinel emails (B910 — one impl behind the api/web/mobile mirrors) ──────
+// ─── Sentinel emails (B910 — one impl for web/mobile; the api keeps a spec-pinned local copy) ──
 
 export * from "./internal-email";
 

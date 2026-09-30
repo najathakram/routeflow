@@ -66,6 +66,9 @@ describe("isInternalEmail", () => {
       "owner@imported.localhost.com",
       "Acme Store <owner@acme.example>",
       "  owner@acme.example  ",
+      "x@sub.imported.local", // a subdomain of the sentinel domain is NOT the sentinel
+      "x@imported.local.", // trailing dot: not matched by either copy
+      '"a b"@imported.local', // quoted local part
       "",
     ])("agrees with the shared implementation for %j", (form) => {
       expect(isInternalEmail(form)).toBe(sharedIsInternalEmail(form));

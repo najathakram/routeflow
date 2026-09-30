@@ -1,8 +1,9 @@
 /**
  * B910: the one implementation lives in `@routeflow/types` (`internal-email.ts`
  * there) — this file is a re-export kept so every existing `lib/internal-email`
- * import keeps working. The api and web counterparts re-export the same module,
- * so the former triple mirror can no longer drift. The SUBPATH import matters:
+ * import keeps working. Web re-exports the same module. The api keeps a LOCAL copy
+ * (runtime source cannot value-import this package) pinned functionally equal by
+ * `apps/api/src/common/internal-email.spec.ts`. The SUBPATH import matters:
  * mobile's jest stubs the types package ROOT (its index pulls the whole DTO
  * surface), and the subpath resolves to source past that stub (jest.config.js).
  */

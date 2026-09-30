@@ -1089,6 +1089,12 @@ export class EmailService {
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
+  /** B911: the log form of a recipient — the domain only, never the full address. */
+  private logRecipient(to: string): string {
+    const at = to.lastIndexOf("@");
+    return at >= 0 ? to.slice(at) : "<no-domain>";
+  }
+
   /**
    * #2854 Opus B4+r2: ONE refusal shared by BOTH public send paths — `send()` and
    * `sendPlatform()` (which is called directly by set-password / tenant-welcome /
@@ -1098,12 +1104,6 @@ export class EmailService {
    * refusing is treated exactly like "no email on file". Honest result (R5).
    * The warn log carries the sentinel DOMAIN only, never the full address.
    */
-  /** B911: the log form of a recipient — the domain only, never the full address. */
-  private logRecipient(to: string): string {
-    const at = to.lastIndexOf("@");
-    return at >= 0 ? to.slice(at) : "<no-domain>";
-  }
-
   private refuseSentinel(
     to: string,
   ): { delivered: false; transport: "none"; error: string } | null {
@@ -1273,7 +1273,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via tenant SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1313,7 +1313,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return {
           delivered: true,
@@ -1362,10 +1362,14 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected email to ${params.to}: ${msg}`);
+          this.logger.error(
+            `Resend rejected email to ${this.logRecipient(params.to)}: ${redactAddresses(msg)}`,
+          );
           return { delivered: false, transport: "resend", error: msg, smtpFallbackReason };
         }
-        this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
+        this.logger.log(
+          `Email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
+        );
         // Resend rescued a failing tenant SMTP send — delivered:true is honest (the mail
         // DID go out), but smtpFallbackReason must still ride along: this is exactly the
         // case where, without it, nobody ever learns their own mailbox is broken. The From
@@ -1378,7 +1382,9 @@ export class EmailService {
           fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
         };
       } catch (err: any) {
-        this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
+        );
         return {
           delivered: false,
           transport: "resend",
@@ -1390,7 +1396,7 @@ export class EmailService {
 
     // 4. No transport configured — NOT delivered (was a silent mock "success").
     this.logger.warn(
-      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
+      `[EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
     return {
       delivered: false,
@@ -1480,7 +1486,7 @@ export class EmailService {
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
           this.logger.error(
-            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${msg}`,
+            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(msg)}`,
           );
           return { delivered: false, transport: "resend", error: msg };
         }
@@ -1490,7 +1496,7 @@ export class EmailService {
         return { delivered: true, transport: "resend", id: (result.data as any)?.id };
       } catch (err: any) {
         this.logger.error(
-          `Failed to send platform email to ${this.logRecipient(params.to)}: ${err?.message}`,
+          `Failed to send platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
         );
         return {
           delivered: false,
