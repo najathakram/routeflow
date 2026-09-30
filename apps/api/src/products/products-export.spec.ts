@@ -73,9 +73,38 @@ const line = (l: Line) => ({
   invoice: { tenantId: l.tenantId, status: l.status, issueDate: day(l.issueDate) },
 });
 
+/** Evaluates the slice of a Prisma where the export uses: AND / OR and name|id equality or gt. */
+function matches(where: any, p: any): boolean {
+  if (!where) return true;
+  for (const [k, v] of Object.entries<any>(where)) {
+    if (k === "AND") {
+      if (!(v as any[]).every((w) => matches(w, p))) return false;
+    } else if (k === "OR") {
+      if (!(v as any[]).some((w) => matches(w, p))) return false;
+    } else if (k === "name" || k === "id") {
+      if (typeof v === "string") {
+        if (p[k] !== v) return false;
+      } else if (v && typeof v === "object" && "gt" in v) {
+        if (!(p[k] > v.gt)) return false;
+      }
+    }
+  }
+  return true;
+}
+function compareBy(orderBy: any, a: any, b: any): number {
+  for (const o of Array.isArray(orderBy) ? orderBy : [orderBy]) {
+    const [k] = Object.keys(o);
+    if (a[k] !== b[k]) return a[k] < b[k] ? -1 : 1;
+  }
+  return 0;
+}
+
 function build(opts: {
   products: ReturnType<typeof product>[];
   lines?: ReturnType<typeof line>[];
+  creditNotes?: any[];
+  refunds?: any[];
+  lineOwners?: any[];
   cap?: number;
   batch?: number;
 }) {
@@ -88,10 +117,9 @@ function build(opts: {
     product: {
       findMany: jest.fn(async (args: any) => {
         productCalls.push(args);
-        const gt = JSON.stringify(args.where).match(/"id":\{"gt":"([^"]+)"\}/)?.[1];
         return opts.products
-          .filter((p) => p.tenantId === TENANT_A && (!gt || p.id > gt))
-          .sort((a, b) => (a.id < b.id ? -1 : 1))
+          .filter((p) => p.tenantId === TENANT_A && matches(args.where, p))
+          .sort((a, b) => compareBy(args.orderBy, a, b))
           .slice(0, args.take);
       }),
     },
@@ -109,9 +137,9 @@ function build(opts: {
         );
       }),
     },
-    creditNote: { findMany: jest.fn().mockResolvedValue([]) },
-    return: { findMany: jest.fn().mockResolvedValue([]) },
-    invoice: { findMany: jest.fn().mockResolvedValue([]) },
+    creditNote: { findMany: jest.fn().mockResolvedValue(opts.creditNotes ?? []) },
+    return: { findMany: jest.fn().mockResolvedValue(opts.refunds ?? []) },
+    invoice: { findMany: jest.fn().mockResolvedValue(opts.lineOwners ?? []) },
     order: { findMany: jest.fn().mockResolvedValue([]) },
   };
   prisma.forTenant = jest.fn().mockReturnValue(scoped);
@@ -231,6 +259,32 @@ describe("products export.csv", () => {
     expect(scoped.order.findMany).not.toHaveBeenCalled();
   });
 
+  it("Net sales = gross minus the credit notes and external refunds attributed to the product (same as insights)", async () => {
+    const { svc } = build({
+      products: [
+        product({ id: "p1", tenantId: TENANT_A, name: "Cola" }),
+        product({ id: "p2", tenantId: TENANT_A, name: "Diet" }),
+      ],
+      lines: [
+        line({ productId: "p1", tenantId: TENANT_A, status: "SENT", issueDate: "2026-09-10", qty: 10, subtotal: 100 }),
+      ],
+      // A 30.00 note pointing at p1's invoice line, and a 12.50 note on p2's (sold before the window).
+      creditNotes: [
+        { id: "cn1", amount: 30, status: "APPLIED", createdAt: day("2026-09-12"), items: [{ invoiceItemId: "li1", amount: 30 }] },
+        { id: "cn2", amount: 12.5, status: "ISSUED", createdAt: day("2026-09-13"), items: [{ invoiceItemId: "li2", amount: 12.5 }] },
+      ],
+      lineOwners: [{ items: [{ id: "li1", productId: "p1" }, { id: "li2", productId: "p2" }] }],
+      // An inline external refund of 5.00 on p1 (5.40 with tax: the 0.40 stays unattributed).
+      refunds: [
+        { kind: "INLINE", refundAmount: 5.4, items: [{ productId: "p1", subtotal: 5 }] },
+      ],
+    });
+    const { out } = await run(svc, WINDOW);
+    const [, cola, diet] = rows(out);
+    expect(cola.split(",")[14]).toBe("65"); // 100 - 30 - 5
+    expect(diet.split(",")[14]).toBe("-12.5"); // no sales, one credit
+  });
+
   it("only reads through forTenant(): tenant B products never appear", async () => {
     const { svc, prisma } = build({
       products: [
@@ -276,6 +330,25 @@ describe("products export.csv", () => {
     expect(w.trackedCategoryId).toEqual({ not: null });
     expect(productCalls[0].skip).toBeUndefined();
     expect(productCalls[0].take).toBeGreaterThan(5);
+  });
+
+  it("rows follow the list's order (name asc, id as the tie-break) across batches", async () => {
+    const products = [
+      product({ id: "p5", tenantId: TENANT_A, name: "Banana", sku: "p5" }),
+      product({ id: "p1", tenantId: TENANT_A, name: "Cherry", sku: "p1" }),
+      product({ id: "p4", tenantId: TENANT_A, name: "Apple", sku: "p4" }),
+      product({ id: "p2", tenantId: TENANT_A, name: "Banana", sku: "p2" }),
+      product({ id: "p3", tenantId: TENANT_A, name: "Apple", sku: "p3" }),
+      product({ id: "p6", tenantId: TENANT_A, name: "Banana", sku: "p6" }),
+    ];
+    const { svc, productCalls, itemCalls } = build({ products, batch: 2 });
+    const { out } = await run(svc, WINDOW);
+    const seen = rows(out)
+      .slice(1)
+      .map((r) => r.split(",").slice(0, 2).join("/"));
+    expect(seen).toEqual(["Apple/p3", "Apple/p4", "Banana/p2", "Banana/p5", "Banana/p6", "Cherry/p1"]);
+    expect(productCalls[0].orderBy).toEqual([{ name: "asc" }, { id: "asc" }]);
+    expect(itemCalls).toHaveLength(Math.ceil(6 / 2)); // still one grouped stats read per batch
   });
 
   it("truncates at the cap with a trailing marker row", async () => {
