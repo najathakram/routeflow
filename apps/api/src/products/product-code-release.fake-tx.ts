@@ -45,6 +45,7 @@ export function product(over: Partial<ProductRow> & { id: string }): ProductRow 
 
 function matchesValue(actual: unknown, filter: unknown): boolean {
   if (filter === undefined) return true;
+  if (filter === null) return actual == null;
   if (filter !== null && typeof filter === "object") {
     const f = filter as { not?: unknown; in?: unknown[]; equals?: string; mode?: string };
     if ("equals" in f) {

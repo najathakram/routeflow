@@ -22,7 +22,10 @@ import { lockProductName } from "./product-name-rules";
 export const DEACTIVATED_FOR_REACTIVATION_ACTION = "product.deactivated_for_reactivation";
 
 export interface ReactivationHolder {
-  code: "CODE_TAKEN" | "BARCODE_TAKEN" | "NAME_TAKEN";
+  code:
+    | typeof API_ERROR_CODES.CODE_TAKEN
+    | typeof API_ERROR_CODES.BARCODE_TAKEN
+    | typeof API_ERROR_CODES.NAME_TAKEN;
   field: CodeField | "name";
   value: string;
   productId: string;
@@ -71,7 +74,7 @@ async function deriveHolders(
     for (const h of await findCodeHolders(tx, tenantId, productId, w.field, w.value)) {
       if (!h.isActive) continue;
       out.push({
-        code: w.field === "barcode" ? "BARCODE_TAKEN" : "CODE_TAKEN",
+        code: w.field === "barcode" ? API_ERROR_CODES.BARCODE_TAKEN : API_ERROR_CODES.CODE_TAKEN,
         field: w.field,
         value: w.value,
         productId: h.id,
@@ -91,7 +94,7 @@ async function deriveHolders(
   });
   if (nameHolder) {
     out.push({
-      code: "NAME_TAKEN",
+      code: API_ERROR_CODES.NAME_TAKEN,
       field: "name",
       value: input.name,
       productId: nameHolder.id,
