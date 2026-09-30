@@ -2,7 +2,17 @@
 
 import * as React from "react";
 import { Bell } from "lucide-react";
-import { Badge, Button, Card, Input, Modal, Textarea, cn, useToast } from "@routeflow/ui/web";
+import {
+  Badge,
+  Button,
+  Card,
+  Input,
+  Modal,
+  SkeletonRows,
+  Textarea,
+  cn,
+  useToast,
+} from "@routeflow/ui/web";
 import { useAuth } from "@/lib/auth-context";
 import { useNotificationsStatus, useSendTestNotification } from "@/lib/api/notifications";
 import { MiniSwitch } from "./MiniSwitch";
@@ -77,8 +87,13 @@ export function NotificationsSettingsTab() {
 
   const openEvent = data?.events.find((e) => e.eventKey === openEventKey) ?? null;
 
+  const isLiveChannel = (channel: MessageChannel) =>
+    channel === "INTERNAL" || data?.channelStatus[channel] === "LIVE";
+
   const openEditor = (event: MatrixEvent) => {
-    const firstChannel = event.channels.find((c) => !c.locked)?.channel ?? null;
+    // Only channels that are built AND set up get a template editor; opens on the first live one (Email).
+    const firstChannel =
+      event.channels.find((c) => !c.locked && isLiveChannel(c.channel))?.channel ?? null;
     setOpenEventKey(event.eventKey);
     setSelectedChannel(firstChannel);
   };
@@ -87,11 +102,13 @@ export function NotificationsSettingsTab() {
     setSelectedChannel(null);
   };
 
-  if (isError) {
+  if (isError && !data) {
     return (
       <Card title="Notification rules">
         <div className="flex flex-wrap items-center gap-3">
-          <p className="text-sm text-navy">Couldn&apos;t load notification settings.</p>
+          <p role="alert" className="text-sm text-navy">
+            Couldn&apos;t load notification settings.
+          </p>
           <Button variant="secondary" size="sm" onClick={() => refetch()}>
             Retry
           </Button>
@@ -103,10 +120,12 @@ export function NotificationsSettingsTab() {
   if (isLoading || !data) {
     return (
       <Card title="Notification rules">
-        <div className="space-y-3" aria-busy="true" aria-label="Loading notification settings">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-8 animate-pulse rounded bg-navy/10" />
-          ))}
+        <div role="status" aria-label="Loading notification settings">
+          <table className="w-full">
+            <tbody>
+              <SkeletonRows rows={4} columns={["55%", "20%", "15%"]} />
+            </tbody>
+          </table>
         </div>
       </Card>
     );
@@ -114,6 +133,11 @@ export function NotificationsSettingsTab() {
 
   return (
     <div className="space-y-5">
+      {isError && (
+        <p role="alert" className="text-xs text-danger">
+          Couldn&apos;t refresh notification settings.
+        </p>
+      )}
       <DeliveryHealthStrip />
 
       <NotificationRulesCard data={data} isAdmin={isAdmin} onEdit={openEditor} />
@@ -126,6 +150,7 @@ export function NotificationsSettingsTab() {
         <TemplateEditorModal
           event={openEvent}
           selectedChannel={selectedChannel}
+          isLiveChannel={isLiveChannel}
           onSelectChannel={setSelectedChannel}
           isAdmin={isAdmin}
           onClose={closeEditor}
@@ -140,12 +165,14 @@ export function NotificationsSettingsTab() {
 function TemplateEditorModal({
   event,
   selectedChannel,
+  isLiveChannel,
   onSelectChannel,
   isAdmin,
   onClose,
 }: {
   event: MatrixEvent;
   selectedChannel: MessageChannel | null;
+  isLiveChannel: (channel: MessageChannel) => boolean;
   onSelectChannel: (channel: MessageChannel) => void;
   isAdmin: boolean;
   onClose: () => void;
@@ -155,7 +182,7 @@ function TemplateEditorModal({
   const preview = usePreviewTemplate();
   const bodyRef = React.useRef<HTMLTextAreaElement>(null);
 
-  const pillChannels = event.channels.filter((c) => !c.locked);
+  const pillChannels = event.channels.filter((c) => !c.locked && isLiveChannel(c.channel));
   const cell = event.channels.find((c) => c.channel === selectedChannel) ?? null;
   const template = cell?.template ?? null;
 

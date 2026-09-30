@@ -13,6 +13,7 @@ export function MiniSwitch({
   disabled,
   ariaDisabled,
   title,
+  description,
   onToggle,
   ariaLabel,
 }: {
@@ -20,31 +21,42 @@ export function MiniSwitch({
   disabled?: boolean;
   ariaDisabled?: boolean;
   title?: string;
+  /** Visible-to-AT description (a `title` alone is mouse-only). */
+  description?: string;
   onToggle: () => void;
   ariaLabel: string;
 }) {
+  const descId = React.useId();
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={ariaLabel}
-      aria-disabled={ariaDisabled ? true : undefined}
-      title={title}
-      disabled={disabled}
-      onClick={ariaDisabled ? undefined : onToggle}
-      className={cn(
-        "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-        ariaDisabled && "cursor-not-allowed opacity-40",
-        checked ? "bg-brand-500" : "bg-navy/20",
-      )}
-    >
-      <span
+    <>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={ariaLabel}
+        aria-disabled={ariaDisabled ? true : undefined}
+        title={title}
+        aria-describedby={description ? descId : undefined}
+        disabled={disabled}
+        onClick={ariaDisabled ? undefined : onToggle}
         className={cn(
-          "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-          checked ? "translate-x-4" : "translate-x-0.5",
+          "relative inline-flex h-5 w-9 flex-none items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+          ariaDisabled && "cursor-not-allowed opacity-40",
+          checked ? "bg-brand-500" : "bg-navy/20",
         )}
-      />
-    </button>
+      >
+        <span
+          className={cn(
+            "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
+            checked ? "translate-x-4" : "translate-x-0.5",
+          )}
+        />
+      </button>
+      {description && (
+        <span id={descId} className="sr-only">
+          {description}
+        </span>
+      )}
+    </>
   );
 }
