@@ -51,12 +51,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 class Barrier {
   private arrived = 0;
   private waiters: Array<() => void> = [];
+  private markParked!: () => void;
+  /** Resolves when the first caller has arrived, i.e. is parked inside its transaction. */
+  readonly parked = new Promise<void>((resolve) => {
+    this.markParked = resolve;
+  });
   constructor(
     private readonly parties: number,
     private readonly timeoutMs: number,
   ) {}
   async arrive(): Promise<void> {
     this.arrived += 1;
+    this.markParked();
     if (this.arrived >= this.parties) {
       this.waiters.forEach((w) => w());
       return;
@@ -251,7 +257,8 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
     const w = await seedWorld("a", 50, 2);
     const po = await sentPo(w, 20, 4);
     // the receive parks for up to 3s inside its txn; the sale (connection B) must contend with it
-    holdReceiveAt(A, new Barrier(2, 3000));
+    const barrier = new Barrier(2, 4000);
+    holdReceiveAt(A, barrier);
 
     const receive = inTenant(A, w, () =>
       A.inventory.receivePurchaseOrder(
@@ -260,15 +267,25 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         w.userId,
       ),
     );
-    await sleep(400);
+    await barrier.parked;
+    let receiveDoneAt = Infinity;
+    let saleDoneAt = Infinity;
+    void receive.then(() => {
+      receiveDoneAt = performance.now();
+    });
     const sale = inTenant(B, w, () =>
       B.prisma.product.update({
         where: { id: w.productId },
         data: { currentStock: { decrement: 10 } },
       }),
     );
-    const blocked = await sawLockWait(2500);
+    void sale.then(() => {
+      saleDoneAt = performance.now();
+    });
+    await sawLockWait(2500);
     await Promise.all([receive, sale]);
+    // the sale contended with the open receive: it could only finish once the receive had
+    const blocked = saleDoneAt >= receiveDoneAt;
 
     const p = await productOf(w);
     const moves = await A.prisma.stockMovement.findMany({ where: { tenantId: w.tenantId } });
@@ -326,7 +343,8 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
       } as never),
     );
     expect(bill.purchaseOrder).toBeNull();
-    holdReceiveAt(A, new Barrier(2, 3000));
+    const barrier = new Barrier(2, 4000);
+    holdReceiveAt(A, barrier);
 
     const receive = inTenant(A, w, () =>
       A.inventory.receivePurchaseOrder(
@@ -335,7 +353,7 @@ describeDb("B285 — PO receive vs concurrent writers — real Postgres, separat
         w.userId,
       ),
     );
-    await sleep(400);
+    await barrier.parked;
     const billReceive = inTenant(B, w, () => B.bills.receive(bill.id, undefined, w.userId));
     await sawLockWait(2500);
     await Promise.all([receive, billReceive]);
