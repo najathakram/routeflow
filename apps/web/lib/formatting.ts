@@ -113,26 +113,10 @@ export function calendarDaysUntil(d?: string | null): number | null {
 }
 
 /**
- * True for the internal, non-routable email sentinels we mint when a customer has no address:
- * `no-email+<uuid>@placeholder.local` (User.email is required + unique per tenant) and
- * `<username>@imported.local` (CSV import). Never render one of these to a user.
+ * B910: sentinel-email helpers (`isInternalEmail`, `displayEmail`,
+ * `NO_EMAIL_COPY`) now have ONE implementation in `@routeflow/types`
+ * (`internal-email.ts` there) — re-exported here so every existing
+ * `@/lib/formatting` import keeps working. The api and mobile counterparts
+ * re-export the same module, so the former triple mirror can no longer drift.
  */
-export function isInternalEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const e = email.toLowerCase();
-  return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
-}
-
-/** The ONE empty-state copy for email fields — every render site uses this string. */
-export const NO_EMAIL_COPY = "No email";
-
-/**
- * Render-side email gate (L-225 shared-helper shape): returns the email only when
- * it is real — null for absent values AND for import sentinels, so every screen
- * treats both identically as "no email on file". String sites render
- * `displayEmail(e) ?? NO_EMAIL_COPY`; conditional sites hide on null.
- * Mobile mirror: `lib/internal-email.ts`.
- */
-export function displayEmail(email?: string | null): string | null {
-  return email && !isInternalEmail(email) ? email : null;
-}
+export { displayEmail, isInternalEmail, NO_EMAIL_COPY } from "@routeflow/types";

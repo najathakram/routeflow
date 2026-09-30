@@ -24,4 +24,24 @@ describe("isInternalEmail", () => {
     expect(isInternalEmail(null)).toBe(false);
     expect(isInternalEmail(undefined)).toBe(false);
   });
+
+  // B910 (Opus r2 follow-up): a recipient is not always a bare addr-spec. Every
+  // form a caller can realistically hand a transport must hit the guard.
+  describe("B910 — recipient forms beyond a bare addr-spec", () => {
+    it.each([
+      ["  acme_store@imported.local  ", "padded"],
+      ["Acme Store <acme_store@imported.local>", "display-name"],
+      ["<no-email+x@placeholder.local>", "bare angle-addr"],
+      ["Acme Store <ACME_STORE@IMPORTED.LOCAL>", "display-name, mixed case"],
+      ["acme_store@imported.local", "bare"],
+      ["No-Email+X@PLACEHOLDER.LOCAL", "mixed case"],
+    ])("flags %s (%s)", (form) => {
+      expect(isInternalEmail(form)).toBe(true);
+    });
+
+    it("a display-name wrapping a REAL address stays unflagged", () => {
+      expect(isInternalEmail("Acme Store <owner@acme.example>")).toBe(false);
+      expect(isInternalEmail("  owner@acme.example  ")).toBe(false);
+    });
+  });
 });

@@ -126,6 +126,10 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 
 export * from "./trip-grouping";
 
+// ─── Sentinel emails (B910 — one impl behind the api/web/mobile mirrors) ──────
+
+export * from "./internal-email";
+
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
 export * from "./post-delivery-invoice-prompt";
