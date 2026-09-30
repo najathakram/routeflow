@@ -1,6 +1,7 @@
 import {
   buyerVisibleProductByIdWhere,
   buyerVisibleProductWhere,
+  firstNewHiddenProduct,
   isBuyerVisibleProduct,
 } from "./buyer-product-visibility";
 
@@ -49,5 +50,25 @@ describe("isBuyerVisibleProduct (in-memory twin)", () => {
         parent: { portalVisible: false },
       }),
     ).toBe(false);
+  });
+});
+
+describe("firstNewHiddenProduct (buyer replace-all gate)", () => {
+  const hidden = { id: "h", isActive: true, portalVisible: false };
+  const underHidden = { id: "v", isActive: true, parent: { portalVisible: false } };
+  const ok = { id: "o", isActive: true, portalVisible: true };
+
+  it("returns a hidden or hidden-parent product the order does not already hold", () => {
+    expect(firstNewHiddenProduct([ok, hidden], new Set())).toBe(hidden);
+    expect(firstNewHiddenProduct([underHidden], new Set())).toBe(underHidden);
+  });
+
+  it("lets a line the order already holds be echoed, and ignores visible products", () => {
+    expect(firstNewHiddenProduct([hidden, underHidden], new Set(["h", "v"]))).toBeUndefined();
+    expect(firstNewHiddenProduct([ok], new Set())).toBeUndefined();
+  });
+
+  it("does not turn an archived product into a refusal (archive rules stay as they were)", () => {
+    expect(firstNewHiddenProduct([{ id: "a", isActive: false }], new Set())).toBeUndefined();
   });
 });
