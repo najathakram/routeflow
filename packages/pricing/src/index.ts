@@ -16,3 +16,4 @@ export * from "./nsf-line";
 export * from "./sell-level";
 export * from "./component-price";
 export * from "./largest-remainder";
+export * from "./component-pieces";
