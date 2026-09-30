@@ -89,25 +89,118 @@ function taskFromBase(b: BaseTask): TaskState {
   };
 }
 
+type TaskField = "status" | "priority" | "release" | "lane" | "phase" | "areas" | "related" | "pr";
+type ReleaseField = "status" | "shipDate";
+const WARNINGS_CAP = 2000;
+const TIMELINE_CAP = 200;
+
 /**
- * fold(base, eventsByLane, github, railway, now) -> state (spec §4). Deterministic: events are
- * applied in total order, output keys are sorted, `version` is the sha256 of the canonical JSON.
- * Never throws on identified data: an unapplicable event becomes a `warnings` entry. The inferred
- * layer (github/railway) lands with WP5; both are accepted and ignored here.
+ * Everything the events did, independent of register data (spec §8 resume contract). Plain JSON:
+ * it round-trips through a snapshot. Register rows stay in `project()`; the acc holds only what an
+ * event set (per-field overlays for register tasks, whole rows for event-minted ones).
  */
-export function fold(
+export interface FoldAcc {
+  v: 1;
+  /** Status-machine track, only for tasks an event touched. */
+  tracks: Record<string, Track>;
+  /** Fields an event set on a register task. */
+  taskOv: Record<string, Partial<Pick<TaskState, TaskField>>>;
+  /** Tasks minted by events (task.created / task.proposed), whole. */
+  created: Record<string, TaskState>;
+  lanes: Record<string, LaneState>;
+  alias: Record<string, string>;
+  releaseOv: Record<string, Partial<Pick<ReleaseState, ReleaseField>>>;
+  releaseHistory: Record<string, ReleaseState["history"]>;
+  releasesCreated: Record<string, ReleaseState>;
+  acks: ControlState["acks"];
+  superseded: ControlState["superseded"];
+  timeline: ControlState["timeline"];
+  warnings: Warning[];
+  eventCount: number;
+  /** Validation resume: minted RF ids, proposed tmp ids, and each task's release. */
+  mintedIds: string[];
+  proposedIds: string[];
+  taskRelease: Record<string, string | null>;
+  lastByLane: Record<string, { seq: number; ts: string }>;
+  maxTs: string;
+}
+
+const emptyAcc = (): FoldAcc => ({
+  v: 1,
+  tracks: {},
+  taskOv: {},
+  created: {},
+  lanes: {},
+  alias: {},
+  releaseOv: {},
+  releaseHistory: {},
+  releasesCreated: {},
+  acks: {},
+  superseded: {},
+  timeline: [],
+  warnings: [],
+  eventCount: 0,
+  mintedIds: [],
+  proposedIds: [],
+  taskRelease: {},
+  lastByLane: {},
+  maxTs: "",
+});
+
+/** Copy into a prototype-less map (keys are validated ids; defineProperty never hits __proto__). */
+function toMap<T>(src: Record<string, T>): Record<string, T> {
+  const out = Object.create(null) as Record<string, T>;
+  for (const k of Object.keys(src)) {
+    Object.defineProperty(out, k, {
+      value: src[k],
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return out;
+}
+
+/**
+ * foldEvents(acc|null, base, eventsByLane) -> acc. Pure: no clock, no github/railway. Applies the
+ * given events (in total order) on top of `acc`; events must sort after everything already in it.
+ * `base` is read only to decide whether an event applies (existence, starting status).
+ */
+export function foldEvents(
+  prev: FoldAcc | null,
   base: FoldBase,
   eventsByLane: Record<string, ControlEvent[]>,
-  github: GithubSnapshot,
-  railway: RailwaySnapshot,
-  now: string,
-): ControlState {
+): FoldAcc {
+  const acc: FoldAcc = prev ? structuredClone(prev) : emptyAcc();
   const tasks = Object.create(null) as Record<string, TaskState>;
   const tracks = new Map<string, Track>();
+  const dirtyTracks = new Set<string>(Object.keys(acc.tracks));
   for (const b of base.tasks) {
     tasks[b.id] = taskFromBase(b);
     tracks.set(b.id, { status: b.status, prior: null, lane: null });
   }
+  const createdIds = new Set<string>(Object.keys(acc.created));
+  for (const id of Object.keys(acc.taskOv)) {
+    if (tasks[id]) Object.assign(tasks[id], acc.taskOv[id]);
+  }
+  for (const id of Object.keys(acc.created)) tasks[id] = acc.created[id];
+  for (const id of Object.keys(acc.tracks)) tracks.set(id, acc.tracks[id]);
+  const marks = new Map<string, Set<TaskField>>();
+  for (const id of Object.keys(acc.taskOv)) {
+    marks.set(id, new Set(Object.keys(acc.taskOv[id]) as TaskField[]));
+  }
+  const mk = (id: string, f: TaskField) => {
+    let m = marks.get(id);
+    if (!m) marks.set(id, (m = new Set()));
+    m.add(f);
+    dirtyTracks.add(id);
+  };
+  const setTrack = tracks.set.bind(tracks);
+  tracks.set = (k: string, v: Track) => {
+    dirtyTracks.add(k);
+    return setTrack(k, v);
+  };
+
   const releases = Object.create(null) as Record<string, ReleaseState>;
   for (const r of base.releases) {
     releases[r.id] = {
@@ -119,12 +212,30 @@ export function fold(
       history: [],
     };
   }
-  const lanes = Object.create(null) as Record<string, LaneState>;
-  const alias = new Map<string, string>();
-  const warnings: Warning[] = [];
-  const timeline: ControlState["timeline"] = [];
-  const acks = Object.create(null) as ControlState["acks"];
-  const superseded = Object.create(null) as ControlState["superseded"];
+  const rmarks = new Map<string, Set<ReleaseField>>();
+  for (const id of Object.keys(acc.releaseOv)) {
+    if (releases[id]) Object.assign(releases[id], acc.releaseOv[id]);
+    rmarks.set(id, new Set(Object.keys(acc.releaseOv[id]) as ReleaseField[]));
+  }
+  for (const id of Object.keys(acc.releaseHistory)) {
+    if (releases[id]) releases[id].history = acc.releaseHistory[id];
+  }
+  const createdRel = new Set<string>(Object.keys(acc.releasesCreated));
+  for (const id of createdRel) releases[id] = acc.releasesCreated[id];
+  const rmk = (id: string, f: ReleaseField) => {
+    let m = rmarks.get(id);
+    if (!m) rmarks.set(id, (m = new Set()));
+    m.add(f);
+  };
+
+  const lanes = toMap(acc.lanes);
+  const alias = new Map<string, string>(Object.entries(acc.alias));
+  const warnings: Warning[] = acc.warnings;
+  const timeline: ControlState["timeline"] = acc.timeline;
+  const acks = toMap(acc.acks);
+  const superseded = toMap(acc.superseded);
+  const minted = new Set<string>(acc.mintedIds);
+  const proposedSet = new Set<string>(acc.proposedIds);
 
   const ensureLane = (id: string): LaneState => {
     let l = lanes[id];
@@ -164,6 +275,9 @@ export function fold(
     const warn = (reason: string) => warnings.push({ lane: ev.lane, seq: ev.seq, reason });
     const lane = ensureLane(ev.lane);
     lane.heartbeat = rep(ev.ts, ev);
+    const seen = acc.lastByLane[ev.lane];
+    if (!seen || ev.seq >= seen.seq) acc.lastByLane[ev.lane] = { seq: ev.seq, ts: ev.ts };
+    if (ev.ts > acc.maxTs) acc.maxTs = ev.ts;
     const find = (key: string): string | null => {
       const raw = str(ev, key);
       if (raw === null) {
@@ -194,21 +308,29 @@ export function fold(
           const t = tasks[id];
           tracks.set(id, res.track);
           t.status = rep<Status>(res.track.status, ev);
+          mk(id, "status");
           if (res.track.status !== "blocked") dropBlockers(id);
           switch (ev.type) {
             case "task.started":
               t.lane = rep(ev.lane, ev);
+              mk(id, "lane");
               lane.current = rep(id, ev);
               break;
             case "task.done": {
               const pr = ev.pr;
-              if (typeof pr === "number") t.pr = rep<number | null>(pr, ev);
+              if (typeof pr === "number") {
+                t.pr = rep<number | null>(pr, ev);
+                mk(id, "pr");
+              }
               clearCurrent(id, ev);
               break;
             }
             case "task.released": {
               const rel = str(ev, "release");
-              if (rel !== null) t.release = rep(rel, ev);
+              if (rel !== null) {
+                t.release = rep(rel, ev);
+                mk(id, "release");
+              }
               clearCurrent(id, ev);
               break;
             }
@@ -218,6 +340,7 @@ export function fold(
               break;
             case "task.reopened":
               t.lane = rep(null, ev);
+              mk(id, "lane");
               clearCurrent(id, ev);
               break;
             case "task.reconsider":
@@ -278,6 +401,8 @@ export function fold(
               pr: rep<number | null>(null, ev),
             };
             tracks.set(id, { status: "planned", prior: null, lane: null });
+            createdIds.add(id);
+            minted.add(id);
           }
           break;
         }
@@ -311,6 +436,8 @@ export function fold(
               pr: rep<number | null>(null, ev),
             };
             tracks.set(id, { status: "proposed", prior: null, lane: null });
+            createdIds.add(id);
+            proposedSet.add(id);
           }
           break;
         }
@@ -325,6 +452,9 @@ export function fold(
             alias.set(tmp, id);
             delete tasks[tmp];
             tracks.delete(tmp);
+            dirtyTracks.delete(tmp);
+            createdIds.delete(tmp);
+            marks.delete(tmp);
           } else applied = false;
           break;
         }
@@ -336,7 +466,10 @@ export function fold(
           else if (phase === null) {
             warn("missing phase");
             applied = false;
-          } else tasks[id].phase = rep(phase, ev);
+          } else {
+            tasks[id].phase = rep(phase, ev);
+            mk(id, "phase");
+          }
           break;
         }
         case "task.priority": {
@@ -347,7 +480,10 @@ export function fold(
           else if (p === null) {
             warn("missing priority");
             applied = false;
-          } else tasks[id].priority = rep(p, ev);
+          } else {
+            tasks[id].priority = rep(p, ev);
+            mk(id, "priority");
+          }
           break;
         }
         case "task.release": {
@@ -360,6 +496,7 @@ export function fold(
           const to = str(ev, "release");
           const from = tasks[id].release.value;
           tasks[id].release = rep(to, ev);
+          mk(id, "release");
           for (const rid of new Set([from, to])) {
             if (rid !== null && releases[rid]) {
               releases[rid].history.push({
@@ -384,6 +521,7 @@ export function fold(
           } else {
             const to = str(ev, "toLane");
             tasks[id].lane = rep(to, ev);
+            mk(id, "lane");
             tracks.set(id, { ...trackOf(id), lane: to });
           }
           break;
@@ -407,7 +545,10 @@ export function fold(
           else if (a === null) {
             warn("missing areas");
             applied = false;
-          } else tasks[id].areas = rep(a, ev);
+          } else {
+            tasks[id].areas = rep(a, ev);
+            mk(id, "areas");
+          }
           break;
         }
         case "bug.filed": {
@@ -421,6 +562,7 @@ export function fold(
               const link = (a: string, b: string) => {
                 if (!tasks[a].related.value.includes(b)) {
                   tasks[a].related = rep([...tasks[a].related.value, b], ev);
+                  mk(a, "related");
                 }
               };
               link(bug, other);
@@ -444,7 +586,11 @@ export function fold(
           }
           tracks.set(bug, res.track);
           tasks[bug].status = rep<Status>("code-complete", ev);
-          if (typeof ev.pr === "number") tasks[bug].pr = rep<number | null>(ev.pr, ev);
+          mk(bug, "status");
+          if (typeof ev.pr === "number") {
+            tasks[bug].pr = rep<number | null>(ev.pr, ev);
+            mk(bug, "pr");
+          }
           dropBlockers(bug);
           clearCurrent(bug, ev);
           break;
@@ -466,6 +612,7 @@ export function fold(
               goal: str(ev, "goal"),
               history: [],
             };
+            createdRel.add(id);
           }
           break;
         }
@@ -479,6 +626,7 @@ export function fold(
           const from = releases[id].shipDate.value;
           const to = str(ev, "shipDate");
           releases[id].shipDate = rep(to, ev);
+          rmk(id, "shipDate");
           releases[id].history.push({
             ref: refOf(ev),
             ts: ev.ts,
@@ -497,12 +645,14 @@ export function fold(
             break;
           }
           releases[id].status = rep("shipped", ev);
+          rmk(id, "status");
           for (const t of Object.values(tasks)) {
             if (t.release.value === id && t.status.value === "code-complete") {
               const res = step(trackOf(t.id), "task.released", ev.by, ev.lane);
               if (res.ok) {
                 tracks.set(t.id, res.track);
                 t.status = rep<Status>("released", ev);
+                mk(t.id, "status");
               }
             }
           }
@@ -549,6 +699,95 @@ export function fold(
     }
   }
 
+  // dehydrate: only what events set; register data is never frozen in
+  const taskOv: FoldAcc["taskOv"] = {};
+  for (const [id, fields] of marks) {
+    if (!tasks[id] || createdIds.has(id)) continue;
+    const o: Record<string, unknown> = {};
+    for (const f of [...fields].sort()) o[f] = tasks[id][f];
+    taskOv[id] = o;
+  }
+  const created: FoldAcc["created"] = {};
+  for (const id of createdIds) if (tasks[id]) created[id] = tasks[id];
+  const outTracks: FoldAcc["tracks"] = {};
+  for (const id of dirtyTracks) {
+    const t = tracks.get(id);
+    if (t) outTracks[id] = t;
+  }
+  const releaseOv: FoldAcc["releaseOv"] = {};
+  for (const [id, fields] of rmarks) {
+    if (!releases[id] || createdRel.has(id)) continue;
+    const o: Record<string, unknown> = {};
+    for (const f of [...fields].sort()) o[f] = releases[id][f];
+    releaseOv[id] = o;
+  }
+  const releaseHistory: FoldAcc["releaseHistory"] = {};
+  const releasesCreated: FoldAcc["releasesCreated"] = {};
+  for (const id of Object.keys(releases)) {
+    if (createdRel.has(id)) releasesCreated[id] = releases[id];
+    else if (releases[id].history.length > 0) releaseHistory[id] = releases[id].history;
+  }
+  const taskRelease: FoldAcc["taskRelease"] = {};
+  for (const id of Object.keys(taskOv)) {
+    if (taskOv[id].release) taskRelease[id] = taskOv[id].release.value;
+  }
+  for (const id of Object.keys(created)) taskRelease[id] = created[id].release.value;
+
+  acc.tracks = outTracks;
+  acc.taskOv = taskOv;
+  acc.created = created;
+  acc.lanes = { ...lanes };
+  acc.alias = Object.fromEntries(alias);
+  acc.releaseOv = releaseOv;
+  acc.releaseHistory = releaseHistory;
+  acc.releasesCreated = releasesCreated;
+  acc.acks = { ...acks };
+  acc.superseded = { ...superseded };
+  acc.timeline = timeline.slice(-TIMELINE_CAP);
+  acc.warnings = warnings.slice(-WARNINGS_CAP);
+  acc.eventCount += flat.length;
+  acc.mintedIds = [...minted].sort(cmpStr);
+  acc.proposedIds = [...proposedSet].sort(cmpStr);
+  acc.taskRelease = taskRelease;
+  return acc;
+}
+
+/**
+ * project(acc, base, github, railway, now) -> state (spec §4). Adds the register layer and the
+ * clock: stale calculation and the `version` hash. The acc is not modified.
+ */
+export function project(
+  prev: FoldAcc,
+  base: FoldBase,
+  github: GithubSnapshot,
+  railway: RailwaySnapshot,
+  now: string,
+): ControlState {
+  const acc = structuredClone(prev);
+  const tasks = Object.create(null) as Record<string, TaskState>;
+  for (const b of base.tasks) {
+    const t = taskFromBase(b);
+    const ov = acc.taskOv[b.id];
+    if (ov) Object.assign(t, ov);
+    tasks[b.id] = t;
+  }
+  for (const id of Object.keys(acc.created)) tasks[id] = acc.created[id];
+  const releases = Object.create(null) as Record<string, ReleaseState>;
+  for (const r of base.releases) {
+    const rel: ReleaseState = {
+      id: r.id,
+      name: r.name,
+      status: reg(r.status, r.id),
+      shipDate: reg(r.shipDate, r.id),
+      goal: r.goal ?? null,
+      history: acc.releaseHistory[r.id] ?? [],
+    };
+    const ov = acc.releaseOv[r.id];
+    if (ov) Object.assign(rel, ov);
+    releases[r.id] = rel;
+  }
+  for (const id of Object.keys(acc.releasesCreated)) releases[id] = acc.releasesCreated[id];
+  const lanes = toMap(acc.lanes);
   const nowMs = Date.parse(now);
   for (const l of Object.values(lanes)) {
     const hb = l.heartbeat.value === null ? NaN : Date.parse(l.heartbeat.value);
@@ -566,12 +805,12 @@ export function fold(
     waste: [],
     overlap: [],
     piggyback: {},
-    acks,
-    superseded,
-    timeline: timeline.slice(-200),
-    warnings,
+    acks: acc.acks,
+    superseded: acc.superseded,
+    timeline: acc.timeline.slice(-TIMELINE_CAP),
+    warnings: acc.warnings,
     sources: {
-      events: flat.length,
+      events: acc.eventCount,
       lanes: Object.keys(lanes).length,
       github: github !== null,
       railway: railway !== null,
@@ -579,4 +818,20 @@ export function fold(
   }) as Omit<ControlState, "version">;
   const version = createHash("sha256").update(JSON.stringify(body)).digest("hex");
   return { ...body, version };
+}
+
+/**
+ * fold(base, eventsByLane, github, railway, now) -> state (spec §4): project(foldEvents(null)).
+ * Deterministic: events are applied in total order, output keys are sorted, `version` is the
+ * sha256 of the canonical JSON. Never throws on identified data: an unapplicable event becomes a
+ * `warnings` entry. The inferred layer (github/railway) lands with WP5; both are ignored here.
+ */
+export function fold(
+  base: FoldBase,
+  eventsByLane: Record<string, ControlEvent[]>,
+  github: GithubSnapshot,
+  railway: RailwaySnapshot,
+  now: string,
+): ControlState {
+  return project(foldEvents(null, base, eventsByLane), base, github, railway, now);
 }

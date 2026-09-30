@@ -39,6 +39,23 @@ export interface ValidationContext {
   denylistHit?: (line: string) => string | null;
 }
 
+/**
+ * What the snapshot already knows (spec §8), so a live segment can be validated alone. The first
+ * three members are the documented minimum; a full FoldAcc satisfies every optional one.
+ */
+export interface ValidationResume {
+  lastByLane: Record<string, { seq: number; ts: string }>;
+  mintedIds: string[];
+  tracks: Record<string, Track>;
+  /** Newest event time in the snapshot; defaults to the newest of `lastByLane`. */
+  maxTs?: string;
+  lanes?: Record<string, { kind: string }>;
+  proposedIds?: string[];
+  releasesCreated?: Record<string, unknown>;
+  alias?: Record<string, string>;
+  taskRelease?: Record<string, string | null>;
+}
+
 interface Rec {
   fileIdx: number;
   file: string;
@@ -56,17 +73,27 @@ const isObj = (v: unknown): v is Record<string, unknown> =>
  * sorted by file then line. `ctx` carries the register-side ids; RF- tasks, lanes and aliases come
  * from the events themselves.
  */
-export function validateEvents(files: EventFile[], ctx: ValidationContext): ValidationError[] {
+export function validateEvents(
+  files: EventFile[],
+  ctx: ValidationContext,
+  resume?: ValidationResume,
+): ValidationError[] {
   const errors: { fileIdx: number; e: ValidationError }[] = [];
   const push = (fileIdx: number, file: string, line: number, reason: string) =>
     errors.push({ fileIdx, e: { file, line, reason } });
   const recs: Rec[] = [];
   const firstLine = new Map<number, number>();
+  let minTs = resume?.maxTs ?? "";
+  if (resume && minTs === "") {
+    for (const r of Object.values(resume.lastByLane)) if (r.ts > minTs) minTs = r.ts;
+  }
 
   // Pass A: per-line structure.
   files.forEach((f, fileIdx) => {
     const fileLane = f.file.replace(/\.jsonl$/, "");
-    let expectedSeq = 1;
+    const known = resume ? Object.hasOwn(resume.lastByLane, fileLane) : false;
+    const was = known && resume ? resume.lastByLane[fileLane] : null;
+    let expectedSeq = was ? was.seq + 1 : 1;
     let prevTs = "";
     let seen = 0;
     const rows = f.text.split("\n");
@@ -108,6 +135,13 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
         else if (keys.length > 0) push(fileIdx, f.file, line, `extra key ${keys.join(", ")}`);
         else if (typeof from !== "number" || !Number.isInteger(from) || from < 1) {
           push(fileIdx, f.file, line, "segment header needs integer from >= 1");
+        } else if (was && from !== was.seq + 1) {
+          push(
+            fileIdx,
+            f.file,
+            line,
+            `segment header from ${from} != expected ${was.seq + 1} (snapshot ends at seq ${was.seq})`,
+          );
         } else expectedSeq = from;
         continue;
       }
@@ -132,7 +166,9 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
           problems.push("ts must be ISO UTC");
           ok = false;
         } else {
-          if (ts < prevTs) problems.push(`ts decreases (${ts} < ${prevTs})`);
+          if (minTs !== "" && ts < minTs) {
+            problems.push(`ts older than the snapshot's newest event (${ts} < ${minTs})`);
+          } else if (ts < prevTs) problems.push(`ts decreases (${ts} < ${prevTs})`);
           else prevTs = ts;
         }
       } else if (!missingEnv.includes("ts")) {
@@ -211,15 +247,21 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
 
   // Global, order-independent facts.
   const lanes = new Map<string, LaneKind>();
+  if (resume?.lanes) {
+    for (const [id, l] of Object.entries(resume.lanes)) lanes.set(id, l.kind as LaneKind);
+  }
   const regTasks: RegisterTask[] = [
     ...(ctx.taskIds ?? []).map((id): RegisterTask => ({ id, status: "planned", release: null })),
     ...(ctx.tasks ?? []),
   ];
   const taskIds = new Set(regTasks.map((t) => t.id));
   const releaseIds = new Set(ctx.releaseIds);
-  const minted = new Set<string>();
-  const proposed = new Set<string>();
-  const createdReleases = new Set<string>();
+  const minted = new Set<string>(resume?.mintedIds ?? []);
+  const proposed = new Set<string>(resume?.proposedIds ?? []);
+  const createdReleases = new Set<string>(Object.keys(resume?.releasesCreated ?? {}));
+  for (const id of minted) taskIds.add(id);
+  for (const id of proposed) taskIds.add(id);
+  for (const id of createdReleases) releaseIds.add(id);
   const sorted = [...recs].sort(
     (a, b) => eventOrder(a.ev, b.ev) || a.fileIdx - b.fileIdx || a.line - b.line,
   );
@@ -264,7 +306,9 @@ export function validateEvents(files: EventFile[], ctx: ValidationContext): Vali
     tracks.set(t.id, { status: t.status, prior: null, lane: null });
     taskRelease.set(t.id, t.release ?? null);
   }
-  const alias = new Map<string, string>();
+  for (const [id, t] of Object.entries(resume?.tracks ?? {})) tracks.set(id, t);
+  for (const [id, r] of Object.entries(resume?.taskRelease ?? {})) taskRelease.set(id, r);
+  const alias = new Map<string, string>(Object.entries(resume?.alias ?? {}));
   const resolve = (id: string) => alias.get(id) ?? id;
   const trackOf = (id: string): Track =>
     tracks.get(id) ?? {

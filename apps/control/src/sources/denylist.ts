@@ -36,10 +36,45 @@ function load(file: string): Rule[] | null {
   return rules;
 }
 
+const INVISIBLE = /\p{Cf}/gu;
+const DASHES = /[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+
+/** Fold look-alikes before scanning: NFKC, no format chars, one dash, defanged schemes restored. */
+function normalise(text: string): string {
+  return text
+    .replace(INVISIBLE, "")
+    .normalize("NFKC")
+    .replace(INVISIBLE, "")
+    .replace(DASHES, "-")
+    .replace(/hxxp(s?)(:\/\/)/gi, "http$1$2");
+}
+
+/** Every string (keys and values) of a parsed JSON value, so `\u0040` escapes are decoded. */
+function strings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v);
+  else if (Array.isArray(v)) for (const x of v as unknown[]) strings(x, out);
+  else if (v !== null && typeof v === "object") {
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      out.push(k);
+      strings(x, out);
+    }
+  }
+  return out;
+}
+
 /** Name of the first rule the line matches, else null. Unreadable denylist => refuse everything. */
 export function denylistHit(line: string): string | null {
   const rules = load(process.env.CONTROL_DENYLIST || defaultPath());
   if (rules === null) return UNAVAILABLE;
-  for (const r of rules) if (r.re.test(line)) return r.name;
-  return URL_RULE.re.test(line) ? URL_RULE.name : null;
+  const views = [normalise(line)];
+  try {
+    views.push(normalise(strings(JSON.parse(line) as unknown).join("\n")));
+  } catch {
+    /* not JSON: the raw view is enough */
+  }
+  for (const text of views) {
+    for (const r of rules) if (r.re.test(text)) return r.name;
+    if (URL_RULE.re.test(text)) return URL_RULE.name;
+  }
+  return null;
 }

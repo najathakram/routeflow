@@ -46,12 +46,26 @@ export const CTL_IDENTITY: readonly string[] = [
   "commit.gpgsign=false",
 ];
 
+/** Every git call is capped; `CTL_GIT_TIMEOUT_MS` overrides it (tests, slow links). */
+export const GIT_TIMEOUT_MS = 10_000;
+const timeoutMs = (): number => {
+  const v = Number(process.env.CTL_GIT_TIMEOUT_MS);
+  return Number.isFinite(v) && v > 0 ? v : GIT_TIMEOUT_MS;
+};
+
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/;
+/** Names Windows cannot create as files (with or without an extension), plus our own parking dir. */
+const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
+/** `pending/rejected/` is where set-aside parked lines go; it must never be a lane. */
+const RESERVED_LANES = new Set(["rejected"]);
 
 /** A lane name (single segment) must match the house name regex. */
 export function assertLaneName(name: string): string {
   if (typeof name !== "string" || !NAME_RE.test(name) || name.includes("..")) {
     throw new CtlError(2, `bad lane name ${JSON.stringify(name)}`);
+  }
+  if (RESERVED_LANES.has(name) || WINDOWS_RESERVED.test(name.split(".")[0])) {
+    throw new CtlError(2, `reserved lane name ${JSON.stringify(name)}`);
   }
   return name;
 }
@@ -84,7 +98,7 @@ function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitRe
     cwd,
     encoding: "utf8",
     input: opts.input,
-    timeout: opts.timeoutMs ?? 120_000,
+    timeout: opts.timeoutMs ?? timeoutMs(),
     maxBuffer: 256 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
@@ -102,11 +116,11 @@ function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitRe
   return { ok: r.status === 0, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
-/** Run git; throws on failure (message = stderr). Returns stdout. */
+/** Run git; throws CtlError(5) on failure or timeout (message = stderr). Returns stdout. */
 export function git(cwd: string, args: string[], opts?: GitOpts): string {
   const r = run(cwd, args, opts);
   if (!r.ok) {
-    throw new Error(`git ${args[0] ?? ""} failed: ${(r.err || r.out).trim()}`);
+    throw new CtlError(5, `git ${args[0] ?? ""} failed: ${(r.err || r.out).trim()}`);
   }
   return r.out;
 }

@@ -1,5 +1,6 @@
 /** mkdir-atomic lock with a pid file, a heartbeat, stale reclaim and release on exit/SIGINT. */
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { CtlError } from "./git";
@@ -48,6 +49,25 @@ function ageMs(p: string): number | null {
   }
 }
 
+/** True when the lock's recorded holder is a live process on THIS host (never steal it). */
+function holderAlive(dir: string): boolean {
+  let text = "";
+  try {
+    text = fs.readFileSync(path.join(dir, "pid"), "utf8");
+  } catch {
+    return false;
+  }
+  const [pidText, host] = text.trim().split(/\s+/, 2);
+  const pid = Number(pidText);
+  if (!Number.isInteger(pid) || pid <= 0 || host !== os.hostname()) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 /** Move a stale lock dir aside atomically; put it back if we raced a fresh holder. */
 function reclaim(dir: string, staleMs: number): void {
   const aside = `${dir}.stale-${process.pid}-${randomBytes(4).toString("hex")}`;
@@ -86,7 +106,10 @@ export async function withLock<T>(
       if (code !== "EEXIST") throw e;
     }
     const age = ageMs(dir);
-    if (age !== null && age > staleMs) {
+    // A live holder refreshes the mtime; only a dead (or remote) one goes stale. A recycled pid
+    // must not pin the lock forever, so a lock far past stale is reclaimed regardless.
+    const abandoned = age !== null && age > Math.max(staleMs * 100, 600_000);
+    if (age !== null && age > staleMs && (abandoned || !holderAlive(dir))) {
       reclaim(dir, staleMs);
       continue;
     }
@@ -109,7 +132,7 @@ export async function withLock<T>(
   );
   beat.unref();
   try {
-    fs.writeFileSync(path.join(dir, "pid"), `${process.pid}\n`);
+    fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
     return await fn();
   } finally {
     clearInterval(beat);

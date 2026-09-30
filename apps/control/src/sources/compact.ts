@@ -1,21 +1,21 @@
 /**
  * Compaction (spec §8): snapshot.json at the tip, segments moved to the archive branch, new
- * segments start with a header. fold(snapshot + new segments) == fold(all events): the snapshot
- * keeps a slimmed replay (inert note text dropped) so the one fold function stays the only truth.
+ * segments start with a header. The snapshot carries the resume accumulator (`foldEvents`), so
+ * fold(snapshot + new segments) == fold(all events) without replaying any archived event.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
-import type { ControlEvent } from "../domain/types";
+import { foldEvents } from "../domain/fold";
 import { CTL_IDENTITY, CtlError, git, gitTry } from "./git";
 import type { Env } from "./git";
 import { withLock } from "./lock";
 import {
   appendRetrySleep,
   ensureClone,
-  foldDir,
   lastSeq,
+  liveEvents,
   lockDirOf,
   readTree,
   syncClone,
@@ -23,16 +23,50 @@ import {
 import type { SnapshotFile } from "./state-branch";
 
 const MAX_ATTEMPTS = 6;
-
-const slim = (e: ControlEvent): Record<string, unknown> => {
-  const { lane: _lane, ...rest } = e;
-  void _lane;
-  return e.type === "lane.note" ? { ...rest, note: "" } : rest;
-};
+const REJECTED_PUSH = /non-fast-forward|fetch first|rejected/;
 
 export interface CompactResult {
   compacted: boolean;
   archived: string[];
+}
+
+interface ArchiveView {
+  parent: string | null;
+  paths: string[];
+  read(file: string): string;
+}
+
+/** Fetch the archive branch (depth 1) and list its files; an absent branch is an empty archive. */
+function loadArchive(env: Env, clone: string): ArchiveView {
+  const ref = `refs/heads/${env.archiveBranch}`;
+  const tracking = `refs/remotes/origin/${env.archiveBranch}`;
+  const fetched = gitTry(clone, ["fetch", "-q", "--depth", "1", "origin", `+${ref}:${tracking}`]);
+  if (!fetched.ok) return { parent: null, paths: [], read: () => "" };
+  const parent = git(clone, ["rev-parse", tracking]).trim();
+  const paths = git(clone, ["ls-tree", "-r", "--name-only", parent])
+    .split("\n")
+    .filter((l) => l !== "");
+  return { parent, paths, read: (file) => git(clone, ["show", `${parent}:${file}`]) };
+}
+
+/**
+ * Seqs of `lane` already archived as a contiguous run starting at `first`. Re-archiving them would
+ * create overlapping ranges after a retry, so only what follows is archived.
+ */
+function alreadyArchived(view: ArchiveView, lane: string, first: number, last: number): number {
+  const ranges: [number, number][] = [];
+  const re = new RegExp(`^archive/${lane.replace(/[.]/g, "\\.")}/(\\d+)-(\\d+)\\.jsonl$`);
+  for (const p of view.paths) {
+    const m = re.exec(p);
+    if (m && Number(m[1]) >= first && Number(m[2]) <= last)
+      ranges.push([Number(m[1]), Number(m[2])]);
+  }
+  let covered = first - 1;
+  for (;;) {
+    const hit = ranges.find(([a, b]) => a === covered + 1 && b >= a);
+    if (!hit) return covered;
+    covered = hit[1];
+  }
 }
 
 /** Compact the state branch from `env.cloneDir`. Safe to re-run; never rewrites history. */
@@ -42,54 +76,57 @@ export async function compact(env: Env): Promise<CompactResult> {
     env.sleep ? env.sleep(ms) : new Promise<void>((r) => setTimeout(r, ms));
   return withLock(lockDirOf(clone), 30_000, async () => {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      try {
-        syncClone(env, clone);
-      } catch (e) {
-        throw new CtlError(5, (e as Error).message);
-      }
+      syncClone(env, clone);
       const tree = readTree(clone);
       const now = env.now();
       const lanes = Object.keys(tree.lanes).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      const view = loadArchive(env, clone);
       const archives: { file: string; text: string }[] = [];
-      const replay: Record<string, Record<string, unknown>[]> = {};
-      const seqByLane: Record<string, number> = {};
-      const fresh: Record<string, string> = {};
+      let any = false;
       for (const lane of lanes) {
         const d = tree.lanes[lane];
-        const last = lastSeq(tree, lane);
-        seqByLane[lane] = last;
-        replay[lane] = [...(tree.snap?.replay[lane] ?? []), ...d.liveEvents.map(slim)];
-        if (d.liveEvents.length > 0) {
-          const first = d.liveEvents[0].seq;
-          const text =
-            d.live.filter((l) => !l.startsWith('{"seq":0,"type":"segment"')).join("\n") + "\n";
-          archives.push({ file: `archive/${lane}/${first}-${last}.jsonl`, text });
+        if (d.liveEvents.length === 0) continue;
+        any = true;
+        const seqs = d.liveEvents.map((e) => e.seq);
+        const first = seqs[0];
+        const last = Math.max(...seqs);
+        const raws = d.live.filter((l) => !l.startsWith('{"seq":0,"type":"segment"'));
+        const covered = alreadyArchived(view, lane, first, last);
+        if (covered >= first) {
+          // what an earlier (interrupted) run archived must be exactly our prefix
+          const prefix = raws.filter((_, i) => seqs[i] <= covered).join("\n") + "\n";
+          const have = view.paths
+            .filter((p) => p.startsWith(`archive/${lane}/`))
+            .map((p) => ({ p, m: /\/(\d+)-(\d+)\.jsonl$/.exec(p) }))
+            .filter((x) => x.m && Number(x.m[1]) >= first && Number(x.m[2]) <= covered)
+            .sort((x, y) => Number(x.m?.[1]) - Number(y.m?.[1]))
+            .map((x) => view.read(x.p))
+            .join("");
+          if (have !== prefix)
+            throw new CtlError(5, `archive conflict for ${lane} at ${first}-${covered}`);
         }
-        fresh[lane] = JSON.stringify({ seq: 0, type: "segment", from: last + 1 }) + "\n";
+        const fresh = raws.filter((_, i) => seqs[i] > covered);
+        if (fresh.length > 0) {
+          archives.push({
+            file: `archive/${lane}/${Math.max(first, covered + 1)}-${last}.jsonl`,
+            text: fresh.join("\n") + "\n",
+          });
+        }
       }
-      if (archives.length === 0) return { compacted: false, archived: [] };
+      if (!any) return { compacted: false, archived: [] };
 
-      const state = foldDir(clone, env.registers, now);
+      const base = { tasks: env.registers.tasks, releases: env.registers.releases };
+      const acc = foldEvents(tree.snap?.acc ?? null, base, liveEvents(tree));
+      const seqByLane: Record<string, number> = {};
+      for (const lane of lanes) seqByLane[lane] = lastSeq(tree, lane);
       const sha = git(clone, ["rev-parse", "HEAD"]).trim();
-      const snap: SnapshotFile = {
-        v: 1,
-        at: now,
-        sha,
-        seqByLane,
-        tasks: state.tasks,
-        lanes: state.lanes,
-        releases: state.releases,
-        acks: state.acks,
-        version: state.version,
-        replay,
-      };
+      const snap: SnapshotFile = { v: 2, at: now, sha, seqByLane, acc };
 
       pushArchive(env, clone, archives);
 
       for (const lane of lanes) {
-        const f = path.join(clone, "events", `${lane}.jsonl`);
-        fs.mkdirSync(path.dirname(f), { recursive: true });
-        writeAtomic(f, fresh[lane]);
+        const header = { seq: 0, type: "segment", from: seqByLane[lane] + 1 };
+        writeAtomic(path.join(clone, "events", `${lane}.jsonl`), JSON.stringify(header) + "\n");
       }
       writeAtomic(path.join(clone, "snapshot.json"), JSON.stringify(snap));
       git(clone, ["add", "-A"]);
@@ -104,9 +141,7 @@ export async function compact(env: Env): Promise<CompactResult> {
       const pushed = gitTry(clone, ["push", "-q", "origin", `HEAD:refs/heads/${env.stateBranch}`]);
       if (pushed.ok) return { compacted: true, archived: archives.map((a) => a.file) };
       gitTry(clone, ["reset", "-q", "--hard", `refs/remotes/origin/${env.stateBranch}`]);
-      if (!/non-fast-forward|fetch first|rejected/.test(pushed.err)) {
-        throw new CtlError(5, pushed.err.trim());
-      }
+      if (!REJECTED_PUSH.test(pushed.err)) throw new CtlError(5, pushed.err.trim());
       if (attempt < MAX_ATTEMPTS) await sleep(appendRetrySleep(attempt));
     }
     throw new CtlError(5, "compaction push exhausted");
@@ -114,6 +149,7 @@ export async function compact(env: Env): Promise<CompactResult> {
 }
 
 function writeAtomic(file: string, text: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}-${randomBytes(4).toString("hex")}`;
   fs.writeFileSync(tmp, text);
   fs.renameSync(tmp, file);
@@ -124,6 +160,7 @@ function writeAtomic(file: string, text: string): void {
  * checkout). Existing archive files are never rewritten; a clash with different bytes is an error.
  */
 function pushArchive(env: Env, clone: string, files: { file: string; text: string }[]): void {
+  if (files.length === 0) return;
   const ref = `refs/heads/${env.archiveBranch}`;
   const tracking = `refs/remotes/origin/${env.archiveBranch}`;
   const idxDir = fs.mkdtempSync(path.join(os.tmpdir(), "ctl-idx-"));
@@ -171,9 +208,7 @@ function pushArchive(env: Env, clone: string, files: { file: string; text: strin
       const commit = git(clone, args).trim();
       const pushed = gitTry(clone, ["push", "-q", "origin", `${commit}:${ref}`]);
       if (pushed.ok) return;
-      if (!/non-fast-forward|fetch first|rejected/.test(pushed.err)) {
-        throw new CtlError(5, pushed.err.trim());
-      }
+      if (!REJECTED_PUSH.test(pushed.err)) throw new CtlError(5, pushed.err.trim());
     }
     throw new CtlError(5, "archive push exhausted");
   } finally {
