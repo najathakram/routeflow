@@ -210,7 +210,7 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
       BadRequestException,
     );
     const other = build({
-      products: [fam(), kid("k1"), { ...kid("k2"), parentProductId: "other-fam" }],
+      products: [fam(), kid("k1"), kid("k2", { parentProductId: "other-fam" })],
     });
     await expect(
       other.service.updateVariants("fam", { deactivate: ["k1", "k2"] }, ACTOR),
