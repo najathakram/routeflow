@@ -71,7 +71,13 @@ const REASON_RE = /^--\s*reason:\s*\S/;
 const IGNORE_RE = /^--\s*squawk-ignore/;
 
 function parseArgs(argv) {
-  const opts = { mode: "base", base: "origin/master", files: [], strict: false };
+  const opts = {
+    mode: "base",
+    base: "origin/master",
+    files: [],
+    strict: false,
+    requireWrap: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--base") {
@@ -86,6 +92,8 @@ function parseArgs(argv) {
       opts.mode = "all";
     } else if (arg === "--strict") {
       opts.strict = true;
+    } else if (arg === "--require-wrap") {
+      opts.requireWrap = true;
     }
   }
   return opts;
@@ -196,6 +204,61 @@ function blankNonCode(sql) {
 
 // SET LOCAL rule — see header. Walks the top-level statements, tracking whether an explicit
 // transaction is open.
+// B904 / SA-582 wrap rule: every NEW migration must carry `BEGIN; SET LOCAL lock_timeout ...;
+// COMMIT;`: exactly one of each, in that order, with nothing before the BEGIN or after the COMMIT
+// (comments aside), because a statement outside the wrap runs unbounded. Runs only where the caller
+// asks (`--require-wrap`, on by default in --base mode: the migrations in the diff range), so
+// already-applied history (--all, --files) is never asked to change. An applied migration on the
+// exemption table (folder + sha256) is skipped, as for the SET LOCAL rule above; an EDITED applied
+// file (sha changed) is held to it.
+function checkRequiredWrap(files) {
+  const errors = [];
+  for (const file of files) {
+    if (isSetLocalExempt(file)) continue;
+    const text = fs.readFileSync(file, "utf8");
+    const code = blankNonCode(text);
+    const lineAt = (offset) => text.slice(0, offset).split("\n").length;
+    const stmts = [];
+    let offset = 0;
+    for (const raw of code.split(";")) {
+      const stmt = raw.trim().replace(/\s+/g, " ").toUpperCase();
+      const at = offset + (raw.length - raw.trimStart().length);
+      offset += raw.length + 1;
+      if (stmt) stmts.push({ stmt, line: lineAt(at) });
+    }
+    const idx = (re) => stmts.map((s, i) => (re.test(s.stmt) ? i : -1)).filter((i) => i >= 0);
+    const begins = idx(/^(BEGIN|START TRANSACTION)\b/);
+    const commits = idx(/^(COMMIT|END)( (WORK|TRANSACTION))?$/);
+    const locks = idx(/^SET LOCAL LOCK_TIMEOUT\b/);
+    const wrapHint = "BEGIN; SET LOCAL lock_timeout = '...'; ... COMMIT;";
+    const problems = [];
+    if (begins.length !== 1)
+      problems.push(`exactly one BEGIN; is required (found ${begins.length})`);
+    if (commits.length !== 1)
+      problems.push(`exactly one COMMIT; is required (found ${commits.length})`);
+    if (locks.length !== 1) {
+      problems.push(`exactly one SET LOCAL lock_timeout is required (found ${locks.length})`);
+    }
+    if (begins.length === 1 && commits.length === 1) {
+      if (begins[0] > 0) {
+        problems.push(`a statement before BEGIN; (line ${stmts[0].line}) runs outside the wrap`);
+      }
+      if (commits[0] < stmts.length - 1) {
+        problems.push(
+          `a statement after COMMIT; (line ${stmts[commits[0] + 1].line}) runs outside the wrap`,
+        );
+      }
+      if (locks.length === 1 && !(begins[0] < locks[0] && locks[0] < commits[0])) {
+        problems.push("SET LOCAL lock_timeout must come between BEGIN; and COMMIT;");
+      }
+    }
+    for (const problem of problems) {
+      errors.push(`${file}:1: SA-582 wrap (${wrapHint}): ${problem}`);
+    }
+  }
+  return errors;
+}
+
 function checkSetLocalWrapped(files) {
   const errors = [];
   for (const file of files) {
@@ -252,6 +315,13 @@ if (files.length === 0) {
 const reasonErrors = checkReasonedIgnores(files);
 if (reasonErrors.length > 0) {
   for (const err of reasonErrors) console.error(err);
+  process.exit(1);
+}
+
+// The wrap is REQUIRED on the migrations in a --base range (new or edited), or wherever asked.
+const wrapErrors = opts.mode === "base" || opts.requireWrap ? checkRequiredWrap(files) : [];
+if (wrapErrors.length > 0) {
+  for (const err of wrapErrors) console.error(err);
   process.exit(1);
 }
 

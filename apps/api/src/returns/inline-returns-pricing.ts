@@ -10,13 +10,13 @@
  *
  * Money discipline: every returned subtotal/tax figure is rounded via {@link roundMoney}
  * from `@routeflow/pricing`; the line-subtotal proration itself goes through
- * {@link prorateLineSubtotal} — never re-derived here — so this stays consistent with
- * every other partial-quantity money computation in the codebase.
+ * {@link creditedThrough} (B894/SA-576: a credit is a LINEAR slice of the billed line, additive
+ * across slices) — never re-derived here.
  */
 import {
   computeLineSubtotal,
   normalizeBoxesPieces,
-  prorateLineSubtotal,
+  creditedThrough,
   roundMoney,
 } from "@routeflow/pricing";
 
@@ -268,16 +268,10 @@ export function priceMatchedChunk(
   const boxSplit = line.boxes != null;
   const upb = Number(line.unitsPerBox ?? 0);
   const chunkInLineAxis = boxSplit ? chunkPieces : upb > 1 ? chunkPieces / upb : chunkPieces;
-  const freeUnits = Number(line.promoFreeUnits ?? 0);
-  const freeUnitSize = boxSplit ? upb || 1 : 1;
-
-  const prorated = prorateLineSubtotal(
-    line.subtotal,
-    chunkInLineAxis,
-    line.qty,
-    freeUnits,
-    freeUnitSize,
-  );
+  // B894 (SA-576): a credit prices a SLICE of the already-billed line from scratch, so it is LINEAR
+  // (additive: the slices of one line credit at most its stored subtotal). The invoice's floored
+  // free-unit telescope (prorateLineSubtotal) is non-monotone and over-credits per slice.
+  const prorated = creditedThrough(line.subtotal, chunkInLineAxis, line.qty);
 
   // Discount share: the SAME fraction of the line's stored subtotal that `prorated`
   // represents, applied to this line's own share of the invoice's total discount.
