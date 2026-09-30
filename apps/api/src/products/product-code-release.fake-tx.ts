@@ -92,6 +92,24 @@ export function makeTx(seed: { products: ProductRow[]; barcodes?: BarcodeRow[] }
         calls.push("product.findMany");
         return Promise.resolve(products.filter((p) => matchesWhere(p, where)));
       }),
+      create: jest.fn(({ data }: { data: Record<string, unknown> }) => {
+        calls.push("product.create");
+        const row = {
+          id: `new-${products.length}`,
+          tenantId: T,
+          name: "",
+          isActive: true,
+          sku: null,
+          barcode: null,
+          unitSku: null,
+          retiredSku: null,
+          retiredBarcode: null,
+          retiredUnitSku: null,
+          ...data,
+        } as ProductRow;
+        products.push(row);
+        return Promise.resolve(row);
+      }),
       update: jest.fn(({ where, data }: { where: { id: string }; data: Partial<ProductRow> }) => {
         calls.push(`product.update:${where.id}`);
         const row = products.find((p) => p.id === where.id)!;
@@ -100,6 +118,24 @@ export function makeTx(seed: { products: ProductRow[]; barcodes?: BarcodeRow[] }
       }),
     },
     productBarcode: {
+      findFirst: jest.fn(({ where }: { where: Record<string, unknown> }) => {
+        calls.push("productBarcode.findFirst");
+        return Promise.resolve(barcodes.find((b) => matchesWhere(b, where)) ?? null);
+      }),
+      createMany: jest.fn(({ data }: { data: Array<Record<string, unknown>> }) => {
+        calls.push("productBarcode.createMany");
+        for (const d of data) {
+          barcodes.push({ id: `nb-${barcodes.length}`, retiredCode: null, ...d } as BarcodeRow);
+        }
+        return Promise.resolve({ count: data.length });
+      }),
+      deleteMany: jest.fn(({ where }: { where: Record<string, unknown> }) => {
+        calls.push("productBarcode.deleteMany");
+        const keep = barcodes.filter((b) => !matchesWhere(b, where));
+        const n = barcodes.length - keep.length;
+        barcodes.splice(0, barcodes.length, ...keep);
+        return Promise.resolve({ count: n });
+      }),
       findMany: jest.fn(({ where }: { where: Record<string, unknown> }) => {
         calls.push("productBarcode.findMany");
         return Promise.resolve(barcodes.filter((b) => matchesWhere(b, where)));
