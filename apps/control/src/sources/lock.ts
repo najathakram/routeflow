@@ -5,18 +5,36 @@ import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { CtlError } from "./git";
 
-const held = new Set<string>();
+/** Locks we hold: dir -> the token we wrote, so release never removes somebody else's lock. */
+const held = new Map<string, string>();
 let installed = false;
 
-function releaseAll(): void {
-  for (const d of held) {
-    try {
-      fs.rmSync(d, { recursive: true, force: true });
-    } catch {
-      /* best effort */
-    }
+const tokenOf = (dir: string): string | null => {
+  try {
+    return fs.readFileSync(path.join(dir, "token"), "utf8").trim();
+  } catch {
+    return null;
   }
+};
+
+/** Remove `dir` only while it still carries our token (B may have taken over a lock we lost). */
+function releaseIfOurs(dir: string, token: string): void {
+  if (tokenOf(dir) !== token) return;
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+}
+
+function releaseAll(): void {
+  for (const [d, token] of held) releaseIfOurs(d, token);
   held.clear();
+}
+
+/** Clear a lock by hand (recycled pid, hung holder). The CLI's `unlock` calls this. */
+export function forceUnlock(dir: string): void {
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 function onSigint(): void {
@@ -106,10 +124,9 @@ export async function withLock<T>(
       if (code !== "EEXIST") throw e;
     }
     const age = ageMs(dir);
-    // A live holder refreshes the mtime; only a dead (or remote) one goes stale. A recycled pid
-    // must not pin the lock forever, so a lock far past stale is reclaimed regardless.
-    const abandoned = age !== null && age > Math.max(staleMs * 100, 600_000);
-    if (age !== null && age > staleMs && (abandoned || !holderAlive(dir))) {
+    // A live same-host holder is never displaced, however old the lock looks; a recycled pid is
+    // cleared by hand (forceUnlock). Only a dead or remote holder's stale lock is reclaimed.
+    if (age !== null && age > staleMs && !holderAlive(dir)) {
       reclaim(dir, staleMs);
       continue;
     }
@@ -117,13 +134,14 @@ export async function withLock<T>(
     await sleepMs(delay);
     delay = Math.min(delay * 2, 100);
   }
-  held.add(dir);
+  const token = randomBytes(16).toString("hex");
+  held.set(dir, token);
   install();
   const beat = setInterval(
     () => {
       const t = new Date();
       try {
-        fs.utimesSync(dir, t, t);
+        if (tokenOf(dir) === token) fs.utimesSync(dir, t, t);
       } catch {
         /* lock dir gone */
       }
@@ -132,12 +150,13 @@ export async function withLock<T>(
   );
   beat.unref();
   try {
+    fs.writeFileSync(path.join(dir, "token"), token + "\n");
     fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
     return await fn();
   } finally {
     clearInterval(beat);
     held.delete(dir);
-    fs.rmSync(dir, { recursive: true, force: true });
+    releaseIfOurs(dir, token);
     if (held.size === 0) uninstall();
   }
 }

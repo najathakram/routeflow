@@ -18,6 +18,7 @@ import {
   assertBranchName,
   assertLaneName,
   assertOrigin,
+  cloneTimeoutMs,
   git,
   gitAnywhere,
   gitTry,
@@ -227,20 +228,23 @@ export async function ensureClone(env: Env): Promise<string> {
   if (!fs.existsSync(path.join(dir, ".git"))) {
     await withLock(`${dir}.clone.lock`, LOCK_STALE_MS, () => {
       if (fs.existsSync(path.join(dir, ".git"))) return;
-      const r = gitAnywhere([
-        "clone",
-        "-q",
-        "-c",
-        "core.autocrlf=false",
-        "--single-branch",
-        "--branch",
-        env.stateBranch,
-        "--depth",
-        "50",
-        "--",
-        env.origin,
-        dir,
-      ]);
+      const r = gitAnywhere(
+        [
+          "clone",
+          "-q",
+          "-c",
+          "core.autocrlf=false",
+          "--single-branch",
+          "--branch",
+          env.stateBranch,
+          "--depth",
+          "50",
+          "--",
+          env.origin,
+          dir,
+        ],
+        { timeoutMs: cloneTimeoutMs() },
+      );
       if (!r.ok) throw new CtlError(5, `clone failed: ${r.err.trim()}`);
     });
   }
@@ -269,14 +273,11 @@ export function syncClone(env: Env, clone: string): void {
   const b = env.stateBranch;
   // a git call killed by its timeout can leave the index lock behind; we hold the clone lock
   fs.rmSync(path.join(clone, ".git", "index.lock"), { force: true });
-  git(clone, [
-    "fetch",
-    "-q",
-    "--depth",
-    "50",
-    "origin",
-    `+refs/heads/${b}:refs/remotes/origin/${b}`,
-  ]);
+  git(
+    clone,
+    ["fetch", "-q", "--depth", "50", "origin", `+refs/heads/${b}:refs/remotes/origin/${b}`],
+    { timeoutMs: cloneTimeoutMs() },
+  );
   git(clone, ["reset", "-q", "--hard", `refs/remotes/origin/${b}`]);
   git(clone, ["clean", "-fdq"]);
 }
@@ -290,8 +291,10 @@ export const defaultSleep = (ms: number): Promise<void> => new Promise((r) => se
 /* ------------------------------------------------------------------ pending (parked) lines */
 
 const NONCE_KEY = "_nonce";
+const AT_KEY = "_at";
 const NONCES_FILE = "nonces.txt";
-const NONCES_KEEP = 500;
+/** Applied nonces are kept by age (a parked line older than the window cannot be deduped). */
+const NONCES_KEEP_MS = 30 * 24 * 3_600_000;
 
 function pendingDir(clone: string): string {
   return path.join(clone, "pending");
@@ -303,10 +306,11 @@ export function park(
   lane: string,
   draft: Record<string, unknown>,
   nonce: string,
+  at: string,
 ): void {
   assertLaneName(lane);
   fs.mkdirSync(pendingDir(clone), { recursive: true });
-  const line = JSON.stringify({ ...draft, [NONCE_KEY]: nonce });
+  const line = JSON.stringify({ ...draft, [NONCE_KEY]: nonce, [AT_KEY]: at });
   fs.appendFileSync(path.join(pendingDir(clone), `${lane}.jsonl`), line + "\n");
 }
 
@@ -314,6 +318,8 @@ interface PendingItem {
   lane: string;
   draft: Record<string, unknown>;
   nonce: string | null;
+  /** When the line was parked (absent on lines from before this field existed). */
+  at: string | null;
   raw: string;
 }
 
@@ -340,13 +346,14 @@ function readPending(clone: string): { items: PendingItem[]; files: string[] } {
       if (raw.trim() === "") continue;
       const o = parseLine(raw);
       if (!o) {
-        items.push({ lane: m[1], draft: {}, nonce: null, raw });
+        items.push({ lane: m[1], draft: {}, nonce: null, at: null, raw });
         continue;
       }
-      const { [NONCE_KEY]: nonce, ...draft } = o;
+      const { [NONCE_KEY]: nonce, [AT_KEY]: at, ...draft } = o;
       items.push({
         lane: m[1],
         draft,
+        at: typeof at === "string" ? at : null,
         nonce: typeof nonce === "string" && /^[0-9a-f]{16}$/.test(nonce) ? nonce : null,
         raw,
       });
@@ -355,15 +362,34 @@ function readPending(clone: string): { items: PendingItem[]; files: string[] } {
   return { items, files };
 }
 
-function readNonces(clone: string): string[] {
+interface NonceRow {
+  nonce: string;
+  ts: string;
+}
+
+/** `nonce ts` rows (a bare `nonce` from an older file has no ts). */
+function readNonces(clone: string): NonceRow[] {
   try {
     return fs
       .readFileSync(path.join(clone, NONCES_FILE), "utf8")
       .split("\n")
-      .filter((l) => l !== "");
+      .filter((l) => l !== "")
+      .map((l) => {
+        const [nonce, ts] = l.split(" ");
+        return { nonce, ts: ts ?? "" };
+      });
   } catch {
     return [];
   }
+}
+
+/** Drop rows older than the retention window (by the event clock, never by count). */
+function pruneNonces(rows: NonceRow[], now: string): NonceRow[] {
+  const cutoff = Date.parse(now) - NONCES_KEEP_MS;
+  return rows.filter((r) => {
+    const t = Date.parse(r.ts);
+    return Number.isNaN(t) || t >= cutoff;
+  });
 }
 
 /* ------------------------------------------------------------------ validation */
@@ -494,7 +520,13 @@ export async function appendAndPush(
 
         // 1. drain parked drafts: once (nonce), and never silently lost (set aside when invalid)
         const pend = readPending(clone);
-        const applied = new Set(readNonces(clone));
+        const nonceRows = readNonces(clone);
+        const applied = new Set(nonceRows.map((r) => r.nonce));
+        const oldestKept =
+          nonceRows
+            .map((r) => r.ts)
+            .filter((t) => t !== "")
+            .sort(cmp)[0] ?? "";
         const rejected: { lane: string; raw: string }[] = [];
         const drainNonces: string[] = [];
         const materialize = (list: PendingItem[]): Built[] => {
@@ -507,6 +539,10 @@ export async function appendAndPush(
         };
         let items = pend.items.filter((it) => {
           if (it.nonce !== null && applied.has(it.nonce)) return false; // already on the branch
+          if (it.at !== null && oldestKept !== "" && it.at < oldestKept) {
+            rejected.push({ lane: it.lane, raw: it.raw }); // older than the dedupe window
+            return false;
+          }
           const ok =
             Object.keys(it.draft).length > 0 &&
             !lineProblem(JSON.stringify(buildEvent(it.lane, 1, ts, it.draft)));
@@ -554,8 +590,14 @@ export async function appendAndPush(
         for (const l of Object.keys(added)) {
           appendLines(path.join(clone, "events", `${l}.jsonl`), added[l]);
         }
-        const seen = [...readNonces(clone), ...drainNonces, nonce].slice(-NONCES_KEEP);
-        writeAtomic(path.join(clone, NONCES_FILE), seen.join("\n") + "\n");
+        const seen = pruneNonces(
+          [...nonceRows, ...[...drainNonces, nonce].map((n) => ({ nonce: n, ts }))],
+          ts,
+        );
+        writeAtomic(
+          path.join(clone, NONCES_FILE),
+          seen.map((r) => (r.ts === "" ? r.nonce : `${r.nonce} ${r.ts}`)).join("\n") + "\n",
+        );
         git(clone, ["add", "-A"]);
         const extraN = builtAll.length - 1;
         const msg =
@@ -593,7 +635,13 @@ export async function appendAndPush(
       if (!parked) {
         parked = true;
         resetQuiet(env, clone);
-        park(clone, lane, { ...draft, ...(lastId !== undefined ? { id: lastId } : {}) }, nonce);
+        park(
+          clone,
+          lane,
+          { ...draft, ...(lastId !== undefined ? { id: lastId } : {}) },
+          nonce,
+          env.now(),
+        );
       }
       const msg = e instanceof Error ? e.message : String(e);
       throw new CtlError(

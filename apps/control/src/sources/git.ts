@@ -48,10 +48,17 @@ export const CTL_IDENTITY: readonly string[] = [
 
 /** Every git call is capped; `CTL_GIT_TIMEOUT_MS` overrides it (tests, slow links). */
 export const GIT_TIMEOUT_MS = 10_000;
-const timeoutMs = (): number => {
-  const v = Number(process.env.CTL_GIT_TIMEOUT_MS);
-  return Number.isFinite(v) && v > 0 ? v : GIT_TIMEOUT_MS;
+/** Clone and fetch move real data, so they get their own, longer cap (`CTL_GIT_CLONE_TIMEOUT_MS`). */
+export const GIT_CLONE_TIMEOUT_MS = 120_000;
+const fromEnv = (name: string, dflt: number): number => {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? v : dflt;
 };
+/** Cap for commit, push and every other local call. */
+export const shortTimeoutMs = (): number => fromEnv("CTL_GIT_TIMEOUT_MS", GIT_TIMEOUT_MS);
+/** Cap for clone and fetch. */
+export const cloneTimeoutMs = (): number =>
+  fromEnv("CTL_GIT_CLONE_TIMEOUT_MS", GIT_CLONE_TIMEOUT_MS);
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/;
 /** Names Windows cannot create as files (with or without an extension), plus our own parking dir. */
@@ -98,7 +105,7 @@ function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitRe
     cwd,
     encoding: "utf8",
     input: opts.input,
-    timeout: opts.timeoutMs ?? timeoutMs(),
+    timeout: opts.timeoutMs ?? shortTimeoutMs(),
     maxBuffer: 256 * 1024 * 1024,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,

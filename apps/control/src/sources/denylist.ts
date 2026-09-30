@@ -38,6 +38,7 @@ function load(file: string): Rule[] | null {
 
 const INVISIBLE = /\p{Cf}/gu;
 const DASHES = /[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g;
+const STOPS = /[\u3002\uFF61\uFF0E\u2024\uFE52]/g;
 
 /** Fold look-alikes before scanning: NFKC, no format chars, one dash, defanged schemes restored. */
 function normalise(text: string): string {
@@ -46,6 +47,7 @@ function normalise(text: string): string {
     .normalize("NFKC")
     .replace(INVISIBLE, "")
     .replace(DASHES, "-")
+    .replace(STOPS, ".")
     .replace(/hxxp(s?)(:\/\/)/gi, "http$1$2");
 }
 
