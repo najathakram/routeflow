@@ -99,6 +99,19 @@ describe("SettingsHub regroup", () => {
     expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
   });
 
+  it.each(["speed & depot", "service time, start time", "orders & stock"])(
+    "a search that lists the Route defaults result ('%s') also shows its card",
+    (q) => {
+      renderWithProviders(<SettingsHub isAdmin />);
+      fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: q } });
+      const link = screen
+        .getAllByRole("link")
+        .find((l) => l.getAttribute("href") === "#route-defaults");
+      expect(link).toBeTruthy();
+      expect(screen.getByText("route-defaults-card")).toBeInTheDocument();
+    },
+  );
+
   it("hides the route defaults card when the search matches nothing", () => {
     renderWithProviders(<SettingsHub isAdmin />);
     fireEvent.change(screen.getByLabelText("Search settings"), { target: { value: "zzzzqq" } });
