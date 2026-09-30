@@ -7,6 +7,8 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "../orders/orders.service";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 /**
@@ -77,6 +79,14 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: AuthorizationGuardService, useValue: authGuard },
         { provide: NotificationsService, useValue: notifications },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);
@@ -132,6 +142,26 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
     expect(tob.trackedCategoryId).toBe("cat-tob");
     expect(createData.hasRegulated).toBe(true);
     expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+  });
+
+  it("B297 (SA-088): a standing order's regulated line stamps the rate-snapshot trio, alongside categoryTaxAmount", async () => {
+    authGuard.checkAuthorized.mockResolvedValue({ blocked: [] });
+    prisma.trackedCategory.findMany.mockResolvedValue([
+      { id: "cat-tob", taxType: "EXCISE_PER_UNIT", rate: 2, priceIncludesTax: false },
+    ]);
+
+    await service.generateOrder("t1");
+
+    const createdLines = prisma.order.create.mock.calls[0][0].data.lineItems.create;
+    const tob = createdLines.find((l: any) => l.productId === "p-tob");
+    const std = createdLines.find((l: any) => l.productId === "p-std");
+    expect(tob.categoryTaxType).toBe("EXCISE_PER_UNIT");
+    expect(tob.categoryTaxRate).toBe(2);
+    expect(tob.categoryPriceIncludesTax).toBe(false);
+    // The non-regulated line gets an all-null snapshot, never a stamped trio.
+    expect(std.categoryTaxType).toBeNull();
+    expect(std.categoryTaxRate).toBeNull();
+    expect(std.categoryPriceIncludesTax).toBeNull();
   });
 
   it("creates nothing and throws when EVERY line is a license-gated category", async () => {
@@ -239,6 +269,14 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
         {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         {
           provide: NotificationsService,
@@ -399,6 +437,14 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
         },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
         {
           provide: NotificationsService,
           useValue: { sendToCustomer: jest.fn(), sendToUser: jest.fn() },
@@ -453,6 +499,14 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
         {
           provide: AuthorizationGuardService,
           useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
         },
         {
           provide: NotificationsService,

@@ -1,0 +1,6 @@
+-- B904 / SA-582 RED fixture: two BEGIN; statements (exactly one is required).
+BEGIN;
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE "User" ADD COLUMN "lastLoginAt" TIMESTAMP(3);
+COMMIT;

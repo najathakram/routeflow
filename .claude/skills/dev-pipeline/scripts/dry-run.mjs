@@ -39,12 +39,28 @@ const DEFAULT_RESPONSES = {
   // green default so only the scenarios that specifically test the Final
   // pass behavior (G's HIGH-risk fable read, a failing final gate) need
   // their own override.
-  'final-gate': () => ({ pass: true, cwd: null, results: [] }),
+  // P1-6 fix (Opus review 2026-09-16): an EMPTY results array with pass:true
+  // was itself the false-green this default fixture normalised across every
+  // scenario that did not override it -- gateProblem() now checks the
+  // reported count against the commands the gate was actually handed, so a
+  // real `{results: []}` default would now blocker every one of those
+  // scenarios. Parse the commands finalGatePrompt actually bulleted (one
+  // '- <command>' line per entry) out of the prompt itself, so this default
+  // stays well-formed for whatever verifyCommands.final a scenario declares,
+  // not a single hardcoded command.
+  'final-gate': (opts, prompt) => {
+    const cmds = (String(prompt).match(/^- (.+)$/gm) || []).map((l) => l.slice(2))
+    return { pass: true, cwd: null, results: cmds.map((c) => ({ command: c, pass: true, executed: 1, summary: 'ok' })) }
+  },
   'final-read': () => ({ findings: [] }),
   // A14: runResult()'s own Haiku write-and-self-check call -- a sane default
   // endedAt so every scenario that doesn't specifically test a dead result
   // writer still gets one, matching the file's established default pattern.
   result: () => ({ written: true, path: 'auto/result.json', endedAt: '2026-09-12T00:00:00.000Z', note: 'ok' }),
+  // SS4d: the overflow writer only fires on an oversized payload, but it needs
+  // a sane default for the same reason every other writer does -- only the
+  // scenario that specifically tests a FAILED overflow write overrides it.
+  'result-overflow': () => ({ written: true, path: 'auto/result-overflow.json', note: 'ok' }),
 }
 // Fix round 1 (finding 2/11): every fix round now makes a `pack:<id>[:rN]`
 // review-pack.mjs call and a `fix-base:<id>:rN` / `fix-head:<id>:rN` git-sha
@@ -106,12 +122,25 @@ async function run(s) {
   // touches the OTHER parallel() calls in this file (baseline's 3-item array,
   // final-gate's 2-item array), whose resolved values carry no task id.
   const dropIds = (s && Array.isArray(s.dropParallelResultIds)) ? s.dropParallelResultIds : []
-  const parallel = async (thunks) => Promise.all(thunks.map(async (t) => {
-    try {
-      const r = await t()
-      return (r && dropIds.includes(r.id)) ? null : r
-    } catch (e) { logs.push(`THROW ${e && e.message}`); return null }
-  }))
+  // SS4a: every parallel() call's fan-out width, in call order, plus the peak
+  // number of task chains actually in flight at once. The batch sizes alone
+  // would not prove throttling (the engine could slice correctly and still
+  // not await between slices), so inFlight is measured inside the thunks.
+  const parallelBatchSizes = []
+  let inFlight = 0
+  let peakInFlight = 0
+  const parallel = async (thunks) => {
+    parallelBatchSizes.push(thunks.length)
+    return Promise.all(thunks.map(async (t) => {
+      inFlight++
+      if (inFlight > peakInFlight) peakInFlight = inFlight
+      try {
+        const r = await t()
+        return (r && dropIds.includes(r.id)) ? null : r
+      } catch (e) { logs.push(`THROW ${e && e.message}`); return null }
+      finally { inFlight-- }
+    }))
+  }
   const pipelineFn = async (items, ...stages) => Promise.all(items.map(async (it, i) => {
     let v = it
     for (const st of stages) v = await st(v, it, i)
@@ -142,7 +171,7 @@ async function run(s) {
   }
   const fn = new Function('agent', 'parallel', 'pipeline', 'log', 'phase', 'args', 'budget', 'workflow', `return (async () => { ${src} })()`)
   const result = await fn(agent, parallel, pipelineFn, log, phase, s.args, budget, async () => null)
-  return { result, calls, logs }
+  return { result, calls, logs, parallelBatchSizes, peakInFlight }
 }
 
 let failures = 0
@@ -454,7 +483,7 @@ scenario(
     check('P: exactly one warmup call for the single-task single-wave plan', warmups.length === 1, JSON.stringify(warmups))
     check(
       "P: the HIGH-risk second `files` entry routes the wave to Sonnet/implementHigh effort, not the LOW/implement default",
-      !!warmups[0] && warmups[0].model === 'claude-sonnet-5' && warmups[0].effort === 'high',
+      !!warmups[0] && warmups[0].model === 'claude-sonnet-5-5' && warmups[0].effort === 'high',
       JSON.stringify(warmups),
     )
   },
@@ -487,7 +516,7 @@ scenario(
     check('Q: exactly one warmup call for the single-task single-wave plan', warmups.length === 1, JSON.stringify(warmups))
     check(
       'Q: a HIGH-risk `tests` entry routes the wave to Sonnet/implementHigh effort, not the LOW/implement default',
-      !!warmups[0] && warmups[0].model === 'claude-sonnet-5' && warmups[0].effort === 'high',
+      !!warmups[0] && warmups[0].model === 'claude-sonnet-5-5' && warmups[0].effort === 'high',
       JSON.stringify(warmups),
     )
   },
@@ -518,7 +547,7 @@ scenario(
     const warmups = calls.filter((c) => c.label === 'warmup' && c.phase === 'Implement')
     check(
       'R: with no manifest and no explicit task risk, the wave still routes to implementHigh effort (unknown stays HIGH), never the LOW/implement default',
-      warmups.length > 0 && warmups[0].model === 'claude-sonnet-5' && warmups[0].effort === 'high',
+      warmups.length > 0 && warmups[0].model === 'claude-sonnet-5-5' && warmups[0].effort === 'high',
       JSON.stringify(warmups),
     )
   },
@@ -550,6 +579,10 @@ scenario(
     check('D: exactly two red-check calls (initial + after remediation)', redChecks.length === 2, JSON.stringify(redChecks.map((c) => c.label)))
     const remediate = calls.filter((c) => c.label === 'tests:T1:remediate')
     check('D: exactly one remediation attempt', remediate.length === 1, JSON.stringify(remediate.map((c) => c.label)))
+    const authorCall = calls.find((c) => c.label === 'tests:T1')
+    const NOINST = 'do not install dependencies or edit lockfiles'
+    check('D: the test-author prompt carries the verification paragraph AND the tests-only no-install line', !!authorCall && authorCall.prompt.includes('run a real check that exercises the change before reporting it done') && authorCall.prompt.includes(NOINST), 'testAuthorPrompt')
+    check('D: the red-remediation prompt carries the verification paragraph AND the tests-only no-install line', !!remediate[0] && remediate[0].prompt.includes('run a real check that exercises the change before reporting it done') && remediate[0].prompt.includes(NOINST), 'redRemediationPrompt')
   },
   {
     'tests:T1': () => ({ ran: true, cwd: 'C:/repo', results: [{ command: 'npx jest src/a.test.ts', exitCode: 1, output: 'FAIL: TypeError: cannot read x' }] }),
@@ -622,7 +655,7 @@ scenario(
     const r4Labels = calls.filter((c) => c.label === 'fix-brief:T1:r4' || c.label === 'fix-plan:T1:r4').map((c) => c.label)
     check('F: round 4 makes the same fix-brief then fix-plan call pair, on Opus, not a collapsed single call (finding 10)', JSON.stringify(r4Labels) === JSON.stringify(['fix-brief:T1:r4', 'fix-plan:T1:r4']), JSON.stringify(r4Labels))
     const r4PlanCall = calls.find((c) => c.label === 'fix-plan:T1:r4')
-    check('F: round 4\'s fix-plan (design) call runs on Opus (finding 10)', !!r4PlanCall && r4PlanCall.model === 'claude-opus-5', JSON.stringify(r4PlanCall))
+    check('F: round 4\'s fix-plan (design) call runs on Opus (finding 10)', !!r4PlanCall && r4PlanCall.model === 'claude-opus-5-5', JSON.stringify(r4PlanCall))
     // finding 11: per-round {plan, design, exec} evidence retained; the
     // Ruling cites something concrete, not a bare count.
     check('F: roundHistory retains all 4 rounds with plan/exec evidence (finding 11)', !!t1 && Array.isArray(t1.roundHistory) && t1.roundHistory.length === 4 && t1.roundHistory.every((r) => r.plan && 'exec' in r), JSON.stringify(t1 && t1.roundHistory))
@@ -687,7 +720,14 @@ scenario(
     const alive = (result.checkpoints || []).find((c) => c.alias === 'checkpoint:T1')
     check("J: a sibling task's checkpoint still writes normally (written:true)", !!alive && alive.written === true, JSON.stringify(alive))
   },
-  { 'checkpoint:T2': () => null },
+  // 2026-09-30 fix 2: T2 dependsOn T1, and a dependent of a blocked task no longer runs -- so T1 must really complete for T2 (and its checkpoint) to exist.
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/a.ts'] }),
+    ...passingChainFor('T2', { filesChanged: ['src/b.ts'] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'review:T2': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'checkpoint:T2': () => null,
+  },
 )
 
 // ==================== FIX ROUND 1 (5 Critical, 7 Important) ====================
@@ -875,6 +915,7 @@ scenario(
     check('Z: no fix-plan:T1:r3 call is made when an override is supplied', !planCall, JSON.stringify(calls.map((c) => c.label)))
     const execCall = calls.find((c) => c.label === 'fix:T1:r3')
     check('Z: the round-3 executor still runs, using the override design', !!execCall && execCall.prompt.includes('ruled inline'), JSON.stringify(execCall && execCall.prompt))
+    check('Z: the override-path executor is Sonnet 5.5 @ medium -- Opus never writes code (ruling 2026-09-29)', !!execCall && execCall.model === 'claude-sonnet-5-5' && execCall.effort === 'medium', JSON.stringify(execCall && [execCall.model, execCall.effort]))
   },
   {
     ...PASSING_CHAIN,
@@ -990,18 +1031,20 @@ scenario(
     )
     check(
       "AD: T1's wave (explicit LOW) warms Sonnet/implement -- NOT confused by T2's later explicit HIGH contaminating their shared file's riskMap entry (finding 12)",
-      !!warmups[0] && warmups[0].model === 'claude-sonnet-5' && warmups[0].effort === 'medium',
+      !!warmups[0] && warmups[0].model === 'claude-sonnet-5-5' && warmups[0].effort === 'medium',
       JSON.stringify(warmups),
     )
-    check("AD: T2's wave (explicit HIGH) warms Sonnet at implementHigh effort (finding 12)", !!warmups[1] && warmups[1].model === 'claude-sonnet-5' && warmups[1].effort === 'high', JSON.stringify(warmups))
+    check("AD: T2's wave (explicit HIGH) warms Sonnet at implementHigh effort (finding 12)", !!warmups[1] && warmups[1].model === 'claude-sonnet-5-5' && warmups[1].effort === 'high', JSON.stringify(warmups))
     const impl = calls.find((c) => c.label === 'impl:T1')
-    check('AD: the T1 implementer runs on Sonnet (finding 10)', !!impl && impl.model === 'claude-sonnet-5', JSON.stringify(impl))
+    check('AD: the T1 implementer prompt carries the verification paragraph verbatim (ruling 2026-09-29)', !!impl && impl.prompt.includes('run a real check that exercises the change before reporting it done') && impl.prompt.includes('instead of reporting the change as done.'), 'VERIFY_NOTE missing from implementPrompt')
+    check('AD: the fix executor prompt carries the verification paragraph', !!calls.find((c) => c.label === 'fix:T1:r1') && calls.find((c) => c.label === 'fix:T1:r1').prompt.includes('run a real check that exercises the change before reporting it done'), 'VERIFY_NOTE missing from fixExecPrompt')
+    check('AD: the T1 implementer runs on Sonnet (finding 10)', !!impl && impl.model === 'claude-sonnet-5-5', JSON.stringify(impl))
     const review = calls.find((c) => c.label === 'review:T1')
-    check('AD: the T1 reviewer runs on Sonnet (finding 10)', !!review && review.model === 'claude-sonnet-5', JSON.stringify(review))
+    check('AD: the T1 reviewer runs on Opus 5.5 at reviewRoutine (medium) effort (ruling 2026-09-29; was Sonnet)', !!review && review.model === 'claude-opus-5-5' && review.effort === 'medium', JSON.stringify(review))
     const fix = calls.find((c) => c.label === 'fix:T1:r1')
-    check('AD: the T1 round-1 fix executor runs on Sonnet (finding 10)', !!fix && fix.model === 'claude-sonnet-5', JSON.stringify(fix))
+    check('AD: the T1 round-1 fix executor runs on Sonnet (finding 10)', !!fix && fix.model === 'claude-sonnet-5-5', JSON.stringify(fix))
     const implT2 = calls.find((c) => c.label === 'impl:T2')
-    check('AD: the T2 implementer runs on Sonnet at HIGH-risk implementHigh effort (finding 10, converse case)', !!implT2 && implT2.model === 'claude-sonnet-5' && implT2.effort === 'high', JSON.stringify(implT2))
+    check('AD: the T2 implementer runs on Sonnet at HIGH-risk implementHigh effort (finding 10, converse case)', !!implT2 && implT2.model === 'claude-sonnet-5-5' && implT2.effort === 'high', JSON.stringify(implT2))
   },
   {
     ...passingChainFor('T1'),
@@ -1116,9 +1159,9 @@ scenario(
   }),
   ({ result, calls }) => {
     const implCall = calls.find((c) => c.label === 'impl:F1')
-    check('G: the HIGH-risk fix implementer runs on Sonnet at implementHigh effort', !!implCall && implCall.model === 'claude-sonnet-5' && implCall.effort === 'high', JSON.stringify(implCall))
+    check('G: the HIGH-risk fix implementer runs on Sonnet at implementHigh effort', !!implCall && implCall.model === 'claude-sonnet-5-5' && implCall.effort === 'high', JSON.stringify(implCall))
     const reviewCall = calls.find((c) => c.label === 'review:F1')
-    check('G: the HIGH-risk fix reviewer runs on Opus', !!reviewCall && reviewCall.model === 'claude-opus-5', JSON.stringify(reviewCall))
+    check('G: the HIGH-risk fix reviewer runs on Opus at HIGH (review) effort', !!reviewCall && reviewCall.model === 'claude-opus-5-5' && reviewCall.effort === 'high', JSON.stringify(reviewCall && [reviewCall.model, reviewCall.effort]))
     // Fix round 1, finding 1: RC1 declares no `risk` field and empty
     // files/tests -- the natural, realistic shape for a root-cause
     // investigation (per the plan and every fixture). Its dependent fix
@@ -1127,7 +1170,7 @@ scenario(
     // silently run on Sonnet just because the root-cause task itself has
     // nothing to classify.
     const rootCauseCall = calls.find((c) => c.label === 'root-cause:RC1')
-    check('G: RC1\'s root-cause investigation also runs on Opus, because its dependent fix F1 is HIGH-risk', !!rootCauseCall && rootCauseCall.model === 'claude-opus-5', JSON.stringify(rootCauseCall))
+    check('G: RC1\'s root-cause investigation also runs on Opus, because its dependent fix F1 is HIGH-risk', !!rootCauseCall && rootCauseCall.model === 'claude-opus-5-5', JSON.stringify(rootCauseCall))
     const probeLabels = calls.filter((c) => c.label === 'probe:RP1' || c.label === 'probe:RP2').map((c) => c.label)
     check('G: both revert-probes ran', probeLabels.length === 2, JSON.stringify(probeLabels))
     check(
@@ -1145,12 +1188,12 @@ scenario(
     // A12 (Final pass), G extended: hasHighRisk is true (F1 is HIGH) -- the
     // conditional Fable read runs exactly once, alongside the final gate.
     const finalReadCalls = calls.filter((c) => c.label === 'final-read')
-    check('G (Final pass): exactly one final-read call, on Fable, when the run has a HIGH-risk task', finalReadCalls.length === 1 && finalReadCalls[0].model === 'claude-fable-5-1', JSON.stringify(finalReadCalls))
+    check('G (Final pass): exactly one final-read call, on Opus 5.5 (ruling 2026-09-29), when the run has a HIGH-risk task', finalReadCalls.length === 1 && finalReadCalls[0].model === 'claude-opus-5-5', JSON.stringify(finalReadCalls))
     const finalGateCalls = calls.filter((c) => c.label === 'final-gate')
     check('G (Final pass): the final gate runs once', finalGateCalls.length === 1, JSON.stringify(finalGateCalls))
     check(
       'G (Final pass): finalPass reports ran/skipped/model/completed for the HIGH-risk case',
-      !!result.finalPass && result.finalPass.ran === true && result.finalPass.skipped === null && result.finalPass.model === 'claude-fable-5-1' && result.finalPass.completed === true,
+      !!result.finalPass && result.finalPass.ran === true && result.finalPass.skipped === null && result.finalPass.model === 'claude-opus-5-5' && result.finalPass.completed === true,
       JSON.stringify(result.finalPass),
     )
   },
@@ -1207,13 +1250,13 @@ scenario(
     const rc1Call = calls.find((c) => c.label === 'root-cause:RC1')
     check(
       'AN: RC1 (only a TRANSITIVE ancestor of HIGH-risk F1, via RT1) still runs on Opus',
-      !!rc1Call && rc1Call.model === 'claude-opus-5',
+      !!rc1Call && rc1Call.model === 'claude-opus-5-5',
       JSON.stringify(rc1Call),
     )
     const rc2Call = calls.find((c) => c.label === 'root-cause:RC2')
     check(
       'AN: RC2 (whose only dependent fix F3 is LOW-risk) stays on Sonnet -- promotion is not unconditional',
-      !!rc2Call && rc2Call.model === 'claude-sonnet-5',
+      !!rc2Call && rc2Call.model === 'claude-sonnet-5-5',
       JSON.stringify(rc2Call),
     )
   },
@@ -1483,6 +1526,7 @@ scenario(
   baseArgs({ tasks: [{ id: 'D1', type: 'docs', files: ['docs/readme.md'], tests: [], brief: 'document the new flag', dependsOn: [], check: 'npm run lint:docs' }] }),
   ({ result, calls }) => {
     const implCall = calls.find((c) => c.label === 'impl:D1')
+    check('AH: the docs implementer prompt carries the verification paragraph', !!implCall && implCall.prompt.includes('run a real check that exercises the change before reporting it done'), 'docsImplementPrompt')
     check('AH: the docs implementer prompt carries the check command', !!implCall && implCall.prompt.includes('npm run lint:docs'), JSON.stringify(implCall && implCall.prompt))
     check('AH: no tests:D1 or red-check:D1 call -- docs tasks author no tests', !calls.some((c) => c.label === 'tests:D1' || c.label === 'red-check:D1'), JSON.stringify(calls.map((c) => c.label)))
     const reviewCall = calls.find((c) => c.label === 'review:D1')
@@ -1688,6 +1732,396 @@ scenario(
   },
 )
 
+// ---------- scenarios BX/BY/BZ (SS5: the holistic read moved earlier) -------
+// The RUN-LOG independently raised "run the final review BEFORE the last fix
+// round" five separate times and it was never acted on. The read now fires per
+// task, right after round 1's re-review and before round 2 begins, so what it
+// finds still has fix rounds to be spent on it. These prove the TIMING, the
+// MERGE, and that nothing paid for it twice.
+scenario(
+  'BX. SS5: the holistic read fires inside the fix loop -- after round 1 re-review, BEFORE round 2 -- and its findings enter round 2',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/money.ts'], tests: ['src/money.test.ts'], brief: 'add money math', dependsOn: [], risk: 'HIGH' }], buildPlanPath: PLAN_PATH }),
+  ({ result, calls }) => {
+    const labels = calls.map((c) => c.label)
+    const holisticAt = labels.indexOf('holistic-read:T1')
+    const rereview1At = labels.indexOf('re-review:T1:r1')
+    const round2At = labels.indexOf('fix-base:T1:r2')
+    check('BX: a holistic-read call happened at all', holisticAt >= 0, JSON.stringify(labels))
+    check('BX: it runs AFTER round 1\'s re-review', holisticAt > rereview1At && rereview1At >= 0, JSON.stringify({ rereview1At, holisticAt }))
+    check('BX: it runs BEFORE round 2 starts -- the whole point of moving it', round2At >= 0 && holisticAt < round2At, JSON.stringify({ holisticAt, round2At }))
+    check('BX: exactly ONE holistic read per task, never one per round', labels.filter((l) => l === 'holistic-read:T1').length === 1, JSON.stringify(labels.filter((l) => l === 'holistic-read:T1')))
+    check('BX: it runs on Opus 5.5 at the finalRead effort -- the same spend, relocated', calls[holisticAt] && calls[holisticAt].model === 'claude-opus-5-5' && calls[holisticAt].effort === 'high', JSON.stringify(calls[holisticAt] && { m: calls[holisticAt].model, e: calls[holisticAt].effort }))
+    check('BX: its prompt tells the reader its findings go into the NEXT fix round', calls[holisticAt] && /straight into the NEXT fix round/.test(calls[holisticAt].prompt), 'prompt missing the can-still-fix clause')
+    // The merge: round 2's fix-brief must carry the finding the holistic read
+    // raised, or "it enters round 2" is a claim with nothing behind it.
+    const r2Fix = calls.find((c) => c.label === 'fix:T1:r2')
+    check('BX: round 2 actually happened -- round 1 had closed its own finding, so only the holistic read could have opened it', !!r2Fix, JSON.stringify(labels))
+    check('BX: the holistic finding is what round 2 is fixing', !!r2Fix && /proration applied after rounding/.test(r2Fix.prompt), 'round-2 fix prompt does not carry the holistic finding')
+    check('BX: it is carried at the severity the reader gave it, not downgraded', !!r2Fix && /\[critical\][^\n]*proration applied after rounding/.test(r2Fix.prompt), 'round-2 fix prompt does not carry it as critical')
+    // And it must not also be paid for at the end of the run.
+    check('BX: NO end-of-run final-read -- the read already happened at a useful time', !labels.includes('final-read'), JSON.stringify(labels))
+    check('BX: finalPass says the read MOVED, never that it was skipped', !!result.finalPass && result.finalPass.skipped === 'moved-to-fix-loop' && result.finalPass.holisticReads === 1, JSON.stringify(result.finalPass))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/money.ts'] }),
+    'review:T1': () => ({ specCompliance: 'partial', findings: [{ severity: 'critical', file: 'src/money.ts', line: 10, summary: 'wrong total', scenario: 'money math off' }], assessment: 'needs-fixes' }),
+    're-review:T1:r1': () => ({ perFinding: [{ key: '#0', status: 'ADDRESSED', evidence: 'fixed' }], newFindings: [] }),
+    'holistic-read:T1': () => ({ findings: [{ severity: 'critical', file: 'src/money.ts', line: 42, summary: 'proration applied after rounding, so every boxed line is a cent out', detail: 'the whole change reads consistently per-finding but the order of roundMoney and proration is inverted across the two hunks together' }] }),
+    're-review:T1:r2': () => ({ perFinding: [{ key: '#0', status: 'ADDRESSED', evidence: 'the ordering is corrected across both hunks' }], newFindings: [] }),
+  },
+)
+
+scenario(
+  'BY. SS5: a HIGH-risk run where NO task entered a fix loop still gets the read, as the end-of-run fallback',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/money.ts'], tests: ['src/money.test.ts'], brief: 'add money math', dependsOn: [], risk: 'HIGH' }], buildPlanPath: PLAN_PATH }),
+  ({ result, calls }) => {
+    const labels = calls.map((c) => c.label)
+    check('BY: no per-task holistic read (the task never entered the fix loop)', !labels.some((l) => /^holistic-read:/.test(l)), JSON.stringify(labels))
+    check('BY: the end-of-run final-read DID fire -- coverage is never lost', labels.filter((l) => l === 'final-read').length === 1, JSON.stringify(labels))
+    check('BY: finalPass records zero holistic reads and no skip reason', !!result.finalPass && result.finalPass.holisticReads === 0 && result.finalPass.skipped === null, JSON.stringify(result.finalPass))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/money.ts'] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+  },
+)
+
+scenario(
+  'BZ. SS5: a NON-HIGH-risk task in a fix loop gets no holistic read at all -- this relocates spend, it does not add any',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [], risk: 'LOW' }], buildPlanPath: PLAN_PATH }),
+  ({ result, calls }) => {
+    const labels = calls.map((c) => c.label)
+    check('BZ: the task did enter a fix round', labels.includes('fix:T1:r1'), JSON.stringify(labels))
+    check('BZ: but no holistic read fired for a LOW-risk task', !labels.some((l) => /^holistic-read:/.test(l)), JSON.stringify(labels))
+    check('BZ: and no end-of-run final-read either, exactly as before this change', !labels.includes('final-read'), JSON.stringify(labels))
+    check('BZ: finalPass reports no-high-risk, unchanged', !!result.finalPass && result.finalPass.skipped === 'no-high-risk', JSON.stringify(result.finalPass))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/a.ts'] }),
+    'review:T1': () => ({ specCompliance: 'partial', findings: [{ severity: 'critical', file: 'src/a.ts', line: 10, summary: 'off-by-one', scenario: 'loop bound wrong' }], assessment: 'needs-fixes' }),
+    're-review:T1:r1': () => ({ perFinding: [{ key: '#0', status: 'ADDRESSED', evidence: 'fixed' }], newFindings: [] }),
+  },
+)
+
+// ---------- scenario CA (SS5: a dead holistic-read agent never fakes coverage) ----------
+scenario(
+  'CA. a dead holistic-read agent leaves holisticReads at 0, so the end-of-run fallback still fires -- coverage is never silently lost twice',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/money.ts'], tests: ['src/money.test.ts'], brief: 'add money math', dependsOn: [], risk: 'HIGH' }], buildPlanPath: PLAN_PATH }),
+  ({ result, calls }) => {
+    const labels = calls.map((c) => c.label)
+    check('CA: the holistic-read call was attempted', labels.includes('holistic-read:T1'), JSON.stringify(labels))
+    check('CA: a dead reader is not counted as a read that happened', !!result.finalPass && result.finalPass.holisticReads === 0, JSON.stringify(result.finalPass))
+    check('CA: the end-of-run fallback still fires -- coverage is not lost because one reader died', labels.filter((l) => l === 'final-read').length === 1, JSON.stringify(labels))
+    check('CA: finalPass reports null skipped (the fallback path), not moved-to-fix-loop', !!result.finalPass && result.finalPass.skipped === null, JSON.stringify(result.finalPass))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/money.ts'] }),
+    'review:T1': () => ({ specCompliance: 'partial', findings: [{ severity: 'critical', file: 'src/money.ts', line: 10, summary: 'wrong total', scenario: 'money math off' }], assessment: 'needs-fixes' }),
+    're-review:T1:r1': () => ({ perFinding: [{ key: '#0', status: 'ADDRESSED', evidence: 'fixed' }], newFindings: [] }),
+    'holistic-read:T1': () => null,
+  },
+)
+
+// ---------- scenario CB (P0-2 regression: multi-task holistic-read coverage) ----------
+// Opus review 2026-09-16: the per-task holistic read only fires for a
+// HIGH-risk task that enters a fix loop. A HIGH-risk task whose round-1
+// review comes back clean never enters the loop, so it never got read, and
+// the old `holisticReadsRan === 0` fallback gate only re-covered a run where
+// NO task got read -- silently leaving a clean-reviewed HIGH-risk task
+// uncovered in a multi-task run while still reporting 'moved-to-fix-loop'.
+scenario(
+  'CB. two HIGH-risk tasks, one dirty (gets its own read) and one clean (would get none) -- the run-level fallback still covers the clean one, and finalPass does not claim full coverage',
+  baseArgs({
+    tasks: [
+      { id: 'T1', type: 'feature', files: ['src/money.ts'], tests: ['src/money.test.ts'], brief: 'add money math', dependsOn: [], risk: 'HIGH' },
+      { id: 'T2', type: 'feature', files: ['src/tenant.ts'], tests: ['src/tenant.test.ts'], brief: 'add tenant scoping', dependsOn: [], risk: 'HIGH' },
+    ],
+    buildPlanPath: PLAN_PATH,
+  }),
+  ({ result, calls }) => {
+    const labels = calls.map((c) => c.label)
+    check('CB: T1 (dirty review) gets its own per-task holistic read', labels.includes('holistic-read:T1'), JSON.stringify(labels))
+    check('CB: T2 (clean review, never enters the fix loop) gets NO per-task read', !labels.includes('holistic-read:T2'), JSON.stringify(labels))
+    check('CB: the run-level fallback STILL fires -- coverage was incomplete (1 of 2 HIGH-risk tasks read)', labels.filter((l) => l === 'final-read').length === 1, JSON.stringify(labels))
+    check('CB: finalPass.highRiskTasks reports the real denominator (2)', !!result.finalPass && result.finalPass.highRiskTasks === 2, JSON.stringify(result.finalPass))
+    check('CB: finalPass.holisticReads reports only the ones that actually ran (1)', !!result.finalPass && result.finalPass.holisticReads === 1, JSON.stringify(result.finalPass))
+    check('CB: finalPass.skipped is null, NEVER moved-to-fix-loop -- coverage was partial, not full', !!result.finalPass && result.finalPass.skipped === null, JSON.stringify(result.finalPass))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/money.ts'] }),
+    ...passingChainFor('T2', { filesChanged: ['src/tenant.ts'] }),
+    'review:T1': () => ({ specCompliance: 'partial', findings: [{ severity: 'critical', file: 'src/money.ts', line: 10, summary: 'wrong total', scenario: 'money math off' }], assessment: 'needs-fixes' }),
+    'review:T2': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    're-review:T1:r1': () => ({ perFinding: [{ key: '#0', status: 'ADDRESSED', evidence: 'fixed' }], newFindings: [] }),
+    'holistic-read:T1': () => ({ findings: [] }),
+  },
+)
+
+// ---------- scenario CC (P1-6 regression: final-gate with 0 results reported) ----------
+// Opus review 2026-09-16: a gate reporting pass:true with an EMPTY results
+// array -- the exact shape dry-run.mjs's own OLD default fixture normalised
+// across every scenario -- passed clean under SS6, since the zero-test check
+// only inspects results THAT EXIST. gateProblem() now also compares the
+// reported count against the commands the gate was actually handed.
+scenario(
+  'CC. a final-gate reporting pass:true with results:[] -- fewer results than commands handed -- is a blocker, not a pass',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    const fgFindings = (result.remainingFindings || []).filter((f) => f.file === '(final-gate)')
+    check('CC: exactly one (final-gate) blocker for the missing results', fgFindings.length === 1 && fgFindings[0].severity === 'blocker', JSON.stringify(fgFindings))
+    check('CC: the blocker names the shortfall, not a generic failure', fgFindings.length === 1 && /handed 1 command\(s\) but reported only 0 result\(s\)/.test(fgFindings[0].detail || ''), JSON.stringify(fgFindings))
+    check('CC: finalPass.completed is false', !!result.finalPass && result.finalPass.completed === false, JSON.stringify(result.finalPass))
+    check('CC: the run is not clean', result.clean === false, JSON.stringify(result.remainingFindings))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'final-gate': () => ({ pass: true, cwd: 'C:/repo', results: [] }),
+  },
+)
+
+// ---------- scenarios BV/BW (SS4d: result.json overflow split) --------------
+// pipeline.js has no filesystem access: result.json is written by a Haiku agent
+// asked to reproduce the JSON as literal output, which stops being reliable
+// past ~150 KB -- the silent truncation this fixes. A single reviewer finding
+// with a very long detail is enough to blow the cap, so that is the fixture.
+const HUGE_DETAIL = 'x'.repeat(200000)
+scenario(
+  'BV. an oversized payload is split into result-overflow.json, and result.json keeps a pointer plus the real counts',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result, calls }) => {
+    check('BV: the overflow writer was actually called', calls.some((c) => c.label === 'result-overflow'), JSON.stringify(calls.map((c) => c.label)))
+    check('BV: result.overflow records the cap and the before/after sizes', !!result.overflow && result.overflow.bytesBefore > result.overflow.capBytes && result.overflow.bytesAfter < result.overflow.bytesBefore, JSON.stringify(result.overflow && { b: result.overflow.bytesBefore, a: result.overflow.bytesAfter, cap: result.overflow.capBytes }))
+    check('BV: remainingFindings is the LAST field given up -- it is the part a reader actually needs', !!result.overflow && (!result.overflow.fields.includes('remainingFindings') || result.overflow.fields[result.overflow.fields.length - 1] === 'remainingFindings'), JSON.stringify(result.overflow && result.overflow.fields))
+    check('BV: the split actually gets result.json under the cap', !!result.overflow && result.overflow.residualOverCap === false && result.overflow.bytesAfter <= result.overflow.capBytes, JSON.stringify(result.overflow && { a: result.overflow.bytesAfter, cap: result.overflow.capBytes, residual: result.overflow.residualOverCap }))
+    check('BV: every moved field keeps its count, never a silent empty array', !!result.overflow && Object.keys(result.overflow.counts).length === result.overflow.fields.length && Object.values(result.overflow.counts).every((n) => n > 0), JSON.stringify(result.overflow && result.overflow.counts))
+    check('BV: the overflow write is reported as successful', !!result.overflow && result.overflow.written === true, JSON.stringify(result.overflow))
+    const body = calls.find((c) => c.label === 'result-overflow')
+    check('BV: the overflow prompt actually carries the moved data', !!body && body.prompt.includes('result-overflow.json') && body.prompt.length > 100000, body ? String(body.prompt.length) : 'no call')
+    const resultCall = calls.find((c) => c.label === 'result')
+    check('BV: the result writer is now handed a payload under the cap', !!resultCall && resultCall.prompt.length < 160000, resultCall ? String(resultCall.prompt.length) : 'no call')
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'fail', findings: [{ severity: 'critical', file: 'src/a.ts', line: 5, summary: 'wrong total', detail: HUGE_DETAIL, scenario: 'money math off' }], assessment: 'needs-fixes' }),
+    'fix-plan:T1:r1': () => ({ fixes: [] }),
+    'fix-plan:T1:r2': () => ({ fixes: [] }),
+    'fix-plan:T1:r3': () => ({ fixes: [] }),
+    'fix-plan:T1:r4': () => ({ fixes: [] }),
+  },
+)
+
+scenario(
+  'BW. a normal-sized payload is untouched -- overflow is null and no extra agent call is made',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result, calls }) => {
+    check('BW: no result-overflow call on a normal run', !calls.some((c) => c.label === 'result-overflow'), JSON.stringify(calls.map((c) => c.label)))
+    check('BW: result.overflow is explicitly null, never an absent key', result.overflow === null, JSON.stringify(result.overflow))
+    check('BW: checkpoints and tasks are still fully present', Array.isArray(result.checkpoints) && result.checkpoints.length > 0 && Array.isArray(result.tasks) && result.tasks.length === 1, JSON.stringify({ c: (result.checkpoints || []).length, t: (result.tasks || []).length }))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+  },
+)
+
+// ---------- scenarios BS/BT/BU (SS4c: which sibling-sweep guard fired) ------
+// The reported symptom was `siblingSweep.ran:false` on runs that DID supply
+// patterns, with no way to tell which of the two skip guards fired. These three
+// pin each path to a distinct, greppable reason and log line. They are the
+// repro harness the guard fix itself will need -- per the plan, changing a
+// guard needs one real repro first; this is what turns a future incident into
+// one.
+const SIB_TASKS = [
+  { id: 'RC1', type: 'root-cause', files: [], tests: [], brief: 'find the cause', dependsOn: [] },
+  { id: 'RT1', type: 'repro-test', files: [], tests: ['src/bug.test.ts'], brief: 'prove the bug', dependsOn: [], wrongValue: 'WRONG_TOTAL' },
+]
+function sibArgs(extra) {
+  return baseArgs(Object.assign({
+    tasks: SIB_TASKS,
+    mode: 'bugfix',
+    buildPlanPath: PLAN_PATH,
+    siblingPatterns: [{ pattern: 'WRONG_TOTAL', note: 'the same off-by-one shape' }],
+  }, extra || {}))
+}
+const SIB_CHAIN = {
+  'root-cause:RC1': () => ({ reproduced: true, cause: 'off by one', evidence: 'line 10', confidence: 'high', files: ['src/money.ts'] }),
+  'tests:RT1': () => ({ ran: true, cwd: 'C:/repo', results: [{ command: 'npx jest src/bug.test.ts', exitCode: 1, output: 'FAIL: expected WRONG_TOTAL' }] }),
+  'red-check:RT1': () => ({ structurallyRed: true, tests: [{ test: 'repro', outcome: 'assertion-failure', note: 'WRONG_TOTAL' }], blockers: [], remediation: '' }),
+  'impl:RT1': () => ({ status: 'done', filesChanged: ['src/bug.test.ts'], deviations: '', notes: '' }),
+  'review:RC1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+  'review:RT1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+}
+
+scenario(
+  'BS. SS4c: a DEAD sibling-grep agent is reported as grep-died, named in the log, with the pattern count',
+  sibArgs(),
+  ({ result, logs }) => {
+    check('BS: skipped is grep-died', !!result.siblingSweep && result.siblingSweep.skipped === 'grep-died', JSON.stringify(result.siblingSweep))
+    check('BS: ran stays false', !!result.siblingSweep && result.siblingSweep.ran === false, JSON.stringify(result.siblingSweep))
+    check('BS: a log line names the guard that fired and the patterns supplied', logs.some((l) => /\[sibling-sweep\] SKIPPED \(grep-died\)/.test(l) && /1 pattern/.test(l)), JSON.stringify(logs.filter((l) => /sibling-sweep/.test(l))))
+  },
+  { ...SIB_CHAIN, 'sibling-grep': () => null },
+)
+
+scenario(
+  'BT. SS4c: a grepper that searched the WRONG TREE is no longer mislabelled as a dead agent',
+  sibArgs({ workdir: 'C:/repo/wt/lane-a' }),
+  ({ result, logs }) => {
+    check('BT: skipped is grep-wrong-tree, NOT grep-died -- the two need opposite fixes', !!result.siblingSweep && result.siblingSweep.skipped === 'grep-wrong-tree', JSON.stringify(result.siblingSweep))
+    check('BT: both the reported and the expected toplevel are recorded', !!result.siblingSweep && result.siblingSweep.toplevelReported === 'C:/repo/wt/OTHER-LANE' && result.siblingSweep.toplevelExpected === 'C:/repo/wt/lane-a', JSON.stringify(result.siblingSweep))
+    check('BT: the log line names it an args/launcher mismatch, not a dead agent', logs.some((l) => /\[sibling-sweep\] SKIPPED \(grep-wrong-tree\)/.test(l)), JSON.stringify(logs.filter((l) => /sibling-sweep/.test(l))))
+  },
+  {
+    ...SIB_CHAIN,
+    'sibling-grep': () => ({ hits: [{ pattern: 'WRONG_TOTAL', file: 'src/other.ts', line: 12, excerpt: 'return WRONG_TOTAL' }], truncated: [], toplevel: 'C:/repo/wt/OTHER-LANE' }),
+  },
+)
+
+scenario(
+  'BU. SS4c: a DEAD judge is reported as judge-died, and the log says how many hits were lost',
+  sibArgs(),
+  ({ result, logs }) => {
+    check('BU: skipped is judge-died', !!result.siblingSweep && result.siblingSweep.skipped === 'judge-died', JSON.stringify(result.siblingSweep))
+    check('BU: the grep half is still credited -- hits were found, then lost', !!result.siblingSweep && result.siblingSweep.hits === 2, JSON.stringify(result.siblingSweep))
+    check('BU: the log line separates "nothing to sweep" from "found 2 and lost them"', logs.some((l) => /\[sibling-sweep\] SKIPPED \(judge-died\)/.test(l) && /2 hit/.test(l)), JSON.stringify(logs.filter((l) => /sibling-sweep/.test(l))))
+  },
+  {
+    ...SIB_CHAIN,
+    'sibling-grep': () => ({
+      hits: [
+        { pattern: 'WRONG_TOTAL', file: 'src/other.ts', line: 12, excerpt: 'return WRONG_TOTAL' },
+        { pattern: 'WRONG_TOTAL', file: 'src/third.ts', line: 30, excerpt: 'const x = WRONG_TOTAL' },
+      ],
+      truncated: [],
+      toplevel: '',
+    }),
+    'sibling-judge': () => null,
+  },
+)
+
+// ---------- scenario BQ (SS7: preflight toolchain gate) ----------
+// The host being free says nothing about the toolchain being able to prove
+// anything. A runner that RAN and found zero test files makes every gate in
+// the run meaningless -- caught at preflight, before the budget is spent,
+// instead of at the final gate after it.
+scenario(
+  'BQ. a preflight reporting testDiscovery:0 raises a (preflight) finding before any work starts',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    const pf = (result.remainingFindings || []).filter((f) => f.file === '(preflight)')
+    check('BQ: exactly one (preflight) finding for zero test discovery', pf.length === 1 && /ZERO test files/.test(pf[0].summary || ''), JSON.stringify(pf))
+    check('BQ: it is major, not a blocker -- it must not kill a run on its own', pf.length === 1 && pf[0].severity === 'major', JSON.stringify(pf))
+    check('BQ: baseline records the toolchain the run ran against', !!result.baseline && !!result.baseline.preflight && result.baseline.preflight.testDiscovery === 0, JSON.stringify(result.baseline && result.baseline.preflight))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    preflight: () => ({ contended: false, treeClean: true, resumeWritten: true, nodeVersion: 'v20.11.0', npmVersion: '10.8.0', testDiscovery: 0, packagesResolved: true, missingPackages: [], note: 'jest listed no test files' }),
+  },
+)
+
+// ---------- scenario BR (SS7: -1 is a legitimate no-runner repo) ----------
+scenario(
+  'BR. a preflight reporting testDiscovery:-1 (no runner at all) raises NO finding, but a missing required package does',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }], preflightPackages: ['@acme/pricing'] }),
+  ({ result, calls }) => {
+    const pf = (result.remainingFindings || []).filter((f) => f.file === '(preflight)')
+    check('BR: -1 (no runner) is not flagged -- a repo without a test runner is legitimate', !pf.some((f) => /ZERO test files/.test(f.summary || '')), JSON.stringify(pf))
+    check('BR: an unresolvable required package IS flagged, and names it', pf.length === 1 && /@acme\/pricing/.test(pf[0].summary || ''), JSON.stringify(pf))
+    const pre = calls.find((c) => c.label === 'preflight')
+    check('BR: args.preflightPackages reaches the preflight prompt', !!pre && pre.prompt.includes('@acme/pricing'), pre ? 'no package in prompt' : 'no preflight call')
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    preflight: () => ({ contended: false, treeClean: true, resumeWritten: true, nodeVersion: 'v20.11.0', npmVersion: '10.8.0', testDiscovery: -1, packagesResolved: false, missingPackages: ['@acme/pricing'], note: 'no jest in this repo' }),
+  },
+)
+
+// ---------- scenario BP (SS4a: the wave loop is really throttled) ----------
+// Before SS4a, CFG.maxConcurrent was declared and read by nothing: one wave of
+// N independent tasks fired ONE parallel() call of width N. Nine independent
+// tasks now have to arrive as three batches of at most CFG.waveBatchSize (4),
+// each awaited before the next starts.
+const NINE_IDS = ['W1', 'W2', 'W3', 'W4', 'W5', 'W6', 'W7', 'W8', 'W9']
+const nineTaskResponses = {}
+for (const id of NINE_IDS) {
+  Object.assign(nineTaskResponses, passingChainFor(id, { filesChanged: ['src/' + id + '.ts'] }))
+  nineTaskResponses['review:' + id] = () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' })
+}
+scenario(
+  'BP. nine independent tasks in one wave are launched in batches of at most CFG.waveBatchSize, never one unthrottled parallel()',
+  baseArgs({
+    tasks: NINE_IDS.map((id) => ({ id, type: 'feature', files: ['src/' + id + '.ts'], tests: ['src/' + id + '.test.ts'], brief: 'add ' + id, dependsOn: [] })),
+  }),
+  ({ result, parallelBatchSizes, peakInFlight }) => {
+    // Baseline's own parallel() call (4 thunks) and Final pass's (2) are in
+    // this list too -- the wave batches are the ones carrying task chains, so
+    // assert on the peak in-flight count, which only task thunks can raise
+    // above 4... and on the absence of any batch wider than 4.
+    check('BP: no parallel() call anywhere in the run fans out wider than 4', parallelBatchSizes.every((n) => n <= 4), JSON.stringify(parallelBatchSizes))
+    check('BP: at most 4 task chains are ever in flight at once', peakInFlight <= 4, String(peakInFlight))
+    check('BP: the 9 tasks arrive as 4 + 4 + 1', JSON.stringify(parallelBatchSizes).includes('4,4,1'), JSON.stringify(parallelBatchSizes))
+    check('BP: all nine tasks still produced a result, in order', (result.tasks || []).map((t) => t.id).join(',') === NINE_IDS.join(','), JSON.stringify((result.tasks || []).map((t) => t.id)))
+  },
+  nineTaskResponses,
+)
+
+// ---------- scenario BM (SS6: zero-test-run gate) ----------
+// Codex's "green gate that ran zero tests" bug: the final gate reports
+// pass:true for every command, but one of them executed 0 tests. Before the
+// SS6 fix gateProblem() returned null here and the run reported itself clean.
+scenario(
+  'BM. a final-gate command that reports pass:true having executed 0 tests is treated as a FAILURE',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    const fgFindings = (result.remainingFindings || []).filter((f) => f.file === '(final-gate)')
+    check('BM: a pass:true / executed:0 command still produces a (final-gate) blocker', fgFindings.length === 1 && fgFindings[0].severity === 'blocker', JSON.stringify(fgFindings))
+    check('BM: the blocker names the zero-test reason, not a generic failure', fgFindings.length === 1 && /0 tests executed/.test(fgFindings[0].detail || ''), JSON.stringify(fgFindings))
+    check('BM: finalPass.completed is false', !!result.finalPass && result.finalPass.completed === false, JSON.stringify(result.finalPass))
+    check('BM: the run is not clean', result.clean === false, JSON.stringify(result.remainingFindings))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'final-gate': () => ({ pass: true, cwd: 'C:/repo', results: [{ command: 'npm test', pass: true, executed: 0, summary: 'No tests found, exiting with code 0' }] }),
+  },
+)
+
+// ---------- scenario BN (SS6: -1 stays a pass) ----------
+// The counterpart to BM: the gate prompts define -1 as "the tool printed no
+// count" (lint, tsc). That must stay a PASS -- a zero-test gate that reddens
+// every lint command would be worse than the bug it replaces.
+scenario(
+  'BN. a final-gate command reporting executed:-1 (no count printed, e.g. lint) still passes',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    check('BN: no (final-gate) blocker for an executed:-1 command', !(result.remainingFindings || []).some((f) => f.file === '(final-gate)'), JSON.stringify(result.remainingFindings))
+    check('BN: finalPass.completed is true', !!result.finalPass && result.finalPass.completed === true, JSON.stringify(result.finalPass))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'final-gate': () => ({ pass: true, cwd: 'C:/repo', results: [{ command: 'npm run lint', pass: true, executed: -1, summary: 'no lint errors' }] }),
+  },
+)
+
+// ---------- scenario BO (SS6: a MISSING executed field is unverified) ----------
+scenario(
+  'BO. a final-gate command with no executed field at all is treated as unverified, not as a pass',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    const fgFindings = (result.remainingFindings || []).filter((f) => f.file === '(final-gate)')
+    check('BO: a missing executed field produces a (final-gate) blocker', fgFindings.length === 1 && fgFindings[0].severity === 'blocker', JSON.stringify(fgFindings))
+  },
+  {
+    ...PASSING_CHAIN,
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'final-gate': () => ({ pass: true, cwd: 'C:/repo', results: [{ command: 'npm test', pass: true, summary: 'ok' }] }),
+  },
+)
+
 // ---------- scenario AL (A10: mutation-probe checksum mismatch) ----------
 scenario(
   'AL. a checksum:after digest that mismatches Baseline\'s recorded digest for a probed file produces a (mutation) blocker and flips mutationProbe.restoredVerified/result.clean to false',
@@ -1736,7 +2170,7 @@ scenario(
   baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/money.ts'], tests: ['src/money.test.ts'], brief: 'add money math', dependsOn: [], risk: 'HIGH' }], buildPlanPath: PLAN_PATH }),
   ({ result, calls }) => {
     const finalReadCalls = calls.filter((c) => c.label === 'final-read')
-    check('AM: exactly one final-read call, on Fable, for this HIGH-risk run', finalReadCalls.length === 1 && finalReadCalls[0].model === 'claude-fable-5-1', JSON.stringify(finalReadCalls))
+    check('AM: exactly one final-read call, on Opus 5.5 (ruling 2026-09-29), for this HIGH-risk run', finalReadCalls.length === 1 && finalReadCalls[0].model === 'claude-opus-5-5', JSON.stringify(finalReadCalls))
     const merged = (result.remainingFindings || []).find((f) => f.file === 'src/money.ts' && f.summary === 'off-by-one cent rounding the final-read caught')
     check('AM: the final-read finding is genuinely merged into remainingFindings, not discarded', !!merged && merged.phase === 'Final pass', JSON.stringify(result.remainingFindings))
     check('AM: the run is not clean because of the merged blocker finding', result.clean === false, JSON.stringify(result.remainingFindings))
@@ -2139,7 +2573,8 @@ scenario(
     check('BA: an (engine) blocker finding names the no-usable-result case', !!blocker && blocker.phase === 'Implement' && /ended without a usable result/.test(blocker.summary), JSON.stringify(rc1 && rc1.blockerFindings))
     check('BA: the (engine) blocker detail carries the underlying error message', !!blocker && /StructuredOutput/.test(blocker.detail), JSON.stringify(blocker))
     check('BA: RC1 keeps its real id/type (never a bare null)', !!rc1 && rc1.id === 'RC1' && rc1.type === 'root-cause', JSON.stringify(rc1))
-    check('BA: the dependent fix F1 is blocked through the EXISTING root-cause gate (fixGateStage), not a duplicate mechanism', !!f1 && f1.blocked === true && (f1.blockerFindings || []).some((x) => x.file === '(root-cause)'), JSON.stringify(f1))
+    // 2026-09-30 fix 2: the wave loop now skips a dependent of a blocked task before its chain (and so fixGateStage) ever starts.
+    check('BA: the dependent fix F1 is blocked by the upstream-dependency skip (engine), never run', !!f1 && f1.blocked === true && (f1.blockerFindings || []).some((x) => x.file === '(engine)' && /upstream dependency/.test(x.summary)), JSON.stringify(f1))
     check('BA: no impl:F1 call was ever made -- the root-cause gate stops the chain before implement', !calls.some((c) => c.label === 'impl:F1'), JSON.stringify(calls.map((c) => c.label)))
     check('BA: RT1, unaffected by RC1, completes clean', !!rt1 && rt1.blocked !== true, JSON.stringify(rt1))
     check('BA: T3, an unrelated sibling in RC1\'s own wave, completes clean', !!t3 && t3.status === 'complete' && t3.clean === true, JSON.stringify(t3))
@@ -2273,6 +2708,90 @@ scenario(
   },
 )
 
+// ---------- scenario BF1 (2026-09-30 fix 1: collapsed untracked dir) ----------
+// A brand-new directory shows up in plain `git status --porcelain` as ONE
+// `?? apps/control/` entry. That dir-form entry matched no declared path, so the
+// scope guard flagged it as an unplanned untracked file and the remediation
+// would have deleted the test author's files. The scope-check prompt must ask
+// for --untracked-files=all (both branches), and a reported path ending in '/'
+// that is a prefix of a declared test path must never be a violation.
+scenario(
+  'BF1. a new untracked directory collapsed to "apps/control/" never blocks the test author',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['apps/control/src/a.ts'], tests: ['apps/control/src/a.test.ts'], brief: 'add alpha', dependsOn: [] }], buildPlanPath: PLAN_PATH, profile: 'standard' }),
+  ({ result, calls }) => {
+    const t1 = (result.tasks || []).find((t) => t.id === 'T1')
+    const scopeCall = calls.find((c) => c.label === 'tests:T1:scope')
+    check('BF1: scope-check prompt asks for --untracked-files=all', !!scopeCall && scopeCall.prompt.includes('--untracked-files=all'), scopeCall && scopeCall.prompt.slice(-300))
+    check('BF1: no (scope) blocker for a dir-prefix entry', !!t1 && !(t1.blockerFindings || []).some((f) => f.file === '(scope)'), JSON.stringify(t1 && t1.blockerFindings))
+    check('BF1: scope-revert is never called', !calls.some((c) => c.label === 'tests:T1:scope-revert'), JSON.stringify(calls.map((c) => c.label)))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['apps/control/src/a.ts'] }),
+    'tests:T1:scope-before': () => ({ ran: true, files: [] }),
+    'tests:T1:scope': () => ({ ran: true, files: [{ path: 'apps/control/', tracked: false }] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+  },
+)
+scenario(
+  'BF1b. the workdir-branch scope-check prompt also asks for --untracked-files=all',
+  baseArgs({ workdir: 'C:/repo/wt/lane-a', tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }], buildPlanPath: PLAN_PATH, profile: 'standard' }),
+  ({ calls }) => {
+    const scopeCall = calls.find((c) => c.label === 'tests:T1:scope')
+    check('BF1b: workdir scope-check prompt includes --untracked-files=all', !!scopeCall && scopeCall.prompt.includes('status --porcelain --untracked-files=all'), scopeCall && scopeCall.prompt.slice(-300))
+  },
+  {},
+)
+
+// ---------- scenario BF2 (2026-09-30 fix 2: dependents of a blocked task) ----------
+scenario(
+  'BF2. a task whose dependency is blocked is never run -- it gets a blocked upstream result with zero agent calls',
+  baseArgs({
+    tasks: [
+      { id: 'WP-A', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] },
+      { id: 'WP-B', type: 'feature', files: ['src/b.ts'], tests: ['src/b.test.ts'], brief: 'add beta', dependsOn: ['WP-A'] },
+    ],
+    buildPlanPath: PLAN_PATH, profile: 'standard',
+  }),
+  ({ result, calls }) => {
+    const a = (result.tasks || []).find((t) => t.id === 'WP-A')
+    const b = (result.tasks || []).find((t) => t.id === 'WP-B')
+    check('BF2: WP-A is blocked', !!a && a.blocked === true, JSON.stringify(a && a.status))
+    check('BF2: WP-B has zero agent calls', !calls.some((c) => (c.label || '').includes('WP-B')), JSON.stringify(calls.filter((c) => (c.label || '').includes('WP-B')).map((c) => c.label)))
+    check('BF2: WP-B result is blocked', !!b && b.blocked === true && b.status === 'open', JSON.stringify(b))
+    const f = b && (b.blockerFindings || []).find((x) => x.file === '(engine)')
+    check('BF2: WP-B carries the upstream-blocked summary', !!f && f.summary === 'Task WP-B skipped: upstream dependency WP-A is blocked/open' && f.severity === 'blocker' && f.phase === 'Implement', JSON.stringify(b && b.blockerFindings))
+  },
+  {
+    'tests:WP-A': () => ({ ran: true, cwd: 'C:/repo', results: [{ command: 'npx jest src/a.test.ts', exitCode: 1, output: 'FAIL: assertion failed as expected' }] }),
+    'tests:WP-A:scope-before': () => ({ ran: true, files: [] }),
+    'tests:WP-A:scope': () => ({ ran: true, files: [{ path: 'src/a.ts', tracked: true }] }),
+    'tests:WP-A:scope-revert': () => ({ exitCode: 0, reverted: ['src/a.ts'] }),
+    ...passingChainFor('WP-B', { filesChanged: ['src/b.ts'] }),
+    'review:WP-B': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+  },
+)
+
+// ---------- scenario BF3 (args.waveBatchSize + missing task type) ----------
+scenario(
+  'BF3a. args.waveBatchSize overrides CFG.waveBatchSize',
+  baseArgs({
+    waveBatchSize: 2,
+    tasks: ['X1', 'X2', 'X3', 'X4'].map((id) => ({ id, type: 'feature', files: ['src/' + id + '.ts'], tests: ['src/' + id + '.test.ts'], brief: 'add ' + id, dependsOn: [] })),
+  }),
+  ({ parallelBatchSizes }) => {
+    check('BF3a: four tasks arrive as 2 + 2', JSON.stringify(parallelBatchSizes).includes('2,2'), JSON.stringify(parallelBatchSizes))
+  },
+  {},
+)
+scenario(
+  'BF3c. a task with no type is treated as feature by the validator',
+  baseArgs({ tasks: [{ id: 'T1', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }] }),
+  ({ result }) => {
+    check('BF3c: plan is not rejected as invalid', result.aborted !== 'invalid-plan', JSON.stringify(result.remainingFindings && result.remainingFindings.map((f) => f.summary)))
+  },
+  {},
+)
+
 // ---------- scenario BE (E9 rule 4: defence in depth against a cascade) ----------
 // Even with BC/BD closing the deletion hole, this is the second, independent
 // layer: if this run's build-plan.md/test-plan.md vanish from disk mid-run
@@ -2303,6 +2822,96 @@ scenario(
     'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
     'run-artifacts-check:T1': () => ({ ran: true, missing: [] }),
     'run-artifacts-check:T2': () => ({ ran: true, missing: [PLAN_PATH] }),
+  },
+)
+
+// ---------- scenario BF (P1a, retro 2026-09-16: a FINAL command broken at
+// Baseline for a real reason is a blocker, never a silent exclusion) ----------
+scenario(
+  'BF. a FINAL verify command that fails at Baseline for a real reason is a (gate-command) blocker, never added to badCommands',
+  baseArgs({ tasks: [{ id: 'T1', type: 'feature', files: ['src/a.ts'], tests: ['src/a.test.ts'], brief: 'add alpha', dependsOn: [] }], buildPlanPath: PLAN_PATH }),
+  ({ result }) => {
+    check('BF: npm test is NOT added to baseline.badCommands', Array.isArray(result.baseline && result.baseline.badCommands) && !result.baseline.badCommands.includes('npm test'), JSON.stringify(result.baseline))
+    const gc = (result.remainingFindings || []).filter((f) => f.file === '(gate-command)')
+    check('BF: exactly one (gate-command) finding, severity blocker, naming npm test as FINAL', gc.length === 1 && gc[0].severity === 'blocker' && gc[0].summary.includes('npm test') && gc[0].summary.includes('FINAL'), JSON.stringify(gc))
+    check('BF: result.clean is false', result.clean === false, JSON.stringify({ clean: result.clean }))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/a.ts'] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'baseline-gate': () => ({
+      pass: false,
+      cwd: null,
+      results: [{ command: 'npm test', pass: false, executed: -1, summary: 'existing suite regression: 3 failing assertions in checkout.spec.ts' }],
+    }),
+  },
+)
+
+// ---------- scenario BG (P1b: a command failing "no files matching" against a
+// plan-created path is deferred, then cleared when the wave-1 recheck passes) ----------
+scenario(
+  'BG. a perRound command that fails at Baseline with "no files matching" against a plan-created path is deferred, then cleared when the wave-1 recheck passes',
+  baseArgs({
+    tasks: [{ id: 'T1', type: 'feature', files: ['src/newmod/thing.ts'], tests: ['src/newmod/thing.test.ts'], brief: 'add newmod', dependsOn: [] }],
+    verifyCommands: { perRound: ['npx eslint src/newmod'], final: ['npm test'] },
+    buildPlanPath: PLAN_PATH,
+  }),
+  ({ result, calls }) => {
+    check('BG: the command is recorded as deferred', (result.baseline.deferredCommands || []).includes('npx eslint src/newmod'), JSON.stringify(result.baseline))
+    check('BG: the command never lands in badCommands', !(result.baseline.badCommands || []).includes('npx eslint src/newmod'), JSON.stringify(result.baseline.badCommands))
+    const gc = (result.remainingFindings || []).filter((f) => f.file === '(gate-command)')
+    check('BG: exactly one (gate-command) finding, severity minor, noting the deferral', gc.length === 1 && gc[0].severity === 'minor' && gc[0].summary.includes('deferred'), JSON.stringify(gc))
+    check('BG: the deferred re-check call actually ran after wave 1', calls.some((c) => c.label === 'baseline-deferred-recheck'), JSON.stringify(calls.map((c) => c.label)))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/newmod/thing.ts'] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'baseline-gate': () => ({
+      pass: false,
+      cwd: null,
+      results: [{ command: 'npx eslint src/newmod', pass: false, executed: -1, summary: 'no files matching the pattern were found' }],
+    }),
+    'baseline-deferred-recheck': () => ({
+      pass: true,
+      cwd: null,
+      results: [{ command: 'npx eslint src/newmod', pass: true, executed: 3 }],
+    }),
+  },
+)
+
+// ---------- scenario BH (P1b, other outcome: still failing after the ONE
+// wave-1 recheck resolves definitively -- a FINAL command becomes a real
+// blocker, never a second silent deferral or exclusion) ----------
+scenario(
+  'BH. a FINAL command deferred as a plan-created path that STILL fails after the wave-1 recheck becomes a real blocker, not a second silent exclusion',
+  baseArgs({
+    tasks: [{ id: 'T1', type: 'feature', files: ['src/newmod/thing.ts'], tests: ['src/newmod/thing.test.ts'], brief: 'add newmod', dependsOn: [] }],
+    verifyCommands: { perRound: ['npm run check'], final: ['npx jest src/newmod'] },
+    buildPlanPath: PLAN_PATH,
+  }),
+  ({ result }) => {
+    check('BH: the command never lands in badCommands (a final command is never silently excluded)', !(result.baseline.badCommands || []).includes('npx jest src/newmod'), JSON.stringify(result.baseline.badCommands))
+    const gc = (result.remainingFindings || []).filter((f) => f.file === '(gate-command)')
+    check(
+      'BH: two (gate-command) findings -- the initial minor deferral and the post-recheck blocker',
+      gc.length === 2 && gc.some((f) => f.severity === 'minor') && gc.some((f) => f.severity === 'blocker' && f.phase === 'Implement'),
+      JSON.stringify(gc),
+    )
+    check('BH: result.clean is false', result.clean === false, JSON.stringify({ clean: result.clean }))
+  },
+  {
+    ...passingChainFor('T1', { filesChanged: ['src/newmod/thing.ts'] }),
+    'review:T1': () => ({ specCompliance: 'pass', findings: [], assessment: 'approved' }),
+    'baseline-gate': () => ({
+      pass: false,
+      cwd: null,
+      results: [{ command: 'npx jest src/newmod', pass: false, executed: -1, summary: 'no tests found matching src/newmod' }],
+    }),
+    'baseline-deferred-recheck': () => ({
+      pass: false,
+      cwd: null,
+      results: [{ command: 'npx jest src/newmod', pass: false, executed: -1, summary: 'still no tests found matching src/newmod' }],
+    }),
   },
 )
 
@@ -2531,6 +3140,19 @@ check('every recorded agent call carries a full, real model id (never a bare ali
 const callsMissingEffort = allCalls.filter((c) => typeof c.effort !== 'string' || c.effort.length === 0)
 check('every recorded agent call carries an explicit, non-empty effort', callsMissingEffort.length === 0, JSON.stringify(callsMissingEffort.slice(0, 5)))
 
+// 2026-09-30 fix 3: every Haiku call carries the read-only MECHANICAL STEP guard; no other model's prompt does.
+const HAIKU_ID = 'claude-haiku-4-5'
+const haikuCalls = allCalls.filter((c) => c.model === HAIKU_ID)
+const nonHaikuCalls = allCalls.filter((c) => c.model !== HAIKU_ID)
+check('guard: at least one Haiku call was recorded', haikuCalls.length > 0, String(haikuCalls.length))
+check('guard: every Haiku prompt carries the MECHANICAL STEP guard', haikuCalls.every((c) => c.prompt.includes('MECHANICAL STEP')), JSON.stringify(haikuCalls.filter((c) => !c.prompt.includes('MECHANICAL STEP')).slice(0, 3).map((c) => c.label)))
+check('guard: no Sonnet/Opus/Fable prompt carries the guard', nonHaikuCalls.every((c) => !c.prompt.includes('MECHANICAL STEP')), JSON.stringify(nonHaikuCalls.filter((c) => c.prompt.includes('MECHANICAL STEP')).slice(0, 3).map((c) => c.label)))
+// 2026-09-30 guard reword (lead): the guard must not forbid the OS temp dir (revert-probe backups) or build/cache side effects of commands the prompt itself names.
+const guardText = (c) => { const i = c.prompt.indexOf('MECHANICAL STEP'); const j = c.prompt.indexOf('report that and stop.', i); return i >= 0 && j > i ? c.prompt.slice(i, j) : '' }
+check('guard: the guard sentence itself allows the OS temp directory', haikuCalls.every((c) => /OS temp directory/.test(guardText(c))), JSON.stringify(haikuCalls.slice(0, 1).map(guardText)))
+check('guard: the guard sentence allows build/cache side effects (dist/, .turbo, tsbuildinfo) of a command THIS prompt names', haikuCalls.every((c) => { const g = guardText(c); return /side effects of a command THIS prompt names/.test(g) && /dist\//.test(g) && /\.turbo/.test(g) && /tsbuildinfo/.test(g) }), JSON.stringify(haikuCalls.slice(0, 1).map(guardText)))
+check('guard: the PHASE/LABEL tag line still precedes the guard in every Haiku prompt', haikuCalls.every((c) => { const i = c.prompt.search(/^PHASE: .+ · LABEL: .+$/m); const g = c.prompt.indexOf('MECHANICAL STEP'); return i >= 0 && g > i }), '')
+
 // SOURCE SCAN (owner ruling -- pipeline.js runs in a sandbox with NO host
 // globals, and the Workflow approval dialog rejects a script whose source
 // contains non-ASCII). Strip `src` down to real code -- `//` and `/* */`
@@ -2598,6 +3220,205 @@ function stripToCode(text) {
   }
   return out
 }
+// SS3/SS3b: light-loop.js scenarios
+// light-loop.js is now the DEFAULT execution path (SS1 widened the router), so
+// it gets the same zero-API-call proof pipeline.js has had. Same stub globals,
+// its own small responder set -- it makes far fewer distinct calls.
+const llSrc = fs
+  .readFileSync(path.join(here, 'light-loop.js'), 'utf8')
+  .replace(/^export const meta = \{/m, 'const meta = {')
+
+const LL_DEFAULTS = {
+  preflight: () => ({ contended: false, treeClean: true, resumeWritten: true, note: 'ok' }),
+  warmup: () => ({ ok: true }),
+  ground: () => ({ ok: true, missing: [], packages: [{ id: 'P1', title: 'one package', brief: 'do the thing', files: ['src/a.ts'], risk: 'LOW' }], note: 'ok' }),
+  'build:P1': () => ({ packageId: 'P1', filesChanged: ['src/a.ts'], gates: [{ command: 'npm test', pass: true, summary: 'ok' }], findings: [], deviations: [] }),
+  pack: () => ({ out: 'auto/review-pack.md', bytes: 400, truncated: false, sections: ['diff'], exitCode: 0 }),
+  'review:correctness': () => ({ claims: [], findings: [], verdict: 'SHIP' }),
+  result: () => ({ written: true, path: 'auto/result.json', endedAt: '2026-09-16T00:00:00.000Z', note: 'ok' }),
+}
+function llDynamic(label) {
+  if (/^checkpoint:/.test(label)) return { written: true, path: 'auto/' + label + '.json', note: 'ok' }
+  return undefined
+}
+async function runLightLoop(s) {
+  const calls = []
+  const logs = []
+  const responses = (s && s.responses) || {}
+  const agent = async (prompt, opts) => {
+    calls.push({ label: opts.label, model: opts.model, effort: opts.effort, phase: opts.phase, prompt })
+    const custom = responses[opts.label]
+    if (typeof custom === 'function') return custom(opts, prompt)
+    if (custom !== undefined) return custom
+    const def = LL_DEFAULTS[opts.label]
+    if (def !== undefined) return typeof def === 'function' ? def(opts, prompt) : def
+    const dyn = llDynamic(opts.label)
+    if (dyn !== undefined) return dyn
+    return null
+  }
+  const parallel = async (thunks) => Promise.all(thunks.map(async (t) => {
+    try { return await t() } catch (e) { logs.push('THROW ' + (e && e.message)); return null }
+  }))
+  const pipelineFn = async (items, ...stages) => Promise.all(items.map(async (it, i) => {
+    let v = it
+    for (const st of stages) v = await st(v, it, i)
+    return v
+  }))
+  const log = (m) => logs.push(String(m))
+  const phase = () => {}
+  const budget = { total: null, spent: () => 0, remaining: () => Infinity }
+  const fn = new Function('agent', 'parallel', 'pipeline', 'log', 'phase', 'args', 'budget', 'workflow', `return (async () => { ${llSrc} })()`)
+  const result = await fn(agent, parallel, pipelineFn, log, phase, s.args, budget, async () => null)
+  return { result, calls, logs }
+}
+function llArgs(extra) {
+  return Object.assign({
+    briefPath: '.claude/pipeline/dry/brief.md',
+    runDir: '.claude/pipeline/dry-ll',
+    lessonsPath: '.claude/lessons/LESSONS.md',
+    startedAt: '2026-09-16T00:00:00Z',
+    runId: 'wf_dry_ll',
+  }, extra || {})
+}
+
+console.log('\nLIGHT-LOOP. SS1/SS3/SS3b -- lane, agent-call ceiling, pre-merge-review handoff')
+{
+  // LL1: the standard lane is the default, keeps 2 fix rounds, and every run
+  // carries the unconditional pre-merge-review handoff.
+  const { result } = await runLightLoop({ args: llArgs() })
+  check('LL1: lane defaults to standard', result.lane === 'standard', JSON.stringify(result.lane))
+  check('LL1: standard lane keeps maxFixRounds 2', result.maxFixRounds === 2, String(result.maxFixRounds))
+  check('LL1: the run reports its real agent-call telemetry', typeof result.agentCalls === 'number' && result.agentCalls > 0 && typeof result.workAgentCalls === 'number', JSON.stringify({ a: result.agentCalls, w: result.workAgentCalls }))
+  check('LL1: a healthy standard run stays well under its own ceiling', result.agentCalls < result.maxAgentCalls, result.agentCalls + ' of ' + result.maxAgentCalls)
+  check('LL1 (SS3b): every lane carries the pre-merge-review handoff, required and not yet run', !!result.preMergeReview && result.preMergeReview.required === true && result.preMergeReview.ran === false, JSON.stringify(result.preMergeReview))
+  check('LL1: a clean run is not halted', result.haltedAt === null, JSON.stringify(result.haltedAt))
+}
+{
+  // LL2: SS3 -- the surgical lane takes ONE fix round, not two.
+  const { result } = await runLightLoop({ args: llArgs({ lane: 'surgical' }) })
+  check('LL2: lane surgical is honoured', result.lane === 'surgical', JSON.stringify(result.lane))
+  check('LL2: surgical lane caps fix rounds at 1', result.maxFixRounds === 1, String(result.maxFixRounds))
+  check('LL2: surgical lane gets the tighter agent ceiling', result.maxAgentCalls === 20, String(result.maxAgentCalls))
+}
+{
+  // LL3: SS3 -- an explicit args.maxFixRounds still wins over the lane default.
+  const { result } = await runLightLoop({ args: llArgs({ lane: 'surgical', maxFixRounds: 3 }) })
+  check('LL3: an explicit maxFixRounds overrides the lane default', result.maxFixRounds === 3, String(result.maxFixRounds))
+}
+{
+  // LL4: SS3 -- the ceiling actually HALTS. Squeezed to 3 calls, the run must
+  // stop with haltedAt:'agent-cap', a blocker finding, and a written result --
+  // never a silent continue and never a silent re-spawn.
+  const { result, calls } = await runLightLoop({ args: llArgs({ maxAgentCalls: 3 }) })
+  check('LL4: the run halts at the agent-call ceiling', result.haltedAt === 'agent-cap', JSON.stringify(result.haltedAt))
+  check('LL4: the halt is not reported as clean', result.clean === false, JSON.stringify(result.clean))
+  check('LL4: the halt leaves a blocker finding naming the ceiling', (result.remainingFindings || []).some((f) => f.severity === 'blocker' && /agent-call ceiling/.test(f.summary || '')), JSON.stringify(result.remainingFindings))
+  check('LL4: the halt still writes its own checkpoint', (result.checkpoints || []).some((c) => c.phase === 'agent-cap'), JSON.stringify((result.checkpoints || []).map((c) => c.phase)))
+  check('LL4: the halt still writes result.json (close-out is not starved by its own cap)', calls.some((c) => c.label === 'result'), JSON.stringify(calls.map((c) => c.label)))
+  check('LL4: the run stopped early -- far fewer calls than a full run', calls.filter((c) => c.label !== 'warmup').length <= 8, String(calls.filter((c) => c.label !== 'warmup').length))
+}
+{
+  // LL5: SS3 -- warmups are cache priming, not work, and must never be what
+  // pushes a run over its ceiling. spansSkillAndRepo:true is the path that
+  // actually fires a warmUp (before the two review lenses), so this is the
+  // fixture that can prove the exclusion at all.
+  // The "- 2" is not slack: result.agentCalls is snapshotted when closeOut()
+  // builds the payload, and closeOut then makes exactly two more calls of its
+  // own (the 'Final pass' checkpoint and the result writer) which cannot
+  // appear in a number they are writing.
+  const { result, calls } = await runLightLoop({
+    args: llArgs({ spansSkillAndRepo: true }),
+    responses: {
+      'review:engine/scripts': () => ({ claims: [], findings: [], verdict: 'SHIP' }),
+      'review:docs/repo': () => ({ claims: [], findings: [], verdict: 'SHIP' }),
+    },
+  })
+  const warmups = calls.filter((c) => c.label === 'warmup').length
+  check('LL5: this fixture really does fire a warmup (otherwise the exclusion below proves nothing)', warmups > 0, String(warmups))
+  check('LL5: warmup calls are reported separately from the counted ones', result.warmupCalls === warmups, JSON.stringify({ warmups: warmups, reported: result.warmupCalls }))
+  check('LL5: warmups are excluded from the ceiling count', result.agentCalls === calls.length - warmups - 2, JSON.stringify({ warmups: warmups, agentCalls: result.agentCalls, total: calls.length }))
+}
+
+{
+  // LL6: SS7 -- the light loop carries the same toolchain preflight, with the
+  // same -1-is-fine / 0-is-a-finding split.
+  const { result, calls } = await runLightLoop({
+    args: llArgs({ preflightPackages: ['@acme/pricing'] }),
+    responses: {
+      preflight: () => ({ contended: false, treeClean: true, resumeWritten: true, nodeVersion: 'v20.11.0', npmVersion: '10.8.0', testDiscovery: 0, packagesResolved: false, missingPackages: ['@acme/pricing'], note: 'jest listed nothing' }),
+    },
+  })
+  const summaries = (result.remainingFindings || []).map((f) => f.summary || '')
+  check('LL6: zero test discovery is raised as a finding', summaries.some((s) => /ZERO test files/.test(s)), JSON.stringify(summaries))
+  check('LL6: an unresolvable required package is raised and named', summaries.some((s) => /@acme\/pricing/.test(s)), JSON.stringify(summaries))
+  check('LL6: the toolchain is reported in result.preflight', !!result.preflight && result.preflight.testDiscovery === 0 && result.preflight.packagesResolved === false, JSON.stringify(result.preflight))
+  const pre = calls.find((c) => c.label === 'preflight')
+  check('LL6: args.preflightPackages reaches the preflight prompt', !!pre && pre.prompt.includes('@acme/pricing'), pre ? 'no package in prompt' : 'no preflight call')
+}
+{
+  // LL7: SS7 -- a repo with no runner at all (-1) is not flagged.
+  const { result } = await runLightLoop({
+    args: llArgs(),
+    responses: {
+      preflight: () => ({ contended: false, treeClean: true, resumeWritten: true, nodeVersion: 'v20.11.0', npmVersion: '10.8.0', testDiscovery: -1, packagesResolved: true, missingPackages: [], note: 'no jest here' }),
+    },
+  })
+  check('LL7: -1 (no runner) raises no preflight finding', !(result.remainingFindings || []).some((f) => /ZERO test files/.test(f.summary || '')), JSON.stringify(result.remainingFindings))
+}
+
+{
+  // LL8 (P2-9 regression, Opus review 2026-09-16): a ceiling breach INSIDE a
+  // parallel() fan-out (2 packages, concurrentEditors:true) must halt the run
+  // via checkCeiling() right after that fan-out -- never get mapped into an
+  // ordinary "build:P2 agent returned nothing" finding first.
+  const TWO_PKGS = { ok: true, missing: [], packages: [
+    { id: 'P1', title: 'pkg 1', brief: 'do thing 1', files: ['src/a.ts'], risk: 'LOW' },
+    { id: 'P2', title: 'pkg 2', brief: 'do thing 2', files: ['src/b.ts'], risk: 'LOW' },
+  ], note: 'ok' }
+  const { result, calls } = await runLightLoop({
+    args: llArgs({ concurrentEditors: true, maxAgentCalls: 4 }),
+    responses: {
+      ground: () => TWO_PKGS,
+      'build:P1': () => ({ packageId: 'P1', filesChanged: ['src/a.ts'], gates: [{ command: 'npm test', pass: true, summary: 'ok' }], findings: [], deviations: [] }),
+      'build:P2': () => ({ packageId: 'P2', filesChanged: ['src/b.ts'], gates: [{ command: 'npm test', pass: true, summary: 'ok' }], findings: [], deviations: [] }),
+    },
+  })
+  const labels = calls.map((c) => c.label)
+  check('LL8: build:P1 (under the cap) actually ran', labels.includes('build:P1'), JSON.stringify(labels))
+  check('LL8: build:P2 (the thunk that crossed the cap) never made a real call -- askAgent threw before reaching the stub', !labels.includes('build:P2'), JSON.stringify(labels))
+  check('LL8: the run halts at the ceiling, from inside the fan-out, not one step later', result.haltedAt === 'agent-cap', JSON.stringify(result.haltedAt))
+  check('LL8: NO spurious "build:P2 agent returned nothing" finding -- the swallowed slot never got merged into the run\'s findings', !(result.remainingFindings || []).some((f) => /build:P2/.test(f.summary || '') || /returned nothing/.test(f.summary || '')), JSON.stringify(result.remainingFindings))
+  check('LL8: the ONLY finding is the ceiling halt itself', (result.remainingFindings || []).length === 1 && /agent-call ceiling/.test(result.remainingFindings[0].summary), JSON.stringify(result.remainingFindings))
+  // Without checkCeiling(), the run still eventually halts (checkpoint's own
+  // re-throw catches it one call later) but agentCalls ends at 6 -- the
+  // Implement-phase checkpoint fires needlessly before that self-correction,
+  // overstating how many calls this run actually needed. With checkCeiling()
+  // right after the fan-out, that phantom call never happens.
+  check('LL8: agentCalls is exactly 5 -- no phantom checkpoint call after the swallowed breach', result.agentCalls === 5, String(result.agentCalls))
+  check('LL8: checkpoint:Implement never fires -- the halt happens BEFORE it, not one call after', !calls.some((c) => c.label === 'checkpoint:Implement'), JSON.stringify(calls.map((c) => c.label)))
+}
+{
+  // LL9 (P2-8 regression, Opus review 2026-09-16): a halt that lands AFTER a
+  // fix round genuinely completed must report that round, not a hardcoded 0
+  // -- rounds/fixRounds are exactly what pipeline-ledger.mjs and closeout.mjs
+  // read to know how much work a halted run actually got done.
+  const { result } = await runLightLoop({
+    args: llArgs({ maxAgentCalls: 14 }),
+    responses: {
+      'review:correctness': () => ({ claims: [], findings: [{ severity: 'critical', file: 'src/a.ts', line: 1, summary: 'bug' }], verdict: 'FIX-FIRST' }),
+      'fix-brief': () => ({ items: [{ index: 0, severity: 'critical', file: 'src/a.ts', excerpt: 'bug', evidence: 'e', phase: 'Gate & Review' }] }),
+      'fix-plan': () => ({ fixes: [{ findingRef: 0, action: 'fix', executorTier: 'sonnet' }] }),
+      'execute:0': () => ({ findingRef: 0, status: 'done', filesChanged: ['src/a.ts'], note: 'fixed', gate: { command: 'npm test', pass: true, summary: 'ok' } }),
+      recheck: () => ({ claims: [], findings: [], verdict: 'SHIP' }),
+    },
+  })
+  check('LL9: the halt happens (proves this fixture is actually squeezed at the right point)', result.haltedAt === 'agent-cap', JSON.stringify(result.haltedAt))
+  check('LL9: rounds reports the ONE round that genuinely completed, not 0', result.rounds === 1, String(result.rounds))
+  check('LL9: fixRounds matches rounds (the field pipeline-ledger.mjs/closeout.mjs actually read)', result.fixRounds === 1, String(result.fixRounds))
+}
+
+console.log('\nSOURCE SCAN. light-loop.js never touches a host global the sandbox does not provide')
+
 function scanHostGlobals(text) {
   const stripped = stripToCode(text)
   const hits = []
@@ -2608,6 +3429,13 @@ function scanHostGlobals(text) {
   }
   return hits
 }
+const llHits = scanHostGlobals(llSrc)
+check(
+  'light-loop.js (outside comments/strings/template text) never calls Buffer., process., require(, fs., Date.now(, Math.random(, or new Date()',
+  llHits.length === 0,
+  llHits.join(', '),
+)
+
 const engineHits = scanHostGlobals(src)
 check(
   'pipeline.js (outside comments/strings/template text) never calls Buffer., process., require(, fs., Date.now(, Math.random(, or new Date()',

@@ -1,3 +1,4 @@
+import { invoiceItem, invoicePayment } from "@/test-utils/buyer-invoice-fixtures";
 import * as React from "react";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import type { BuyerInvoiceDetail } from "@/lib/api/buyer";
@@ -29,7 +30,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
     terms: null,
     orderId: null,
     items: [
-      {
+      invoiceItem({
         id: "item-1",
         description: "Mango Juice",
         productId: "p1",
@@ -39,8 +40,8 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
         subtotal: 10,
         priceType: "STANDARD",
         notes: "Mango",
-      },
-      {
+      }),
+      invoiceItem({
         id: "item-2",
         description: "Orange Juice",
         productId: "p2",
@@ -50,7 +51,7 @@ function makeInvoice(overrides: Partial<BuyerInvoiceDetail> = {}): BuyerInvoiceD
         subtotal: 10,
         priceType: "STANDARD",
         notes: null,
-      },
+      }),
     ],
     payments: [],
     customer: { id: "cust-1", businessName: "Acme Foods" },
@@ -99,5 +100,35 @@ describe("buyer invoice detail — per-line note (R5.8)", () => {
     renderWithProviders(<Page />);
     const notes = document.querySelectorAll("p.italic");
     expect(notes.length).toBe(1);
+  });
+
+  it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", () => {
+    mockUseBuyerInvoice.mockReturnValue({
+      data: makeInvoice({
+        items: [
+          invoiceItem({
+            id: "item-1",
+            description: "Mango Juice",
+            productId: "p1",
+            qty: 1,
+            unitPrice: 10,
+            discount: 0,
+            subtotal: 10,
+            priceType: "STANDARD",
+            notes: "Extra ice\nSide door\nCall on arrival",
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithProviders(<Page />);
+    // A plain <p> collapses "\n" to a space in the rendered browser text, so this must be a DOM
+    // query (the raw text content, not what a browser would visually show) plus the CSS rule that
+    // makes the browser actually respect it — not a text match, which can't tell the two apart.
+    const noteEl = screen.getByText(
+      (_, el) => el?.textContent === "Extra ice\nSide door\nCall on arrival",
+    );
+    expect(noteEl.className).toEqual(expect.stringContaining("whitespace-pre-line"));
   });
 });

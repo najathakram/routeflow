@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
+import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
 import { unitsLabel } from "@/lib/stock-label";
 import { fmtCalendarDate } from "@/lib/formatting";
@@ -12,7 +13,14 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import type { POItem, POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
+import {
+  resolveStoredPOLineAmounts,
+  type POItem,
+  type POStatus,
+  type PurchaseOrder,
+  type Supplier,
+  linePack,
+} from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
@@ -81,10 +89,16 @@ function PODetailRow({
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {(po.items ?? []).map((item: POItem) => {
-                  const upb = Number(catalogById.get(item.productId)?.unitsPerBox ?? 0);
+                  const upb = linePack(
+                    item,
+                    Number(catalogById.get(item.productId)?.unitsPerBox ?? 0),
+                  );
                   const isBoxed = upb > 1;
                   const ordered = Number(item.qtyOrdered ?? 0);
                   const received = Number(item.qtyReceived ?? 0);
+                  // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
+                  // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
+                  const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
                   return (
                     <tr key={item.id}>
                       <td className="px-3 py-2 font-medium text-navy">
@@ -108,9 +122,7 @@ function PODetailRow({
                           <span className="text-navy/30">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {formatMoney(ordered * Number(item.unitCost ?? 0))}
-                      </td>
+                      <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
                     </tr>
                   );
                 })}
@@ -244,14 +256,14 @@ export function PurchaseOrdersTab({
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
           placeholder="From"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
           placeholder="To"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button
@@ -306,7 +318,7 @@ export function PurchaseOrdersTab({
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
                     <td className="px-4 py-3 font-medium text-navy">
-                      {formatMoney(po.total ?? 0)}
+                      {formatMoney(poDisplayTotal(po))}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}

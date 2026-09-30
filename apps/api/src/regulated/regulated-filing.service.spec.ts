@@ -2,6 +2,7 @@ import { Test } from "@nestjs/testing";
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { RegulatedFilingService } from "./regulated-filing.service";
 import { RegulatedService } from "./regulated.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { RegulatedReportService } from "./regulated-report.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
@@ -56,6 +57,14 @@ describe("RegulatedFilingService", () => {
         // Real instance (not mocked) — the TX_COMPTROLLER branch below exercises its
         // manual three-step join against the same mocked `prisma`.
         RegulatedReportService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            getPolicy: jest
+              .fn()
+              .mockResolvedValue({ enabled: false, addressPrecedence: "BILLING_FIRST" }),
+          },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RegulatedService, useValue: regulated },
         { provide: StorageService, useValue: storage },

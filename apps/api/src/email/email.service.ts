@@ -5,11 +5,15 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
 // no Nest/module coupling, and unlike ./invoice-pdf-template it is not mocked
-// away under Jest).
-import { showOriginalPrice } from "../invoices/invoice-pdf-item";
+// away under Jest). B653: qtyCellText is the SAME per-line qty-text decision, now
+// shared with the email too — one formatter, never a second copy of the same
+// boxes/pieces/unitLabel display logic.
+import { showOriginalPrice, qtyCellText } from "../invoices/invoice-pdf-item";
 
 // F6-001: SSRF guard — block private/loopback/metadata IPs as SMTP hosts.
 // Tenants control smtpHost; without this guard they could point it at
@@ -187,23 +191,6 @@ function redactAddresses(msg: string): string {
     .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
 }
 
-/**
- * N4 ground rule: every interpolated value in a NEW email template must be
- * HTML-escaped — none of the existing templates in this file do (their
- * inputs are operator/tenant-typed strings from an already-authenticated
- * session, an accepted pre-existing gap, not this PR's to fix), but a
- * low-stock digest interpolates PRODUCT NAMES, which a tenant's own staff
- * can set to arbitrary text via the catalogue import/edit flow.
- */
-export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
 interface PlatformSmtpConfig {
   host: string;
@@ -315,8 +302,15 @@ function renderBrandedEmail(params: {
 /** A branded CTA button — Route Teal, ≥44px tap target (14px vertical padding either side of
  *  a 16px line-height = 44px total, meeting the email tap-target guideline). */
 function renderBrandButton(label: string, url: string): string {
+  // B809: a non-http(s) URL renders the button WITHOUT an href (logged and counted), so the
+  // email still goes out but can never carry a javascript: or data: link.
+  const href = safeLinkHref(url, "renderBrandButton");
+  const style = `display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;`;
+  const button = href
+    ? `<a href="${escapeHtml(href)}" style="${style}">${escapeHtml(label)}</a>`
+    : `<span style="${style}">${escapeHtml(label)}</span>`;
   return `<table cellpadding="0" cellspacing="0" role="presentation"><tr><td style="background:${BRAND_TEAL};border-radius:6px;" bgcolor="${BRAND_TEAL}">
-    <a href="${url}" style="display:inline-block;padding:14px 28px;line-height:16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${BRAND_WHITE};text-decoration:none;">${escapeHtml(label)}</a>
+    ${button}
   </td></tr></table>`;
 }
 
@@ -960,7 +954,7 @@ export class EmailService {
 
   async sendTestEmail(toEmail: string): Promise<{ success: boolean; message: string }> {
     const businessName = await this.getTenantBusinessName();
-    const html = `<p>This is a test email from ${businessName}. Your SMTP configuration is working correctly.</p>`;
+    const html = `<p>This is a test email from ${escapeHtml(businessName)}. Your SMTP configuration is working correctly.</p>`;
     // send() is honest-by-result and never throws for a delivery/config problem.
     const result = await this.send({ to: toEmail, subject: `${businessName} — Test Email`, html });
 
@@ -1049,6 +1043,11 @@ export class EmailService {
       priceType?: string | null;
       /** BUY_N_GET_M free units on this line — null/0 renders no note. */
       promoFreeUnits?: number | null;
+      /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
+      boxes?: number | null;
+      pieces?: number | null;
+      /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
+      unitLabel?: string | null;
     }[];
     pdfUrl?: string;
     isReminder?: boolean;
@@ -1495,6 +1494,11 @@ export class EmailService {
         priceType?: string | null;
         /** BUY_N_GET_M free units on this line — null/0 renders no note. */
         promoFreeUnits?: number | null;
+        /** units_v1/boxed split (B653) — null/null renders the bare `qty`, unchanged. */
+        boxes?: number | null;
+        pieces?: number | null;
+        /** units_v1 sold-unit noun ("Case") — null/undefined defaults to "box"/"boxes". */
+        unitLabel?: string | null;
       }[];
       pdfUrl?: string;
       isReminder?: boolean;
@@ -1522,8 +1526,8 @@ export class EmailService {
         const showOriginal = showOriginalPrice(it, !!params.hideOriginalPrice);
         return `
         <tr>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${it.description}</td>
-          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${it.qty}${
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;">${escapeHtml(it.description)}</td>
+          <td style="padding:8px 12px;border-bottom:1px solid #f0f0f0;font-size:14px;color:#1D2A3D;text-align:center;">${escapeHtml(qtyCellText(it))}${
             freeUnits > 0
               ? `<div style="font-size:11px;color:#b45309;font-weight:600;margin-top:2px;">${freeUnits} free</div>`
               : ""
@@ -1555,14 +1559,14 @@ export class EmailService {
       params.depositAmount != null
         ? `<div style="background:#eef2ff;border-left:4px solid #6366f1;padding:12px 16px;margin-bottom:24px;border-radius:4px;">
            <p style="margin:0;font-size:14px;color:#3730a3;font-weight:600;">Deposit due${
-             params.depositDueDate ? ` by ${params.depositDueDate}` : ""
+             params.depositDueDate ? ` by ${escapeHtml(params.depositDueDate)}` : ""
            }: ${fmt(params.depositAmount)}</p>
-           <p style="margin:4px 0 0;font-size:13px;color:#3730a3;">Remainder due by ${params.dueDate}.</p>
+           <p style="margin:4px 0 0;font-size:13px;color:#3730a3;">Remainder due by ${escapeHtml(params.dueDate)}.</p>
          </div>`
         : "";
 
     const pdfButton = params.pdfUrl
-      ? `<a href="${params.pdfUrl}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">Download PDF</a>`
+      ? `<a href="${escapeHtml(params.pdfUrl)}" style="display:inline-block;margin-top:8px;background:#f3f4f6;color:#374151;padding:8px 20px;border-radius:6px;font-size:13px;text-decoration:none;font-weight:500;">Download PDF</a>`
       : "";
 
     // F03/R1/R8/B102 — Amount Paid + Balance Due on the CONFIRMED (PAID) basis,
@@ -1589,7 +1593,7 @@ export class EmailService {
     const creditAppliedRow =
       params.creditApplied != null && params.creditApplied > 0
         ? `<tr>
-                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">${creditNoteLabel}</td>
+                <td colspan="3" style="padding:8px 12px;font-size:13px;font-weight:600;color:#374151;text-align:right;">${escapeHtml(creditNoteLabel)}</td>
                 <td style="padding:8px 12px;font-size:14px;font-weight:600;color:#374151;text-align:right;">${fmt(params.creditApplied)}</td>
               </tr>`
         : "";
@@ -1615,7 +1619,7 @@ export class EmailService {
     const bodyHtml = `
           ${reminderBanner}
           ${depositBanner}
-          <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${params.customerName},</p>
+          <p style="margin:0 0 8px;font-size:15px;color:#6b7280;">Dear ${escapeHtml(params.customerName)},</p>
           <p style="margin:0 0 24px;font-size:15px;color:#374151;">
             ${params.isReminder ? "This is a reminder that the following invoice is outstanding." : "Please find your invoice details below."}
           </p>
@@ -1624,21 +1628,21 @@ export class EmailService {
           <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
             <tr>
               <td style="font-size:13px;color:#6b7280;">Invoice No.</td>
-              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;">${params.invoiceNumber}</td>
+              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;">${escapeHtml(params.invoiceNumber)}</td>
             </tr>
             <tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Issue Date</td>
-              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${params.issueDate}</td>
+              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${escapeHtml(params.issueDate)}</td>
             </tr>
             <tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Due Date</td>
-              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${params.dueDate}</td>
+              <td style="font-size:13px;color:#1D2A3D;font-weight:600;text-align:right;padding-top:6px;${params.isReminder ? "color:#dc2626;" : ""}">${escapeHtml(params.dueDate)}</td>
             </tr>
             ${
               params.paymentTermsLabel
                 ? `<tr>
               <td style="font-size:13px;color:#6b7280;padding-top:6px;">Terms</td>
-              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${params.paymentTermsLabel}</td>
+              <td style="font-size:13px;color:#1D2A3D;text-align:right;padding-top:6px;">${escapeHtml(params.paymentTermsLabel)}</td>
             </tr>`
                 : ""
             }
@@ -1699,7 +1703,7 @@ export class EmailService {
       params.items
         .map((it) => {
           const freeUnits = it.promoFreeUnits != null ? Number(it.promoFreeUnits) : 0;
-          return `${it.description} — qty ${it.qty}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
+          return `${it.description} — qty ${qtyCellText(it)}${freeUnits > 0 ? ` (${freeUnits} free)` : ""} @ ${fmt(it.unitPrice)} = ${fmt(it.subtotal)}`;
         })
         .join("\n"),
     );
@@ -1743,8 +1747,8 @@ export class EmailService {
   }> {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi,</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
-      An account merge request has been submitted. The account signed in as <strong>${params.primaryEmail}</strong> wants
-      to merge <strong>this account</strong> (${params.to}) into it. After the merge, you'll only need to use the other
+      An account merge request has been submitted. The account signed in as <strong>${escapeHtml(params.primaryEmail)}</strong> wants
+      to merge <strong>this account</strong> (${escapeHtml(params.to)}) into it. After the merge, you'll only need to use the other
       email to sign in.
     </p>
     <p style="margin:0 0 24px;font-size:15px;color:#374151;">
@@ -1795,13 +1799,13 @@ export class EmailService {
     const closing = (
       greeting: string,
       signInLine: string,
-    ) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${greeting}</p>
+    ) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(greeting)}</p>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       Your two RouteFlow buyer accounts have been successfully merged.
     </p>
     <ul style="margin:0 0 16px;padding-left:20px;font-size:15px;color:#374151;">
-      <li><strong>Active account:</strong> ${params.primaryEmail}</li>
-      <li><strong>Deactivated account:</strong> ${params.secondaryEmail}</li>
+      <li><strong>Active account:</strong> ${escapeHtml(params.primaryEmail)}</li>
+      <li><strong>Deactivated account:</strong> ${escapeHtml(params.secondaryEmail)}</li>
     </ul>
     <p style="margin:0 0 16px;font-size:15px;color:#374151;">
       All your seller connections from the deactivated account have been transferred to your active account.
@@ -1816,7 +1820,7 @@ export class EmailService {
       heading: "Accounts Merged",
       bodyHtml: closing(
         `Hi ${params.primaryName},`,
-        `You can now sign in with <strong>${params.primaryEmail}</strong> to access everything in one place.`,
+        `You can now sign in with <strong>${escapeHtml(params.primaryEmail)}</strong> to access everything in one place.`,
       ),
       bodyText: [
         `Hi ${params.primaryName},`,
@@ -1842,7 +1846,7 @@ export class EmailService {
       heading: "Accounts Merged",
       bodyHtml: closing(
         "Hi,",
-        `Please use <strong>${params.primaryEmail}</strong> to sign in going forward. This account (${params.secondaryEmail}) is now deactivated.`,
+        `Please use <strong>${escapeHtml(params.primaryEmail)}</strong> to sign in going forward. This account (${escapeHtml(params.secondaryEmail)}) is now deactivated.`,
       ),
       bodyText: [
         "Hi,",
@@ -1895,6 +1899,67 @@ export class EmailService {
     return this.sendPlatform({
       to: params.to,
       subject: "Set your RouteFlow password",
+      html,
+      text,
+    });
+  }
+
+  /**
+   * #2439: the new-workspace welcome email. It carries the workspace, the username, a single-use
+   * set-password link (never a password), the login URL and — when self-serve checkout is allowed
+   * for the plan — a STABLE "Pay now" link (login → /settings/billing, which mints a fresh Stripe
+   * checkout on click), so nothing in it goes stale in 24h. Platform sender only.
+   */
+  async sendTenantWelcomeEmail(params: {
+    to: string;
+    username: string;
+    businessName: string;
+    workspace: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+    loginUrl: string;
+    payUrl: string | null;
+    trialDays: number;
+  }) {
+    const p = (html: string) =>
+      `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${html}</p>`;
+    const paySection = params.payUrl
+      ? `${p(
+          params.trialDays === 0
+            ? "Complete payment to activate your workspace:"
+            : `Your trial runs for ${params.trialDays} days. Complete payment any time to keep going:`,
+        )}
+    ${renderBrandButton("Pay now", params.payUrl)}
+    ${p('<span style="font-size:13px;color:#6b7280;">Sign in, then you\'ll go straight to billing.</span>')}`
+      : "";
+    const body = `${p(`Hi ${escapeHtml(params.username)},`)}
+    ${p(`Your RouteFlow workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
+    ${p(`<strong>Workspace:</strong> ${escapeHtml(params.workspace)}<br/><strong>Username:</strong> ${escapeHtml(params.username)}`)}
+    ${p("Start by setting your password:")}
+    ${renderBrandButton("Set your password", params.setPasswordUrl)}
+    ${p(`<span style="font-size:13px;color:#6b7280;">This link works once and expires in ${params.expiryHours} hours.</span>`)}
+    ${renderBrandButton("Sign in", params.loginUrl)}
+    ${paySection}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Your RouteFlow workspace is ready",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow workspace for ${params.businessName} is ready.`,
+        `Workspace: ${params.workspace}`,
+        `Username: ${params.username}`,
+        `Set your password (works once, expires in ${params.expiryHours} hours): ${params.setPasswordUrl}`,
+        `Sign in: ${params.loginUrl}`,
+        ...(params.payUrl
+          ? [`Pay now (sign in, then you'll go straight to billing): ${params.payUrl}`]
+          : []),
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: `Welcome to RouteFlow — your ${params.businessName} workspace is ready`,
       html,
       text,
     });
@@ -1977,6 +2042,48 @@ export class EmailService {
       subject: "Your RouteFlow role was changed",
       html,
       text,
+    });
+  }
+
+  // ─── F-10a: connected mailbox revoked (platform-sent, tenant-admin-facing) ─────
+
+  /**
+   * Tells a tenant admin that RouteFlow can no longer send from their connected Gmail/Outlook
+   * mailbox (`MailboxAlertService`, once per revocation). ALWAYS the platform sender class: the
+   * mailbox this is about is exactly the one that can't send, and the notice is RouteFlow talking
+   * to its own customer, not tenant-branded mail — so it never reaches the connected mailbox or
+   * the tenant's SMTP, whatever tenant context is active. The words come from
+   * `mailboxRevokedCopy`, the same source as the in-app notification. Never throws (`send()` is
+   * honest-by-result).
+   */
+  async sendMailboxRevokedNotice(params: {
+    to: string;
+    username: string;
+    accountEmail: string;
+    provider: "GOOGLE" | "MICROSOFT";
+    /** Whether a fallback sender exists (`isEmailConfigured()`), so the copy never promises one
+     *  that doesn't. */
+    hasFallback: boolean;
+  }) {
+    const copy = mailboxRevokedCopy(params);
+    // The same destination MailboxController sends the admin back to after (re)connecting.
+    const settingsUrl = `${(this.config.get<string>("WEB_URL") ?? "http://localhost:3001").replace(/\/$/, "")}/settings?tab=email`;
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    ${copy.paragraphs.map((line) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(line)}</p>`).join("")}
+    ${renderBrandButton(copy.cta, settingsUrl)}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: copy.heading,
+      bodyHtml: body,
+      bodyText: [`Hi ${params.username},`, ...copy.paragraphs, `${copy.cta}: ${settingsUrl}`],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
+    return this.send({
+      to: params.to,
+      subject: copy.subject,
+      html,
+      text,
+      senderClass: "platform",
     });
   }
 

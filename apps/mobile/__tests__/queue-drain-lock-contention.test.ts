@@ -59,6 +59,23 @@ describe("drainQueue — order-merge lock contention is retriable (F-B1)", () =>
     expect(result.delivered).toEqual([]);
   });
 
+  // #2645: the invoicedQty CAS 409 is raised before anything is billed (the whole invoice rolls
+  // back), so a queued stop completion that hits it is retried, never dead-lettered.
+  it("409 ORDER_LINE_CHANGED is retried, not moved to failedActions", async () => {
+    const entry = action({ id: "q-invoiced-qty-changed" });
+    const request = jest.fn(async () => {
+      throw httpError(409, {
+        code: "ORDER_LINE_CHANGED",
+        message: "An order line changed while this invoice was being created.",
+      });
+    });
+
+    const result = await drainQueue([entry], { request, notifyFailed: jest.fn() });
+
+    expect(result.retriedIds).toEqual(["q-invoiced-qty-changed"]);
+    expect(result.failedActions).toEqual([]);
+  });
+
   it("503 LOCK_UNAVAILABLE is retried, not moved to failedActions", async () => {
     const entry = action({ id: "q-lock-unavailable" });
     const request = jest.fn(async () => {

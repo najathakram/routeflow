@@ -6,11 +6,19 @@ import { getStoredActiveSeller } from "@/lib/buyer-auth";
 import type { ExpiringAuthorization } from "./authorizations";
 import type { PromotionRule } from "@routeflow/pricing";
 import type { ChangeRequest } from "@/lib/change-requests";
+import { isTrackingLive, type OrderTrackingResponse } from "@routeflow/types";
 import type {
   BuyerAnalytics,
   BuyerAuthorizationRow,
   BuyerCreateChangeRequestInput,
+  BuyerFavoriteProduct,
+  BuyerInvoiceItem,
+  BuyerInvoicePayment,
+  BuyerOrder,
+  BuyerOrderListItem,
   BuyerPayment,
+  BuyerProduct,
+  BuyerProductDetailExtras,
   BuyerPromotion,
   BuyerRemittance,
   BuyerStatement,
@@ -40,91 +48,18 @@ export type {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew?: boolean;
-  isDeal?: boolean;
-  /** Presigned URLs (max 4) for the tile dot-pager; first entry == thumbnailUrl. */
-  imageUrls?: string[];
-  inStock?: boolean;
-  stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining — present only while stockStatus === "LOW". */
-  stockLeft?: number | null;
-}
+// #2703 (SA-562): catalog row + favorites = ONE declaration in @routeflow/types.
+export type {
+  BuyerFavoriteProduct,
+  BuyerOrder,
+  BuyerOrderLine,
+  BuyerOrderListItem,
+  BuyerProduct,
+} from "@routeflow/types";
 
-export interface BuyerProductDetail extends BuyerProduct {
-  imageUrls: string[];
-  variants: Array<{
-    id: string;
-    name: string;
-    sku: string | null;
-    buyerPrice: number;
-    unit: string;
-    /** Promo inputs — a variant row prices through `deriveTilePrice` like any tile. */
-    category: string | null;
-    unitsPerBox: number | null;
-  }>;
-  /** P5-03: whether the caller has a PENDING restock alert on this product. */
-  alertSubscribed?: boolean;
-}
-
-export interface BuyerOrder {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  subtotal: number;
-  tax: number;
-  discountAmount: number;
-  urgent: boolean;
-  notes: string | null;
-  requestedDeliveryDate: string | null;
-  createdAt: string;
-  customer: { id: string; businessName: string };
-  lineItems: Array<{
-    id: string;
-    /** Null for a staff-added custom (unlisted) line — it has no `product` either. */
-    productId: string | null;
-    /** Free-text label of a custom line (its `product` is null). */
-    name?: string | null;
-    qty: number;
-    unitPrice: number;
-    subtotal: number;
-    priceType: string;
-    originalPrice: number | null;
-    notes: string | null;
-    status: string;
-    deliveredQty: number;
-    boxes: number | null;
-    pieces: number | null;
-    /** BUY_N_GET_M snapshot: whole free selling units on this line (boxes for a
-     *  boxed line). Drives the "{n} free" label and the edit preview's subtotal. */
-    promoFreeUnits?: number | null;
-    product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
-  }>;
-  invoices?: Array<{ id: string; invoiceNumber: string; status: string; total: number }>;
-  /** P5-09: post-dispatch change requests, newest first (absent on older API). */
-  changeRequests?: ChangeRequest[];
-  /** P5-08: server edit window — editing closes when the order's run dispatches. */
-  editWindow?: {
-    editable: boolean;
-    editableUntil: string | null;
-    closedReason: "DISPATCHED" | "STATUS" | null;
-  };
-  /** Run state backing the edit window (null until the order is on a run). */
-  routeRun?: { status: string; startedAt?: string | null } | null;
-}
+/** Detail-only fields are shared with mobile via @routeflow/types (#2345). */
+export interface BuyerProductDetail
+  extends Omit<BuyerProduct, "imageUrls">, BuyerProductDetailExtras {}
 
 export interface DashboardData {
   recentOrders: Array<{
@@ -386,16 +321,6 @@ export function useBuyerActiveOrder() {
   });
 }
 
-export interface BuyerOrderListItem {
-  id: string;
-  orderNumber: string;
-  status: string;
-  total: number;
-  totalAmount?: number;
-  createdAt: string;
-  itemCount?: number;
-}
-
 export function useBuyerOrders(params?: { page?: number; limit?: number; status?: string }) {
   return useQuery<Paginated<BuyerOrderListItem>>({
     queryKey: ["buyer", "orders", params],
@@ -408,6 +333,34 @@ export function useBuyerOrder(orderId: string) {
     queryKey: ["buyer", "order", orderId],
     queryFn: () => buyerApiClient.get(`/buyer/orders/${orderId}`).then((r) => r.data),
     enabled: !!orderId,
+  });
+}
+
+/** How often a live "Track your delivery" card refreshes (#2095). */
+export const BUYER_TRACKING_POLL_MS = 60_000;
+
+/**
+ * TanStack `refetchInterval` for the tracking card: every minute while the delivery is live, and
+ * never once the order is delivered or cancelled. WHEN is the shared `isTrackingLive` rule (the
+ * one mobile polls on); only the cadence is the web's.
+ */
+export function buyerTrackingRefetchInterval(
+  data: OrderTrackingResponse | undefined,
+): number | false {
+  return isTrackingLive(data) ? BUYER_TRACKING_POLL_MS : false;
+}
+
+/**
+ * #2095: the order's delivery tracking (driver first name, stops before you, delivery window).
+ * Keyed UNDER the order's own key, so every invalidation of the order (cancel, edit, a realtime
+ * order.statusChanged push) refreshes the card with it.
+ */
+export function useBuyerOrderTracking(orderId: string) {
+  return useQuery<OrderTrackingResponse>({
+    queryKey: ["buyer", "order", orderId, "tracking"],
+    queryFn: () => buyerApiClient.get(`/buyer/orders/${orderId}/tracking`).then((r) => r.data),
+    enabled: !!orderId,
+    refetchInterval: (query) => buyerTrackingRefetchInterval(query.state.data),
   });
 }
 
@@ -517,31 +470,9 @@ export interface BuyerInvoiceDetail {
   creditApplied?: number;
   /** Confirmed advance-payment applications (B421) — same treatment. */
   advanceApplied?: number;
-  items: Array<{
-    id: string;
-    description: string;
-    productId: string | null;
-    qty: number;
-    unitPrice: number;
-    discount: number;
-    subtotal: number;
-    priceType: string;
-    /** BUY_N_GET_M snapshot carried from the order line — drives the "{n} free"
-     *  label so a reduced subtotal doesn't read as a pricing error. */
-    promoFreeUnits?: number | null;
-    /** Per-line note, buyer-visible. */
-    notes?: string | null;
-  }>;
-  payments: Array<{
-    id: string;
-    amount: number;
-    method: string;
-    status?: string;
-    checkStatus?: "RECORDED" | "DEPOSITED" | "CLEARED" | "BOUNCED" | null;
-    nsfFeeAmount?: number | null;
-    paidAt?: string | null;
-    createdAt?: string;
-  }>;
+  /** #2703: one declaration in @routeflow/types, shared with mobile. */
+  items: BuyerInvoiceItem[];
+  payments: BuyerInvoicePayment[];
   customer: { id: string; businessName: string };
 }
 
@@ -590,21 +521,8 @@ export function useBuyerReorder() {
 
 // ─── Favorites ───────────────────────────────────────────────────────────────
 
-export interface BuyerFavoriteItem {
-  id: string;
-  productId: string;
-  name: string;
-  sku: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  createdAt: string;
-}
-
 export function useBuyerFavorites() {
-  return useQuery<BuyerFavoriteItem[]>({
+  return useQuery<BuyerFavoriteProduct[]>({
     queryKey: ["buyer", "favorites"],
     queryFn: () => buyerApiClient.get("/buyer/favorites").then((r) => r.data),
   });

@@ -220,12 +220,83 @@ describe("BookkeepingService", () => {
 
   // ─── recordPayment ────────────────────────────────────────────────────────
 
+  describe("recordPayment — B812: alreadyPaid/remaining/totalPaid are rounded, so a fully-paid invoice actually flips to PAID", () => {
+    // 0.70 + 0.10 === 0.7999999999999999 in plain JS float addition — an
+    // $0.80 invoice with a $0.70 payment already on it never reached PAID
+    // when this $0.10 payment landed, and (B812) every payment after that
+    // was refused as "exceeds remaining balance" off a near-zero float
+    // residual instead of the correct "already fully paid".
+    function mockInvoice(existingPayments: Array<{ amount: number }>) {
+      const update = jest.fn().mockResolvedValue({ id: "inv-b812" });
+      const create = jest.fn();
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
+          invoice: {
+            findMany: jest.fn(async () => []),
+            findUnique: jest
+              .fn()
+              .mockResolvedValue({ id: "inv-b812", total: 0.8, payments: existingPayments }),
+            update,
+          },
+          invoicePayment: { create },
+        }),
+      );
+      return { update, create };
+    }
+
+    it("REG-B812: a $0.10 payment on a $0.70-already-paid $0.80 invoice flips status to PAID, not PARTIAL", async () => {
+      const { update } = mockInvoice([{ amount: 0.7 }]);
+
+      await service.recordPayment("inv-b812", { amount: 0.1, method: "CASH" as any });
+
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ status: "PAID" }) }),
+      );
+    });
+
+    it("REG-B812: a further payment on that now-fully-paid invoice is refused as already paid, not as an overpayment", async () => {
+      mockInvoice([{ amount: 0.7 }, { amount: 0.1 }]);
+
+      await expect(
+        service.recordPayment("inv-b812", { amount: 0.01, method: "CASH" as any }),
+      ).rejects.toThrow("Transaction is already fully paid");
+    });
+  });
+
+  describe("recordPayment — SA-121: dto.amount is rounded to the cent", () => {
+    it("a sub-cent amount (10.005) is stored cent-exact, not silently truncated", async () => {
+      const create = jest.fn();
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
+          invoice: {
+            findMany: jest.fn(async () => []),
+            findUnique: jest.fn().mockResolvedValue({ id: "inv-sa121", total: 100, payments: [] }),
+            update: jest.fn().mockResolvedValue({ id: "inv-sa121" }),
+          },
+          invoicePayment: { create },
+        }),
+      );
+
+      await service.recordPayment("inv-sa121", { amount: 10.005, method: "CASH" as any });
+
+      expect(create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ amount: 10.01 }) }),
+      );
+    });
+  });
+
   describe("recordPayment", () => {
     it("should throw NotFoundException when transaction does not exist", async () => {
       // recordPayment uses tenantTransaction (not $transaction)
       prisma.tenantTransaction.mockImplementation(async (fn: any) => {
         const tx = {
-          invoice: { findUnique: jest.fn().mockResolvedValue(null) },
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
+          invoice: {
+            findMany: jest.fn(async () => []),
+            findUnique: jest.fn().mockResolvedValue(null),
+          },
           transaction: { findUnique: jest.fn().mockResolvedValue(null) },
           invoicePayment: { create: jest.fn() },
           payment: { create: jest.fn() },
@@ -240,6 +311,32 @@ describe("BookkeepingService", () => {
   });
 
   // ─── getPdfUrl ────────────────────────────────────────────────────────────
+
+  describe("recordPayment — SA-404f F1: lock (Order →) Invoice BEFORE reading its status", () => {
+    it("takes the Invoice row lock first, so a committed VOID is seen and refused, never written over", async () => {
+      const log: string[] = [];
+      prisma.tenantTransaction.mockImplementation(async (fn: any) =>
+        fn({
+          $executeRaw: jest.fn(async (strings: TemplateStringsArray) => {
+            log.push(strings.join("?").includes('"Order"') ? "lock Order" : "lock Invoice");
+          }),
+          invoice: {
+            findMany: jest.fn(async () => [{ orderId: "ord-1" }]),
+            findUnique: jest.fn(async () => {
+              log.push("read status");
+              return { id: "inv-v", status: "VOID", total: 50, payments: [] };
+            }),
+            update: jest.fn(),
+          },
+          invoicePayment: { create: jest.fn() },
+        }),
+      );
+      await expect(
+        service.recordPayment("inv-v", { amount: 10, method: "CASH" as any }),
+      ).rejects.toThrow("Cannot record a payment on a voided invoice.");
+      expect(log).toEqual(["lock Order", "lock Invoice", "read status"]);
+    });
+  });
 
   describe("getPdfUrl", () => {
     it("should return url when PDF exists", async () => {
@@ -974,7 +1071,9 @@ describe("BookkeepingService", () => {
       });
       prisma.tenantTransaction.mockImplementation(async (fn: any) =>
         fn({
+          $executeRaw: jest.fn(), // SA-404f F1: lockInvoicesForPayment
           invoice: {
+            findMany: jest.fn(async () => []),
             findUnique: jest.fn(async (args: any) => ({
               id: "inv-b11",
               total: INVOICE_TOTAL,
@@ -1118,7 +1217,7 @@ describe("BookkeepingService", () => {
         },
       ]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(2) },
       ]);
       prisma.expense.findMany.mockResolvedValue([{ amount: 100, category: { name: "Rent" } }]);
 
@@ -1188,8 +1287,8 @@ describe("BookkeepingService", () => {
       ]);
       // Average cost was 2.00 in May, 3.00 from June 1 — the sale costs at 2.00.
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-05-01"), avgCostAfter: D(2) },
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(3) },
+        { productId: "p1", effectiveAt: new Date("2026-05-01"), avgCostAfter: D(2) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(3) },
       ]);
 
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
@@ -1214,7 +1313,7 @@ describe("BookkeepingService", () => {
         },
       ]);
       prisma.stockMovement.findMany.mockResolvedValue([
-        { productId: "p1", createdAt: new Date("2026-06-01"), avgCostAfter: D(0.335) },
+        { productId: "p1", effectiveAt: new Date("2026-06-01"), avgCostAfter: D(0.335) },
       ]);
 
       const result = await service.getProfitAndLoss("2026-06-01", "2026-06-30");
@@ -1285,6 +1384,126 @@ describe("BookkeepingService", () => {
     });
   });
 
+  describe("createExpense — B781: the computed amount is rounded to the cent", () => {
+    it("a mileage expense's distance x rate is cent-exact, not a float artifact", async () => {
+      // 3 x 0.335 === 1.0050000000000001 in plain JS float multiplication — a
+      // real-world sub-cent mileage rate (33.5c/mile).
+      prisma.mileageRate.findFirst.mockResolvedValue({ ratePerUnit: 0.335 });
+      prisma.expense.create.mockResolvedValue({ id: "exp-mileage" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isMileage: true,
+          distance: 3,
+          mileageUnit: "MILE",
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(1.01);
+      expect(data.amount).not.toBe(1.0050000000000001);
+    });
+
+    it("an itemized expense's line-item sum is cent-exact, not a float artifact", async () => {
+      prisma.expense.create.mockResolvedValue({ id: "exp-itemized" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isItemized: true,
+          lineItems: [
+            { account: "Supplies", amount: 0.1 },
+            { account: "Fuel", amount: 0.2 },
+          ],
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
+    });
+
+    it("a mileage expense with a CLIENT-supplied rate snapshot is still rounded (the auto-lookup branch never runs for it)", async () => {
+      // The web mileage form always sends mileageRateSnapshot, so `!rateSnapshot`
+      // is false and the auto-lookup branch above is skipped entirely — the
+      // unrounded distance*rate arrives here as a plain `amount` passthrough.
+      prisma.expense.create.mockResolvedValue({ id: "exp-mileage-snapshot" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isMileage: true,
+          distance: 3,
+          mileageUnit: "MILE",
+          mileageRateSnapshot: 0.335,
+          amount: 3 * 0.335,
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(1.01);
+      expect(data.amount).not.toBe(1.0050000000000001);
+    });
+
+    it("a plain (non-mileage, non-itemized) expense's amount is still rounded", async () => {
+      prisma.expense.create.mockResolvedValue({ id: "exp-plain" });
+
+      await service.createExpense(
+        { date: new Date("2026-09-01T00:00:00Z"), amount: 0.1 + 0.2 },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
+    });
+
+    it("each itemized line is rounded on write, so the stored lines always sum to the header total", async () => {
+      // 0.005 + 0.005: each line rounds independently to 0.01, header is their
+      // sum (0.02) — never a raw-float sum that could drift from the lines.
+      prisma.expense.create.mockResolvedValue({ id: "exp-itemized-lines" });
+
+      await service.createExpense(
+        {
+          date: new Date("2026-09-01T00:00:00Z"),
+          isItemized: true,
+          lineItems: [
+            { account: "Supplies", amount: 0.005 },
+            { account: "Fuel", amount: 0.005 },
+          ],
+        },
+        "u1",
+      );
+
+      const data = prisma.expense.create.mock.calls[0][0].data;
+      const created = data.lineItems.create;
+      expect(created.map((li: any) => li.amount)).toEqual([0.01, 0.01]);
+      expect(data.amount).toBe(0.02);
+    });
+  });
+
+  describe("updateExpense — SA-121: dto.amount is rounded to the cent", () => {
+    it("a float-artifact amount (0.1 + 0.2) is stored cent-exact, not 0.30000000000000004", async () => {
+      prisma.expense.findFirst.mockResolvedValue({
+        id: "exp-1",
+        status: "PENDING",
+        receivedAt: null,
+        paidAt: null,
+      });
+      prisma.expense.update.mockResolvedValue({ id: "exp-1" });
+
+      await service.updateExpense("exp-1", { amount: 0.1 + 0.2 });
+
+      const data = prisma.expense.update.mock.calls[0][0].data;
+      expect(data.amount).toBe(0.3);
+      expect(data.amount).not.toBe(0.30000000000000004);
+    });
+  });
+
   describe("extractExpenseItems", () => {
     const RECEIPT_MODEL = "claude-opus-4-5-20251101";
 
@@ -1344,6 +1563,59 @@ describe("BookkeepingService", () => {
       expect(recordAiUsage).toHaveBeenCalledWith(
         expect.objectContaining({ feature: "ocr.expense_receipt", success: false }),
       );
+    });
+
+    it("REG-B801: a single OCR line item's amount is cent-exact, not a float artifact", async () => {
+      const lineItemModel = graftExpenseLineItem();
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            // 3 x 0.335 === 1.0050000000000001 in plain JS float multiplication.
+            text: JSON.stringify({
+              vendor: "Acme",
+              items: [{ description: "Delivery", qty: 3, unitCost: 0.335, amount: 3 * 0.335 }],
+            }),
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+
+      await service.extractExpenseItems("exp-1");
+
+      const created = lineItemModel.createMany.mock.calls[0][0].data;
+      expect(created[0].amount).toBe(1.01);
+      expect(created[0].amount).not.toBe(1.0050000000000001);
+
+      const updateData = prisma.expense.update.mock.calls[0][0].data;
+      expect(updateData.amount).toBe(1.01);
+    });
+
+    it("REG-B801: each OCR line item is rounded on write, so the stored lines sum exactly to the header total", async () => {
+      const lineItemModel = graftExpenseLineItem();
+      mockAnthropicCreate.mockResolvedValue({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              vendor: "Acme",
+              items: [
+                { description: "A", amount: 0.005 },
+                { description: "B", amount: 0.005 },
+              ],
+            }),
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+
+      await service.extractExpenseItems("exp-1");
+
+      const created = lineItemModel.createMany.mock.calls[0][0].data;
+      expect(created.map((li: any) => li.amount)).toEqual([0.01, 0.01]);
+
+      const updateData = prisma.expense.update.mock.calls[0][0].data;
+      expect(updateData.amount).toBe(0.02);
     });
   });
 });

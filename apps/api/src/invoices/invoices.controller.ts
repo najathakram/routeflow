@@ -32,6 +32,7 @@ import {
   WriteOffDto,
 } from "./dto/create-invoice.dto";
 import { CreatePartialInvoiceDto } from "./dto/create-partial-invoice.dto";
+import { UpdateInvoiceDto } from "./dto/update-invoice.dto";
 import { ListInvoicesDto } from "./dto/list-invoices.dto";
 import { KpiSummaryDto } from "./dto/kpi-summary.dto";
 import { PriceAdjustmentDto } from "./dto/price-adjustment.dto";
@@ -169,7 +170,7 @@ export class InvoicesController {
     return this.invoicesService.findOne(id, user);
   }
 
-  @Patch(":id") update(@Param("id") id: string, @Body() dto: Partial<CreateInvoiceDto>) {
+  @Patch(":id") update(@Param("id") id: string, @Body() dto: UpdateInvoiceDto) {
     return this.invoicesService.update(id, dto);
   }
 

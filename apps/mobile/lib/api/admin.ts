@@ -6,7 +6,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { TripEligibilityRow, TripOrigin } from "@routeflow/types";
+import type { LineComponentView, TripEligibilityRow, TripOrigin } from "@routeflow/types";
 export type { TripEligibilityRow, TripIneligibleReason, TripOrigin } from "@routeflow/types";
 
 export interface PaginationMeta {
@@ -213,7 +213,20 @@ export interface AdminOrder {
     invoiceNumber: string;
     status: string;
     total: number;
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    // #2404: `creditNote` is attached by the order read; `autoApplied` is SA-436 PR-1's column.
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      createdAt?: string | null;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * P5-08 edit-window descriptor (server-computed). `editable` is the single source
@@ -402,11 +415,18 @@ export interface AdminInvoice {
   items?: Array<{
     id: string;
     description: string;
+    /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+    systemKind?: string | null;
     qty: number;
     /** Boxed denomination snapshot — when set, unitPrice is the BOX price. */
     boxes?: number | null;
     pieces?: number | null;
     unitsPerBox?: number | null;
+    /** units_v1: the line's own selling unit ("Case"…) when sold by a non-pack
+     *  unit rather than loose pieces; null on a plain/pack line. B653 names it in
+     *  `invoice-line-display.ts`'s qty text; B784 names it in the unit-aware-edit
+     *  guard's refusal message. */
+    unitLabel?: string | null;
     unitPrice: number;
     /** Catalog base for an override line; unitPrice > originalPrice = upsell. */
     originalPrice?: number | null;
@@ -419,6 +439,8 @@ export interface AdminInvoice {
     taxRate?: number | null;
     /** Per-line note carried from the order line (buyer-visible). */
     notes?: string | null;
+    /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line; absent on a plain line. */
+    components?: LineComponentView[];
     /** BUY_N_GET_M snapshot: whole free selling units on this line. MUST be
      *  round-tripped by an items PATCH — the server replaces every line, so
      *  dropping it re-prices an agreed BOGO line to full. */

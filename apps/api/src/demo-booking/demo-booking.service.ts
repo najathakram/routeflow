@@ -6,7 +6,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { hashSignedToken, mintSignedToken, verifySignedToken } from "../common/signed-token";
 import { DemoBooking, DemoBookingStatus, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
@@ -20,6 +20,7 @@ import {
 } from "./demo-booking.config";
 import { BusyBlock, GoogleCalendarService } from "./google-calendar.service";
 import { isValidTimeZone, zonedDateParts, zonedWallClockToUtc } from "./zoned-time";
+import { escapeHtml } from "../common/html-escape";
 
 export interface AvailabilitySlot {
   /** Slot start as a UTC ISO instant — the only value a client sends back. */
@@ -602,22 +603,11 @@ export class DemoBookingService {
    * cancel anyone's booking.
    */
   private mintToken(): string {
-    const nonce = randomBytes(24).toString("base64url");
-    return `${nonce}.${this.signature(nonce)}`;
+    return mintSignedToken(this.config().tokenSecret);
   }
 
   private verifyToken(token: string): boolean {
-    const separator = token.lastIndexOf(".");
-    if (separator <= 0) return false;
-    const nonce = token.slice(0, separator);
-    const provided = Buffer.from(token.slice(separator + 1));
-    const expected = Buffer.from(this.signature(nonce));
-    if (provided.length !== expected.length) return false;
-    return timingSafeEqual(provided, expected);
-  }
-
-  private signature(nonce: string): string {
-    return createHmac("sha256", this.config().tokenSecret).update(nonce).digest("base64url");
+    return verifySignedToken(token, this.config().tokenSecret);
   }
 
   private eventShape(booking: DemoBooking) {
@@ -747,7 +737,7 @@ function parseInstant(value: string | undefined): Date | null {
 }
 
 function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
+  return hashSignedToken(token);
 }
 
 function webUrl(): string {
@@ -787,14 +777,6 @@ function plainTextField(value: string): string {
       .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, "")
       .trim()
   );
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 /**

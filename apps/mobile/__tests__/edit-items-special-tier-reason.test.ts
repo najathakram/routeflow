@@ -16,6 +16,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -27,7 +28,8 @@ const SCREEN_PATH = join(
   "[id]",
   "edit-items.tsx",
 );
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus the modules it was sliced into.
+const source = readEditItemsSurface();
 
 describe("edit-items.tsx PriceOverrideModal — SPECIAL-tier reason required (B465)", () => {
   // Slice from the function's own start to the NEXT top-level `function`
@@ -69,8 +71,11 @@ describe("edit-items.tsx PriceOverrideModal — SPECIAL-tier reason required (B4
     }
   });
 
-  it("REG-B465-5: the list branch passes isSpecialFor(priceEditItem.productId) — the SAME helper canEditPriceFor already uses to exclude SPECIAL lines from the affordance itself", () => {
-    expect(source).toMatch(/isSpecial=\{isSpecialFor\(priceEditItem\.productId\)\}/);
+  it("REG-B465-5: the list branch passes isSpecialFor(priceEditItem.item.productId) — the SAME helper canEditPriceFor already uses to exclude SPECIAL lines from the affordance itself", () => {
+    // B775/SA-108: `priceEditItem` is now `{ key, item }` (never re-derives
+    // its draft key from `item.lineId ?? item.productId`), so the price
+    // check reads off `.item.productId`, not a bare `.productId`.
+    expect(source).toMatch(/isSpecial=\{isSpecialFor\(priceEditItem\.item\.productId\)\}/);
   });
 
   it("REG-B465-6: ProductPicker forwards an isSpecialTierFor prop through to its own PriceOverrideModal mount", () => {

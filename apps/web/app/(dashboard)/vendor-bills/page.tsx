@@ -1,5 +1,6 @@
 "use client";
 
+import { PREF } from "@routeflow/types";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -35,6 +36,7 @@ import {
   type BadgeVariant,
 } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
 import {
@@ -49,6 +51,7 @@ import {
 } from "@/lib/api/vendor-bills";
 import { useSuppliers as useInventorySuppliers, usePurchaseOrders } from "@/lib/api/inventory";
 import { getPoBillRefusal, type PoBillRefusal } from "@/lib/po-bill-refusal";
+import { poTotal, type PORow } from "./po-ledger-total";
 import { useProducts } from "@/lib/api/products";
 import {
   useExpenses,
@@ -121,7 +124,7 @@ function StatTile({
         ring === "danger" && "border-danger",
       )}
     >
-      <span className="overline block">{label}</span>
+      <span className="eyebrow-label block">{label}</span>
       <span
         className={cn(
           "mt-1.5 block text-2xl text-navy",
@@ -507,7 +510,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       if (!product) {
         toast({ title: `Item not found: ${code.trim()}`, variant: "error" });
         setScanInput("");
-        setTimeout(() => scanInputRef.current?.focus(), 50);
+        scheduleScannerRefocus(scanInputRef, 50);
         return;
       }
       const existing = lineItemsRef.current.findIndex((li) => li.productId === product!.id);
@@ -532,7 +535,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         });
       }
       setScanInput("");
-      setTimeout(() => scanInputRef.current?.focus(), 50);
+      scheduleScannerRefocus(scanInputRef, 50);
     },
     [toast],
   );
@@ -556,7 +559,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       setErrors({});
       setDuplicate(null);
       setPoRefusal(null);
-      if (prefs?.["bill.lastSupplierId"]) setSupplierId(prefs["bill.lastSupplierId"]);
+      if (prefs?.[PREF.billLastSupplierId]) setSupplierId(prefs[PREF.billLastSupplierId]);
     }
   }, [isOpen]);
 
@@ -657,7 +660,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
       },
       {
         onSuccess: () => {
-          savePrefs.mutate({ "bill.lastSupplierId": supplierId });
+          savePrefs.mutate({ [PREF.billLastSupplierId]: supplierId });
           toast({ title: "Vendor bill created", variant: "success" });
           onClose();
         },
@@ -803,7 +806,7 @@ function CreateBillModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-navy/80">Bill Date</label>
               <input
@@ -1228,7 +1231,7 @@ function InventoryPurchasesTab() {
               value={markPaidDate}
               onChange={(e) => setMarkPaidDate(e.target.value)}
               title="Payment date"
-              className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+              className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             />
             <Button
               variant="danger"
@@ -1282,7 +1285,7 @@ function InventoryPurchasesTab() {
                 : "border-surface-border bg-white",
           )}
         >
-          <span className="overline block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
+          <span className="eyebrow-label block">Unlinked Items{needsMappingOnly ? " ✕" : ""}</span>
           <span
             className={cn(
               "mt-1.5 block text-2xl font-semibold tracking-[-0.02em]",
@@ -1337,7 +1340,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date from"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <span className="text-navy/70">–</span>
           <input
@@ -1349,7 +1352,7 @@ function InventoryPurchasesTab() {
               setPage(1);
             }}
             title="Bill date to"
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           {(dateFrom || dateTo) && (
             <button
@@ -1622,17 +1625,6 @@ function InventoryPurchasesTab() {
 
 // ─── Purchase Orders Tab ──────────────────────────────────────────────────────
 
-interface PORow {
-  id: string;
-  poNumber: string;
-  status: string;
-  supplier?: { id: string; name: string };
-  expectedDate?: string;
-  createdAt?: string;
-  totalAmount?: number;
-  items?: Array<{ qtyOrdered: number; unitCost: number }>;
-}
-
 const PO_STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "DRAFT", label: "Draft" },
@@ -1641,14 +1633,6 @@ const PO_STATUS_FILTERS = [
   { value: "RECEIVED", label: "Received" },
   { value: "CLOSED", label: "Closed" },
 ];
-
-function poTotal(po: PORow): number {
-  if (po.totalAmount != null) return Number(po.totalAmount);
-  return (po.items ?? []).reduce(
-    (sum, i) => sum + Number(i.qtyOrdered ?? 0) * Number(i.unitCost ?? 0),
-    0,
-  );
-}
 
 function PurchaseOrdersTab() {
   const [statusFilter, setStatusFilter] = React.useState("");
@@ -1969,7 +1953,7 @@ function OtherExpensesTab() {
             setFrom(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         <input
           type="date"
@@ -1978,7 +1962,7 @@ function OtherExpensesTab() {
             setTo(e.target.value);
             setPage(1);
           }}
-          className="h-9 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+          className="h-9 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
         {(categoryId || from || to) && (
           <button

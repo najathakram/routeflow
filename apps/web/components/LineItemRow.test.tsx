@@ -1,6 +1,6 @@
 import * as React from "react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, within } from "@/test-utils/render";
+import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
 /**
@@ -101,6 +101,38 @@ describe("LineItemRow layout contract (B565)", () => {
     const stepper = within(li).getByText("3").parentElement!;
     expect(stepper).toHaveClass("col-start-1", "row-start-2");
   });
+
+  // #2080 v2: at 320px the cases/units row (~186px) ran past its ~170-182px track into the line
+  // total. The row wraps, but each "[n] cases" / "+ [n] units" group stays whole, so the units
+  // group drops to its own line instead of splitting mid-group. Pixels: e2e 56's content probe.
+  it("wraps the cases/units row between two no-wrap groups (#2080)", () => {
+    // pieces > 0: the opt-in loose-units group is shown (#2696 d).
+    renderRow(makeProps({ ...boxedItem, pieces: 2 }));
+    const row = screen.getByTestId("line-qty-cases-row");
+    expect(row).toHaveClass("flex", "flex-wrap");
+    const cases = screen.getByTitle("Number of whole cases").parentElement!;
+    const units = screen.getByTitle("Extra loose units (less than a full case)").parentElement!;
+    expect(cases).not.toBe(units);
+    for (const group of [cases, units]) {
+      expect(group.parentElement).toBe(row);
+      expect(group).toHaveClass("whitespace-nowrap");
+    }
+    expect(within(cases).getByText(/^cases?$/)).toBeInTheDocument();
+    expect(within(units).getByText("+")).toBeInTheDocument();
+    expect(within(units).getByText(/^units?$/)).toBeInTheDocument();
+  });
+
+  // SA-558d: one wording in the row and the sheet (PriceEditor.test "case wording").
+  it("says '1 case' / 'n cases' and '1 unit' / 'n units'", () => {
+    const row = () => within(screen.getByTestId("line-qty-cases-row"));
+    const { unmount } = renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 1 }));
+    expect(row().getByText("case")).toBeInTheDocument();
+    expect(row().getByText("unit")).toBeInTheDocument();
+    unmount();
+    renderRow(makeProps({ ...boxedItem, boxes: 3, pieces: 2 }));
+    expect(row().getByText("cases")).toBeInTheDocument();
+    expect(row().getByText("units")).toBeInTheDocument();
+  });
 });
 
 describe("LineItemRow behaviour is unchanged by the layout wrapper", () => {
@@ -151,4 +183,84 @@ describe("B715: the tap-to-edit price has a visible affordance only when onTapPr
     expect(screen.queryByLabelText("Change price")).not.toBeInTheDocument();
     expect(screen.queryByText("Tap to change")).not.toBeInTheDocument();
   });
+
+  // #2696 (b), owner: "tap on the price and change it" — not a text box beside it. With the tap
+  // wired the sheet owns the price, so the row renders no inline price box; without it, it does.
+  it("renders no inline price box when onTapPrice is provided, and one when it is omitted", () => {
+    const { unmount } = renderRow({ ...makeProps(plainItem), onTapPrice: jest.fn() });
+    expect(screen.queryByText("Price:")).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+    unmount();
+    renderRow(makeProps(plainItem));
+    expect(screen.getByText("Price:")).toBeInTheDocument();
+    expect(screen.getAllByRole("textbox").length).toBeGreaterThan(0);
+  });
+});
+
+describe("multi-line per-item notes", () => {
+  const noteFieldFor = (item: LineItemRowItem) =>
+    renderRow(makeProps({ ...item, noteOpen: true })).getByPlaceholderText(
+      /note for this item/i,
+    ) as HTMLTextAreaElement;
+
+  it("the note field is a <textarea>, not a single-line <input>", () => {
+    const field = noteFieldFor(plainItem);
+    expect(field.tagName).toBe("TEXTAREA");
+  });
+
+  it("caps at 2000 characters, the same cap raised server-side for updateOrderItems", () => {
+    const field = noteFieldFor(plainItem);
+    expect(field).toHaveAttribute("maxLength", "2000");
+  });
+
+  it("Enter inserts a newline instead of doing nothing (the field has no onKeyDown of its own)", async () => {
+    const user = userEvent.setup();
+    const props = makeProps({ ...plainItem, noteOpen: true, note: "line one" });
+    renderRow(props);
+    const field = screen.getByPlaceholderText(/note for this item/i) as HTMLTextAreaElement;
+    // Cursor explicitly at the end of the existing value — onSetNote is a bare mock with no
+    // state to feed back, so this proves the browser's native textarea behavior inserts \n
+    // (nothing here does it manually), not a controlled-component re-render artifact.
+    await user.type(field, "{Enter}line two", {
+      initialSelectionStart: field.value.length,
+      initialSelectionEnd: field.value.length,
+    });
+    const calls = (props.onSetNote as jest.Mock).mock.calls.map((c) => c[0] as string);
+    expect(calls.some((v) => v.includes("\n"))).toBe(true);
+  });
+
+  it("a note already carrying multiple lines round-trips through the value prop intact", () => {
+    const field = noteFieldFor({ ...plainItem, note: "line one\nline two\nline three" });
+    expect(field.value).toBe("line one\nline two\nline three");
+  });
+});
+
+// SA-563 (#2696 d): "Remove extra units" is hidden at 0 cases — the units are then the whole line.
+describe("SA-563: the remove-extra-units control needs at least one case", () => {
+  it("cases 0 + units n ⇒ the control is absent", () => {
+    renderRow(makeProps({ ...boxedItem, boxes: 0, pieces: 3, qty: 3 }));
+    expect(screen.getByLabelText("Extra loose units")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Remove extra units")).not.toBeInTheDocument();
+  });
+
+  it("cases ≥ 1 + units n ⇒ present; tapping it sets units 0, leaves cases alone and keeps the line", () => {
+    const props = makeProps({ ...boxedItem, boxes: 2, pieces: 3, qty: 27 });
+    renderRow(props);
+    fireEvent.click(screen.getByLabelText("Remove extra units"));
+    expect(props.onSetPieces).toHaveBeenCalledWith(0);
+    expect(props.onSetBoxes).not.toHaveBeenCalled();
+    expect(props.onRemove).not.toHaveBeenCalled();
+  });
+});
+
+// #2706 parity: mobile's "+ units" carries hitSlop={8}; web grows the tap target by the same 8px
+// with a pseudo-element (layout unchanged).
+it("the '+ units' and remove-units controls carry an 8px hit-area extension", () => {
+  renderRow(makeProps({ ...boxedItem, boxes: 1, pieces: 0 }));
+  expect(screen.getByRole("button", { name: "+ units" })).toHaveClass(
+    "relative",
+    "before:-inset-2",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "+ units" }));
+  expect(screen.getByLabelText("Remove extra units")).toHaveClass("relative", "before:-inset-2");
 });

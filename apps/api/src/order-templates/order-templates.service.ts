@@ -1,4 +1,5 @@
 import {
+  Optional,
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -11,14 +12,24 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { syncOrderLineCompositions } from "../orders/order-composition";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { SystemConfigService } from "../system-config/system-config.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-restrictions.core";
+import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
 import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
 import { AddTemplateItemDto } from "./dto/add-template-item.dto";
-import { computeCategoryTax, computeLineSubtotal, roundMoney } from "@routeflow/pricing";
+import {
+  categoryTaxSnapshotOf,
+  computeCategoryTax,
+  computeLineSubtotal,
+  roundMoney,
+} from "@routeflow/pricing";
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
@@ -28,6 +39,18 @@ function startOfDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
+function leastPrivilegedAuthor(t: {
+  createdByRole?: string | null;
+  itemsEditedByRole?: string | null;
+}) {
+  const staff = (role?: string | null) =>
+    restrictionChannelForPrincipal({ role: role ?? null }) === "STAFF";
+  return staff(t.createdByRole) && staff(t.itemsEditedByRole)
+    ? { role: t.createdByRole }
+    : { type: "BUYER" };
 }
 
 @Injectable()
@@ -41,6 +64,9 @@ export class OrderTemplatesService {
     private readonly authGuard: AuthorizationGuardService,
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
+    private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -104,7 +130,7 @@ export class OrderTemplatesService {
       if (!customer) throw new ForbiddenException();
       dto.customerId = customer.id;
     }
-    return this.create(dto);
+    return this.create(dto, { role: user.role, userId: user.sub });
   }
 
   async updateForUser(id: string, dto: UpdateOrderTemplateDto, user: JwtPayload) {
@@ -115,7 +141,7 @@ export class OrderTemplatesService {
         .customer.findFirst({ where: { userId: user.sub } });
       if (!customer || template.customerId !== customer.id) throw new ForbiddenException();
     }
-    return this.update(id, dto);
+    return this.update(id, dto, { role: user.role, userId: user.sub });
   }
 
   async removeForUser(id: string, user: JwtPayload) {
@@ -129,7 +155,7 @@ export class OrderTemplatesService {
     return this.remove(id);
   }
 
-  async create(dto: CreateOrderTemplateDto) {
+  async create(dto: CreateOrderTemplateDto, creator?: { role: string; userId: string } | null) {
     if (!dto.customerId) throw new BadRequestException("customerId is required");
     // REG-B131: a removed (soft-deleted) customer is not a standing-order target either — the cron
     // already skips their templates, so creating one would only schedule a silent no-op. Refuse
@@ -153,6 +179,10 @@ export class OrderTemplatesService {
         name: dto.name,
         daysOfWeek: dto.daysOfWeek,
         notes: dto.notes,
+        // F-05 (SA-210): provenance snapshot; the unattended run's sell channel derives from it, NULL = buyer.
+        createdByRole: (creator?.role as UserRole | undefined) ?? null,
+        createdByUserId: creator?.userId ?? null,
+        itemsEditedByRole: (creator?.role as UserRole | undefined) ?? null,
         items: {
           create: dto.items.map((item) => ({
             productId: item.productId,
@@ -171,13 +201,19 @@ export class OrderTemplatesService {
     });
   }
 
-  async update(id: string, dto: UpdateOrderTemplateDto) {
+  async update(
+    id: string,
+    dto: UpdateOrderTemplateDto,
+    editor?: { role: string; userId: string } | null,
+  ) {
     await this.findOne(id);
     const include = {
       items: { include: { product: { select: { id: true, name: true, unit: true } } } },
       customer: { select: { id: true, businessName: true } },
     };
     const scalar = {
+      // F-05 (SA-247): every write of the ITEMS records its author's role; no known editor = unknown (NULL).
+      ...(dto.items ? { itemsEditedByRole: (editor?.role as UserRole | undefined) ?? null } : {}),
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.daysOfWeek !== undefined ? { daysOfWeek: dto.daysOfWeek } : {}),
       ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
@@ -204,23 +240,97 @@ export class OrderTemplatesService {
       throw new BadRequestException("One or more products not found");
     }
     const tenantId = this.prisma.getTenantId();
+    // F-05: a suspension survives an edit of the template unless THAT line's product or qty changed
+    // (a notes edit, or an edit of another line, must not launder a banned line back into the order).
+    const suspended: {
+      productId: string;
+      qty: number;
+      suspendedAt: Date | null;
+      suspendedReason: string | null;
+    }[] = await this.prisma.forTenant().orderTemplateItem.findMany({
+      where: { templateId: id, suspendedAt: { not: null } },
+      select: { productId: true, qty: true, suspendedAt: true, suspendedReason: true },
+    });
+    const carried = new Map(suspended.map((r) => [`${r.productId}:${r.qty}`, r]));
+    const lifted = suspended.filter(
+      (r) => !items.some((i) => i.productId === r.productId && i.qty === r.qty),
+    );
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.orderTemplateItem.deleteMany({ where: { templateId: id } });
+      // the lift and its audit row commit together (AuditService swallows errors: no silent lift)
+      for (const r of lifted)
+        await this.auditInTx(
+          tx,
+          "order-template.line-suspension-lifted",
+          id,
+          editor?.userId ?? null,
+          {
+            how: "EDITED",
+            productId: r.productId,
+          },
+        );
       return tx.orderTemplate.update({
         where: { id },
         data: {
           ...scalar,
           items: {
-            create: items.map((item) => ({
-              productId: item.productId,
-              qty: item.qty,
-              notes: item.notes,
-              tenantId, // nested creates bypass forTenant() extension
-            })),
+            create: items.map((item) => {
+              const keep = carried.get(`${item.productId}:${item.qty}`);
+              return {
+                productId: item.productId,
+                qty: item.qty,
+                notes: item.notes,
+                ...(keep
+                  ? { suspendedAt: keep.suspendedAt, suspendedReason: keep.suspendedReason }
+                  : {}),
+                tenantId, // nested creates bypass forTenant() extension
+              };
+            }),
           },
         },
         include,
       });
+    });
+  }
+
+  /** F-05: the audited way to put a suspended line back without changing it (the operator decides). */
+  async liftItemSuspension(templateId: string, itemId: string, user: JwtPayload) {
+    await this.findOne(templateId);
+    const item = await this.prisma
+      .forTenant()
+      .orderTemplateItem.findFirst({ where: { id: itemId, templateId } });
+    if (!item) throw new NotFoundException("Template item not found");
+    if (!item.suspendedAt) throw new BadRequestException("This line is not suspended");
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.orderTemplateItem.update({
+        where: { id: itemId },
+        data: { suspendedAt: null, suspendedReason: null },
+      });
+      await this.auditInTx(tx, "order-template.line-suspension-lifted", templateId, user.sub, {
+        how: "LIFTED",
+        productId: item.productId,
+      });
+    });
+    return { success: true };
+  }
+
+  /** F-05: an audit row written in the SAME transaction as the change it records (AuditService swallows errors). */
+  private async auditInTx(
+    tx: any,
+    action: string,
+    entityId: string,
+    userId: string | null,
+    meta: Record<string, unknown>,
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: this.prisma.getTenantId(),
+        userId,
+        action,
+        entityType: "order-templates",
+        entityId,
+        meta: meta as any,
+      },
     });
   }
 
@@ -232,24 +342,34 @@ export class OrderTemplatesService {
 
   // ─── Item management ─────────────────────────────────────────────────────────
 
-  async addItem(templateId: string, dto: AddTemplateItemDto) {
+  async addItem(templateId: string, dto: AddTemplateItemDto, editor?: { role: string } | null) {
     await this.findOne(templateId);
     const product = await this.prisma
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new BadRequestException("Product not found");
 
+    await this.markItemsEdited(templateId, editor);
     return this.prisma.forTenant().orderTemplateItem.create({
       data: { templateId, productId: dto.productId, qty: dto.qty, notes: dto.notes },
       include: { product: { select: { id: true, name: true, unit: true } } },
     });
   }
 
-  async removeItem(templateId: string, itemId: string) {
+  /** F-05 (SA-247): the role of whoever last wrote the items; no editor = unknown (NULL) = the stricter channel. */
+  private async markItemsEdited(templateId: string, editor?: { role: string } | null) {
+    await this.prisma.forTenant().orderTemplate.update({
+      where: { id: templateId },
+      data: { itemsEditedByRole: (editor?.role as UserRole | undefined) ?? null },
+    });
+  }
+
+  async removeItem(templateId: string, itemId: string, editor?: { role: string } | null) {
     const item = await this.prisma.forTenant().orderTemplateItem.findFirst({
       where: { id: itemId, templateId },
     });
     if (!item) throw new NotFoundException("Template item not found");
+    await this.markItemsEdited(templateId, editor);
     await this.prisma.forTenant().orderTemplateItem.delete({ where: { id: itemId } });
     return { success: true };
   }
@@ -288,12 +408,12 @@ export class OrderTemplatesService {
   // its value is uniformity — a future CUSTOMER grant on addItem cannot ship unguarded.
   async addItemForUser(templateId: string, dto: AddTemplateItemDto, user: JwtPayload) {
     await this.findOneForUser(templateId, user);
-    return this.addItem(templateId, dto);
+    return this.addItem(templateId, dto, { role: user.role });
   }
 
   async removeItemForUser(templateId: string, itemId: string, user: JwtPayload) {
     await this.findOneForUser(templateId, user);
-    return this.removeItem(templateId, itemId);
+    return this.removeItem(templateId, itemId, { role: user.role });
   }
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
@@ -365,9 +485,14 @@ export class OrderTemplatesService {
             continue;
           }
 
+          // F-05: the ban notice is sent AFTER the attempt, whatever its outcome (the suspension already
+          // committed, so a throw past it must not lose the one notice for good).
+          const ctx: { ban: { count: number; names: string } | null; placed?: boolean } = {
+            ban: null,
+          };
           try {
             // Unattended cron run — same warn-and-oversell posture as an operator.
-            const order = await this.createOrderFromTemplate(template, true);
+            const order = await this.createOrderFromTemplate(template, true, true, ctx);
             // null = all lines were license-gated + skipped → nothing created.
             if (order) totalCreated++;
             else totalSkipped++;
@@ -376,6 +501,9 @@ export class OrderTemplatesService {
               `[tenant:${tenant.id}] Failed to generate order for template ${template.id} (${template.name})`,
               err instanceof Error ? err.stack : String(err),
             );
+          } finally {
+            if (ctx.ban)
+              await this.notifyBanSkipped(template, ctx.ban, ctx.placed ? "ordered" : "held");
           }
         }
       });
@@ -391,10 +519,79 @@ export class OrderTemplatesService {
       id: string;
       customerId: string;
       name: string;
-      items: Array<{ productId: string; qty: number; notes?: string | null }>;
+      isActive?: boolean;
+      createdByRole?: string | null;
+      itemsEditedByRole?: string | null;
+      items: Array<{
+        id?: string;
+        productId: string;
+        qty: number;
+        notes?: string | null;
+        suspendedAt?: Date | null;
+      }>;
     },
     isStaffRole: boolean,
+    unattended = false,
+    /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
+    ctx?: { ban: { count: number; names: string } | null; placed?: boolean },
   ) {
+    // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
+    // instead SKIPS the banned line(s), still orders the rest, notifies once and marks each banned template
+    // line suspended until it is edited or lifted; only an all-banned template orders nothing (and is then
+    // deactivated, so the cron does not notify again). A suspended line is never ordered, by either path.
+    // Channel: the run is judged at the LEAST privileged of the template's creator and last items-editor
+    // (SA-247): STAFF only when both are known staff, so a buyer's edit of an operator's template, or an
+    // unknown author, is BUYER_PORTAL; a manual run is the caller's own role.
+    const channel = restrictionChannelForPrincipal(
+      unattended
+        ? leastPrivilegedAuthor(template)
+        : { role: isStaffRole ? UserRole.OPERATOR : UserRole.CUSTOMER },
+    );
+    const restrictionTenantId = requireRestrictionTenantId(this.prisma.getTenantId());
+    const customerId = template.customerId;
+    const live = template.items.filter((i) => !i.suspendedAt);
+    let banNote: { count: number; names: string } | null = null;
+    if (!unattended) {
+      if (live.length === 0)
+        throw new BadRequestException(
+          "Every line on this standing order is suspended — lift a line or edit the template.",
+        );
+      await this.sellingRestrictions.assertLinesSellable({
+        tenantId: restrictionTenantId,
+        customerId,
+        lines: live.map((i) => ({ productId: i.productId })),
+        channel,
+      });
+    } else {
+      const verdict = await this.sellingRestrictions.checkLinesSellable({
+        tenantId: restrictionTenantId,
+        customerId,
+        lines: live.map((i) => ({ productId: i.productId })),
+        channel,
+      });
+      const banned = new Set(
+        verdict.outcome === "BLOCK" || verdict.outcome === "INDETERMINATE"
+          ? verdict.reasons.map((r) => r.productId)
+          : [],
+      );
+      if (banned.size > 0) {
+        await this.suspendBannedLines(template, banned, verdict.reasons);
+        banNote = {
+          count: banned.size,
+          names: [...new Set(verdict.reasons.map((r) => r.productName).filter(Boolean))].join(", "),
+        };
+        if (ctx) ctx.ban = banNote;
+      }
+      template = { ...template, items: live.filter((i) => !banned.has(i.productId)) };
+      if (template.items.length === 0) {
+        // nothing left to order: deactivate (once — the cron no longer selects it) and say so once
+        await this.deactivateForRestriction(template);
+        await this.notifyBanSkipped(template, banNote, "deactivated");
+        if (ctx) ctx.ban = null; // already told: the caller must not notify again
+        return null;
+      }
+    }
+    if (!unattended) template = { ...template, items: live };
     const productIds = template.items.map((i) => i.productId);
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
@@ -440,7 +637,7 @@ export class OrderTemplatesService {
     }
     // Every line was a license-gated category the customer isn't verified for —
     // there is nothing to order. Callers treat null as "skipped".
-    if (allowedItems.length === 0) return null;
+    if (allowedItems.length === 0) return null; // nothing is ordered
 
     // REG-B48: a standing order is the CUSTOMER's order whoever triggers it (06:00 cron,
     // operator "Generate now", buyer "Reorder"), so every line is priced exactly as the
@@ -508,6 +705,16 @@ export class OrderTemplatesService {
             priceIncludesTax: category.priceIncludesTax,
           })
         : 0;
+      // B297 (SA-088): freeze the trio categoryTaxAmount above was computed from.
+      const categorySnapshot = categoryTaxSnapshotOf(
+        category
+          ? {
+              taxType: category.taxType as CategoryTaxType,
+              rate: category.rate,
+              priceIncludesTax: category.priceIncludesTax,
+            }
+          : null,
+      );
       return {
         productId: item.productId,
         qty: item.qty,
@@ -520,6 +727,7 @@ export class OrderTemplatesService {
         // W4/W6b: snapshot the product's regulated category at sale time (unchanged).
         trackedCategoryId: product.trackedCategoryId ?? null,
         categoryTaxAmount,
+        ...categorySnapshot,
         tenantId, // nested creates bypass forTenant() extension
       };
     });
@@ -578,6 +786,7 @@ export class OrderTemplatesService {
           customer: { select: { id: true, businessName: true } },
         },
       });
+      await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
       // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
       // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's
@@ -588,9 +797,13 @@ export class OrderTemplatesService {
         tx,
         stockLines,
         isStaffRole,
+        // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
+        { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
       );
       return order;
     });
+
+    if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
 
     // If the customer already had PENDING orders, fold the newly-created one
     // (and any pre-existing duplicates) into a single winner. The newest order
@@ -622,8 +835,83 @@ export class OrderTemplatesService {
     return merged ?? created;
   }
 
-  /** Spec §8: when a standing order skips license-gated lines, notify the buyer
-   *  (push) and the seller's operators (push). Best-effort per recipient. */
+  /**
+   * F-05: the ONE notice a banning run sends, worded after the filtering — what actually happened:
+   * "ordered" (the rest went ahead), "held" (banned lines suspended but nothing was ordered, e.g. the rest is
+   * license-gated: the template stays active), "deactivated" (nothing left to order, the template was switched off).
+   * Never claims a deactivation that did not happen. Best-effort: a failure here never fails the run.
+   */
+  private async notifyBanSkipped(
+    template: { customerId: string; name: string },
+    note: { count: number; names: string } | null,
+    mode: "ordered" | "held" | "deactivated",
+  ): Promise<void> {
+    const what = note?.names ? ` (${note.names})` : "";
+    const n = note?.count ?? 0;
+    const cust = {
+      ordered: `"${template.name}" went ahead without ${n} item(s) that can't be sold right now${what}. Contact your supplier.`,
+      held: `"${template.name}" was not sent this time: ${n} item(s) can't be sold right now${what} and the rest could not be ordered. Contact your supplier.`,
+      deactivated: `"${template.name}" was not sent: nothing on it can be sold right now${what}. Contact your supplier.`,
+    }[mode];
+    const ops = {
+      ordered: `"${template.name}": ${n} line(s) are under a selling restriction${what} and are suspended until the line is edited or lifted.`,
+      held: `"${template.name}" produced no order: ${n} line(s) are under a selling restriction${what} and suspended, and the remaining lines could not be ordered (for example a license). The template is still active.`,
+      deactivated: `"${template.name}" was not generated and is deactivated: every line is under a selling restriction or suspended${what}.`,
+    }[mode];
+    if (!note && mode !== "deactivated") return;
+    try {
+      await this.notifications
+        .sendToCustomer(template.customerId, "Standing order", cust)
+        .catch(() => {});
+      await this.notifyOperators(ops);
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  /** F-05: mark each banned template line suspended, atomically with its audit row. */
+  private async suspendBannedLines(
+    template: { id: string },
+    bannedProductIds: ReadonlySet<string>,
+    reasons: Array<{ ruleId?: string | null }>,
+  ): Promise<void> {
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.orderTemplateItem.updateMany({
+        where: { templateId: template.id, productId: { in: [...bannedProductIds] } },
+        data: { suspendedAt: new Date(), suspendedReason: "SELLING_RESTRICTED" },
+      });
+      await this.auditInTx(tx, "order-template.line-suspended", template.id, null, {
+        reason: "SELLING_RESTRICTED",
+        productIds: [...bannedProductIds],
+        ruleIds: [...new Set(reasons.map((r) => r.ruleId).filter(Boolean))],
+      });
+    });
+  }
+
+  /** F-05: a template with no orderable line is deactivated once, with its audit row in the same tx. */
+  private async deactivateForRestriction(template: { id: string }): Promise<void> {
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.orderTemplate.update({ where: { id: template.id }, data: { isActive: false } });
+      await this.auditInTx(tx, "order-template.deactivated", template.id, null, {
+        reason: "NO_SELLABLE_LINES",
+      });
+    });
+  }
+
+  private async notifyOperators(body: string): Promise<void> {
+    const operators = await this.prisma.user.findMany({
+      where: {
+        tenantId: this.prisma.getTenantId(),
+        role: { in: ["OPERATOR", "TENANT_ADMIN"] },
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+    for (const op of operators) {
+      await this.notifications.sendToUser(op.id, { title: "Standing order", body }).catch(() => {});
+    }
+  }
+
   private async notifySkippedRegulatedLines(
     template: { customerId: string; name: string },
     blocked: Array<{ categoryName: string }>,

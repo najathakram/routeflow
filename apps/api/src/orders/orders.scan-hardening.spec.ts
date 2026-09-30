@@ -1367,7 +1367,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       1,
       "cust-1",
       {},
-      { lockMode: "try" },
+      { lockMode: "try", actor: expect.objectContaining({ role: "OPERATOR" }) },
     );
 
     // (b) the POST-CREATE auto-consolidation on a CUSTOMER caller.
@@ -1379,7 +1379,7 @@ describe("OrdersController.create — staff merge is denomination-aware (T-B199 
       2,
       "cust-1",
       { buyerInitiated: true },
-      { lockMode: "try" },
+      { lockMode: "try", actor: expect.objectContaining({ role: "CUSTOMER" }) },
     );
   });
 
@@ -1619,7 +1619,10 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     // normalizeScanCode instead of matching the raw string.
     const candidates = normalizeScanCode(SCANNED);
     expect(candidates).toContain("012345678905");
-    expect(scopedProductFindMany.mock.calls[0][0].where.OR).toEqual(
+    // M4a-1: the shared findScanMatches ANDs the buyer's scope ({ isActive: true }) with the code OR.
+    const where = scopedProductFindMany.mock.calls[0][0].where;
+    expect(where.AND[0]).toEqual({ isActive: true });
+    expect(where.AND[1].OR).toEqual(
       expect.arrayContaining([
         { barcode: { in: candidates } },
         { sku: { in: candidates } },

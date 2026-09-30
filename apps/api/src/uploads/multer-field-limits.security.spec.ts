@@ -95,7 +95,7 @@ describe("multer field-parser limits (CVE-2026-82333)", () => {
       new SentryExceptionFilter(app.getHttpAdapter()),
       new MulterExceptionFilter(),
     );
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -179,6 +179,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("a shipped upload route receives its file (silent-skip oracle)", () => {
   let app: INestApplication;
@@ -215,7 +216,7 @@ describe("a shipped upload route receives its file (silent-skip oracle)", () => 
       .compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

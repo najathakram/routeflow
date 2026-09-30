@@ -1,5 +1,6 @@
 "use client";
 
+import { driverNavItemVisible } from "@/lib/portal-routing";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -171,8 +172,14 @@ const CUSTOMER_NAV: NavEntry[] = [
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
 ];
 
-/** Driver nav — routes and settings only */
+/**
+ * Driver nav — routes and settings only. PHASE 1a (web driver mode): "Today's
+ * route" is the landing item, pointing at the DRIVER-only my-runs view — see
+ * getNavForRole's filter below, which drops it (and "My Routes") together
+ * when neither routes addon is enabled.
+ */
 const DRIVER_NAV: NavEntry[] = [
+  { kind: "leaf", label: "Today's route", href: "/routes/my-runs", icon: Truck },
   { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
   { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
@@ -187,10 +194,10 @@ function getNavForRole(
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER") {
     // Drivers run both recurring routes and ad-hoc delivery trips, so "My
-    // Routes" needs either surface unlocked — not just recurring routes.
-    if (!(routesAccess || deliveryAccess))
-      return DRIVER_NAV.filter((e) => e.kind !== "leaf" || e.href !== "/routes");
-    return DRIVER_NAV;
+    // Routes"/"Today's route" need either surface unlocked — not just
+    // recurring routes. GET /route-runs/my-runs is gated the same way
+    // server-side (RouteRunsController's own @RequireAddon).
+    return DRIVER_NAV.filter((e) => e.kind !== "leaf" || driverNavItemVisible(e.href, access));
   }
 
   // Tenants without either addon never see the Dispatch group — it's gated
@@ -591,12 +598,13 @@ function Header({
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
-  const { data: expiring = [] } = useExpiringAuthorizations();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
   // GET /customers/pending-portal-approvals (also OPERATOR-only) — a
   // CUSTOMER/DRIVER on their own /dashboard must fire neither.
   const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  // #2254: GET /authorizations/expiring-soon is @Roles(OPERATOR) — staff only, like the above.
+  const { data: expiring = [] } = useExpiringAuthorizations({ enabled: isStaffRole });
   // Buyer-connect requests whose sign-in email didn't match the customer
   // record — pinned in the bell until the seller approves or declines
   // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).

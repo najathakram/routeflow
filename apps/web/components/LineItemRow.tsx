@@ -24,6 +24,8 @@ export interface LineItemRowItem {
   listPrice: number; // standard pricePerUnit from product catalog
   specialPrice?: number; // permanent customer-specific price (from CustomerPrice)
   discountedPrice?: number; // one-time ad-hoc override (below list = discount, above = upsell)
+  /** #2696(c): why the price moved — required when it moves off a special (tier) price. */
+  overrideReason?: string;
   unitPrice: number; // effective price used for display totals
   priceType: "STANDARD" | "SPECIAL" | "DISCOUNTED" | "MANUAL";
   qty: number; // total pieces (authoritative)
@@ -87,6 +89,9 @@ export interface LineItemRowProps {
    *  inline-editable exactly as it is today — this prop only adds a click target
    *  around the existing price display, it never removes the inline input. */
   onTapPrice?: () => void;
+  /** #2696 (b): a typed qty for a plain (non-case) line. When given, the qty between − / + is a
+   *  tap-to-type input; when omitted (other callers), it stays the read-only count it was. */
+  onSetQty?: (value: number) => void;
   /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
   unitSlot?: React.ReactNode;
 
@@ -112,6 +117,10 @@ export interface LineItemRowProps {
   deliveredQty?: number | null;
 }
 
+/** SA-558d: the ONE case/unit wording, shared by the row and the scan screen's PriceEditor. */
+export const caseWord = (n: number | null | undefined) => (n === 1 ? "case" : "cases");
+export const unitWord = (n: number | null | undefined) => (n === 1 ? "unit" : "units");
+
 /**
  * Renders one order line item: name/price display, the case/unit qty controls
  * (or a plain +/- stepper for non-boxed products), the live line total, the
@@ -119,6 +128,21 @@ export interface LineItemRowProps {
  * `CreateOrderModal.tsx`'s inline `.map()` — every branch below existed there
  * unchanged; see that file's git history for prior art. No behavior change.
  */
+/**
+ * #2696 (d): on a case-packed line in Case mode the loose-units field is OPT-IN ("+ units"), never
+ * shown by default — so a new line submits pieces = 0. Shown whenever pieces > 0 regardless (an
+ * edited line with boxes + pieces, or one switched back from Unit mode, never hides its units).
+ * Shared by the row and the scan screen's PriceEditor so the two cannot drift.
+ */
+export function useLooseUnitsToggle(pieces: number | null | undefined) {
+  const [open, setOpen] = React.useState(false);
+  return {
+    showLooseUnits: open || (pieces ?? 0) > 0,
+    openLooseUnits: () => setOpen(true),
+    closeLooseUnits: () => setOpen(false),
+  };
+}
+
 export function LineItemRow({
   item: li,
   category,
@@ -143,8 +167,10 @@ export function LineItemRow({
   onRemove,
   unitSlot,
   onTapPrice,
+  onSetQty,
   rowRef,
 }: LineItemRowProps) {
+  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   return (
     <li
       ref={rowRef}
@@ -186,13 +212,13 @@ export function LineItemRow({
             <span className="text-[10px] text-navy/70">/ {li.unit}</span>
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>
@@ -269,8 +295,9 @@ export function LineItemRow({
               {category.name} · regulated
             </span>
           )}
-          {/* One-time discount input (only when no special price already applied) */}
-          {li.priceType !== "SPECIAL" && (
+          {/* One-time discount input (only when no special price already applied). #2696 (b): when
+              the price is tap-to-edit (onTapPrice), the sheet owns the price — no inline box. */}
+          {li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
                 {li.unitsPerBox && li.unitsPerBox > 1 ? "Case price:" : "Price:"}
@@ -306,20 +333,28 @@ export function LineItemRow({
             />
           </div>
           {(li.noteOpen || li.note?.trim()) && (
-            <input
-              type="text"
-              maxLength={500}
+            <textarea
+              rows={2}
+              maxLength={2000}
               value={li.note ?? ""}
               onChange={(e) => onSetNote(e.target.value)}
               placeholder="Flavor or note for this item (prints on invoice)"
-              className="mt-1 w-full rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
+              className="mt-1 w-full resize-y rounded border border-surface-border bg-white px-2 py-1 text-xs text-navy placeholder:text-navy/40 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
           )}
         </div>
       )}
       {/* Qty controls */}
       {li.unitsPerBox ? (
-        <div className="col-start-1 row-start-2 flex min-w-[190px] flex-col gap-0.5">
+        // Not #2080 — a narrower 320px glitch found alongside it: the grid's `minmax(0,1fr)`
+        // track resolves to ~170-182px there, and a `min-w-[190px]` floor forced this column
+        // past it. `min-w-0` below `sm` lets the column shrink; its CONTENT fits the shrunk
+        // track because the cases/units row below wraps (spec 56 measures the content, not
+        // this box). `sm:min-w-[190px]` keeps desktop unchanged.
+        <div
+          data-testid="line-qty-controls"
+          className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]"
+        >
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
@@ -362,29 +397,67 @@ export function LineItemRow({
               <span className="text-xs text-navy/70">units</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5">
-              <input
-                type="number"
-                min={0}
-                value={li.boxes ?? 0}
-                onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
-                onFocus={(e) => e.target.select()}
-                className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Number of whole cases"
-              />
-              <span className="text-xs text-navy/70">cases</span>
-              <span className="text-xs text-navy/30">+</span>
-              <input
-                type="number"
-                min={0}
-                max={li.unitsPerBox - 1}
-                value={li.pieces ?? 0}
-                onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                onFocus={(e) => e.target.select()}
-                className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Extra loose units (less than a full case)"
-              />
-              <span className="text-xs text-navy/70">units</span>
+            // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
+            // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
+            // 320px, less as the line total in column 2 grows). The second group drops to
+            // its own line there instead of overflowing into the line total; on one line
+            // (every `sm`+ layout) nothing changes.
+            <div
+              data-testid="line-qty-cases-row"
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
+            >
+              <span className="flex items-center gap-1.5 whitespace-nowrap">
+                <input
+                  type="number"
+                  min={0}
+                  value={li.boxes ?? 0}
+                  onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
+                  onFocus={(e) => e.target.select()}
+                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                  title="Number of whole cases"
+                />
+                <span className="text-xs text-navy/70">{caseWord(li.boxes ?? 0)}</span>
+              </span>
+              {showLooseUnits ? (
+                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="text-xs text-navy/30">+</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={li.unitsPerBox - 1}
+                    value={li.pieces ?? 0}
+                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+                    onFocus={(e) => e.target.select()}
+                    className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    title="Extra loose units (less than a full case)"
+                    aria-label="Extra loose units"
+                  />
+                  <span className="text-xs text-navy/70">{unitWord(li.pieces ?? 0)}</span>
+                  {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
+                  {(li.boxes ?? 0) >= 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSetPieces(0);
+                        closeLooseUnits();
+                      }}
+                      aria-label="Remove extra units"
+                      className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={openLooseUnits}
+                  // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
+                  className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
+                >
+                  + units
+                </button>
+              )}
             </div>
           )}
           <span className="text-[10px] text-navy/30">
@@ -407,7 +480,20 @@ export function LineItemRow({
           >
             −
           </button>
-          <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
+          {onSetQty ? (
+            <input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={li.qty}
+              onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
+              onFocus={(e) => e.target.select()}
+              aria-label="Quantity"
+              className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+          ) : (
+            <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
+          )}
           <button
             type="button"
             onClick={() => onQtyDelta(1)}
@@ -431,7 +517,10 @@ export function LineItemRow({
           unitsPerBox: li.unitsPerBox ?? null,
         }).toFixed(2)}
       </span>
-      <div className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3">
+      <div
+        data-testid="line-actions-column"
+        className="col-start-2 row-start-1 flex shrink-0 items-start gap-2 sm:gap-3"
+      >
         <button
           type="button"
           onClick={onToggleNoteOpen}

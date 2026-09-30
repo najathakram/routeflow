@@ -1,3 +1,7 @@
+// SA-429 (#2377): these driver cases pin OTHER behaviour (pricing, merges, restrictions, returns),
+// not ownership, and their mocks carry no assigned run; the ownership predicate itself is pinned by
+// driver-edit-access.spec.ts and driver-edit-access.db.spec.ts.
+jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
 import {
   buildOrdersService,
   buyerPseudoUser,

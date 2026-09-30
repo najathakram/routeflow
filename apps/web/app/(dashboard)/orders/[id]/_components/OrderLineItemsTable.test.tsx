@@ -81,6 +81,14 @@ describe("OrderLineItemsTable — columns and a plain line", () => {
     renderTable([line({ notes: "leave at dock" })]);
     expect(screen.getByText("leave at dock")).toBeInTheDocument();
   });
+
+  it("a multi-line note keeps its line breaks (whitespace-pre-line, not collapsed to a space)", () => {
+    renderTable([line({ notes: "leave at dock\nring bell twice\nask for Sam" })]);
+    const note = screen.getByText(
+      (_, el) => el?.textContent === "leave at dock\nring bell twice\nask for Sam",
+    );
+    expect(note.className).toEqual(expect.stringContaining("whitespace-pre-line"));
+  });
 });
 
 describe("OrderLineItemsTable — quantity", () => {
@@ -90,6 +98,25 @@ describe("OrderLineItemsTable — quantity", () => {
     ]);
     const split = screen.getByText("2 boxes + 3 pcs");
     expect(split).toHaveAttribute("title", "27 pcs total");
+  });
+
+  // B653 (units_v1): a line sold by a named unit shows ITS label, never the generic "boxes".
+  it("a Case line reads '3 Cases', not '3 boxes'", () => {
+    renderTable([
+      line({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12, unitLabel: "Case", subtotal: 195 }),
+    ]);
+    expect(screen.getByText("3 Cases")).toBeInTheDocument();
+    expect(screen.queryByText("3 boxes")).toBeNull();
+  });
+
+  it("a factor-1 unit line (no split) still names its unit: '5 Piece', never a bare '5'", () => {
+    renderTable([line({ qty: 5, boxes: null, pieces: null, unitLabel: "Piece", subtotal: 325 })]);
+    expect(screen.getByText("5 Piece")).toBeInTheDocument();
+  });
+
+  it("a pack line (no unitLabel) is unchanged: '3 boxes'", () => {
+    renderTable([line({ qty: 36, boxes: 3, pieces: 0, unitsPerBox: 12, subtotal: 195 })]);
+    expect(screen.getByText("3 boxes")).toBeInTheDocument();
   });
 
   it("names BUY_N_GET_M free units so the reduced total does not read as a pricing error", () => {

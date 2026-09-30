@@ -57,6 +57,15 @@ describe("LoginPage (operator)", () => {
     window.history.replaceState(null, "", "/login");
   });
 
+  // B891: the Enter-in-username handler focuses getElementById("password"); the field's id is
+  // explicit, so the useId default can never break it.
+  it("the password field is findable by its explicit id, and its label targets it", () => {
+    renderWithProviders(<LoginPage />);
+    const byId = document.getElementById("password");
+    expect(byId).toBeInstanceOf(HTMLInputElement);
+    expect(screen.getByLabelText("Password")).toBe(byId);
+  });
+
   it("shows the zod validation message and never calls the API when a required field is empty", async () => {
     const user = userEvent.setup();
     renderWithProviders(<LoginPage />);
@@ -213,5 +222,22 @@ describe("LoginPage — tenant logo in the auth card (R9)", () => {
     const { container } = renderWithProviders(<LoginPage />);
 
     expect(container.querySelector(".rf-auth-card img")).toBeNull();
+  });
+});
+
+// Owner ruling (mobile-web-proxy-redesign): /login no longer proxies phone UAs
+// to the installed driver app, so it needs its own explicit link there.
+describe("LoginPage — driver app link (mobile-web-proxy-redesign)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/login");
+  });
+
+  it("links to the driver app's own login screen", () => {
+    renderWithProviders(<LoginPage />);
+
+    const link = screen.getByRole("link", { name: /open the driver app/i });
+    expect(link).toHaveAttribute("href", "https://routeflowmobile-production.up.railway.app/login");
   });
 });

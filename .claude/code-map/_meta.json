@@ -1,6 +1,6 @@
 {
-  "mappedSha": "b87656895e3eeb530b8c523dc4124de47194fe25",
-  "generatedAt": "2026-09-21T01:21:47.750Z",
+  "mappedSha": "e23a8b03530602be1e52b3efe2a9867b7f97912f",
+  "generatedAt": "2026-09-30T19:40:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-19 — refresh 56c01d2b→a3c37bdb: B562 critical inventory sales-blind-replay fix + #931 UI hiding, #933 LineItemRow extraction, B536/B543 platform-admin getStats fixes, B559 platform-admin mobile tab-overflow, B535 TAP_TARGET + B534 grid-cols + B533 buyer-table mobile sweep, B343 credit-note voided event, B525 dead-addon-toggle removal, B519 web unmet-requires warning, B549 booking min-width + A7 nav-CSS guard, #871 marketing copy rewrite, A6 marketing cache-control, B523 campaign-check self-heal, #940 docs-only bug filings, and #936 schema spine (ProductUnit/SupplierProduct/ProductCategoryLabel/SellingRestriction+enums/CustomerAddress.stateCode/VendorBill.purchaseOrderId — schema-only, no API surface yet) mapped once merged.** See CHANGELOG.md for the full landing list."
+  "notes": "**2026-09-30 \u2014 windows 9 and 11 landings #2185, #2781, #2796, #2795, #2754, #2790 (docs-only bookkeeping).** New `api/landing-2026-09-30-w9-w11.md` (web and packages included) and `mobile/landing-2026-09-30-w9-w11.md` (TOC rows in `api.md`/`mobile.md`), one bullet per PR, each grepped in the merged tree; #2781, #2185 and #2754 span both sides (bullet plus pointer). Gotcha recorded: #2790's local `round4` in `products-export.service.ts` (L-248). No source changed. mappedSha -> e23a8b03. See CHANGELOG.md."
 }

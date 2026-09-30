@@ -52,7 +52,12 @@ import { isCreditOpenForApply, openCreditBalance } from "../../../../lib/credit-
 import { siblingInvoicesOf } from "../../../../lib/invoice-siblings";
 import { showToast } from "../../../../lib/toast";
 import { alertInfo, confirm, chooseAction } from "../../../../lib/confirm";
-import { formatQtySplit } from "@routeflow/pricing";
+import {
+  invoiceLineSubLines,
+  invoiceLineUnitNoun,
+  usesUnitDisplay,
+} from "../../../../lib/invoice-line-display";
+import { invoiceLineQtyText } from "@routeflow/pricing";
 import { freeUnitsLabel } from "../../../../lib/buyer-cart-logic";
 import { ACTIVATION_BUDGET_MS, sharePdf } from "../../../../lib/share-pdf";
 import { printPdf } from "../../../../lib/print-pdf";
@@ -856,10 +861,14 @@ export default function InvoiceDetailScreen() {
                         {it.description}
                       </Text>
                       <Text style={styles.itemSub}>
-                        {it.boxes != null || it.pieces != null
+                        {usesUnitDisplay(it)
                           ? // Boxed line: unitPrice is the BOX price — "qty × price"
-                            // would read as pieces × box-price (visually wrong).
-                            `${formatQtySplit({ qty: it.qty, boxes: it.boxes, pieces: it.pieces })} @ ${fmtCurrency(it.unitPrice)}/box`
+                            // would read as pieces × box-price (visually wrong). B653:
+                            // both the qty noun and the price-per-unit noun read the
+                            // line's own unitLabel ("Case"), not a hardcoded "box".
+                            // #1275: a factor-1 unit line (no split) also routes here —
+                            // usesUnitDisplay catches it via unitLabel alone.
+                            `${invoiceLineQtyText(it)} @ ${fmtCurrency(it.unitPrice)}/${invoiceLineUnitNoun(it)}`
                           : `${it.qty} × ${fmtCurrency(it.unitPrice)}`}
                       </Text>
                       {/* Suggested retail price snapshot — per PIECE, display-only. */}
@@ -881,10 +890,15 @@ export default function InvoiceDetailScreen() {
                         </Text>
                       ) : null}
                       {it.notes?.trim() ? (
-                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={2}>
+                        <Text style={[styles.itemSub, { fontStyle: "italic" }]} numberOfLines={4}>
                           {it.notes}
                         </Text>
                       ) : null}
+                      {invoiceLineSubLines(it).map((text, i) => (
+                        <Text key={i} style={styles.itemSub} testID="line-component-sub-line">
+                          {text}
+                        </Text>
+                      ))}
                       {it.priceType === "MANUAL" &&
                       it.originalPrice != null &&
                       Number(it.unitPrice) > Number(it.originalPrice) ? (

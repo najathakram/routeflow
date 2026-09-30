@@ -1,9 +1,12 @@
 import { Test } from "@nestjs/testing";
 import { EstimatesService } from "./estimates.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { NumberingService } from "../import/numbering.service";
 import { createMockPrisma } from "../testing/prisma-mock";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 /**
  * B451 — Strix coverage gap 4 (business-logic financial-total manipulation)
@@ -32,12 +35,24 @@ describe("EstimatesService.create — unvalidated discount/tax (B451 gap 4)", ()
     const mod = await Test.createTestingModule({
       providers: [
         EstimatesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
           provide: NumberingService,
           useValue: { reserveNext: jest.fn().mockResolvedValue("EST-1") },
         },
+        { provide: RegulatedLedgerService, useValue: {} },
       ],
     }).compile();
     service = mod.get(EstimatesService);

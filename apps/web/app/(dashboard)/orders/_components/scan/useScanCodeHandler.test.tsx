@@ -1,5 +1,9 @@
 import { renderHook, waitFor } from "@testing-library/react";
-import { useScanCodeHandler, type ScanCodeHandlerDeps } from "./useScanCodeHandler";
+import {
+  isConnectivityError,
+  useScanCodeHandler,
+  type ScanCodeHandlerDeps,
+} from "./useScanCodeHandler";
 
 const mockResolve = jest.fn();
 jest.mock("@/lib/barcode-resolve", () => ({
@@ -27,7 +31,7 @@ describe("useScanCodeHandler", () => {
 
     result.current.current("012345678905");
 
-    await waitFor(() => expect(d.addLineItem).toHaveBeenCalledWith(product));
+    await waitFor(() => expect(d.addLineItem).toHaveBeenCalledWith(product, expect.stringMatching(/^(BOX|UNIT)$/)));
     expect(d.onUnknownCode).not.toHaveBeenCalled();
     expect(d.toast).not.toHaveBeenCalled();
   });
@@ -44,7 +48,7 @@ describe("useScanCodeHandler", () => {
     rerender({ d: second });
     captured.current("012345678905");
 
-    await waitFor(() => expect(second.addLineItem).toHaveBeenCalledWith(product));
+    await waitFor(() => expect(second.addLineItem).toHaveBeenCalledWith(product, expect.stringMatching(/^(BOX|UNIT)$/)));
     expect(first.addLineItem).not.toHaveBeenCalled();
   });
 
@@ -87,5 +91,110 @@ describe("useScanCodeHandler", () => {
       }),
     );
     expect(d.onUnknownCode).not.toHaveBeenCalled();
+  });
+});
+
+describe("isConnectivityError", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it.each([
+    ["axios ERR_NETWORK", { code: "ERR_NETWORK", message: "Network Error" }],
+    ["axios timeout", { code: "ECONNABORTED", message: "timeout of 10000ms exceeded" }],
+    ["ETIMEDOUT", { code: "ETIMEDOUT" }],
+    ["a bare 'Network Error'", { message: "Network Error" }],
+    ["a message that says timeout", { message: "Request timeout" }],
+  ])("%s is a connectivity failure", (_n, err) => {
+    expect(isConnectivityError(err)).toBe(true);
+  });
+
+  it("the browser reporting offline is a connectivity failure even with no code", () => {
+    jest.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    expect(isConnectivityError(new Error("boom"))).toBe(true);
+  });
+
+  it("an HTTP response - even a 500 - means the server was reached, so it is NOT a signal problem", () => {
+    expect(isConnectivityError({ response: { status: 500 }, message: "Network Error" })).toBe(
+      false,
+    );
+    expect(isConnectivityError({ response: { status: 404 } })).toBe(false);
+  });
+
+  it("an unrelated error is not a connectivity failure", () => {
+    expect(isConnectivityError(new Error("Cannot read properties of undefined"))).toBe(false);
+    expect(isConnectivityError(null)).toBe(false);
+    expect(isConnectivityError(undefined)).toBe(false);
+  });
+});
+
+describe("useScanCodeHandler - connectivity + quiet", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("reports offline: true for a transport failure, and false for an HTTP error", async () => {
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    mockResolve.mockRejectedValueOnce({ code: "ERR_NETWORK", message: "Network Error" });
+    await expect(result.current.current("111")).resolves.toMatchObject({
+      kind: "error",
+      offline: true,
+    });
+
+    mockResolve.mockRejectedValueOnce({ response: { status: 500, data: { message: "boom" } } });
+    await expect(result.current.current("222")).resolves.toMatchObject({
+      kind: "error",
+      offline: false,
+      message: "boom",
+    });
+  });
+
+  it("quiet suppresses the lookup-failure toast but still returns the error", async () => {
+    mockResolve.mockRejectedValue({ code: "ERR_NETWORK", message: "Network Error" });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    const res = await result.current.current("111", { quiet: true });
+
+    expect(res).toMatchObject({ kind: "error", offline: true });
+    expect(d.toast).not.toHaveBeenCalled();
+  });
+
+  it("without quiet the classic behaviour is unchanged: it toasts", async () => {
+    mockResolve.mockRejectedValue({ code: "ERR_NETWORK", message: "Network Error" });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await result.current.current("111");
+
+    expect(d.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Couldn't look up the code" }),
+    );
+  });
+
+  it("a BACKGROUND lookup that finds nothing reports unknown but never opens create-product", async () => {
+    mockResolve.mockResolvedValue({ notFound: true, archived: false });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await expect(result.current.current("111", { background: true })).resolves.toEqual({
+      kind: "unknown",
+    });
+    expect(d.onUnknownCode).not.toHaveBeenCalled();
+
+    await result.current.current("222"); // a live scan still does
+    expect(d.onUnknownCode).toHaveBeenCalledWith("222");
+  });
+
+  it("quiet does NOT silence an archived-product toast (that is not a lookup failure)", async () => {
+    mockResolve.mockResolvedValue({ notFound: false, archived: true, product: { name: "Old" } });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+
+    await result.current.current("111", { quiet: true });
+
+    expect(d.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Old is archived — reactivate to sell" }),
+    );
   });
 });

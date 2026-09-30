@@ -8,12 +8,14 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { randomUUID } from "crypto";
 import { ImportService } from "./import.service";
+import { ProductsService } from "../products/products.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -57,6 +59,20 @@ describeDb("T6 importer InvoiceItem tenantId — real Postgres", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ImportService,
+        // ImportService injects ProductsService since B858/B859; this spec imports no products,
+        // so a stub suffices.
+        {
+          provide: ProductsService,
+          useValue: {
+            assertMsrpAllowed: jest.fn(),
+            assertCanFlagTobacco: jest.fn(),
+            assertIdentityAvailable: jest.fn(),
+            assertReorderAllowed: jest.fn(),
+            create: jest.fn(),
+            update: jest.fn(),
+            emitCatalogBulkChanged: jest.fn(),
+          },
+        },
         NumberingService,
         // REAL ExternalRefService: T3c's re-import idempotency is exactly the
         // (source, externalId) → invoice mapping it writes, so it must hit Postgres.
@@ -64,6 +80,12 @@ describeDb("T6 importer InvoiceItem tenantId — real Postgres", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: VendorBillsService, useValue: mockVendorBills },
         { provide: CustomersService, useValue: mockCustomers },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
       ],
     }).compile();
 

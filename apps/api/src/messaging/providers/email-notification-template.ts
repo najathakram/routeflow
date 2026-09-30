@@ -8,6 +8,10 @@
  * escaping everything is a strict superset of "every interpolated value
  * escaped".
  */
+import { escapeHtml } from "../../common/html-escape";
+
+/** Re-exported for tests (the one shared escaper, B809). */
+export { escapeHtml };
 export function buildNotificationEmailHtml(params: {
   title: string;
   bodyText: string;
@@ -50,14 +54,4 @@ export function buildNotificationEmailText(params: {
   brandName: string;
 }): string {
   return `${params.brandName}\n${params.title}\n\n${params.bodyText}`;
-}
-
-/** Exported for tests. Escapes the five characters that matter for HTML text content. */
-export function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }

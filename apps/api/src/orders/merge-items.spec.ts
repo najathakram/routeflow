@@ -54,7 +54,7 @@ describe("merge-items — box-aware fold (T1, move-pin — green after the byte-
     ];
     const incomingItems = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
 
-    const folded = foldMergeItems(existingLines, incomingItems);
+    const { items: folded } = foldMergeItems(existingLines, incomingItems);
 
     expect(folded).toHaveLength(1);
     expect(folded[0]).toMatchObject({
@@ -80,7 +80,7 @@ describe("merge-items — box-aware fold (T1, move-pin — green after the byte-
     ];
     const incomingItems = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
 
-    const folded = foldMergeItems(existingLines, incomingItems);
+    const { items: folded } = foldMergeItems(existingLines, incomingItems);
 
     // Two lines out: the untouched existing one AND the brand-new incoming one.
     // Without the length + append assertions a fold that silently dropped either
@@ -98,7 +98,7 @@ describe("merge-items — box-aware fold (T1, move-pin — green after the byte-
     ];
     const incomingItems = [{ name: "Pallet deposit", qty: 2, unitPrice: 15 }];
 
-    const folded = foldMergeItems(existingLines, incomingItems);
+    const { items: folded } = foldMergeItems(existingLines, incomingItems);
 
     // The two unlisted arms of the fold — the existing snapshot and the
     // incoming item — each emit a standalone line. A fold that dropped either
@@ -133,7 +133,7 @@ describe("merge-items — box-aware fold (T1, move-pin — green after the byte-
     // Box-unaware add of a loose product: no boxes/pieces keys at all.
     const incomingItems = [{ productId: "prod-loose", qty: 3 }];
 
-    const folded = foldMergeItems(existingLines, incomingItems);
+    const { items: folded } = foldMergeItems(existingLines, incomingItems);
 
     expect(folded).toHaveLength(1);
     // toEqual, not toMatchObject: a fold that INVENTS a box split on a loose
@@ -172,7 +172,7 @@ describe("merge-items — box-unaware snapshot normalization (T-B47 / REG-B47)",
     expect(existingLines[0]).toEqual(before);
 
     const incomingItems = [{ productId: "prod-2", qty: 12, boxes: 1, pieces: 0 }];
-    const folded = foldMergeItems(normalized, incomingItems);
+    const { items: folded } = foldMergeItems(normalized, incomingItems);
 
     expect(folded).toHaveLength(1);
     // hand: 2 boxes (the normalized snapshot) + 1 box = 3 boxes = 36 pieces.
@@ -295,7 +295,7 @@ describe("merge-items — bare incoming selling-unit expansion (T-B47 / REG-B47)
     // New objects only — the caller still holds the client's own payload.
     expect(incoming[0]).toEqual(before);
 
-    const folded = foldMergeItems([BOX_SPLIT_LINE], expanded);
+    const { items: folded } = foldMergeItems([BOX_SPLIT_LINE], expanded);
 
     expect(folded).toHaveLength(1);
     // hand: 2 stored boxes + 2 ordered boxes = 4 boxes = 48 pieces. The shape this
@@ -338,7 +338,7 @@ describe("merge-items — bare incoming selling-unit expansion (T-B47 / REG-B47)
     // toEqual: a boxes/pieces key appearing here at all flips the merged line into
     // box-split denomination and mis-bills the box-unaware stored qty beside it.
     expect(expanded[0]).toEqual({ productId: "prod-4", qty: 2 });
-    expect(foldMergeItems([boxUnawareLine], expanded)[0]).toEqual({
+    expect(foldMergeItems([boxUnawareLine], expanded).items[0]).toEqual({
       productId: "prod-4",
       qty: 4,
     });
@@ -399,7 +399,7 @@ describe("merge-items — overrideReason threading (B465 fix round 2, Opus BLOCK
     ];
     const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 2 }];
 
-    const merged = foldMergeItems(existingLines, incoming);
+    const { items: merged } = foldMergeItems(existingLines, incoming);
 
     expect(merged).toEqual([
       expect.objectContaining({
@@ -422,16 +422,300 @@ describe("merge-items — overrideReason threading (B465 fix round 2, Opus BLOCK
     ];
     const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 2 }];
 
-    const merged = foldMergeItems(existingLines, incoming);
+    const { items: merged } = foldMergeItems(existingLines, incoming);
 
     expect(merged[0]).not.toHaveProperty("unitPrice");
     expect(merged[0]).not.toHaveProperty("overrideReason");
   });
 
   it("REG-B465-MERGE-3: a brand-new merged line (no existing counterpart) never fabricates an overrideReason", () => {
-    const merged = foldMergeItems([], [{ productId: "prod-new", qty: 2, unitPrice: 12 }]);
+    const { items: merged } = foldMergeItems(
+      [],
+      [{ productId: "prod-new", qty: 2, unitPrice: 12 }],
+    );
 
     expect(merged).toEqual([expect.objectContaining({ productId: "prod-new", unitPrice: 12 })]);
     expect(merged[0]).not.toHaveProperty("overrideReason");
+  });
+
+  // #2696(c) SA-558d: the create auto-merge's NEW line takes create's rule A, which needs the
+  // reason on a special line — the fold dropped the incoming one, so a documented staff override
+  // 400'd when it merged into a pending order (found by the F2 real-PG parity pin).
+  it("#2696-MERGE-4: a brand-new merged line carries the INCOMING reason with its incoming price", () => {
+    const { items: merged } = foldMergeItems(
+      [],
+      [{ productId: "prod-new", qty: 2, unitPrice: 6, overrideReason: "bent box" }],
+    );
+    expect(merged).toEqual([
+      expect.objectContaining({ productId: "prod-new", unitPrice: 6, overrideReason: "bent box" }),
+    ]);
+  });
+
+  it("#2696-MERGE-5: an incoming price that FILLS a priceless MANUAL bucket brings its reason; an existing price keeps its own", () => {
+    const filled = foldMergeItems(
+      [{ productId: "prod-1", qty: 3, priceType: "MANUAL" }],
+      [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "bent box" }],
+    ).items;
+    expect(filled[0]).toMatchObject({ unitPrice: 6, overrideReason: "bent box" });
+
+    const kept = foldMergeItems(
+      [{ productId: "prod-1", qty: 3, unitPrice: 12, priceType: "MANUAL", overrideReason: "old" }],
+      [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: "new" }],
+    ).items;
+    expect(kept[0]).toMatchObject({ unitPrice: 12, overrideReason: "old" });
+  });
+});
+
+describe("merge-items — B776 (SA-101(1)(d)): a genuine pack disagreement REFUSES, never re-denominates", () => {
+  it("stored at a 12-pack, scanned as a 6-pack: refuses naming both packs, before mutating anything", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-repack", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-repack", qty: 6, boxes: 1, pieces: 0 },
+    ];
+
+    expect(() => foldMergeItems(existingLines, incoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          productId: "prod-repack",
+          existingPacks: [12],
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("a disagreeing pack for ONE product never re-denominates an untouched sibling line", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-repack", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+      { productId: "prod-fine", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 24 },
+    ];
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-fine", qty: 12, boxes: 1, pieces: 0 },
+      { productId: "prod-repack", qty: 6, boxes: 1, pieces: 0 },
+    ];
+
+    // prod-fine is processed first and folds cleanly; prod-repack's disagreement still throws —
+    // the whole call fails atomically (the caller never sees a partial merge).
+    expect(() => foldMergeItems(existingLines, incoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({ code: "MERGE_PACK_MISMATCH" }),
+      }),
+    );
+  });
+
+  it("an UNRESOLVED accumulator pack (box-unaware existing line) still adopts the incoming pack, no refusal", () => {
+    // acc.unitsPerBox starts at 0 (existing line has no boxes/pieces) — not a disagreement,
+    // the existing "own pack, else packFromOwnSplit, else live" precedence's normal fill-in.
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-1", qty: 2, unitPrice: 36 }, // box-unaware, boxes/pieces both null
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
+
+    expect(() => foldMergeItems(existingLines, incoming)).not.toThrow();
+  });
+
+  it("agreeing packs still fold normally — the refusal never fires on a genuine match", () => {
+    const existingLines: MergeLineSnapshot[] = [
+      { productId: "prod-1", boxes: 1, pieces: 0, qty: 12, unitsPerBox: 12, unitPrice: 36 },
+    ];
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-1", qty: 12, boxes: 1, pieces: 0 }];
+
+    const { items: folded } = foldMergeItems(existingLines, incoming);
+    expect(folded[0]).toMatchObject({ boxes: 2, pieces: 0, qty: 24 });
+  });
+});
+
+describe("merge-items — SA-124a: existing lines keyed by productId + resolved pack (not productId alone)", () => {
+  // The order already carries TWO lines for the same product, at two different packs — the
+  // durable result of an earlier pack-mismatch sweep (B776). Before this round, `foldMergeItems`
+  // keyed its accumulator by productId ALONE (a `Map<string, Acc>`), so building that map from
+  // `existingLines` silently OVERWROTE the first of the two lines before any incoming item was
+  // even considered — a genuine data-loss bug, independent of the disagreement-refusal above.
+  const winnerAt12: MergeLineSnapshot = {
+    productId: "prod-split",
+    boxes: 1,
+    pieces: 0,
+    qty: 12,
+    unitsPerBox: 12,
+    unitPrice: 36,
+  };
+  const winnerAt6: MergeLineSnapshot = {
+    productId: "prod-split",
+    boxes: 1,
+    pieces: 0,
+    qty: 6,
+    unitsPerBox: 6,
+    unitPrice: 18,
+  };
+
+  it("a replace-all scan of a 6-pack grows the 6-pack line; the 12-pack line survives byte-identical — NO DELETE", () => {
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-split", qty: 6, boxes: 1, pieces: 0 },
+    ];
+
+    const { items } = foldMergeItems([winnerAt12, winnerAt6], incoming);
+
+    expect(items).toHaveLength(2);
+    const twelvePackLine = items.find((i) => i.boxes === 1 && i.qty === 12);
+    const sixPackLine = items.find((i) => i.qty === 12 && i.boxes === 2);
+    // the 12-pack line survives byte-identical in SHAPE — NO DELETE, no re-split, still its
+    // own 1-box/12-qty line (unitPrice is dropped here regardless of which bucket, MANUAL
+    // aside — R0's existing re-price-on-replaceAll rule, unrelated to this pin).
+    expect(twelvePackLine).toMatchObject({ productId: "prod-split", boxes: 1, pieces: 0, qty: 12 });
+    // the 6-pack line: grew from 1 box to 2 (6 + 6 scanned pieces = 2 boxes of 6) — the loser
+    // folded into the MATCHING pack, never the 12-pack line, and no third line was created.
+    expect(sixPackLine).toMatchObject({ productId: "prod-split", boxes: 2, pieces: 0 });
+  });
+
+  it("a scan at a THIRD pack (24) matching neither stored line refuses naming both existing packs", () => {
+    const incoming: MergeIncomingItem[] = [
+      { productId: "prod-split", qty: 24, boxes: 1, pieces: 0 },
+    ];
+
+    expect(() => foldMergeItems([winnerAt12, winnerAt6], incoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          productId: "prod-split",
+          existingPacks: [6, 12],
+          incomingPack: 24,
+        }),
+      }),
+    );
+  });
+
+  it("SA-124e MED-5: two SAME-pack duplicate existing lines each keep their own bucket — a scan folds into the FIRST, the second survives byte-identical", () => {
+    const first: MergeLineSnapshot = {
+      productId: "prod-dup",
+      boxes: 1,
+      pieces: 0,
+      qty: 12,
+      unitsPerBox: 12,
+      unitPrice: 36,
+      priceType: "STANDARD",
+    };
+    const second: MergeLineSnapshot = {
+      productId: "prod-dup",
+      boxes: 2,
+      pieces: 0,
+      qty: 24,
+      unitsPerBox: 12,
+      unitPrice: 30,
+      priceType: "MANUAL",
+      overrideReason: "operator discount",
+    };
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-dup", qty: 12, boxes: 1, pieces: 0 }];
+
+    const { items } = foldMergeItems([first, second], incoming);
+
+    // Both lines present after the fold — neither overwritten, neither dropped.
+    expect(items).toHaveLength(2);
+    // The first becomes 2 boxes (1 + the scanned 1) — the ONLY one touched.
+    const grown = items.find((i) => i.boxes === 2 && i.unitPrice === undefined);
+    expect(grown).toMatchObject({ productId: "prod-dup", boxes: 2, pieces: 0, qty: 24 });
+    // The second survives byte-identical, including its MANUAL price and override reason —
+    // never summed across duplicates, never dropped.
+    const untouched = items.find((i) => i.unitPrice === 30);
+    expect(untouched).toMatchObject({
+      productId: "prod-dup",
+      boxes: 2,
+      pieces: 0,
+      qty: 24,
+      unitPrice: 30,
+      overrideReason: "operator discount",
+    });
+  });
+
+  it("SA-124g/h R1 item 3 (Opus HIGH): two PLAIN-product duplicate lines (no pack at all) fold a scan into the FIRST — NEVER a 409 naming empty packs", () => {
+    // Two genuinely never-boxed lines of the same product — each its own bucket (MED-5), both
+    // unitsPerBox 0 (unresolved). Pre-fix, this refused with existingPacks: [] ("at packs []").
+    const first: MergeLineSnapshot = {
+      productId: "prod-plain",
+      qty: 5,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 2,
+    };
+    const second: MergeLineSnapshot = {
+      productId: "prod-plain",
+      qty: 3,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      unitPrice: 2,
+    };
+    const incoming: MergeIncomingItem[] = [{ productId: "prod-plain", qty: 4 }];
+
+    const { items } = foldMergeItems([first, second], incoming);
+
+    expect(items).toHaveLength(2);
+    // The first grows by the scanned 4 pieces; the second survives byte-identical.
+    const grown = items.find((i) => i.qty === 9);
+    expect(grown).toMatchObject({ productId: "prod-plain", qty: 9 });
+    const untouched = items.find((i) => i.qty === 3);
+    expect(untouched).toMatchObject({ productId: "prod-plain", qty: 3 });
+  });
+
+  const boxedBucket: MergeLineSnapshot = {
+    productId: "prod-mixed",
+    boxes: 1,
+    pieces: 0,
+    qty: 12,
+    unitsPerBox: 12,
+    unitPrice: 36,
+  };
+  const plainBucket: MergeLineSnapshot = {
+    productId: "prod-mixed",
+    qty: 3,
+    boxes: null,
+    pieces: null,
+    unitsPerBox: null,
+    unitPrice: 2,
+  };
+  const sixPackIncoming: MergeIncomingItem[] = [
+    { productId: "prod-mixed", qty: 6, boxes: 1, pieces: 0 },
+  ];
+
+  it("SA-124i (mixed-bucket fix): [12-pack, plain] + a mismatched 6-pack scan REFUSES — ONE known pack among the buckets is still a genuine disagreement", () => {
+    expect(() => foldMergeItems([boxedBucket, plainBucket], sixPackIncoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          productId: "prod-mixed",
+          existingPacks: [12],
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("SA-124i (mixed-bucket fix): [plain, 12-pack] + a mismatched 6-pack scan REFUSES — same as above, bucket order reversed", () => {
+    expect(() => foldMergeItems([plainBucket, boxedBucket], sixPackIncoming)).toThrow(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          code: "MERGE_PACK_MISMATCH",
+          existingPacks: [12],
+          incomingPack: 6,
+        }),
+      }),
+    );
+  });
+
+  it("SA-124i (mixed-bucket fix): [plain, plain] + a KNOWN-pack 6-pack scan still folds — no bucket has any known pack to disagree with", () => {
+    const secondPlain: MergeLineSnapshot = { ...plainBucket, qty: 5 };
+    const { items } = foldMergeItems([plainBucket, secondPlain], sixPackIncoming);
+
+    expect(items).toHaveLength(2);
+    // The first bucket (plain, qty 3) adopts the incoming's pack (6, since its own was
+    // unresolved — foldInto's normal "fill in an unresolved pack" behavior, not a
+    // disagreement) and normalizes: 1 box of 6 + the 3 pre-existing loose pieces = qty 9.
+    const grown = items.find((i) => i.qty === 9);
+    expect(grown).toMatchObject({ productId: "prod-mixed", boxes: 1, pieces: 3, qty: 9 });
+    const untouched = items.find((i) => i.qty === 5);
+    expect(untouched).toMatchObject({ productId: "prod-mixed", qty: 5 });
   });
 });

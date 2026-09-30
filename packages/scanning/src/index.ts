@@ -12,3 +12,6 @@ export * from "./scan-loop";
 export * from "./scan-pending-buffer";
 export * from "./scan-engine";
 export * from "./scan-feedback";
+export * from "./barcode-normalize";
+export * from "./barcode-symbology";
+export * from "./scan-level";

@@ -247,6 +247,53 @@ describe("trayRowsFrom", () => {
       expect(seen).toEqual([{ id: "single", line }]);
     });
   });
+
+  /**
+   * SA-085h HIGH: a unit-sold line's qty is a COUNT of `unitLabel`, never pieces-in-a-box.
+   * `priceFor` now receives the line too, so a caller can price it off its OWN resolved
+   * level instead of the pack's tier price (the shipped bug: a Case line has no unitPrice,
+   * so `priceFor(product)` alone returned the pack's price for a $220 Case).
+   */
+  describe("units_v1 — a unit-sold line's qty/price never fold against the pack (SA-085h HIGH)", () => {
+    // A unit-aware `priceFor` mirrors lineUnitFor/unitPriceBase: it resolves off the LINE's
+    // own unitLabel, never the pack's tier price, for a unit-sold line ($220/Case here).
+    const unitAwarePriceFor = (p: TrayProduct, line: TrayLine) =>
+      line.unitLabel ? 220 : priceFor(p);
+
+    it("2 Cases at $220 total $440 in the tray, never $48 (2 x the pack's own price)", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: unitAwarePriceFor,
+      });
+      expect(out[0].subtotal).toBe(440);
+      expect(out[0].subtotal).not.toBe(48);
+    });
+
+    it("RED PROOF: a priceFor that ignores the line (the shipped shape) prices the Case at the pack's price, not $440", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: (p: TrayProduct) => priceFor(p), // old signature: no line, no unit-awareness
+      });
+      expect(out[0].subtotal).toBe(24); // 2 x $12, case6's own pack-price fixture — the shipped bug
+      expect(out[0].subtotal).not.toBe(440); // the fixed behaviour, proven above
+    });
+
+    it("a unit-sold line's qty never gets re-split against the pack's unitsPerBox", () => {
+      const out = trayRowsFrom({
+        items: { case6: { qty: 2, unitLabel: "Case" } },
+        scanOrder: ["case6"],
+        lookup,
+        priceFor: unitAwarePriceFor,
+      });
+      expect(out[0].qtySummary).toBe("2"); // never "0 cs + 2" or similar
+      expect(out[0].unitsPerBox).toBeNull();
+      expect(out[0].qty).toBe(2);
+    });
+  });
 });
 
 /**
@@ -277,8 +324,9 @@ describe("ScanTray.tsx price-edit affordance (REG-shared-scantray-price)", () =>
     expect(scanTraySrc).toMatch(/onEditPrice,?\s*\}:\s*RowProps/);
     // renderItem passes it through and lists it as a memo dependency.
     expect(scanTraySrc).toMatch(/onEditPrice=\{onEditPrice\}/);
+    // #2694 appended the optional hideMoney to the same memo deps.
     expect(scanTraySrc).toMatch(
-      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice\]/,
+      /\[flash, reduceMotion, onChangeQty, onIncrement, onDecrement, onRemove, onEditPrice(, hideMoney)?\]/,
     );
   });
 });

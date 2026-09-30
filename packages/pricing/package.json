@@ -24,6 +24,7 @@
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@routeflow/types": "*",
     "@routeflow/typescript-config": "*",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.43",

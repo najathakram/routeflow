@@ -254,10 +254,11 @@ export default function CreditNoteDetailPage() {
           variant: "info",
         });
       },
-      onError: () => {
+      // SA-436 PR-2 (#2402): show the server's readable refusal, never a fixed "Please try again."
+      onError: (err: any) => {
         toast({
           title: "Failed to void credit note",
-          description: "Please try again.",
+          description: err?.response?.data?.message ?? "The credit note could not be voided.",
           variant: "error",
         });
       },
@@ -424,7 +425,8 @@ export default function CreditNoteDetailPage() {
                 </p>
                 {cn.invoiceId && (
                   <p className="mt-1 text-sm text-navy/70">
-                    <span className="font-medium text-navy">Applied to Invoice:</span>{" "}
+                    {/* #2404: cn.invoiceId is the ORIGIN invoice; applications are InvoicePayments. */}
+                    <span className="font-medium text-navy">Issued against invoice:</span>{" "}
                     <Link
                       href={`/invoices/${cn.invoiceId}`}
                       className="text-brand-600 hover:underline"

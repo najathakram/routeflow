@@ -1,0 +1,64 @@
+{
+  "task": {
+    "id": "FIX-865A",
+    "title": "the ONE add-on ledger helper (new file)",
+    "type": "fix",
+    "files": ["apps/api/src/billing/addon-ledger.ts"],
+    "tests": [],
+    "dependsOn": ["RC-865", "RT-865"],
+    "risk": "HIGH",
+    "radius": [5, 10],
+    "briefPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865A/brief.md",
+    "implBaseSha": "4e80b024a232f70c57d04eb1d3220d8cd7b5996b",
+    "implement": {
+      "status": "done",
+      "filesChanged": ["apps/api/src/billing/addon-ledger.ts"],
+      "deviations": "Note: I did not write .claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865A/report.md — the Write tool itself refused with \"Subagents should return findings as text, not write report files. Include this content in your final response instead.\" So the GREEN evidence below (which I had drafted for that file) is included here instead, per that tool's own instruction.",
+      "notes": "STATUS: apps/api/src/billing/addon-ledger.ts already existed in the worktree, byte-for-byte matching the FIX-865A brief, when this task started (untracked/uncommitted — no prior commit in this branch's history touches it). I verified its correctness against the real collaborators rather than assuming it was already right, then committed it.\n\nVERIFICATION (all commands run from the worktree root unless noted):\n- `cd apps/api && npx jest src/billing/addon-ledger.spec.ts -t \"REG-B865-LEDGER\" --maxWorkers=2` → PASS 1/1 (paying row books ±snapshot×deltaQty; FOR-UPDATE lock runs before the paying-set read per invocationCallOrder; TRIAL row books 0; deltaQty:0 books 0; priceSnapshot:null books 0).\n- `npx tsc --noEmit -p apps/api/tsconfig.json` → clean, 0 errors (after removing a stale apps/api/dist/tsconfig.tsbuildinfo — see below).\n- Signature cross-check against the real (non-mocked) collaborators, not just the spec's mocks:\n  - `isPayingRow(tenant: {status, deletedAt, class}, planKey)` — apps/api/src/billing/mrr.service.ts:25 — matches the `{status, class, deletedAt, subscription}` selection and call in addon-ledger.ts.\n  - `BillingEventService.emit(tenantId, type, payload, {amountDelta, actorId, tx})` — apps/api/src/billing/billing-event.service.ts:15 — matches the call.\n  - `BILLING_EVENTS.ADDON_ENABLED` / `ADDON_DISABLED` — apps/api/src/billing/plan-catalog.constants.ts:219-220 — present.\n- Broader scoped run from the brief: `cd apps/api && npx jest src/billing/billing-cron.service.spec.ts src/platform-admin/platform-admin.service.spec.ts src/billing/addon.service.spec.ts src/billing/subscription-mutation.service.spec.ts src/billing/mrr.service.spec.ts src/billing/addon-ledger.spec.ts src/billing/mrr-paying-predicate.parity.spec.ts --maxWorkers=2 --passWithNoTests` → addon-ledger.spec.ts, billing-cron.service.spec.ts, mrr-paying-predicate.parity.spec.ts, and platform-admin.service.spec.ts are GREEN (platform-admin failures I initially saw were resolved mid-session by a concurrent FIX-863 commit, 9ec6d0cf, landing on this branch). Remaining 7 failures in addon.service.spec.ts (T8-T11, P5) and subscription-mutation.service.spec.ts (T12, T13) are FIX-865B/FIX-865C's scope — those two services don't call emitAddonDelta yet, and neither file is in this task's \"Files you own\" list; RESUME.md's task graph confirms FIX-865B/FIX-865C depend on FIX-865A and own those files.\n\nCOMMIT: 6fc0bb21 \"fix(billing): add the one add-on ledger writer emitAddonDelta (B865, SA-277)\" — 1 file changed (apps/api/src/billing/addon-ledger.ts, 49 insertions). Re-verified addon-ledger.spec.ts and tsc clean on the committed tree post-lint-staged/prettier.\n\nFOLLOW-UPS FOUND BUT NOT FIXED (out of this task's scope per instructions):\n1. Stale apps/api/dist/tsconfig.tsbuildinfo caused a false tsc error (\"no exported member flatRateFromTotals/inferredFlatRate\" from @routeflow/pricing) even though both are exported from packages/pricing/src/index.ts and present in dist/index.d.ts. Deleting the buildinfo file fixed it — a caching artifact, unrelated to B865, not something I own to fix permanently (I only deleted the local stale cache file to unblock my own tsc check).\n2. mrr.service.spec.ts test REG-743-N5 now fails: after FIX-866 changed byPlan.baseMrr to gross (no `- discount`), this pre-existing test still asserts the old net semantics for a fully-discounted GROWTH row (expects baseMrr:0, tenants:0 second in the array; actual is baseMrr:100, now sorted first). This is FIX-866's file/test, not touched here.\nDid not modify addon.service.ts, subscription-mutation.service.ts, mrr.service.ts, or any spec file — none are in \"Files you own\" for FIX-865A."
+    },
+    "packPath": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/zealous-franklin-2c1741/.claude/pipeline/2026-09-25-f51-billing-mrr-ledger/tasks/FIX-865A/pack.md",
+    "review": {
+      "specCompliance": "pass",
+      "findings": [
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon-ledger.spec.ts",
+          "line": 36,
+          "summary": "T14 only covers the positive (enable) branch. Nothing in this unit spec checks that a negative deltaQty maps to BILLING_EVENTS.ADDON_DISABLED with a negative amountDelta, or that the FOR UPDATE lock is taken on d.tenantId.",
+          "scenario": "Suppose someone flips the ternary so deltaQty < 0 emits ADDON_ENABLED, or drops the sign from the amount. addon-ledger.spec.ts stays green. Only the call-site tests T10/T13 (FIX-865B/C) would catch it."
+        },
+        {
+          "severity": "minor",
+          "file": "apps/api/src/billing/addon-ledger.ts",
+          "line": 27,
+          "summary": "The guard skips only a null snapshot. A stored 0 snapshot on a paying tenant still emits an ADDON_ENABLED/ADDON_DISABLED event with amountDelta 0. The spec comment calls null 'a free grant, D1', but addon.service.spec.ts:516 says D1 writes 0 for a free grant, so the two disagree on how D1 is represented.",
+          "scenario": "An admin grants a free add-on (priceSnapshot 0 under D1) to an ACTIVE/PRODUCTION tenant. A billing.event row is written with amountDelta 0. The ledger math is unaffected. This is audit noise, or intended audit, depending on the ruling. It needs a one-line decision, not a code change."
+        }
+      ],
+      "assessment": "approved"
+    },
+    "status": "complete",
+    "rounds": 0,
+    "clean": true,
+    "minorFindings": [
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon-ledger.spec.ts",
+        "line": 36,
+        "summary": "T14 only covers the positive (enable) branch. Nothing in this unit spec checks that a negative deltaQty maps to BILLING_EVENTS.ADDON_DISABLED with a negative amountDelta, or that the FOR UPDATE lock is taken on d.tenantId.",
+        "scenario": "Suppose someone flips the ternary so deltaQty < 0 emits ADDON_ENABLED, or drops the sign from the amount. addon-ledger.spec.ts stays green. Only the call-site tests T10/T13 (FIX-865B/C) would catch it."
+      },
+      {
+        "severity": "minor",
+        "file": "apps/api/src/billing/addon-ledger.ts",
+        "line": 27,
+        "summary": "The guard skips only a null snapshot. A stored 0 snapshot on a paying tenant still emits an ADDON_ENABLED/ADDON_DISABLED event with amountDelta 0. The spec comment calls null 'a free grant, D1', but addon.service.spec.ts:516 says D1 writes 0 for a free grant, so the two disagree on how D1 is represented.",
+        "scenario": "An admin grants a free add-on (priceSnapshot 0 under D1) to an ACTIVE/PRODUCTION tenant. A billing.event row is written with amountDelta 0. The ledger math is unaffected. This is audit noise, or intended audit, depending on the ruling. It needs a one-line decision, not a code change."
+      }
+    ],
+    "rulings": [],
+    "roundHistory": [],
+    "packGaps": []
+  },
+  "progressLine": "Task FIX-865A: complete (review clean)"
+}

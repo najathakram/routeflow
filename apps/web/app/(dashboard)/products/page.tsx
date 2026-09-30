@@ -42,6 +42,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import { ProductsExportButton } from "./_components/ProductsExportButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1174,7 +1175,7 @@ export default function ProductsPage() {
             : "Manage your product catalog"
         }
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={
@@ -1198,6 +1199,16 @@ export default function ProductsPage() {
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
             </Button>
+            <ProductsExportButton
+              total={totalItems}
+              loading={isLoading}
+              filters={{
+                search: debouncedSearch,
+                category: categoryFilter,
+                stockStatus: (stockFilter || undefined) as any,
+                section: sectionFilter,
+              }}
+            />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>

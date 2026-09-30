@@ -1,3 +1,4 @@
+import type { BannedMergedLine } from "./merge-restriction-warning";
 import {
   Controller,
   Get,
@@ -33,6 +34,7 @@ import { UpdateFulfillPathDto } from "./dto/update-fulfill-path.dto";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import { ResolveChangeRequestDto } from "./dto/resolve-change-request.dto";
 import { foldMergeItems } from "./merge-items";
+import { assertNoUnitAwareLines } from "./unit-aware-guard";
 import { mergeRequestHash } from "./merge-idempotency";
 import { withAdvisoryLock } from "../common/db-locks";
 import {
@@ -153,6 +155,7 @@ export class OrdersController {
                 customerId: dto.customerId!,
                 items: dto.items,
                 appliedCreditNotes: dto.appliedCreditNotes,
+                inlineReturn: dto.inlineReturn,
               })
             : undefined;
           let merged: { kind: "merged"; orderId: string; replayed: boolean } | { kind: "stale" };
@@ -193,6 +196,7 @@ export class OrdersController {
                     idempotencyKey,
                     dto.customerId!,
                     requestHash,
+                    dto.inlineReturn, // #2424: the replay compares its items too
                   );
                   if (replayed) {
                     const replayedOrderId = replayed.orderId;
@@ -222,9 +226,30 @@ export class OrdersController {
                     return { kind: "merged" as const, orderId: replayedOrderId, replayed: true };
                   }
                 }
-                const mergedItems = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                // B649: foldMergeItems has no unitLabel field on MergeIncomingItem and never
+                // reads or forwards one — a Case count merged into an open order would
+                // silently fold as loose pieces/pack units at the pack price. The existing
+                // unit-aware fence (assertOrderEditAllowed, called inside updateOrderItems
+                // below) only inspects the ORDER's pre-fold lineItems, never this incoming
+                // dto.items — by the time that guard runs, the fold has already happened and
+                // the label is already gone. Refuse here instead, while the real unitLabel is
+                // still on the wire, same fail-closed posture as every other un-converted
+                // rewrite path (unit-aware-guard.ts's own doc comment).
+                assertNoUnitAwareLines(
+                  dto.items ?? [],
+                  "added to an existing order this way",
+                  // SA-142: this is the CREATE path — there is no existing order to send the
+                  // operator to edit yet. The actual remedy is to not merge at all.
+                  'Choose "Create as a separate order" instead.',
+                );
+                const foldResult = foldMergeItems(current.lineItems ?? [], dto.items ?? []);
+                if (foldResult.livePackFallbackProductIds.length > 0) {
+                  this.logger.warn(
+                    `foldMergeItems: order ${current.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+                  );
+                }
                 const foldDto = {
-                  items: mergedItems,
+                  items: foldResult.items,
                   // foldMergeItems returns the order's COMPLETE new line set, so
                   // this is a full replace. R10 made `replaceAll` explicit-only —
                   // without saying so out loud the merged absolute totals would
@@ -236,6 +261,8 @@ export class OrdersController {
                   ...(dto.appliedCreditNotes !== undefined
                     ? { appliedCreditNotes: dto.appliedCreditNotes }
                     : {}),
+                  // #2094: a return taken on a merge lands on the winner in the same tx (updateOrderItems).
+                  ...(dto.inlineReturn ? { inlineReturn: dto.inlineReturn } : {}),
                 } as any;
                 // B215: the idempotency key (when present) rides INTO updateOrderItems and
                 // commits inside the fold's own transaction — a crash or a later throw can no
@@ -309,7 +336,7 @@ export class OrdersController {
                 await this.ordersService.mergeAllPendingForCustomer(
                   dto.customerId,
                   {},
-                  { lockMode: "try" },
+                  { lockMode: "try", actor: user },
                 );
               } catch (e) {
                 if (!isMergeContention(e)) throw e;
@@ -346,7 +373,7 @@ export class OrdersController {
           { buyerInitiated: user.role === UserRole.CUSTOMER },
           // POST-COMMIT: never wait. A held lock means someone else is consolidating this very
           // customer anyway, so `try` defers to them instead of spending this request's budget.
-          { lockMode: "try" },
+          { lockMode: "try", actor: user },
         );
         if (merged) return merged;
       } catch (e) {
@@ -555,8 +582,14 @@ export class OrdersController {
   @Post("force-consolidate/:customerId")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  forceConsolidate(@Param("customerId") customerId: string) {
-    return this.ordersService.forceConsolidateCustomer(customerId);
+  async forceConsolidate(@Param("customerId") customerId: string, @CurrentUser() user: JwtPayload) {
+    // F-05 (SA-255): merge-and-warn — the banned lines of the merged order ride along for the acting UI.
+    let bannedLines: BannedMergedLine[] = [];
+    const merged = await this.ordersService.forceConsolidateCustomer(customerId, {
+      actor: user,
+      onBannedLines: (lines) => (bannedLines = lines),
+    });
+    return merged && bannedLines.length > 0 ? { ...merged, bannedLines } : merged;
   }
 
   // Delete-any: staff (OPERATOR/TENANT_ADMIN) may delete an order in any status;

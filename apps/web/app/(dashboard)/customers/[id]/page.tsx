@@ -65,7 +65,12 @@ import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/port
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@routeflow/pricing";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeMarginFraction,
+  classifyMargin,
+} from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -125,6 +130,7 @@ import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useRoutesAccess } from "@/lib/api/addons";
+import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   useCustomerCurrentAgent,
   useSalesAgents,
@@ -975,7 +981,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
-    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+    !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 
   const openAdd = () => {
     setEditingPrice(null);
@@ -2392,6 +2398,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
           >
             New Invoice
           </Button>
+          <RecordReturnAction customerId={id} customerName={customer.businessName} />
         </div>
       </div>
 

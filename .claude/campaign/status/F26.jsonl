@@ -4,6 +4,6 @@
 {"id":"B28","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B41","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
 {"id":"B42","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"2d0270fd"}
-{"id":"B87","batch":"F26","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
+{"id":"B87","batch":"F26","tier":"T1","state":"already-fixed","pr":2644,"proof":null,"evidence":"Merged 8df15b07 (#2603, shared deposit helper; AR aging shows overdue deposits) and 024e4e8a (#2644, closes #1529: web/mobile aging shows overdue deposits; mobile invoice create has the deposit fields)","roundSha":"e5b0af8e"}
 {"id":"B88","batch":"F26","tier":"T1","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"e5b0af8e"}
 {"id":"B119","batch":"F26","tier":"T2","state":"queued","pr":null,"proof":null,"evidence":null,"roundSha":"0cd59277"}

@@ -16,6 +16,9 @@ export interface TrayLine {
   pieces?: number | null;
   /** One-time per-selling-unit override; falls back to the resolved tier price. */
   unitPrice?: number;
+  /** units_v1 (SA-085h HIGH): set when this line is sold by a unit (Case…) — its qty is a
+   *  COUNT, never pieces-in-a-box, so the row is never re-split against the pack's size. */
+  unitLabel?: string | null;
 }
 
 export interface TrayProduct extends DisplayProductLike {
@@ -86,13 +89,18 @@ function catalogRow(
   overridable: boolean,
   freeUnits: number,
 ): TrayRow | null {
-  const qty = effectiveQty(line, product.unitsPerBox);
+  // units_v1 (SA-085h HIGH): a unit-sold line's qty is a COUNT, never pieces-in-a-box — the
+  // pack's own unitsPerBox must never re-split it (a 2-Case line must read "2", not get folded
+  // against a 24-pack) or price it as a pack-priced box (2 Cases at $220 must total $440, not
+  // 2 x the pack's own tier price).
+  const packUpb = line.unitLabel ? null : (product.unitsPerBox ?? null);
+  const qty = effectiveQty(line, packUpb);
   if (qty <= 0) return null;
   const split = normalizeBoxesPieces({
     boxes: line.boxes,
     pieces: line.pieces,
     qty,
-    unitsPerBox: product.unitsPerBox,
+    unitsPerBox: packUpb,
   });
   return {
     id,
@@ -104,10 +112,10 @@ function catalogRow(
       qty,
       boxes: line.boxes ?? null,
       pieces: line.pieces ?? null,
-      unitsPerBox: product.unitsPerBox ?? null,
+      unitsPerBox: packUpb,
       freeUnits,
     }),
-    unitsPerBox: product.unitsPerBox ?? null,
+    unitsPerBox: packUpb,
     unlisted: false,
   };
 }
@@ -118,8 +126,12 @@ export interface TrayRowsInput {
   /** Newest-first product ids, as maintained by {@link bumpScanOrder}. */
   scanOrder: readonly string[];
   lookup: (id: string) => TrayProduct | undefined;
-  /** The customer's effective per-selling-unit price for a product. */
-  priceFor: (product: TrayProduct) => number;
+  /**
+   * The customer's effective per-selling-unit price. Takes the LINE too (SA-085h HIGH) so a
+   * caller can resolve a unit-sold line's own price (`lineUnitFor`/`unitPriceBase`) instead of
+   * the pack's tier price — the same price every other reader of this line already uses.
+   */
+  priceFor: (product: TrayProduct, line: TrayLine) => number;
   /**
    * Whether a line-level unitPrice override counts for this product. SPECIAL
    * (tier≠1) lines return false so the tray charges the tier price, matching
@@ -167,7 +179,7 @@ export function trayRowsFrom({
         id,
         line,
         product,
-        priceFor(product),
+        priceFor(product, line),
         overridable?.(product) ?? true,
         freeUnitsFor?.(id, line) ?? 0,
       ),

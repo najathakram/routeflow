@@ -7,7 +7,13 @@
  * then hands everything to the pure `inline-returns-pricing.ts` engine. Read-only:
  * nothing here writes a Return/ReturnItem row (that's PR-1c/1d's capture path).
  */
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   InvoiceStatus,
   OrderStatus,
@@ -20,26 +26,88 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { REAL_INVOICE_STATUSES } from "../common/invoiced-sales";
 import { currentTaxRate } from "../common/tax-rate";
-import { getTierPrice } from "@routeflow/pricing";
+import { getTierPrice, isWholeCents, packFromOwnSplit } from "@routeflow/pricing";
 import { returnedPiecesByProduct } from "./returns-pieces.util";
 import {
   allocateReturnedPieces,
+  applyCreditOverride,
   priceMatchedChunk,
   priceUnreferencedChunk,
+  resolveReturnPackFactor,
   returnRequestPieces,
   totalChunks,
   type CandidateInvoiceLine,
+  type CreditOverride,
   type PricedChunk,
   type QuoteBreakdown,
   type RemainingSupply,
 } from "./inline-returns-pricing";
-import type { QuoteInlineReturnDto } from "./dto/quote-inline-return.dto";
+import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
 const DEFAULT_SOLD_WINDOW_DAYS = 90;
 
 const DELIVERED_ORDER_STATUSES = [OrderStatus.DELIVERED, OrderStatus.PARTIALLY_DELIVERED];
+
+/** #2695 (SA-557): the 400 codes of a per-line credit price override. */
+export const RETURN_CREDIT_OVERRIDE_ERROR_CODES = {
+  /** A caller other than OPERATOR/TENANT_ADMIN sent an override field — refused, never dropped. */
+  FORBIDDEN: "RETURN_CREDIT_OVERRIDE_FORBIDDEN",
+  /** A price without a reason (or a reason without a price), or an unusable value. */
+  INVALID: "RETURN_CREDIT_OVERRIDE_INVALID",
+  /** Above the engine's default per-selling-unit price for a chunk: overrides only LOWER a credit. */
+  OVER_CAP: "RETURN_CREDIT_OVER_CAP",
+} as const;
+
+const CREDIT_OVERRIDE_ROLES: ReadonlySet<string> = new Set([
+  UserRole.OPERATOR,
+  UserRole.TENANT_ADMIN,
+]);
+
+/**
+ * #2695: each request item's validated override (undefined = none), keyed by the item. Runs
+ * before any read, on the quote and the capture alike (both reach `priceInlineReturn`), so the two
+ * can never price different chunks. `undefined` is "not sent"; any other value (null included) is
+ * a field the caller sent.
+ */
+export function creditOverridesOf(
+  items: readonly QuoteInlineReturnItemDto[],
+  user: JwtPayload,
+): Map<QuoteInlineReturnItemDto, CreditOverride> {
+  const out = new Map<QuoteInlineReturnItemDto, CreditOverride>();
+  for (const item of items) {
+    const price = item.creditUnitPrice;
+    const rawReason = item.overrideReason;
+    if (price === undefined && rawReason === undefined) continue;
+    if (!CREDIT_OVERRIDE_ROLES.has(user.role)) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+        message: "Only office staff can override a return's credit price.",
+      });
+    }
+    const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+    if (
+      typeof price !== "number" ||
+      price < 0 ||
+      // SA-557c: the one shared cents predicate (finite + roundMoney-exact), never a hand-rolled cents multiply.
+      !isWholeCents(price)
+    ) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,
+        message: "A credit price override needs a price of $0.00 or more, in cents.",
+      });
+    }
+    if (reason.length === 0 || reason.length > 200) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.INVALID,
+        message: "A credit price override needs a reason (up to 200 characters).",
+      });
+    }
+    out.set(item, { unitPrice: price, reason, overriddenBy: user.sub });
+  }
+  return out;
+}
 
 @Injectable()
 export class InlineReturnsQuoteService {
@@ -68,6 +136,9 @@ export class InlineReturnsQuoteService {
     dto: QuoteInlineReturnDto,
     user: JwtPayload,
     db: any,
+    // #2178: invoices to leave out of the matching set — the order-edit preflight passes the ones
+    // the edit's revert is about to turn into DRAFTs of an undelivered order (which §3.1 excludes).
+    opts: { excludeInvoiceIds?: readonly string[] } = {},
   ): Promise<QuoteBreakdown & { productBreakdown: Record<string, QuoteBreakdown> }> {
     // Q5/§7: buyers keep the post-delivery request flow — never captured at order-entry
     // time. `@Roles` on the controller already excludes CUSTOMER, but this is the money-
@@ -76,6 +147,8 @@ export class InlineReturnsQuoteService {
     if (user.role === UserRole.CUSTOMER) {
       throw new ForbiddenException("Buyers cannot capture returns at order entry");
     }
+    // #2695: a driver's override is a 400 before any read; staff overrides are validated here too.
+    const overrides = creditOverridesOf(dto.items, user);
 
     // M8 scoping (§7): a DRIVER may only quote for the customer of a stop on their
     // OWN currently-IN_PROGRESS run — mirrors orders.service.ts's B309 driver-
@@ -143,6 +216,7 @@ export class InlineReturnsQuoteService {
         where: { id: { in: productIds } },
         select: {
           id: true,
+          name: true,
           pricePerUnit: true,
           priceTier2: true,
           priceTier3: true,
@@ -160,7 +234,14 @@ export class InlineReturnsQuoteService {
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     const productUpbMap = new Map(products.map((p) => [p.id, p.unitsPerBox]));
-    const matchingSet = await this.fetchMatchingSet(db, dto.customerId, productIds, productUpbMap);
+    const matchingSet = await this.fetchMatchingSet(
+      db,
+      dto.customerId,
+      productIds,
+      productUpbMap,
+      undefined,
+      opts.excludeInvoiceIds,
+    );
 
     const tierByProduct = new Map(
       customerPrices
@@ -192,7 +273,9 @@ export class InlineReturnsQuoteService {
     const remainingByKey: RemainingSupply[] = [];
     for (const [key, sold] of soldByOrderProduct) {
       const [sourceOrderId, productId] = key.split("::");
-      const priorReturned = priorReturnedMap.get(sourceOrderId)?.[productId] ?? 0;
+      const prior = priorReturnedMap.get(sourceOrderId)?.[productId];
+      // An unclassifiable prior refuses THIS product's line below; the supply entry is inert.
+      const priorReturned = prior && "pieces" in prior ? prior.pieces : 0;
       remainingByKey.push({
         sourceOrderId,
         productId,
@@ -213,20 +296,69 @@ export class InlineReturnsQuoteService {
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
+      // SA-101(2)/B3/B765 interim guard, precision round SA-107/SA-108: resolve the pack
+      // size from EVERY candidate line for this product, not just the newest
+      // (`matchingSet.find(...)` picked the first — i.e. newest-invoice — match, silently
+      // applying ITS pack size even when an older line, the one the operator was actually
+      // shown, used a different one). A product whose candidate lines DISAGREE on a pack
+      // size > 1 refuses outright rather than guess. This refusal set is a SUPERSET of the
+      // pricing set below (it includes lines already exhausted or at 0 remaining pieces),
+      // so the interim can over-refuse a line that pricing itself would never have touched
+      // — the safe direction, accepted for this interim guard.
+      const candidatePacksForProduct = matchingSet
+        .filter((l) => l.productId === item.productId)
+        .map((l) => l.unitsPerBox);
+      const { factor: resolvedUnitsPerBox, conflictingPacks } = resolveReturnPackFactor(
+        candidatePacksForProduct,
+        product?.unitsPerBox ?? null,
+      );
+      const productName = product?.name ?? "This product";
+      // SA-159: a prior STANDARD return of THIS product whose basis cannot be classified refuses only
+      // this product's line; other products on the same source order still quote.
+      for (const orderId of new Set(
+        matchingSet.filter((l) => l.productId === item.productId).map((l) => l.sourceOrderId),
+      )) {
+        const prior = priorReturnedMap.get(orderId)?.[item.productId];
+        if (prior && "unknown" in prior) {
+          throw new ConflictException({
+            code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+            message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
+          });
+        }
+      }
+      if (conflictingPacks) {
+        throw new ConflictException({
+          code: "INLINE_RETURN_PACK_CONFLICT",
+          message:
+            `${productName} is packed at more than one size in this customer's recent ` +
+            `history (${conflictingPacks.join(", ")}) — return these lines from the order ` +
+            `page's standard return instead.`,
+        });
+      }
+      // A return typed as an explicit BOX count needs a real factor to convert to pieces —
+      // an unknown factor must never silently multiply boxes by 0 and credit $0 for real
+      // returned goods (the returnRequestPieces boxes*upb branch does exactly that when
+      // unitsPerBox is null). `buildQuoteRequest`/`buildCaptureRequest` always send `boxes`
+      // explicitly (0 for a non-boxed product), so gating on "boxes was PROVIDED" rather
+      // than "boxes is a real, positive count" refused every loose-product return outright
+      // — a pieces-only entry (boxes: 0) never needs a pack at all.
+      if (
+        Number(item.boxes ?? 0) > 0 &&
+        (resolvedUnitsPerBox == null || resolvedUnitsPerBox <= 0)
+      ) {
+        throw new ConflictException({
+          code: "INLINE_RETURN_PACK_UNKNOWN",
+          message:
+            `${productName}'s pack size is unknown — return these lines from the order ` +
+            `page's standard return instead.`,
+        });
+      }
+
       const requestedPieces = returnRequestPieces({
-        qty: item.qty,
+        qty: item.qty ?? 0,
         boxes: item.boxes ?? null,
         pieces: item.pieces ?? null,
-        // The caller's own product-level box size — returnRequestPieces uses it both to
-        // scale a bare `qty` (no boxes/pieces split) into pieces AND to scale an explicit
-        // `boxes` count into pieces. Prefer a matching-set line's own snapshot, but a
-        // fully unreferenced item (no matching line at all) still needs the product's
-        // own unitsPerBox so a bare `qty: 1` on a boxed product is read as one box, not
-        // one loose piece.
-        unitsPerBox:
-          matchingSet.find((l) => l.productId === item.productId)?.unitsPerBox ??
-          product?.unitsPerBox ??
-          null,
+        unitsPerBox: resolvedUnitsPerBox,
       });
 
       const allocated = allocateReturnedPieces(
@@ -251,8 +383,11 @@ export class InlineReturnsQuoteService {
       const fallbackTaxRate =
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
-      const chunks: PricedChunk[] = allocated.map((chunk) =>
-        chunk.line
+      const override = overrides.get(item);
+      // The pack an unreferenced chunk is priced (and so overridden) against.
+      const unreferencedUpb = product?.unitsPerBox ?? null;
+      const chunks: PricedChunk[] = allocated.map((chunk) => {
+        const priced = chunk.line
           ? priceMatchedChunk(chunk.line, chunk.pieces, customer.isTaxExempt)
           : priceUnreferencedChunk(
               item.productId,
@@ -260,12 +395,43 @@ export class InlineReturnsQuoteService {
               {
                 unitPrice: unreferencedPrice,
                 source: unreferencedSource,
-                unitsPerBox: product?.unitsPerBox ?? null,
+                unitsPerBox: unreferencedUpb,
               },
               fallbackTaxRate,
               customer.isTaxExempt,
-            ),
-      );
+            );
+        if (!override) return priced;
+        // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
+        // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice
+        // charged no tax), an unreferenced chunk's product pack and quote rate.
+        const result = applyCreditOverride(
+          priced,
+          override,
+          chunk.line
+            ? {
+                unitsPerBox: chunk.line.unitsPerBox,
+                taxRate: chunk.line.taxRate,
+                taxExempt: chunk.line.invoiceTaxAmount === 0 || customer.isTaxExempt,
+              }
+            : {
+                unitsPerBox: unreferencedUpb,
+                taxRate: fallbackTaxRate,
+                taxExempt: customer.isTaxExempt,
+              },
+        );
+        if (result.overCap) {
+          throw new BadRequestException({
+            code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.OVER_CAP,
+            productId: item.productId,
+            creditUnitPrice: override.unitPrice,
+            defaultUnitPrice: result.defaultUnitPrice,
+            message:
+              `${productName}: a credit price can only be lowered — the most this return can ` +
+              `credit is $${result.defaultUnitPrice.toFixed(2)} per unit.`,
+          });
+        }
+        return result.chunk;
+      });
 
       productBreakdown[item.productId] = totalChunks(chunks);
       allChunks.push(...chunks);
@@ -282,6 +448,7 @@ export class InlineReturnsQuoteService {
     productIds: string[],
     productUpbMap: Map<string, number | null>,
     soldWindowDays = DEFAULT_SOLD_WINDOW_DAYS,
+    excludeInvoiceIds: readonly string[] = [],
   ): Promise<CandidateInvoiceLine[]> {
     const since = new Date();
     since.setDate(since.getDate() - soldWindowDays);
@@ -290,6 +457,7 @@ export class InlineReturnsQuoteService {
       where: {
         customerId,
         orderId: { not: null },
+        ...(excludeInvoiceIds.length > 0 ? { id: { notIn: [...excludeInvoiceIds] } } : {}),
         issueDate: { gte: since },
         OR: [
           { status: REAL_INVOICE_STATUSES },
@@ -336,10 +504,17 @@ export class InlineReturnsQuoteService {
         // must be multiplied by unitsPerBox. Pooling/capping uses ONLY piecesQty; qty stays
         // the line's own axis for proration inside priceMatchedChunk. A DRAFT invoice's
         // `update()` (invoices.service.ts:3500) can store a boxed line with unitsPerBox:
-        // null, so fall back to the product's own unitsPerBox — same convention as the
-        // orders' category-tax fallback at invoices.service.ts:427-428. Resolved ONCE here
-        // and stored on the line itself so priceMatchedChunk sees the same value.
-        const upb = item.unitsPerBox ?? productUpbMap.get(item.productId) ?? null;
+        // null, so first try recovering the pack from THIS line's own boxes/pieces/qty split
+        // (SA-101(a)/SA-107 — a null-snapshot line still names its own pack via the split it
+        // was actually stored with) before falling back to the product's CURRENT unitsPerBox
+        // — same convention as the orders' category-tax fallback at
+        // invoices.service.ts:427-428. Resolved ONCE here and stored on the line itself so
+        // priceMatchedChunk and resolveReturnPackFactor's refusal set both see the same value.
+        const upb =
+          item.unitsPerBox ??
+          packFromOwnSplit({ qty, boxes: item.boxes, pieces: item.pieces }) ??
+          productUpbMap.get(item.productId) ??
+          null;
         const upbNum = Number(upb) || 0;
         // B661-sweep: a box-unaware multiply — follow-up PR converts this to
         // @routeflow/pricing's regulatedUnitBasis; see no-second-legacy-line-pieces.spec.ts's allowlist.

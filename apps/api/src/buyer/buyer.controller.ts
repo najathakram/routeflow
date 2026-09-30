@@ -15,7 +15,7 @@ import {
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiHeader } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
-import { OrderStatus, UserRole, UserStatus } from "@prisma/client";
+import { InvoiceStatus, OrderStatus, UserRole, UserStatus } from "@prisma/client";
 import { BuyerService } from "./buyer.service";
 import { BuyerCatalogService } from "./buyer-catalog.service";
 import { BuyerDashboardService } from "./buyer-dashboard.service";
@@ -49,7 +49,8 @@ import { ListOrdersDto } from "../orders/dto/list-orders.dto";
 import { ListInvoicesDto } from "../invoices/dto/list-invoices.dto";
 import { UpdateOrderItemsDto } from "../orders/dto/update-order-items.dto";
 import { SubmitAuthorizationDto } from "../authorizations/dto/submit-authorization.dto";
-import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "../products/scan-match";
 import { redactUpsellForCustomer } from "../common/upsell-redaction";
 import {
   foldMergeItems,
@@ -66,6 +67,11 @@ import {
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
+
+/** #2142: every invoice status a buyer may see — all of them but DRAFT (derived, never re-typed). */
+const BUYER_VISIBLE_INVOICE_STATUSES: InvoiceStatus[] = Object.values(InvoiceStatus).filter(
+  (s) => s !== InvoiceStatus.DRAFT,
+);
 
 /**
  * Builds a JwtPayload that looks like a tenant user.
@@ -198,22 +204,31 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "List buyer's invoices at the selected seller" })
-  getInvoices(@CurrentBuyerCustomer() ctx: any, @Query() query: ListInvoicesDto) {
+  async getInvoices(@CurrentBuyerCustomer() ctx: any, @Query() query: ListInvoicesDto) {
     // Inject customerId directly; pass OPERATOR role so invoicesService.findAll()
-    // uses the where.customerId path rather than the userId-lookup path.
-    // Buyers must never see DRAFT invoices — exclude them unless caller specified a status.
-    const buyerQuery: ListInvoicesDto = { ...query, customerId: ctx.customerId };
-    if (!buyerQuery.status && (!buyerQuery.statuses || buyerQuery.statuses.length === 0)) {
-      buyerQuery.statuses = [
-        "SENT",
-        "VIEWED",
-        "PARTIAL",
-        "OVERDUE",
-        "PAID",
-        "VOID",
-        "WRITTEN_OFF",
-      ] as any;
+    // uses the where.customerId path rather than the userId-lookup path (which also skips its
+    // CUSTOMER-role DRAFT filter, so the buyer boundary applies it here).
+    // #2142: buyers never see a DRAFT, WHATEVER status filter they send. The request's filter
+    // (statuses first, as findAll reads it, else status, else everything) is narrowed to the
+    // buyer-visible statuses; a filter that names only DRAFT matches nothing. `status` is
+    // dropped so findAll reads the narrowed `statuses` alone.
+    const requested: InvoiceStatus[] = query.statuses?.length
+      ? query.statuses
+      : query.status
+        ? [query.status]
+        : BUYER_VISIBLE_INVOICE_STATUSES;
+    const visible = requested.filter((s) => s !== InvoiceStatus.DRAFT);
+    if (visible.length === 0) {
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 20;
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
+    const buyerQuery: ListInvoicesDto = {
+      ...query,
+      status: undefined,
+      statuses: visible,
+      customerId: ctx.customerId,
+    };
     return this.invoicesService.findAll(
       buyerQuery,
       makePseudoUser({ ...ctx, role: UserRole.OPERATOR }),
@@ -230,6 +245,11 @@ export class BuyerController {
     // Ownership check: invoice must belong to this buyer's customer
     if ((invoice as any).customerId !== ctx.customerId) {
       throw new ForbiddenException("This invoice does not belong to your account");
+    }
+    // #2142 N1: a DRAFT is the seller's unissued working copy: to the buyer it does not exist yet
+    // (the same 404 as a missing id), and opening it must not mark it viewed.
+    if ((invoice as any).status === InvoiceStatus.DRAFT) {
+      throw new NotFoundException("Invoice not found");
     }
     // Mark as viewed if not already
     if (!(invoice as any).viewedAt) {
@@ -444,32 +464,11 @@ export class BuyerController {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    const db = this.prisma.forTenant();
-    // Tier 1 — exact (mirrors ProductsService.findByBarcode).
-    let matches = await db.product.findMany({
-      where: {
-        OR: [
-          { barcode: { in: candidates } },
-          { sku: { in: candidates } },
-          { unitSku: { in: candidates } },
-        ],
-      },
-    });
-    // Tier 2 — case-insensitive, MISS ONLY (typed/lowercased alpha SKUs).
-    if (matches.length === 0) {
-      matches = await db.product.findMany({
-        where: {
-          OR: candidates.flatMap((c) => [
-            { barcode: { equals: c, mode: "insensitive" as const } },
-            { sku: { equals: c, mode: "insensitive" as const } },
-            { unitSku: { equals: c, mode: "insensitive" as const } },
-          ]),
-        },
-        take: 25,
-      });
-    }
-    if (matches.length === 0) throw new NotFoundException("Product not found");
-    const match = pickBestScanMatch(matches, candidates);
+    // One shared lookup (L-167). Buyer scope: active products only; getProductDetail below still
+    // applies the regulated-category gate, so a row code on a hidden product 404s here too.
+    const hit = await findScanMatches(this.prisma.forTenant(), candidates, { isActive: true });
+    if (!hit) throw new NotFoundException("Product not found");
+    const match = hit.product;
 
     const detail = await this.catalogService.getProductDetail(match.id, ctx.customerId);
     const alertSubscribed = await this.stockAlertService.isSubscribed(ctx.customerId, match.id);
@@ -614,10 +613,19 @@ export class BuyerController {
             // register entry rather than fixed here: the fix belongs in the CUSTOMER
             // branch (honour a STORED override, still never a client-supplied one),
             // which is F07's file region.
-            const mergedItems = foldMergeItems(
+            const foldResult = foldMergeItems(
               normalizeBoxUnawareSnapshots(lineItems, upbForStoredSnapshots),
               normalizeBareIncomingSellingUnits(incomingItems, lineItems, upbByProduct),
-            ).filter((i) => i.productId);
+              // SA-124e(3): the price basis follows the RESOLVED pack, not the live one —
+              // already built above for the denomination normalizers.
+              upbByProduct,
+            );
+            if (foldResult.livePackFallbackProductIds.length > 0) {
+              this.logger.warn(
+                `foldMergeItems: order ${activeOrder.id} product(s) [${foldResult.livePackFallbackProductIds.join(", ")}] had box data but no resolvable pack of their own — deferred to the live product pack in updateOrderItems (B776/SA-124)`,
+              );
+            }
+            const mergedItems = foldResult.items.filter((i) => i.productId);
             await this.ordersService.updateOrderItems(
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,

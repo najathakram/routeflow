@@ -269,7 +269,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
             pricePerUnit: 10,
             currentStock: 3.5,
             lowStockThreshold: 5,
-            imageKeys: ["a-fp50x50.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"],
+            imageKeys: ["a-fp50x50.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"].map(
+              (k) => `products/p1/${k}`,
+            ),
             isNew: true,
             isDeal: true,
           },
@@ -292,10 +294,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
       expect(p1.isNew).toBe(true);
       expect(p1.isDeal).toBe(true);
       expect(p1.imageUrls).toEqual([
-        "https://signed/a-fp50x50.jpg",
-        "https://signed/b.jpg",
-        "https://signed/c.jpg",
-        "https://signed/d.jpg",
+        "https://signed/products/p1/a-fp50x50.jpg",
+        "https://signed/products/p1/b.jpg",
+        "https://signed/products/p1/c.jpg",
+        "https://signed/products/p1/d.jpg",
       ]);
       expect(p1.imageUrls.length).toBe(4); // 5th key never presigned
       expect(p1.stockStatus).toBe("LOW");
