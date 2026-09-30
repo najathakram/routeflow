@@ -10,6 +10,7 @@ import {
   IsString,
   Matches,
   Min,
+  ValidateIf,
   ValidateNested,
 } from "class-validator";
 
@@ -18,6 +19,9 @@ const MONEY = /^\d{1,8}(\.\d+)?$/;
 
 // Decimal(10,4): at most 6 integer digits.
 const COST = /^\d{1,6}(\.\d+)?$/;
+
+// An explicit null is NOT "omitted": it must fail the money rule, never silently write $0 (Tier 1, #2881 r3).
+const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
 
 const trimmed = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim() : value;
@@ -30,7 +34,7 @@ export class FamilyVariantDto {
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" }) pricePerUnit: string;
-  @IsOptional()
+  @ValidateIf(notUndefined)
   @Matches(COST, { message: "standardCost must be non-negative" })
   standardCost?: string;
 }
@@ -39,11 +43,11 @@ export class FamilyInfoDto {
   @Transform(trimmed) @IsString() @IsNotEmpty() name: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
-  @IsOptional()
+  @ValidateIf(notUndefined)
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
   pricePerUnit?: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
-  @IsOptional()
+  @ValidateIf(notUndefined)
   @Matches(COST, { message: "standardCost must be non-negative" })
   standardCost?: string;
 }
@@ -68,10 +72,10 @@ export class FamilyVariantUpdateDto {
   @IsOptional() @Transform(trimmed) @IsString() barcode?: string;
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
-  @IsOptional()
+  @ValidateIf(notUndefined)
   @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
   pricePerUnit?: string;
-  @IsOptional()
+  @ValidateIf(notUndefined)
   @Matches(COST, { message: "standardCost must be non-negative" })
   standardCost?: string;
 }
