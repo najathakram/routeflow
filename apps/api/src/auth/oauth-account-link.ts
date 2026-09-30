@@ -92,6 +92,9 @@ const PROVIDER_ID_INDEXES: Record<OAuthProviderColumn, ReadonlySet<string>> = {
   appleId: new Set(["User_tenantId_appleId_key", "BuyerAccount_appleId_key"]),
 };
 
+/** adapter-pg keeps the SQL identifier quotes in constraint names/fields (`"googleId"`). */
+const unquoteIdent = (name: string): string => name.replace(/^"|"$/g, "");
+
 /**
  * True only for a Prisma P2002 raised by the provider-id unique constraint itself (another row
  * already owns this sub). Prisma 7's pg driver adapter has no `meta.target`: the constraint rides
@@ -106,9 +109,9 @@ export function isProviderIdUniqueViolation(err: unknown, column: OAuthProviderC
       | undefined
   )?.driverAdapterError?.cause?.constraint;
   if (typeof constraint?.index === "string")
-    return PROVIDER_ID_INDEXES[column].has(constraint.index);
+    return PROVIDER_ID_INDEXES[column].has(unquoteIdent(constraint.index));
   if (Array.isArray(constraint?.fields)) {
-    const fields = constraint.fields.map(String).sort();
+    const fields = constraint.fields.map((f) => unquoteIdent(String(f))).sort();
     return (
       (fields.length === 1 && fields[0] === column) ||
       (fields.length === 2 && fields[0] === column && fields[1] === "tenantId")

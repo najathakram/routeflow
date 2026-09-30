@@ -47,6 +47,32 @@ describe("isProviderIdUniqueViolation", () => {
       true,
     ],
     ["fields [googleId]", p2002(adapter({ fields: ["googleId"] })), "googleId", true],
+    ["quoted fields [googleId]", p2002(adapter({ fields: ['"googleId"'] })), "googleId", true],
+    [
+      "quoted fields [tenantId, googleId]",
+      p2002(adapter({ fields: ['"tenantId"', '"googleId"'] })),
+      "googleId",
+      true,
+    ],
+    [
+      "quoted email fields",
+      p2002(adapter({ fields: ['"tenantId"', '"email"'] })),
+      "googleId",
+      false,
+    ],
+    ["quoted appleId fields", p2002(adapter({ fields: ['"appleId"'] })), "appleId", true],
+    [
+      "quoted appleId fields vs googleId",
+      p2002(adapter({ fields: ['"appleId"'] })),
+      "googleId",
+      false,
+    ],
+    [
+      "quoted googleId fields vs appleId",
+      p2002(adapter({ fields: ['"googleId"'] })),
+      "appleId",
+      false,
+    ],
     ["email index", p2002(adapter({ index: "User_tenantId_email_key" })), "googleId", false],
     ["email fields", p2002(adapter({ fields: ["tenantId", "email"] })), "googleId", false],
     [
