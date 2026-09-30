@@ -174,14 +174,11 @@ export class CreditNotesService {
     // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
     // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
     // line-attribution quirk, never a net over-refund or a negative filing.
+    const notThisNote = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
     const priorLineItems = await db.creditNoteItem.findMany({
       where: {
         invoiceItemId: { in: [...mergedByLine.keys()] },
-        creditNote: {
-          invoiceId: dto.invoiceId,
-          status: { not: "VOID" },
-          ...(opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {}),
-        },
+        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" }, ...notThisNote },
       },
       select: { invoiceItemId: true, amount: true, qty: true },
     });
