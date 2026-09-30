@@ -672,6 +672,12 @@ export class AppleOAuthService {
       tenantId: user.tenantId ?? null,
       tenantSlug: tenantSlug ?? null,
       hasPassword: !!user.password,
+      // #2495: mirror AuthService.login()'s claims exactly — an Apple-authenticated
+      // staff token must carry the same isAdmin claim a password login would.
+      isAdmin: user.isAdmin || user.role === "TENANT_ADMIN",
+      // #1534: the same capability claim password login and refresh mint (auth.service) — the
+      // staff socket re-check compares it with the user row.
+      canActAsDriver: user.canActAsDriver ?? false,
     };
     const claims = await this.entitlements.claimsFor(payload.tenantId);
     if (claims) Object.assign(payload, claims);
