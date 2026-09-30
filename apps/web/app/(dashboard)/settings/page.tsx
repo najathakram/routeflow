@@ -91,6 +91,7 @@ import GoHighLevelSettingsTab from "./_components/GoHighLevelSettingsTab";
 import NextLink from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { describeSaveError } from "@/lib/reason-copy";
+import { isInShell } from "@/lib/in-shell";
 
 // ─── TAB 1: Business Profile ──────────────────────────────────────────────────
 
@@ -1956,6 +1957,8 @@ function MyAccountTab() {
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {
+    // #2653 / SA-542 Q3: never start Google inside the app shell (the CSS hides it; this guards it).
+    if (isInShell()) return;
     setIsLinking(true);
     try {
       const { data } = await apiClient.get("/auth/google/link");
@@ -2024,72 +2027,75 @@ function MyAccountTab() {
         </Card>
       )}
 
-      <Card title="Google Sign-In">
-        <div className="space-y-4">
-          <p className="text-sm text-navy/70">
-            Connect your Google account to sign in without a password.
-          </p>
+      {/* #2653: Google sign-in isn't offered inside the app shell (app/shell.css). */}
+      <div data-google-signin>
+        <Card title="Google Sign-In">
+          <div className="space-y-4">
+            <p className="text-sm text-navy/70">
+              Connect your Google account to sign in without a password.
+            </p>
 
-          <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
-            <div className="flex items-center gap-3">
-              {/* Google logo */}
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
-                <svg viewBox="0 0 48 48" className="h-5 w-5">
-                  <path
-                    fill="#EA4335"
-                    d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
-                  />
-                  <path
-                    fill="#4285F4"
-                    d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
-                  />
-                  <path
-                    fill="#FBBC05"
-                    d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
-                  />
-                  <path
-                    fill="#34A853"
-                    d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
-                  />
-                </svg>
+            <div className="flex items-center justify-between rounded-lg border border-surface-border bg-surface-raised p-4">
+              <div className="flex items-center gap-3">
+                {/* Google logo */}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-surface-border bg-white p-2">
+                  <svg viewBox="0 0 48 48" className="h-5 w-5">
+                    <path
+                      fill="#EA4335"
+                      d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.5 2.2 30 0 24 0 14.6 0 6.6 5.5 2.7 13.5l7.8 6C12.3 13.3 17.7 9.5 24 9.5z"
+                    />
+                    <path
+                      fill="#4285F4"
+                      d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.8 37.3 46.6 31.4 46.6 24.5z"
+                    />
+                    <path
+                      fill="#FBBC05"
+                      d="M10.5 28.1A14.5 14.5 0 0 1 9.5 24c0-1.4.2-2.8.6-4.1L2.3 14A24 24 0 0 0 0 24c0 3.9.9 7.5 2.5 10.8l8-6.7z"
+                    />
+                    <path
+                      fill="#34A853"
+                      d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.5-5.8c-2.2 1.5-5 2.4-8.4 2.4-6.3 0-11.6-4.2-13.5-9.8l-8 6.2C6.5 42.3 14.6 48 24 48z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-navy">Google</p>
+                  <p className="text-xs text-navy/70">
+                    {isLoading
+                      ? "Checking status…"
+                      : googleLinked
+                        ? "Connected — you can sign in with Google"
+                        : "Not connected"}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-navy">Google</p>
-                <p className="text-xs text-navy/70">
-                  {isLoading
-                    ? "Checking status…"
-                    : googleLinked
-                      ? "Connected — you can sign in with Google"
-                      : "Not connected"}
-                </p>
-              </div>
+              {isLoading ? null : googleLinked ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Connected
+                </span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  leftIcon={<LinkIcon className="h-4 w-4" />}
+                  loading={isLinking}
+                  onClick={handleLinkGoogle}
+                >
+                  Connect Google
+                </Button>
+              )}
             </div>
-            {isLoading ? null : googleLinked ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-success-bg px-3 py-1 text-xs font-medium text-success">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Connected
-              </span>
-            ) : (
-              <Button
-                size="sm"
-                variant="secondary"
-                leftIcon={<LinkIcon className="h-4 w-4" />}
-                loading={isLinking}
-                onClick={handleLinkGoogle}
-              >
-                Connect Google
-              </Button>
+
+            {!googleLinked && !isLoading && (
+              <p className="text-xs text-navy/70">
+                After connecting, you can sign in to RouteFlow with your Google account in addition
+                to your username and password.
+              </p>
             )}
           </div>
-
-          {!googleLinked && !isLoading && (
-            <p className="text-xs text-navy/70">
-              After connecting, you can sign in to RouteFlow with your Google account in addition to
-              your username and password.
-            </p>
-          )}
-        </div>
-      </Card>
+        </Card>
+      </div>
 
       <PasswordCard />
 
