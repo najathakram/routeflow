@@ -68,6 +68,7 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
   let creditNotes: CreditNotesService;
   let reissue: CreditNoteReissueService;
   let idempotency: IdempotencyService;
+  let numbering: NumberingService;
   const tenantIds: string[] = [];
   const idemHashes: string[] = [];
   let seq = 0;
@@ -156,6 +157,7 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     creditNotes = mod.get(CreditNotesService);
     reissue = mod.get(CreditNoteReissueService);
     idempotency = mod.get(IdempotencyService);
+    numbering = mod.get(NumberingService);
   });
 
   afterEach(() => {
@@ -265,6 +267,41 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     prisma.auditLog.findMany({ where: { tenantId, entityType: "CreditNote", entityId } });
   const counter = (tenantId: string) =>
     prisma.numberingSequence.findFirst({ where: { tenantId, docType: "CREDIT_NOTE" } });
+
+  /**
+   * Holds every caller at `numbering.reserveNext` until `n` have arrived, then lets them all
+   * through. Both callers have passed every PRE-tx refusal / replay / cap by then, so the race is
+   * decided by the IN-tx re-checks (the lock, the Serializable conflict, the void's refusal, the
+   * authoritative re-cap) and not by which request happened to finish first.
+   */
+  function barrierAtReserve(n: number) {
+    const real = (numbering.reserveNext as any).bind(numbering);
+    const waiting: Array<() => void> = [];
+    return jest.spyOn(numbering, "reserveNext").mockImplementation((async (...args: any[]) => {
+      await new Promise<void>((resolve, reject) => {
+        const t = setTimeout(
+          () => reject(new Error(`barrier: fewer than ${n} callers reached reserveNext`)),
+          20_000,
+        );
+        waiting.push(() => {
+          clearTimeout(t);
+          resolve();
+        });
+        if (waiting.length >= n) waiting.forEach((w) => w());
+      });
+      return real(...args);
+    }) as any);
+  }
+  const settle = async (...calls: Array<Promise<any>>) => {
+    const results = await Promise.allSettled(calls);
+    return {
+      ok: results.filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled"),
+      failed: results.filter((r): r is PromiseRejectedResult => r.status === "rejected"),
+    };
+  };
+  const actionsOn = async (tenantId: string, id: string) =>
+    (await audits(tenantId, id)).map((a) => a.action).sort();
+  const IN_TX_LOSS = /already void|in progress|retry/i;
 
   it("1: an applied note is reversed, voided and replaced by an unapplied note on the same source", async () => {
     const { tenantId, customerId } = await seedTenant("applied");
@@ -418,27 +455,30 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     expect(fresh?.autoApplyExcluded).toBe(true);
   }, 60_000);
 
-  it("8: SA-608 — two DIFFERENT keys racing on one source note: exactly one successor and one 409", async () => {
+  it("8: SA-608 — two DIFFERENT keys racing on one source note (barriered past every pre-tx check): exactly one successor and one readable 409", async () => {
     const { tenantId, customerId } = await seedTenant("race");
     const invSrc = await seedSentInvoice(tenantId, customerId, 50);
     const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+    const before = await counter(tenantId);
+    barrierAtReserve(2);
+    const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
 
-    // Two concurrent calls draw two pooled connections, each in its own Serializable tx.
-    const results = await Promise.allSettled([
+    const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 20 }, "k-8a"),
       run(tenantId, old.id, { amount: 25 }, "k-8b"),
-    ]);
+    );
 
-    const ok = results.filter((r) => r.status === "fulfilled");
-    const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
     expect(ok).toHaveLength(1);
     expect(failed).toHaveLength(1);
     expect(failed[0].reason).toBeInstanceOf(ConflictException);
+    expect(String(failed[0].reason.message)).toMatch(IN_TX_LOSS); // the IN-tx refusal, not a pre-tx one
+    expect(voidSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // both really entered the void
     const successors = await prisma.creditNote.findMany({
       where: { tenantId, reason: { startsWith: `Replaces ${old.creditNoteNumber}` } },
     });
     expect(successors).toHaveLength(1);
-    expect((await prisma.creditNote.findUnique({ where: { id: old.id } }))?.status).toBe("VOID");
+    expect(await actionsOn(tenantId, old.id)).toEqual(["SUPERSEDED", "VOIDED"]); // one each
+    expect((await counter(tenantId))?.nextNumber).toBe(before!.nextNumber + 2); // both reserved
   }, 60_000);
 
   describe("SA-608c: a note with no source invoice", () => {
@@ -502,66 +542,81 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
     }, 60_000);
   });
 
-  it("9: two concurrent reissues, SAME key + SAME body: both return the same note, exactly one minted", async () => {
+  it("9: two concurrent reissues, SAME key + SAME body (barriered): both return the same note, exactly one minted", async () => {
     const { tenantId, customerId } = await seedTenant("samekey");
     const invSrc = await seedSentInvoice(tenantId, customerId, 50);
     const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+    const before = await counter(tenantId);
+    barrierAtReserve(2);
+    const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
 
-    const [a, b] = await Promise.all([
+    const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 20 }, "k-9"),
       run(tenantId, old.id, { amount: 20 }, "k-9"),
-    ]);
+    );
 
-    expect(a.creditNote.id).toBe(b.creditNote.id);
+    expect(failed).toHaveLength(0);
+    expect(ok[0].value.creditNote.id).toBe(ok[1].value.creditNote.id);
+    expect(voidSpy.mock.calls.length).toBeGreaterThanOrEqual(2); // the loser's first attempt reached the void, then replayed
     const minted = await prisma.creditNote.findMany({
       where: { tenantId, reason: { startsWith: `Replaces ${old.creditNoteNumber}` } },
     });
     expect(minted).toHaveLength(1);
+    expect(await actionsOn(tenantId, old.id)).toEqual(["SUPERSEDED", "VOIDED"]);
+    expect((await counter(tenantId))?.nextNumber).toBe(before!.nextNumber + 2);
   }, 60_000);
 
-  it("10: the race-loser of two different keys is a READABLE 409 (a message, never a 500)", async () => {
+  it("10: the race-loser (keys swapped vs case 8, barriered) is a readable in-tx 409, never a 500", async () => {
     const { tenantId, customerId } = await seedTenant("loser");
     const invSrc = await seedSentInvoice(tenantId, customerId, 50);
     const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+    const before = await counter(tenantId);
+    barrierAtReserve(2);
+    const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
 
-    const results = await Promise.allSettled([
-      run(tenantId, old.id, { amount: 20 }, "k-10a"),
+    const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 25 }, "k-10b"),
-    ]);
+      run(tenantId, old.id, { amount: 20 }, "k-10a"),
+    );
 
-    const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(ok).toHaveLength(1);
     expect(failed).toHaveLength(1);
     expect(failed[0].reason).toBeInstanceOf(ConflictException);
     expect((failed[0].reason as ConflictException).getStatus()).toBe(409);
-    expect(String((failed[0].reason as ConflictException).message).length).toBeGreaterThan(10);
+    expect(String(failed[0].reason.message)).toMatch(IN_TX_LOSS);
+    expect(voidSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(await actionsOn(tenantId, old.id)).toEqual(["SUPERSEDED", "VOIDED"]);
+    expect((await counter(tenantId))?.nextNumber).toBe(before!.nextNumber + 2);
   }, 60_000);
 
-  it("11: a reissue racing create() on the same source invoice never pushes total credit past the invoice total", async () => {
+  it("11: a reissue racing create() on the same source invoice (barriered; create() also reserves via numbering) never pushes total credit past the invoice total", async () => {
     const { tenantId, customerId } = await seedTenant("vscreate");
     const invSrc = await seedSentInvoice(tenantId, customerId, 50);
     const old = await seedSourcedCredit(tenantId, customerId, invSrc, 30);
+    const before = await counter(tenantId);
+    barrierAtReserve(2);
+    const voidSpy = jest.spyOn(creditNotes, "voidWithReversalInTx");
 
-    // Sequentially either order leaves one of these refused (35 + 20 > 50): only a write-skew
-    // would let both commit.
-    const results = await Promise.allSettled([
+    // Both pass their pre-tx cap (35 <= 50 with the old note excluded; 30 + 20 <= 50). Sequentially
+    // either order refuses the second (35 + 20 > 50): only a write-skew would let both commit.
+    const { ok, failed } = await settle(
       run(tenantId, old.id, { amount: 35 }, "k-11"),
       tenantCtx.run(tenantId, () =>
         creditNotes.create({ customerId, invoiceId: invSrc, amount: 20, reason: "Race" } as any),
       ),
-    ]);
+    );
 
-    for (const r of results)
-      if (r.status === "rejected") {
-        // A refusal is a readable 4xx, never an unhandled 500.
-        const status = (r.reason as { getStatus?: () => number }).getStatus?.();
-        expect(status).toBeGreaterThanOrEqual(400);
-        expect(status).toBeLessThan(500);
-      }
+    expect(ok).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    const status = (failed[0].reason as { getStatus?: () => number }).getStatus?.();
+    expect(status).toBeGreaterThanOrEqual(400); // a readable refusal, never a 500
+    expect(status).toBeLessThan(500);
+    expect(voidSpy).toHaveBeenCalled();
     const live = await prisma.creditNote.findMany({
       where: { tenantId, invoiceId: invSrc, status: { not: "VOID" } },
     });
-    const total = live.reduce((t, c) => t + Number(c.amount), 0);
-    expect(total).toBeLessThanOrEqual(50);
+    expect(live.reduce((t, c) => t + Number(c.amount), 0)).toBeLessThanOrEqual(50);
+    expect((await counter(tenantId))?.nextNumber).toBe(before!.nextNumber + 2);
   }, 60_000);
 });
 

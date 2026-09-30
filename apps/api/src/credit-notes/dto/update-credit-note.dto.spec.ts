@@ -12,9 +12,13 @@ describe("UpdateCreditNoteDto (#2648 PATCH)", () => {
     expect(await errs({ expiresAt: null })).toHaveLength(0);
   });
 
+  it("accepts a 450-character reason (same bound as the reissue DTO)", async () => {
+    expect(await errs({ reason: "x".repeat(450) })).toHaveLength(0);
+  });
+
   it("rejects a non-string or over-long reason and a non-ISO expiry", async () => {
     expect(await errs({ reason: 7 })).not.toHaveLength(0);
-    expect(await errs({ reason: "x".repeat(501) })).not.toHaveLength(0);
+    expect(await errs({ reason: "x".repeat(451) })).not.toHaveLength(0);
     expect(await errs({ expiresAt: "next tuesday" })).not.toHaveLength(0);
   });
 });

@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { createHash } from "crypto";
 import { roundMoney } from "@routeflow/pricing";
+import { Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
@@ -39,7 +40,7 @@ const RETURN_BACKED = (returnNumber?: string | null) =>
 
 /** The 400s the cap and the void raise that are really a conflict with the current state. */
 const STATE_REFUSAL =
-  /would exceed|exceeds|Invoice not found|Cannot issue a credit note|changed while|backs a return|RETURN_CREDIT_CONSUMED|already void|Nothing was changed/;
+  /would exceed|Invoice not found|Cannot issue a credit note|changed while|backs a return|RETURN_CREDIT_CONSUMED|already void|Nothing was changed/;
 
 /** SA-608c: a note with no source invoice (born standalone, or orphaned by deleteInvoice). */
 const NO_SOURCE_CAP =
@@ -59,6 +60,8 @@ const REPLACES_PREFIX = /^Replaces CN-\S+(?: — )?/;
  */
 @Injectable()
 export class CreditNoteReissueService {
+  private readonly logger = new Logger(CreditNoteReissueService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly creditNotes: CreditNotesService,
@@ -337,8 +340,19 @@ export class CreditNoteReissueService {
       return new ConflictException(
         "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
       );
-    if ((err as { code?: string })?.code === "P2002")
-      return new ConflictException("Credit note number conflict — please retry.");
+    if ((err as { code?: string })?.code === "P2002") {
+      // Like create(): only the creditNoteNumber constraint is a "number conflict"; log the real
+      // target either way and let any other unique violation propagate untouched.
+      const meta = (err as { meta?: { target?: unknown } }).meta;
+      const target = Array.isArray(meta?.target)
+        ? meta.target.join(",")
+        : typeof meta?.target === "string"
+          ? meta.target
+          : "";
+      this.logger.warn(`Credit note reissue failed code=P2002 target=${target}`);
+      if (target === "" || target.includes("creditNoteNumber"))
+        return new ConflictException("Credit note number conflict — please retry.");
+    }
     return err;
   }
 
