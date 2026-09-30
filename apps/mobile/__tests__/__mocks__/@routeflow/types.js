@@ -23,6 +23,15 @@
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
+  // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
+  // apps/api/src/users/users.controller.preferences.spec.ts.
+  PREF: {
+    lowStockDigestEnabled: "lowStockDigestEnabled",
+    pushEnabled: "pushEnabled",
+    locale: "locale",
+    billLastSupplierId: "bill.lastSupplierId",
+    paymentLastMethod: "payment.lastMethod",
+  },
   VENDOR_BILL_STATUS_VALUES: ["DRAFT", "RECEIVED", "PARTIAL", "PAID", "OVERDUE", "VOID"],
   PURCHASE_ORDER_STATUS_VALUES: ["DRAFT", "SENT", "PARTIAL", "RECEIVED", "CLOSED"],
   // #2722: hand-copied; the parity sweep pins it to Prisma PaymentMethod (via enums.ts).
@@ -54,6 +63,12 @@ module.exports = {
     RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
     RECIPE_INVALID: "RECIPE_INVALID",
     FAMILY_PRICE_AUTHORITY: "FAMILY_PRICE_AUTHORITY",
+    FIXED_WHOLE_BOXES: "FIXED_WHOLE_BOXES",
+    COMPOSED_UNIT_LINE: "COMPOSED_UNIT_LINE",
+    RECIPE_PACK_MISMATCH: "RECIPE_PACK_MISMATCH",
+    COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
+    COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
+    COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
