@@ -9,6 +9,8 @@
  *   Q4 buyer cart path (create with a CUSTOMER caller) composes the same; buyer isolation
  *   Q5 edit 2 -> 3 keeps and rescales the components
  *   Q6 buyer AUTO-MERGE new-line path: qty is PIECES (re-split), pins vs a non-recipe twin
+ *   Q7 DRIVER replace path, `pieceDenominated` arm (product already carries a box-aware line):
+ *      same rule as Q6 (pieces % pack == 0 composes; else 400 FIXED_WHOLE_BOXES, nothing persisted)
  *
  * WRITTEN, NOT RUN by the lane that wrote it: DB specs are F2's (`npm run local:test:db`), which
  * adjusts any fixture field the schema demands. Harness mirrors order-composition.db.spec.ts.
@@ -298,6 +300,92 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     expect(twinLine.components).toEqual([]);
   };
 
+  const driverCaller = (w: World, userId: string): JwtPayload =>
+    ({
+      sub: userId,
+      username: "",
+      role: "DRIVER",
+      status: "ACTIVE",
+      forcePasswordChange: false,
+      tenantId: w.tenantId,
+      tenantSlug: w.slug,
+    }) as JwtPayload;
+
+  /**
+   * A CONFIRMED order on the driver's own IN_PROGRESS run (assertDriverMayEditOrder), already
+   * holding a BOX-AWARE line (qty 72, boxes 3, pieces 0, pack 24) for each product in `productIds`
+   * -- exactly what puts those products in updateOrderItems' `pieceDenominated` set.
+   */
+  async function seedDriverOrder(w: World, productIds: string[]) {
+    seq += 1;
+    const du = await raw.user.create({
+      data: {
+        email: `drv-${run}-${seq}@example.test`,
+        username: `drv-${run}-${seq}`,
+        role: "DRIVER",
+        tenantId: w.tenantId,
+      },
+    });
+    const driver = await raw.driver.create({
+      data: { userId: du.id, tenantId: w.tenantId } as any,
+    });
+    const customerId = await seedCustomer(w, "drv");
+    const route = await raw.route.create({
+      data: { name: `2717 route ${run}-${seq}`, tenantId: w.tenantId } as any,
+    });
+    const routeStop = await raw.routeStop.create({
+      data: { tenantId: w.tenantId, routeId: route.id, stopNumber: 1, customerId } as any,
+    });
+    const rr = await raw.routeRun.create({
+      data: {
+        tenantId: w.tenantId,
+        routeId: route.id,
+        scheduledDate: new Date("2026-09-27T00:00:00.000Z"),
+        status: "IN_PROGRESS" as any,
+        driverId: driver.id,
+      },
+    });
+    const stop = await raw.routeRunStop.create({
+      data: {
+        tenantId: w.tenantId,
+        routeRunId: rr.id,
+        routeStopId: routeStop.id,
+        stopNumber: 1,
+        status: "PENDING" as any,
+      } as any,
+    });
+    const order = await raw.order.create({
+      data: {
+        customerId,
+        tenantId: w.tenantId,
+        status: "CONFIRMED" as any,
+        subtotal: String(90 * productIds.length),
+        total: String(90 * productIds.length),
+        routeRunId: rr.id,
+        routeRunStopId: stop.id,
+        lineItems: {
+          create: productIds.map((productId, i) => ({
+            tenantId: w.tenantId,
+            productId,
+            qty: 72,
+            boxes: 3,
+            pieces: 0,
+            unitsPerBox: 24,
+            unitPrice: "30.00",
+            subtotal: "90.00",
+            position: i,
+          })),
+        },
+      },
+    });
+    return { orderId: order.id, driverUserId: du.id };
+  }
+
+  const driverEdit = (w: World, orderId: string, userId: string, items: unknown[]) =>
+    inTenant(w.tenantId, () =>
+      orders.updateOrderItems(orderId, { items, replaceAll: true }, driverCaller(w, userId)),
+    );
+
   beforeAll(async () => {
     const url = requireLocalDatabaseUrl();
     pool = new Pool({ connectionString: url });
@@ -365,6 +453,11 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     await raw.orderRevision?.deleteMany?.({ where: { orderId: { in: orderIds } } });
     await raw.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
     await raw.order.deleteMany({ where: { id: { in: orderIds } } });
+    await raw.routeRunStop.deleteMany({ where: { tenantId } });
+    await raw.routeRun.deleteMany({ where: { tenantId } });
+    await raw.routeStop.deleteMany({ where: { tenantId } });
+    await raw.route.deleteMany({ where: { tenantId } });
+    await raw.driver.deleteMany({ where: { tenantId } });
     await raw.stockMovement.deleteMany({ where: { productId: { in: productIds } } });
     await raw.recipeComponent.deleteMany({ where: { tenantId } });
     await raw.recipe.deleteMany({ where: { tenantId } });
@@ -553,5 +646,52 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     expect(l.components.reduce((s, c) => s + c.qty, 0)).toBe(48);
     expect(Number(l.qty)).toBe(2);
     expect(l.boxes).toBeNull();
+  });
+
+  // Q7: the `pieceDenominated` arm of updateOrderItems' new-line split (NOT the buyer arms of Q6).
+  // Reach: the CUSTOMER/DRIVER replace branch only. STAFF (OPERATOR) edits never enter it -- they go
+  // through the merge branch below, which has no split -- so the arm is driven here as a DRIVER on
+  // their own IN_PROGRESS run, on an order whose lines for these products are already box-aware.
+  // PINS SA-593g: same rule as Q6 -- pieces % pack == 0 composes as packs, else 400, nothing written.
+  it("Q7a DRIVER replace (pieceDenominated arm): qty 72 re-splits to 3 packs, composes 36+36; stored columns equal the plain twin's", async () => {
+    const w = await seedWorld("q7a");
+    const cat = await seedCatalog(w);
+    const twin = await product(w, "plain-twin");
+    const d = await seedDriverOrder(w, [cat.mix.id, twin.id]);
+
+    await driverEdit(w, d.orderId, d.driverUserId, [
+      { productId: cat.mix.id, qty: 72 },
+      { productId: twin.id, qty: 72 },
+    ]);
+
+    const lines = await linesOf(d.orderId);
+    const mixLine = lines.find((l) => l.productId === cat.mix.id);
+    const twinLine = lines.find((l) => l.productId === twin.id);
+    expect(mixLine).toBeDefined();
+    expect(twinLine).toBeDefined();
+    expectComposed72(w, cat, mixLine!, twinLine!);
+  });
+
+  it("Q7b DRIVER replace (pieceDenominated arm): qty 3 (3 loose pieces) -> 400 FIXED_WHOLE_BOXES; the order is unchanged", async () => {
+    const w = await seedWorld("q7b");
+    const cat = await seedCatalog(w);
+    const d = await seedDriverOrder(w, [cat.mix.id]);
+    const before = await linesOf(d.orderId);
+    const orderBefore = await raw.order.findUniqueOrThrow({ where: { id: d.orderId } });
+    const compsBefore = await componentCount(w.tenantId);
+
+    await expect(
+      driverEdit(w, d.orderId, d.driverUserId, [{ productId: cat.mix.id, qty: 3 }]),
+    ).rejects.toMatchObject({
+      status: 400,
+      response: { code: API_ERROR_CODES.FIXED_WHOLE_BOXES },
+    });
+
+    const after = await linesOf(d.orderId);
+    expect(after.map((l) => [l.id, cols(l)])).toEqual(before.map((l) => [l.id, cols(l)]));
+    const orderAfter = await raw.order.findUniqueOrThrow({ where: { id: d.orderId } });
+    expect(Number(orderAfter.total)).toBe(Number(orderBefore.total));
+    expect(Number(orderAfter.subtotal)).toBe(Number(orderBefore.subtotal));
+    expect(await componentCount(w.tenantId)).toBe(compsBefore);
   });
 });

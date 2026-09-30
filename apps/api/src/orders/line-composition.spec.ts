@@ -94,6 +94,16 @@ describe("effectiveBoxes (qty-only line = qty whole packs)", () => {
   it("loose pieces without boxes is NOT promoted to qty (stays refusable)", () => {
     expect(effectiveBoxes({ boxes: 0, pieces: 5, qty: 5 })).toBe(0);
   });
+  it.each([
+    [{ boxes: 0, pieces: 3, qty: 3 }, 0],
+    [{ boxes: null, pieces: 3, qty: 3 }, 0],
+    // even a whole multiple of a pack stays 0: the service's re-split (not effectiveBoxes) makes boxes
+    [{ boxes: 0, pieces: 48, qty: 48 }, 0],
+    [{ boxes: 3, pieces: 0, qty: 72 }, 3],
+    [{ boxes: null, pieces: null, qty: 2 }, 2],
+  ])("never reads loose pieces as packs: %j -> %d", (line, expected) => {
+    expect(effectiveBoxes(line)).toBe(expected);
+  });
 });
 
 describe("assertComponentSum (I12)", () => {
