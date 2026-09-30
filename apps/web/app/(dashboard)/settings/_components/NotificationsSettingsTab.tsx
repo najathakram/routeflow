@@ -91,7 +91,7 @@ export function NotificationsSettingsTab() {
   const openEvent = data?.events.find((e) => e.eventKey === openEventKey) ?? null;
 
   const isLiveChannel = (channel: MessageChannel) =>
-    channel === "INTERNAL" || data?.channelStatus[channel] === "LIVE";
+    channel === "INTERNAL" || data?.channelStatus?.[channel] === "LIVE";
 
   const openEditor = (event: MatrixEvent) => {
     // Only channels that are built AND set up get a template editor; opens on the first live one (Email).
