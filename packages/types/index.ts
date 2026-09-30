@@ -162,6 +162,7 @@ export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/import";
 export * from "./api/analytics-insights";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
