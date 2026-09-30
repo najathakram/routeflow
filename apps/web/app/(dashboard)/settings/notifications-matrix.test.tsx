@@ -14,11 +14,19 @@ jest.mock("@/lib/auth-context", () => ({
   useAuth: () => ({ user: { role: mockRole } }),
 }));
 
-const senderState: { sender: { kind: string; label: string } | null } = {
-  sender: { kind: "default", label: "RouteFlow's address" },
+const senderState: {
+  sender: { kind: string; label: string; mailboxAvailable: boolean } | null;
+  enabledArg: boolean | undefined;
+} = {
+  sender: { kind: "default", label: "RouteFlow's address", mailboxAvailable: true },
+  enabledArg: undefined,
 };
+// Mirrors production: the hook is told enabled=isAdmin and returns nothing when disabled.
 jest.mock("./_components/useEmailSender", () => ({
-  useEmailSender: () => ({ sender: senderState.sender }),
+  useEmailSender: (enabled: boolean) => {
+    senderState.enabledArg = enabled;
+    return { sender: enabled ? senderState.sender : null };
+  },
 }));
 
 jest.mock("@/lib/api/notifications", () => ({
@@ -136,7 +144,8 @@ jest.mock("@/lib/api/messaging", () => ({
 }));
 
 beforeEach(() => {
-  senderState.sender = { kind: "default", label: "RouteFlow's address" };
+  senderState.sender = { kind: "default", label: "RouteFlow's address", mailboxAvailable: true };
+  senderState.enabledArg = undefined;
   mockRole = "TENANT_ADMIN";
   state.config = makeConfig();
   state.isError = false;
@@ -312,8 +321,12 @@ describe("Notifications page — grouped list (#1965)", () => {
     );
   });
 
-  it("T16b a connected sender is named; an unknown sender hides the row; a non-admin gets no setup link", () => {
-    senderState.sender = { kind: "mailbox", label: "your connected mailbox (ops@acme.test)" };
+  it("T16b a connected sender is named; an unknown sender hides the row; without the mailbox add-on the link says Set up email", () => {
+    senderState.sender = {
+      kind: "mailbox",
+      label: "your connected mailbox (ops@acme.test)",
+      mailboxAvailable: true,
+    };
     const first = renderWithProviders(<NotificationsSettingsTab />);
     expect(document.querySelector("[data-sender-row]")).toHaveTextContent(
       "Sending from: your connected mailbox (ops@acme.test)",
@@ -323,11 +336,27 @@ describe("Notifications page — grouped list (#1965)", () => {
     const second = renderWithProviders(<NotificationsSettingsTab />);
     expect(document.querySelector("[data-sender-row]")).toBeNull();
     second.unmount();
-    senderState.sender = { kind: "default", label: "RouteFlow's address" };
+    senderState.sender = { kind: "default", label: "RouteFlow's address", mailboxAvailable: false };
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(screen.queryByRole("link", { name: /use your own mailbox/i })).toBeNull();
+    expect(screen.getByRole("link", { name: /set up email/i })).toHaveAttribute(
+      "href",
+      "/settings?tab=email",
+    );
+  });
+
+  it("T16c (Q11) an operator: the hook is told enabled=false, NO sender row renders and no setup link", () => {
     mockRole = "OPERATOR";
     renderWithProviders(<NotificationsSettingsTab />);
+    expect(senderState.enabledArg).toBe(false);
+    expect(document.querySelector("[data-sender-row]")).toBeNull();
+    expect(screen.queryByText(/sending from/i)).toBeNull();
     expect(screen.queryByRole("link", { name: /set up email|use your own mailbox/i })).toBeNull();
-    expect(screen.getByText(/sending from: routeflow's address/i)).toBeInTheDocument();
+  });
+
+  it("T16d an admin: the hook is told enabled=true", () => {
+    renderWithProviders(<NotificationsSettingsTab />);
+    expect(senderState.enabledArg).toBe(true);
   });
 
   it("T22 the team group says plainly that nothing is emailed to the team yet", () => {
@@ -443,6 +472,21 @@ describe("Notifications page — grouped list (#1965)", () => {
     renderWithProviders(<NotificationsSettingsTab />);
     expect(screen.getByRole("button", { name: /retry/i }).className).toMatch(/min-h-11/);
     expect(screen.getByText("Push notifications")).toBeInTheDocument();
+  });
+
+  it("T13d the health strip fix link is admin-only: a non-admin still sees the sentence, no link", () => {
+    mockRole = "OPERATOR";
+    state.health = {
+      windowDays: 7,
+      sent: 40,
+      failed: 2,
+      skipped: 0,
+      byReason: [{ reasonCode: "NO_FROM_ADDRESS", count: 2, fixLink: "SETTINGS_EMAIL" }],
+    };
+    renderWithProviders(<NotificationsSettingsTab />);
+    const strip = screen.getByRole("region", { name: /email delivery, last 7 days/i });
+    expect(strip).toHaveTextContent("2 emails weren't sent: no sending email address is set up.");
+    expect(within(strip).queryByRole("link")).toBeNull();
   });
 
   it("T13b the health strip renders nothing when the endpoint has no data", () => {

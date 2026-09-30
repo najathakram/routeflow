@@ -54,7 +54,7 @@ const DELIVERY_REASON_CLAUSE: Record<DeliveryReasonCode, { clause: string; skipp
   NO_FROM_ADDRESS: { clause: "no sending email address is set up", skipped: false },
   MAILBOX_REVOKED: { clause: "the connected mailbox lost access", skipped: false },
   SMTP_AUTH: { clause: "the email account sign-in was rejected", skipped: false },
-  TRANSPORT_ERROR: { clause: "of an email delivery problem", skipped: false },
+  TRANSPORT_ERROR: { clause: "the email service had a delivery problem", skipped: false },
   RECIPIENT_REJECTED: {
     clause: "the recipient's mail server rejected the message",
     skipped: false,
