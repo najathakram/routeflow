@@ -276,6 +276,55 @@ describe("N2 nonces are kept by age; a parked line older than the retained windo
   });
 });
 
+describe("R32 the nonce window is 7 days", () => {
+  const day = (d: number) =>
+    new Date(Date.parse(NOW) - d * 86_400_000).toISOString().replace(".000Z", "Z");
+  const row = (i: number, ts: string) => `${i.toString(16).padStart(16, "0")} ${ts}`;
+
+  it("compaction prunes nonces older than 7 days and keeps the window", async () => {
+    world.seedBranch(STATE_BRANCH, {
+      ...baseState(3),
+      "nonces.txt":
+        [row(1, day(8)), row(2, day(30)), row(3, day(6)), row(4, day(1))].join("\n") + "\n",
+    });
+    await CP.compact(world.env("srv"));
+    const kept = world.remoteFile("nonces.txt").split("\n").filter(Boolean);
+    expect(kept).toEqual([row(3, day(6)), row(4, day(1))]);
+  });
+
+  it("a parked line older than 7 days goes to pending/rejected/ even when the file still has older nonces", async () => {
+    world.seedBranch(STATE_BRANCH, { ...baseState(2), "nonces.txt": row(1, day(9)) + "\n" });
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("first"));
+    const old = JSON.stringify({ ...note("week-old"), _nonce: "0123456789abcdef", _at: day(8) });
+    fs.mkdirSync(path.join(env.cloneDir, "pending"), { recursive: true });
+    fs.writeFileSync(path.join(env.cloneDir, "pending", "lane-u.jsonl"), old + "\n");
+    const write = jest.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await SB.appendAndPush(env, "lane-u", note("second"));
+      expect(write.mock.calls.map((c) => String(c[0])).join("")).toMatch(/set aside/);
+    } finally {
+      write.mockRestore();
+    }
+    expect(world.remoteLines("lane-u").map((l) => l.note)).not.toContain("week-old");
+    expect(
+      fs.readFileSync(path.join(env.cloneDir, "pending", "rejected", "lane-u.jsonl"), "utf8"),
+    ).toContain("week-old");
+  });
+
+  it("append prunes rows older than 7 days too", async () => {
+    world.seedBranch(STATE_BRANCH, {
+      ...baseState(2),
+      "nonces.txt": [row(1, day(8)), row(2, day(2))].join("\n") + "\n",
+    });
+    const env = world.env("a");
+    await SB.appendAndPush(env, "lane-u", note("x"));
+    const rows = world.remoteFile("nonces.txt").split("\n").filter(Boolean);
+    expect(rows.some((r) => r.startsWith(row(1, "").trim()))).toBe(false);
+    expect(rows).toContain(row(2, day(2)));
+  });
+});
+
 describe("N3 clone and fetch have their own, longer timeout", () => {
   it("defaults: 120 s for clone/fetch, 10 s for everything else", () => {
     expect(GT.GIT_CLONE_TIMEOUT_MS).toBe(120_000);

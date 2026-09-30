@@ -8,15 +8,19 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
 import { foldEvents } from "../domain/fold";
-import { CTL_IDENTITY, CtlError, git, gitTry } from "./git";
+import { CTL_IDENTITY, CtlError, cloneTimeoutMs, git, gitTry } from "./git";
 import type { Env } from "./git";
 import { withLock } from "./lock";
 import {
+  NONCES_FILE,
   appendRetrySleep,
   ensureClone,
   lastSeq,
   liveEvents,
+  formatNonces,
   lockDirOf,
+  pruneNonces,
+  readNonces,
   readTree,
   syncClone,
 } from "./state-branch";
@@ -40,7 +44,9 @@ interface ArchiveView {
 function loadArchive(env: Env, clone: string): ArchiveView {
   const ref = `refs/heads/${env.archiveBranch}`;
   const tracking = `refs/remotes/origin/${env.archiveBranch}`;
-  const fetched = gitTry(clone, ["fetch", "-q", "--depth", "1", "origin", `+${ref}:${tracking}`]);
+  const fetched = gitTry(clone, ["fetch", "-q", "--depth", "1", "origin", `+${ref}:${tracking}`], {
+    timeoutMs: cloneTimeoutMs(),
+  });
   if (!fetched.ok) return { parent: null, paths: [], read: () => "" };
   const parent = git(clone, ["rev-parse", tracking]).trim();
   const paths = git(clone, ["ls-tree", "-r", "--name-only", parent])
@@ -129,6 +135,11 @@ export async function compact(env: Env): Promise<CompactResult> {
         writeAtomic(path.join(clone, "events", `${lane}.jsonl`), JSON.stringify(header) + "\n");
       }
       writeAtomic(path.join(clone, "snapshot.json"), JSON.stringify(snap));
+      // the dedupe window is 7 days: older nonces are dead weight on the tip
+      const kept = pruneNonces(readNonces(clone), now);
+      if (kept.length !== readNonces(clone).length) {
+        writeAtomic(path.join(clone, NONCES_FILE), formatNonces(kept));
+      }
       git(clone, ["add", "-A"]);
       git(clone, [
         ...CTL_IDENTITY,
@@ -167,14 +178,11 @@ function pushArchive(env: Env, clone: string, files: { file: string; text: strin
   const idxEnv = { GIT_INDEX_FILE: path.join(idxDir, "index") };
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      const fetched = gitTry(clone, [
-        "fetch",
-        "-q",
-        "--depth",
-        "1",
-        "origin",
-        `+${ref}:${tracking}`,
-      ]);
+      const fetched = gitTry(
+        clone,
+        ["fetch", "-q", "--depth", "1", "origin", `+${ref}:${tracking}`],
+        { timeoutMs: cloneTimeoutMs() },
+      );
       const parent = fetched.ok ? git(clone, ["rev-parse", tracking]).trim() : null;
       fs.rmSync(idxEnv.GIT_INDEX_FILE, { force: true });
       if (parent) git(clone, ["read-tree", parent], { env: idxEnv });
@@ -206,7 +214,9 @@ function pushArchive(env: Env, clone: string, files: { file: string; text: strin
       ];
       if (parent) args.push("-p", parent);
       const commit = git(clone, args).trim();
-      const pushed = gitTry(clone, ["push", "-q", "origin", `${commit}:${ref}`]);
+      const pushed = gitTry(clone, ["push", "-q", "origin", `${commit}:${ref}`], {
+        timeoutMs: cloneTimeoutMs(),
+      });
       if (pushed.ok) return;
       if (!REJECTED_PUSH.test(pushed.err)) throw new CtlError(5, pushed.err.trim());
     }

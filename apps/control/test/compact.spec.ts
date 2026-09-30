@@ -215,6 +215,56 @@ describe("T55 compact", () => {
   }, 20_000);
 });
 
+describe("R32 compacted tip with a full nonce window", () => {
+  it("200 appends/day: 7 days of nonces + 30 days of old rows + a 384 KB events trigger -> tip <= 512 KB", async () => {
+    const files = baseState(0);
+    const evs: any[] = [
+      {
+        seq: 1,
+        ts: "2026-01-10T08:00:00Z",
+        lane: "lane-u",
+        type: "task.started",
+        by: "agent",
+        task: "RF-1",
+      },
+    ];
+    for (let i = 2; i <= 400; i++) {
+      evs.push({
+        seq: i,
+        ts: new Date(Date.parse("2026-01-10T08:00:00Z") + i * 1000)
+          .toISOString()
+          .replace(".000Z", "Z"),
+        lane: "lane-u",
+        type: "lane.note",
+        by: "agent",
+        note: `n${i}-`.padEnd(930, "x"),
+      });
+    }
+    files["events/lane-u.jsonl"] = evs.map(jl).join("");
+    expect(Buffer.byteLength(files["events/lane-u.jsonl"])).toBeGreaterThanOrEqual(384 * 1024);
+    const rows: string[] = [];
+    for (let n = 0; n < 200 * 37; n++) {
+      const ts = new Date(Date.parse(NOW) - Math.floor((n * 86_400_000) / 200))
+        .toISOString()
+        .replace(".000Z", "Z");
+      rows.push(`${n.toString(16).padStart(16, "0")} ${ts}`);
+    }
+    files["nonces.txt"] = rows.join("\n") + "\n";
+    world.seedBranch(STATE_BRANCH, files);
+    const env = world.env("srv");
+    await need(CP, "compact").compact(env);
+    const shallow = world.shallowClone(STATE_BRANCH, "shallow");
+    expect(kb(shallow)).toBeLessThanOrEqual(512);
+    const kept = fs
+      .readFileSync(path.join(shallow, "nonces.txt"), "utf8")
+      .split("\n")
+      .filter(Boolean);
+    expect(kept.length).toBeLessThanOrEqual(200 * 7 + 1);
+    const oldest = Math.min(...kept.map((r) => Date.parse(r.split(" ")[1])));
+    expect(oldest).toBeGreaterThanOrEqual(Date.parse(NOW) - 7 * 86_400_000);
+  }, 30_000);
+});
+
 /** mulberry32: fixed-seed PRNG, so the property test is reproducible. */
 function prng(seed: number): () => number {
   let a = seed >>> 0;

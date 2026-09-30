@@ -292,9 +292,9 @@ export const defaultSleep = (ms: number): Promise<void> => new Promise((r) => se
 
 const NONCE_KEY = "_nonce";
 const AT_KEY = "_at";
-const NONCES_FILE = "nonces.txt";
+export const NONCES_FILE = "nonces.txt";
 /** Applied nonces are kept by age (a parked line older than the window cannot be deduped). */
-const NONCES_KEEP_MS = 30 * 24 * 3_600_000;
+const NONCES_KEEP_MS = 7 * 24 * 3_600_000;
 
 function pendingDir(clone: string): string {
   return path.join(clone, "pending");
@@ -362,13 +362,13 @@ function readPending(clone: string): { items: PendingItem[]; files: string[] } {
   return { items, files };
 }
 
-interface NonceRow {
+export interface NonceRow {
   nonce: string;
   ts: string;
 }
 
 /** `nonce ts` rows (a bare `nonce` from an older file has no ts). */
-function readNonces(clone: string): NonceRow[] {
+export function readNonces(clone: string): NonceRow[] {
   try {
     return fs
       .readFileSync(path.join(clone, NONCES_FILE), "utf8")
@@ -383,8 +383,13 @@ function readNonces(clone: string): NonceRow[] {
   }
 }
 
+export const formatNonces = (rows: NonceRow[]): string =>
+  rows.length === 0
+    ? ""
+    : rows.map((r) => (r.ts === "" ? r.nonce : `${r.nonce} ${r.ts}`)).join("\n") + "\n";
+
 /** Drop rows older than the retention window (by the event clock, never by count). */
-function pruneNonces(rows: NonceRow[], now: string): NonceRow[] {
+export function pruneNonces(rows: NonceRow[], now: string): NonceRow[] {
   const cutoff = Date.parse(now) - NONCES_KEEP_MS;
   return rows.filter((r) => {
     const t = Date.parse(r.ts);
@@ -539,7 +544,11 @@ export async function appendAndPush(
         };
         let items = pend.items.filter((it) => {
           if (it.nonce !== null && applied.has(it.nonce)) return false; // already on the branch
-          if (it.at !== null && oldestKept !== "" && it.at < oldestKept) {
+          const tooOld =
+            it.at !== null &&
+            (Date.parse(it.at) < Date.parse(ts) - NONCES_KEEP_MS ||
+              (oldestKept !== "" && it.at < oldestKept));
+          if (tooOld) {
             rejected.push({ lane: it.lane, raw: it.raw }); // older than the dedupe window
             return false;
           }
@@ -594,10 +603,7 @@ export async function appendAndPush(
           [...nonceRows, ...[...drainNonces, nonce].map((n) => ({ nonce: n, ts }))],
           ts,
         );
-        writeAtomic(
-          path.join(clone, NONCES_FILE),
-          seen.map((r) => (r.ts === "" ? r.nonce : `${r.nonce} ${r.ts}`)).join("\n") + "\n",
-        );
+        writeAtomic(path.join(clone, NONCES_FILE), formatNonces(seen));
         git(clone, ["add", "-A"]);
         const extraN = builtAll.length - 1;
         const msg =
