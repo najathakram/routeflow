@@ -119,6 +119,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { AppliedCreditsPanel, appliedOnOrderRows } from "./AppliedCreditsPanel";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { resolveProductByCode } from "@/lib/barcode-resolve";
+import * as scan from "./scan-level-line";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
@@ -1260,11 +1261,15 @@ export function EditableLineItems({
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
-  function addProduct(p: any) {
-    // If this product is already in the list (not cancelled), increment qty instead of adding duplicate
+  function addProduct(p: any, level?: scan.SellLevel, explicit?: scan.SellLevel) {
     const existing = items.find((it) => it.productId === p.id && !it.cancelled);
+    const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
-      onChange(items.map((it) => (it.id === existing.id ? { ...it, qty: it.qty + 1 } : it)));
+      onChange(
+        items.map((it) =>
+          it.id === existing.id ? scan.bumpLineForScan(it, unitScan, explicit) : it,
+        ),
+      );
       setScrollToId(existing.id);
     } else {
       // This customer's contracted price is the line's BASE — pinning the base
@@ -1282,29 +1287,9 @@ export function EditableLineItems({
           ? hist.lastPrice
           : base;
       const newId = `new-${Date.now()}-${Math.random()}`;
-      onAdd({
-        id: newId,
-        isNew: true,
-        originalProductId: p.id,
-        originalProductName: p.name,
-        originalQty: 1,
-        productId: p.id,
-        productName: p.name,
-        qty: 1,
-        unitPrice: startPrice,
-        basePrice: base,
-        originalUnitPrice: startPrice,
-        originalBasePrice: base,
-        // Carry the case size so a later substitution re-denominates this
-        // line's selling-unit qty correctly (boxSplit stays unset — a plain
-        // new line still bills in selling units and sends no split).
-        unitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
-        originalUnitsPerBox: p.unitsPerBox == null ? null : Number(p.unitsPerBox),
-        cancelled: false,
-        // units_v1: OrderLineUnitPicker's required fields (pack unit label + price type).
-        unit: p.unit ?? "",
-        priceType: isSpecialTierFor(p) ? "SPECIAL" : "STANDARD",
-      });
+      onAdd(
+        scan.buildNewLine(p, { newId, startPrice, base, unitScan, special: isSpecialTierFor(p) }),
+      );
       setScrollToId(newId);
     }
     setAddSearch("");
@@ -1345,7 +1330,7 @@ export function EditableLineItems({
           scheduleScannerRefocus(addInputRef, 50, { select: true });
           return;
         }
-        addProduct(result.product);
+        addProduct(result.product, ...scan.scanArgsForHit(code, result.product));
         return;
       }
       // Nothing found — open create-product modal with scanned code as SKU
@@ -1526,6 +1511,7 @@ export function EditableLineItems({
                     if (!isNaN(v) && v > 0) update(item.id, { qty: v });
                   }}
                 />
+                <scan.SplitLineHint item={item} />
               </label>
             )}
 

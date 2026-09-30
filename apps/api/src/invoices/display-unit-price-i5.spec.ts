@@ -16,7 +16,8 @@ const ALLOW: Record<string, string> = {
   "invoices/invoice-composed-edit.ts": "writer: re-stamps the rows on a DRAFT edit",
   "invoices/invoice-pdf-item.ts": "reader: the PDF sub-line price text",
   "orders/component-view.ts": "reader: read mapper for the component view (findOne)",
-  "orders/order-edit-composition.ts": "carry: restores the stored rows' value on an edit (SA-591), never summed",
+  "orders/order-edit-composition.ts":
+    "carry: restores the stored rows' value on an edit (SA-591), never summed",
 };
 
 /** Files that compute money from lines; they must never name the identifier at all. */
@@ -61,7 +62,10 @@ function moneyViolations(files: string[]): string[] {
 describe("displayUnitPrice4 is display-only (I5, case 16)", () => {
   const sourceFiles = listTsFiles(SRC_ROOT);
   const namers = sourceFiles
-    .map((f) => ({ rel: relative(SRC_ROOT, f).split("\\").join("/"), text: readFileSync(f, "utf8") }))
+    .map((f) => ({
+      rel: relative(SRC_ROOT, f).split("\\").join("/"),
+      text: readFileSync(f, "utf8"),
+    }))
     .filter((f) => readsDisplayUnitPrice4(f.text))
     .map((f) => f.rel);
 
@@ -76,11 +80,18 @@ describe("displayUnitPrice4 is display-only (I5, case 16)", () => {
 
   it("negative control: a fixture naming it in a money path, a money directory and a stray file is reported", () => {
     const fixture = "const price = row.displayUnitPrice4;";
-    const fixtureFiles = ["invoices/invoice-edit-plan.ts", "analytics/report.ts", "orders/stray.ts"];
+    const fixtureFiles = [
+      "invoices/invoice-edit-plan.ts",
+      "analytics/report.ts",
+      "orders/stray.ts",
+    ];
     const naming = fixtureFiles.filter(() => readsDisplayUnitPrice4(fixture));
     expect(naming).toEqual(fixtureFiles);
     expect(naming.filter((f) => !(f in ALLOW))).toEqual(fixtureFiles); // the allowlist check rejects all three
-    expect(moneyViolations(naming)).toEqual(["invoices/invoice-edit-plan.ts", "analytics/report.ts"]);
+    expect(moneyViolations(naming)).toEqual([
+      "invoices/invoice-edit-plan.ts",
+      "analytics/report.ts",
+    ]);
     expect(moneyViolations(["orders/component-view.ts"])).toEqual([]);
   });
 
@@ -104,6 +115,8 @@ describe("displayUnitPrice4 is display-only (I5, case 16)", () => {
   it("revert-red: a scratch read inside a totals function is detected", () => {
     const scratch = `function editInvoiceTotals(items) { return items.reduce((s, i) => s + i.displayUnitPrice4 * i.qty, 0); }`;
     expect(readsDisplayUnitPrice4(scratch)).toBe(true);
-    expect(readsDisplayUnitPrice4(`// displayUnitPrice4 is display only\nconst x = 1;`)).toBe(false);
+    expect(readsDisplayUnitPrice4(`// displayUnitPrice4 is display only\nconst x = 1;`)).toBe(
+      false,
+    );
   });
 });

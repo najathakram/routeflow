@@ -43,6 +43,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
 import { deactivateFailureToast } from "@/lib/product-reactivation-refusal";
+import { ProductsExportButton } from "./_components/ProductsExportButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1199,6 +1200,16 @@ export default function ProductsPage() {
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
             </Button>
+            <ProductsExportButton
+              total={totalItems}
+              loading={isLoading}
+              filters={{
+                search: debouncedSearch,
+                category: categoryFilter,
+                stockStatus: (stockFilter || undefined) as any,
+                section: sectionFilter,
+              }}
+            />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>

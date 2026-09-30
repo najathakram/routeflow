@@ -32,7 +32,12 @@ const line = (id: string | undefined, o: Partial<Record<string, unknown>> = {}):
     ...o,
   }) as unknown as MergeLine;
 
-const opts = { promos: [], canEarnNew: false, categoryFor: () => null, liveUnitsPerBoxFor: () => 24 };
+const opts = {
+  promos: [],
+  canEarnNew: false,
+  categoryFor: () => null,
+  liveUnitsPerBoxFor: () => 24,
+};
 
 describe("buildMergeLineWrites with FIXED lines (C9a/C9b)", () => {
   it("different recipeVersion: not folded; the loser moves as its own line with its stamp", () => {

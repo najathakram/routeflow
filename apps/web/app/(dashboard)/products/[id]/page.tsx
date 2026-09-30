@@ -70,6 +70,7 @@ import { useReactivateFlow } from "./useReactivateFlow";
 import { deactivateFailureToast } from "@/lib/product-reactivation-refusal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
+import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
@@ -2408,6 +2409,7 @@ export default function ProductDetailPage() {
             {/* Sales — per-buyer invoiced-sale history (PR-B): who bought this,
                 when, and at what price, with min/avg/max price summary chips. */}
             <SalesHistoryCard productId={product.id} />
+            <ProductInsightsExport productId={product.id} sku={product.sku ?? product.id} />
 
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />

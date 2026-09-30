@@ -43,8 +43,7 @@ import { saleModeGate } from "../../../../lib/sale-mode";
 import { showToast } from "../../../../lib/toast";
 import {
   decrementLine,
-  incrementLine,
-  incrementLinePiece,
+  addScannedLevelToLine,
   setLineBoxes,
   setLinePieces,
   setLineQty,
@@ -55,7 +54,9 @@ import { canRemoveLooseUnits, looseUnitsVisible } from "../../../../lib/loose-un
 import { makeScanHandler, runWedgeSubmit } from "../../../../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wedge-submit";
 import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
-import { findExactScanMatch, looksLikeScanCode, scanUnitKind } from "../../../../lib/wedge-scan";
+import { resolveScanSellLevel } from "@routeflow/scanning";
+import type { SellLevel } from "@routeflow/pricing";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
@@ -490,21 +491,16 @@ function InvoiceComposer({
     [products, scannedById],
   );
 
-  const addOne = (id: string, snapshot?: Product, kind: "case" | "piece" = "case") => {
+  const addOne = (id: string, snapshot?: Product, level: SellLevel = "BOX") => {
     const p = snapshot ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
     setItems((m) => {
       const prev: LineState = m[id] ?? { qty: 0 };
-      // ...prev preserved so a repeat scan / +1 keeps unitPrice. A PIECE-code
-      // scan (unitSku) adds one loose piece, rolling into a box at upb.
-      return {
-        ...m,
-        [id]:
-          kind === "piece"
-            ? incrementLinePiece(prev, isBoxed, upb)
-            : incrementLine(prev, isBoxed, upb),
-      };
+      // ...prev preserved so a repeat scan / +1 keeps unitPrice. The level the scanned code
+      // carries decides (SA-580 R1/R2): UNIT adds one loose piece, rolling into a box at upb; BOX
+      // adds a box. upb <= 1: today's plain +1 (R4).
+      return { ...m, [id]: addScannedLevelToLine(prev, level, isBoxed, upb) };
     });
     // Retain a snapshot for EVERY added line, not just scanned ones — see
     // NewOrderScreen.addOne. Gated on `snapshot`, a row added by TAPPING it
@@ -655,17 +651,14 @@ function InvoiceComposer({
    * confirmation, so no banner and no search reset (which would swap the list
    * out from under the operator mid-scan); ScanOrderSheet owns the haptic.
    */
-  const acceptScannedProduct = (
-    product: Product,
-    unitKind: "case" | "piece" = "case",
-  ): ScanOutcome => {
-    addOne(product.id, product, unitKind);
+  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
+    addOne(product.id, product, level);
     bumpScanned(product.id);
     // Never set the search box to the scanned code — see NewOrderScreen: the
     // barcode endpoint resolves codes the text search cannot match.
     clearSearch();
     const label =
-      unitKind === "piece" && Number(product.unitsPerBox ?? 0) > 1
+      level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1
         ? `Added 1 loose · ${displayName(product)}`
         : `Added ${displayName(product)}`;
     if (scanOpen) return; // the tray row is the confirmation
@@ -748,9 +741,9 @@ function InvoiceComposer({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const kind = scanUnitKind(code, match);
-    if (!scanGuardRef.current.offer(code, match, kind)) return;
-    const outcome = acceptScannedProduct(match, kind);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
+    if (!scanGuardRef.current.offer(code, match, level)) return;
+    const outcome = acceptScannedProduct(match, level);
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);

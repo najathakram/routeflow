@@ -425,18 +425,12 @@ export function buildReplaceAllPairing(
   const preEditLinesByProduct = new Map<string, number>();
   for (const li of order.lineItems ?? []) {
     if (!li.productId || li.status === "CANCELLED") continue;
-    preEditLinesByProduct.set(
-      li.productId,
-      (preEditLinesByProduct.get(li.productId) ?? 0) + 1,
-    );
+    preEditLinesByProduct.set(li.productId, (preEditLinesByProduct.get(li.productId) ?? 0) + 1);
   }
   const incomingLinesByProduct = new Map<string, number>();
   for (const it of dto.items ?? []) {
     if (!it.productId) continue;
-    incomingLinesByProduct.set(
-      it.productId,
-      (incomingLinesByProduct.get(it.productId) ?? 0) + 1,
-    );
+    incomingLinesByProduct.set(it.productId, (incomingLinesByProduct.get(it.productId) ?? 0) + 1);
   }
   const bogoCounterparts = new Map<string, any>();
   for (const li of order.lineItems ?? []) {
