@@ -66,7 +66,9 @@ export function allocateComponentPieces(input: {
   }
   const total = comps.reduce((a, c) => a + c.qty, 0);
   if (prior + bill > total) {
-    throw new MoneyInvariantError(`prior ${prior} + bill ${bill} exceeds the line's ${total} pieces`);
+    throw new MoneyInvariantError(
+      `prior ${prior} + bill ${bill} exceeds the line's ${total} pieces`,
+    );
   }
   if (bill === 0) return comps.map((c) => ({ ...c, qty: 0 }));
   const before = picksThrough(comps, prior);
