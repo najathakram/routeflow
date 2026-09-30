@@ -65,7 +65,7 @@ export class RecurringInvoicesService {
       .forTenant()
       .customer.findUnique({ where: { id: dto.customerId, deletedAt: null } });
     if (!customer) throw new NotFoundException("Customer not found");
-    await this.assertLinesSellable(dto.items ?? []);
+    await this.assertNoFamilyLines(dto.items ?? []);
 
     return this.prisma.forTenant().recurringInvoice.create({
       data: {
@@ -96,7 +96,7 @@ export class RecurringInvoicesService {
   }
 
   /** WS8: a template line never names a FAMILY (the generated invoice line would). */
-  private async assertLinesSellable(items: ReadonlyArray<{ productId?: string | null }>) {
+  private async assertNoFamilyLines(items: ReadonlyArray<{ productId?: string | null }>) {
     const ids = [...new Set(items.map((i) => i.productId).filter((id): id is string => !!id))];
     if (ids.length === 0) return;
     const products = await this.prisma.forTenant().product.findMany({
@@ -145,7 +145,7 @@ export class RecurringInvoicesService {
     // the re-create must never leave a template with no items.
     const tenantId = this.prisma.getTenantId();
     const items = dto.items;
-    await this.assertLinesSellable(items);
+    await this.assertNoFamilyLines(items);
     return this.prisma.tenantTransaction(async (tx) => {
       await tx.recurringInvoiceItem.deleteMany({ where: { recurringInvoiceId: id } });
       return tx.recurringInvoice.update({

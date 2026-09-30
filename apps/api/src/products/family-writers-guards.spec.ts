@@ -71,9 +71,9 @@ describe("the skipped line / stock writers now refuse a FAMILY (400 FAMILY_NOT_S
       RecurringInvoicesService,
       prismaWith({ product: { findMany: jest.fn().mockResolvedValue([FAMILY]) } }),
     );
-    await refused((svc as any).assertLinesSellable([{ productId: FAMILY.id }]));
+    await refused((svc as any).assertNoFamilyLines([{ productId: FAMILY.id }]));
     // a line with no product id is a free-text line: nothing to check
-    await expect((svc as any).assertLinesSellable([{ productId: null }])).resolves.toBeUndefined();
+    await expect((svc as any).assertNoFamilyLines([{ productId: null }])).resolves.toBeUndefined();
   });
 
   it("inventory: recordPurchase and recordAdjustment refuse a FAMILY before any StockLot / StockMovement", async () => {

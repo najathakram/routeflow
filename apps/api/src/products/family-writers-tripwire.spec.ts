@@ -42,7 +42,7 @@ const GUARDED: Record<string, { calls: number; why: string }> = {
   },
   "recurring-invoices/recurring-invoices.service.ts": {
     calls: 1,
-    why: "the assertLinesSellable helper, which BOTH template create and the replace-all update call (pinned in the wiring spec)",
+    why: "the assertNoFamilyLines helper, which BOTH template create and the replace-all update call (pinned in the wiring spec)",
   },
   "vendor-bills/vendor-bills.service.ts": {
     calls: 1,
