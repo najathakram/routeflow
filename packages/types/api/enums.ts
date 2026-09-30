@@ -519,3 +519,9 @@ export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
 /** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
 export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
 export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
+// #2717 M3 (SA-572): how a document line was composed. NULL on the row = a plain single line
+// (SINGLE is never materialised); FIXED = a RECIPE product with frozen component snapshots; FLEX is
+// reserved for M3b.
+export const COMPOSITION_MODE_VALUES = ["SINGLE", "FIXED", "FLEX"] as const;
+export type CompositionMode = (typeof COMPOSITION_MODE_VALUES)[number];
