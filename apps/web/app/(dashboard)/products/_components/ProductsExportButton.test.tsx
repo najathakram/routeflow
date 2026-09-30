@@ -108,6 +108,15 @@ describe("ProductsExportButton", () => {
     expect(downloadCsvBlob).toHaveBeenCalledWith("products-2026-09-01-to-2026-09-29.csv", blob);
   });
 
+  it("the Inactive filter exports isActive=false (the same set the list shows)", async () => {
+    render(<ProductsExportButton total={3} filters={{ isActive: false }} />);
+    open();
+    fireEvent.click(screen.getByTestId("products-export-download"));
+    await waitFor(() => expect(downloadCsvBlob).toHaveBeenCalledTimes(1));
+    expect(get.mock.calls[0][1].params).toMatchObject({ isActive: false });
+    expect(get.mock.calls[0][1].params.stockStatus).toBeUndefined();
+  });
+
   it("is disabled and reads Exporting… while the request runs", async () => {
     let resolve!: (v: unknown) => void;
     get.mockReturnValue(new Promise((r) => (resolve = r)));
