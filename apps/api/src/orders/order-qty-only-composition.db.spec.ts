@@ -11,6 +11,7 @@
  *   Q6 buyer AUTO-MERGE new-line path: qty is PIECES (re-split), pins vs a non-recipe twin
  *   Q7 DRIVER replace path, `pieceDenominated` arm (product already carries a box-aware line):
  *      same rule as Q6 (pieces % pack == 0 composes; else 400 FIXED_WHOLE_BOXES, nothing persisted)
+ *   Q7c STAFF (OPERATOR) diff/merge branch: no split, qty = packs -> 2 packs = 48, boxes/pieces null
  *
  * WRITTEN, NOT RUN by the lane that wrote it: DB specs are F2's (`npm run local:test:db`), which
  * adjusts any fixture field the schema demands. Harness mirrors order-composition.db.spec.ts.
@@ -693,5 +694,40 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
     expect(Number(orderAfter.total)).toBe(Number(orderBefore.total));
     expect(Number(orderAfter.subtotal)).toBe(Number(orderBefore.subtotal));
     expect(await componentCount(w.tenantId)).toBe(compsBefore);
+  });
+
+  // Q7c: STAFF merge branch: no split, qty = packs (documents SA-593g: staff does NOT hit pieceDenominated).
+  // An OPERATOR PATCH without `replaceAll` takes the diff/merge branch of updateOrderItems: a NEW
+  // id-less qty-only line is added as-is (no normalizeBoxesPieces), so qty 2 = 2 packs = 48 pieces.
+  it("Q7c STAFF merge branch: no split, qty = packs (documents SA-593g: staff does NOT hit pieceDenominated)", async () => {
+    const w = await seedWorld("q7c");
+    const cat = await seedCatalog(w);
+    const twin = await product(w, "plain-twin");
+    const other = await product(w, "existing-plain");
+    const customerId = await seedCustomer(w, "q7c");
+    const created = await create(w, customerId, [qtyOnly(other.id, 1)]);
+
+    // No `replaceAll`: staff diff/merge branch, adds both new lines with the same qty-only payload.
+    await edit(w, created.id, {
+      items: [qtyOnly(cat.mix.id, 2), qtyOnly(twin.id, 2)],
+    });
+
+    const lines = await linesOf(created.id);
+    const mixLine = lines.find((l) => l.productId === cat.mix.id);
+    const twinLine = lines.find((l) => l.productId === twin.id);
+    expect(mixLine).toBeDefined();
+    expect(twinLine).toBeDefined();
+    expect(mixLine).toMatchObject({ compositionMode: "FIXED", recipeId: cat.v1?.id });
+    expect(mixLine!.components.map((c) => [c.componentProductId, c.qty])).toEqual([
+      [cat.a.id, 24],
+      [cat.b.id, 24],
+    ]);
+    expect(mixLine!.components.reduce((n, c) => n + c.qty, 0)).toBe(48);
+    for (const c of mixLine!.components) expect(c.tenantId).toBe(w.tenantId);
+    expect(Number(mixLine!.qty)).toBe(2);
+    expect(mixLine!.boxes).toBeNull();
+    expect(mixLine!.pieces).toBeNull();
+    expect(cols(mixLine!)).toEqual(cols(twinLine!));
+    expect(twinLine!.components).toEqual([]);
   });
 });
