@@ -73,6 +73,8 @@ import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
+import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { RemoveCreditButton } from "./RemoveCreditButton";
@@ -2514,6 +2516,9 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
+                          <ComponentSubLines
+                            components={(item as { components?: LineComponentView[] }).components}
+                          />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span
