@@ -89,6 +89,15 @@ describe("MessagingDeliveriesService", () => {
       expect(item.toAddress).toBe("jane@example.com");
     });
 
+    it("a stored kind outside the EMAIL_KINDS allow-list is mapped to AUTH_OTHER", async () => {
+      const { svc } = make([
+        dbRow({ kind: "SOMETHING_NEW" }),
+        dbRow({ id: "d2", kind: "INVOICE_SENT" }),
+      ]);
+      const out = await svc.list("TENANT_ADMIN", {});
+      expect(out.items.map((i) => i.kind)).toEqual(["AUTH_OTHER", "INVOICE_SENT"]);
+    });
+
     it("OPERATOR sees a masked address", async () => {
       const { svc } = make();
       const out = await svc.list("OPERATOR", {});

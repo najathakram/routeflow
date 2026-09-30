@@ -50,7 +50,11 @@ function makeHarness(
     findUnique: jest.fn().mockResolvedValue(opts.order === undefined ? baseOrder() : opts.order),
   };
   const models = { user, userPreference, systemConfig, order };
-  const prisma = { ...models, forTenant: jest.fn().mockReturnValue(models) };
+  const prisma = {
+    ...models,
+    forTenant: jest.fn().mockReturnValue(models),
+    getTenantId: jest.fn().mockReturnValue("t1"),
+  };
   const email = { send: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }) };
   const deliveries = { record: jest.fn().mockResolvedValue(undefined) };
   return { prisma, email, deliveries, models };
@@ -109,8 +113,8 @@ describe("effectiveStaffOrderEmailMode (T2 ceiling = min(env, policy))", () => {
     ["off", "on", "off"],
     ["dark", "on", "dark"],
     ["on", "on", "on"],
-    [undefined, "on", "on"],
-    ["garbage", "on", "on"],
+    [undefined, "on", "dark"],
+    ["garbage", "on", "dark"],
     ["on", "off", "off"],
     ["off", "off", "off"],
   ];
@@ -171,6 +175,20 @@ describe("StaffOrderEmailService.resolveRecipients (T1 matrix)", () => {
     expect(lower).toEqual(expect.arrayContaining(["admin1@example.com", "admin2@example.com"]));
     expect(lower).not.toContain("op@example.com");
     expect(lower).not.toContain("sa@example.com");
+  });
+
+  it("drops sentinel (@placeholder.local / @imported.local) admins and staffCc entries", async () => {
+    const h = makeHarness({
+      users: [
+        ...ADMINS,
+        { id: "u7", email: "no-email+abc@placeholder.local", role: "TENANT_ADMIN" },
+        { id: "u8", email: "bob@IMPORTED.local", role: "TENANT_ADMIN" },
+      ],
+      staffCc: ["cc1@example.com", "x@imported.local", "y@placeholder.local"],
+    });
+    const svc = await build(h);
+    const out = (await svc.resolveRecipients("t1")).map((e) => e.toLowerCase());
+    expect(out.sort()).toEqual(["admin1@example.com", "admin2@example.com", "cc1@example.com"]);
   });
 
   it("skips users with an empty email", async () => {

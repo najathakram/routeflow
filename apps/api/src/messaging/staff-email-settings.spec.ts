@@ -154,6 +154,19 @@ describe("StaffEmailSettingsService", () => {
       });
       expect(systemConfig.create).not.toHaveBeenCalled();
     });
+    it.each(["a@placeholder.local", "B@Imported.LOCAL"])(
+      "sentinel address %s => 400 STAFF_CC_INVALID reason sentinel",
+      async (addr) => {
+        const { svc } = makeHarness([]);
+        const e = await svc.update({ staffCc: ["ok@acme.test", addr] }).catch((x) => x);
+        expect(e).toBeInstanceOf(BadRequestException);
+        expect(e.getResponse()).toMatchObject({
+          code: API_LOCAL.STAFF_CC_INVALID,
+          details: { index: 1, reason: "sentinel" },
+        });
+      },
+    );
+
     it("invalid format => 400 with index + reason", async () => {
       const { svc } = makeHarness();
       const e = await rejection(svc.update({ staffCc: ["ok@acme.test", "nope"] }));
@@ -190,7 +203,12 @@ describe("StaffEmailSettingsService", () => {
       expect(JSON.stringify(systemConfig.create.mock.calls[0])).not.toContain("effectiveMode");
     });
     it("reason codes / error code match the shared source", () => {
-      expect([...STAFF_CC_INVALID_REASON_VALUES]).toEqual(["format", "duplicate", "too_many"]);
+      expect([...STAFF_CC_INVALID_REASON_VALUES]).toEqual([
+        "format",
+        "duplicate",
+        "too_many",
+        "sentinel",
+      ]);
       expect(API_ERROR_CODES.STAFF_CC_INVALID).toBe(API_LOCAL.STAFF_CC_INVALID);
     });
   });

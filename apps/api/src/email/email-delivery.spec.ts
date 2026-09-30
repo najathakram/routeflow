@@ -276,14 +276,25 @@ describe("EmailService.send — delivery ctx rows", () => {
     expect(res.delivered).toBe(true);
   });
 
+  it.each(["x@placeholder.local", "no-email+1@IMPORTED.local"])(
+    "sentinel recipient %s with a delivery ctx writes NO row",
+    async (to) => {
+      const { svc, deliveries } = make(
+        jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox" }),
+      );
+      await svc.send({ to, subject: "s", html: "<p>x</p>", delivery: ctx } as any);
+      expect(deliveries.record).not.toHaveBeenCalled();
+    },
+  );
+
   it("internal-placeholder refusal (delivered:false, transport:none) writes NO row", async () => {
-    // ASSUMPTION: a `.invalid` recipient is the internal placeholder the service refuses to mail.
+    // A sentinel recipient (@placeholder.local / @imported.local) is never mailed or recorded.
     const mailbox = jest
       .fn()
       .mockResolvedValue({ delivered: false, transport: "mailbox", error: "refused" });
     const { svc, deliveries } = make(mailbox);
     const res = await svc.send({
-      to: "placeholder@routeflow.invalid",
+      to: "placeholder@imported.local",
       subject: "s",
       html: "<p>x</p>",
       delivery: ctx,
