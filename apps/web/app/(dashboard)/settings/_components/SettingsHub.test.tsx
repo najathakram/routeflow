@@ -40,8 +40,8 @@ describe("SettingsHub regroup", () => {
 
   it("hides admin-only items from operators", () => {
     renderWithProviders(<SettingsHub isAdmin={false} />);
-    expect(screen.queryByText("Selling restrictions")).not.toBeInTheDocument();
     expect(screen.queryByText("Regulated sections")).not.toBeInTheDocument();
+    expect(screen.queryByText("Product labels")).not.toBeInTheDocument();
     expect(screen.getAllByText("Invoicing").length).toBeGreaterThan(0);
   });
 
@@ -51,6 +51,28 @@ describe("SettingsHub regroup", () => {
       const link = within(section(t)).getByRole("link", { name: /selling restrictions/i });
       expect(link).toHaveAttribute("href", "/settings/restrictions");
     }
+  });
+
+  it("operators see Selling restrictions in both groups (read-only page)", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    for (const t of ["Selling & catalog", "Compliance"]) {
+      // Compliance collapses to a single card for operators (other items are admin-only).
+      const hrefs = within(section(t))
+        .getAllByRole("link")
+        .map((l) => l.getAttribute("href"));
+      expect(hrefs).toContain("/settings/restrictions");
+    }
+  });
+
+  it("operators find it by search", () => {
+    renderWithProviders(<SettingsHub isAdmin={false} />);
+    fireEvent.change(screen.getByLabelText("Search settings"), {
+      target: { value: "restrictions" },
+    });
+    const hrefs = screen
+      .getAllByRole("link")
+      .filter((l) => l.getAttribute("href") === "/settings/restrictions");
+    expect(hrefs).toHaveLength(2);
   });
 
   it("search 'restrictions' finds it in both groups", () => {

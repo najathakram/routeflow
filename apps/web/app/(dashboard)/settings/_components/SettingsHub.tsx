@@ -47,7 +47,6 @@ const RESTRICTIONS_ITEM: HubItem = {
   label: "Selling restrictions",
   desc: "Block restricted products by the customer's state",
   href: "/settings/restrictions",
-  show: "admin",
 };
 
 const GROUPS: HubGroup[] = [
