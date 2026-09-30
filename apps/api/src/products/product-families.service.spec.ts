@@ -287,12 +287,11 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
   });
 
   it("Opus #2881 notes: out-of-range money is a 400 (incl. the ROUNDING overflow) and codes are stored trimmed", async () => {
-    const a = build();
     await expect(
-      a.service.createFamily(dto([variant("A", { pricePerUnit: "99999999.999" })]), ACTOR),
+      build().service.createFamily(dto([variant("A", { pricePerUnit: "99999999.999" })]), ACTOR),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      a.service.createFamily(dto([variant("A", { standardCost: "999999.99999" })]), ACTOR),
+      build().service.createFamily(dto([variant("A", { standardCost: "999999.99999" })]), ACTOR),
     ).rejects.toBeInstanceOf(BadRequestException);
     const b = build();
     await b.service.createFamily(dto([variant("A", { sku: "  S-1  ", barcode: " 123 " })]), ACTOR);
@@ -305,7 +304,7 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
   it("Opus #2881 B5 (authority off): a price edit moves only the tiers that EQUALLED the old price", async () => {
     const famRow = fam();
     const k1 = {
-      ...kid("k1"),
+      ...(kid("k1") as Record<string, unknown>),
       pricePerUnit: "5.00",
       priceTier2: "5.00",
       priceTier3: "4.00", // deliberately different
