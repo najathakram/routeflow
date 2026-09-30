@@ -56,3 +56,33 @@ describe("describeDeliveryOutcome (#1965 UX review)", () => {
     );
   });
 });
+
+describe("every reason code renders a whole, well-formed sentence (#1965 review)", () => {
+  const EXPECTED: Record<string, string> = {
+    RULE_OFF: "2 emails were skipped: this notification is switched off.",
+    NO_RECIPIENT: "2 emails were skipped: the customer has no email address.",
+    OPTED_OUT: "2 emails were skipped: the recipient opted out.",
+    NO_FROM_ADDRESS: "2 emails weren't sent: no sending email address is set up.",
+    MAILBOX_REVOKED: "2 emails weren't sent: the connected mailbox lost access.",
+    SMTP_AUTH: "2 emails weren't sent: the email account sign-in was rejected.",
+    TRANSPORT_ERROR: "2 emails weren't sent: the email service had a delivery problem.",
+    RECIPIENT_REJECTED: "2 emails weren't sent: the recipient's mail server rejected the message.",
+    UNKNOWN: "2 emails weren't sent for a reason we couldn't identify.",
+  };
+
+  it("has an expected sentence for every DELIVERY_REASON_CODE_VALUES entry (no code is unpinned)", () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual([...DELIVERY_REASON_CODE_VALUES].sort());
+    for (const code of DELIVERY_REASON_CODE_VALUES) {
+      expect(describeDeliveryOutcome(code, 2)).toBe(EXPECTED[code]);
+    }
+  });
+
+  it("no sentence has a dangling preposition after the colon or echoes a code", () => {
+    for (const code of DELIVERY_REASON_CODE_VALUES) {
+      const s = describeDeliveryOutcome(code, 2);
+      expect(s).not.toMatch(/: (of|because|to|for) /);
+      expect(s).not.toContain(code);
+      expect(s).toMatch(/\.$/);
+    }
+  });
+});
