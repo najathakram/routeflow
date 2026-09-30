@@ -12,8 +12,10 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { IdempotencyService } from "../common/idempotency.service";
 import { tenantTimeZone } from "../common/tenant-time-zone";
-import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { CreditNotesService } from "./credit-notes.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { asReadableConflict, cnBad, cnConflict, codeOf, messageOf } from "./credit-note-errors";
 
 export interface ReissueInput {
   amount: number;
@@ -38,9 +40,15 @@ interface StoredReissue {
 const RETURN_BACKED = (returnNumber?: string | null) =>
   `This credit note backs a return${returnNumber ? ` (${returnNumber})` : ""}. Edit the return instead.`;
 
-/** The 400s the cap and the void raise that are really a conflict with the current state. */
-const STATE_REFUSAL =
-  /would exceed|Invoice not found|Cannot issue a credit note|changed while|backs a return|RETURN_CREDIT_CONSUMED|already void|Nothing was changed/;
+/** The refusal codes the cap and the void raise as 400s that are, for a reissue, a 409 conflict. */
+const STATE_CODES = new Set<string>([
+  API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+  API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
+  API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY,
+  API_ERROR_CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+  API_ERROR_CODES.CREDIT_NOTE_VOID_NOT_EDITABLE,
+  API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED,
+]);
 
 /** SA-608c: a note with no source invoice (born standalone, or orphaned by deleteInvoice). */
 const NO_SOURCE_CAP =
@@ -91,7 +99,11 @@ export class CreditNoteReissueService {
     actorId: string | null,
   ): Promise<ReissueResult> {
     const key = idempotencyKey?.trim();
-    if (!key) throw new BadRequestException("An Idempotency-Key header is required.");
+    if (!key)
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_KEY_REQUIRED,
+        "An Idempotency-Key header is required.",
+      );
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
     const scope = `creditNoteReissue:${id}`;
@@ -123,13 +135,17 @@ export class CreditNoteReissueService {
     });
     if (!old) throw new NotFoundException("Credit note not found");
     if (old.status === "VOID")
-      throw new ConflictException("A void credit note can't be edited or reissued.");
+      throw cnConflict(
+        API_ERROR_CODES.CREDIT_NOTE_VOID_NOT_EDITABLE,
+        "A void credit note can't be edited or reissued.",
+      );
     // SA-535a(1): the SUPERSET — any live return-backed note (the void's own refusal set).
     const ret = await db.return.findFirst({
       where: { creditNoteId: id, status: { notIn: ["CANCELLED", "REJECTED"] } },
       select: { returnNumber: true },
     });
-    if (ret) throw new ConflictException(RETURN_BACKED(ret.returnNumber));
+    if (ret)
+      throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED, RETURN_BACKED(ret.returnNumber));
     // Credit consumed somewhere a reversal cannot reach (RETURN_CREDIT_CONSUMED) is refused here,
     // BEFORE a number is reserved, so a refused attempt burns none. The void re-checks in-tx.
     const consumed = await this.creditNotes.voidWithReversalRefusal(
@@ -137,22 +153,25 @@ export class CreditNoteReissueService {
       old,
       await this.creditNotes.liveCreditPayments(db, id),
     );
-    if (consumed) throw new ConflictException(consumed);
+    if (consumed) throw cnConflict(consumed.code, consumed.message);
 
     // SA-608c (b): no invoice but line rows = its source was deleted (the rows survive); a reissue
     // would silently drop the split, so it is refused. (a): every no-invoice note is capped at its
     // own amount, so an edit can never create value the note did not already hold.
     if (!old.invoiceId) {
       const lineRows = await db.creditNoteItem.count({ where: { creditNoteId: id } });
-      if (lineRows > 0) throw new ConflictException(SOURCE_DELETED);
+      if (lineRows > 0) throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED);
       if (roundMoney(Number(dto.amount)) > roundMoney(Number(old.amount)) + 0.001)
-        throw new ConflictException(NO_SOURCE_CAP);
+        throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP, NO_SOURCE_CAP);
     }
 
     const expiresAt = this.resolveExpiry(dto.expiresAt, old.expiresAt);
     const lineItems = Array.isArray(dto.items) && dto.items.length > 0 ? dto.items : undefined;
     if (lineItems && !old.invoiceId)
-      throw new BadRequestException("Credit line items require a source invoice");
+      throw cnBad(
+        API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
+        "Credit line items require a source invoice",
+      );
     // A line-linked note carries its line split (and, for regulated lines, the ledger reversal
     // keyed on it). A reissue without lines would silently drop both, so it must restate them.
     if (!lineItems && old.invoiceId) {
@@ -160,7 +179,8 @@ export class CreditNoteReissueService {
         where: { creditNoteId: id, invoiceItemId: { not: null } },
       });
       if (linked > 0)
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_LINES_REQUIRED,
           "This credit is split across invoice lines: give the new amount for each line.",
         );
     }
@@ -221,7 +241,7 @@ export class CreditNoteReissueService {
               !cur.invoiceId &&
               roundMoney(Number(dto.amount)) > roundMoney(Number(cur.amount)) + 0.001
             )
-              throw new ConflictException(NO_SOURCE_CAP);
+              throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP, NO_SOURCE_CAP);
 
             // B222 re-cap on the tx, AFTER the void and WITHOUT the exclude: authoritative.
             const cnItemsData = await this.asConflict(() =>
@@ -285,7 +305,7 @@ export class CreditNoteReissueService {
         ),
       );
     } catch (err) {
-      throw this.asReadableConflict(err);
+      throw asReadableConflict(err, this.logger);
     }
 
     if (outcome.replayed) return this.replay(outcome.stored, fingerprint);
@@ -309,7 +329,8 @@ export class CreditNoteReissueService {
 
   private replay(stored: StoredReissue, fingerprint: string): ReissueResult {
     if (stored.fingerprint !== fingerprint)
-      throw new ConflictException(
+      throw cnConflict(
+        API_ERROR_CODES.CREDIT_NOTE_KEY_REUSED,
         "This Idempotency-Key was already used for a different edit of this credit note.",
       );
     return stored.response;
@@ -320,40 +341,17 @@ export class CreditNoteReissueService {
     if (input === null) return null;
     if (input === undefined) {
       if (old && new Date(old).getTime() <= Date.now())
-        throw new BadRequestException(
+        throw cnBad(
+          API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST,
           "This credit note has expired: set a new expiry to reissue it.",
         );
       return old ? new Date(old) : null;
     }
     const d = new Date(input);
     if (isNaN(d.getTime())) throw new BadRequestException("expiresAt must be a valid ISO date");
-    if (d.getTime() <= Date.now()) throw new BadRequestException("expiresAt must be in the future");
+    if (d.getTime() <= Date.now())
+      throw cnBad(API_ERROR_CODES.CREDIT_NOTE_EXPIRY_PAST, "expiresAt must be in the future");
     return d;
-  }
-
-  /**
-   * Exhausted serialization retries (40001 / 40P01 / P2034) and a number collision (P2002) are
-   * 409s with create()'s wording, never a raw 500. Everything else propagates unchanged.
-   */
-  private asReadableConflict(err: unknown): unknown {
-    if (txConflictState(err))
-      return new ConflictException(
-        "Another change to this credit note or its invoice was in progress. Nothing was changed; please retry.",
-      );
-    if ((err as { code?: string })?.code === "P2002") {
-      // Like create(): only the creditNoteNumber constraint is a "number conflict"; log the real
-      // target either way and let any other unique violation propagate untouched.
-      const meta = (err as { meta?: { target?: unknown } }).meta;
-      const target = Array.isArray(meta?.target)
-        ? meta.target.join(",")
-        : typeof meta?.target === "string"
-          ? meta.target
-          : "";
-      this.logger.warn(`Credit note reissue failed code=P2002 target=${target}`);
-      if (target === "" || target.includes("creditNoteNumber"))
-        return new ConflictException("Credit note number conflict — please retry.");
-    }
-    return err;
   }
 
   /**
@@ -366,16 +364,16 @@ export class CreditNoteReissueService {
       return await run();
     } catch (err) {
       if (!(err instanceof BadRequestException)) throw err;
-      const message = (err.getResponse() as any)?.message ?? err.message;
-      const text = Array.isArray(message) ? message.join("; ") : String(message);
+      const code = codeOf(err);
       // Only a STATE refusal (cap exceeded, source gone/uncreditable, void raced or refused) is a
-      // 409; a malformed line (unknown line, amount <= 0, lines not summing) stays the 400 it is.
-      if (!STATE_REFUSAL.test(text)) throw err;
-      if (fromVoid && /backs a return/.test(text)) {
+      // 409; a malformed line (LINE_INVALID) and anything uncoded stay the 400 they are.
+      if (!code || !STATE_CODES.has(code)) throw err;
+      const text = messageOf(err);
+      if (fromVoid && code === API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED) {
         const m = /\(([^)]+)\)/.exec(text);
-        throw new ConflictException(RETURN_BACKED(m?.[1]));
+        throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_RETURN_BACKED, RETURN_BACKED(m?.[1]));
       }
-      throw new ConflictException(text);
+      throw cnConflict(code as never, text);
     }
   }
 }
