@@ -205,7 +205,7 @@ describe("resolveStoredPOLineAmounts (stored line, exact total)", () => {
 describe("PurchaseOrdersTab", () => {
   it("shows the empty state", () => {
     render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
-    expect(screen.getByText("No purchase orders found.")).toBeInTheDocument();
+    expect(screen.getByText("No purchase orders yet")).toBeInTheDocument();
   });
 
   it("offers Send on DRAFT, Receive on SENT/PARTIAL, and neither on CLOSED", () => {
