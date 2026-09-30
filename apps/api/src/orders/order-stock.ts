@@ -2,6 +2,7 @@ import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
+import type { InsufficientStockLine } from "@routeflow/types";
 import { linePieceQty } from "./line-piece-qty";
 
 /**
@@ -117,19 +118,30 @@ export async function decrementStockForSale(
   }));
 
   const oosItems: string[] = [];
+  const oosLines: InsufficientStockLine[] = [];
   for (const li of pieceLines) {
     const p = lockedProducts.find((lp: any) => lp.id === li.productId);
     if (p && Number(p.currentStock) < li.pieces) {
       oosItems.push(
         `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.pieces})`,
       );
+      oosLines.push({
+        productId: li.productId,
+        name: p.name ?? undefined,
+        available: Number(p.currentStock),
+        requested: li.pieces,
+      });
     }
   }
   if (oosItems.length > 0) {
     if (isStaffRole) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
-      throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
+      throw new ConflictException({
+        code: "INSUFFICIENT_STOCK",
+        message: `Insufficient stock: ${oosItems.join("; ")}`,
+        lines: oosLines,
+      });
     }
   }
 
@@ -398,6 +410,13 @@ export async function settleStockForEdit(
           message:
             `Not enough stock for ${first.name} ` +
             `(available: ${first.available}, requested: ${first.requested}).`,
+          lines: violations.map((v) => ({
+            productId: v.productId,
+            name: v.name,
+            available: v.available,
+            requested: v.requested,
+          })),
+          // legacy single-line fields (= lines[0]) for clients that predate lines[]
           productId: first.productId,
           available: first.available,
           requested: first.requested,

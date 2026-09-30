@@ -189,6 +189,31 @@ describe("BuyerOrderDetailPage — order with a custom line (B586)", () => {
     });
   });
 
+  it("a stock-blocked save reads as a sentence and never shows the server text (gap 05, edit path)", async () => {
+    mockOrder = order([LISTED]);
+    mockUpdateItems.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed"), {
+        response: {
+          status: 409,
+          data: {
+            code: "INSUFFICIENT_STOCK",
+            message: "Not enough stock for Sample Cola 12oz (available: 4, requested: 9).",
+            lines: [{ productId: "p-1", name: "Sample Cola 12oz", available: 4, requested: 9 }],
+            productId: "p-1",
+            available: 4,
+            requested: 9,
+          },
+        },
+      }),
+    );
+    renderWithProviders(<BuyerOrderDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /edit items/i }));
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Only 4 Sample Cola 12oz left.")).toBeInTheDocument();
+    expect(screen.queryByText(/Not enough stock|available: 4/)).toBeNull();
+  });
+
   it("a custom line does not get a 'Special' pill (its MANUAL price type is not a customer special)", () => {
     mockOrder = order([CUSTOM]);
     renderWithProviders(<BuyerOrderDetailPage />);

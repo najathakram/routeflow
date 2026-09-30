@@ -1,5 +1,6 @@
 "use client";
 
+import { insufficientStockSentence, parseInsufficientStock } from "@routeflow/types";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -201,6 +202,11 @@ export default function BuyerCartPage() {
       const restricted = parseSellingRestricted(err);
       if (restricted) {
         setOrderError(buyerBlockedMessage(restricted));
+        return;
+      }
+      const short = parseInsufficientStock(err);
+      if (short) {
+        setOrderError(insufficientStockSentence(short.lines));
         return;
       }
       setOrderError(data?.message ?? "Failed to create order. Please try again.");
