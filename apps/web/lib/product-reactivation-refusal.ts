@@ -54,8 +54,7 @@ const isHolder = (h: unknown): h is ProductReactivationHolder => {
 /** The refusal to show in the dialog, or null when `err` is anything else (the caller toasts it). */
 export function getReactivationRefusal(err: unknown): ReactivationRefusal | null {
   const data = (err as { response?: { data?: unknown } } | null)?.response?.data as
-    | (Partial<ProductCodeTakenError> & Partial<ProductHoldersChangedError>)
-    | undefined;
+    (Partial<ProductCodeTakenError> & Partial<ProductHoldersChangedError>) | undefined;
   if (!data || typeof data !== "object") return null;
   if (data.code === API_ERROR_CODES.HOLDERS_CHANGED) return { kind: "HOLDERS_CHANGED" };
   if (

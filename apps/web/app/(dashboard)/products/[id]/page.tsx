@@ -1576,7 +1576,9 @@ export default function ProductDetailPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          product.isActive ? setShowDeactivateConfirm(true) : reactivateFlow.start(id)
+                          product.isActive
+                            ? setShowDeactivateConfirm(true)
+                            : reactivateFlow.start(id)
                         }
                         loading={updateProduct.isPending || reactivateFlow.isPending}
                       >

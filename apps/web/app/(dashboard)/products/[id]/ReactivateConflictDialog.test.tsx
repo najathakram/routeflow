@@ -86,7 +86,9 @@ describe("ReactivateConflictDialog", () => {
 
   it("a hostile product name is text, not markup", () => {
     const name = `<img src=x onerror=alert(1)>`;
-    setup(holders({ holders: [{ productId: "h1", productName: name, line: "l", blocked: false }] }));
+    setup(
+      holders({ holders: [{ productId: "h1", productName: name, line: "l", blocked: false }] }),
+    );
     expect(document.querySelector("img")).toBeNull();
     expect(screen.getByRole("link", { name })).toBeInTheDocument();
   });

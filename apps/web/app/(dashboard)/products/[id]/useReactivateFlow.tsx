@@ -3,7 +3,10 @@
 import * as React from "react";
 import { useToast } from "@routeflow/ui/web";
 import { useReactivateProduct } from "@/lib/api/products";
-import { getReactivationRefusal, type ReactivationRefusal } from "@/lib/product-reactivation-refusal";
+import {
+  getReactivationRefusal,
+  type ReactivationRefusal,
+} from "@/lib/product-reactivation-refusal";
 import { ReactivateConflictDialog } from "./ReactivateConflictDialog";
 
 /**

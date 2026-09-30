@@ -24,7 +24,13 @@ const conflict = (extra: Record<string, unknown> = {}) => ({
       productId: "h1",
       productName: "Cola 6pk",
       holders: [
-        { code: "CODE_TAKEN", field: "sku", value: "COLA-6", productId: "h1", productName: "Cola 6pk" },
+        {
+          code: "CODE_TAKEN",
+          field: "sku",
+          value: "COLA-6",
+          productId: "h1",
+          productName: "Cola 6pk",
+        },
       ],
       ...extra,
     },
@@ -74,7 +80,9 @@ describe("useReactivateFlow", () => {
   it("HOLDERS_CHANGED on a resolve -> retry prompt; Try again sends a PLAIN reactivation", async () => {
     patch
       .mockRejectedValueOnce(conflict())
-      .mockRejectedValueOnce({ response: { status: 409, data: { code: "HOLDERS_CHANGED", message: "x", holders: [] } } })
+      .mockRejectedValueOnce({
+        response: { status: 409, data: { code: "HOLDERS_CHANGED", message: "x", holders: [] } },
+      })
       .mockResolvedValueOnce({ data: {} });
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByText("go"));
@@ -87,7 +95,9 @@ describe("useReactivateFlow", () => {
     patch.mockRejectedValue({ response: { status: 500, data: { message: "SQL exploded" } } });
     renderWithProviders(<Harness />);
     fireEvent.click(screen.getByText("go"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: "error" })));
+    await waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ variant: "error" })),
+    );
     expect(JSON.stringify(toast.mock.calls)).not.toMatch(/SQL exploded/);
     expect(screen.queryByRole("dialog")).toBeNull();
   });

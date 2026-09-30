@@ -33,7 +33,13 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
 
   it("NAME_TAKEN -> a rename line, no field/value needed", () => {
     const r = getReactivationRefusal(
-      err({ code: "NAME_TAKEN", field: "name", value: "Cola 6pk", productId: "h9", productName: "Cola 6pk" }),
+      err({
+        code: "NAME_TAKEN",
+        field: "name",
+        value: "Cola 6pk",
+        productId: "h9",
+        productName: "Cola 6pk",
+      }),
     );
     expect(r && r.kind === "HOLDERS" && r.holders[0].line).toBe(
       `Can't reactivate: an active product is already named "Cola 6pk". Rename one of them first.`,
@@ -62,13 +68,18 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
 
   it("any holder blocked:HAS_ACTIVE_VARIANTS -> no one-call resolve", () => {
     const r = getReactivationRefusal(
-      err({ ...holder(), holders: [holder(), holder({ productId: "h2", blocked: "HAS_ACTIVE_VARIANTS" })] }),
+      err({
+        ...holder(),
+        holders: [holder(), holder({ productId: "h2", blocked: "HAS_ACTIVE_VARIANTS" })],
+      }),
     );
     expect(r).toMatchObject({ kind: "HOLDERS", canResolve: false });
   });
 
   it("HOLDERS_CHANGED -> its own kind", () => {
-    expect(getReactivationRefusal(err({ code: "HOLDERS_CHANGED", message: "x", holders: [] }))).toEqual({
+    expect(
+      getReactivationRefusal(err({ code: "HOLDERS_CHANGED", message: "x", holders: [] })),
+    ).toEqual({
       kind: "HOLDERS_CHANGED",
     });
   });
@@ -84,15 +95,23 @@ describe("getReactivationRefusal — maps the 409 by code+field, never by the se
   });
 
   it("product names are returned as plain strings (rendering escapes them)", () => {
-    const r = getReactivationRefusal(err(holder({ productName: `<img src=x onerror=alert(1)> "A"` })));
-    expect(r && r.kind === "HOLDERS" && r.holders[0].productName).toBe(`<img src=x onerror=alert(1)> "A"`);
+    const r = getReactivationRefusal(
+      err(holder({ productName: `<img src=x onerror=alert(1)> "A"` })),
+    );
+    expect(r && r.kind === "HOLDERS" && r.holders[0].productName).toBe(
+      `<img src=x onerror=alert(1)> "A"`,
+    );
   });
 });
 
 describe("reactivationResolveLabel", () => {
   it("1 holder -> by name; 2 -> 'A and B'; 3+ -> a count", () => {
-    expect(reactivationResolveLabel(["Cola 6pk"])).toBe('Deactivate "Cola 6pk" and reactivate this');
+    expect(reactivationResolveLabel(["Cola 6pk"])).toBe(
+      'Deactivate "Cola 6pk" and reactivate this',
+    );
     expect(reactivationResolveLabel(["A", "B"])).toBe('Deactivate "A" and "B" and reactivate this');
-    expect(reactivationResolveLabel(["A", "B", "C"])).toBe("Deactivate 3 products and reactivate this");
+    expect(reactivationResolveLabel(["A", "B", "C"])).toBe(
+      "Deactivate 3 products and reactivate this",
+    );
   });
 });
