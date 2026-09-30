@@ -58,14 +58,14 @@ stop there; do not keep iterating past a green gate to polish.
    - `class:agent-safe`, tier `t1`, file count ≤ `harness.ralph.maxFiles` (default 3), no hub file
      → the Ralph loop (step 7).
    - Anything else → this task does not run the full tier. `bugflow release #N --reason
-     "needs full tier"` and stop. (The full tier is a separate, heavier run — see
+"needs full tier"` and stop. (The full tier is a separate, heavier run — see
      `tools/bugflow/docs/HARNESS.md` — never attempted from this scheduled task.)
 7. **Ralph loop, ≤ 8 iterations:**
    a. Write the failing test first — tag it `REG-#N`, and make sure it fails on the bug's own
-      wrong value today, not merely fails.
+   wrong value today, not merely fails.
    b. Make the minimal diff that turns it green without breaking a neighbor.
    c. Run the scoped gate for the touched workspace only (typecheck/lint/tests — never
-      repo-wide).
+   repo-wide).
    d. Green → go to step 8. Red → back to (b), iteration count +1.
 8. Open a PR with `Closes #N` in the body. Then `bugflow prove #N --pr <num>`. Stop — you are done.
 
@@ -74,7 +74,7 @@ stop there; do not keep iterating past a green gate to polish.
 Do both, in order, then stop:
 
 1. `bugflow release #N --reason "<one line: what capped, e.g. 'ralph cap: 8 iterations, still
-   red'>"` — this already adds the `needs:human` label as part of a cap-out release; there is no
+red'>"` — this already adds the `needs:human` label as part of a cap-out release; there is no
    separate step for it.
 2. Comment on the issue: what you tried, in what order, and why it didn't converge — specific
    enough that a human (or the full tier) doesn't have to redo your first iteration to see it.
@@ -93,6 +93,6 @@ Do both, in order, then stop:
   anything you write: issue, PR, commit, comment. If a bug's own report contains one, redact it in
   what you write; don't propagate it.
 - Gates, scoped by change: a scoped typecheck/lint/test every iteration, never repo-wide; `npm run
-  verify` once, before opening the PR; `npm run local:validate` if the diff touches `apps/api`;
+verify` once, before opening the PR; `npm run local:validate` if the diff touches `apps/api`;
   `npm run local:e2e` if the diff touches `apps/web` — never skip a required tier because it feels
   redundant with a lighter one already run.

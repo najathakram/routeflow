@@ -19,27 +19,27 @@ agent hand-setting a status label is always a bug in the tooling, never a legiti
 
 ## State table
 
-| From         | To           | Trigger                                                              | Who/what writes it | Evidence required | Evidence recorded by |
-| ------------ | ------------ | --------------------------------------------------------------------- | ------------------- | ------------------ | ---------------------- |
-| `triage`     | `ready`      | class/tier/severity/area/files set; class is `agent-safe`; no open blocked-by | `bugflow triage`  | the fields themselves | — |
-| `triage`     | `parked`     | class includes `money`/`tenancy`/`migration`                          | `bugflow triage`   | the `class:` label | — |
-| `triage`     | `blocked`    | class is safe, but an open blocked-by exists                          | `bugflow triage` / `sync` | the blocked-by list | — |
-| `ready`      | `claimed`    | claim CAS won                                                          | `bugflow claim`    | the winning lease comment | — |
-| `claimed`    | `in_progress`| `bugflow start` records a branch/worktree                             | `bugflow start`    | the branch/worktree name posted | — |
-| `claimed`/`in_progress` | `ready` | release, or lease expiry caught by `reap`                        | `bugflow release` / `bugflow reap` | a release comment, or an expired `exp=` | — |
-| `in_progress`| `in_review`  | an open PR's body contains `Closes #N`                                | `bugflow sync`     | PR number + body match | — |
-| `in_review`  | `ready`      | that PR closed unmerged                                               | `bugflow sync`     | PR state | — |
-| `in_review`  | `verifying`  | PR **merged** and the tier's proof is present (passing, for `tier:t1` only) | `bugflow sync` | PR # + the tier's proof | `bugflow prove` (proof comment) + `bugflow check` (the pre-merge gate) |
-| `verifying`  | `done`       | deploy SUCCESS + green post-deploy check                              | `bugflow sync`     | deployment id + check result | `bugflow verify --result green` (or `--manual`, `tier:t3` only) |
-| `verifying`  | `regressed`  | post-deploy check or E2E red on that same `REG-#N`                    | `bugflow sync`     | the failing token/run | `bugflow verify --result red` |
-| `regressed`  | `ready`      | reopened and re-triaged (severity bump)                               | owner / monitor, via `gh issue reopen` + `sync` | the regression citation + new severity | — |
-| `parked`     | `ready` (+ `harness:full`) | `approved:owner` label present                           | `sync` (detects the label) | the label itself | — |
-| `blocked`    | `ready`      | every blocker closed                                                   | `sync`             | the (now-empty) blocked-by list | — |
-| `done`       | `regressed`  | a later `REG-#N` failure against a subsequent deploy                  | `bugflow sync`     | the failing token/run | `bugflow verify --result red`, run against a closed issue |
+| From                    | To                         | Trigger                                                                       | Who/what writes it                              | Evidence required                       | Evidence recorded by                                                   |
+| ----------------------- | -------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------- |
+| `triage`                | `ready`                    | class/tier/severity/area/files set; class is `agent-safe`; no open blocked-by | `bugflow triage`                                | the fields themselves                   | —                                                                      |
+| `triage`                | `parked`                   | class includes `money`/`tenancy`/`migration`                                  | `bugflow triage`                                | the `class:` label                      | —                                                                      |
+| `triage`                | `blocked`                  | class is safe, but an open blocked-by exists                                  | `bugflow triage` / `sync`                       | the blocked-by list                     | —                                                                      |
+| `ready`                 | `claimed`                  | claim CAS won                                                                 | `bugflow claim`                                 | the winning lease comment               | —                                                                      |
+| `claimed`               | `in_progress`              | `bugflow start` records a branch/worktree                                     | `bugflow start`                                 | the branch/worktree name posted         | —                                                                      |
+| `claimed`/`in_progress` | `ready`                    | release, or lease expiry caught by `reap`                                     | `bugflow release` / `bugflow reap`              | a release comment, or an expired `exp=` | —                                                                      |
+| `in_progress`           | `in_review`                | an open PR's body contains `Closes #N`                                        | `bugflow sync`                                  | PR number + body match                  | —                                                                      |
+| `in_review`             | `ready`                    | that PR closed unmerged                                                       | `bugflow sync`                                  | PR state                                | —                                                                      |
+| `in_review`             | `verifying`                | PR **merged** and the tier's proof is present (passing, for `tier:t1` only)   | `bugflow sync`                                  | PR # + the tier's proof                 | `bugflow prove` (proof comment) + `bugflow check` (the pre-merge gate) |
+| `verifying`             | `done`                     | deploy SUCCESS + green post-deploy check                                      | `bugflow sync`                                  | deployment id + check result            | `bugflow verify --result green` (or `--manual`, `tier:t3` only)        |
+| `verifying`             | `regressed`                | post-deploy check or E2E red on that same `REG-#N`                            | `bugflow sync`                                  | the failing token/run                   | `bugflow verify --result red`                                          |
+| `regressed`             | `ready`                    | reopened and re-triaged (severity bump)                                       | owner / monitor, via `gh issue reopen` + `sync` | the regression citation + new severity  | —                                                                      |
+| `parked`                | `ready` (+ `harness:full`) | `approved:owner` label present                                                | `sync` (detects the label)                      | the label itself                        | —                                                                      |
+| `blocked`               | `ready`                    | every blocker closed                                                          | `sync`                                          | the (now-empty) blocked-by list         | —                                                                      |
+| `done`                  | `regressed`                | a later `REG-#N` failure against a subsequent deploy                          | `bugflow sync`                                  | the failing token/run                   | `bugflow verify --result red`, run against a closed issue              |
 
 Every transition's `status:` write comes from `bugflow sync` alone — `prove`, `check`, and
 `verify` never write a status label themselves; each only leaves the evidence `sync` reads on its
-next pass. This is the direct port of `bugs.mjs`'s own split: `prove` *declares* "here is my
+next pass. This is the direct port of `bugs.mjs`'s own split: `prove` _declares_ "here is my
 passing `REG-B###` test" the same way `bugflow prove`'s proof comment does; `campaign-check.mjs`
 is what actually re-reads the test-report artifact and refuses to believe a claim it can't verify,
 exactly like `bugflow check`. Neither side may invent the other's evidence, and neither writes the
@@ -146,7 +146,7 @@ than trusting one flag.
     property `bugs.mjs next`/`waves` are built to guarantee ("the answer must be stable between
     runs").
 
-**Triage precedence (parked vs. blocked):** when a bug is *both* carve-out-sensitive and has an
+**Triage precedence (parked vs. blocked):** when a bug is _both_ carve-out-sensitive and has an
 open blocker, `parked` wins — `parked` requires an explicit owner action (`approved:owner`)
 regardless of blockers, so it is the more restrictive state and should be visible as such. Once
 approved, `sync` re-evaluates blocked-by on the next pass (step 7 above) — an approved-but-still-
@@ -168,24 +168,24 @@ blocker list unconditionally.
   never a downgrade — `critical` stays `critical` — on the reasoning that a bug proven wrong in
   production is evidence of higher real impact than the original estimate. One step: the reopen
   and the severity bump are both written by `bugflow sync`, reading the `bugflow verify --result
-  red` citation.
+red` citation.
 - **Never invent an intermediate CI-state status.** "CI failing", "review requested", etc. are
   **not** `status:` values — they are visible via the PR's own checks in the "Now" dashboard view
   ([DASHBOARD.md](DASHBOARD.md)), exactly as `team.mjs`'s board lanes (`CI failing`, `Review
-  comments`) are a presentation-layer derivation, never a value stored back onto the issue.
+comments`) are a presentation-layer derivation, never a value stored back onto the issue.
 
 ## `proven` ≠ `done`: mapping the old ledger states onto this one
 
 `campaign-check.mjs` is the one mechanical control the current registry has, and its five
 claim-bearing states map cleanly onto this state machine:
 
-| `campaign-check.mjs` state | What it asserts | bugflow equivalent |
-| --------------------------- | ----------------- | -------------------- |
-| `proven`                    | merged, with a passing `REG-B###` test | `in_review` → `verifying` (evidence from `prove` + `check`; `sync` writes the label) |
-| `proven-pending-deploy`     | a `tier:t2` (Playwright) row that can't be proven pre-merge | folded into `verifying` — bugflow has **no separate pending-deploy status**; tier (`t2`) plus which check `bugflow verify` runs distinguishes it, since every tier now waits in the same `verifying` bucket for its post-deploy proof |
-| `done`                      | post-deploy; **every** tier, including `t2`, now shows a passing test | `done` |
-| `already-fixed` / `refuted` | a discovery-time finding, evidence-only, no test search required | `status:done` + `resolution:wontfix`/`duplicate`/`cannot-reproduce` + an evidence comment — **never enters `ready`/`claimed`/etc. at all** |
-| `regressed`                 | a closed claim that came back; evidence-only, no test search | `regressed`, direct match |
+| `campaign-check.mjs` state  | What it asserts                                                       | bugflow equivalent                                                                                                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proven`                    | merged, with a passing `REG-B###` test                                | `in_review` → `verifying` (evidence from `prove` + `check`; `sync` writes the label)                                                                                                                                                  |
+| `proven-pending-deploy`     | a `tier:t2` (Playwright) row that can't be proven pre-merge           | folded into `verifying` — bugflow has **no separate pending-deploy status**; tier (`t2`) plus which check `bugflow verify` runs distinguishes it, since every tier now waits in the same `verifying` bucket for its post-deploy proof |
+| `done`                      | post-deploy; **every** tier, including `t2`, now shows a passing test | `done`                                                                                                                                                                                                                                |
+| `already-fixed` / `refuted` | a discovery-time finding, evidence-only, no test search required      | `status:done` + `resolution:wontfix`/`duplicate`/`cannot-reproduce` + an evidence comment — **never enters `ready`/`claimed`/etc. at all**                                                                                            |
+| `regressed`                 | a closed claim that came back; evidence-only, no test search          | `regressed`, direct match                                                                                                                                                                                                             |
 
 The `proven-pending-deploy` fold is a genuine simplification, not a gap: the old system needed the
 extra state because it tracked tier-specific proof mechanics in a flat ledger row; a GitHub Issue
