@@ -36,7 +36,7 @@ const GATED_LABELS = [
   "Credit Notes",
   "Returns",
   "Suppliers",
-  "Bills & Purchasing",
+  "Supplier Bills",
   "Reports",
   "Analytics",
 ];

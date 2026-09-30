@@ -190,7 +190,7 @@ function useStaticCommands(router: ReturnType<typeof useRouter>): CommandItem[] 
         {
           id: "nav-expenses",
           group: "Navigate",
-          label: "Bills & Purchasing",
+          label: "Supplier Bills",
           icon: ShoppingBag,
           action: () => router.push("/vendor-bills"),
         },
