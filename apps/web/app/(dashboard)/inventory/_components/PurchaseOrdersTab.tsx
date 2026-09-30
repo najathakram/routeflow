@@ -307,6 +307,11 @@ export function PurchaseOrdersTab({
         )}
       </div>
 
+      {/* Announced whenever stale rows are on screen, whether or not there is a pager. */}
+      <p role="status" className={isPlaceholderData ? "mb-2 text-sm text-navy/70" : "sr-only"}>
+        {isPlaceholderData ? "Updating…" : ""}
+      </p>
+
       {isLoading ? (
         <div className="space-y-2" aria-busy="true">
           {[...Array(5)].map((_, i) => (
@@ -427,12 +432,10 @@ export function PurchaseOrdersTab({
       )}
       {(totalPages > 1 || page > 1) && (
         <div className="mt-3 flex items-center justify-between text-sm text-navy/70">
-          <span role="status">
-            {isPlaceholderData
-              ? "Updating…"
-              : total > 0
-                ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`
-                : ""}
+          <span>
+            {total > 0
+              ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`
+              : ""}
           </span>
           <div className="flex gap-2">
             <Button

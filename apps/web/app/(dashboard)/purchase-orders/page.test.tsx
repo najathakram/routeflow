@@ -158,11 +158,35 @@ describe("/purchase-orders page", () => {
     expect(lastPoParams).toMatchObject({ page: 1, status: undefined });
   });
 
-  it("never renders a 'Showing 21–0 of 0' range", () => {
+  it("never renders a 'Showing 21–0 of 0' range after the list empties under page 2", () => {
+    poState = pagedState(3, 45);
+    const { rerender } = render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText(/Showing 21–40 of 45/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeEnabled();
     poState = pagedState(0, 0);
-    render(<PurchaseOrdersPage />);
-    fireEvent.click(screen.queryByRole("button", { name: "Next page" }) ?? document.body);
+    rerender(<PurchaseOrdersPage />);
     expect(screen.queryByText(/Showing 21/)).not.toBeInTheDocument();
+  });
+
+  it("announces 'Updating…' on a single page too: one page + filter change + placeholder", () => {
+    poState = { ...pagedState(1, 12), isFetching: true, isPlaceholderData: true };
+    const { container } = render(<PurchaseOrdersPage />);
+    expect(screen.queryByRole("button", { name: "Next page" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Updating…");
+    const dimmed = container.querySelector('[aria-busy="true"]');
+    expect(dimmed).not.toBeNull();
+    expect(dimmed).toHaveClass("opacity-50");
+  });
+
+  it("a failed page-2 fetch keeps the pager on page 2 (the meta guard) and shows the error", () => {
+    poState = pagedState(3, 45);
+    const { rerender } = render(<PurchaseOrdersPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    poState = { data: undefined, isLoading: false, isError: true };
+    rerender(<PurchaseOrdersPage />);
+    expect((lastPoParams as { page: number }).page).toBe(2);
+    expect(screen.getByText("Couldn't load purchase orders.")).toBeInTheDocument();
   });
 
   it("hides the pager when everything fits on one page", () => {
