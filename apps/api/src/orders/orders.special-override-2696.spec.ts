@@ -253,13 +253,13 @@ describe("#2696(c) staff price override — updateOrderItems", () => {
         operatorPayload as never,
       );
 
-    it("C1 red-first (SA-558b(2)): a typed TIER price with no reason is no longer a 400 — classification unchanged (≠ catalog ⇒ MANUAL)", async () => {
+    it("C1 red-first (SA-558b(2)): a typed TIER price with no reason is no longer a 400 and is no override (#2716: stays SPECIAL)", async () => {
       await add({ unitPrice: 8 });
       expect(h.prisma.orderItem.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             unitPrice: 8,
-            priceType: "MANUAL",
+            priceType: "SPECIAL",
             originalPrice: 10,
             overrideReason: null,
           }),
@@ -272,13 +272,13 @@ describe("#2696(c) staff price override — updateOrderItems", () => {
       expect(h.prisma.orderItem.create).not.toHaveBeenCalled();
     });
 
-    it("C3 (classification byte-identical): off-tier with a reason ⇒ MANUAL at the raw typed price, originalPrice catalog", async () => {
+    it("C3 (#2716): off-tier below list with a reason ⇒ DISCOUNTED at the typed price, originalPrice list", async () => {
       await add({ unitPrice: 6, overrideReason: "loyalty" });
       expect(h.prisma.orderItem.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             unitPrice: 6,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             originalPrice: 10,
             overrideReason: "loyalty",
             overriddenBy: "user-op",
@@ -288,14 +288,14 @@ describe("#2696(c) staff price override — updateOrderItems", () => {
       );
     });
 
-    it("C4 (classification byte-identical): a typed price equal to CATALOG with a reason stays STANDARD", async () => {
+    it("C4 (#2716): a typed price equal to LIST on a special-tier line with a reason ⇒ MANUAL, originalPrice list", async () => {
       await add({ unitPrice: 10, overrideReason: "list today" });
       expect(h.prisma.orderItem.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             unitPrice: 10,
-            priceType: "STANDARD",
-            originalPrice: null,
+            priceType: "MANUAL",
+            originalPrice: 10,
           }),
         }),
       );
