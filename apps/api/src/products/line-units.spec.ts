@@ -293,6 +293,20 @@ describe("resolveLineUnits — honourDefaultSelling (#2784, SA-601 buyer qty-onl
     expect(resolveLineUnits(boxed, [flaggedCase], undefined, {}, opts).kind).toBe("pack");
   });
 
+  it("SA-610 B2: an EXPLICIT boxes/pieces split with no unit always wins — never re-united to the default", () => {
+    for (const split of [{ boxes: 0, pieces: 3 }, { boxes: 2 }, { pieces: 5 }, { boxes: 0 }]) {
+      expect(resolveLineUnits(boxed, [flaggedCase], { ...split }, null, opts)).toEqual({
+        unitsPerBox: 24,
+        unitLabel: null,
+        kind: "pack",
+      });
+    }
+    // A qty-only line (boxes/pieces both absent or null) still takes the default.
+    expect(
+      resolveLineUnits(boxed, [flaggedCase], { boxes: null, pieces: null }, null, opts).unitLabel,
+    ).toBe("Case");
+  });
+
   it("no flagged level -> today's pack line", () => {
     expect(resolveLineUnits(boxed, [caseRow], undefined, null, opts)).toEqual({
       unitsPerBox: 24,

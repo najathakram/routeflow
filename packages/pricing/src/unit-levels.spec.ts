@@ -356,6 +356,11 @@ describe("defaultSellingLabel (#2784: the ONE default-selling-unit resolver)", (
     expect(defaultSellingLabel(boxedProduct, units)).toBe("Piece");
   });
 
+  it("a flagged row labelled Piece whose factor is not 1 is never the default (the ladder sells Piece as ONE piece)", () => {
+    const units = [row({ label: "Piece", factorToBase: 6, isDefaultSelling: true })];
+    expect(defaultSellingLabel(boxedProduct, units)).toBeNull();
+  });
+
   it("the first valid flagged row wins when more than one is flagged", () => {
     const units = [
       row({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
