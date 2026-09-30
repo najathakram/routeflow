@@ -54,6 +54,7 @@ import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
 import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
+import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-lock";
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
@@ -213,7 +214,7 @@ const emptyReviewItem = (): ReviewItem => ({
   confidence: "none",
 });
 
-const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
+const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): InvoiceGroup => ({
   id: crypto.randomUUID(),
   kind,
   files,
@@ -233,7 +234,7 @@ const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
   billDate: new Date().toISOString().slice(0, 10),
   dueDate: "",
   createMode: "bill",
-  raisePo: false,
+  raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
   expenseDate: new Date().toISOString().slice(0, 10),
@@ -368,9 +369,19 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated?: () => void;
+  /** "bill" (default) records a vendor bill; "purchase-order" starts every invoice with
+   *  "raise a purchase order" on and reports each raised PO through `onPurchaseOrderCreated`. */
+  intent?: "bill" | "purchase-order";
+  onPurchaseOrderCreated?: (po: { id: string; poNumber?: string }) => void;
 }
 
-export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
+export function ScanInvoiceModal({
+  open,
+  onClose,
+  onCreated,
+  intent = "bill",
+  onPurchaseOrderCreated,
+}: Props) {
   const { toast } = useToast();
   const [step, setStep] = React.useState<"upload" | "processing" | "review">("upload");
   // Row index a "Create product from this line" quick-create is open for.
@@ -714,21 +725,32 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const msg: string = err?.response?.data?.message ?? "";
       const code: string | undefined = err?.response?.data?.code;
       const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
+      // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
+      // never the server's raw message.
+      const planLocked = intent === "purchase-order" && isScanPlanLock(err);
       if (singleFlow) {
         toast({
-          title: isApiKeyError ? "Anthropic API key not configured" : "Failed to scan invoice",
-          description: isApiKeyError
-            ? "Go to Settings → AI & Integrations to add your Claude API key."
-            : msg || "Please check the file and try again.",
+          title: planLocked
+            ? SCAN_LOCK_TITLE
+            : isApiKeyError
+              ? "Anthropic API key not configured"
+              : "Failed to scan invoice",
+          description: planLocked
+            ? SCAN_LOCK_BODY
+            : isApiKeyError
+              ? "Go to Settings → AI & Integrations to add your Claude API key."
+              : msg || "Please check the file and try again.",
           variant: "error",
         });
         setStep("upload");
       } else {
         patchInvoiceById(inv.id, {
           status: "failed",
-          error: isApiKeyError
-            ? "Anthropic API key not configured — see Settings → AI & Integrations."
-            : msg || "Scan failed. Retry, or check the file.",
+          error: planLocked
+            ? SCAN_LOCK_BODY
+            : isApiKeyError
+              ? "Anthropic API key not configured — see Settings → AI & Integrations."
+              : msg || "Scan failed. Retry, or check the file.",
         });
       }
     } finally {
@@ -815,7 +837,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     // Drop any previous session (aborts stale scans, revokes object URLs).
     discardSession();
     const runId = runIdRef.current;
-    const newInvoices = groups.map((g) => makeInvoice(g.kind, g.files));
+    const newInvoices = groups.map((g) =>
+      makeInvoice(g.kind, g.files, intent === "purchase-order"),
+    );
     setInvoices(newInvoices);
 
     if (newInvoices.length === 1) {
@@ -1323,6 +1347,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           ),
         );
         billId = (bill as { id?: string })?.id ?? null;
+        const raisedPo = (bill as { purchaseOrder?: { id?: string; poNumber?: string } | null })
+          ?.purchaseOrder;
+        if (raisesPo && raisedPo?.id) {
+          onPurchaseOrderCreated?.({ id: raisedPo.id, poNumber: raisedPo.poNumber });
+        }
         patchInvoiceById(invoiceId, { createdBillId: billId });
         // Auto-receive: transitions DRAFT → RECEIVED, which triggers stock movements
         // and recalculates average cost for every product-linked line item.
@@ -1637,7 +1666,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-brand-500" />
-            <h2 className="text-lg font-semibold text-navy">AI Invoice Scanner</h2>
+            <h2 className="text-lg font-semibold text-navy">
+              {intent === "purchase-order"
+                ? "Create a PO from a supplier invoice"
+                : "AI Invoice Scanner"}
+            </h2>
           </div>
           <button
             onClick={onClose}
