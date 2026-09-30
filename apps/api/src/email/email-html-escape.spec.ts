@@ -35,7 +35,9 @@ function makeService(): EmailService {
   const mailboxSend = {
     trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
   } as any;
-  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend);
+  return new EmailService(config, prisma, { decrypt: (v: string) => v } as any, mailboxSend, {
+    record: jest.fn(),
+  } as any);
 }
 
 /** The HTML of every send() the service makes, with delivery stubbed out. */

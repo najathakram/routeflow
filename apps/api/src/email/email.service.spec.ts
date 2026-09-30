@@ -61,7 +61,7 @@ function makeService(
         error: "not_connected",
       }),
     } as any);
-  return new EmailService(config, prisma, encryption, mailboxSend);
+  return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
 }
 
 describe("EmailService — honest send (R5)", () => {
@@ -1803,7 +1803,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    return new EmailService(config, prisma, encryption, mailboxSend);
+    return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
   }
 
   const items = [
@@ -2007,7 +2007,9 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    const svc = new EmailService(config, prisma, encryption, mailboxSend);
+    const svc = new EmailService(config, prisma, encryption, mailboxSend, {
+      record: jest.fn(),
+    } as any);
     const sendSpy = jest
       .spyOn(svc, "send")
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
