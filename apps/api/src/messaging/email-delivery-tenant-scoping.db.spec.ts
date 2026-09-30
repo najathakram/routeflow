@@ -10,12 +10,14 @@
  * TenantContextService, `assertTestTenant`, FK-safe cleanup in afterAll).
  */
 import { randomUUID } from "crypto";
+import { ForbiddenException } from "@nestjs/common";
 import { NotificationEvent } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
 import { MessagingDeliveriesService } from "./messaging-deliveries.service";
 import { StaffOrderEmailService } from "./staff-order-email";
+import { StaffEmailSettingsService } from "./staff-email-settings.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -29,6 +31,7 @@ describeDb("EmailDelivery tenant scoping (real Postgres)", () => {
   let deliveries: EmailDeliveryService;
   let list: MessagingDeliveriesService;
   let staff: StaffOrderEmailService;
+  let settings: StaffEmailSettingsService;
   let send: jest.Mock;
   const tenants: Record<"A" | "B", string> = { A: "", B: "" };
   const orderIds: string[] = [];
@@ -85,6 +88,7 @@ describeDb("EmailDelivery tenant scoping (real Postgres)", () => {
     list = new MessagingDeliveriesService(prisma);
     send = jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" });
     staff = new StaffOrderEmailService(prisma, { send } as never, deliveries);
+    settings = new StaffEmailSettingsService(prisma, staff);
     process.env.STAFF_ORDER_EMAIL = "dark";
   });
 
@@ -154,5 +158,41 @@ describeDb("EmailDelivery tenant scoping (real Postgres)", () => {
       where: { kind: "BUYER_ORDER_CANCELLED", entityId: orderIds[0] },
     });
     expect(rows).toHaveLength(0);
+  });
+
+  describe("no tenant context: requireTenantContext 403 (real services, real Prisma)", () => {
+    const readCc = async (tenantId: string) =>
+      (
+        await prisma.systemConfig.findFirst({
+          where: { tenantId, key: "notifications.staffCc" },
+        })
+      )?.value;
+
+    it.each([
+      ["MessagingDeliveriesService.list", () => list.list("TENANT_ADMIN", {})],
+      ["MessagingDeliveriesService.health", () => list.health()],
+      ["StaffEmailSettingsService.get", () => settings.get("TENANT_ADMIN")],
+      [
+        "StaffEmailSettingsService.update",
+        () => settings.update({ staffCc: [`hijack-${RUN}@example.test`] }),
+      ],
+    ])(
+      "%s rejects TENANT_CONTEXT_REQUIRED and leaves other tenants' staffCc untouched",
+      async (_l, call) => {
+        // Another tenant's rows exist (beforeAll) and the test runs OUTSIDE ctx.run: the unscoped
+        // client would see/overwrite them if the guard were a no-op.
+        const beforeA = await readCc(tenants.A);
+        const beforeB = await readCc(tenants.B);
+        expect(beforeA).toBeDefined();
+        expect(beforeB).toBeDefined();
+        const err: any = await call().catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getResponse()).toMatchObject({ code: "TENANT_CONTEXT_REQUIRED" });
+        expect(await readCc(tenants.A)).toBe(beforeA);
+        expect(await readCc(tenants.B)).toBe(beforeB);
+        expect(beforeA).toContain(`cc-a-${RUN}@example.test`);
+        expect(beforeB).toContain(`cc-b-${RUN}@example.test`);
+      },
+    );
   });
 });

@@ -116,10 +116,18 @@ describe("StaffOrderEmailService tenant scoping (#2872 B1)", () => {
   it("(c) ambient tenant B but the order is in A: same refusal", async () => {
     const h = makeFake("B");
     const svc = await build(h);
-    await svc.notifyStaffEvent(NotificationEvent.STAFF_NEW_ORDER, { orderId: "ordA" });
+    await expect(
+      svc.notifyStaffEvent(NotificationEvent.STAFF_NEW_ORDER, { orderId: "ordA" }),
+    ).resolves.toBeUndefined();
+    // The mismatch half of the guard: without it recipients would still resolve by order.tenantId
+    // (A) and A's rows would be written while B is ambient. Nothing may be queried or written.
+    expect(h.prisma.getTenantId).toHaveBeenCalled();
     expect(h.models.user.findMany).not.toHaveBeenCalled();
-    expect(h.deliveries.record).not.toHaveBeenCalled();
-    expect(h.email.send).not.toHaveBeenCalled();
+    expect(h.models.userPreference.findMany).not.toHaveBeenCalled();
+    expect(h.models.systemConfig.findFirst).not.toHaveBeenCalled();
+    expect(h.models.systemConfig.findMany).not.toHaveBeenCalled();
+    expect(h.deliveries.record).toHaveBeenCalledTimes(0);
+    expect(h.email.send).toHaveBeenCalledTimes(0);
   });
 
   it("(d) every user / userPreference / systemConfig query carries where.tenantId === order.tenantId", async () => {
