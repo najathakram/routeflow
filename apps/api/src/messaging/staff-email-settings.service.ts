@@ -6,6 +6,7 @@ import type {
 } from "@routeflow/types";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { maskEmail } from "./messaging-deliveries.service";
 import { StaffOrderEmailService } from "./staff-order-email";
 
@@ -74,6 +75,7 @@ export class StaffEmailSettingsService {
     input.forEach((raw, index) => {
       const email = typeof raw === "string" ? raw.trim().toLowerCase() : "";
       if (!EMAIL_SHAPE.test(email)) throw this.invalid({ index, reason: "format" });
+      if (isInternalEmail(email)) throw this.invalid({ index, reason: "sentinel" });
       if (seen.has(email)) throw this.invalid({ index, reason: "duplicate" });
       seen.add(email);
       out.push(email);

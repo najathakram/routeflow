@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailDeliveryStatus } from "@prisma/client";
+import { EMAIL_KINDS, type EmailKind } from "../email/email-kinds";
 import type { DeliveryFixKey, DeliveryHealth, DeliveryList } from "@routeflow/types";
 
 /** Local literal copy (the API never value-imports `@routeflow/types`); pinned equal to the shared
@@ -21,6 +22,11 @@ const HEALTH_WINDOW_DAYS = 7;
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 const FAILURE_SAMPLE = 1000;
+
+/** A stored kind outside the allow-list (older/foreign rows) is shown as AUTH_OTHER. */
+function safeKind(kind: string): EmailKind {
+  return (EMAIL_KINDS as readonly string[]).includes(kind) ? (kind as EmailKind) : "AUTH_OTHER";
+}
 
 /** `jane@x.com` -> `j***@x.com` (never leaks the local part beyond its first char). */
 export function maskEmail(email: string): string {
@@ -75,7 +81,7 @@ export class MessagingDeliveriesService {
     return {
       items: rows.map((r) => ({
         id: r.id,
-        kind: r.kind,
+        kind: safeKind(r.kind),
         toAddress: full ? r.toAddress : maskEmail(r.toAddress),
         status: r.status as EmailDeliveryStatus,
         // Raw (redacted, ≤500) provider text: TENANT_ADMIN only — an OPERATOR sees the status and the

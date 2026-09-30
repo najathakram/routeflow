@@ -47,13 +47,24 @@ export class EmailDeliveryPruneService {
     return { deleted };
   }
 
-  /** Repeat until a delete removes fewer than a full batch. */
+  /**
+   * Truly bounded: select at most BATCH ids (`take`), delete exactly those (`id IN`), repeat
+   * until the select comes back empty. Every statement carries the tenantId.
+   */
   private async deleteAll(where: Record<string, unknown>): Promise<number> {
+    const tenantId = where.tenantId;
     let total = 0;
     for (;;) {
-      const res = await this.prisma.emailDelivery.deleteMany({ where });
+      const rows = await this.prisma.emailDelivery.findMany({
+        where,
+        select: { id: true },
+        take: BATCH,
+      });
+      if (rows.length === 0) return total;
+      const res = await this.prisma.emailDelivery.deleteMany({
+        where: { tenantId, id: { in: rows.map((r) => r.id) } },
+      });
       total += res.count;
-      if (res.count < BATCH) return total;
     }
   }
 }

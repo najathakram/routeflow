@@ -6,11 +6,12 @@ import { EmailService } from "../email/email.service";
 import { EmailDeliveryService } from "../email/email-delivery.service";
 import type { EmailKind } from "../email/email-kinds";
 import { escapeHtml } from "../common/html-escape";
+import { isInternalEmail } from "../common/internal-email";
 
 /**
  * WS4 (SA-606) — staff emails for buyer-placed orders, buyer edits and buyer cancels.
  *
- * Rollout: the platform env ceiling `STAFF_ORDER_EMAIL=off|dark|on` (unset/garbage = "on") is
+ * Rollout: the platform env ceiling `STAFF_ORDER_EMAIL=off|dark|on` (only the literal off|dark|on are honoured; unset/garbage = "dark") is
  * combined with a policy mode (fixed "dark" until the policy layer lands) and the EFFECTIVE mode
  * is the minimum of the two: off = nothing, dark = WOULD_SEND audit rows only, on = real sends.
  */
@@ -26,7 +27,7 @@ export function effectiveStaffOrderEmailMode(
   env: string | undefined,
   policy: StaffOrderEmailMode,
 ): StaffOrderEmailMode {
-  const ceiling = asMode(env) ?? "on";
+  const ceiling = asMode(env) ?? "dark";
   const pol = asMode(policy) ?? "dark";
   return MODE_RANK[ceiling] <= MODE_RANK[pol] ? ceiling : pol;
 }
@@ -76,11 +77,15 @@ export class StaffOrderEmailService {
   }
 
   /** Active tenant admins + up to 5 valid `notifications.staffCc` addresses, deduped. */
-  async resolveRecipients(_tenantId: string): Promise<string[]> {
-    return (await this.resolveRecipientRows()).map((r) => r.email);
+  async resolveRecipients(tenantId: string): Promise<string[]> {
+    return (await this.resolveRecipientRows(tenantId)).map((r) => r.email);
   }
 
-  private async resolveRecipientRows(): Promise<Recipient[]> {
+  /**
+   * `forTenant()` returns the UNSCOPED client when there is no tenant context (job worker,
+   * SUPER_ADMIN), so every query here names the tenant explicitly.
+   */
+  private async resolveRecipientRows(tenantId: string): Promise<Recipient[]> {
     const db = this.prisma.forTenant();
     const out: Recipient[] = [];
     const seen = new Set<string>();
@@ -88,13 +93,13 @@ export class StaffOrderEmailService {
       if (typeof raw !== "string") return;
       const email = raw.trim();
       const key = email.toLowerCase();
-      if (!EMAIL_SHAPE.test(email) || seen.has(key)) return;
+      if (!EMAIL_SHAPE.test(email) || isInternalEmail(email) || seen.has(key)) return;
       seen.add(key);
       out.push({ email, userId });
     };
 
     const admins = await db.user.findMany({
-      where: { role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
+      where: { tenantId, role: "TENANT_ADMIN", status: "ACTIVE", deletedAt: null },
       select: { id: true, email: true, role: true },
     });
     for (const u of admins) {
@@ -103,7 +108,7 @@ export class StaffOrderEmailService {
     }
 
     try {
-      const cfg = await db.systemConfig.findFirst({ where: { key: STAFF_CC_KEY } });
+      const cfg = await db.systemConfig.findFirst({ where: { tenantId, key: STAFF_CC_KEY } });
       const parsed: unknown = cfg?.value ? JSON.parse(cfg.value) : [];
       if (Array.isArray(parsed)) {
         let added = 0;
@@ -135,9 +140,19 @@ export class StaffOrderEmailService {
       if (!order) return;
       const tenantId = String(order.tenantId);
 
-      const recipients = await this.resolveRecipientRows();
+      // Refuse without a matching ambient tenant: the unscoped client would otherwise expose
+      // every tenant's admins and staffCc (#2872 review B1).
+      const ambient = this.prisma.getTenantId();
+      if (!ambient || ambient !== tenantId) {
+        this.logger.warn(
+          `notifyStaffEvent(${String(event)}) refused: ambient tenant missing or differs from the order's`,
+        );
+        return;
+      }
+
+      const recipients = await this.resolveRecipientRows(tenantId);
       if (recipients.length === 0) return;
-      const optedOut = await this.optedOutUserIds(recipients, OPT_OUT_KEY[kind]);
+      const optedOut = await this.optedOutUserIds(recipients, OPT_OUT_KEY[kind], tenantId);
 
       const delivery = {
         tenantId,
@@ -165,12 +180,16 @@ export class StaffOrderEmailService {
     }
   }
 
-  private async optedOutUserIds(recipients: Recipient[], key: string): Promise<Set<string>> {
+  private async optedOutUserIds(
+    recipients: Recipient[],
+    key: string,
+    tenantId: string,
+  ): Promise<Set<string>> {
     const ids = recipients.map((r) => r.userId).filter((v): v is string => !!v);
     const out = new Set<string>();
     if (ids.length === 0) return out;
     const prefs = await this.prisma.forTenant().userPreference.findMany({
-      where: { userId: { in: ids }, key },
+      where: { tenantId, userId: { in: ids }, key },
     });
     for (const p of prefs as { userId: string; key: string; value: string }[]) {
       if (p.key === key && p.value === "false" && ids.includes(p.userId)) out.add(p.userId);

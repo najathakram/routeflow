@@ -22,7 +22,12 @@ export interface UpdateStaffEmailSettingsRequest {
 }
 
 /** `details.reason` of the 400 `STAFF_CC_INVALID`. */
-export const STAFF_CC_INVALID_REASON_VALUES = ["format", "duplicate", "too_many"] as const;
+export const STAFF_CC_INVALID_REASON_VALUES = [
+  "format",
+  "duplicate",
+  "too_many",
+  "sentinel",
+] as const;
 export type StaffCcInvalidReason = (typeof STAFF_CC_INVALID_REASON_VALUES)[number];
 
 export interface StaffCcInvalidDetails {

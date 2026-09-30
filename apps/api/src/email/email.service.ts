@@ -4,6 +4,7 @@ import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
+import { isInternalEmail } from "../common/internal-email";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
 import {
   EmailDeliveryService,
@@ -1179,8 +1180,8 @@ export class EmailService {
         error: (err as Error)?.message ?? "Email send failed",
       };
     }
-    // `.invalid` is the reserved internal-placeholder TLD: nothing real was attempted, so no row.
-    if (!/\.invalid$/i.test(params.to.trim())) {
+    // A sentinel address (@placeholder.local / @imported.local): nothing real was attempted, no row.
+    if (!isInternalEmail(params.to.trim())) {
       try {
         await this.deliveries.record({
           tenantId: delivery.tenantId,
