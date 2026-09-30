@@ -26,11 +26,37 @@ import { BuyerRequestPasswordResetDto } from "./dto/buyer-request-password-reset
 import { BuyerResetPasswordDto } from "./dto/buyer-reset-password.dto";
 import { BuyerUpdateAccountDto } from "./dto/buyer-update-account.dto";
 import { BuyerVerifyEmailDto } from "./dto/buyer-verify-email.dto";
+import { BuyerHandoffService } from "./buyer-handoff.service";
+import { HandoffExchangeDto, HandoffMintDto } from "../auth/handoff/handoff.dto";
 
 @ApiTags("buyer-auth")
 @Controller("buyer/auth")
 export class BuyerAuthController {
-  constructor(private readonly buyerAuthService: BuyerAuthService) {}
+  constructor(
+    private readonly buyerAuthService: BuyerAuthService,
+    private readonly buyerHandoff: BuyerHandoffService,
+  ) {}
+
+  // ─── #2653 in-app sign-in handoff (SA-542b), buyer realm ─────────────────────────
+
+  @Post("handoff")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(BuyerJwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Mint a one-time code for the in-app web shell (buyer)" })
+  mintHandoff(@CurrentBuyer() buyer: BuyerJwtPayload, @Body() dto: HandoffMintDto) {
+    return this.buyerHandoff.mint(buyer, dto.deviceId);
+  }
+
+  @Post("handoff/exchange")
+  @HttpCode(HttpStatus.OK)
+  // The buyer login throttle: an exchange signs someone in.
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiOperation({ summary: "Trade a one-time buyer handoff code for a fresh buyer session" })
+  exchangeHandoff(@Body() dto: HandoffExchangeDto, @Req() req: any) {
+    return this.buyerHandoff.exchange(dto.code, this.extractDeviceInfo(req));
+  }
 
   @Post("register")
   @HttpCode(HttpStatus.CREATED)
