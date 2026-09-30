@@ -1,7 +1,7 @@
 /**
  * SA-603 / SA-603a DB-lane proof for code release and reuse (real Postgres, throwaway `qa-*` tenants).
  *
- * WRITTEN, NOT RUN by its author: the DB lane is F2's (`npm run local:test:db`). Collected only by
+ * Run by F2's DB lane (`npm run local:test:db`; `npm run local:test:db` builds its own fresh database). Collected only by
  * `jest.db.config.js` (`.db.spec.ts$`). Needs the Sitting-B bundle migration applied (retired* columns,
  * nullable ProductBarcode.code, the two active-name partial uniques). `requireLocalDatabaseUrl()` refuses any
  * non-local host; every tenant is a `qa-*` slug approved by `assertTestTenant`.
@@ -15,6 +15,7 @@ import { StorageService } from "../storage/storage.service";
 import { AddonService } from "../billing/addon.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { FeatureOverrideService } from "../billing/feature-override.service";
 import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-authority-provider";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -63,6 +64,7 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         entitlementAuthorityFromEntitlements,
         {
           provide: PlanCatalogService,
@@ -354,8 +356,10 @@ describeDb("SA-603a code release, lazy reuse, restore and name rule — real Pos
   });
 
   // ── Opus #2860 B1/B2/B3: lock-order pins. A deadlock (40P01) surfaces as a raw 500; each race below must end with
-  // ONLY 2xx / 4xx outcomes. REVERT PROBE (F2): remove the single sorted `lockBarcodeCodes` set from `update()` (or
-  // swap `releaseProductCodes` back AFTER the isActive write) and scenarios A, B, C and D go red with a 500 in some round.
+  // ONLY 2xx / 4xx outcomes. What each scenario PINS (F2's revert probe, removing the single sorted lock set in
+  // `update()`): scenario C goes red deterministically; A, B and D are best-effort SMOKE pins (the interleavings are
+  // timing-dependent, so they may stay green on a revert): they guard against regressions but are not the proof of the
+  // lock. The deterministic proof of the lock SET is the unit probe in products.code-release-wiring.spec.ts.
   const barrier = async <T>(...fns: Array<() => Promise<T>>) => {
     let open!: () => void;
     const gate = new Promise<void>((r) => {

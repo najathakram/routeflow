@@ -214,7 +214,15 @@ export async function peekProductCodes(
  */
 export async function releaseProductCodes(
   tx: CatalogTx,
-  input: { tenantId: string; productId: string },
+  input: {
+    tenantId: string;
+    productId: string;
+    /**
+     * The codes the caller ALREADY locked in its ONE sorted call. After the row lock the product's live codes must be a
+     * subset of it, else 409 CODES_CHANGED (the release would free a code nobody locked: an inverted-order deadlock).
+     */
+    lockedCodes?: ReadonlySet<string>;
+  },
 ): Promise<{ released: CodeField[]; freed: FreedCode[] }> {
   const { tenantId, productId } = input;
   const peek: ProductCodes | null = await tx.product.findFirst({
@@ -238,6 +246,15 @@ export async function releaseProductCodes(
     select: CODE_SELECT,
   });
   if (!p) return { released: [], freed: [] };
+  if (input.lockedCodes) {
+    const live = await peekProductCodes(tx, tenantId, productId);
+    if (live.some((c) => !input.lockedCodes!.has(c))) {
+      throw new ConflictException({
+        code: API_ERROR_CODES.CODES_CHANGED,
+        message: "This product's codes changed while it was being saved. Try again.",
+      });
+    }
+  }
   const done = await releaseLive(tx, tenantId, p);
   return { released: done.fields, freed: done.freed };
 }

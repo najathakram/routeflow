@@ -60,6 +60,35 @@ describe("releaseProductCodes (deactivate)", () => {
   });
 });
 
+describe("releaseProductCodes lockedCodes (Opus #2860 R1)", () => {
+  it("a live code that was NOT in the caller's locked set is a 409 CODES_CHANGED and nothing is written", async () => {
+    const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "B1" })] });
+    const err = await releaseProductCodes(tx, {
+      tenantId: T,
+      productId: "p1",
+      lockedCodes: new Set(["S1"]), // B1 was not locked up front
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "CODES_CHANGED" });
+    expect(tx.products[0]).toMatchObject({ sku: "S1", barcode: "B1", retiredSku: null });
+  });
+
+  it("with every code locked it releases as before", async () => {
+    const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "B1" })] });
+    await releaseProductCodes(tx, {
+      tenantId: T,
+      productId: "p1",
+      lockedCodes: new Set(["S1", "B1"]),
+    });
+    expect(tx.products[0]).toMatchObject({
+      sku: null,
+      barcode: null,
+      retiredSku: "S1",
+      retiredBarcode: "B1",
+    });
+  });
+});
+
 describe("claimCodes (create / update / reactivate collide with a holder)", () => {
   it("an ACTIVE holder is a 409 CODE_TAKEN naming it, and nothing is written", async () => {
     const tx = makeTx({ products: [product({ id: "h1", name: "Holder One", sku: "S1" })] });
