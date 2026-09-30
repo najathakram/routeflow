@@ -45,6 +45,9 @@ export function findRawStringSites(text: string): RawHit[] {
   const aliases = new Set<string>();
   for (const m of text.matchAll(/\b(?:const|let|var)\s+(\w+)\s*(?::[^=;]+)?=([^;]*);/g)) {
     const expr = m[2].replace(/\s+/g, "");
+    // A function-valued const, or a value derived through match/replace/test/includes/startsWith,
+    // is a computation, not the raw text itself.
+    if (/=>|function|\.(match|replace|test|includes|startsWith|slice)\(/.test(expr)) continue;
     if (
       /response\??\.data\??\.(message|error)/.test(expr) ||
       /(^|[.?])lastError\b/.test(expr) ||

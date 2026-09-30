@@ -1354,11 +1354,10 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
               );
             } else {
               // Bill was created but receive failed — surface the issue but don't lose the bill
-              const rmsg =
-                (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
-                  ?.message ??
-                "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
-              notes.push(`Vendor bill ${rmsg}`);
+              console.error(receiveErr);
+              notes.push(
+                "Vendor bill created in Draft (could not auto-receive, open the bill and click Receive to update stock)",
+              );
             }
           }
         } else {
