@@ -10,7 +10,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { isBuyerVisibleProduct } from "../buyer/buyer-product-visibility";
+import { assertNoNewHiddenProduct, isBuyerVisibleProduct } from "../buyer/buyer-product-visibility";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -3165,7 +3165,12 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-          const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+          const products = await tx.product.findMany({
+            where: { id: { in: productIds } },
+            include: { parent: { select: { portalVisible: true } } },
+          });
+          if (user.role === UserRole.CUSTOMER)
+            assertNoNewHiddenProduct(products, new Set(order.lineItems.map((l) => l.productId!)));
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
