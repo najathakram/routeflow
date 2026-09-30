@@ -9,7 +9,11 @@ import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
-import { buyerVisibleProductWhere, isBuyerVisibleProduct } from "./buyer-product-visibility";
+import {
+  buyerVisibleProductWhere,
+  isBuyerVisibleProduct,
+  NO_BUYER_RESTRICTIONS,
+} from "./buyer-product-visibility";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
@@ -139,7 +143,7 @@ export class BuyerCatalogService {
     }
 
     // One shared buyer-visibility predicate (active + portal-visible + parent visible).
-    andWhere.push(buyerVisibleProductWhere() as Record<string, unknown>);
+    andWhere.push(buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS) as Record<string, unknown>);
     const opts = {
       ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
       andWhere,
@@ -273,7 +277,10 @@ export class BuyerCatalogService {
     if (hiddenIds.size > 0) {
       gateOr.push({ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } });
     }
-    const baseWhere = buyerVisibleProductWhere(gateOr.length > 0 ? { OR: gateOr } : undefined);
+    const baseWhere = buyerVisibleProductWhere(
+      NO_BUYER_RESTRICTIONS,
+      gateOr.length > 0 ? { OR: gateOr } : undefined,
+    );
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
@@ -323,7 +330,7 @@ export class BuyerCatalogService {
     const product = await this.productsService.findOne(productId);
 
     // Buyers must not see inactive/discontinued products
-    if (!isBuyerVisibleProduct(product as any)) {
+    if (!isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, product as any)) {
       throw new NotFoundException("Product not found");
     }
 
@@ -410,7 +417,7 @@ export class BuyerCatalogService {
    */
   async getCategories() {
     const products = await this.prisma.forTenant().product.findMany({
-      where: buyerVisibleProductWhere({ category: { not: null } }),
+      where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { category: { not: null } }),
       select: { category: true },
       distinct: ["category"],
       orderBy: { category: "asc" },
@@ -425,7 +432,11 @@ export class BuyerCatalogService {
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
-      where: { buyerAccountId, customerId, product: buyerVisibleProductWhere() },
+      where: {
+        buyerAccountId,
+        customerId,
+        product: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+      },
       include: {
         product: true,
       },
@@ -493,7 +504,9 @@ export class BuyerCatalogService {
     // Verify the product exists and is active
     const product = await this.prisma
       .forTenant()
-      .product.findFirst({ where: buyerVisibleProductWhere({ id: productId }) });
+      .product.findFirst({
+        where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: productId }),
+      });
     if (!product) throw new NotFoundException("Product not found");
 
     try {

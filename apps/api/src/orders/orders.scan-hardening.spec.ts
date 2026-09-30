@@ -1619,7 +1619,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     // normalizeScanCode instead of matching the raw string.
     const candidates = normalizeScanCode(SCANNED);
     expect(candidates).toContain("012345678905");
-    // the code match now rides inside the shared builder's AND (buyerVisibleProductWhere(extra))
+    // the code match now rides inside the shared builder's AND (buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, extra))
     const codeClause = (scopedProductFindMany.mock.calls[0][0].where.AND as any[]).find((c) =>
       c.OR?.some((o: any) => "barcode" in o),
     );

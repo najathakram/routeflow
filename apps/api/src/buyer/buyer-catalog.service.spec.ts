@@ -9,10 +9,10 @@ import { StorageService } from "../storage/storage.service";
 import { OrdersService } from "../orders/orders.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { buyerVisibleProductWhere } from "./buyer-product-visibility";
+import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
 
 // The one shared buyer-visibility clause getCatalog always appends to findAll's andWhere.
-const VIS = buyerVisibleProductWhere();
+const VIS = buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS);
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
   let service: BuyerCatalogService;

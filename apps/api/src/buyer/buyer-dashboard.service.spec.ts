@@ -37,7 +37,7 @@ describe("BuyerDashboardService — W7 gate", () => {
       // NULL-SAFE gate shape: the bare `{ notIn }` this used to pin excludes
       // NULL rows in Prisma, hiding every untracked product from the rails.
       expect(args.where.trackedCategoryId).toBeUndefined();
-      // the gate now rides inside the shared builder's AND (buyerVisibleProductWhere(extra))
+      // the gate now rides inside the shared builder's AND (buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, extra))
       const gateClause = (args.where.AND as any[]).find((c) =>
         c.OR?.some((o: any) => "trackedCategoryId" in o),
       );

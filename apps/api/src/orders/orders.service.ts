@@ -10,7 +10,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { assertNoNewHiddenProduct, isBuyerVisibleProduct } from "../buyer/buyer-product-visibility";
+import { assertNoNewHiddenProduct, isBuyerVisibleBase } from "../buyer/buyer-product-visibility";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -1614,7 +1614,7 @@ export class OrdersService implements OnApplicationBootstrap {
       const archivedCreate = products.find(
         (p: any) =>
           p.isActive === false ||
-          (user.role === UserRole.CUSTOMER && !isBuyerVisibleProduct({ ...p, isActive: true })),
+          (user.role === UserRole.CUSTOMER && !isBuyerVisibleBase({ ...p, isActive: true })),
       );
       if (archivedCreate) {
         throw new BadRequestException(
@@ -3650,8 +3650,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const archivedAdd = addProducts.find(
               (p: any) =>
                 p.isActive === false ||
-                (user?.role === UserRole.CUSTOMER &&
-                  !isBuyerVisibleProduct({ ...p, isActive: true })),
+                (user?.role === UserRole.CUSTOMER && !isBuyerVisibleBase({ ...p, isActive: true })),
             );
             if (archivedAdd) {
               throw new BadRequestException(
