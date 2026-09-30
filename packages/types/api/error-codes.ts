@@ -44,6 +44,8 @@
 //                    into whole boxes; a server tripwire, never a client-fixable input.
 //   COMPOSED_LINE_EDIT — `body.code` of the 409 when a DRAFT invoice edit changes a mixed-pack line
 //                    by anything other than whole boxes or a price (#2717 M3).
+//   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
+//                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -69,6 +71,7 @@ export const API_ERROR_CODES = {
   COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
   COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
+  CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];
