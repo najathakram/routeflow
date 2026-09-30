@@ -3,7 +3,7 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
 import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
@@ -42,7 +42,11 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
-import { PurchaseOrdersTab } from "./_components/PurchaseOrdersTab";
+import {
+  INVENTORY_TABS,
+  inventoryTabHref,
+  resolveInventoryTab,
+} from "./_components/inventory-tabs";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 
@@ -1637,14 +1641,20 @@ export default function InventoryPage() {
     setTitle("Inventory");
   }, [setTitle]);
 
-  // Deep-linkable to the Stock Count tab — `?tab=count` (and `?amend=<id>`,
-  // which implies it) land on "count" instead of the default "stock". Read
-  // once on mount; StockCountTab strips `amend` from the URL itself once it's
-  // consumed the deep link, so this never needs to react to later changes.
+  // Every panel tab deep-links via `?tab=<value>` (and `?amend=<id>` implies "count"); an
+  // unknown value falls back to Stock and `?tab=purchase-orders` goes to its own route. Read
+  // once on mount; StockCountTab strips `amend` from the URL itself once it's consumed it.
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = React.useState(() =>
-    searchParams.get("tab") === "count" || searchParams.get("amend") ? "count" : "stock",
-  );
+  const router = useRouter();
+  const [initialTab] = React.useState(() => resolveInventoryTab(searchParams));
+  const [activeTab, setActiveTab] = React.useState(initialTab.tab);
+  React.useEffect(() => {
+    if (initialTab.redirect) router.replace(initialTab.redirect);
+  }, [initialTab.redirect, router]);
+  const selectTab = (value: string) => {
+    setActiveTab(value);
+    window.history.replaceState(null, "", inventoryTabHref(value));
+  };
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
@@ -1782,13 +1792,7 @@ export default function InventoryPage() {
   );
   const clearScrollTarget = React.useCallback(() => setScrollToProductId(null), []);
 
-  const tabs = [
-    { value: "stock", label: "Stock" },
-    { value: "count", label: "Stock Count" },
-    { value: "suppliers", label: "Suppliers" },
-    { value: "purchase-orders", label: "Purchase Orders" },
-    { value: "forecasting", label: "Forecasting" },
-  ];
+  const tabs = INVENTORY_TABS;
 
   return (
     <div className="space-y-5 p-6">
@@ -1891,21 +1895,31 @@ export default function InventoryPage() {
         </div>
       )}
 
-      <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
+      <Tabs.Root value={activeTab} onValueChange={selectTab}>
         <Tabs.List className="flex gap-1 border-b border-surface-border">
-          {tabs.map((tab) => (
-            <Tabs.Trigger
-              key={tab.value}
-              value={tab.value}
-              className={cn(
-                "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
-                "text-navy/70 hover:text-navy",
-                "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
-              )}
-            >
-              {tab.label}
-            </Tabs.Trigger>
-          ))}
+          {tabs.map((tab) =>
+            tab.href ? (
+              <Link
+                key={tab.value}
+                href={tab.href}
+                className="-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy"
+              >
+                {tab.label}
+              </Link>
+            ) : (
+              <Tabs.Trigger
+                key={tab.value}
+                value={tab.value}
+                className={cn(
+                  "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
+                  "text-navy/70 hover:text-navy",
+                  "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
+                )}
+              >
+                {tab.label}
+              </Tabs.Trigger>
+            ),
+          )}
         </Tabs.List>
 
         {/* ── Stock tab ── */}
@@ -2252,19 +2266,6 @@ export default function InventoryPage() {
               </table>
             </div>
           )}
-        </Tabs.Content>
-
-        {/* ── Purchase Orders tab ── */}
-        <Tabs.Content value="purchase-orders" className="pt-4">
-          <PurchaseOrdersTab
-            suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({
-              id: p.id,
-              name: p.name,
-              sku: p.sku,
-              unitsPerBox: p.unitsPerBox ?? null,
-            }))}
-          />
         </Tabs.Content>
 
         {/* ── Forecasting tab ── */}
