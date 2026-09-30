@@ -6837,10 +6837,19 @@ describe("OrdersService", () => {
       expect(created.pieces).toBeNull();
     });
 
-    it("SA-601/#2780: buyer plain qty 3 on a NEW boxed product (x12 pieces) = 3 PACKS at the box price, not 3 pieces", async () => {
-      // A plain buyer qty (no boxes/pieces/unitLabel) is the DEFAULT SELLING UNIT = the pack,
-      // identically to create(): qty 3 = 3 packs (36 pieces) at 3 x $30 = $90, boxes/pieces null.
-      // The old re-split read it as 3 PIECES (0 boxes + 3 pieces = $7.50).
+    it("SA-601/#2780: buyer plain qty 3 on a NEW boxed product (x12) = 3 PACKS ($90), not 3 pieces", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 3 });
+      expect(line).toMatchObject({ qty: 3, boxes: null, pieces: null, unitsPerBox: null });
+      expect(line.subtotal).toBeCloseTo(90, 2); // 3 packs x $30, never 3 pieces = $7.50
+    });
+
+    it("SA-601/#2780: buyer EXPLICIT boxes on a NEW boxed product still wins (qty 24 + boxes 2 = $60)", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 24, boxes: 2 });
+      expect(line).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+      expect(line.subtotal).toBeCloseTo(60, 2); // 2 boxes x $30, never 24 packs = $720
+    });
+
+    async function buyerAddsNewBoxed(item: Record<string, unknown>) {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "PENDING",
@@ -6851,41 +6860,9 @@ describe("OrdersService", () => {
         { id: "prod-box-new", pricePerUnit: 30, unitsPerBox: 12 },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([]);
-
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-box-new", qty: 3 }] },
-        customerPayload as never,
-      );
-
-      const created = prisma.orderItem.create.mock.calls[0][0].data;
-      expect(created).toMatchObject({ qty: 3, boxes: null, pieces: null, unitsPerBox: null });
-      expect(created.subtotal).toBeCloseTo(90, 2); // 3 packs x $30
-      expect(created.subtotal).not.toBeCloseTo(7.5, 2); // 3 pieces of a 12-pack
-    });
-
-    it("SA-601/#2780: buyer EXPLICIT boxes on a NEW boxed product still wins (qty 24 + boxes 2 = 24 pieces = $60)", async () => {
-      prisma.order.findUnique.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "PENDING",
-        lineItems: [],
-      });
-      prisma.customer.findFirst.mockResolvedValue({ id: "cust-1" });
-      prisma.product.findMany.mockResolvedValue([
-        { id: "prod-box-new", pricePerUnit: 30, unitsPerBox: 12 },
-      ]);
-      prisma.orderItem.findMany.mockResolvedValue([]);
-
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-box-new", qty: 24, boxes: 2 }] },
-        customerPayload as never,
-      );
-
-      const created = prisma.orderItem.create.mock.calls[0][0].data;
-      expect(created).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
-      expect(created.subtotal).toBeCloseTo(60, 2); // 2 boxes x $30 — never 24 packs = $720
-    });
+      await service.updateOrderItems("ord-1", { items: [item] }, customerPayload as never);
+      return prisma.orderItem.create.mock.calls[0][0].data;
+    }
 
     it("operator UPDATE prorates a boxed line when the client sends boxes/pieces", async () => {
       prisma.order.findUnique.mockResolvedValue({
