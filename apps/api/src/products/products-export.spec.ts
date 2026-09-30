@@ -1,4 +1,6 @@
 import "reflect-metadata";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
@@ -248,6 +250,25 @@ describe("products export.csv", () => {
     const [, r1, r2] = rows(out);
     expect(r1).toBe("Cola 12pk,C-1,,,Drinks,each,24.5,10.1235,,7,Yes,Yes,,8,80,2026-09-20");
     expect(r2).toBe("Cola Diet,,,,,each,1,,,0,No,No,Cola 12pk,0,0,");
+  });
+
+  it("Avg cost uses @routeflow/pricing round4 (half away from zero; L-248), not a local Math.round nudge", async () => {
+    // A local `Math.round((n + EPSILON) * 1e4) / 1e4` rounds a negative half (-2.00005) toward +inf -> -2.
+    const { svc } = build({
+      products: [
+        product({ id: "p1", tenantId: TENANT_A, name: "Credit cost", averageCost: -2.00005 }),
+      ],
+      lines: [],
+    });
+    const { out } = await run(svc, WINDOW);
+    const [, r1] = rows(out);
+    expect(r1.split(",")[7]).toBe("-2.0001");
+  });
+
+  it("products-export.service imports round4 from @routeflow/pricing and declares no local copy (L-248)", () => {
+    const src = readFileSync(join(__dirname, "products-export.service.ts"), "utf8");
+    expect(src).toMatch(/import \{[^}]*\bround4\b[^}]*\} from "@routeflow\/pricing"/);
+    expect(src).not.toMatch(/(const|function)\s+round4\b/);
   });
 
   it("stats come from accrual invoices only: DRAFT/VOID, other tenants and out-of-window lines never count, a PAID invoice does, and no order is read", async () => {

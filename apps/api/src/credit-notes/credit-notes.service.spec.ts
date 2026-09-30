@@ -1,6 +1,8 @@
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, NotFoundException } from "@nestjs/common";
 import { CreditNotesService } from "./credit-notes.service";
+import { codeOf } from "./credit-note-errors";
+import { API_ERROR_CODES as CODES } from "../common/api-error-codes";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
@@ -1897,6 +1899,39 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
         { id: "c1" },
       );
       expect(prisma.creditNote.create.mock.calls[0][0].data.amount).toBe(20);
+    });
+
+    it("PR-C: the PATCH refusals carry their CREDIT_NOTE_* code", async () => {
+      prisma.creditNote.findFirst.mockResolvedValueOnce({ id: "cn-1", status: "VOID" });
+      expect(
+        codeOf(await service.updateCreditNote("cn-1", { reason: "x" }).catch((e: unknown) => e)),
+      ).toBe(CODES.CREDIT_NOTE_VOID_NOT_EDITABLE);
+
+      prisma.creditNote.findFirst.mockResolvedValueOnce({
+        id: "cn-1",
+        status: "APPLIED",
+        expiresAt: null,
+      });
+      expect(
+        codeOf(
+          await service
+            .updateCreditNote("cn-1", { expiresAt: "2999-01-01T00:00:00.000Z" })
+            .catch((e: unknown) => e),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE);
+
+      prisma.creditNote.findFirst.mockResolvedValueOnce({
+        id: "cn-1",
+        status: "ISSUED",
+        expiresAt: null,
+      });
+      expect(
+        codeOf(
+          await service
+            .updateCreditNote("cn-1", { expiresAt: "2020-01-01T00:00:00.000Z" })
+            .catch((e: unknown) => e),
+        ),
+      ).toBe(CODES.CREDIT_NOTE_EXPIRY_PAST);
     });
 
     it("throws NotFound for an unknown credit note id", async () => {
