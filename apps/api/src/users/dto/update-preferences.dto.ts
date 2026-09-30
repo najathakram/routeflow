@@ -7,7 +7,6 @@ import {
 import { plainToInstance } from "class-transformer";
 import { IsIn, IsString, MaxLength, ValidateIf, validateSync } from "class-validator";
 import { PaymentMethod } from "@prisma/client";
-import { PREFERENCE_KEYS } from "@routeflow/types";
 
 /** ValidateIf (not IsOptional) so an explicit null is rejected rather than skipped. */
 const whenPresent = () => ValidateIf((_o, v) => v !== undefined);
@@ -50,8 +49,18 @@ export class UpdatePreferencesDto {
   "payment.lastMethod"?: string;
 }
 
-/** The allow-listed preference keys — the shared declaration (`@routeflow/types`). */
-export { PREFERENCE_KEYS };
+/**
+ * The allow-listed preference keys. API code must not value-import `@routeflow/types` (TS source,
+ * no dist), so this is the api's runtime copy; users.controller.preferences.spec.ts pins it
+ * set-equal to the shared `PREFERENCE_KEYS` that web and mobile write through.
+ */
+export const PREFERENCE_KEYS = [
+  "lowStockDigestEnabled",
+  "pushEnabled",
+  "locale",
+  "bill.lastSupplierId",
+  "payment.lastMethod",
+] as const;
 
 /**
  * Real allow-list: rejects unknown keys with 400, validates each known key, and returns ONLY the

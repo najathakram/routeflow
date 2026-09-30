@@ -10,9 +10,9 @@ import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
-import { PREF, PREFERENCE_KEYS, type PreferenceKey } from "@routeflow/types";
+import { PREF, PREFERENCE_KEYS as SHARED_KEYS, type PreferenceKey } from "@routeflow/types";
 import { getMetadataStorage } from "class-validator";
-import { UpdatePreferencesDto } from "./dto/update-preferences.dto";
+import { PREFERENCE_KEYS, UpdatePreferencesDto } from "./dto/update-preferences.dto";
 import { LOW_STOCK_DIGEST_PREF_KEY } from "../inventory/low-stock-digest.service";
 
 describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () => {
@@ -99,6 +99,7 @@ describe("PATCH/GET users/me/preferences — typed lowStockDigestEnabled", () =>
   };
 
   it("the api allow-list is the shared client key list", () => {
+    expect([...PREFERENCE_KEYS].sort()).toEqual([...SHARED_KEYS].sort());
     expect([...PREFERENCE_KEYS].sort()).toEqual(Object.keys(CLIENT_KEYS).sort());
     expect([...PREFERENCE_KEYS].sort()).toEqual(Object.values(PREF).sort());
   });
