@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import {
   claimCodes,
+  lockCodesOfProducts,
   releaseProductCodes,
   restoreProductCodes,
   CODE_RELEASED_ON_REUSE_ACTION,
@@ -60,7 +61,52 @@ describe("releaseProductCodes (deactivate)", () => {
   });
 });
 
+describe("lockCodesOfProducts (clearAll's ONE sorted lock set, capped)", () => {
+  it("peeks every product's codes and locks them in ONE call (one lock per distinct code), returning the set", async () => {
+    const tx = makeTx({
+      products: [
+        product({ id: "a", sku: "SA", barcode: "BA" }),
+        product({ id: "b", sku: "SB", barcode: "BA" }),
+      ],
+      barcodes: [row("r1", "a", "UNIT", "BA")],
+    });
+    const set = await lockCodesOfProducts(tx, T, ["a", "b"]);
+    expect([...set].sort()).toEqual(["BA", "SA", "SB"]);
+    expect(tx.calls.filter((c) => c === "lock:code")).toHaveLength(3); // distinct codes, locked once each
+    expect(tx.calls.indexOf("lock:code")).toBeGreaterThan(
+      tx.calls.lastIndexOf("productBarcode.findMany"),
+    );
+  });
+
+  it("refuses a set above the cap with a readable coded 409 and takes NO lock", async () => {
+    const tx = makeTx({
+      products: Array.from({ length: 5 }, (_, i) => product({ id: `p${i}`, sku: `S${i}` })),
+    });
+    const err = await lockCodesOfProducts(tx, T, ["p0", "p1", "p2", "p3", "p4"], 4).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
+      codeCount: 5,
+      max: 4,
+    });
+    expect(String(err.getResponse().message)).toMatch(/smaller batches/);
+    expect(tx.calls).not.toContain("lock:code");
+  });
+});
+
 describe("releaseProductCodes lockedCodes (Opus #2860 R1)", () => {
+  it("r3 B1: a code outside the caller's set is refused BEFORE any lock is issued (a late lock would deadlock)", async () => {
+    const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "NEW" })] });
+    const err = await releaseProductCodes(tx, {
+      tenantId: T,
+      productId: "p1",
+      lockedCodes: new Set(["S1"]), // NEW appeared after the caller locked
+    }).catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "CODES_CHANGED" });
+    expect(tx.calls).not.toContain("lock:code");
+    expect(tx.calls.some((c) => c.startsWith("lock:row"))).toBe(false);
+  });
+
   it("a live code that was NOT in the caller's locked set is a 409 CODES_CHANGED and nothing is written", async () => {
     const tx = makeTx({ products: [product({ id: "p1", sku: "S1", barcode: "B1" })] });
     const err = await releaseProductCodes(tx, {
