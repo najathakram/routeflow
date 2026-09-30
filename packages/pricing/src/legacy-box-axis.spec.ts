@@ -14,14 +14,19 @@ describe("classifySaleAxis", () => {
 
   it("r1: box-unaware, pack 12 (via productPackNow), qty 5 / unitBasisQty 5 -> legacy (box axis)", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 5 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "legacy", reason: "box axis" });
   });
 
   it("r1 + a correction (qty 0, unitBasisQty +55) landing it on 60 -> piece-axis, not re-flagged legacy", () => {
     expect(
       classifySaleAxis(
-        { entryType: "SALE", qty: 5, unitBasisQty: 5 },
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
         boxUnaware,
         [{ qty: 0, unitBasisQty: 55 }],
         12,
@@ -31,20 +36,30 @@ describe("classifySaleAxis", () => {
 
   it("r3: qty 5 / unitBasisQty 60, already on the pieces axis -> piece-axis", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 60 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 60, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "piece-axis", reason: "pieces axis" });
   });
 
   it("r5: qty 5 / unitBasisQty 5, same shape as r1 -> legacy", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 5 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "legacy", reason: "box axis" });
   });
 
   it('split line (boxes 5): qty 60 / unitBasisQty 60 -> piece-axis, "split line" reason, short-circuits before the axis math', () => {
     expect(
       classifySaleAxis(
-        { entryType: "SALE", qty: 60, unitBasisQty: 60 },
+        { entryType: "SALE", qty: 60, unitBasisQty: 60, writtenAt: AFTER_CUTOFF },
         { boxes: 5, pieces: 0, unitLabel: null, unitsPerBox: 12 },
         [],
         12,
@@ -55,7 +70,7 @@ describe("classifySaleAxis", () => {
   it('unit line ("Case"): qty 60 / unitBasisQty 60 -> piece-axis, "unit line" reason', () => {
     expect(
       classifySaleAxis(
-        { entryType: "SALE", qty: 60, unitBasisQty: 60 },
+        { entryType: "SALE", qty: 60, unitBasisQty: 60, writtenAt: AFTER_CUTOFF },
         { boxes: null, pieces: null, unitLabel: "Case", unitsPerBox: null },
         [],
         12,
@@ -75,7 +90,12 @@ describe("classifySaleAxis", () => {
   });
 
   it("no line-level unitsPerBox snapshot AND productPackNow OMITTED entirely -> unknown, never guessed", () => {
-    expect(classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 5 }, boxUnaware)).toEqual({
+    expect(
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+      ),
+    ).toEqual({
       state: "unknown",
       reason: "no snapshot and no product to gate on",
     });
@@ -93,7 +113,14 @@ describe("classifySaleAxis", () => {
   });
 
   it("line null (no invoice/order item resolved) -> unknown", () => {
-    expect(classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 5 }, null, [], 12)).toEqual({
+    expect(
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        null,
+        [],
+        12,
+      ),
+    ).toEqual({
       state: "unknown",
       reason: "no line to read a shape from",
     });
@@ -101,26 +128,41 @@ describe("classifySaleAxis", () => {
 
   it("malformed: qty 5 / unitBasisQty 3 (below the qty axis, fits neither) -> unknown", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: 3 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: 3, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "unknown", reason: "malformed — unitBasisQty is less than qty" });
   });
 
   it("a REVERSAL row is always unknown here — it takes its SALE's axis, never classified alone", () => {
     expect(
-      classifySaleAxis({ entryType: "REVERSAL", qty: -5, unitBasisQty: -5 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "REVERSAL", qty: -5, unitBasisQty: -5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "unknown", reason: "a reversal takes its SALE's axis" });
   });
 
   it("Decimal-typed inputs (toString-coercible objects) answer identically to plain numbers", () => {
     const asDecimal = (n: number) => ({ toString: () => String(n), valueOf: () => n });
     const plain = classifySaleAxis(
-      { entryType: "SALE", qty: 5, unitBasisQty: 5 },
+      { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
       boxUnaware,
       [],
       12,
     );
     const decimal = classifySaleAxis(
-      { entryType: "SALE", qty: asDecimal(5) as unknown, unitBasisQty: asDecimal(5) as unknown },
+      {
+        entryType: "SALE",
+        qty: asDecimal(5) as unknown,
+        unitBasisQty: asDecimal(5) as unknown,
+        writtenAt: AFTER_CUTOFF,
+      },
       {
         boxes: null,
         pieces: null,
@@ -138,7 +180,7 @@ describe("classifySaleAxis", () => {
     // snapshot is authoritative; a later product change is not evidence about what this line sold as.
     expect(
       classifySaleAxis(
-        { entryType: "SALE", qty: 5, unitBasisQty: 5 },
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
         { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 1 },
         [],
         12,
@@ -149,7 +191,7 @@ describe("classifySaleAxis", () => {
   it("effQty <= 0 after corrections -> unknown, never legacy or piece-axis", () => {
     expect(
       classifySaleAxis(
-        { entryType: "SALE", qty: 5, unitBasisQty: 5 },
+        { entryType: "SALE", qty: 5, unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
         boxUnaware,
         [{ qty: -5, unitBasisQty: -5 }],
         12,
@@ -159,13 +201,23 @@ describe("classifySaleAxis", () => {
 
   it("SA-073: a non-finite row qty (a non-numeric string) -> unknown, never silently defaults", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: "x", unitBasisQty: 5 }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: "x", unitBasisQty: 5, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "unknown", reason: "row qty/unitBasisQty is not a usable number" });
   });
 
   it("SA-073: a non-finite row unitBasisQty (NaN) -> unknown, never silently defaults", () => {
     expect(
-      classifySaleAxis({ entryType: "SALE", qty: 5, unitBasisQty: NaN }, boxUnaware, [], 12),
+      classifySaleAxis(
+        { entryType: "SALE", qty: 5, unitBasisQty: NaN, writtenAt: AFTER_CUTOFF },
+        boxUnaware,
+        [],
+        12,
+      ),
     ).toEqual({ state: "unknown", reason: "row qty/unitBasisQty is not a usable number" });
   });
   // SA-609 / #2052: a snapshot-less line's live pack may no longer short-circuit to piece-axis —
@@ -225,6 +277,11 @@ describe("classifySaleAxis", () => {
       expect(
         classifySaleAxis(sale(3, 3), boxUnaware, [{ qty: 0, unitBasisQty: 33 }], 1).state,
       ).toBe("piece-axis");
+    });
+
+    it("a zeroed row (qty 0/0) or a malformed one on an un-boxed product keeps today's piece-axis — never newly parks", () => {
+      expect(classifySaleAxis(sale(0, 0), boxUnaware, [], 1).state).toBe("piece-axis");
+      expect(classifySaleAxis(sale(5, 3), boxUnaware, [], null).state).toBe("piece-axis");
     });
 
     it("pack now OMITTED with no snapshot -> unknown, as today", () => {
