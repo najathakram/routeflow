@@ -29,12 +29,6 @@ const PHASE1_PILOTS = [
   "invoicing.priceDisclosure",
 ];
 
-/**
- * WS9 added `orders.buyerOversell` (no production call site until its call-site PR). The ceiling
- * grows by exactly this one key; the allow-list itself stays shrink-only from here.
- */
-const PILOT_CEILING = [...PHASE1_PILOTS, "orders.buyerOversell"];
-
 function sourceFiles(filter: (rel: string) => boolean): string[] {
   return (fs.readdirSync(SRC_ROOT, { recursive: true }) as string[])
     .map(String)
@@ -152,7 +146,7 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
   it("P3: pilotPending is shrink-only — every flagged key is allow-listed, the list never grows past the phase-1 pilots, and every listed key is still flagged", () => {
     const flagged = ENTRIES.filter((e) => e.pilotPending).map((e) => e.key);
     expect(flagged.filter((k) => !POLICY_PILOT_PENDING_ALLOWLIST.includes(k))).toEqual([]);
-    expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PILOT_CEILING.includes(k))).toEqual([]);
+    expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PHASE1_PILOTS.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !flagged.includes(k))).toEqual([]);
   });
 });
@@ -165,7 +159,7 @@ describe("orders.buyerOversell (WS9)", () => {
     expect(e?.area).toBe("orders");
     expect(e?.kind).toBe("enum");
     expect(e?.default).toBe("off");
-    expect(e?.added).toBe("2026-10-01");
+    expect(e?.added).toBe("2026-09-30");
     expect(BUYER_OVERSELL_MODES).toEqual(["off", "backorder"]);
   });
 
@@ -183,8 +177,8 @@ describe("orders.buyerOversell (WS9)", () => {
       expect(e?.schema.safeParse(bad).success).toBe(false);
   });
 
-  it("is pilotPending until its call site lands (and allow-listed)", () => {
-    expect(e?.pilotPending).toBe(true);
-    expect(POLICY_PILOT_PENDING_ALLOWLIST).toContain("orders.buyerOversell");
+  it("is NOT pilotPending: PolicyOversellReader is its production call site (P1b), and the shrink-only allow-list never grew", () => {
+    expect(e?.pilotPending).toBeUndefined();
+    expect(POLICY_PILOT_PENDING_ALLOWLIST).not.toContain("orders.buyerOversell");
   });
 });

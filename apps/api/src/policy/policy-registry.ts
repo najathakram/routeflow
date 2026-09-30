@@ -133,8 +133,7 @@ export const POLICY_REGISTRY = [
       "Whether a buyer may order more than is on hand: 'off' = no, the order is refused with a " +
       "readable stock error (today); 'backorder' = yes, the line is marked backorder and stock " +
       "may go below zero. Staff may always oversell; the standing-order cron is unchanged.",
-    added: "2026-10-01",
-    pilotPending: true,
+    added: "2026-09-30",
   }),
 ] as const;
 
@@ -146,7 +145,6 @@ export const POLICY_PILOT_PENDING_ALLOWLIST: readonly string[] = [
   "orders.driverAtDoorEdit",
   "credit.approvalThreshold",
   "invoicing.priceDisclosure",
-  "orders.buyerOversell",
 ];
 
 export type PolicyKey = (typeof POLICY_REGISTRY)[number]["key"];

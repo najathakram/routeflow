@@ -100,7 +100,7 @@ function pieceUnitLabel(p: { unit?: string | null; unitsPerBox?: unknown }): str
 
 /**
  * `allowOversell` is the ONE resolved boolean (staff role, or the buyer-oversell policy already
- * read by the caller) � this locked section never reads a policy itself (SA-606c: the policy is
+ * read by the caller) — this locked section never reads a policy itself (SA-606c: the policy is
  * resolved BEFORE any FOR UPDATE; order-stock-no-policy-read.spec.ts pins it).
  */
 export async function decrementStockForSale(
