@@ -1,9 +1,16 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  Optional,
+} from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import type { FamilyRowConflict } from "@routeflow/types";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { AuditService } from "../audit/audit.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { PrismaService } from "../prisma/prisma.service";
 import {
@@ -19,6 +26,7 @@ import {
   type CatalogTx,
 } from "./product-catalog-sync";
 import { peekProductCodes, releaseProductCodes, type CodeField } from "./product-code-release";
+import { familyPriceAuthorityError, readFamilyPriceMode } from "./family-price";
 import { lockProductName } from "./product-name-rules";
 import type {
   CreateFamilyDto,
@@ -50,6 +58,8 @@ export class ProductFamiliesService {
     private readonly prisma: PrismaService,
     private readonly gateway: RouteFlowGateway,
     private readonly audit: AuditService,
+    // #2717 M2 price authority: optional like ProductsService (a missing provider reads as mode "off").
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   private tenant(): string {
@@ -243,11 +253,18 @@ export class ProductFamiliesService {
     if (add.length + update.length + deactivate.length > MAX_ROWS) {
       throw new BadRequestException(`At most ${MAX_ROWS} rows per request.`);
     }
+    // M2 price authority: while mixed_packs is ON the family owns the variants' price, so a price EDIT is a 409 and an
+    // added variant takes the family's price (never a price of its own).
+    const authority = (await readFamilyPriceMode(this.featureConfig, tenantId)) === "on";
+    if (authority && update.some((u) => u.pricePerUnit !== undefined)) {
+      throw familyPriceAuthorityError(familyId);
+    }
     const result = await this.prisma.tenantTransaction(async (tx: CatalogTx) => {
-      const family: { id: string; kind: string } | null = await tx.product.findFirst({
-        where: { id: familyId, tenantId },
-        select: { id: true, kind: true },
-      });
+      const family: { id: string; kind: string; pricePerUnit: unknown } | null =
+        await tx.product.findFirst({
+          where: { id: familyId, tenantId },
+          select: { id: true, kind: true, pricePerUnit: true },
+        });
       if (!family) throw new BadRequestException("Product not found");
       if (family.kind !== "FAMILY") throw new BadRequestException("This product is not a family.");
       const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
@@ -343,7 +360,13 @@ export class ProductFamiliesService {
       const added: string[] = [];
       for (const v of add) {
         // eslint-disable-next-line no-await-in-loop
-        const created = await tx.product.create({ data: this.variantData(familyId, v) });
+        const created = await tx.product.create({
+          data: this.variantData(
+            familyId,
+            v,
+            authority ? money(String(family.pricePerUnit)) : undefined,
+          ),
+        });
         added.push(created.id);
         // eslint-disable-next-line no-await-in-loop
         await syncProductBarcodesFromLegacy(tx, {

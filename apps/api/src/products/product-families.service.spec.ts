@@ -6,7 +6,7 @@ import { ACTOR, T, makeTx, product, row } from "./product-code-release.fake-tx";
 /**
  * WS8 families API (SA-606): unit cases over the in-memory fake tx. The real-PG races live in product-families.db.spec.ts.
  */
-function build(seed: Parameters<typeof makeTx>[0] = { products: [] }) {
+function build(seed: Parameters<typeof makeTx>[0] = { products: [] }, mode: "on" | "off" = "off") {
   const tx = makeTx(seed);
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
   const gateway = { emitProductUpdated: jest.fn() };
@@ -15,7 +15,14 @@ function build(seed: Parameters<typeof makeTx>[0] = { products: [] }) {
     tenantTransaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
     forTenant: () => tx,
   };
-  const service = new ProductFamiliesService(prisma as never, gateway as never, audit as never);
+  const service = new ProductFamiliesService(
+    prisma as never,
+    gateway as never,
+    audit as never,
+    {
+      getEffectiveMode: jest.fn().mockResolvedValue(mode),
+    } as never,
+  );
   return { service, tx, audit, gateway };
 }
 const variant = (name: string, over: Record<string, unknown> = {}) => ({
@@ -277,6 +284,29 @@ describe("PATCH /products/:id/variants (updateVariants)", () => {
     expect(added).toMatchObject({ sku: "K1", kind: "VARIANT", parentProductId: "fam" });
     const k1Updates = tx.calls.filter((c) => c === "product.update:k1");
     expect(k1Updates).toHaveLength(2); // the release write, then the isActive write
+  });
+
+  it("M2 price authority: with mixed_packs ON a price EDIT is 409 FAMILY_PRICE_AUTHORITY and an added variant takes the FAMILY's price", async () => {
+    const famRow = { ...fam(), pricePerUnit: "9.99" };
+    const on = build({ products: [famRow, kid("k1")] }, "on");
+    await expect(
+      on.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR),
+    ).rejects.toMatchObject({
+      response: { code: "FAMILY_PRICE_AUTHORITY", familyId: "fam" },
+    });
+    await on.service.updateVariants(
+      "fam",
+      { add: [variant("NewOne", { pricePerUnit: "1.00" })] as never },
+      ACTOR,
+    );
+    expect(
+      on.tx.products.find((p) => (p as Record<string, unknown>).name === "NewOne"),
+    ).toMatchObject({ pricePerUnit: "9.99" });
+    // mode off: a price edit is an ordinary write
+    const off = build({ products: [famRow, kid("k1")] }, "off");
+    await expect(
+      off.service.updateVariants("fam", { update: [{ id: "k1", pricePerUnit: "1" }] }, ACTOR),
+    ).resolves.toBeDefined();
   });
 
   it("an update re-checks the new code/name against ACTIVE holders, excluding the variant itself; kind is never written", async () => {

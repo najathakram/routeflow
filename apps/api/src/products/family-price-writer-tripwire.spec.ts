@@ -28,6 +28,9 @@ const ROUTED: Record<string, string[]> = {
 
 /** File -> why a direct column write there can never reach a governed (variant or recipe) row. */
 const EXEMPT: Record<string, string> = {
+  "products/product-families.service.ts":
+    "WS8 families: createFamily mints a brand-new family with brand-new variants (no existing governed row); " +
+    "updateVariants price edits are refused 409 FAMILY_PRICE_AUTHORITY while mixed_packs is on and added variants take the family price.",
   "import/import.service.ts":
     "Zoho import creates a brand-new STANDALONE product (no parentProductId): nothing to inherit.",
   "import/variant-resolution.service.ts":
@@ -201,6 +204,12 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
       "createVariantRowInTx spreads `priceColumns`: the family's own five columns re-read under its " +
       "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
       "cost-basis write with a ternary `data` names only cost columns.",
+  },
+  "products/product-families.service.ts": {
+    count: 3,
+    reason:
+      "WS8 families: variantData/variantPatch build the row from the request's own named fields only (name, codes, " +
+      "unitsPerBox, price, cost); price edits are refused while mixed_packs is on (see updateVariants).",
   },
   "products/product-code-release.ts": {
     count: 2,

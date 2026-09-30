@@ -36,6 +36,12 @@ export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
       "createVariantRowInTx spreads the family's five price columns and a cost-basis `data`; " +
       "neither names familyPriceOverride (the flag has no writer in M2, SA-584a).",
   },
+  "src/products/product-families.service.ts": {
+    count: 3,
+    reason:
+      "WS8 families: variantData/variantPatch build the row from the request's own named fields only; they never name " +
+      "familyPriceOverride, and price edits are refused while mixed_packs is on.",
+  },
   "src/products/product-code-release.ts": {
     count: 2,
     reason:
