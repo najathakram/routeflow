@@ -47,4 +47,20 @@ describe("control railway isolation (T56)", () => {
     expect(df).toContain('CMD ["node","dist/main.js"]');
     expect(df).toMatch(/apk add --no-cache git openssh-client/);
   });
+
+  it("Dockerfile COPY sources are confined to apps/control, the root manifests, or --from=", () => {
+    const df = read(path.join(CONTROL, "Dockerfile"));
+    const copies = df.split(/\r?\n/).filter((l) => /^\s*COPY\s/.test(l));
+    expect(copies.length).toBeGreaterThan(0);
+    for (const line of copies) {
+      const args = line.trim().split(/\s+/).slice(1);
+      const flags = args.filter((a) => a.startsWith("--"));
+      if (flags.some((f) => f.startsWith("--from="))) continue;
+      const operands = args.filter((a) => !a.startsWith("--"));
+      const sources = operands.slice(0, -1);
+      for (const src of sources) {
+        expect(src).toMatch(/^(apps\/control\/|package\.json$|package-lock\.json$)/);
+      }
+    }
+  });
 });
