@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import { EstimateStatus, PriceType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { isSpecialTier, computeLineSubtotal, getTierPrice, roundMoney } from "@routeflow/pricing";
@@ -148,6 +149,7 @@ export class EstimatesService {
           })
         : [];
     const productMap = new Map(products.map((p) => [p.id, p]));
+    assertSellableLines(products); // WS8: a FAMILY is never a line
 
     // Load per-product tier overrides for this customer
     const customerPrices =

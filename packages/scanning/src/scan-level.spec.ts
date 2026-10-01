@@ -15,6 +15,7 @@
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
 import {
   levelsForScannedCode,
+  resolveScanSellChoice,
   resolveScanSellLevel,
   scanMatchIsForCode,
 } from "./scan-level";
@@ -113,7 +114,12 @@ describe("resolveScanSellLevel — R4 (upb <= 1: no box/unit distinction)", () =
 });
 
 describe("levelsForScannedCode — legacy columns (parity with mobile scanUnitKind on upb>1, R5)", () => {
-  const boxed = { barcode: "4000000000019", sku: "COLA-6", unitSku: "2000000000012", unitsPerBox: 6 };
+  const boxed = {
+    barcode: "4000000000019",
+    sku: "COLA-6",
+    unitSku: "2000000000012",
+    unitsPerBox: 6,
+  };
 
   it.each([
     ["barcode hit", "4000000000019", [BOX, UNIT], BOX],
@@ -241,7 +247,66 @@ describe("scanMatchIsForCode — a scanMatch only speaks for the code that produ
 
 describe("levelsForScannedCode — a row whose level is not BOX/UNIT never contributes (#2764)", () => {
   it("CASE + UNIT rows on one code -> [UNIT] only", () => {
-    const rows = [{ code: "SH", level: "CASE" }, { code: "SH", level: "UNIT" }] as any;
+    const rows = [
+      { code: "SH", level: "CASE" },
+      { code: "SH", level: "UNIT" },
+    ] as any;
     expect(levelsForScannedCode("SH", { barcodes: rows, unitsPerBox: 6 })).toEqual(["UNIT"]);
+  });
+});
+
+describe("resolveScanSellChoice (#2784): a SHARED code honours the default selling unit; the code still decides otherwise", () => {
+  const p = { unitsPerBox: 6 };
+  const both: Array<"BOX" | "UNIT"> = ["BOX", "UNIT"];
+
+  it("with NO default args it is exactly resolveScanSellLevel, and never carries a unitLabel", () => {
+    for (const upb of [undefined, null, 0, 1, 6, 24]) {
+      for (const levels of [[], ["BOX"], ["UNIT"], both, [...both].reverse()] as Array<
+        Array<"BOX" | "UNIT">
+      >) {
+        const product = { unitsPerBox: upb };
+        expect(resolveScanSellChoice(product, levels)).toEqual({
+          level: resolveScanSellLevel(product, levels),
+        });
+      }
+    }
+  });
+
+  it("rung 1: the CUSTOMER's default unit wins a shared code", () => {
+    expect(
+      resolveScanSellChoice(p, both, {
+        customerDefaultUnitLabel: "Case",
+        defaultUnitLabel: "Carton",
+      }),
+    ).toEqual({ level: "BOX", unitLabel: "Case" });
+  });
+
+  it("rung 2: else the tenant-flagged product default", () => {
+    expect(resolveScanSellChoice(p, both, { defaultUnitLabel: "Carton" })).toEqual({
+      level: "BOX",
+      unitLabel: "Carton",
+    });
+    expect(
+      resolveScanSellChoice(p, both, { customerDefaultUnitLabel: null, defaultUnitLabel: "Carton" })
+        .unitLabel,
+    ).toBe("Carton");
+    expect(
+      resolveScanSellChoice(p, both, { customerDefaultUnitLabel: "  ", defaultUnitLabel: "Carton" })
+        .unitLabel,
+    ).toBe("Carton");
+  });
+
+  it("rung 3: else today's default sell level, no unitLabel (blank/absent labels add nothing)", () => {
+    expect(resolveScanSellChoice(p, both, { defaultUnitLabel: null })).toEqual({ level: "BOX" });
+    expect(resolveScanSellChoice({ unitsPerBox: 1 }, both, { defaultUnitLabel: "" })).toEqual({
+      level: "UNIT",
+    });
+  });
+
+  it("box-only stays BOX and unit-only stays UNIT: the CODE decides, whatever the defaults say", () => {
+    const opts = { customerDefaultUnitLabel: "Case", defaultUnitLabel: "Carton" };
+    expect(resolveScanSellChoice(p, ["BOX"], opts)).toEqual({ level: "BOX" });
+    expect(resolveScanSellChoice(p, ["UNIT"], opts)).toEqual({ level: "UNIT" });
+    expect(resolveScanSellChoice(p, [], opts)).toEqual({ level: "BOX" }); // no levels: today's fallback, no label
   });
 });

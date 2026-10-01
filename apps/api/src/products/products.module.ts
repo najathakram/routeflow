@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { ProductFamiliesController } from "./product-families.controller";
+import { ProductFamiliesService } from "./product-families.service";
 import { ProductsController } from "./products.controller";
 import { ProductPortalVisibilityController } from "./product-portal-visibility.controller";
 import { ProductPortalVisibilityService } from "./product-portal-visibility.service";
@@ -26,6 +28,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
   ],
   controllers: [
     ProductPortalVisibilityController,
+    ProductFamiliesController,
     ProductsController,
     ProductUnitsController,
     RecipesController,
@@ -33,6 +36,7 @@ import { GatewaysModule } from "../gateways/gateways.module";
   providers: [
     ProductsService,
     ProductPortalVisibilityService,
+    ProductFamiliesService,
     ProductUnitsService,
     RecipesService,
     ProductsExportService,
