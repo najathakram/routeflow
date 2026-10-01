@@ -114,7 +114,9 @@ describeDb("F-10a: mailbox REVOKED / THROTTLED transitions — real Postgres", (
     prisma = new PrismaService(tenantCtx);
     await prisma.$connect();
     encryption = new EncryptionService(config);
-    service = new MailboxSendService(prisma, encryption, config);
+    service = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
     alerts = new MailboxAlertService(
       service,
       prisma,

@@ -52,6 +52,7 @@ function makeService() {
     prisma,
     { decrypt: (v: string) => v } as any,
     mailboxSend as any,
+    { record: jest.fn() } as any,
   );
   const resendSend = jest.fn().mockResolvedValue({ data: { id: "eml_1" }, error: null });
   (svc as any).resend.emails.send = resendSend;

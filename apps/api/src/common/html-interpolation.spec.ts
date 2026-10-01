@@ -43,7 +43,7 @@ function underAllowed(keys: readonly string[], entries: Record<string, Allowed> 
 }
 const ALLOWED: Record<string, Record<string, Allowed>> = {
   "email/email.service.ts": {
-    "send :: params.html": { reason: TRANSPORT, count: 5 },
+    "sendUnrecorded :: params.html": { reason: TRANSPORT, count: 5 },
     "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
     "sendSetPasswordEmail :: params.expiryHours": NUMBER,

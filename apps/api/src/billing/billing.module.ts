@@ -4,6 +4,7 @@ import { BillingService } from "./billing.service";
 import { PlatformPricingService } from "./platform-pricing.service";
 import { AddonService } from "./addon.service";
 import { AddonGuard } from "./addon.guard";
+import { AddonAccessService } from "./addon-access";
 import { BillingController } from "./billing.controller";
 import { BillingWebhookController } from "./billing-webhook.controller";
 import { PlanCatalogController } from "./plan-catalog.controller";
@@ -42,6 +43,7 @@ import { EntitlementsModule } from "./entitlements.module";
     PlatformPricingService,
     AddonService,
     AddonGuard,
+    AddonAccessService,
     ProrationService,
     SubscriptionService,
     SubscriptionMutationService,
@@ -70,6 +72,7 @@ import { EntitlementsModule } from "./entitlements.module";
     PlatformPricingService,
     AddonService,
     AddonGuard,
+    AddonAccessService,
     // Platform-admin plan changes move the snapshot MRR run-rate, so they must emit the
     // matching signed BillingEvent delta (see PlatformAdminService.updatePlan).
     BillingEventService,
