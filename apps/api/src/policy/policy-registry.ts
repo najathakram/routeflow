@@ -63,6 +63,9 @@ export type AtDoorEditMode = (typeof AT_DOOR_EDIT_MODES)[number];
 export const PRICE_DISCLOSURE_FACTS = ["originalPrice", "discount", "msrp"] as const;
 export type PriceDisclosureFact = (typeof PRICE_DISCLOSURE_FACTS)[number];
 
+export const BUYER_OVERSELL_MODES = ["off", "backorder"] as const;
+export type BuyerOversellMode = (typeof BUYER_OVERSELL_MODES)[number];
+
 export const POLICY_REGISTRY = [
   entry<AtDoorEditMode>({
     key: "orders.driverAtDoorEdit",
@@ -116,6 +119,21 @@ export const POLICY_REGISTRY = [
       "original (pre-discount) price, the discount, and the MSRP. All three are shown today.",
     added: "2026-09-24",
     pilotPending: true,
+  }),
+  entry<BuyerOversellMode>({
+    key: "orders.buyerOversell",
+    area: "orders",
+    kind: "enum",
+    schema: z.enum(BUYER_OVERSELL_MODES),
+    default: "off",
+    scopes: ["TENANT", "CUSTOMER"],
+    // The seller's stock-handling rule, not something a buyer client renders.
+    clientVisible: false,
+    description:
+      "Whether a buyer may order more than is on hand: 'off' = no, the order is refused with a " +
+      "readable stock error (today); 'backorder' = yes, the line is marked backorder and stock " +
+      "may go below zero. Staff may always oversell; the standing-order cron is unchanged.",
+    added: "2026-09-30",
   }),
 ] as const;
 
