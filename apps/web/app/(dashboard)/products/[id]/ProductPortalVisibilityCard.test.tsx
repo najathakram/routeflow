@@ -73,8 +73,10 @@ describe("ProductPortalVisibilityCard", () => {
 
   it("renders nothing for a tenant without the buyer-portal add-on; fails open while the flag is unknown", () => {
     flag = { enabled: false, resolved: true, failed: false };
-    const { container } = render();
-    expect(container).toBeEmptyDOMElement();
+    render();
+    // The card itself is absent. (The test wrapper's ToastProvider renders its own empty notification
+    // region, so "the whole container is empty" is not a property of the card.)
+    expect(screen.queryByTestId("portal-visibility-card")).toBeNull();
     flag = { enabled: true, resolved: false, failed: false };
     render();
     expect(screen.getByTestId("portal-visibility-card")).toBeInTheDocument();

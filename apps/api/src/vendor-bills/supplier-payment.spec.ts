@@ -38,7 +38,11 @@ const dupMatch = {
   findScanDuplicate: jest.fn().mockResolvedValue(null),
 };
 const storage = { upload: jest.fn(), presignedUrl: jest.fn() };
-const inventory = { recomputeProductInTx: jest.fn(), fireStockAlerts: jest.fn() };
+const inventory = {
+  recomputeProductInTx: jest.fn(),
+  lockProducts: jest.fn(),
+  fireStockAlerts: jest.fn(),
+};
 
 /** A vendor bill as `recordSupplierPayment`/`create` would load it. */
 const vendorBill = (overrides: Record<string, unknown> = {}) => ({

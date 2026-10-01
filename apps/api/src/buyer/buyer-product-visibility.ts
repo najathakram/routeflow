@@ -96,8 +96,8 @@ interface OrderableProduct {
 
 /**
  * The ONE buyer order-write gate (SA-606 WS6 "Refusal"): a BUYER order naming a NEW product the catalog would hide
- * (portal-hidden, under a hidden parent, or a FAMILY container) is a 409 in the EXISTING buyer envelope,
- * `{ code: "SELLING_RESTRICTED", blockedLines: [{ productId, productName, reason: "HIDDEN_FROM_PORTAL" }] }`, so the
+ * (portal-hidden, under a hidden parent, or a FAMILY container) is a 409 in the EXISTING buyer envelope (the
+ * SELLING_RESTRICTED code with `blockedLines: [{ productId, productName, reason: "HIDDEN_FROM_PORTAL" }]`), so the
  * cart's blocked-lines dialog opens. EVERY new hidden product is named, not the first. `heldProductIds` are lines the
  * order already holds (replace-all keeps them editable). An archived product (`isActive === false`) is not judged
  * here: the archived 400 rules stay as they were. The reason appears on buyer lines ONLY for this case; a state or ban

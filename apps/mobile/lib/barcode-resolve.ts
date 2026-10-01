@@ -41,6 +41,7 @@
  * routing it to the `notFound` branch would offer "create new" for a product
  * that plainly exists.
  */
+import type { ScanMatchView } from "@routeflow/types";
 import { apiClient } from "./api-client";
 
 export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
@@ -50,6 +51,8 @@ export interface BarcodeResolveHit<T = any> {
   source: BarcodeResolveSource;
   notFound?: false;
   archived?: false;
+  /** #2717 M4a-1: the server's additive scan-lookup verdict (which levels the scanned code has). */
+  scanMatch?: ScanMatchView;
   /**
    * The substring search returned MORE THAN ONE row and none was an exact
    * sku/unitSku hit, so `product` is a guess (the first row by name).

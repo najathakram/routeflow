@@ -20,7 +20,7 @@ import {
   GitBranch,
   Layers,
 } from "lucide-react";
-import { PageHeader, Table, Badge, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
+import { PageHeader, Table, Button, Select, cn, EmptyState } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useToast } from "@routeflow/ui/web";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
@@ -48,10 +48,16 @@ import {
   PortalHiddenFilter,
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
+import { ProductsExportButton } from "./_components/ProductsExportButton";
+import {
+  STOCK_FILTER_CHIPS,
+  ProductStatusBadge,
+  getProductStatus,
+  stockFilterParams,
+  type ProductStockFilter,
+} from "./_components/product-status";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-
-type StockStatus = "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
 
 interface ApiProduct {
   id: string;
@@ -121,21 +127,6 @@ function MerchBadges({ product }: { product: ApiProduct }) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function getStockStatus(p: ApiProduct): StockStatus {
-  if (!p.isActive) return "OUT_OF_STOCK";
-  if (p.currentStock <= 0) return "OUT_OF_STOCK";
-  if (p.currentStock <= 5) return "LOW";
-  return "IN_STOCK";
-}
-
-// ─── Stock badge ──────────────────────────────────────────────────────────────
-
-function StockBadge({ status }: { status: StockStatus }) {
-  if (status === "OUT_OF_STOCK") return <Badge variant="danger" label="Out of Stock" />;
-  if (status === "LOW") return <Badge variant="warning" label="Low Stock" />;
-  return <Badge variant="success" label="In Stock" />;
-}
-
 // ─── Product grid card ────────────────────────────────────────────────────────
 
 function ProductCard({
@@ -155,14 +146,14 @@ function ProductCard({
   onAddVariant?: (parentId: string) => void;
   sectionNameById: Map<string, string>;
 }) {
-  const status = getStockStatus(product);
+  const status = getProductStatus(product);
   return (
     <div
       className={cn(
         "relative flex flex-col overflow-hidden rounded-lg border bg-white text-left shadow-card transition-shadow hover:shadow-dropdown cursor-pointer",
         status === "LOW" && "border-warning/40",
         status === "OUT_OF_STOCK" && "border-danger/40",
-        status === "IN_STOCK" && "border-surface-border",
+        (status === "IN_STOCK" || status === "INACTIVE") && "border-surface-border",
         selected && "ring-2 ring-brand-500 border-brand-500",
       )}
       onClick={selectionMode ? onSelect : onClick}
@@ -191,7 +182,7 @@ function ProductCard({
           "relative flex h-28 w-full items-center justify-center overflow-hidden",
           status === "LOW" && "bg-warning-bg",
           status === "OUT_OF_STOCK" && "bg-danger-bg",
-          status === "IN_STOCK" && "bg-surface-raised",
+          (status === "IN_STOCK" || status === "INACTIVE") && "bg-surface-raised",
         )}
         onClick={selectionMode ? undefined : onClick}
       >
@@ -210,7 +201,7 @@ function ProductCard({
               "h-10 w-10",
               status === "LOW" && "text-warning/40",
               status === "OUT_OF_STOCK" && "text-danger/40",
-              status === "IN_STOCK" && "text-navy/20",
+              (status === "IN_STOCK" || status === "INACTIVE") && "text-navy/20",
             )}
           />
         )}
@@ -246,7 +237,7 @@ function ProductCard({
           <p className="text-[10px] text-navy/70 truncate">{product.parent.name}</p>
         )}
         <div className="flex items-center gap-1.5">
-          <StockBadge status={status} />
+          <ProductStatusBadge status={status} />
           <MerchBadges product={product} />
           {product.trackedCategoryId && (
             <span
@@ -426,7 +417,7 @@ function makeTableColumns(
       header: "Product",
       cell: ({ row }) => {
         const p = row.original;
-        const status = getStockStatus(p);
+        const status = getProductStatus(p);
         return (
           <div className="flex items-center gap-3">
             <div
@@ -688,10 +679,10 @@ function makeTableColumns(
       accessorKey: "currentStock",
       header: "Stock",
       cell: ({ row }) => {
-        const status = getStockStatus(row.original);
+        const status = getProductStatus(row.original);
         return (
           <div className="flex items-center gap-2">
-            <StockBadge status={status} />
+            <ProductStatusBadge status={status} />
             {/* `currentStock` is a PIECE count system-wide, so it must never be printed
                 next to `unit` (the box/case noun) — `unitsLabel` keeps that noun only
                 for unboxed products and shows a box+piece split otherwise. */}
@@ -735,7 +726,7 @@ export default function ProductsPage() {
 
   const [search, setSearch, debouncedSearch] = useUrlSearch();
   const [categoryFilter, setCategoryFilter] = React.useState("");
-  const [stockFilter, setStockFilter] = React.useState("");
+  const [stockFilter, setStockFilter] = React.useState<ProductStockFilter>("");
   // Regulated-section filter is the one deep-linkable filter (?section=) — the
   // Compliance hub's per-section KPI links here.
   const [urlFilters, setUrlFilter] = useUrlFilters({ section: "" });
@@ -1051,7 +1042,7 @@ export default function ProductsPage() {
   } = useProducts({
     search: debouncedSearch,
     category: categoryFilter || undefined,
-    stockStatus: (stockFilter || undefined) as any,
+    ...stockFilterParams(stockFilter),
     section: sectionFilter || undefined,
     ...portalVisibleFilterParam(hiddenOnly),
     page,
@@ -1211,6 +1202,16 @@ export default function ProductsPage() {
             >
               {quickEditMode ? "Exit Quick Edit" : "Quick Edit"}
             </Button>
+            <ProductsExportButton
+              total={totalItems}
+              loading={isLoading}
+              filters={{
+                search: debouncedSearch,
+                category: categoryFilter,
+                ...stockFilterParams(stockFilter),
+                section: sectionFilter,
+              }}
+            />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>
@@ -1286,14 +1287,11 @@ export default function ProductsPage() {
         )}
 
         {/* Stock status filter chips */}
-        {[
-          { value: "", label: "All" },
-          { value: "IN_STOCK", label: "In Stock" },
-          { value: "LOW", label: "Low Stock" },
-          { value: "OUT_OF_STOCK", label: "Out of Stock" },
-        ].map((o) => (
+        {STOCK_FILTER_CHIPS.map((o) => (
           <button
             key={o.value || "all"}
+            type="button"
+            aria-pressed={stockFilter === o.value}
             onClick={() => setStockFilter(o.value)}
             className={cn(
               "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium whitespace-nowrap transition-colors",

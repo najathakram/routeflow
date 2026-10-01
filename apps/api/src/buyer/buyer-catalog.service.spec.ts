@@ -114,6 +114,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       category: "Snacks",
@@ -163,6 +166,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([{ productId: "v1", pricingTier: 3 }]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       pricePerUnit: 20,
@@ -198,6 +204,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
     prisma.customerPrice.findMany.mockResolvedValue([]);
     products.findOne.mockResolvedValue({
       id: "p1",
+      kind: "STANDARD",
+      portalVisible: true,
+      parent: null,
       name: "Widget",
       unit: "ea",
       pricePerUnit: 20,
@@ -520,7 +529,9 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         productCount.mockImplementation(async ({ where }: any) => {
           if (where.isNew === true) return 4; // newCount
           if (where.id?.in) return where.id.in.includes("p1") ? 2 : 1; // usuals : favorites
-          if (where.AND?.[0]?.AND) return 3; // deals ({ AND: [baseWhere, dealsWhere] })
+          // deals = { AND: [baseWhere, dealsWhere] }: its first clause is the 4-clause baseWhere (the sellable
+          // clause inside a plain baseWhere has an AND of its own, but only 2 clauses)
+          if (where.AND?.[0]?.AND?.length >= 4) return 3;
           return 9; // total (baseWhere only)
         });
 
@@ -538,8 +549,11 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         ];
         for (const call of productCount.mock.calls as any[]) {
           const where = call[0].where;
-          // baseWhere = AND[isActive, portalVisible, parentOR, gate]; deals nests it one level down.
-          const gate = (where.AND?.[0]?.AND ?? where.AND)?.[3]?.OR;
+          // baseWhere = AND[sellable{AND[isActive, kind]}, portalVisible, parentOR, gate] (4 clauses); the deals
+          // count nests it one level down as { AND: [baseWhere, dealsWhere] }. The sellable clause has an AND of
+          // its own (2 clauses), so telling the two apart by "has an inner AND" is no longer enough.
+          const base = where.AND?.[0]?.AND?.length >= 4 ? where.AND[0] : where;
+          const gate = base.AND?.[3]?.OR;
           expect(gate).toEqual(NULL_SAFE_GATE);
           expect(where.trackedCategoryId).toBeUndefined();
         }
