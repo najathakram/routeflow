@@ -11,7 +11,7 @@ const src = readFileSync(join(__dirname, "credit-notes.service.ts"), "utf8");
 
 describe("CreditNotesService.create: the invoice row lock precedes the in-tx headroom re-read", () => {
   it("FOR UPDATE on the Invoice row comes before the in-tx validateAndBuildCnItems(tx, dto, …)", () => {
-    const create = src.slice(src.indexOf("  async create(dto: {"));
+    const create = src.slice(src.search(/\n  async create\(/));
     const lock = create.indexOf('SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE');
     const recheck = create.indexOf("await this.validateAndBuildCnItems(tx, dto");
     expect(lock).toBeGreaterThan(-1);
