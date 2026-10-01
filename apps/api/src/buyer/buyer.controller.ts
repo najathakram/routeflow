@@ -58,6 +58,8 @@ import {
   normalizeBoxUnawareSnapshots,
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
+import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -125,6 +127,8 @@ export class BuyerController {
     private readonly authorizationsService: AuthorizationsService,
     private readonly prisma: PrismaService,
     private readonly systemConfigService: SystemConfigService,
+    // WS9: reads the backorder policy for a buyer's standing-order "Reorder" (once, before the run).
+    private readonly oversellReader: PolicyOversellReader,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -970,12 +974,18 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    // #1208 review LOW-MED: this buyer-portal path bypasses generateOrderForUser (there
-    // is no JwtPayload here — ownership is already verified above against ctx.customerId),
-    // so it must pass isStaffRole=false itself, or it silently keeps the old hardcoded-true
-    // oversell posture. A buyer's "Reorder" gets the SAME hard block their own checkout
-    // (orders.service.ts create()) gives them — never the operator/cron warn-and-oversell.
-    return this.templatesService.generateOrder(id, false);
+    // #1208 review LOW-MED / WS9: this buyer-portal path has no JwtPayload (ownership is verified above
+    // against ctx.customerId), so it resolves the policy itself, ONCE, before the run: role CUSTOMER
+    // (never a staff role) and source "buyer" (never "template_cron" - a buyer's Reorder is a buyer
+    // action). A buyer's Reorder gets the SAME answer their own checkout gets; the boolean is all the
+    // template service receives; `isStaffRole=false` (2nd arg) keeps the BUYER selling-restriction channel.
+    const allowOversell = await resolveOversellAllowed(this.oversellReader, {
+      tenantId: ctx.tenantId,
+      role: UserRole.CUSTOMER,
+      source: "buyer",
+      customerId: ctx.customerId,
+    });
+    return this.templatesService.generateOrder(id, false, allowOversell);
   }
 
   @Patch("templates/:id")
