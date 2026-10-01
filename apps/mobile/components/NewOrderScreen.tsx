@@ -2409,7 +2409,7 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          acceptScannedProduct(p as unknown as Product, "BOX");
+          acceptScannedProduct(p as unknown as Product, "BOX", { startOnDefault: true });
         }}
       />
 

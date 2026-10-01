@@ -156,9 +156,11 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
       // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
-      const added = scanCodeIsShared(code, result.product)
-        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
-        : deps.addLineItem(result.product, level);
+      // SA-626a: a multi-match (first row wins) is a picker-style pick, so it starts on the default unit too.
+      const added =
+        result.ambiguous || scanCodeIsShared(code, result.product)
+          ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+          : deps.addLineItem(result.product, level);
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a
