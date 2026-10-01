@@ -21,7 +21,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
-import { loadLineCredits } from "./line-credit-headroom";
+import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -105,6 +105,8 @@ export class CreditNotesService {
             productId: true,
             subtotal: true,
             qty: true,
+            boxes: true,
+            unitsPerBox: true,
             trackedCategoryId: true,
             categoryTaxAmount: true,
           },
@@ -188,12 +190,7 @@ export class CreditNotesService {
     const lineCredits = await loadLineCredits(
       db,
       dto.invoiceId,
-      (invoice.items ?? []).map((it: any) => ({
-        id: it.id,
-        productId: it.productId ?? null,
-        subtotal: Number(it.subtotal),
-        qty: Number(it.qty),
-      })),
+      (invoice.items ?? []).map(toHeadroomLine),
       opts,
     );
     const creditedByLine = new Map<string, number>();
