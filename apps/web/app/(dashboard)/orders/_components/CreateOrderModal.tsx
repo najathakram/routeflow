@@ -46,13 +46,9 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
-import {
-  applyLineUnit,
-  mergeSameLine,
-  sameProductUnit,
-  unitLabelPayload,
-  type PackBase,
-} from "@/lib/order-line-unit";
+import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-line-unit";
+import { applyUnitToLines, isPendingDefaultUnit } from "@/lib/default-unit-line";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
@@ -874,22 +870,12 @@ export function CreateOrderModal({
   const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
-      if (!target) return prev;
-      // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount (list <-> scan screen) can never
-      // re-apply the default over the operator's choice (Opus #2865 B1).
-      const next = {
-        ...applyLineUnit(target, option, {
-          tier: tierForProduct(target.productId),
-          keepQty: refresh,
-        }),
-        startOnDefaultUnit: false,
-      };
-      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-      return prev
-        .filter((li) => li.tempId !== tempId)
-        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+      return target
+        ? applyUnitToLines(prev, tempId, option, refresh, tierForProduct(target.productId))
+        : prev;
     });
+  // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
+  const resolveDefaultUnits = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct);
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -1154,6 +1140,28 @@ export function CreateOrderModal({
     data: FormValues,
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
+    // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
+    // nothing pending = the synchronous path, unchanged.
+    if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
+    void resolveDefaultUnits(lineItems).then(({ lines, blocked }) => {
+      if (blocked.length) {
+        setMergePrompt(null);
+        toast({
+          title: "Couldn't load the selling units. Check your connection and try again.",
+          variant: "error",
+        });
+        return;
+      }
+      setLineItems(() => lines);
+      doSubmitOrder(data, options, lines);
+    });
+  };
+
+  const doSubmitOrder = (
+    data: FormValues,
+    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean },
+    lines: LineItem[],
+  ) => {
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
@@ -1165,7 +1173,7 @@ export function CreateOrderModal({
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
-    const needsReason = lineItems.find(lineNeedsReason);
+    const needsReason = lines.find(lineNeedsReason);
     if (needsReason) {
       setMergePrompt(null);
       toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
@@ -1174,10 +1182,8 @@ export function CreateOrderModal({
     }
     const itemsForSubmit = (
       asDraft
-        ? lineItems.filter(
-            (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
-          )
-        : lineItems
+        ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+        : lines
     ).map((li) => {
       // Optional per-line note (trimmed) — carried onto the invoice line.
       const note = li.note?.trim() ? { notes: li.note.trim() } : {};

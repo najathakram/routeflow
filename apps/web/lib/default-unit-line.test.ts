@@ -1,6 +1,7 @@
 import type { ProductUnitLevel } from "@routeflow/types";
 import {
   applyUnitToLines,
+  type DefaultUnitLine,
   isPendingDefaultUnit,
   mergeResolvedLines,
   resolvePendingDefaultUnits,
@@ -25,10 +26,11 @@ const lvl = (over: Partial<ProductUnitLevel>) =>
     sortOrder: 0,
     ...over,
   }) as ProductUnitLevel;
+type TestLine = DefaultUnitLine & { productName: string };
 const BOTTLE = lvl({ label: "Bottle", factorToBase: 1, price: "2.00", isDefaultSelling: true });
 const CASE_LEVEL = lvl({ label: "Case", factorToBase: 12, price: "24.00" });
 
-const line = (over: Record<string, unknown> = {}) => ({
+const line = (over: Record<string, unknown> = {}): TestLine => ({
   tempId: "t1",
   productId: "p1",
   productName: "Soda",

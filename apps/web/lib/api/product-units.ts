@@ -21,11 +21,16 @@ export function useUnitsEnabled(opts?: { enabled?: boolean }): boolean {
 }
 
 const key = (productId: string) => ["products", productId, "units"] as const;
+export const productUnitsKey = key;
+
+/** The product's ladder (shared by the picker's query and the order's default-unit resolver, SA-626c). */
+export const fetchProductUnits = (productId: string): Promise<ProductUnitLevel[]> =>
+  apiClient.get(`/products/${productId}/units`).then((r) => r.data);
 
 export function useProductUnits(productId: string, enabled: boolean) {
   return useQuery<ProductUnitLevel[]>({
     queryKey: key(productId),
-    queryFn: () => apiClient.get(`/products/${productId}/units`).then((r) => r.data),
+    queryFn: () => fetchProductUnits(productId),
     enabled: enabled && !!productId,
   });
 }
