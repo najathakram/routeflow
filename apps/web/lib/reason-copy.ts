@@ -1,3 +1,5 @@
+import { RUN_UNFINALIZED_PREFIX } from "./api/invoices";
+
 /**
  * PLACEHOLDER closed sets for the email-delivery health strip. The authoritative `EmailReasonCode`
  * Prisma enum (+ its `X_VALUES` mirror in `packages/types/api/enums.ts`, L-072) ships with the
@@ -100,3 +102,72 @@ export function deliveryFixTarget(link: string): { label: string; href: string }
     ? DELIVERY_FIX_TARGET[link as DeliveryFixLink]
     : null;
 }
+
+// ─── Recurring invoice run failures ──────────────────────────────────────────
+
+const RUN_SUSPENDED = "Suspended:";
+
+/**
+ * A recurring invoice's `lastError` is free text from the API (an exception message). It is never
+ * shown: known prefixes map to a fixed sentence, everything else to a generic one. `retryable`
+ * mirrors `isRetryableRunFailure` (REG-B106): an unfinalized cycle is already billed, so no re-run.
+ */
+export function describeRunFailure(lastError: string): { text: string; retryable: boolean } {
+  if (lastError.startsWith(RUN_UNFINALIZED_PREFIX)) {
+    return {
+      text: "The invoice was created, but the run couldn't be finalized. Don't run it again.",
+      retryable: false,
+    };
+  }
+  if (lastError.startsWith(RUN_SUSPENDED)) {
+    // The restricted product lines are tenant data (not provider text): keep naming them.
+    // Names may themselves contain parentheses ("Soda (12 oz)"), so stop at the ")." that ends the list.
+    const names = lastError.match(/selling restriction \((.*?)\)\. /)?.[1];
+    return {
+      text: `Paused because a line is under a selling restriction${names ? ` (${names})` : ""}. Fix the template and reactivate it; the skipped cycle isn't billed.`,
+      retryable: true,
+    };
+  }
+  return { text: "The last run failed. Use Run Now to retry.", retryable: true };
+}
+
+// ─── Return reasons (realtime toast) ─────────────────────────────────────────
+
+const RETURN_REASON_COPY: Record<string, string> = {
+  DAMAGED: "Damaged",
+  WRONG_ITEM: "Wrong item",
+  CUSTOMER_REFUSED: "Customer refused",
+  QUALITY_ISSUE: "Quality issue",
+  EXCESS_ORDER: "Excess order",
+};
+
+export function describeReturnReason(reason: string): string {
+  return Object.prototype.hasOwnProperty.call(RETURN_REASON_COPY, reason)
+    ? RETURN_REASON_COPY[reason]
+    : "No reason given";
+}
+
+// ─── Save errors (mutations) ─────────────────────────────────────────────────
+
+/** Maps an axios-style error to a fixed sentence by HTTP status; never echoes `message`. */
+export function describeSaveError(err: unknown): string {
+  const status = (err as { response?: { status?: number } })?.response?.status;
+  if (status === 409) return "That username or email is already in use.";
+  if (status === 400) {
+    // users.service.ts answers a duplicate with 400 + "Email/Username already in use". The server
+    // text only CLASSIFIES here; it is never displayed.
+    const serverText = String(
+      (err as { response?: { data?: { message?: unknown } } })?.response?.data?.message ?? "",
+    );
+    if (/email already in use/i.test(serverText)) return "That email is already in use.";
+    if (/username already in use/i.test(serverText)) return "That username is already in use.";
+  }
+  if (status === 400 || status === 422) return "Check the details and try again.";
+  if (status === 403) return "You don't have permission to do that.";
+  return "Couldn't save, please try again.";
+}
+
+// ─── Scan modal ──────────────────────────────────────────────────────────────
+
+export const SCAN_FAILED_COPY = "We couldn't read this page. Try a clearer photo.";
+export const RECORDS_FAILED_COPY = "We couldn't create the records. Please try again.";
