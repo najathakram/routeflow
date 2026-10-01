@@ -2,7 +2,7 @@
  * Resolve a scanned barcode (or typed SKU) to a product, with the same
  * fallback ladder used elsewhere (mobile + /orders + /invoices/new):
  *
- *   1. Exact `Product.barcode` match           — `/products/barcode/<code>`
+ *   1. Exact `Product.barcode` / `ProductBarcode` row match — `/products/barcode/<code>`
  *   2. Exact `Product.sku` match (case-insens) — `/products?search=<code>`
  *   3. First name/SKU substring hit             — same search, first row
  *   4. Nothing                                  — caller decides (usually
@@ -24,6 +24,7 @@
  * Errors other than 404 (network / 5xx) propagate so the caller can show
  * a transient retry toast instead of falsely jumping to "not found".
  */
+import type { ScanMatchView } from "@routeflow/types";
 import { apiClient } from "./api-client";
 
 export type BarcodeResolveSource = "barcode" | "sku" | "unitSku" | "search";
@@ -33,6 +34,8 @@ export interface BarcodeResolveHit<T = any> {
   source: BarcodeResolveSource;
   notFound?: false;
   archived?: false;
+  /** #2717 M4a-1: the server's additive scan-lookup verdict (which levels the scanned code has). */
+  scanMatch?: ScanMatchView;
   /** True when several substring hits matched with no exact code match —
    *  `product` is the first row, `matches` carries the alternatives so the
    *  caller can offer a choice instead of committing to row #1 (mirrors
@@ -129,6 +132,15 @@ export async function resolveProductByCode<T = any>(
       const codeLower = code.toLowerCase();
       const skuExact = matches.find((p) => (p?.sku ?? "").toString().toLowerCase() === codeLower);
       if (skuExact) return asHit(skuExact, "sku");
+      // #2717 M4a-1: an exact ProductBarcode row code (the list's additive `barcodes[]`) is an
+      // exact code hit like sku/unitSku — the product keeps its `barcodes[]`/`scanMatch` untouched
+      // so the scan handler can read the level the code carries.
+      const rowExact = matches.find((p) =>
+        (Array.isArray(p?.barcodes) ? p.barcodes : []).some(
+          (b: { code?: unknown }) => (b?.code ?? "").toString().toLowerCase() === codeLower,
+        ),
+      );
+      if (rowExact) return asHit(rowExact, "barcode");
       const unitSkuExact = matches.find(
         (p) => (p?.unitSku ?? "").toString().toLowerCase() === codeLower,
       );

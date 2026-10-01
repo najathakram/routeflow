@@ -10,8 +10,10 @@
  * The ladder itself is pure: the network call, the cart write and the two
  * hand-offs are injected, so it unit-tests in the node Jest env.
  */
+import type { SellLevel } from "@routeflow/pricing";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import {
-  scanUnitKind,
+  levelsForScan,
   looksLikeScanCode,
   findExactScanMatch,
   type ScanMatchable,
@@ -28,7 +30,7 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
    */
   products: readonly T[] | (() => readonly T[]);
   /** Put the product in the cart and describe what happened. Screen-owned. */
-  accept: (product: T, unitKind: "case" | "piece") => ScanOutcome;
+  accept: (product: T, level: SellLevel) => ScanOutcome;
   /**
    * Server fallback (`resolveProductByCode`), injected to keep this testable.
    * MUST forward `signal` to the underlying request: the ladder's deadline
@@ -52,6 +54,14 @@ export interface ScanLadderDeps<T extends ScanMatchable> {
    * pickers): every branch below still runs, unclaimed and unchanged.
    */
   acceptGuard?: ScanAcceptGuard<T>;
+}
+
+/** The level the scanned code carries on `product` (SA-580 R1/R2): the ONE shared resolver. */
+function scanLevel<T extends ScanMatchable & { unitsPerBox?: number | null }>(
+  code: string,
+  product: T,
+): SellLevel {
+  return resolveScanSellLevel(product, levelsForScan(code, product));
 }
 
 function resolveProducts<T extends ScanMatchable>(p: ScanLadderDeps<T>["products"]): readonly T[] {
@@ -110,7 +120,7 @@ export function makeScanHandler<T extends ScanMatchable>(
     const localMatch = findExactScanMatch(trimmed, resolveProducts(deps.products));
     if (localMatch.match) {
       const local = localMatch.match;
-      return settle("accepted", deps.accept(local, scanUnitKind(trimmed, local)));
+      return settle("accepted", deps.accept(local, scanLevel(trimmed, local)));
     }
     if (localMatch.multiple) {
       return settle("unresolved", {
@@ -159,11 +169,11 @@ export function makeScanHandler<T extends ScanMatchable>(
         });
       }
       if (!result.notFound && result.product?.id) {
-        // Classify against the RESOLVED product's own codes — the endpoint
-        // resolves either code but doesn't say which one matched.
+        // The server's `scanMatch.levels` (or, failing that, the resolved product's own
+        // codes) says which level the code carries.
         return settle(
           "accepted",
-          deps.accept(result.product, scanUnitKind(trimmed, result.product)),
+          deps.accept(result.product, scanLevel(trimmed, result.product)),
         );
       }
     } catch (err: any) {

@@ -36,7 +36,8 @@ import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
 import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
-import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "./scan-match";
 import { buildProductListWhere } from "./product-list-where";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
@@ -569,44 +570,14 @@ export class ProductsService {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    const include = { variants: { where: { isActive: true } }, parent: true };
-    const db = this.prisma.forTenant();
-
-    // Tier 1 — exact. Rides @@unique([tenantId, barcode|sku|unitSku]) and the
-    // @@index([barcode]) / @@index([unitSku]) as a BitmapOr of index scans:
-    // at most MAX_SCAN_CANDIDATES probes per column.
-    let matches = await db.product.findMany({
-      where: {
-        OR: [
-          { barcode: { in: candidates } },
-          { sku: { in: candidates } },
-          { unitSku: { in: candidates } },
-        ],
-      },
-      include,
-    });
-
-    // Tier 2 — case-insensitive, MISS ONLY. Prisma emits ILIKE for
-    // `mode: "insensitive"`, which a btree can't serve, so this is a
-    // tenant-scoped seq scan. It runs only on the path that used to 404
-    // outright, and camera-decoded EAN/UPC codes (all digits) never reach it —
-    // it exists for typed or lowercased alpha SKUs.
-    if (matches.length === 0) {
-      matches = await db.product.findMany({
-        where: {
-          OR: candidates.flatMap((c) => [
-            { barcode: { equals: c, mode: "insensitive" as const } },
-            { sku: { equals: c, mode: "insensitive" as const } },
-            { unitSku: { equals: c, mode: "insensitive" as const } },
-          ]),
-        },
-        include,
-        take: 25,
-      });
-    }
-
-    if (matches.length === 0) throw new NotFoundException("Product not found");
-    return pickBestScanMatch(matches, candidates);
+    const hit = await findScanMatches(
+      this.prisma.forTenant(),
+      candidates,
+      {},
+      { variants: { where: { isActive: true } }, parent: true },
+    );
+    if (!hit) throw new NotFoundException("Product not found");
+    return { ...hit.product, scanMatch: hit.scanMatch };
   }
 
   /**

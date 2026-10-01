@@ -13,6 +13,7 @@ import { RouteGuard } from "./RouteGuard";
  *      for a role plan-flag gating doesn't apply to.
  */
 
+const mockReplace = jest.fn();
 let mockPathname = "/estimates";
 let mockUser: { role: string } | undefined = { role: "OPERATOR" };
 let mockSubscription: {
@@ -23,7 +24,7 @@ let mockSubscription: {
 
 jest.mock("next/navigation", () => ({
   usePathname: () => mockPathname,
-  useRouter: () => ({ replace: jest.fn() }),
+  useRouter: () => ({ replace: mockReplace }),
 }));
 
 jest.mock("@/lib/auth-context", () => ({
@@ -48,6 +49,7 @@ jest.mock("./PlanGateBoundary", () => ({
 }));
 
 beforeEach(() => {
+  mockReplace.mockClear();
   boundaryProps.length = 0;
   mockPathname = "/estimates";
   mockUser = { role: "OPERATOR" };
@@ -116,5 +118,26 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     );
 
     expect(boundaryProps[0]).toMatchObject({ planGateKey: null });
+  });
+
+  it.each(["DRIVER", "CUSTOMER"])("bounces a %s off /purchase-orders to /dashboard", (role) => {
+    mockUser = { role };
+    mockPathname = "/purchase-orders";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
+  it("lets an OPERATOR stay on /purchase-orders", () => {
+    mockPathname = "/purchase-orders";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).not.toHaveBeenCalled();
   });
 });

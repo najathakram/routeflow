@@ -16,6 +16,8 @@ import { UsersModule } from "../users/users.module";
 import { EmailModule } from "../email/email.module";
 import { EntitlementsModule } from "../billing/entitlements.module";
 import { AppConfig } from "../config/configuration";
+import { HandoffCodeService } from "./handoff/handoff-code.service";
+import { StaffHandoffService } from "./handoff/staff-handoff.service";
 
 @Module({
   imports: [
@@ -44,6 +46,9 @@ import { AppConfig } from "../config/configuration";
     RolesGuard,
     GoogleOAuthService,
     TenantGoogleOAuthService,
+    // #2653 in-app sign-in handoff (staff realm). HandoffCodeService is stateless and shared.
+    HandoffCodeService,
+    StaffHandoffService,
   ],
   exports: [AuthService, JwtAuthGuard, RolesGuard, TenantGoogleOAuthService, GoogleOAuthService],
 })

@@ -48,5 +48,7 @@ export function withComponentViews<T extends { components?: ComponentRowLike[] |
   lines: T[] | null | undefined,
 ): T[] | null | undefined {
   if (!lines) return lines;
-  return lines.map((l) => (l.components ? { ...l, components: toLineComponentViews(l.components) } : l));
+  return lines.map((l) =>
+    l.components ? { ...l, components: toLineComponentViews(l.components) } : l,
+  );
 }

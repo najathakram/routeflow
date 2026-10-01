@@ -177,6 +177,26 @@ export function resolveLadderLevel(
 }
 
 /**
+ * #2784: the ONE resolver for "the default selling unit" — the label of the first valid level flagged
+ * `isDefaultSelling`, or null (the pack is the default). A flagged row the ladder would not sell (a corrupt factor, or a
+ * label the pack's own label shadows) is never the default, so a line is never held on a unit nobody can see. The picker
+ * tap, the scan and a buyer's plain qty all call this (web `defaultUnitValue` and `resolveLineUnits` delegate here).
+ */
+export function defaultSellingLabel(
+  product: LadderProduct,
+  units: readonly LadderUnit[],
+): string | null {
+  for (const row of validRows(units)) {
+    if (!row.isDefaultSelling) continue;
+    // resolveLadderLevel applies the shadowing rules (the pack wins its own label; "Piece" is factor 1).
+    const level = resolveLadderLevel(product, units, row.label);
+    // A row the ladder does not actually sell at its own factor (a "Piece" row whose factor is not 1) is not the default.
+    if (level.kind !== "pack" && level.factorToBase === row.factorToBase) return row.label;
+  }
+  return null;
+}
+
+/**
  * Price PER ONE unit of `unitLabel` at customer tier `tierIndex` (an integer 1..5 — a numeric
  * string is accepted; anything else throws `InvalidTierError`, never silently priced as tier 1: a
  * wrong tier is a wrong price, so callers map it to a 400).
