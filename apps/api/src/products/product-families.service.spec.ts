@@ -694,3 +694,81 @@ describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == s
     },
   );
 });
+
+describe("#2881 delta: a non-string money value is a 400 everywhere, never an inherit or a 500", () => {
+  const msgs = async (cls: new () => object, plain: Record<string, unknown>) => {
+    const errs = await validate(plainToInstance(cls, plain) as object, { whitelist: true });
+    const flat = (e: (typeof errs)[number]): string[] => [
+      ...Object.values(e.constraints ?? {}),
+      ...(e.children ?? []).flatMap(flat),
+    ];
+    return errs.flatMap(flat).join(" | ");
+  };
+  it("HTTP: a JSON NUMBER cost on a create row or on the family is refused (it must not silently inherit)", async () => {
+    expect(
+      (
+        await msgs(CreateFamilyDto, {
+          family: { name: "F", standardCost: "3" },
+          variants: [{ name: "A", pricePerUnit: "1", standardCost: 2.5 }],
+        })
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(
+      (
+        await msgs(CreateFamilyDto, {
+          family: { name: "F", standardCost: 2.5 },
+          variants: [{ name: "A", pricePerUnit: "1" }],
+        })
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+  it("service (bypassing the DTO): a numeric cost or price is a 400 BadRequest, not an inherit / TypeError", async () => {
+    for (const plain of [
+      {
+        family: { name: "F", standardCost: "3" },
+        variants: [{ name: "A", pricePerUnit: "1", standardCost: 2.5 }],
+      },
+      { family: { name: "F", standardCost: 2.5 }, variants: [{ name: "A", pricePerUnit: "1" }] },
+      { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: 5 }] },
+    ]) {
+      await expect(build().service.createFamily(plain as never, ACTOR)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    }
+    const famRow = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const k1 = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+    } as never;
+    for (const bad of [{ pricePerUnit: 5 }, { standardCost: 2.5 }]) {
+      await expect(
+        build({ products: [famRow, k1] }).service.updateVariants(
+          "fam",
+          { update: [{ id: "k1", ...bad }] } as never,
+          ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+  it("a null FAMILY price says 'required' (HTTP and service), not 'omit the field' (meaningless on create)", async () => {
+    expect(
+      await msgs(CreateFamilyDto, {
+        family: { name: "F", pricePerUnit: null },
+        variants: [{ name: "A", pricePerUnit: "1" }],
+      }),
+    ).toMatch(/pricePerUnit is required/);
+    const err = await build()
+      .service.createFamily(
+        {
+          family: { name: "F", pricePerUnit: null },
+          variants: [{ name: "A", pricePerUnit: "1" }],
+        } as never,
+        ACTOR,
+      )
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(JSON.stringify(err.getResponse())).toMatch(/required/);
+    expect(JSON.stringify(err.getResponse())).not.toMatch(/omit the field/);
+  });
+});
