@@ -506,14 +506,14 @@ export class InlineReturnsQuoteService {
   ): Promise<number> {
     const ids = lines.map((l) => l.sourceInvoiceItemId);
     const items: Array<{ invoiceItemId: string | null; qty: unknown; creditNoteId: string }> =
-      (await db.creditNoteItem?.findMany?.({
+      (await db.creditNoteItem.findMany({
         where: { invoiceItemId: { in: ids }, creditNote: { status: { not: "VOID" } } },
         select: { invoiceItemId: true, qty: true, creditNoteId: true },
       })) ?? [];
     if (items.length === 0) return 0;
     const noteIds = [...new Set(items.map((i) => i.creditNoteId))];
     const linked: Array<{ creditNoteId: string | null }> =
-      (await db.return?.findMany?.({
+      (await db.return.findMany({
         where: { creditNoteId: { in: noteIds } },
         select: { creditNoteId: true },
       })) ?? [];
