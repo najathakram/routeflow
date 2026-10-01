@@ -127,9 +127,15 @@ const PAGE_SIZE = 20;
 export function PurchaseOrdersTab({
   suppliers,
   products,
+  headerExtra,
+  highlightId,
 }: {
   suppliers: Supplier[];
   products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  /** Extra header action(s), rendered before "New purchase order". */
+  headerExtra?: React.ReactNode;
+  /** A PO to mark as just drafted: filters clear and the list returns to page 1 so it is on screen. */
+  highlightId?: string | null;
 }) {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [supplierFilter, setSupplierFilter] = React.useState("");
@@ -166,6 +172,15 @@ export function PurchaseOrdersTab({
     setPage(1);
   };
 
+  React.useEffect(() => {
+    if (!highlightId) return;
+    setStatusFilter("");
+    setSupplierFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  }, [highlightId]);
+
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
   const total: number = poData?.meta?.total ?? orders.length;
   const totalPages: number = poData?.meta?.totalPages ?? 1;
@@ -181,13 +196,16 @@ export function PurchaseOrdersTab({
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-base font-semibold text-navy">All purchase orders</h3>
-        <Button
-          size="sm"
-          leftIcon={<Plus className="h-4 w-4" />}
-          onClick={() => setShowCreateModal(true)}
-        >
-          New purchase order
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {headerExtra}
+          <Button
+            size="sm"
+            leftIcon={<Plus className="h-4 w-4" />}
+            onClick={() => setShowCreateModal(true)}
+          >
+            New purchase order
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -320,7 +338,12 @@ export function PurchaseOrdersTab({
             <tbody className="divide-y divide-surface-border">
               {orders.map((po) => (
                 <React.Fragment key={po.id}>
-                  <tr className="transition-colors hover:bg-surface-raised/40">
+                  <tr
+                    data-highlighted={po.id === highlightId ? "true" : undefined}
+                    className={`transition-colors hover:bg-surface-raised/40 ${
+                      po.id === highlightId ? "bg-brand-50" : ""
+                    }`}
+                  >
                     <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
                       <Link
                         href={`/purchase-orders/${po.id}`}
