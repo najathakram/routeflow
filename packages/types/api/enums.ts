@@ -512,6 +512,10 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
 
+/** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
+export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
+export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
+
 // #2717 M3 (SA-572): how a document line was composed. NULL on the row = a plain single line
 // (SINGLE is never materialised); FIXED = a RECIPE product with frozen component snapshots; FLEX is
 // reserved for M3b.
