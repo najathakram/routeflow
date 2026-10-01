@@ -414,42 +414,23 @@ describeDb(
       );
     }
 
-    it("11. THIRD DOOR (product A billed on BOTH invoices): a $100 credit note item on Y's A line + a refund lump of A, then an INLINE return of A is REFUSED 409 whichever invoice's line it is sourced to", async () => {
-      // Why not "refund A, then inline A" on a product billed ONCE: the quote's prior-returned reader counts the REFUNDED return's
-      // pieces, so the inline return's remaining supply is 0 and the whole request is priced as an UNREFERENCED chunk (no source
-      // line, nothing to cap): a separate matter (see the PR body). Here A is on X (qty 1) AND on Y (qty 1): the supply is 2, the
-      // refund uses 1, one piece remains and is SOURCED to X's or Y's line; the POOL (credit note item + refund lump = $200 of $200)
-      // refuses it either way, and the per-invoice check alone refuses only when it lands on Y.
+    it("11. THIRD DOOR reaches the POOL: A billed x2 on X only, a refund of 1 (lump on Y), a $100 credit note item on X's A line, then an INLINE return of the last piece is REFUSED by the pool's own check (the per-invoice check cannot see the lump on Y)", async () => {
+      // The inline quote sources the piece to X's A line (A is billed on X only), where the PER-INVOICE check sees only the $100
+      // credit note item ($100 of $200: it fits). The $100 refund lump sits on Y, invisible there. Only the ORDER POOL
+      // ($100 lump + $100 item + $100 take = $300 of $200) refuses, with its OWN message ("order's invoice lines").
       const s = await seed("refund-then-inline");
-      const yA = await prisma.invoiceItem.create({
-        data: {
-          tenantId: s.tenantId,
-          invoiceId: s.Y.id,
-          productId: s.pA.id,
-          description: "A",
-          qty: 1,
-          unitPrice: 100,
-          subtotal: 100,
-        },
+      await prisma.invoiceItem.update({
+        where: { id: s.lineA.id },
+        data: { qty: 2, unitPrice: 100, subtotal: 200 },
       });
-      await prisma.invoice.update({
-        where: { id: s.Y.id },
-        data: { subtotal: 200, total: 200 },
-      });
-      await inTenant(s, () =>
-        creditNotes.create({
-          customerId: s.customerId,
-          invoiceId: s.Y.id,
-          amount: 100,
-          items: [{ invoiceItemId: yA.id, amount: 100 }],
-        } as any),
-      );
-      const ret = await receivedReturn(s, s.pA.id);
-      await refund(s, ret.id);
+      await prisma.invoice.update({ where: { id: s.X.id }, data: { subtotal: 300, total: 300 } });
+      const ret = await receivedReturn(s, s.pA.id, 1);
+      await refund(s, ret.id); // 1 of 2 pieces: the pooled price is $100, a lump on the latest invoice Y
       expect(await status(ret.id)).toBe("REFUNDED");
-      await expect(inlineReturnOfA(s)).rejects.toMatchObject({
-        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
-      });
+      await creditItemOnX(s, s.lineA, 100); // fits: $100 + $100 of the $200 line
+      const err: any = await inlineReturnOfA(s).catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+      expect(err.getResponse().message).toMatch(/order's invoice lines/);
     }, 60_000);
 
     it("6. race: a credit note item on A and a return refund of A racing never total more than $100 on A, and neither 500s", async () => {

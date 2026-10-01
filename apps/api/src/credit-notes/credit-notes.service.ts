@@ -319,9 +319,12 @@ export class CreditNotesService {
         const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
         if (!productId) continue;
         const prev = byProduct.get(productId) ?? { amount: 0, qty: null };
+        // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
+        const pieces =
+          row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
         byProduct.set(productId, {
           amount: prev.amount + row.amount,
-          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + row.qty : prev.qty,
+          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + pieces : prev.qty,
         });
       }
       for (const [productId, take] of byProduct) {

@@ -171,6 +171,42 @@ describe("B947 order pool", () => {
     expect(db.return.findMany.mock.calls[0][0].where.kind).toEqual({ not: "INLINE" });
   });
 
+  it("N2: the pooled qty is in PIECES across lines with different units: a 2-box (x12) line and a 12-piece line pool to 36 pieces, not 14", async () => {
+    const boxed = { ...line("m-box", "pm", 240, 2), unitsPerBox: 12 }; // qty is BOXES: 24 pieces
+    const loose = line("m-pcs", "pm", 60, 12); // qty is PIECES: 12
+    const pool = await loadOrderPool(
+      fakeDb({
+        invoices: [
+          { id: "inv-m1", items: [boxed] },
+          { id: "inv-m2", items: [loose] },
+        ],
+      }).db,
+      "ord-1",
+    );
+    expect(pooledTakeRefusal(pool, "pm", { amount: 1, qty: 30 })).toBeNull(); // adding raw qty (2 + 12 = 14) would refuse this
+    const over = pooledTakeRefusal(pool, "pm", { amount: 1, qty: 37 });
+    expect(over).toMatchObject({ remainingQty: 36, requestedQty: 37 });
+  });
+
+  it("N2: credited boxes are converted too: 1 of 2 boxes credited leaves 24 pieces (12 + 12), not 13", async () => {
+    const boxed = { ...line("m-box", "pm", 240, 2), unitsPerBox: 12 };
+    const loose = line("m-pcs", "pm", 60, 12);
+    const pool = await loadOrderPool(
+      fakeDb({
+        invoices: [
+          { id: "inv-m1", items: [boxed] },
+          { id: "inv-m2", items: [loose] },
+        ],
+        cnItems: [{ invoiceId: "inv-m1", invoiceItemId: "m-box", amount: 120, qty: 1 }],
+      }).db,
+      "ord-1",
+    );
+    expect(pooledTakeRefusal(pool, "pm", { amount: 1, qty: 24 })).toBeNull();
+    expect(pooledTakeRefusal(pool, "pm", { amount: 1, qty: 25 })).toMatchObject({
+      remainingQty: 24,
+    });
+  });
+
   it("qty binds a credit note take only when one is GIVEN: 10 pieces of a fully-credited product at $0.01 is refused", async () => {
     const XP = { id: "inv-x", items: [line("x-p", "pp", 100, 10)] };
     const YP = { id: "inv-y", items: [line("y-p", "pp", 100, 10)] };

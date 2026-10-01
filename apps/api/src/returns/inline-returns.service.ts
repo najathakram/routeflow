@@ -629,7 +629,7 @@ export class InlineReturnsService {
             qty: 0,
             amount: 0,
           };
-          pt.qty += take.qty / (line.piecesPerQty ?? 1); // the line's own qty axis (a boxed selling-unit line counts boxes)
+          pt.qty += take.qty; // PIECES: the pool converts each line's room with its own piecesPerQty
           pt.amount += take.amount;
           invoiceProductTakes.set(k, pt);
         }

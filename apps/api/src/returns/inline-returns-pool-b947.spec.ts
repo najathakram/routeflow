@@ -22,6 +22,7 @@ const X = { id: "inv-x", items: [row("x-a", "pa"), row("x-b", "pb")] };
 const Y = { id: "inv-y", items: [row("y-c", "pc")] };
 
 const Z = { id: "inv-a-first", items: [row("z-a", "pa")] }; // sorts BEFORE inv-x; on ANOTHER order with ONE creditable invoice
+const W = { id: "inv-0-w", items: [row("w-b", "pb")] }; // the LOWEST id, on ord-1 (3 creditable invoices: W, X, Y)
 let orderOf = (id: string): string => (id === "inv-a-first" ? "ord-2" : "ord-1");
 
 function setup(opts: {
@@ -47,6 +48,8 @@ function setup(opts: {
       ),
     },
     invoice: {
+      // (kept so the pre-fix implementation, which read the order of invoiceIds[0] here, can be run against these cases)
+      findFirst: jest.fn(async (args: any) => ({ orderId: orderOf(args.where.id) })),
       count: jest.fn(async (args: any) => inOrder(args.where.orderId).length),
       // the pool read (by orderId) and the invoice -> order read (by id list) are told apart by their `where`
       findMany: jest.fn(async (args: any) =>
@@ -125,12 +128,17 @@ describe("InlineReturnsService.assertWithinLineHeadroom: B947 the order pool (th
     spy.mockRestore();
   });
 
-  it("OPUS: a take on ord-2 is not judged by ord-1's pool (no false 409 at the driver's door)", async () => {
-    // A is fully refunded on ord-1, but THIS take is sourced to ord-2's own line (single invoice): it must pass
+  it("OPUS N1 (fails on the old code): a take on ord-2's own line is not judged by ord-1's pool, even when the LOWEST source invoice id sits on ord-1 (no false 409)", async () => {
+    // A is fully refunded on ord-1 (lump on Y). The takes: A from ord-2's single invoice (own line: fits) and B from ord-1's W.
+    // The OLD code summed takes by product and checked them against the pool of invoiceIds[0] = inv-0-w (ord-1): A's $100 against
+    // ord-1's exhausted A pool = a FALSE 409. Per source order: A is judged on ord-2 (one invoice, no pool), B on ord-1 (room).
     const { run } = setup({
       lumpOfA: true,
-      invoices: [Z, X, Y],
-      takes: [{ sourceInvoiceItemId: "z-a", pieces: 1, subtotal: 100 }],
+      invoices: [W, Z, X, Y],
+      takes: [
+        { sourceInvoiceItemId: "z-a", pieces: 1, subtotal: 100 },
+        { sourceInvoiceItemId: "w-b", pieces: 1, subtotal: 100 },
+      ],
     });
     await expect(run()).resolves.toBeUndefined();
   });

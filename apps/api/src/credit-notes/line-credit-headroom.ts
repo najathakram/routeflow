@@ -400,8 +400,10 @@ export function pooledRefundRefusal(
 }
 
 /**
- * A credit note's take of `amount` (and `qty`, when the operator gave one) against product `productId`'s POOLED room: null when
- * it fits, else the refusal. Money binds only the lines that have money; one cent of tolerance plus the drift of prior items.
+ * A take of `amount` (and `qty` PIECES, when one is given) against product `productId`'s POOLED room: null when it fits, else the
+ * refusal. Money binds only the lines that have money; one cent of tolerance plus the drift of prior items. The qty is in
+ * PIECES: the pool's lines can use different units (a boxed selling-unit line counts boxes, a pieces line counts pieces), so each
+ * line's room is converted with its own `piecesPerQty` before the lines are added; adding raw `qty` across units is wrong.
  */
 export function pooledTakeRefusal(
   pool: OrderPool,
@@ -410,12 +412,12 @@ export function pooledTakeRefusal(
 ): RefundRefusal | null {
   const mine = pool.lines.filter((l) => l.productId === productId && l.qty > 0);
   if (mine.length === 0) return null;
-  let remainingQty = 0;
+  let remainingQty = 0; // pieces
   let remainingAmount = 0;
   let priorItems = 0;
   for (const l of mine) {
     const d = pool.credited.get(l.id) ?? { amount: 0, qty: 0 };
-    remainingQty += Math.max(0, round3(l.qty - d.qty));
+    remainingQty += Math.max(0, round3(l.qty - d.qty)) * (l.piecesPerQty ?? 1);
     remainingAmount += l.subtotal > EPS ? Math.max(0, roundMoney(l.subtotal - d.amount)) : 0;
     priorItems += d.items ?? 0;
   }
