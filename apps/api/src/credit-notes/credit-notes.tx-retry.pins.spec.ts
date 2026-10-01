@@ -1,5 +1,5 @@
 /**
- * SA-392 (#2201): applyToInvoice, voidCreditNote and unapplyFromInvoice run their Serializable
+ * SA-392 (#2201): applyToInvoice, voidWithReversal and unapplyFromInvoice run their Serializable
  * transaction UNDER the house `retryOnTxConflict` (common/tx-retry.ts). create() keeps its own
  * MAX_CN_TX_ATTEMPTS loop and is deliberately not pinned here.
  *
@@ -37,7 +37,7 @@ function methodSource(name: string, source = SOURCE): string {
 type Site = [string, (s: CreditNotesService) => Promise<unknown>];
 const SITES: Site[] = [
   ["applyToInvoice", (s) => s.applyToInvoice("cn-1", "inv-1")],
-  ["voidCreditNote", (s) => s.voidCreditNote("cn-1")],
+  ["voidWithReversal", (s) => s.voidWithReversal("cn-1", null)],
   ["unapplyFromInvoice", (s) => s.unapplyFromInvoice("cn-1", "inv-1")],
 ];
 

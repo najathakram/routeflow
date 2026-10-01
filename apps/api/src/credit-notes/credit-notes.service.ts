@@ -973,7 +973,7 @@ export class CreditNotesService {
    * note that happens to sit on the same order/invoice (a manual credit, or a sibling
    * inline return's own CN).
    *
-   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors `voidCreditNote`'s
+   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors the void's
    * "un-apply first" rule, but un-applies here instead of refusing), then voids it and undoes
    * its regulated-ledger reversal. Throws `RETURN_CREDIT_CONSUMED` if `amountUsed` is still
    * non-zero after restoring everything a payment row could account for — money consumed
@@ -1013,58 +1013,6 @@ export class CreditNotesService {
       await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
     }
     return { restored };
-  }
-
-  async voidCreditNote(id: string) {
-    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    const voided = await retryOnTxConflict(`credit void cn=${id}`, () =>
-      this.prisma.tenantTransaction(
-        async (tx: any) => {
-          const cn = await tx.creditNote.findFirst({
-            where: { id },
-            select: { status: true, amountUsed: true },
-          });
-          if (!cn) throw new NotFoundException("Credit note not found");
-          // A credit that's been consumed as a payment can't be voided — un-applying it
-          // first is the only safe path. Without this, void would delete the ledger
-          // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
-          if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // Race-free flip: only ISSUED/DRAFT + unused → VOID. A concurrent
-          // applyToInvoice (also serializable) that sets amountUsed>0 / APPLIED makes
-          // this updateMany match 0 rows, so we refuse rather than orphan the payment.
-          const flipped = await tx.creditNote.updateMany({
-            where: { id, status: { notIn: ["APPLIED", "VOID"] }, amountUsed: 0 },
-            data: { status: "VOID" },
-          });
-          if (flipped.count === 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // W5c: undo the regulated ledger reversal booked at creation (safe now — the
-          // credit was never consumed, so voiding restores the sale to full).
-          await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
-          return tx.creditNote.findUnique({ where: { id } });
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
-
-    // B343: emitted outside the tx, mirroring create()'s emitCreditNoteCreated — a
-    // void previously fired no event at all, so a customer statement or credit-notes
-    // view left open in another tab/session never learned the note was gone.
-    this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
-      creditNoteId: voided.id,
-      creditNoteNumber: voided.creditNoteNumber,
-      customerId: voided.customerId,
-      amount: Number(voided.amount),
-    });
-
-    return voided;
   }
 
   /**
@@ -1262,7 +1210,7 @@ export class CreditNotesService {
     });
     await tx.orderCreditNote.deleteMany({ where: { creditNoteId: id } });
 
-    // The same compare-and-set as voidCreditNote: every dollar is back, so amountUsed is 0.
+    // The same compare-and-set as the old plain void (removed, B957): every dollar is back, so amountUsed is 0.
     const flipped = await tx.creditNote.updateMany({
       where: { id, status: { not: "VOID" }, amountUsed: 0 },
       data: { status: "VOID" },
@@ -1292,7 +1240,7 @@ export class CreditNotesService {
    * SA-436 PR-2 (#2402): POST :id/void-with-reversal. Un-applies every live application of the
    * note (restoreCreditFromPaymentInTx recomputes each invoice's status), remembers each pair
    * (CreditNoteApplyBlock VOID_REVERSAL) and drops the note's order intents, then runs the SAME
-   * compare-and-set void and ledger un-reversal as voidCreditNote.
+   * compare-and-set void and ledger un-reversal the plain void used (B957: POST :id/void delegates here).
    *
    * Serializable and retried whole on a conflict (L-221). Lock order SA-214: the payments'
    * Orders (sorted), then their Invoices (sorted), then the CreditNote row. Every refusal is

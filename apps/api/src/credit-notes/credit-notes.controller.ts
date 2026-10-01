@@ -86,8 +86,14 @@ export class CreditNotesController {
   // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
   // lets it satisfy OPERATOR).
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  voidNote(@Param("id") id: string) {
-    return this.creditNotesService.voidCreditNote(id);
+  // B957: the same door as :id/void-with-reversal (the URL is kept for old clients): the RETURN_BACKED refusal and the
+  // reason/actor audit apply, and a note in use is reversed then voided, exactly like the main path.
+  voidNote(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: VoidCreditNoteDto,
+  ) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null, dto?.reason);
   }
 
   // SA-436 PR-2 (#2402): the invoices a void-with-reversal reopens, and any refusal. Read-only.

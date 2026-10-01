@@ -375,6 +375,55 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(prisma.creditNote.updateMany).toHaveBeenCalled();
     });
 
+    // B957: POST :id/void was a SECOND void door (skipped CREDIT_NOTE_RETURN_BACKED and the reason/actor audit). It now
+    // delegates to voidWithReversal; the URL stays, voidCreditNote is gone.
+    describe("B957: POST :id/void is the SAME door as :id/void-with-reversal", () => {
+      const door = () =>
+        new CreditNotesController(service as never, {} as never).voidNote(
+          "cn-a",
+          { sub: "user-7" } as never,
+          { reason: "  duplicate  " } as never,
+        );
+
+      it("the service has no second void method", () => {
+        expect((service as any).voidCreditNote).toBeUndefined();
+      });
+      it("a return-backed note is a 409 CREDIT_NOTE_RETURN_BACKED and NOTHING changes", async () => {
+        armNote();
+        prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const err = await door().catch((e: unknown) => e);
+        expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_RETURN_BACKED);
+        noWrites();
+        expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+      });
+      it("a plain unused note is voided and leaves an audit row naming the actor and the reason", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        await door();
+        expect(prisma.creditNote.updateMany).toHaveBeenCalled();
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            userId: "user-7",
+            action: "VOIDED",
+            entityType: "CreditNote",
+            entityId: "cn-a",
+            meta: expect.objectContaining({ reason: "duplicate" }),
+          }),
+        });
+        expect(gateway.emitCreditNoteVoided).toHaveBeenCalled();
+      });
+      it("a note in use behaves exactly like the main void path: its applications are reversed, then it is voided", async () => {
+        armNote();
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+        const res: any = await door();
+        expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-2" } });
+        expect(res.reopened).toHaveLength(2);
+      });
+    });
+
     it.each([
       ["already VOID", () => armNote({ status: "VOID" }), /already void/],
       [
