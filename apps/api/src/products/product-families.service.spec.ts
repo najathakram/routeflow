@@ -828,32 +828,59 @@ describe("SA-606i: the family price is REQUIRED on create (no implicit $0.00), H
     );
   });
 
-  it("copyFamilyPrice WITHOUT a family price is the same 400 and NOTHING is written", async () => {
+  it("copyFamilyPrice WITHOUT a family price is a CODED 400 FAMILY_COPY_PRICE_REQUIRED and NOTHING is written", async () => {
     const h = build();
-    await expect(
-      h.service.createFamily(
-        { family: info(), variants: oneVariant, copyFamilyPrice: true } as never,
-        ACTOR,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const err = await h.service
+      .createFamily({ family: info(), variants: oneVariant, copyFamilyPrice: true } as never, ACTOR)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "FAMILY_COPY_PRICE_REQUIRED" });
+    expect(String(err.getResponse().message)).toMatch(/family price/i);
     expect(h.tx.products).toHaveLength(0);
     expect(h.tx.calls).not.toContain("product.create");
   });
 
-  it('an explicit "0.00" is allowed (a deliberate free family), with and without copyFamilyPrice', async () => {
+  it('copyFamilyPrice with an explicit "0" / "0.00" / "0.004" is the same coded 400, nothing written', async () => {
+    for (const price of ["0", "0.00", "0.004"]) {
+      const h = build();
+      const err = await h.service
+        .createFamily(
+          {
+            family: info({ pricePerUnit: price }),
+            variants: oneVariant,
+            copyFamilyPrice: true,
+          } as never,
+          ACTOR,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "FAMILY_COPY_PRICE_REQUIRED" });
+      expect(h.tx.products).toHaveLength(0);
+    }
+  });
+
+  it("copyFamilyPrice with a price > 0 copies it to every variant, rounded via roundMoney", async () => {
+    const h = build();
+    await h.service.createFamily(
+      {
+        family: info({ pricePerUnit: "9.995" }),
+        variants: oneVariant,
+        copyFamilyPrice: true,
+      } as never,
+      ACTOR,
+    );
+    expect(
+      h.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT"),
+    ).toMatchObject({ pricePerUnit: "10.00" });
+  });
+
+  it('an explicit "0.00" is still allowed WITHOUT copyFamilyPrice (a deliberate free family)', async () => {
     const plain = { family: info({ pricePerUnit: "0.00" }), variants: oneVariant };
     expect(await errs(plain)).toEqual([]);
     const a = build();
     await a.service.createFamily(plain as never, ACTOR);
     expect(
       a.tx.products.find((p) => (p as Record<string, unknown>).kind === "FAMILY"),
-    ).toMatchObject({
-      pricePerUnit: "0.00",
-    });
-    const b = build();
-    await b.service.createFamily({ ...plain, copyFamilyPrice: true } as never, ACTOR);
-    expect(
-      b.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT"),
     ).toMatchObject({ pricePerUnit: "0.00" });
   });
 

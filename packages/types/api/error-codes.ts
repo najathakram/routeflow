@@ -53,6 +53,8 @@
 //   FAMILY_PRICE_AUTHORITY — `body.code` of the 409 a variant price write answers while the
 //                    tenant's mixed_packs mode is on and the family owns the price; body carries
 //                    `familyId`.
+//   FAMILY_COPY_PRICE_REQUIRED — `body.code` of the 400 a family create answers when copyFamilyPrice is set and the
+//                    family price is missing or rounds to <= 0 (nothing is written).
 //   FIXED_WHOLE_BOXES / COMPOSED_UNIT_LINE / RECIPE_PACK_MISMATCH / COMPONENT_SUM_MISMATCH —
 //                    `body.code` of a mixed-pack (FIXED) line write refusal (#2717 M3): loose pieces
 //                    (400), a unit-aware line (400), a recipe pack size that differs from the line's
@@ -102,6 +104,7 @@ export const API_ERROR_CODES = {
   RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
   RECIPE_INVALID: "RECIPE_INVALID",
   FAMILY_PRICE_AUTHORITY: "FAMILY_PRICE_AUTHORITY",
+  FAMILY_COPY_PRICE_REQUIRED: "FAMILY_COPY_PRICE_REQUIRED",
   FIXED_WHOLE_BOXES: "FIXED_WHOLE_BOXES",
   COMPOSED_UNIT_LINE: "COMPOSED_UNIT_LINE",
   RECIPE_PACK_MISMATCH: "RECIPE_PACK_MISMATCH",

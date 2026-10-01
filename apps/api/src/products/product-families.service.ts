@@ -172,8 +172,23 @@ export class ProductFamiliesService {
     }
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyName = dto.family.name.trim();
+    // A family price copied to every variant must be a real price: missing or <= 0 would write $0.00 onto every variant.
+    // Coded so a client can show it; checked BEFORE the generic "required" so the code is stable (nothing written).
+    const copyPriceError = () =>
+      new BadRequestException({
+        code: API_ERROR_CODES.FAMILY_COPY_PRICE_REQUIRED,
+        message:
+          "Enter a family price above $0.00 to copy it to every variant, or turn off copying the family price.",
+      });
+    if (
+      dto.copyFamilyPrice &&
+      (typeof dto.family.pricePerUnit !== "string" || dto.family.pricePerUnit.trim() === "")
+    ) {
+      throw copyPriceError();
+    }
     given(dto.family.pricePerUnit, "family pricePerUnit", "required");
     const familyPrice = money(dto.family.pricePerUnit);
+    if (dto.copyFamilyPrice && !(Number(familyPrice) > 0)) throw copyPriceError();
     const familyCost = costOf(dto.family.standardCost);
     if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {
