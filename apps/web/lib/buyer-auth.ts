@@ -120,14 +120,22 @@ export function clearActiveSeller(): void {
 
 export { BUYER_PRESENCE_COOKIE, clearBuyerPresenceCookie } from "./presence-cookies";
 
+/**
+ * Adopt a freshly-issued buyer token pair as THIS browser's buyer session — the ONE post-login
+ * step shared by buyer login, register and the in-app handoff (#2653, SA-542b).
+ */
+export function adoptBuyerTokenPair(data: { accessToken: string; refreshToken: string }): void {
+  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
+  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
+  setBuyerPresenceCookie();
+}
+
 export async function buyerLogin(email: string, password: string): Promise<BuyerAuthResponse> {
   const { data } = await axios.post<BuyerAuthResponse>(`${BASE_URL}/buyer/auth/login`, {
     email,
     password,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 
@@ -141,9 +149,7 @@ export async function buyerRegister(
     password,
     name,
   });
-  localStorage.setItem(BUYER_KEYS.accessToken, data.accessToken);
-  localStorage.setItem(BUYER_KEYS.refreshToken, data.refreshToken);
-  setBuyerPresenceCookie();
+  adoptBuyerTokenPair(data);
   return data;
 }
 

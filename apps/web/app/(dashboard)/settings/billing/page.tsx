@@ -6,6 +6,7 @@ import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/lib/auth-context";
+import { BillingExportButton } from "./BillingExportButton";
 import {
   useSubscription,
   useUsage,
@@ -157,9 +158,14 @@ export default function BillingSettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Plan &amp; Billing</h1>
-        <p className="mt-1 text-sm text-slate-500">Manage your subscription, add-ons and usage.</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Plan &amp; Billing</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Manage your subscription, add-ons and usage.
+          </p>
+        </div>
+        <BillingExportButton />
       </div>
 
       <TrialBanner sub={s} />
