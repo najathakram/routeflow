@@ -62,6 +62,10 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     trackedCategoryId: null,
     trackedSubcategoryId: null,
     isActive: true,
+    // the buyer gate (#2856) judges these: a fixture that omits them is correctly hidden
+    kind: "STANDARD",
+    portalVisible: true,
+    parent: null,
   };
   const ladder = [
     { productId: "prod-1", label: "Case", factorToBase: 288, price: "480.00", sortOrder: 0 },
