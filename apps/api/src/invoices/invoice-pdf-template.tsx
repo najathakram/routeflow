@@ -2,12 +2,7 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import { roundMoney } from "@routeflow/pricing";
-import {
-  promoNote,
-  qtyCellText,
-  showOriginalPrice,
-  type PdfSubLine,
-} from "./invoice-pdf-item";
+import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
@@ -628,7 +623,12 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                   {item.subLines?.map((sub, subIdx) => (
                     <View key={`${item.id}-sub-${subIdx}`} style={{ marginTop: 3, marginLeft: 8 }}>
                       <Text style={{ fontSize: 7, color: "#334155" }}>
-                        {[sub.name, sub.qtyText, sub.unitSku ? `SKU ${sub.unitSku}` : null, sub.priceText]
+                        {[
+                          sub.name,
+                          sub.qtyText,
+                          sub.unitSku ? `SKU ${sub.unitSku}` : null,
+                          sub.priceText,
+                        ]
                           .filter(Boolean)
                           .join("  |  ")}
                       </Text>

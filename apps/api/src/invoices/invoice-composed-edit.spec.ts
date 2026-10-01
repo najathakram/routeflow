@@ -16,10 +16,30 @@ const stored = (o: Record<string, unknown> = {}) => ({
   ...o,
 });
 const comps = [
-  { componentProductId: "a", qty: 24, name: "A", unitSku: "SA", unitBarcode: "1", barcodeSymbology: "CODE128", position: 0 },
-  { componentProductId: "o", qty: 24, name: "O", unitSku: "SO", unitBarcode: "2", barcodeSymbology: "CODE128", position: 1 },
+  {
+    componentProductId: "a",
+    qty: 24,
+    name: "A",
+    unitSku: "SA",
+    unitBarcode: "1",
+    barcodeSymbology: "CODE128",
+    position: 0,
+  },
+  {
+    componentProductId: "o",
+    qty: 24,
+    name: "O",
+    unitSku: "SO",
+    unitBarcode: "2",
+    barcodeSymbology: "CODE128",
+    position: 1,
+  },
 ];
-const edited = (data: Record<string, unknown>, untouched = false) => ({ rowId: "row-1", untouched, data });
+const edited = (data: Record<string, unknown>, untouched = false) => ({
+  rowId: "row-1",
+  untouched,
+  data,
+});
 
 function tx() {
   return {
@@ -90,8 +110,12 @@ describe("applyComposedLineEdits (case 18)", () => {
     });
     const rows = t.invoiceItemComponent.createMany.mock.calls[0][0].data;
     expect(rows.map((r: { qty: number }) => r.qty)).toEqual([36, 36]);
-    expect(rows.every((r: { displayUnitPrice4: number; tenantId: string; invoiceItemId: string }) =>
-      r.displayUnitPrice4 === 1.25 && r.tenantId === "t-1" && r.invoiceItemId === "row-1")).toBe(true);
+    expect(
+      rows.every(
+        (r: { displayUnitPrice4: number; tenantId: string; invoiceItemId: string }) =>
+          r.displayUnitPrice4 === 1.25 && r.tenantId === "t-1" && r.invoiceItemId === "row-1",
+      ),
+    ).toBe(true);
     expect(rows[0]).toMatchObject({ componentProductId: "a", name: "A", unitSku: "SA" });
   });
 
@@ -100,7 +124,10 @@ describe("applyComposedLineEdits (case 18)", () => {
       const t = tx();
       await expect(
         run(t, { editLines: [edited({ qty, subtotal: 60, unitsPerBox: 24 })] }),
-      ).rejects.toMatchObject({ status: 409, response: { code: API_ERROR_CODES.COMPOSED_LINE_EDIT } });
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: API_ERROR_CODES.COMPOSED_LINE_EDIT },
+      });
       noWrites(t);
     }
   });
