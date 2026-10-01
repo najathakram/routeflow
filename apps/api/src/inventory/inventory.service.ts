@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -214,6 +215,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     if (dto.supplierId) {
       const supplier = await this.prisma
@@ -327,6 +329,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = effectiveDateOf(dto.effectiveDate);
@@ -846,6 +849,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
@@ -1118,8 +1122,9 @@ export class InventoryService {
     }
     const products = await tx.product.findMany({
       where: { id: { in: [...new Set(input.lines.map((l) => l.productId))] } },
-      select: { id: true },
+      select: { id: true, name: true, kind: true },
     });
+    assertSellableLines(products); // WS8
     const known = new Set(products.map((p) => p.id));
     for (const l of input.lines) {
       if (!known.has(l.productId)) throw new NotFoundException(`Product ${l.productId} not found`);
@@ -1165,6 +1170,7 @@ export class InventoryService {
       where: { id: { in: dto.items.map((i: any) => i.productId) } },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
+    assertSellableLines(products); // WS8
     let totalAmount = 0;
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
@@ -1811,6 +1817,7 @@ export class InventoryService {
       const products = await tx.product.findMany({
         where: { id: { in: [...new Set(items.map((l) => l.productId))] } },
       });
+      assertSellableLines(products); // WS8
       const productIds = new Set(products.map((p) => p.id));
       for (const line of items) {
         if (!productIds.has(line.productId))
@@ -2071,6 +2078,7 @@ export class InventoryService {
   async setCostBasis(productId: string, dto: SetCostBasisDto, performedById: string) {
     const product = await this.prisma.forTenant().product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY has no cost basis (no stock)
 
     return this.prisma.tenantTransaction((tx) =>
       this.setCostBasisInTx(tx, product, dto, performedById),
@@ -2090,6 +2098,7 @@ export class InventoryService {
         missingProductIds: missing,
       });
     }
+    assertSellableLines(products); // WS8
 
     return this.prisma.tenantTransaction(async (tx) => {
       const movementIds: string[] = [];
@@ -2358,9 +2367,10 @@ export class InventoryService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
-      select: { id: true, currentStock: true, unitsPerBox: true },
+      select: { id: true, name: true, kind: true, currentStock: true, unitsPerBox: true },
     });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a counted FAMILY must not reach assignToVariants
 
     // Boxes/pieces win when present — the server recomputes qty from the split
     // exactly like the order builders, so a boxed product is never miscounted
@@ -2480,6 +2490,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${id}`;

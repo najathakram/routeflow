@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { ProductFamiliesController } from "./product-families.controller";
+import { ProductFamiliesService } from "./product-families.service";
 import { ProductsController } from "./products.controller";
 import { ProductsService } from "./products.service";
 import { ProductUnitsController } from "./product-units.controller";
@@ -22,8 +24,19 @@ import { GatewaysModule } from "../gateways/gateways.module";
     GatewaysModule,
     SalesFactsModule,
   ],
-  controllers: [ProductsController, ProductUnitsController, RecipesController],
-  providers: [ProductsService, ProductUnitsService, RecipesService, ProductsExportService],
+  controllers: [
+    ProductFamiliesController,
+    ProductsController,
+    ProductUnitsController,
+    RecipesController,
+  ],
+  providers: [
+    ProductsService,
+    ProductFamiliesService,
+    ProductUnitsService,
+    RecipesService,
+    ProductsExportService,
+  ],
   exports: [ProductsService],
 })
 export class ProductsModule {}
