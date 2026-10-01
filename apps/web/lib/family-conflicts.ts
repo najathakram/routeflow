@@ -38,8 +38,9 @@ const CODE_NOUN: Record<string, string> = {
 function message(c: FamilyRowConflict): string {
   if (c.reason === "DUPLICATE_IN_REQUEST")
     return `"${c.value}" appears more than once in this list.`;
-  if (c.reason === "NAME_TAKEN") return `A product named "${c.value}" already exists.`;
-  if (c.reason === "CODE_TAKEN" && CODE_NOUN[c.field]) {
+  if (c.reason === API_ERROR_CODES.NAME_TAKEN)
+    return `A product named "${c.value}" already exists.`;
+  if (c.reason === API_ERROR_CODES.CODE_TAKEN && CODE_NOUN[c.field]) {
     return `The ${CODE_NOUN[c.field]} "${c.value}" is already used by another product.`;
   }
   return `"${c.value}" conflicts with another product.`;
