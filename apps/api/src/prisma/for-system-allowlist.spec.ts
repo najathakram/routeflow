@@ -140,9 +140,27 @@ describe("scanForSystem mutants (SA-619)", () => {
 
 /**
  * PR-2b/auth: `systemTransaction(reason, fn)` is the transaction twin of forSystem: the same rules
- * (literal reason, allow-listed with a count), its own list; empty until a caller converts.
+ * (literal reason, allow-listed with a count), its own list. The first callers are the anonymous token flows that used the array-form
+ * `$transaction`, which bypasses the tenant guard.
  */
-const ALLOWED_TX_SITES: Record<string, Record<string, { count: number; why: string }>> = {}; // 0 callers today
+const ALLOWED_TX_SITES: Record<string, Record<string, { count: number; why: string }>> = {
+  "auth/auth.service.ts": {
+    "auth.resetPassword": {
+      count: 1,
+      why: "anonymous caller: the emailed reset token is the credential; the user row is found by it",
+    },
+  },
+  "buyer/buyer-auth.service.ts": {
+    "buyer-auth.verifyEmail": {
+      count: 1,
+      why: "anonymous buyer: the emailed verification token is the credential; BuyerAccount is a platform model",
+    },
+    "buyer-auth.resetPassword": {
+      count: 1,
+      why: "anonymous buyer: the emailed reset token is the credential; BuyerAccount is a platform model",
+    },
+  },
+};
 
 describe("systemTransaction allow-list (SA-619 PR-2b)", () => {
   const files = walk(SRC_ROOT);
