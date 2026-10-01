@@ -435,5 +435,23 @@ describeDb(
       const cn = await prisma.creditNote.findFirstOrThrow({ where: { id: stored!.creditNoteId! } });
       expect(Number(cn.amount)).toBe(10);
     });
+
+    it("14. SA-628b FOLD1: a prior 3 pcs @ $5 on a $100/10 line, then a 7-pc return mints $70 (the pooled price), never the $85 rest", async () => {
+      const s = await seed("closing7", 0, 10);
+      await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount: 15,
+          items: [{ invoiceItemId: s.lineA.id, amount: 15, qty: 3 }],
+        } as any),
+      );
+      const ret = await receivedReturn(s, s.pA.id, 7);
+      await refund(s, ret.id);
+      const stored = await prisma.return.findUnique({ where: { id: ret.id } });
+      const cn = await prisma.creditNote.findFirstOrThrow({ where: { id: stored!.creditNoteId! } });
+      expect(Number(cn.amount)).toBe(70);
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(100);
+    });
   },
 );
