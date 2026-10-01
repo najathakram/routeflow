@@ -42,6 +42,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
   STOCK_FILTER_CHIPS,
@@ -1102,8 +1103,8 @@ export default function ProductsPage() {
         description: skipped.length > 0 ? skipped.map((s) => s.reason).join("; ") : undefined,
         variant: res.deleted > 0 || softDeleted > 0 ? "success" : "error",
       });
-    } catch {
-      toast({ title: "Failed to delete products", variant: "error" });
+    } catch (err) {
+      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete products"));
     }
   };
 
