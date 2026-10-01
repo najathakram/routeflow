@@ -1083,6 +1083,48 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     ).toBe(RETURN_CREDIT_OVERRIDE_ERROR_CODES.OVER_CAP);
   });
 
+  // B961 / SA-071c: an over-return chunk of a product the customer DID buy (a candidate invoice line exists, all of it already
+  // returned) is flagged "already returned or credited"; a never-invoiced product's chunk stays "not on any invoice".
+  it("B961: the over-return chunk of a product WITH prior sales is flagged alreadyReturned; the matched chunk carries no flag", async () => {
+    const result = await quote({ pieces: 12 }); // 10 sold on a candidate line, 2 over
+    const [matched, over] = result.chunks;
+    expect(matched).not.toHaveProperty("alreadyReturned");
+    expect(over).toMatchObject({ priceSource: "BASE", pieces: 2, alreadyReturned: true });
+  });
+
+  it("B961: a product that was FULLY returned before (nothing left on its candidate line) flags the whole quantity", async () => {
+    // the prior-returned reader counts earlier returns of the product off this source order (here as inline rows)
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 10 }]);
+    const result = await quote({ pieces: 2 });
+    expect(result.chunks).toEqual([
+      expect.objectContaining({ pieces: 2, sourceInvoiceItemId: null, alreadyReturned: true }),
+    ]);
+  });
+
+  it("B961: a NEVER-invoiced product stays 'not on any invoice' (no flag): today's SA-071(2) behaviour", async () => {
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    const result = await quote({ pieces: 3 });
+    expect(result.chunks).toHaveLength(1);
+    expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+  });
+
+  it("B961: a DRIVER carrying alreadyReturnedReason ⇒ 400 FORBIDDEN, before any read (staff only)", async () => {
+    const r = await refusal(
+      service.quote(
+        {
+          customerId: "cust-1",
+          routeRunStopId: "stop-1",
+          items: [
+            { productId: "prod-1", boxes: 0, pieces: 4, alreadyReturnedReason: "customer says so" },
+          ] as any,
+        },
+        DRIVER,
+      ),
+    );
+    expect(r).toMatchObject({ status: 400, code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN });
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+  });
+
   it("a DRIVER carrying either field ⇒ 400, before any read (never silently dropped)", async () => {
     for (const item of [
       { creditUnitPrice: 1, overrideReason: "x" },

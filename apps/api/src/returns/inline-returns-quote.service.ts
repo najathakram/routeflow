@@ -79,6 +79,13 @@ export function creditOverridesOf(
   for (const item of items) {
     const price = item.creditUnitPrice;
     const rawReason = item.overrideReason;
+    // B961: the "already returned" confirmation reason is staff-only too (a driver's capture is HELD, never confirmed).
+    if (item.alreadyReturnedReason !== undefined && !CREDIT_OVERRIDE_ROLES.has(user.role)) {
+      throw new BadRequestException({
+        code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN,
+        message: "Only office staff can confirm a return of goods already returned or credited.",
+      });
+    }
     if (price === undefined && rawReason === undefined) continue;
     if (!CREDIT_OVERRIDE_ROLES.has(user.role)) {
       throw new BadRequestException({
@@ -384,6 +391,7 @@ export class InlineReturnsQuoteService {
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
       const override = overrides.get(item);
+      const hasPriorSales = matchingSet.some((l) => l.productId === item.productId);
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
@@ -400,7 +408,11 @@ export class InlineReturnsQuoteService {
               fallbackTaxRate,
               customer.isTaxExempt,
             );
-        if (!override) return priced;
+        // B961: the unreferenced chunk of a product the customer DID buy (a candidate line exists, all of it used up) is
+        // "already returned or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
+        const flag = (c: PricedChunk): PricedChunk =>
+          !chunk.line && hasPriorSales ? { ...c, alreadyReturned: true } : c;
+        if (!override) return flag(priced);
         // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
         // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice
         // charged no tax), an unreferenced chunk's product pack and quote rate.
@@ -430,7 +442,7 @@ export class InlineReturnsQuoteService {
               `credit is $${result.defaultUnitPrice.toFixed(2)} per unit.`,
           });
         }
-        return result.chunk;
+        return flag(result.chunk);
       });
 
       productBreakdown[item.productId] = totalChunks(chunks);

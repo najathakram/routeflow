@@ -134,6 +134,10 @@ export interface InlineReturnQuoteChunk {
   originalPrice?: number | null;
   overrideReason?: string | null;
   overriddenBy?: string | null;
+  /** B961 / SA-071c: set on an over-return chunk of a product this customer DID buy (a candidate invoice line exists, all of it
+   *  already returned or credited). Shown as "already returned or credited", NOT "not on any invoice"; only staff may credit it,
+   *  with a reason; a driver capture holds it for the office. Absent on every other chunk. */
+  alreadyReturned?: boolean;
 }
 
 export interface InlineReturnQuoteBreakdown {
