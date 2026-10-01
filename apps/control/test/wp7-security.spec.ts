@@ -7,6 +7,8 @@ import * as path from "path";
 import { createHmac } from "crypto";
 import { startServer, rawRequest, WEBHOOK_SECRET, FIXTURE } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { buildPrivateDist } from "./helpers/build-dist";
+import type { PrivateDist } from "./helpers/build-dist";
 
 jest.setTimeout(60_000);
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -47,8 +49,15 @@ describe("1 the image carries the denylist, and boot refuses without it", () => 
   });
 });
 
+// B1: built here, not assumed: `turbo test` does not build dist/, so a fresh checkout has none
+let dist: PrivateDist;
+beforeAll(() => {
+  dist = buildPrivateDist("wp7");
+});
+afterAll(() => dist?.cleanup());
+
 const boot = (env: Record<string, string>) =>
-  spawnSync("node", [path.join(CONTROL, "dist", "main.js")], {
+  spawnSync("node", [dist.main], {
     env: { PATH: process.env.PATH ?? "", ...env },
     encoding: "utf8",
     timeout: 20_000,
@@ -67,8 +76,8 @@ const FULL = {
   CONTROL_PUBLIC_URL: "https://control.example.test",
 };
 describe("boot refusals (exit 1 with a clear message)", () => {
-  it("dist is built", () =>
-    expect(fs.existsSync(path.join(CONTROL, "dist", "main.js"))).toBe(true));
+  it("the private build exists (a fresh checkout has no dist/)", () =>
+    expect(fs.existsSync(dist.main)).toBe(true));
   it("a denylist that fails to load", () => {
     const r = boot({ ...LOCAL, CONTROL_DENYLIST: "/nonexistent/denylist.json" });
     expect(r.status).toBe(1);
