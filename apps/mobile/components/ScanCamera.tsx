@@ -2,6 +2,19 @@ import * as React from "react";
 import { Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { gateScan, type ScanGateState, type ScanOutcome } from "../lib/scan-loop";
+import { normalizeScanCode } from "../lib/barcode-normalize";
+import {
+  continuousFrameScanned,
+  createContinuousScanState,
+  createSteadyReadState,
+  isWithinAimBox,
+  scanSettled,
+  trackSteadyRead,
+  type AimBoxRect,
+  type BarcodeBoundsLike,
+  type ContinuousScanState,
+  type SteadyReadState,
+} from "@routeflow/scanning";
 import {
   completeResolve,
   createPendingBuffer,
@@ -26,6 +39,19 @@ export interface ScanCameraProps {
   active?: boolean;
   /** Keep decoding after a scan. Single-shot latches after the first code. */
   continuous?: boolean;
+  /**
+   * OPT-IN aim assist (owner ruling 2026-09-24, hybrid ruling 2026-09-29): only a code whose centre is inside `aimBox`
+   * counts, and only once the SAME value is held for several frames (steady-read). DEFAULT OFF: the operator / customer
+   * callers of this shared camera stay byte-identical; only the driver screen opts in. Applies to continuous AND
+   * single-shot (steady-read + aim box run before the one-shot latch).
+   */
+  aimAssist?: boolean;
+  /**
+   * The rect a barcode's centre must fall inside when `aimAssist` is on, in expo-camera's own `bounds` space
+   * (view-relative pixels). OMITTED means no aim-box filtering (steady-read still applies): a host that draws no box must
+   * not enforce an invisible one — a host that draws one passes the EXACT rect it draws.
+   */
+  aimBox?: AimBoxRect | null;
   style?: StyleProp<ViewStyle>;
   /** Web-only: rendered in the manual-entry fallback card. Ignored here. */
   footer?: React.ReactNode;
@@ -71,9 +97,14 @@ export function ScanCamera({
   onResolvingChange,
   active = true,
   continuous = false,
+  aimAssist = false,
+  aimBox,
   style,
 }: ScanCameraProps) {
   const firedRef = React.useRef(false);
+  // aimAssist only: the composed continuous engine (aim box + steady-read + gate + buffer) and the single-shot streak.
+  const assistRef = React.useRef<ContinuousScanState>(createContinuousScanState());
+  const steadyRef = React.useRef<SteadyReadState>(createSteadyReadState());
   const gateRef = React.useRef<ScanGateState | null>(null);
   // Replaces the old drop-not-queue `busyRef` boolean (F30 / R2, REG-B192): a
   // bounded, deduped queue behind the one code currently resolving, so a
@@ -112,11 +143,41 @@ export function ScanCamera({
     }
   }, []);
 
-  const handleBarcodeScanned = ({ data }: { data: string }) => {
+  /** aimAssist + continuous: same resolve/drain cycle, but through the composed engine's buffer. */
+  const resolveAssisted = React.useCallback(async (code: string) => {
+    try {
+      onOutcomeRef.current?.(await onScannedRef.current(code));
+    } finally {
+      const result = scanSettled(assistRef.current);
+      assistRef.current = result.next;
+      if (!result.next.buffer.isResolving) onResolvingChangeRef.current?.(false);
+      if (result.startResolving) void resolveAssisted(result.startResolving);
+    }
+  }, []);
+
+  const handleBarcodeScanned = ({ data, bounds }: { data: string; bounds?: BarcodeBoundsLike }) => {
     if (!continuous) {
       if (firedRef.current) return;
+      if (aimAssist) {
+        if (aimBox && !isWithinAimBox(bounds, aimBox)) return;
+        const seen = trackSteadyRead(steadyRef.current, data, Date.now());
+        steadyRef.current = seen.next;
+        if (!seen.steady) return;
+      }
       firedRef.current = true;
       onScannedRef.current(data);
+      return;
+    }
+    if (aimAssist) {
+      const step = continuousFrameScanned(assistRef.current, data, Date.now(), {
+        bounds,
+        aimBox,
+        candidatesOf: normalizeScanCode,
+      });
+      assistRef.current = step.next;
+      if (step.indicator === "on") onResolvingChangeRef.current?.(true);
+      if (step.indicator === "off") onResolvingChangeRef.current?.(false);
+      if (step.startResolving) void resolveAssisted(step.startResolving);
       return;
     }
     // Every frame reaches the gate now — nothing is skipped while a previous
