@@ -1,5 +1,6 @@
 import {
   countCreditableInvoices,
+  lineTakeRefusal,
   loadOrderPool,
   lockOrderPoolRows,
   pooledRefundRefusal,
@@ -205,6 +206,51 @@ describe("B947 order pool", () => {
     expect(pooledTakeRefusal(pool, "pm", { amount: 1, qty: 25 })).toMatchObject({
       remainingQty: 24,
     });
+  });
+
+  it("OPUS r4: no round3 before the pieces multiply: 2 boxes x12 with 2 pieces returned inline leaves 22.0 pieces, so taking 22 passes and 23 is refused", async () => {
+    const boxed = { ...line("r-box", "pr", 240, 2), unitsPerBox: 12 };
+    const pool = await loadOrderPool(
+      fakeDb({
+        invoices: [
+          { id: "inv-r1", items: [boxed] },
+          { id: "inv-r2", items: [line("r-other", "po")] },
+        ],
+        inline: [{ sourceInvoiceItemId: "r-box", qty: 2, subtotal: 20 }], // 2 PIECES = 2/12 box (0.16666...)
+      }).db,
+      "ord-1",
+    );
+    expect(pooledTakeRefusal(pool, "pr", { amount: 1, qty: 22 })).toBeNull(); // the old code computed 21.996 and refused
+    expect(pooledTakeRefusal(pool, "pr", { amount: 1, qty: 23 })).toMatchObject({
+      qtyUnit: "pieces",
+    });
+  });
+
+  it("OPUS r4: an amount-only credit note stores qty 0.167 (3 decimals): the tolerance scales by pieces-per-qty, so 22 passes and 23 is refused", async () => {
+    const boxed = { ...line("r-box", "pr", 240, 2), unitsPerBox: 12 };
+    const pool = await loadOrderPool(
+      fakeDb({
+        invoices: [
+          { id: "inv-r1", items: [boxed] },
+          { id: "inv-r2", items: [line("r-other", "po")] },
+        ],
+        cnItems: [{ invoiceId: "inv-r1", invoiceItemId: "r-box", amount: 20, qty: 0.167 }],
+      }).db,
+      "ord-1",
+    );
+    expect(pooledTakeRefusal(pool, "pr", { amount: 1, qty: 22 })).toBeNull(); // room 21.996 + tolerance 0.012
+    expect(pooledTakeRefusal(pool, "pr", { amount: 1, qty: 23 })).not.toBeNull();
+  });
+
+  it("OPUS r4 N2: the refusal states its qty unit: the pool says pieces, the per-invoice take says line", async () => {
+    const pool = await loadOrderPool(fakeDb({ invoices: [X, Y] }).db, "ord-1");
+    expect(pooledTakeRefusal(pool, "pa", { amount: 500 })).toMatchObject({ qtyUnit: "pieces" });
+    expect(
+      lineTakeRefusal({ id: "l", productId: "pa", subtotal: 100, qty: 1 }, new Map(), {
+        qty: 2,
+        amount: 10,
+      }),
+    ).toMatchObject({ qtyUnit: "line" });
   });
 
   it("qty binds a credit note take only when one is GIVEN: 10 pieces of a fully-credited product at $0.01 is refused", async () => {

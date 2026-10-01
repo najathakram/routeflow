@@ -72,6 +72,8 @@ export interface RefundRefusal {
   remainingAmount: number;
   requestedQty: number;
   remainingQty: number;
+  /** The unit of the two qty fields: "line" = the invoice line's own axis (a boxed line counts boxes); "pieces" = the order pool. */
+  qtyUnit: "line" | "pieces";
 }
 /** "refund": REFUSE, never clip. "count": the legacy history term, which clips to what the lines have left. */
 export type PlanMode = "refund" | "count";
@@ -128,6 +130,7 @@ export function planProductRefund(
       remainingAmount: roomAmount,
       requestedQty: wanted,
       remainingQty: roomQty,
+      qtyUnit: "line",
     },
   });
   if (mode === "refund" && (wanted > roomQty + EPS || price > roomAmount + tol)) return refuse();
@@ -191,6 +194,7 @@ export function lineTakeRefusal(
     requestedAmount: roundMoney(take.amount),
     remainingAmount,
     requestedQty: round3(take.qty),
+    qtyUnit: "line",
     remainingQty,
   };
 }
@@ -413,11 +417,17 @@ export function pooledTakeRefusal(
   const mine = pool.lines.filter((l) => l.productId === productId && l.qty > 0);
   if (mine.length === 0) return null;
   let remainingQty = 0; // pieces
+  let qtyTol = 0; // pieces: EPS on each line's own axis, scaled by that line's pieces-per-qty
   let remainingAmount = 0;
   let priorItems = 0;
   for (const l of mine) {
     const d = pool.credited.get(l.id) ?? { amount: 0, qty: 0 };
-    remainingQty += Math.max(0, round3(l.qty - d.qty)) * (l.piecesPerQty ?? 1);
+    const ppq = l.piecesPerQty ?? 1;
+    // NO round3 before the multiply: rounding a line's room to 3 decimals and THEN scaling by pieces-per-qty grows the error
+    // (1.8333 boxes rounds to 1.833 = 21.996 pieces, not 22). Stored credit qty is itself rounded to 3 decimals, so the
+    // tolerance scales the same way: EPS per line, times that line's pieces-per-qty.
+    remainingQty += Math.max(0, l.qty - d.qty) * ppq;
+    qtyTol += EPS * ppq;
     remainingAmount += l.subtotal > EPS ? Math.max(0, roundMoney(l.subtotal - d.amount)) : 0;
     priorItems += d.items ?? 0;
   }
@@ -425,7 +435,7 @@ export function pooledTakeRefusal(
   remainingAmount = roundMoney(remainingAmount);
   const tol = CENT + Math.min(0.04, 0.005 * priorItems);
   const moneyOver = take.amount > remainingAmount + tol;
-  const qtyOver = take.qty != null && take.qty > remainingQty + EPS;
+  const qtyOver = take.qty != null && take.qty > remainingQty + qtyTol;
   if (!moneyOver && !qtyOver) return null;
   return {
     productId,
@@ -433,6 +443,7 @@ export function pooledTakeRefusal(
     remainingAmount,
     requestedQty: round3(take.qty ?? 0),
     remainingQty,
+    qtyUnit: "pieces",
   };
 }
 

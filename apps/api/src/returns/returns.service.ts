@@ -717,6 +717,7 @@ export class ReturnsService {
             remaining: refused.remainingAmount,
             requestedQty: refused.requestedQty,
             remainingQty: refused.remainingQty,
+            qtyUnit: refused.qtyUnit,
           });
       }
       pooledRefund = [...returnedByProduct].map(([productId, qty]) => ({ productId, qty }));
@@ -782,6 +783,7 @@ export class ReturnsService {
           remaining: refusal.remainingAmount,
           requestedQty: refusal.requestedQty,
           remainingQty: refusal.remainingQty,
+          qtyUnit: refusal.qtyUnit,
         });
       }
       out.push(...items);

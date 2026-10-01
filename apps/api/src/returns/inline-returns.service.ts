@@ -649,6 +649,7 @@ export class InlineReturnsService {
             remaining: refusal.remainingAmount,
             requestedQty: refusal.requestedQty,
             remainingQty: refusal.remainingQty,
+            qtyUnit: refusal.qtyUnit,
           });
         }
       }
@@ -693,6 +694,7 @@ export class InlineReturnsService {
             remaining: refusal.remainingAmount,
             requestedQty: refusal.requestedQty,
             remainingQty: refusal.remainingQty,
+            qtyUnit: refusal.qtyUnit,
           });
       }
     }

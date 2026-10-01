@@ -27,6 +27,7 @@ let orderOf = (id: string): string => (id === "inv-a-first" ? "ord-2" : "ord-1")
 
 function setup(opts: {
   lumpOfA: boolean;
+  lump?: { productId: string; qty: number };
   invoices?: Array<{ id: string; items: any[] }>;
   takes?: Array<{ sourceInvoiceItemId: string; pieces: number; subtotal: number }>;
 }) {
@@ -69,7 +70,11 @@ function setup(opts: {
       ),
     },
     return: {
-      findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pa", qty: 1 }] }]),
+      findMany: jest
+        .fn()
+        .mockResolvedValue([
+          { items: [{ productId: opts.lump?.productId ?? "pa", qty: opts.lump?.qty ?? 1 }] },
+        ]),
     },
   };
   const svc: any = Object.create(InlineReturnsService.prototype);
@@ -141,6 +146,32 @@ describe("InlineReturnsService.assertWithinLineHeadroom: B947 the order pool (th
       ],
     });
     await expect(run()).resolves.toBeUndefined();
+  });
+
+  it("OPUS r4 N1: with pieces-per-qty > 1 the take reaches the pool IN PIECES (removing the conversion in the take OR in the room turns this red)", async () => {
+    // Product pm: a 2-BOX line (x12 = 24 pieces) on X and a 12-PIECE line on Y. An itemless refund lump of pm (on Y) is
+    // attributed over the combined lines by the legacy term: it fills the box line and 10 pieces of Y's line, leaving 2 pieces in
+    // the pool. The take (1 box = 12 pieces, sourced to X's box line) FITS per-invoice (X cannot see the lump on Y) but not the
+    // pool. Dividing the take by its line's pieces-per-qty (the pre-N2 shape) would compare 1 to 2 and pass.
+    const mBox = { ...row("m-box", "pm"), subtotal: 240, qty: 2, unitsPerBox: 12 };
+    const mPcs = { ...row("m-pcs", "pm"), subtotal: 60, qty: 12 };
+    const MX = { id: "inv-mx", items: [mBox] };
+    const MY = { id: "inv-my", items: [mPcs] };
+    const { run } = setup({
+      lumpOfA: true,
+      lump: { productId: "pm", qty: 12 },
+      invoices: [MX, MY],
+      takes: [{ sourceInvoiceItemId: "m-box", pieces: 12, subtotal: 5 }],
+    });
+    const err = await run().catch((e: any) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: "RETURN_REFUND_OVER_LINE_HEADROOM",
+      productId: "pm",
+      qtyUnit: "pieces",
+      requestedQty: 12,
+    });
+    expect(err.getResponse().remainingQty).toBeLessThan(12);
   });
 
   it("the same inline return with nothing credited passes", async () => {
