@@ -10,6 +10,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { roundMoney } from "@routeflow/pricing";
 import { TobaccoReportPdf } from "./tobacco-report-pdf";
 import type { TobaccoReportRow, TobaccoReportTotals } from "./tobacco-report.types";
+import { csvCell } from "../common/csv";
 
 const REAL_INVOICE_STATUSES = { notIn: ["DRAFT", "VOID", "WRITTEN_OFF"] as any };
 
@@ -279,10 +280,8 @@ export class TobaccoReportService {
   }
 
   private buildCsv(rows: TobaccoReportRow[], totals: TobaccoReportTotals, period: string): string {
-    const esc = (v: string | null) => {
-      const s = v ?? "";
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
+    // SA-629: the tobacco report is an audit artifact: verbatim cells (no formula guard).
+    const esc = (v: string | null) => csvCell(v ?? "", { guard: false });
     const lines = [
       `Monthly Tobacco Report,${period}`,
       "Product,SKU,Unit,Qty Purchased,Purchase Value,Qty Sold,Sales Value,Tax Collected,Ending Stock Qty,Ending Stock Value",

@@ -386,6 +386,50 @@ describe("CustomersService", () => {
       );
     });
 
+    it("B953: user-typed text that a spreadsheet would run as a formula is prefixed with an apostrophe", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          businessName: '=HYPERLINK("http://evil.example","x")',
+          contactName: "@SUM(1+1)",
+          email: "-cmd@example.com",
+          phone: "+1 555 0100",
+          customerType: "WHOLESALE",
+          user: { status: "ACTIVE" },
+          invoices: [],
+          advancePayments: [],
+        },
+      ]);
+
+      const csv = await service.exportCustomers({} as any);
+      const row = csv.split("\n")[1];
+
+      expect(row).toContain(`"'=HYPERLINK(""http://evil.example"",""x"")"`);
+      expect(row).toContain("'@SUM(1+1)");
+      expect(row).toContain("'-cmd@example.com");
+      expect(csv.split("\n")[0]).toBe(
+        "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits",
+      );
+    });
+
+    it("B953: ordinary text and the money columns are untouched (a negative amount is never prefixed)", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          businessName: "Acme, Inc.",
+          contactName: null,
+          email: "buyer@acme.example",
+          phone: null,
+          customerType: "RETAIL",
+          user: null,
+          invoices: [],
+          advancePayments: [{ balance: "-12.50" }],
+        },
+      ]);
+
+      const row = (await service.exportCustomers({} as any)).split("\n")[1];
+
+      expect(row.startsWith(`"Acme, Inc.",,buyer@acme.example,,RETAIL,,0.00,-12.50`)).toBe(true);
+    });
+
     it("REG-B170: exports removed customers when removed=1 (export what the screen shows)", async () => {
       await service.exportCustomers({ removed: "1" } as any);
 

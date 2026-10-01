@@ -73,6 +73,7 @@ import {
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { csvCell } from "../common/csv";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -5740,12 +5741,8 @@ export class InvoicesService {
       },
     });
 
-    const escape = (v: any) => {
-      const s = v == null ? "" : String(v);
-      return s.includes(",") || s.includes('"') || s.includes("\n")
-        ? `"${s.replace(/"/g, '""')}"`
-        : s;
-    };
+    // B953: the canonical guarded cell (common/csv.ts); a plain decimal amount ("-12.50") is exempt.
+    const escape = (v: any) => csvCell(v == null ? "" : String(v));
 
     const header =
       "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";

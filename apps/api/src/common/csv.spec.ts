@@ -43,6 +43,10 @@ describe("common/csv", () => {
       expect(csvCell('a,"b"', { guard: false })).toBe('"a,""b"""');
       expect(csvCell("a\nb", { guard: false })).toBe('"a\nb"');
     });
+    it("quotes exactly like the legacy regulated/tobacco escapers: comma, quote, LF only (a bare CR is NOT quoted)", () => {
+      expect(csvCell("a\rb", { guard: false })).toBe("a\rb");
+      expect(csvCell("a\r\nb", { guard: false })).toBe('"a\r\nb"');
+    });
     it("null/undefined/numbers behave as in guarded mode", () => {
       expect(csvCell(null, { guard: false })).toBe("");
       expect(csvCell(-5, { guard: false })).toBe("-5");

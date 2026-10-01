@@ -35,10 +35,13 @@ export function csvCell(
   const guard = options.guard !== false;
   const safe =
     guard && FORMULA_LEAD.test(value) && !PLAIN_DECIMAL.test(value) ? `'${value}` : value;
-  return /[",\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  // Verbatim mode quotes on comma, quote and LF only: byte-identical to the legacy regulated and
+  // tobacco escapers it replaces (a bare CR was never quoted there).
+  const needsQuotes = guard ? /[",\n\r]/.test(safe) : /[",\n]/.test(safe);
+  return needsQuotes ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
 /** One CSV record: cells comma-joined and terminated with CRLF. */
 export function csvRow(cells: (string | number | boolean | null | undefined)[]): string {
-  return `${cells.map(csvCell).join(",")}\r\n`;
+  return `${cells.map((c) => csvCell(c)).join(",")}\r\n`;
 }

@@ -6562,6 +6562,29 @@ describe("InvoicesService", () => {
       });
     });
 
+    it("B953: exportPayments guards formula-leading text but never a negative amount", async () => {
+      prisma.invoicePayment.findMany.mockResolvedValue([
+        {
+          paymentNumber: "PAY-0003",
+          paidAt: new Date("2026-07-03T00:00:00.000Z"),
+          settledAt: null,
+          method: "CHECK",
+          reference: '=HYPERLINK("http://evil.example","x")',
+          bankCharges: -1,
+          amount: -12.5,
+          status: "REFUNDED",
+          invoice: { invoiceNumber: "INV-0003", customer: { businessName: "@Acme" } },
+        },
+      ]);
+
+      const row = (await service.exportPayments({})).split("\n")[1];
+
+      expect(row).toContain("'@Acme");
+      expect(row).toContain(`"'=HYPERLINK(""http://evil.example"",""x"")"`);
+      // Bank Charges and Amount: plain decimals, never prefixed.
+      expect(row).toContain(",-1.00,-12.50,REFUNDED");
+    });
+
     it("exportPayments carries a Bank Date column right after Date", async () => {
       prisma.invoicePayment.findMany.mockResolvedValue([
         {

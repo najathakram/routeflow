@@ -78,6 +78,7 @@ import * as compliance from "./customer-compliance-input";
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { csvCell } from "../common/csv";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1831,13 +1832,8 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
+    // B953: the canonical guarded cell (common/csv.ts) — names, emails and phones are user-typed.
+    const escCsv = (val: string | null | undefined) => csvCell(val);
 
     const header =
       "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
