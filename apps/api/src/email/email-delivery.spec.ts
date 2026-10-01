@@ -9,7 +9,7 @@ describe("EMAIL_KINDS", () => {
   it("includes the WS4 kinds", () => {
     const kinds: readonly string[] = Array.isArray(EMAIL_KINDS)
       ? EMAIL_KINDS
-      : Object.values(EMAIL_KINDS as Record<string, string>);
+      : Object.values(EMAIL_KINDS as unknown as Record<string, string>);
     for (const k of [
       "STAFF_NEW_ORDER",
       "BUYER_ORDER_EDITED",

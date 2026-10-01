@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import type { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { LeaderCron } from "../common/cron-lock";
 
@@ -39,7 +40,7 @@ export class EmailDeliveryPruneService {
           },
           { tenantId, entityType: "Invoice", createdAt: { lt: invoiceCutoff } },
         ];
-        for (const w of where) deleted += await this.deleteAll(w);
+        for (const w of where) deleted += await this.deleteAll(tenantId, w);
       } catch (err) {
         this.logger.warn(`EmailDelivery prune failed for a tenant: ${(err as Error)?.message}`);
       }
@@ -51,8 +52,10 @@ export class EmailDeliveryPruneService {
    * Truly bounded: select at most BATCH ids (`take`), delete exactly those (`id IN`), repeat
    * until the select comes back empty. Every statement carries the tenantId.
    */
-  private async deleteAll(where: Record<string, unknown>): Promise<number> {
-    const tenantId = where.tenantId;
+  private async deleteAll(
+    tenantId: string,
+    where: Prisma.EmailDeliveryWhereInput,
+  ): Promise<number> {
     let total = 0;
     for (;;) {
       const rows = await this.prisma.emailDelivery.findMany({
