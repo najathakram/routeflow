@@ -272,8 +272,8 @@ const markOurs = (dir: string, origin: string): void => {
  * under the clone lock. The clone is made in a private sibling dir and renamed into place after
  * its ownership file (.git/ctl-owned = the origin) and completion marker are written, so a dir
  * that is not ours is never removed, reset or cleaned: it is refused (exit 5) untouched. An
- * existing dir is adopted only when its origin matches; our own broken half-clone (ctl-owned but
- * unusable) is removed and redone.
+ * existing dir is refused unless it carries our ctl-owned stamp; our own broken half-clone is
+ * removed and redone.
  */
 export async function ensureClone(env: Env): Promise<string> {
   checkEnv(env);
@@ -285,14 +285,15 @@ export async function ensureClone(env: Env): Promise<string> {
       if (fs.existsSync(dir)) {
         const entries = fs.readdirSync(dir);
         if (entries.length > 0) {
-          if (!fs.existsSync(path.join(dir, ".git"))) throw notOurs(dir);
-          const originOk = originOf(dir) === env.origin;
-          const usable = cloneUsable(dir, env.stateBranch);
-          if (originOk && usable) {
-            markOurs(dir, env.origin); // complete clone of this origin (incl. pre-marker ones)
+          // only a dir the ctl created and stamped is ever touched: no adoption, even of a
+          // same-origin clone (its uncommitted work would be reset and cleaned)
+          if (!fs.existsSync(path.join(dir, ".git")) || !ownerFileMatches(dir, env.origin)) {
+            throw notOurs(dir);
+          }
+          if (originOf(dir) === env.origin && cloneUsable(dir, env.stateBranch)) {
+            markOurs(dir, env.origin); // ours, complete, only the marker was missing
             return;
           }
-          if (!ownerFileMatches(dir, env.origin)) throw notOurs(dir);
           fs.rmSync(dir, { recursive: true, force: true }); // our own crashed half-clone
         } else {
           fs.rmdirSync(dir);

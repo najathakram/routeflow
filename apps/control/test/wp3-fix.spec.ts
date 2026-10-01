@@ -438,16 +438,38 @@ describe("ensureClone never touches a dir the ctl did not create", () => {
     expect(fs.readFileSync(path.join(env.cloneDir, "thesis.docx"), "utf8")).toBe("years of work");
   });
 
-  it("a pre-marker clone with the MATCHING origin is adopted (ctl-owned written), parked lines survive", async () => {
+  it("a full SAME-origin clone without ctl-owned is refused, dirty edit and untracked file byte-identical", async () => {
     world.seedBranch(STATE_BRANCH, baseState(2));
     const env = world.env("a");
-    await SB.appendAndPush(env, "lane-u", note("first"));
-    fs.rmSync(path.join(env.cloneDir, ".git", "ctl-clone-complete"));
-    fs.rmSync(path.join(env.cloneDir, ".git", "ctl-owned"), { force: true });
-    await SB.ensureClone(env);
-    expect(fs.readFileSync(path.join(env.cloneDir, ".git", "ctl-owned"), "utf8").trim()).toBe(
-      env.origin,
-    );
+    git(world.root, [
+      "clone",
+      "-q",
+      "--single-branch",
+      "--branch",
+      STATE_BRANCH,
+      world.originUrl,
+      env.cloneDir,
+    ]);
+    fs.appendFileSync(path.join(env.cloneDir, "events", "lane-u.jsonl"), "uncommitted edit\n");
+    fs.writeFileSync(path.join(env.cloneDir, "precious.txt"), "untracked work");
+    const snap = () =>
+      [
+        git(env.cloneDir, ["rev-parse", "HEAD"]).trim(),
+        fs.readFileSync(path.join(env.cloneDir, "events", "lane-u.jsonl"), "utf8"),
+        fs.readFileSync(path.join(env.cloneDir, "precious.txt"), "utf8"),
+      ].join("|");
+    const before = snap();
+    for (const call of [
+      () => SB.appendAndPush(env, "lane-u", note("x")),
+      () => SB.ensureClone(env),
+      () => CP.compact(env),
+    ]) {
+      const err = await fail(call());
+      expect(codeOf(err)).toBe(5);
+      expect(String(err.message)).toMatch(OWNED_MSG);
+      expect(snap()).toBe(before);
+    }
+    expect(fs.existsSync(path.join(env.cloneDir, ".git", "ctl-owned"))).toBe(false);
   });
 
   it("a fresh clone records its origin in .git/ctl-owned", async () => {
