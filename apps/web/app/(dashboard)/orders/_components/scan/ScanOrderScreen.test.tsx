@@ -107,6 +107,7 @@ const scan = async (code: string, frame?: ScanFrame) => {
 describe("ScanOrderScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear(); // the scan mode is a per-device setting
     cameraState = { error: null, torchAvailable: false, torchOn: false };
   });
 
@@ -1011,6 +1012,126 @@ describe("ScanOrderScreen", () => {
       setup({ resolveCode: resolve });
       await scan("111");
       await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  describe("Hold to scan (owner ruling 2026-09-24: OPTIONAL per-device mode, default Continuous)", () => {
+    const useHoldMode = () => localStorage.setItem("routeflow.scanMode", "hold");
+    const holdButton = () => screen.getByRole("button", { name: "Hold to scan" });
+
+    it("default Continuous: no hold button, and a steady scan resolves as before", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      expect(screen.queryByRole("button", { name: "Hold to scan" })).not.toBeInTheDocument();
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+
+    it("the scan screen carries a Scan mode control: choosing Hold persists it and shows the round button", async () => {
+      setup();
+      fireEvent.click(screen.getByRole("button", { name: "Hold to scan mode" }));
+      expect(localStorage.getItem("routeflow.scanMode")).toBe("hold");
+      expect(holdButton()).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Continuous mode" }));
+      expect(localStorage.getItem("routeflow.scanMode")).toBe("continuous");
+      expect(screen.queryByRole("button", { name: "Hold to scan" })).not.toBeInTheDocument();
+    });
+
+    it("hold mode, NOT holding: frames are ignored (nothing resolves, however long)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("hold mode, WHILE holding (pointer): a steady code resolves; after release frames are ignored again", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+      fireEvent.pointerUp(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("222");
+      expect(resolve).toHaveBeenCalledTimes(1);
+    });
+
+    it("a RELEASE clears the streak: 2 frames, release, re-grab, 1 frame is NOT a scan", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.pointerUp(holdButton());
+      fireEvent.pointerDown(holdButton());
+      await act(async () => detect("111"));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("pointer cancel / leave, window blur and a hidden tab all release the hold", async () => {
+      useHoldMode();
+      setup();
+      for (const release of [
+        () => fireEvent.pointerCancel(holdButton()),
+        () => fireEvent.pointerLeave(holdButton()),
+        () => fireEvent.blur(window),
+        () => {
+          Object.defineProperty(document, "visibilityState", {
+            value: "hidden",
+            configurable: true,
+          });
+          fireEvent(document, new Event("visibilitychange"));
+          Object.defineProperty(document, "visibilityState", {
+            value: "visible",
+            configurable: true,
+          });
+        },
+      ]) {
+        fireEvent.pointerDown(holdButton());
+        expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+        release();
+        expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      }
+    });
+
+    it("keyboard: Space / Enter hold while down and release on keyup", () => {
+      useHoldMode();
+      setup();
+      for (const key of [" ", "Enter"]) {
+        fireEvent.keyDown(holdButton(), { key });
+        expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+        fireEvent.keyUp(holdButton(), { key });
+        expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      }
+    });
+
+    it("the hold button is a real round target (>= 56px) at the bottom centre of the camera strip", () => {
+      useHoldMode();
+      setup();
+      const btn = holdButton();
+      expect(btn.className).toMatch(/h-14/);
+      expect(btn.className).toMatch(/w-14/);
+      expect(btn.className).toMatch(/rounded-full/);
+      expect(btn.className).toMatch(/left-1\/2/);
+      expect(btn.className).toMatch(/bottom-/);
+    });
+
+    it("manual entry is unaffected by the mode (a deliberate typed code always works)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.click(screen.getByRole("button", { name: /Enter code manually/ }));
+      const input = await screen.findByRole("textbox");
+      fireEvent.change(input, { target: { value: "999" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(resolve).toHaveBeenCalledWith("999", expect.anything()));
     });
   });
 });
