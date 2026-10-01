@@ -70,7 +70,7 @@ function scanLevel<T extends ScanMatchable & { unitsPerBox?: number | null }>(
 }
 
 /** `{ startOnDefault: true }` for a shared code, else undefined (the code decides the level). */
-function scanAcceptOpts<T extends ScanMatchable>(
+export function scanAcceptOpts<T extends ScanMatchable>(
   code: string,
   product: T,
 ): ScanAcceptOpts | undefined {

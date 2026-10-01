@@ -15,7 +15,12 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
-import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import {
+  rememberedPricePrefill,
+  toNumber,
+  type LineState,
+  type Product,
+} from "../lib/cart-line-state";
 import {
   computeOrderTotal,
   lineUnitFor,
@@ -38,10 +43,15 @@ import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { isSharedScanCode, resolveScanSellLevel } from "@routeflow/scanning";
+import { resolveScanSellLevel } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
 import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
-import { makeScanHandler, runWedgeSubmit, type ScanAcceptOpts } from "../lib/scan-ladder";
+import {
+  makeScanHandler,
+  runWedgeSubmit,
+  scanAcceptOpts,
+  type ScanLadderDeps,
+} from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
@@ -760,29 +770,16 @@ function ProductPickView({
    * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
    * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (
-    id: string,
-    productSnapshot?: Product,
-    level: SellLevel = "BOX",
-    startOnDefault?: boolean,
-  ) => {
-    const p = productSnapshot ?? productById.get(id);
+  const addOne = (id: string, snap?: Product, level: SellLevel = "BOX", dflt?: boolean) => {
+    const p = snap ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
-    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
-    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
-    // pre-fills — never over a SPECIAL tier price, which is already the customer's
-    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
-    const histEntry = priceHistory?.[id];
-    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
-    const tierPrice = p ? tierPriceFor(p) : 0;
-    const isSpecial = isSpecialTier(effectiveTierFor(id));
-    const prefill =
-      !isSpecial &&
-      histEntry != null &&
-      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
-        ? histEntry.lastPrice
-        : undefined;
+    const prefill = rememberedPricePrefill(
+      priceHistory?.[id],
+      p ? toNumber(p.pricePerUnit) : 0,
+      p ? tierPriceFor(p) : 0,
+      isSpecialTier(effectiveTierFor(id)),
+    );
     setItems((m) => {
       const isNew = !m[id];
       const prev: LineState = m[id] ?? { qty: 0 };
@@ -793,7 +790,7 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (isNew && startOnDefault) line.startOnDefaultUnit = line.qty;
+      if (isNew && dflt) line.startOnDefaultUnit = line.qty;
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
@@ -1017,8 +1014,7 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, level: SellLevel, opts?: ScanAcceptOpts): ScanOutcome => {
-    // SA-626: only a SHARED code starts the new line on the default selling unit.
+  const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
     addOne(product.id, product, level, opts?.startOnDefault);
     bumpScanned(product.id);
     clearSearch();
@@ -1034,15 +1030,11 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (
-    product: Product,
-    level: SellLevel = "BOX",
-    opts?: ScanAcceptOpts,
-  ): ScanOutcome => {
+  const acceptScannedProduct: ScanLadderDeps<Product>["accept"] = (product, level, ao) => {
     const label = items[product.id]?.unitLabel;
-    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, opts);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, ao);
     const onYes = () => {
-      const o = finishAccept(product, level, opts);
+      const o = finishAccept(product, level, ao);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1136,18 +1128,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const levels = levelsForScan(code, match);
-    const level = resolveScanSellLevel(match, levels);
+    const level = resolveScanSellLevel(match, levelsForScan(code, match));
     // Consume the nonce FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle of the same attempt. A
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
     if (!scanGuardRef.current.offer(code, match, level)) return;
-    const outcome = acceptScannedProduct(
-      match,
-      level,
-      isSharedScanCode(levels) ? { startOnDefault: true } : undefined,
-    );
+    const outcome = acceptScannedProduct(match, level, scanAcceptOpts(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -2422,9 +2409,7 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          // SA-626: deliberately NO start-on-default here. The code only substring-matched several rows (it is
-          // not an exact code of the chosen product), so it carries no level: a manual pick adds like a tap-free BOX.
-          acceptScannedProduct(p as unknown as Product);
+          acceptScannedProduct(p as unknown as Product, "BOX");
         }}
       />
 
