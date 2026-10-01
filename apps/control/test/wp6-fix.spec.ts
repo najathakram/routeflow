@@ -1,4 +1,7 @@
-/** WP6 fix round 1: renderer/CSS regressions found in Opus review. */
+/**
+ * WP6 fix round 1: renderer/CSS regressions found in Opus review (wording updated for the
+ * plain-language pass 2026-09-30; every guard below still guards what it did).
+ */
 import * as fs from "fs";
 import * as path from "path";
 
@@ -47,16 +50,19 @@ describe("H2 overlap list is hidden only when a matrix is present", () => {
 });
 
 describe("LOW renderer items", () => {
-  it("h2 is not inside a summary; folds use a plain summary label", () => {
+  it("h2 is not inside a summary; folds use a plain Hide / Show summary", () => {
     const h = render(base());
     expect(h).not.toMatch(/<summary[^>]*>\s*<h2/);
     expect(h).toMatch(/<h2 id="h-prs"[\s\S]*<details class="fold"[^>]*><summary>/);
+    expect(h).toContain(
+      '<summary><span class="when-open">Hide</span><span class="when-closed">Show</span> ',
+    );
   });
   it("badge() escapes register values exactly once", () => {
     const s = base();
     s.tasks["F-2"].ref.register.release = "a&b";
     const h = render(s);
-    expect(h).toContain('title="register: a&amp;b"');
+    expect(h).toContain('title="register: a&amp;b · owner#3"');
     expect(h).not.toContain("a&amp;amp;b");
   });
   it("timeline verbs use own properties only", () => {
@@ -74,23 +80,28 @@ describe("LOW renderer items", () => {
 });
 
 describe("design round", () => {
-  it("queue action is an icon-only star with the aria-label", () => {
+  it("queue action is a Make next button whose aria-label names the task and the lane", () => {
     const q = panel(render(base()), "queue");
-    expect(q).toMatch(/aria-label="Set F-2 as next">★<\/button>/);
+    expect(q).toMatch(/aria-label="Make F-2 the next task for lane-u">Make next<\/button>/);
+    const s = base();
+    s.tasks["F-2"].lane = { value: null, source: "register", ref: null };
+    expect(panel(render(s), "queue")).toContain('aria-label="Make F-2 the next task for any lane"');
   });
-  it("queue table cells show only the pencil glyph; full text lives in title", () => {
+  it("queue table cells show only the pencil glyph; full words live in title", () => {
     const q = panel(render(base()), "queue");
     expect(q).toContain("✎");
-    expect(text(q)).not.toMatch(/overridden/);
-    expect(q).toMatch(/title="[^"]*overridden · owner#3/);
+    expect(text(q)).not.toMatch(/Changed by you/);
+    expect(q).toMatch(/title="Changed by you · register: R1 · owner#3"/);
   });
-  it("768 queue shows exactly 5 columns (others are c-opt)", () => {
+  it("768 queue shows exactly 4 columns (Priority, Task, Lane, Action; the rest are c-opt)", () => {
     const q = panel(render(base()), "queue");
     const head = q.slice(q.indexOf("<thead"), q.indexOf("</thead>"));
-    const cols = [...head.matchAll(/<th scope="col"([^>]*)>/g)].filter(
+    const cols = [...head.matchAll(/<th scope="col"([^>]*)>([\s\S]*?)<\/th>/g)].filter(
       (m) => !m[1].includes("c-opt"),
     );
-    expect(cols).toHaveLength(5);
+    expect(cols.map((m) => text(m[2]).trim())).toEqual(["Priority", "Task", "Lane", "Action"]);
+    const opt = [...head.matchAll(/<th scope="col" class="c-opt">([^<]*)</g)].map((m) => m[1]);
+    expect(opt).toEqual(["Release", "Size", "Why it is here"]);
   });
   it("css: nowrap on buttons and table badges; >=1400 gives queue a wide track, PRs a full row", () => {
     expect(css).toMatch(/\.btn[^{]*\{[^}]*white-space:\s*nowrap/);
@@ -139,13 +150,18 @@ describe("round 2: lookup maps and fold names", () => {
     s.piggyback["lane-u"][0].severity = "constructor";
     const h = render(s);
     expect(h).not.toMatch(/function|native code|\[object/);
-    expect(h).toContain("CI ? constructor");
-    expect(h).toMatch(/pill low"><span aria-hidden="true">·<\/span> constructor/);
+    expect(h).toContain("Checks: constructor");
+    expect(h).toContain('<span class="pill low">Constructor</span>');
+    expect(h).toContain('<span aria-hidden="true">○</span> constructor'); // heartbeat falls back to the value
   });
-  it("each folded panel summary has a unique Show/hide <title> name", () => {
+  it("each folded panel summary has a unique Hide / Show name for screen readers", () => {
     const h = render(base());
-    const names = [...h.matchAll(/<summary>(Show\/hide [^<]+)<\/summary>/g)].map((m) => m[1]);
-    expect(names).toContain("Show/hide Open PRs");
+    const names = [
+      ...h.matchAll(
+        /<summary><span class="when-open">Hide<\/span><span class="when-closed">Show<\/span> <span class="sr">([^<]+)<\/span><\/summary>/g,
+      ),
+    ].map((m) => m[1]);
+    expect(names).toContain("Open pull requests");
     expect(new Set(names).size).toBe(names.length);
     expect(names.length).toBeGreaterThanOrEqual(5);
   });

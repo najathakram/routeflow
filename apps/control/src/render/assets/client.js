@@ -23,7 +23,15 @@
   var drawerTask = null;
   var backoff = 1000;
   var dismissed = {};
-  var PRIO = ["P0", "P1", "P2", "P3"];
+  var PRIO = ["P0", "P1", "P2", "P3"]; // the posted values; the words below are display only
+  var PRIO_WORD = { P0: "Urgent", P1: "High", P2: "Normal", P3: "Low" };
+  var word = (m, k, d) => (Object.hasOwn(m, k) ? m[k] : d); // own keys only: "constructor" falls back
+  /* "in-progress" reads "In progress"; only the two names that differ from that are listed */
+  var STATUS_WORD = { "code-complete": "Code finished", reconsider: "Being reconsidered" };
+  var statusWord = (s) => {
+    var plain = (s || "unknown").replace(/-/g, " ");
+    return word(STATUS_WORD, s, plain.charAt(0).toUpperCase() + plain.slice(1));
+  };
   var SUP = { id: "pr", num: 1, req: 1 };
   var el = (tag, cls, text) =>
     Object.assign(doc.createElement(tag), { className: cls || "", textContent: text || "" });
@@ -106,7 +114,7 @@
     live = on;
     if (!chip) return;
     chip.setAttribute("data-live", on ? "on" : "off");
-    chip.textContent = on ? "live ●" : "live ◌ reconnecting";
+    chip.textContent = on ? "Live — updates automatically" : "Reconnecting…";
   }
   /* rebuild the open drawer from fresh values, unless the owner is mid-edit in it */
   function syncDrawer() {
@@ -199,6 +207,14 @@
     toast(msg, { error: true, sticky: true });
     return false;
   }
+  /* the plain-words reason a write was refused; for a 422 it is the server's own reason */
+  async function why(r) {
+    if (r.status === 429) return "too many changes in a short time. Wait a minute and try again.";
+    if (!r.status) return "the server could not be reached, so nothing was changed.";
+    var j = r.status === 422 ? await r.json().catch(() => null) : null;
+    var s = j && typeof j.reason === "string" ? j.reason : "";
+    return s || "the server refused the change (error " + r.status + ").";
+  }
   /* No optimistic update: the page changes only when the server's new fragments arrive. */
   async function post(payload, ctl) {
     busy(ctl, true);
@@ -216,17 +232,14 @@
     if (r.status === 401) return location.assign("/login");
     busy(ctl, false);
     if (r.status === 409) {
-      toast("State changed elsewhere — reloaded", { error: true });
+      toast("Someone changed this at the same time, so the page was refreshed. Please try again.", {
+        error: true,
+      });
       etag = null;
       await refresh();
       return "conflict";
     }
-    if (!r.ok) {
-      var why = r.status
-        ? "server refused it (" + r.status + ")"
-        : "network error, nothing changed";
-      return fail(ctl, "Not saved: " + (r.status === 429 ? "rate limited (429)" : why));
-    }
+    if (!r.ok) return fail(ctl, "Not saved: " + (await why(r)));
     busy(ctl, true);
     etag = null;
     await refresh();
@@ -252,6 +265,30 @@
   var lines = (n) => (n.match(/\S[^\n]*/g) || []).map((x) => x.trim());
   var setInert = (on) =>
     $$("header, nav, main, footer, #banners").forEach((n) => n.toggleAttribute("inert", on));
+  /* a lane's name as its card shows it; the id when no card is on the page */
+  var laneName = (id) => {
+    var card = $$(".lane[data-lane]").find((a) => attr(a, "lane") === id);
+    var n = card && $(".lane-h strong", card);
+    return n ? n.textContent : id;
+  };
+  /* what a waste row calls itself, e.g. "PR #308 — Draft left unfinished": read from the row's
+   * heading (else its first <strong>), never parsed from the key; the glyph is dropped */
+  var rowLabel = (row) => {
+    var n = row && ($(".w-head", row) || $("strong", row));
+    return n ? n.textContent.replace(/^\W+/, "").replace(/\s+/g, " ").trim() : "";
+  };
+  /* the success sentence for each kind of write: (task or PR, new value) */
+  var SAY = {
+    "task.priority": (t, n) => "Priority of " + t + " changed to " + word(PRIO_WORD, n, n) + ".",
+    "task.release": (t, n) =>
+      n ? t + " moved to release " + n + "." : t + " removed from its release.",
+    "task.lane": (t, n) =>
+      n ? t + " now belongs to " + laneName(n) + "." : t + " is no longer assigned to a lane.",
+    "task.next": (t, n) => t + " is now the next task for " + laneName(n) + ".",
+    "task.reconsider": (t) => t + " was put up for reconsideration.",
+    "task.areas": (t) => "The list of files for " + t + " was updated.",
+    "pr.superseded": (t, n) => "PR #" + t + " marked as replaced by PR #" + n + ".",
+  };
   /* one declarative field list feeds every drawer form; the inverse event swaps new and old.
    * A task with no priority posts no prev: the schema requires one, so the server says so inline. */
   function build(f, n, o) {
@@ -265,18 +302,19 @@
     var c = f.vals ? el("select") : f.area ? el("textarea") : el("input");
     if (!f.vals && !f.area) c.type = f.num ? "number" : "text";
     (f.blank ? [""] : []).concat(f.vals || []).forEach((v) => {
-      var o = el("option", "", v || "(none)");
-      o.value = v;
+      var o = el("option", "", v ? (f.word ? f.word(v) : v) : f.req ? "Choose…" : "None");
+      o.value = v; // what is posted: the raw id, never the display word
       c.append(o);
     });
     c.value = c.dataset.init = f.old || "";
     return c;
   }
-  function showDrawer(title, info, fields) {
+  function showDrawer(title, info, fields, note) {
     var body = $("#drawer-body");
     body.textContent = "";
     $("#drawer-title").textContent = title;
-    body.append(el("p", "mut", info));
+    body.append(el("p", "info", info));
+    if (note) body.append(el("p", "hint", note));
     fields.forEach((f, i) => {
       var box = el("div", "fld");
       var c = control(f);
@@ -290,11 +328,9 @@
           var b = ev.currentTarget;
           if (n === (f.old || "").trim() && f.old !== undefined) return;
           if (!n && f.req) return fail(b, "Not saved: choose a value first");
-          var from = f.old === undefined ? "" : (f.old || "none") + " → ";
-          var msg = f.ref + " " + f.l.toLowerCase() + ": " + from + (n || "none");
           var inv = f.inv ? f.inv(n) : f.req ? null : build(f, f.old || "", n);
           if (f.key === "priority" && !f.old) inv = null; // nothing valid to restore
-          var res = await write(build(f, n, f.old), b, msg, inv);
+          var res = await write(build(f, n, f.old), b, SAY[f.type](f.ref, n), inv);
           if (res === true) return;
           c.value = f.old || ""; // not saved: show the stored value again
           if (res === "conflict")
@@ -317,16 +353,35 @@
     var f = (l, type, key, more) => fld(l, type, key, d.task, more);
     var lanes = list("lanes");
     var rels = list("releases");
-    var info = "Status " + d.status + " · " + d.title + (d.pr ? " · PR #" + d.pr : "");
+    var info = [
+      "Status: " + statusWord(d.status),
+      "Priority: " + word(PRIO_WORD, d.priority, "None"),
+      "Release: " + (d.release || "None"),
+      "Lane: " + (d.lane ? laneName(d.lane) : "Not assigned"),
+    ];
+    if (d.pr) info.push("Pull request: #" + d.pr);
     var inv = (n) => ({ type: "task.next", task: nexts[n] || null, targetLane: n });
-    showDrawer(d.task, info + (d.alt ? " · " + d.alt : ""), [
-      f("Priority", "task.priority", "priority", { prev: 1, old: d.priority, vals: PRIO }),
-      f("Release", "task.release", "release", { prev: 1, old: d.release, vals: rels, blank: 1 }),
-      f("Lane", "task.lane", "toLane", { old: d.lane, vals: lanes, blank: 1 }),
-      f("Set as next for lane", "task.next", "targetLane", { req: 1, vals: lanes, blank: 1, inv }),
-      f("Reconsider (why)", "task.reconsider", "why", { req: 1 }),
-      f("Areas (one glob per line)", "task.areas", "areas", { old: d.areas, area: 1 }),
-    ]);
+    var opt = (p) => word(PRIO_WORD, p, p) + " (" + p + ")"; // "Urgent (P0)": the value posted is P0
+    var next = "Make this the next task for lane";
+    var files = "Files this task touches (one pattern per line, like apps/api/**)";
+    showDrawer(
+      d.task + " — " + d.title,
+      info.join(" · "),
+      [
+        f("Priority", "task.priority", "priority", {
+          prev: 1,
+          old: d.priority,
+          vals: PRIO,
+          word: opt,
+        }),
+        f("Release", "task.release", "release", { prev: 1, old: d.release, vals: rels, blank: 1 }),
+        f("Lane", "task.lane", "toLane", { old: d.lane, vals: lanes, blank: 1, word: laneName }),
+        f(next, "task.next", "targetLane", { req: 1, vals: lanes, blank: 1, word: laneName, inv }),
+        f("Put up for reconsideration — why?", "task.reconsider", "why", { req: 1 }),
+        f(files, "task.areas", "areas", { old: d.areas, area: 1 }),
+      ],
+      d.alt && "Where these values came from: " + d.alt,
+    );
   }
   function openDrawer(b) {
     lastFocus = b;
@@ -347,8 +402,8 @@
     var pr = Number(attr(b, "pr"));
     lastFocus = b;
     drawerTask = null;
-    showDrawer("PR #" + pr + " superseded", "Name the PR that replaces it.", [
-      fld("Superseding PR number", "pr.superseded", "supersededBy", pr, SUP),
+    showDrawer("PR #" + pr + " was replaced", "Which pull request replaces it? (number)", [
+      fld("Replacing pull request number", "pr.superseded", "supersededBy", pr, SUP),
     ]);
     focusables($("#drawer"))[1].focus();
   }
@@ -369,28 +424,18 @@
     var ev = (type, more) => ({ type, task, ...more });
     if (a === "ack") {
       var until = new Date().toISOString().slice(0, 19) + "Z"; // schema dates carry no millis
-      write({ type: "waste.ack", key }, t, "Acknowledged " + key, {
-        type: "waste.ack",
-        key,
-        until,
-      });
+      var what = rowLabel(t.parentNode.closest(".waste, li"));
+      var said = what ? "Dismissed: " + what : "Warning dismissed.";
+      write({ type: "waste.ack", key }, t, said, { type: "waste.ack", key, until });
     } else if (a === "next" && !lane) openDrawer($('.tid[data-task="' + task + '"]') || t);
     else if (a === "next") {
       var back = { targetLane: lane, task: attr(t, "prev") || null };
-      write(
-        ev("task.next", { targetLane: lane }),
-        t,
-        task + " is next for " + lane,
-        ev("task.next", back),
-      );
+      var go = ev("task.next", { targetLane: lane });
+      write(go, t, SAY["task.next"](task, lane), ev("task.next", back));
     } else if (a === "assign") {
       var was = { toLane: attr(t, "prev-lane") || null };
-      write(
-        ev("task.lane", { toLane: lane }),
-        t,
-        task + " assigned to " + lane,
-        ev("task.lane", was),
-      );
+      var give = ev("task.lane", { toLane: lane });
+      write(give, t, SAY["task.lane"](task, lane), ev("task.lane", was));
     } else if (a === "superseded") openSuperseded(t);
     else if (a === "close-drawer") closeDrawer();
     else if (a === "legend") legend();
@@ -400,7 +445,7 @@
       var next = cur === "dark" ? "light" : cur === "light" ? null : "dark";
       applyTheme(next);
       store("control-theme", next);
-      toast("Theme: " + (next || "follow system"));
+      toast("Colour theme: " + (next || "follows your system"));
     } else if (a === "dismiss") {
       var b = t.closest("[data-banner]");
       dismissed[b.textContent] = true;

@@ -290,17 +290,61 @@ describe("5 webhook hardening", () => {
 });
 
 describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
-  it("200 concurrent fake-signature 1 MB uploads grow memory < 50 MB; a signed delivery still works", async () => {
+  /**
+   * B941. Live memory is measured while every upload is held open mid-body. A streamed body is
+   * hashed as it arrives and kept nowhere (a few MB of socket buffers in all); a buffered body would
+   * hold ~900 KB x 200 = 180 MB at that moment. Holding the sockets open removes the race a
+   * peak sampler had (bodies finished before it looked), and a forced collection before each reading
+   * leaves only what the server still references, so the result no longer depends on test order or load.
+   */
+  const post = (): string =>
+    `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: sha256=${"0".repeat(64)}\r\nContent-Length: ${1024 * 1024}\r\n\r\n`;
+  const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  it("200 concurrent half-sent 1 MB uploads leave live memory < 50 MB (the body is streamed, never buffered)", async () => {
     h = await startServer({ webhook: true });
-    const MB = Buffer.alloc(1024 * 1024, 97);
-    if (global.gc) global.gc();
-    const mem = (): number => {
+    require("v8").setFlagsFromString("--expose-gc");
+    const gc: () => void = global.gc ?? require("vm").runInNewContext("gc");
+    const live = (): number => {
+      gc();
+      gc();
       const m = process.memoryUsage();
       return m.heapUsed + m.arrayBuffers;
     };
-    const base = mem();
-    let peak = base;
-    const t = setInterval(() => (peak = Math.max(peak, mem())), 5);
+    const part = Buffer.alloc(900 * 1024, 97);
+    const port = h.port;
+    live();
+    const base = live();
+    const socks: net.Socket[] = [];
+    let sent = 0;
+    await Promise.all(
+      Array.from(
+        { length: 200 },
+        () =>
+          new Promise<void>((resolve) => {
+            const s = net.connect(port, "127.0.0.1");
+            socks.push(s);
+            s.on("error", () => resolve());
+            s.on("connect", () => {
+              s.write(post());
+              s.write(part, () => {
+                sent++;
+                resolve();
+              });
+            });
+          }),
+      ),
+    );
+    await sleep(500); // let the server read everything the kernel buffered
+    const grown = live() - base;
+    socks.forEach((s) => s.destroy());
+    expect(sent).toBe(200); // every upload really reached the server, so the reading means something
+    expect(grown).toBeLessThan(50 * 1024 * 1024);
+  });
+
+  it("200 concurrent fake-signature 1 MB uploads all get 401, and a signed delivery still works", async () => {
+    h = await startServer({ webhook: true });
+    const MB = Buffer.alloc(1024 * 1024, 97);
     const port = h.port;
     const codes = await Promise.all(
       Array.from(
@@ -319,17 +363,13 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
             });
             s.on("error", () => resolve(0));
             s.on("connect", () => {
-              s.write(
-                `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: sha256=${"0".repeat(64)}\r\nContent-Length: ${MB.length}\r\n\r\n`,
-              );
+              s.write(post());
               s.write(MB);
             });
           }),
       ),
     );
-    clearInterval(t);
     expect(codes.every((c) => c === 401)).toBe(true);
-    expect(peak - base).toBeLessThan(50 * 1024 * 1024);
     const body = JSON.stringify({ a: 1 });
     const ok = await h.req("POST", "/api/github-webhook", {
       headers: {

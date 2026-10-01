@@ -20,7 +20,7 @@ describe("T61 stale source", () => {
   it("fresh sources show no banner", () => {
     const h = render(base());
     expect(h).not.toMatch(/data-banner="stale"/);
-    expect(h).not.toMatch(/GitHub data is \d+ min old/);
+    expect(h).not.toMatch(/has not updated for/);
   });
   it("amber chip (no banner) between 2 and 10 minutes", () => {
     const s = base();
@@ -34,9 +34,17 @@ describe("T61 stale source", () => {
     s.sources.github.lastOk = minutesAgo(11);
     const h = render(s);
     expect(h).toMatch(/data-banner="stale"/);
-    expect(h).toContain("GitHub data is 11 min old");
+    expect(h).toContain(
+      "GitHub has not updated for 11 minutes, so the numbers below may be out of date.",
+    );
     expect(h).toMatch(/data-fresh="red"/);
-    expect(h).toContain("⟳ old"); // inferred chips keep the last data but are badged old
+    // inferred badges keep the last data but say it was detected earlier and may be out of date
+    expect(h).toContain(
+      'class="badge inf" title="#2801"><span aria-hidden="true">⟳</span> Detected earlier — may be out of date',
+    );
+    expect(h).not.toMatch(
+      /class="badge inf"[^>]*>(?:<[^>]+>)*⟳(?:<[^>]+>)* Detected from GitHub or Railway/,
+    );
     expect(h).toContain("Acme invoice date fixes"); // panels keep the last data
   });
 });
@@ -51,9 +59,12 @@ describe("T61 malformed rows", () => {
     ];
     const h = render(s);
     expect(h).toMatch(/data-banner="warnings"/);
-    expect(h).toContain("3 events could not be applied");
-    expect(h).toContain("lane-b#14");
-    expect(h).toContain("illegal transition");
+    expect(h).toContain(
+      "3 updates from the lanes could not be read — the rest of the page is fine.",
+    );
+    expect(h).toContain("lane-b #14</code>: illegal transition planned -&gt; released");
+    expect(h).toContain("lane-u #9</code>: unknown task F-99");
+    expect(h).toContain("owner #2</code>: bad payload");
     expect((h.match(/data-panel="/g) ?? []).length).toBe(12);
   });
   it("no warnings means no banner", () => {
@@ -66,17 +77,33 @@ describe("T61 empty lanes", () => {
     const s = base();
     s.lanes = {};
     const h = render(s);
-    expect(h).toContain("No lanes registered");
+    expect(h).toContain(
+      "No lanes yet. A lane appears when a Claude session registers it with the ctl tool.",
+    );
     expect(h).toContain("ctl");
+    expect(h).toMatch(/data-line="now"[^>]*><span class="lbl">Lanes<\/span> No lanes yet</);
   });
 });
 
 describe("loading (first paint)", () => {
   it("renders skeleton rows and a warming-up footer, not stale zeros", () => {
     const h = render(base(), { loading: true });
-    expect(h).toContain("warming up");
+    expect(h).toContain("Warming up — loading GitHub and Railway data.");
     expect(h).toMatch(/class="[^"]*skeleton/);
     expect((h.match(/data-panel="/g) ?? []).length).toBe(12);
+  });
+  it("keeps the dash placeholders under the plain labels and never claims all clear", () => {
+    const h = render(base(), { loading: true });
+    const head = h.slice(h.indexOf("<header"), h.indexOf("</header>"));
+    for (const [key, label] of [
+      ["now", "Lanes"],
+      ["release", "Next release"],
+      ["broken", "Bugs"],
+      ["waste", "Work at risk"],
+    ])
+      expect(head).toContain(`data-line="${key}"><span class="lbl">${label}</span> —</p>`);
+    expect(head).toContain("Loading the latest numbers");
+    expect(head).not.toContain("All clear");
   });
 });
 
@@ -102,7 +129,7 @@ describe("write-back states live in the shipped client (R18, R33)", () => {
     expect(t).toContain("expectedVersion");
     expect(t).toMatch(/Not saved/); // failure copy, inline
     expect(t).toMatch(/409/);
-    expect(t).toContain("State changed elsewhere");
+    expect(t).toContain("Someone changed this at the same time, so the page was refreshed.");
     expect(t).toMatch(/Undo/);
     expect(t).toMatch(/aria-live|role="status"|role=.status./);
   });

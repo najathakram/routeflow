@@ -27,18 +27,18 @@ const PANEL_ORDER = [
   "sources",
 ];
 const H2 = [
-  "Lane board",
-  "Blockers",
-  "At risk of waste",
-  "Release bar",
-  "Queue",
+  "Who is doing what",
+  "Stuck work",
+  "Work at risk of being wasted",
+  "Releases",
+  "Up next",
   "Bugs",
-  "Open PRs",
-  "Overlap",
-  "Piggyback",
-  "Feature phases",
-  "Timeline",
-  "Sources and freshness",
+  "Open pull requests",
+  "Lanes touching the same files",
+  "Quick wins nearby",
+  "Feature progress",
+  "Recent activity",
+  "Where this data comes from",
 ];
 const PRIO = ["P0", "P1", "P2", "P3"];
 
@@ -175,7 +175,7 @@ for (const vp of VIEWPORTS) {
         await page.locator("#f-0").selectOption(PRIO.find((p) => p !== old)!);
         await page.locator("#f-0 ~ button").click();
         await reload;
-        await expect(page.locator("#toasts .toast.error", { hasText: "reloaded" })).toBeVisible();
+        await expect(page.locator("#toasts .toast.error", { hasText: "refreshed" })).toBeVisible();
       });
 
       test("a11y basics", async ({ page }) => {

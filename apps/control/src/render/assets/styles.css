@@ -5,6 +5,8 @@
  * NOTE (contrast.spec parses this file): the manual-dark block sits FIRST so the light :root below
  * wins the parse; real cascade order does not matter because the attribute selector is more
  * specific. Keep the two dark token sets identical.
+ * Plain-language pass: body 15px/1.5, tables 14px, roomier headings, no tiny all-caps labels; every
+ * colour below the tokens is a var(--token), so light and dark stay in step (contrast.spec.ts).
  */
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -122,17 +124,20 @@ a {
   color: var(--accent);
 }
 h1 {
-  font-size: 1.25rem;
+  font-size: 1.6rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 h2 {
-  font-size: 1.05rem;
-  margin: 0 0 10px;
-  display: inline-block;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  margin: 0 0 4px;
 }
 h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 1.1rem;
+  line-height: 1.3;
 }
 p {
   margin: 4px 0;
@@ -148,12 +153,75 @@ code,
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.92em;
+  overflow-wrap: anywhere;
 }
 .mut {
   color: var(--muted);
 }
 .small {
-  font-size: 0.82rem;
+  font-size: 0.9rem;
+}
+/* plain-language helpers: a one-line purpose under a heading, a small muted explanation, and the
+ * task id shown after its title (quieter than the title, still a clickable .tid) */
+.panel-sub,
+.hint {
+  color: var(--muted);
+  font-size: 0.93rem;
+  line-height: 1.45;
+  max-width: 75ch;
+}
+.panel-sub {
+  margin: 0 0 14px;
+}
+.hint {
+  margin: 4px 0;
+}
+.idtag,
+.idtag .tid,
+.tid.idtag {
+  color: var(--muted);
+}
+.idtag .tid:hover,
+.tid.idtag:hover {
+  color: var(--accent);
+}
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: var(--planned);
+  vertical-align: baseline;
+}
+.swatch.released {
+  background: var(--done);
+}
+.swatch.cc {
+  background: var(--done);
+  opacity: 0.55;
+}
+.swatch.wip {
+  background: var(--wip);
+}
+.swatch.planned {
+  background: var(--planned);
+  opacity: 0.35;
+}
+.swatch.blocked {
+  background: var(--risk);
+}
+.swatch.sev-critical {
+  background: var(--critical);
+}
+.swatch.sev-high {
+  background: var(--high);
+}
+.swatch.sev-medium {
+  background: var(--medium);
+}
+.swatch.sev-low {
+  background: var(--low);
 }
 .sr {
   position: absolute;
@@ -179,36 +247,76 @@ code,
   outline-offset: 2px;
 }
 
-/* header status lines */
+/* header: title, one sentence on what the page is, the attention headline, four status lines */
 .top {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 10px;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 12px 16px;
+  padding: 16px 16px 8px;
 }
 .brand {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.tagline {
+  flex-basis: 100%;
+  grid-column: 1 / -1;
+  max-width: 72ch;
+  margin: 0;
+  color: var(--muted);
 }
 .lines {
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
+/* the headline answer: words carry the meaning, the tint and left edge only repeat it */
+.attn {
+  margin: 0 0 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-left-width: 6px;
+  border-radius: var(--r-card);
+  color: var(--ink);
+  background: var(--card);
+  font-size: 1.05rem;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.attn[data-level="ok"] {
+  background: var(--done-bg);
+  border-color: var(--done);
+}
+.attn[data-level="warn"] {
+  background: var(--medium-bg);
+  border-color: var(--medium);
+}
+.attn[data-level="risk"] {
+  background: var(--critical-bg);
+  border-color: var(--critical);
+}
+/* a status line's label hangs in the left margin: the value wraps neatly beside it */
 .line {
+  --lw: 7.5em;
   margin: 0;
+  padding-left: var(--lw);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 .lbl {
   display: inline-block;
-  min-width: 4.8em;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  margin-right: 0.5em;
+  font-weight: 600;
   color: var(--muted);
+}
+.line > .lbl {
+  float: left;
+  width: var(--lw);
+  margin: 0 0 0 calc(-1 * var(--lw));
 }
 .tools {
   display: flex;
@@ -226,11 +334,16 @@ code,
 .pill {
   display: inline-block;
   border-radius: 999px;
-  padding: 1px 9px;
-  font-size: 0.78rem;
+  padding: 1px 10px;
+  font-size: 0.85rem;
   font-weight: 600;
   line-height: 1.5;
   white-space: nowrap;
+}
+.chip,
+.badge {
+  white-space: normal; /* plain-language chips can be a whole phrase: let them wrap */
+  border-radius: 12px;
 }
 .tone[data-tone="risk"],
 .chip.local {
@@ -314,18 +427,41 @@ code,
   margin: 0 auto;
   padding: 0 16px;
 }
-.jump summary {
+.jump summary,
+.fold > summary {
   cursor: pointer;
   color: var(--accent);
-  min-height: 32px;
+  font-weight: 600;
+  min-height: 36px;
   display: flex;
   align-items: center;
+  gap: 8px;
+  list-style: none;
+}
+.jump summary::-webkit-details-marker,
+.fold > summary::-webkit-details-marker {
+  display: none;
+}
+/* a small arrow shows the open/closed state; the alternative text keeps it out of screen readers */
+.jump summary::before,
+.fold > summary::before {
+  content: "▸";
+  content: "▸" / "";
+  flex: none;
+  width: 1em;
+  font-size: 0.85em;
+  text-align: center;
+}
+.jump details[open] > summary::before,
+.fold[open] > summary::before {
+  content: "▾";
+  content: "▾" / "";
 }
 .jump ul {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 14px;
-  padding: 4px 0 8px;
+  gap: 4px 16px;
+  padding: 4px 0 10px;
 }
 .jump a {
   display: inline-block;
@@ -357,7 +493,10 @@ code,
   position: absolute;
   right: 6px;
   top: 6px;
-  min-width: 32px;
+}
+.dismiss,
+.drawer-h .btn {
+  min-width: 36px; /* the x buttons stay a comfortable touch target */
 }
 
 /* buttons and form controls */
@@ -372,9 +511,12 @@ input[type="number"] {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
-  padding: 4px 10px;
-  min-height: 32px;
+  padding: 5px 12px;
+  min-height: 34px;
   white-space: nowrap;
+}
+textarea {
+  white-space: pre-wrap; /* file patterns may be long: wrap instead of scrolling sideways */
 }
 .btn {
   cursor: pointer;
@@ -410,7 +552,7 @@ input[type="number"] {
 .err {
   display: block;
   color: var(--critical);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   margin-top: 4px;
 }
 
@@ -418,10 +560,10 @@ input[type="number"] {
 .grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 16px;
+  gap: 20px;
   max-width: 1400px;
   margin: 0 auto;
-  padding: 8px 16px 16px;
+  padding: 12px 16px 20px;
 }
 .panel,
 footer .panel {
@@ -429,7 +571,7 @@ footer .panel {
   border: 1px solid var(--line);
   border-radius: var(--r-card);
   box-shadow: var(--shadow);
-  padding: 12px 14px;
+  padding: 16px 18px;
   min-width: 0;
 }
 footer.sources {
@@ -440,29 +582,37 @@ footer.sources {
 .count {
   color: var(--muted);
   font-weight: 400;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   font-variant-numeric: tabular-nums;
 }
 .empty {
   color: var(--muted);
   margin: 4px 0;
 }
-.fold > summary {
-  cursor: pointer;
-  min-height: 32px;
-  display: flex;
-  align-items: center;
+/* the show/hide toggle of a folded panel: the words follow the state, the arrow comes from the
+ * summary marker above (.fold > summary::before) */
+.fold > summary .when-open {
+  display: none;
+}
+.fold[open] > summary .when-open {
+  display: inline;
+}
+.fold[open] > summary .when-closed {
+  display: none;
 }
 .fold.sub > summary,
 .more > summary {
   color: var(--accent);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+}
+.more > summary {
+  cursor: pointer;
 }
 .more {
   margin-top: 6px;
 }
 .rows > li {
-  padding: 6px 0;
+  padding: 8px 0;
   border-top: 1px solid var(--line);
   overflow-wrap: anywhere;
 }
@@ -488,13 +638,13 @@ footer.sources {
 /* lane board */
 .lanes {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   grid-template-columns: minmax(0, 1fr);
 }
 .lane {
   border: 1px solid var(--line);
   border-radius: var(--r-card);
-  padding: 10px 12px;
+  padding: 12px 14px;
   min-width: 0;
 }
 .lane-h {
@@ -502,11 +652,23 @@ footer.sources {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 8px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+.lane-h strong {
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+.lane p {
+  margin: 8px 0;
+}
+.lane .lbl {
+  display: block; /* cards are narrow: the label sits on its own line above the value */
+  margin: 0 0 2px;
+  font-size: 0.9rem;
 }
 .hb {
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.9rem;
 }
 .lane[data-hb="live"] .hb {
   color: var(--done);
@@ -517,6 +679,9 @@ footer.sources {
 .cur {
   font-weight: 600;
 }
+.cur .idtag {
+  font-weight: 400;
+}
 .nxt {
   color: var(--muted);
 }
@@ -526,16 +691,39 @@ footer.sources {
 .pr.bad {
   font-weight: 600;
 }
+/* a warning row: the sign sits in the gutter; headline, reason, advice and buttons stack */
+.rows > li.waste {
+  position: relative;
+  padding-left: 28px;
+}
 .waste .glyph {
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  font-size: 1.1rem;
+  line-height: 1.4;
   color: var(--risk);
+}
+.waste .w-head,
+.waste .why,
+.waste .todo,
+.waste .mut {
+  display: block;
+}
+.waste .todo {
+  color: var(--muted);
+}
+.waste .acts {
+  display: flex;
+  margin-top: 8px;
 }
 
 /* bars + tiles */
 .bar {
   display: block;
   width: 100%;
-  height: 10px;
-  margin: 6px 0 2px;
+  height: 12px;
+  margin: 8px 0 4px;
 }
 .bar .seg.released {
   fill: var(--done);
@@ -582,29 +770,38 @@ footer.sources {
 }
 .rel + .rel,
 .rel + .fold {
-  margin-top: 10px;
+  margin-top: 16px;
+}
+.rel + .rel {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
 }
 .rel-h {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
   overflow-wrap: anywhere;
+}
+.pig + .pig {
+  margin-top: 14px;
 }
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
 }
 .tile {
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
-  padding: 8px 10px;
+  padding: 10px 12px;
 }
 .tile b {
   display: block;
-  font-size: 1.4rem;
+  font-size: 1.6rem;
   line-height: 1.2;
 }
 .tile span {
   color: var(--muted);
-  font-size: 0.8rem;
+  font-size: 0.9rem;
 }
 .tile.crit b {
   color: var(--critical);
@@ -617,21 +814,19 @@ footer.sources {
 .tbl {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.9rem;
+  font-size: 14px;
 }
 .tbl th,
 .tbl td {
   text-align: left;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-top: 1px solid var(--line);
   vertical-align: top;
 }
 .tbl thead th {
   border-top: 0;
   color: var(--muted);
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 600; /* column headings are plain words now: no small caps */
 }
 .tbl tbody th {
   font-weight: 600;
@@ -660,27 +855,44 @@ footer.sources {
   overflow-y: auto;
   background: var(--card);
   border-left: 1px solid var(--line);
-  padding: 14px 16px;
+  padding: 16px 18px;
   z-index: 41;
   animation: slide 0.18s ease-out;
 }
 .drawer-h {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
+}
+.drawer-h h3 {
+  font-size: 1.15rem;
+  overflow-wrap: anywhere;
+}
+.drawer .info {
+  margin: 10px 0 4px;
 }
 .fld {
   display: grid;
-  gap: 4px;
-  margin: 12px 0;
+  gap: 6px;
+  margin: 18px 0;
 }
 .fld label {
-  font-size: 0.8rem;
-  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.fld select,
+.fld input,
+.fld textarea {
+  width: 100%;
+}
+.fld .btn {
+  justify-self: start;
+  min-width: 88px;
 }
 .fld textarea {
-  min-height: 80px;
+  min-height: 96px;
   font-family: var(--mono);
 }
 .legend {
@@ -688,14 +900,20 @@ footer.sources {
   color: var(--ink);
   border: 1px solid var(--line);
   border-radius: var(--r-card);
-  max-width: min(520px, calc(100vw - 32px));
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+.legend h3 {
+  font-size: 1.2rem;
 }
 .legend dt {
   font-weight: 700;
-  margin-top: 8px;
+  margin-top: 12px;
 }
 .legend dd {
-  margin: 0;
+  margin: 2px 0 0;
   color: var(--muted);
 }
 kbd {
@@ -725,9 +943,14 @@ kbd {
   border: 1px solid var(--line);
   border-left: 4px solid var(--accent);
   border-radius: var(--r-ctl);
-  padding: 8px 12px;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 10px 14px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
   animation: slide 0.18s ease-out;
+}
+.toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere; /* toasts are whole sentences now */
 }
 .toast.error {
   border-left-color: var(--critical);
@@ -750,6 +973,10 @@ kbd {
 }
 .chip[data-fresh="off"] {
   color: var(--muted);
+}
+.chip[data-live="on"] {
+  color: var(--done);
+  background: var(--done-bg);
 }
 .chip[data-live="off"] {
   color: var(--medium);
@@ -849,16 +1076,25 @@ kbd {
   }
 }
 @media (max-width: 480px) {
+  /* touch targets: 44px for buttons and fields, at least 36px for an id link set inside a sentence */
   .btn,
-  .tid,
   select,
+  input[type="text"],
+  input[type="number"],
   .fold > summary,
   .jump summary,
   .jump a {
     min-height: 44px;
   }
   .tid {
-    min-width: 44px;
+    min-height: 36px;
+    min-width: 36px;
+  }
+  .line {
+    --lw: 6.8em;
+  }
+  .attn {
+    font-size: 1rem;
   }
   .tbl thead {
     position: absolute;
@@ -875,7 +1111,7 @@ kbd {
     display: flex;
     flex-wrap: wrap;
     gap: 2px 8px;
-    padding: 6px 0;
+    padding: 8px 0;
     border-top: 1px solid var(--line);
   }
   .tbl th,
