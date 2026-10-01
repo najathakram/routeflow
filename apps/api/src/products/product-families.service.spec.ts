@@ -34,7 +34,7 @@ const variant = (name: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const dto = (variants: unknown[], extra: Record<string, unknown> = {}) =>
-  ({ family: { name: "Soda" }, variants, ...extra }) as never;
+  ({ family: { pricePerUnit: "1.00", name: "Soda" }, variants, ...extra }) as never;
 const bodyOf = async (p: Promise<unknown>) => {
   const err = await p.catch((e) => e);
   expect(err).toBeInstanceOf(ConflictException);
@@ -444,7 +444,7 @@ describe("family DTO bounds (Decimal(10,2) price <= 8 integer digits, Decimal(10
   const check = async (over: Record<string, unknown>) =>
     validate(
       plainToInstance(CreateFamilyDto, {
-        family: { name: " Soda " },
+        family: { pricePerUnit: "1.00", name: " Soda " },
         variants: [{ name: " A ", pricePerUnit: "1.00", ...over }],
       }),
       { whitelist: true },
@@ -455,7 +455,7 @@ describe("family DTO bounds (Decimal(10,2) price <= 8 integer digits, Decimal(10
     expect(await check({ standardCost: "999999", pricePerUnit: "99999999" })).toHaveLength(0);
     expect(await check({ name: "   " })).not.toHaveLength(0); // trimmed to empty
     const dto = plainToInstance(CreateFamilyDto, {
-      family: { name: " Soda " },
+      family: { pricePerUnit: "1.00", name: " Soda " },
       variants: [{ name: " A ", pricePerUnit: "1.00", sku: " S1 " }],
     });
     expect(dto.family.name).toBe("Soda");
@@ -504,8 +504,14 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
       ).length,
     ).toBeGreaterThan(0);
     for (const plain of [
-      { family: { name: "F", standardCost: null }, variants: [{ name: "A", pricePerUnit: "1" }] },
-      { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: "1", standardCost: null }] },
+      {
+        family: { pricePerUnit: "1.00", name: "F", standardCost: null },
+        variants: [{ name: "A", pricePerUnit: "1" }],
+      },
+      {
+        family: { pricePerUnit: "1.00", name: "F" },
+        variants: [{ name: "A", pricePerUnit: "1", standardCost: null }],
+      },
     ]) {
       expect(await messages(CreateFamilyDto, plain)).toEqual([]);
     }
@@ -587,7 +593,7 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
     };
     expect(
       await msgs(CreateFamilyDto, {
-        family: { name: "F" },
+        family: { pricePerUnit: "1.00", name: "F" },
         variants: [{ name: "A", pricePerUnit: null }],
       }),
     ).toMatch(/pricePerUnit is required/);
@@ -623,7 +629,7 @@ describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == s
     "variant cost %p on create: the DTO passes AND the service inherits the family cost (parity)",
     async (blank) => {
       const plain = {
-        family: { name: "F", standardCost: "3" },
+        family: { pricePerUnit: "1.00", name: "F", standardCost: "3" },
         variants: [{ name: "A", pricePerUnit: "1", standardCost: blank }],
       };
       expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]); // HTTP accepts it
@@ -640,7 +646,7 @@ describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == s
     "variant cost %p with NO family cost: stays NULL (never 0.0000)",
     async (blank) => {
       const plain = {
-        family: { name: "F" },
+        family: { pricePerUnit: "1.00", name: "F" },
         variants: [{ name: "A", pricePerUnit: "1", standardCost: blank }],
       };
       expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]);
@@ -654,7 +660,7 @@ describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == s
     "family cost %p: the DTO passes and the family row's cost is NULL (never 0.0000)",
     async (blank) => {
       const plain = {
-        family: { name: "F", standardCost: blank },
+        family: { pricePerUnit: "1.00", name: "F", standardCost: blank },
         variants: [{ name: "A", pricePerUnit: "1" }],
       };
       expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]);
@@ -686,7 +692,10 @@ describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == s
   it.each([[null], [""], ["  "]])(
     "STRICT: a create price %p is 400 in BOTH the DTO and the service",
     async (blank) => {
-      const plain = { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: blank }] };
+      const plain = {
+        family: { pricePerUnit: "1.00", name: "F" },
+        variants: [{ name: "A", pricePerUnit: blank }],
+      };
       expect((await errorsOf(CreateFamilyDto, plain)).length).toBeGreaterThan(0);
       await expect(build().service.createFamily(plain as never, ACTOR)).rejects.toBeInstanceOf(
         BadRequestException,
@@ -708,7 +717,7 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
     expect(
       (
         await msgs(CreateFamilyDto, {
-          family: { name: "F", standardCost: "3" },
+          family: { pricePerUnit: "1.00", name: "F", standardCost: "3" },
           variants: [{ name: "A", pricePerUnit: "1", standardCost: 2.5 }],
         })
       ).length,
@@ -716,7 +725,7 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
     expect(
       (
         await msgs(CreateFamilyDto, {
-          family: { name: "F", standardCost: 2.5 },
+          family: { pricePerUnit: "1.00", name: "F", standardCost: 2.5 },
           variants: [{ name: "A", pricePerUnit: "1" }],
         })
       ).length,
@@ -725,11 +734,14 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
   it("service (bypassing the DTO): a numeric cost or price is a 400 BadRequest, not an inherit / TypeError", async () => {
     for (const plain of [
       {
-        family: { name: "F", standardCost: "3" },
+        family: { pricePerUnit: "1.00", name: "F", standardCost: "3" },
         variants: [{ name: "A", pricePerUnit: "1", standardCost: 2.5 }],
       },
-      { family: { name: "F", standardCost: 2.5 }, variants: [{ name: "A", pricePerUnit: "1" }] },
-      { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: 5 }] },
+      {
+        family: { pricePerUnit: "1.00", name: "F", standardCost: 2.5 },
+        variants: [{ name: "A", pricePerUnit: "1" }],
+      },
+      { family: { pricePerUnit: "1.00", name: "F" }, variants: [{ name: "A", pricePerUnit: 5 }] },
     ]) {
       await expect(build().service.createFamily(plain as never, ACTOR)).rejects.toBeInstanceOf(
         BadRequestException,
@@ -758,7 +770,7 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
     await expect(
       build().service.createFamily(
         {
-          family: { name: "F" },
+          family: { pricePerUnit: "1.00", name: "F" },
           variants: [{ name: "A", pricePerUnit: "1", standardCost: true }],
         } as never,
         ACTOR,

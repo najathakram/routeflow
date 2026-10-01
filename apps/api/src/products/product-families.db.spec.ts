@@ -138,7 +138,7 @@ describeDb("WS8 families API — real Postgres", () => {
       inTenant(tenantId, () =>
         service.createFamily(
           {
-            family: { name: "Shared Fam" },
+            family: { pricePerUnit: "1.00", name: "Shared Fam" },
             variants: [variant("Kid", { sku: "SHARED-1" })],
           } as any,
           ACTOR,
@@ -157,7 +157,10 @@ describeDb("WS8 families API — real Postgres", () => {
     const rows = Array.from({ length: 201 }, (_, i) => variant(`V${i}`));
     await expect(
       inTenant(tenantId, () =>
-        service.createFamily({ family: { name: "Big" }, variants: rows } as any, ACTOR),
+        service.createFamily(
+          { family: { pricePerUnit: "1.00", name: "Big" }, variants: rows } as any,
+          ACTOR,
+        ),
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(await prisma.product.count({ where: { tenantId } })).toBe(0);
@@ -167,7 +170,10 @@ describeDb("WS8 families API — real Postgres", () => {
     const tenantId = await seedTenant("conf");
     await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "Existing" }, variants: [variant("Held", { sku: "HELD-1" })] } as any,
+        {
+          family: { pricePerUnit: "1.00", name: "Existing" },
+          variants: [variant("Held", { sku: "HELD-1" })],
+        } as any,
         ACTOR,
       ),
     );
@@ -176,7 +182,7 @@ describeDb("WS8 families API — real Postgres", () => {
       inTenant(tenantId, () =>
         service.createFamily(
           {
-            family: { name: "Second" },
+            family: { pricePerUnit: "1.00", name: "Second" },
             variants: [variant("Fine"), variant("Clash", { sku: "HELD-1" })],
           } as any,
           ACTOR,
@@ -193,7 +199,7 @@ describeDb("WS8 families API — real Postgres", () => {
     const created = await inTenant(tenantId, () =>
       service.createFamily(
         {
-          family: { name: "PatchFam" },
+          family: { pricePerUnit: "1.00", name: "PatchFam" },
           variants: [variant("K1", { sku: "K-1" }), variant("K2", { sku: "K-2" })],
         } as any,
         ACTOR,
@@ -220,7 +226,10 @@ describeDb("WS8 families API — real Postgres", () => {
     const tenantId = await seedTenant("legacy");
     const first = await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "Old Fam" }, variants: [variant("OldKid", { sku: "LEG-1" })] } as any,
+        {
+          family: { pricePerUnit: "1.00", name: "Old Fam" },
+          variants: [variant("OldKid", { sku: "LEG-1" })],
+        } as any,
         ACTOR,
       ),
     );
@@ -228,7 +237,10 @@ describeDb("WS8 families API — real Postgres", () => {
     await prisma.product.update({ where: { id: first.variants[0].id }, data: { isActive: false } });
     const second = await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "New Fam" }, variants: [variant("NewKid", { sku: "LEG-1" })] } as any,
+        {
+          family: { pricePerUnit: "1.00", name: "New Fam" },
+          variants: [variant("NewKid", { sku: "LEG-1" })],
+        } as any,
         ACTOR,
       ),
     );
@@ -243,7 +255,10 @@ describeDb("WS8 families API — real Postgres", () => {
     });
     const third = await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "Third Fam" }, variants: [variant("ThirdKid", { sku: "T-1" })] } as any,
+        {
+          family: { pricePerUnit: "1.00", name: "Third Fam" },
+          variants: [variant("ThirdKid", { sku: "T-1" })],
+        } as any,
         ACTOR,
       ),
     );
@@ -264,7 +279,7 @@ describeDb("WS8 families API — real Postgres", () => {
     const created = await inTenant(tenantId, () =>
       service.createFamily(
         {
-          family: { name: "SwapFam" },
+          family: { pricePerUnit: "1.00", name: "SwapFam" },
           variants: [variant("A", { sku: "SW-A" }), variant("B", { sku: "SW-B" })],
         } as any,
         ACTOR,
@@ -293,7 +308,7 @@ describeDb("WS8 families API — real Postgres", () => {
     const tenantId = await seedTenant("sell");
     const created = await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "SellFam" }, variants: [variant("Kid")] } as any,
+        { family: { pricePerUnit: "1.00", name: "SellFam" }, variants: [variant("Kid")] } as any,
         ACTOR,
       ),
     );
@@ -331,7 +346,7 @@ describeDb("WS8 families API — real Postgres", () => {
     });
     const created = await inTenant(tenantId, () =>
       service.createFamily(
-        { family: { name: "CountFam" }, variants: [variant("Kid")] } as any,
+        { family: { pricePerUnit: "1.00", name: "CountFam" }, variants: [variant("Kid")] } as any,
         ACTOR,
       ),
     );
@@ -393,7 +408,7 @@ describeDb("WS8 families API — real Postgres", () => {
     const created = await inTenant(tenantId, () =>
       service.createFamily(
         {
-          family: { name: "NullFam" },
+          family: { pricePerUnit: "1.00", name: "NullFam" },
           variants: [variant("Kid", { pricePerUnit: "5.00", standardCost: "2" })],
         } as any,
         ACTOR,
@@ -418,7 +433,7 @@ describeDb("WS8 families API — real Postgres", () => {
     const created = await inTenant(tenantId, () =>
       service.createFamily(
         {
-          family: { name: "CostFam", standardCost: "2.00005" },
+          family: { pricePerUnit: "1.00", name: "CostFam", standardCost: "2.00005" },
           variants: [variant("Inherits"), variant("Own", { standardCost: "3.5" })],
         } as any,
         ACTOR,
