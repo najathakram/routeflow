@@ -5,6 +5,9 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
+// #2309 (SA-418 §7): deleteAccount() calls AppleOAuthService.revokeForBuyer — no
+// circular dependency (AuthModule never imports BuyerModule).
+import { AuthModule } from "../auth/auth.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { OrdersModule } from "../orders/orders.module";
 import { InvoicesModule } from "../invoices/invoices.module";
@@ -49,6 +52,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
   imports: [
     PassportModule,
     EmailModule,
+    AuthModule,
     TenantModule,
     OrdersModule,
     InvoicesModule,
