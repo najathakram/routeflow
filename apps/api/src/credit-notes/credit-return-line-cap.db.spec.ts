@@ -5,10 +5,10 @@
  * INVOICE headroom, while the credit-note per-line cap (`CreditNotesService.create`, `priorForLine`) counts only item-bearing
  * notes, so neither side sees the other.
  *
- * RED-FIRST proof (tests only, no production code): these cases assert the INVARIANT, "the total credited against a line
- * (CN items on it + refunds of returns of its product) never exceeds the line's value", so they hold whether the SA rules
- * REFUSE or CLIP the over-crediting call. Order, partial/full, multi-line, tax share and a concurrency probe are covered.
- * Cases 3 (partial boundary), 6 (VOID frees headroom) and 7 (non-attributable credits unchanged) follow the SA ruling.
+ * SA-628 ruled REFUSE (409 RETURN_REFUND_OVER_LINE_HEADROOM), never clip: a refund that would take a line past its value is refused
+ * BEFORE the claim; a credit note past it is the existing 400. Cases 1/2/4/5/8 assert the INVARIANT, "the total credited against a line
+ * (CN items on it + refunds of returns of its product) never exceeds the line's value". Cases 3 (partial boundary), 6 (VOID
+ * frees headroom) and 7 (itemless manual credits stay invoice-level only) pin the ruling's edges.
  *
  * Runs only under `npm run local:test:db` (jest.db.config.js). Every tenant is a throwaway `qa-capret-<run>-<n>` slug
  * approved by `assertTestTenant`, deleted in FK order in afterAll.
