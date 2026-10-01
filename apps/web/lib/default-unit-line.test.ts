@@ -237,3 +237,29 @@ describe("SA-626c rulings A + B and SA-626d (owner rulings): a remembered price 
     expect(keepsDefaultStart(line(), false)).toBe(false);
   });
 });
+
+describe("SA-626d review: the picker's mount path and the resolver give the SAME line; the async resolve never uses a stale count", () => {
+  it("applyUnitToLines on a pending line keeps its count (2 cases = 2 of the default unit) without any extra argument", () => {
+    const [, bottle] = buildUnitOptions(
+      { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" },
+      [BOTTLE],
+      1,
+    );
+    const two = line({ qty: 24, boxes: 2, pieces: 0 });
+    expect(applyUnitToLines([two], "t1", bottle!, false, 1)[0]).toMatchObject({
+      unitLabel: "Bottle",
+      qty: 2,
+    });
+    // an explicit choice on a line that is not pending still resets to 1
+    const typed = line({ qty: 24, boxes: 2, startOnDefaultUnit: false });
+    expect(applyUnitToLines([typed], "t1", bottle!, false, 1)[0]!.qty).toBe(1);
+  });
+
+  it("mergeResolvedLines does not overwrite a line whose count changed while the resolve was in flight", () => {
+    const before = [line({ qty: 12, boxes: 1 })];
+    const done = [{ ...before[0]!, unitLabel: "Bottle", qty: 1, startOnDefaultUnit: false }];
+    const cur = [line({ qty: 24, boxes: 2 })]; // a second fast add landed meanwhile
+    const merged = mergeResolvedLines(cur, before, done);
+    expect(merged[0]).toBe(cur[0]);
+  });
+});

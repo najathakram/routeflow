@@ -272,3 +272,37 @@ describe("SA-626d: the history pre-fill is not an operator shape; the unit price
     expect(typed.unitPrice).toBeUndefined();
   });
 });
+
+describe("SA-626d review: the sheet's mount path and the resolver give the SAME line", () => {
+  const PIECE = lvl({ label: "Bottle", factorToBase: 1, price: null, isDefaultSelling: true });
+  const OTHER = lvl({ label: "Pack6", factorToBase: 6, price: "12.00" });
+  const opts = buildUnitOptions(product, [PIECE, OTHER], 1);
+  const bottle = opts.find((o) => o.value === "Bottle")!;
+  const pack6 = opts.find((o) => o.value === "Pack6")!;
+  const pack = opts.find((o) => o.value === "")!;
+
+  it("a pending line with 2 fast adds keeps its count when the sheet applies the unit (qty 24 pieces = 2 cases)", () => {
+    const pending = flagged({ qty: 24, boxes: 2, pieces: 0, startOnDefaultUnit: 24 });
+    expect(applyUnitOption(pending, bottle, 12).qty).toBe(2);
+    expect(applyUnitOption(flagged({ qty: 3, startOnDefaultUnit: 3 }), bottle, 1).qty).toBe(3);
+  });
+
+  it("an explicit choice on a line that is NOT pending still resets to 1, and the pack always restores qty 1", () => {
+    expect(applyUnitOption({ qty: 5 }, bottle, 12).qty).toBe(1);
+    expect(applyUnitOption(flagged({ qty: 24, startOnDefaultUnit: 24 }), pack, 12).qty).toBe(1);
+  });
+
+  it("the remembered pack price survives default unit -> another unit -> pack", () => {
+    const start = applyUnitOption(
+      { qty: 1, startOnDefaultUnit: 1, unitPrice: 20, priceSource: "history" },
+      bottle,
+      12,
+    );
+    const other = applyUnitOption(start, pack6, 12);
+    expect(other.packUnitPrice).toBe(20);
+    expect(applyUnitOption(other, pack, 12)).toMatchObject({
+      unitPrice: 20,
+      priceSource: "history",
+    });
+  });
+});
