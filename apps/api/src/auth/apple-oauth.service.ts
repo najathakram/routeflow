@@ -662,7 +662,13 @@ export class AppleOAuthService {
     try {
       await this.applyNotificationEvent(payload);
     } catch (e) {
-      await this.redis.del(jtiKey).catch(() => undefined);
+      await this.redis.del(jtiKey).catch(() => {
+        // Never lose this silently: if the delete fails, Apple's retry of this jwt will be
+        // treated as a replay and ignored until the jti expires (the jti value is not logged).
+        this.logger.warn(
+          "Apple notification jti could not be released after a failed write: the retry may be ignored as a replay",
+        );
+      });
       throw e;
     }
   }

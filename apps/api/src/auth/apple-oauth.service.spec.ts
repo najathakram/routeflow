@@ -1227,6 +1227,42 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
   });
 
+  it("pins the replay-store contract: SET key NX with a 7-day TTL under the apple:notif:jti: prefix", async () => {
+    const { service, privateKey } = await buildService();
+    const redisSet = (service as any).redis.set as jest.Mock;
+    const token = await signNotification(privateKey, { jti: "jti-ttl" });
+    (service as any).prisma.buyerAccount.findFirst.mockResolvedValue(null);
+    (service as any).prisma.user.findMany.mockResolvedValue([]);
+
+    await service.handleNotification(token);
+
+    const call = redisSet.mock.calls.find((c) => String(c[0]).startsWith("apple:notif:jti:"));
+    expect(call).toBeTruthy();
+    expect(call![0]).toBe("apple:notif:jti:jti-ttl");
+    expect(call!.slice(2)).toEqual(["EX", 7 * 24 * 3600, "NX"]);
+    // The TTL must outlive every token that could still carry the jti (maxTokenAge 48h + skew).
+    expect(7 * 24 * 3600).toBeGreaterThan(48 * 3600 + 60);
+  });
+
+  it("a FAILED jti delete is logged, never swallowed silently, and the original write error still surfaces", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.buyerAccount.update.mockRejectedValueOnce(new Error("transient db error"));
+    (service as any).redis.del = jest.fn().mockRejectedValue(new Error("redis del failed"));
+    const warn = jest.spyOn((service as any).logger, "warn");
+
+    await expect(
+      service.handleNotification(await signNotification(privateKey, { jti: "jti-del-fail" })),
+    ).rejects.toThrow("transient db error");
+
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/jti/i);
+    expect(logged).toMatch(/retry/i);
+    // never log the jti value itself
+    expect(logged).not.toContain("jti-del-fail");
+  });
+
   it("two DIFFERENT notifications (different jti) are both processed", async () => {
     const { service, prisma, privateKey } = await buildService();
     prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
