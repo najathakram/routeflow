@@ -29,6 +29,10 @@ apps/web/e2e/setup/.auth/
 # lead machine's canonical copies with none of this repo's own history, so they're excluded
 # rather than reformatted.
 .claude/skills/dev-pipeline/scripts/closeout.mjs
+.claude/skills/dev-pipeline/scripts/fix-brief.mjs
+.claude/skills/dev-pipeline/scripts/review-pack.mjs
+.claude/skills/dev-pipeline/scripts/selftest-all.mjs
+.claude/skills/dev-pipeline/scripts/task-brief.mjs
 .claude/skills/dev-pipeline/scripts/dry-run.mjs
 .claude/skills/dev-pipeline/scripts/light-loop-dry-run.mjs
 .claude/skills/dev-pipeline/scripts/test-cap-fable-brief.mjs

@@ -66,6 +66,7 @@ all (self-signup seeds none), and Stripe-originated rows are missing `planKey`/
 Reconciliation script (`apps/api/scripts/backfill-subscription-reconciliation.mjs`, following
 the existing `publish-plan-catalog-v*.ts` pattern): for every tenant with `class = PRODUCTION`
 or `DEMO`, in dry-run mode by default:
+
 - If a `TenantSubscription` row exists but is missing `planKey`/`basePriceSnapshot`/
   `planVersionId`: derive `planKey` from the tenant's legacy `plan` value (mapped once, by
   hand, in a lookup table checked into the script — not inferred), `basePriceSnapshot` from the
@@ -133,7 +134,7 @@ No schema change.
 Creates the house tenant this and every later phase depends on:
 
 - One-time script `apps/api/scripts/bootstrap-house-tenant.mjs`: creates `Tenant{slug:
-  "routeflow-hq", class: INTERNAL, plan: ENTERPRISE}` (a real tenant row, so every existing
+"routeflow-hq", class: INTERNAL, plan: ENTERPRISE}` (a real tenant row, so every existing
   guard, module and query path works unmodified), a `TenantConfig` with RouteFlow's own legal
   name/address (owner-supplied, held as a placeholder until provided), and a `TENANT_ADMIN`
   user for internal use. Guarded by `assertSafeTarget`-style idempotency: running it twice is a
@@ -150,7 +151,7 @@ Creates the house tenant this and every later phase depends on:
   create a duplicate) plus `ContactPerson` rows for each tenant admin (matched on email within
   that customer). Called synchronously at the end of `createTenant()` and `updateTenantConfig()`
   in `platform-admin.service.ts`, and from a new nightly `@LeaderCron("platform-admin.mirror-
-  sync", "0 6 * * *")` job that walks every PRODUCTION/DEMO/MANUAL-eligible tenant and calls
+sync", "0 6 * * *")` job that walks every PRODUCTION/DEMO/MANUAL-eligible tenant and calls
   `upsert()`, logging a `JobRun`-shaped result even though the `JobRun` table itself is Phase
   1's addition (this job writes its outcome via `logger.log` in Phase 0 and gains the table in
   Phase 1 rather than blocking on it). A mirror-sync failure for one tenant does not abort the
@@ -162,14 +163,14 @@ Creates the house tenant this and every later phase depends on:
 
 ## Data model deltas (this phase only)
 
-| Model | Change |
-| --- | --- |
-| Tenant | + `class` enum (PRODUCTION default, backfilled dark) |
-| TenantPlan (enum) | + GROWTH, SCALE (additive) |
-| TenantSubscription | no schema change; reconciliation is a data backfill only |
-| Customer | + `representsTenantId String? @unique` (schema only, no writer yet) |
-| PlatformConfig | + key `platform.houseTenantId` |
-| AdminAuditAction (const) | + `TENANT_CLASS_CHANGED` |
+| Model                    | Change                                                              |
+| ------------------------ | ------------------------------------------------------------------- |
+| Tenant                   | + `class` enum (PRODUCTION default, backfilled dark)                |
+| TenantPlan (enum)        | + GROWTH, SCALE (additive)                                          |
+| TenantSubscription       | no schema change; reconciliation is a data backfill only            |
+| Customer                 | + `representsTenantId String? @unique` (schema only, no writer yet) |
+| PlatformConfig           | + key `platform.houseTenantId`                                      |
+| AdminAuditAction (const) | + `TENANT_CLASS_CHANGED`                                            |
 
 New Prisma migration is one file covering `Tenant.class`, the `TenantPlan` enum widening, and
 `Customer.representsTenantId` together, run through `npx prisma migrate dev` locally and

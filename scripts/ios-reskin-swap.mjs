@@ -56,19 +56,31 @@ const replacements = [
   [/"#0B6E6B"/g, "ios.brand"],
 
   // Import line — replace single-token imports with named ios import
-  [/import\s*\{\s*colors\s*,\s*borderRadius\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    'import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";'],
-  [/import\s*\{\s*colors\s*,\s*borderRadius\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    'import { ios, borderRadius } from "@routeflow/ui/tokens";'],
-  [/import\s*\{\s*colors\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    'import { ios, shadows } from "@routeflow/ui/tokens";'],
-  [/import\s*\{\s*colors\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    'import { ios } from "@routeflow/ui/tokens";'],
+  [
+    /import\s*\{\s*colors\s*,\s*borderRadius\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    'import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";',
+  ],
+  [
+    /import\s*\{\s*colors\s*,\s*borderRadius\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    'import { ios, borderRadius } from "@routeflow/ui/tokens";',
+  ],
+  [
+    /import\s*\{\s*colors\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    'import { ios, shadows } from "@routeflow/ui/tokens";',
+  ],
+  [
+    /import\s*\{\s*colors\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    'import { ios } from "@routeflow/ui/tokens";',
+  ],
   // Multi-line variants
-  [/import\s*\{\s*borderRadius\s*,\s*colors\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    'import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";'],
-  [/import\s*\{\s*colors\s*,\s*(borderRadius|shadows)\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
-    (_m, kept) => `import { ios, ${kept} } from "@routeflow/ui/tokens";`],
+  [
+    /import\s*\{\s*borderRadius\s*,\s*colors\s*,\s*shadows\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    'import { ios, borderRadius, shadows } from "@routeflow/ui/tokens";',
+  ],
+  [
+    /import\s*\{\s*colors\s*,\s*(borderRadius|shadows)\s*\}\s*from\s*"@routeflow\/ui\/tokens";/g,
+    (_m, kept) => `import { ios, ${kept} } from "@routeflow/ui/tokens";`,
+  ],
 ];
 
 let totalFiles = 0;
