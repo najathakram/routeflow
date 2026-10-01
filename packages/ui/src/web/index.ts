@@ -34,6 +34,8 @@ export type { AvatarProps, AvatarSize } from "./Avatar";
 export { ToastProvider, useToast } from "./Toast";
 export type { ToastData, ToastVariant, ToastAction } from "./Toast";
 
+export { ScrollShadow } from "./ScrollShadow";
+export type { ScrollShadowProps } from "./ScrollShadow";
 export { Skeleton, SkeletonRows } from "./Skeleton";
 export type { SkeletonProps } from "./Skeleton";
 

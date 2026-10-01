@@ -4,7 +4,7 @@
  * Runs against the REAL workspace graph of this repo — not a hand-typed fixture — so a new
  * dependency edge or a renamed package is caught here, not by a false-green push.
  *
- * S1: a change under packages/pricing selects api + web + mobile (its dependents) + itself.
+ * S1: a change under packages/pricing selects api + web + mobile + scanning (its dependents) + itself.
  * S2: a change confined to apps/api selects only api + the always-run pricing tripwire.
  * S3: a change under packages/ui selects web (its dependent) and not api/mobile.
  * S4: a docs-only / code-map-only diff selects only the pricing tripwire (repo-truth always runs).
@@ -20,12 +20,12 @@
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path, { dirname, join } from "node:path";
 import {
   changedFilesSince,
-  cleanGitEnv,
   computeScope,
   decideScope,
   loadWorkspaces,
@@ -66,9 +66,9 @@ check(
 );
 
 check(
-  "S1 packages/pricing change selects api + mobile + pricing + web",
+  "S1 packages/pricing change selects api + mobile + pricing + scanning + web",
   scopedNames(["packages/pricing/src/index.ts"]),
-  ["api", "mobile", "pricing", "web"],
+  ["api", "mobile", "pricing", "scanning", "web"],
 );
 check(
   "S2 apps/api-only change selects api + the pricing tripwire",
@@ -132,7 +132,7 @@ function isUnder(root, p, pathImpl = path) {
 }
 
 const fixtureEnv = () => ({
-  ...cleanGitEnv(),
+  ...scrubbedGitEnv(),
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
 });

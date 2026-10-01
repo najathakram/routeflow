@@ -95,11 +95,13 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 import { withAdvisoryLock } from "../common/db-locks";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -168,6 +170,10 @@ describeDb(
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           InvoicesService,
+          {
+            provide: SellingRestrictionsService,
+            useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+          },
           EstimatesService,
           NumberingService,
           { provide: PrismaService, useValue: prisma },
@@ -189,6 +195,13 @@ describeDb(
           { provide: CreditNotesService, useValue: mockCreditNotes },
           { provide: MessagingService, useValue: mockMessaging },
           { provide: StorageService, useValue: mockStorage },
+          {
+            provide: EntitlementAuthority,
+            inject: [EntitlementsService],
+            useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+              can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+            }),
+          },
           { provide: EntitlementsService, useValue: mockEntitlements },
           { provide: CommissionEngineService, useValue: mockCommissionEngine },
         ],
@@ -1797,6 +1810,361 @@ describeDb(
         expect(refreshedA.status).toBe("PENDING");
         expect(Number(refreshedA.qty)).toBe(10);
         expect(Number(refreshedA.subtotal)).toBe(100);
+      });
+    });
+
+    describe("B785/SA-113a: the at-door reconcile (basis:delivered) reads the evidence basis, real Postgres", () => {
+      // SA-345a: a line with NO qualifying row of its own bills its LEGACY COLUMN (`deliveredQty ?? 0`),
+      // capped at qty — never the full qty (the column IS the evidence for an order delivered before
+      // DeliveryMutation rows existed). Coverage (billableQtyFromBasis) keeps "no rows => full qty";
+      // this is the delivered READER, a different question.
+      const seedNoEvidenceLine = async (label: string, column: number | null) => {
+        const { tenant, customer } = await seedTenantAndCustomer(label);
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            ...(column === null ? {} : { deliveredQty: column }),
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+        return { tenant, order, lineA, productA };
+      };
+      const reconcileDelivered = async (tenantId: string, orderId: string) => {
+        await tenantCtx.run(tenantId, () =>
+          invoicesService.reconcileOrderDraftInvoice(orderId, { basis: "delivered" }),
+        );
+        return prisma.invoice.findFirstOrThrow({
+          where: { orderId },
+          include: { items: true },
+        });
+      };
+
+      it("(1a) SA-345a: no evidence row + column 0 bills 0 — the line is dropped from the draft, never billed at the full qty", async () => {
+        const { tenant, order, lineA } = await seedNoEvidenceLine("b785-1a", 0);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(0);
+        expect(Number(draft.subtotal)).toBe(0);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(0);
+      });
+
+      it("(1b) SA-345a: no evidence row + a legacy column of 7 (qty 10) bills 7 (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, order, lineA } = await seedNoEvidenceLine("b785-1b", 7);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(7);
+        expect(Number(draft.subtotal)).toBe(70);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(7);
+      });
+
+      it("(1c) SA-345a: no evidence row + a stale column of 15 against qty 10 is capped at qty — bills 10, never units nobody ordered", async () => {
+        const { tenant, order } = await seedNoEvidenceLine("b785-1c", 15);
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(10);
+        expect(Number(draft.subtotal)).toBe(100);
+      });
+
+      it("(2) a REFUSED evidence row bills 0 (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-2");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        // SA-539d: the office bills FIRST (no evidence yet ⇒ the draft bills the full line), then the
+        // door refuses, then the at-door reconcile. Seeding the REFUSED row before the create made
+        // B760 bill min(10, 0) = 0 ⇒ no draft at all (the owner-closed "no fee on a fully refused
+        // delivery"), which is not the path this case pins.
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "REFUSED",
+            quantityDelivered: 0,
+            tenantId: tenant.id,
+          },
+        });
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(0); // billQty 0 -- filtered out entirely
+        expect(Number(draft.subtotal)).toBe(0);
+      });
+
+      it("(3) a stale OrderItem.deliveredQty that disagrees with the evidence never wins — the evidence does (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-3");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            // Deliberately stale/disagreeing column: a stock-settle or a stray earlier
+            // write left this at 3, but the real evidence row below says 7.
+            deliveredQty: 3,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 7,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(Number(draft.items[0]!.qty)).toBe(7); // the evidence row, never the stale column
+        expect(Number(draft.subtotal)).toBe(70);
+      });
+
+      it("(4) SA-115a: a CANCELLED line is excluded, even with its own evidence row (reconcileOrderDraftInvoice)", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-4");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const productB = await prisma.product.create({
+          data: { name: `B ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 160,
+            total: 160,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineB = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productB.id,
+            status: "CANCELLED",
+            qty: 6,
+            unitPrice: 10,
+            subtotal: 60,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 10,
+            tenantId: tenant.id,
+          },
+        });
+        // A CANCELLED line with its own real evidence row -- must never bill.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineB.id,
+            productId: productB.id,
+            type: "DELIVERED",
+            quantityDelivered: 6,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDraftInvoice(order.id, { basis: "delivered" }),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(draft.items).toHaveLength(1);
+        expect(draft.items[0]!.orderItemId).toBe(lineA.id);
+        expect(Number(draft.subtotal)).toBe(100);
+      });
+
+      it("(5) reconcileOrderDeliveredInvoices (the sibling-aware path) is byte-identical to reconcileOrderDraftInvoice for a single-group order", async () => {
+        const { tenant, customer } = await seedTenantAndCustomer("b785-5");
+        const productA = await prisma.product.create({
+          data: { name: `A ${tenant.slug}`, unit: "ea", pricePerUnit: 10, tenantId: tenant.id },
+        });
+        const order = await prisma.order.create({
+          data: {
+            customerId: customer.id,
+            status: "PARTIALLY_DELIVERED",
+            subtotal: 100,
+            total: 100,
+            tenantId: tenant.id,
+          },
+        });
+        const lineA = await prisma.orderItem.create({
+          data: {
+            orderId: order.id,
+            productId: productA.id,
+            status: "PENDING",
+            qty: 10,
+            unitPrice: 10,
+            subtotal: 100,
+            tenantId: tenant.id,
+          },
+        });
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "DELIVERED",
+            quantityDelivered: 7,
+            tenantId: tenant.id,
+          },
+        });
+        await tenantCtx.run(tenant.id, () => invoicesService.createInvoiceFromOrder(order.id));
+
+        // The clean-provenance sibling path (called via reconcileDeliveredOrdersInTx in
+        // production) must land on the SAME numbers as the plain draft path above.
+        await tenantCtx.run(tenant.id, () =>
+          invoicesService.reconcileOrderDeliveredInvoices(order.id),
+        );
+
+        const draft = await prisma.invoice.findFirstOrThrow({
+          where: { orderId: order.id },
+          include: { items: true },
+        });
+        expect(Number(draft.items[0]!.qty)).toBe(7);
+        expect(Number(draft.subtotal)).toBe(70);
+        const refreshedA = await prisma.orderItem.findUniqueOrThrow({ where: { id: lineA.id } });
+        expect(Number(refreshedA.invoicedQty)).toBe(7);
+      });
+
+      it("(6) SA-133/SA-345a: a line whose ONLY rows are ADD_ON/null-quantity change-request rows has no evidence of its own — it bills its legacy column (7 of 10), and the ADD_ON's signed qty never shrinks or replaces it", async () => {
+        const { tenant, order, productA, lineA } = await seedNoEvidenceLine("b785-6", 7);
+        // A door-cut change request: ADD_ON-shaped, signed delta qty, NO quantityDelivered.
+        // Never evidence — if it wrongly counted, the line would read as delivered -3 (billable
+        // 0), not its column of 7.
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "ADD_ON",
+            qty: -3,
+            quantityDelivered: null,
+            tenantId: tenant.id,
+          },
+        });
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(1);
+        expect(Number(draft.items[0]!.qty)).toBe(7); // the column decides — no real evidence exists
+        expect(Number(draft.subtotal)).toBe(70);
+      });
+
+      it("(6b) SA-345a: the same ADD_ON-only line with a column of 0 bills 0 (nothing delivered), not the full qty", async () => {
+        const { tenant, order, productA, lineA } = await seedNoEvidenceLine("b785-6b", 0);
+        await prisma.deliveryMutation.create({
+          data: {
+            orderId: order.id,
+            orderItemId: lineA.id,
+            productId: productA.id,
+            type: "ADD_ON",
+            qty: -3,
+            quantityDelivered: null,
+            tenantId: tenant.id,
+          },
+        });
+
+        const draft = await reconcileDelivered(tenant.id, order.id);
+
+        expect(draft.items).toHaveLength(0);
+        expect(Number(draft.subtotal)).toBe(0);
       });
     });
 

@@ -1,4 +1,5 @@
 import { OrderStatus, UserRole } from "@prisma/client";
+import type { BuyerOrderEditWindow } from "@routeflow/types";
 
 /**
  * B63 (REG-B63): the statuses past which a BUYER may no longer self-edit an
@@ -32,7 +33,7 @@ export function computeEditWindow(
     routeRun?: { status: string } | null;
   },
   role?: UserRole,
-): { editable: boolean; editableUntil: string | null; closedReason: string | null } {
+): BuyerOrderEditWindow {
   if (
     role === UserRole.CUSTOMER &&
     BUYER_EDIT_CLOSED_STATUSES.includes(order.status as OrderStatus)

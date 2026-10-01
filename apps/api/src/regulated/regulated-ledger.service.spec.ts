@@ -1,5 +1,6 @@
 import { Test } from "@nestjs/testing";
-import { RegulatedLedgerService } from "./regulated-ledger.service";
+import { classifySaleAxis, creditedThrough } from "@routeflow/pricing";
+import { RegulatedLedgerService, priceCorrectionTarget } from "./regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
@@ -688,6 +689,73 @@ describe("RegulatedLedgerService", () => {
       });
     });
 
+    // B662 (Opus R2): a price correction restates the held money on the SALE (a SALE-typed row with
+    // correctsEntryId). A partial return pro-rates the sale's CURRENT held net/tax: the base row alone
+    // under-reversed (a $240 sale corrected to $300, 12 of 72 pieces back booked -$40, not -$50), leaving
+    // $260 held against a $250 invoice share. Driven through reverseReturnEntries, not a hand-written -50.
+    it("B662: a partial return after a price correction reverses its share of the CORRECTED net and tax", async () => {
+      const base = saleRow({ qty: 72, unitBasisQty: 72, netSales: 240, categoryTax: 48 });
+      const correction = saleRow({
+        correctsEntryId: base.id,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 12,
+      });
+      arrange({ sales: [base, correction], items: [{ id: "ii-1", productId: "p1" }] });
+      prisma.regulatedSalesLedger.findMany.mockResolvedValueOnce([
+        {
+          correctsEntryId: base.id,
+          qty: 0,
+          unitBasisQty: 0,
+          netSales: 60,
+          categoryTax: 12,
+        },
+      ]);
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "PIECES",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -50, // 12/72 of $300, not of the base $240 (-40)
+        categoryTax: -10, // 12/72 of $60, not of the base $48 (-8)
+      });
+    });
+
+    it("R-1: a STANDARD (LINE_UNIT) return after a price correction reverses its share of the CORRECTED net and tax (no correction map needed)", async () => {
+      const base = saleRow({ qty: 72, unitBasisQty: 72, netSales: 240, categoryTax: 48 });
+      const correction = saleRow({
+        correctsEntryId: base.id,
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 12,
+      });
+      arrange({ sales: [base, correction], items: [{ id: "ii-1", productId: "p1" }] });
+      await service.reverseReturnEntries({
+        returnId: "ret-1",
+        orderId: "ord-1",
+        returnedByProduct: new Map([["p1", 12]]),
+        returnedUnit: "LINE_UNIT",
+        db: prisma,
+      });
+      expect(written()).toHaveLength(1);
+      expect(written()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -50, // 12/72 of $300, not of the base $240 (-40)
+        categoryTax: -10, // 12/72 of $60, not of the base $48 (-8)
+      });
+    });
+
     // B661/B671 rd2 (live production regression) — the regression pin CI actually runs. The
     // DB-lane spec (return-reversal-unit-axis.db.spec.ts) proves this through the real caller,
     // but nothing in CI invokes `npm run local:test:db`; this mock-level case is what a future
@@ -1180,7 +1248,9 @@ describe("RegulatedLedgerService", () => {
         returnedUnit: "PIECES", // B671 rd2: this fixture is piece-denominated, matching the INLINE caller
         db: prisma,
       });
-      expect(written()[0]).toMatchObject({ qty: -7.7, unitBasisQty: -7.7, netSales: -76 });
+      // B662: a non-closing chunk books its share of what the line STILL HOLDS: $76 x 7.7/8 = $73.15
+      // (it can no longer exceed the remaining, so the clamp below it is defense in depth only).
+      expect(written()[0]).toMatchObject({ qty: -7.7, unitBasisQty: -7.7, netSales: -73.15 });
     });
 
     it("a non-closing partial return can NEVER drive the line net below 0 (reprice-to-zero)", async () => {
@@ -1294,8 +1364,8 @@ describe("RegulatedLedgerService", () => {
       expect(written()[0]).toMatchObject({
         qty: -7.7,
         unitBasisQty: -7.7,
-        netSales: -76,
-        categoryTax: -15.2,
+        netSales: -73.15,
+        categoryTax: -14.63,
       });
     });
 
@@ -2655,6 +2725,547 @@ describe("RegulatedLedgerService", () => {
       await service.unreverseCreditNoteEntries({ creditNoteId: "cn-1", db: prisma });
       expect(prisma.regulatedSalesLedger.deleteMany).toHaveBeenCalledWith({
         where: { creditNoteId: "cn-1", entryType: "REVERSAL" },
+      });
+    });
+  });
+
+  // SA-089 — B660 PR B: the operator resolution of ONE parked reversal row. Query-inspecting
+  // mocks (not ordered mockResolvedValueOnce chains) because resolveParkedReversal's own call
+  // sequence differs from reverseReturnEntries' — findFirst by saleEntryId, not a findMany
+  // sweep — and a legacy verdict inserts a correction row and re-reads corrections mid-call.
+  describe("resolveParkedReversal — SA-089", () => {
+    let saleRows: any[];
+    let invoiceItems: any[];
+    let priorReversals: any[];
+    let createdRows: any[];
+
+    const saleRow = (over: Record<string, unknown> = {}) => ({
+      id: "s-1",
+      tenantId: "t1",
+      trackedCategoryId: "cat-A",
+      trackedSubcategoryId: null,
+      entryType: "SALE",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      invoiceId: "inv-1",
+      invoiceItemId: "ii-1",
+      correctsEntryId: null,
+      qty: 5, // selling units (boxes) — a box-unaware, unsplit line
+      unitBasisQty: 5, // legacy: stored as a straight copy of qty (the pre-B661 defect)
+      netSales: 50,
+      categoryTax: 10,
+      soldAt: new Date("2026-07-01T00:00:00Z"),
+      ...over,
+    });
+
+    const invoiceItem = (over: Record<string, unknown> = {}) => ({
+      id: "ii-1",
+      productId: "p1",
+      boxes: null,
+      pieces: null,
+      unitLabel: null,
+      unitsPerBox: null, // box-unaware: no split, no snapshot — exactly why it parked
+      ...over,
+    });
+
+    const parked = (over: Record<string, unknown> = {}) => ({
+      returnId: "ret-1",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      saleEntryId: "s-1",
+      returnedPieces: 5,
+      ...over,
+    });
+
+    beforeEach(() => {
+      saleRows = [saleRow()];
+      invoiceItems = [invoiceItem()];
+      priorReversals = [];
+      createdRows = [];
+
+      prisma.regulatedSalesLedger.findFirst.mockImplementation(
+        async ({ where }: any) => saleRows.find((s) => s.id === where.id) ?? null,
+      );
+      prisma.regulatedSalesLedger.findMany.mockImplementation(async ({ where }: any) => {
+        if (where?.correctsEntryId?.in) {
+          return saleRows.filter(
+            (s) =>
+              s.correctsEntryId != null && where.correctsEntryId.in.includes(s.correctsEntryId),
+          );
+        }
+        if (where?.orderId != null && where?.entryType === "SALE") {
+          return saleRows.filter((s) => s.orderId === where.orderId);
+        }
+        if (where?.OR && where?.entryType === "REVERSAL") {
+          // SA-167(2): the restatement selects by the balance builder's own line key.
+          return priorReversals.filter((r) =>
+            where.OR.some((c: any) =>
+              c.invoiceItemId?.in
+                ? c.invoiceItemId.in.includes(r.invoiceItemId)
+                : c.orderItemId === r.orderItemId,
+            ),
+          );
+        }
+        if (where?.invoiceItemId?.in && where?.entryType === "REVERSAL") {
+          return priorReversals.filter((r) => where.invoiceItemId.in.includes(r.invoiceItemId));
+        }
+        return [];
+      });
+      prisma.regulatedSalesLedger.create.mockImplementation(async ({ data }: any) => {
+        const row = { id: `created-${createdRows.length + 1}`, ...data };
+        createdRows.push(row);
+        saleRows.push(row); // a correction row is itself typed SALE — visible to later reads
+        return row;
+      });
+      prisma.invoiceItem.findMany.mockImplementation(async ({ where }: any) =>
+        invoiceItems.filter((i) => where.id.in.includes(i.id)),
+      );
+      prisma.orderItem.findMany.mockResolvedValue([]);
+    });
+
+    const corrections = () => createdRows.filter((r) => r.correctsEntryId != null);
+    // A REAL, newly-booked reversal, never a REVERSAL-typed correction row (SA-089a(b) restates
+    // an earlier box-axis reversal with its OWN correction, also entryType REVERSAL but
+    // correctsEntryId-tagged — see `corrections()` above for those).
+    const reversals = () =>
+      createdRows.filter((r) => r.entryType === "REVERSAL" && r.correctsEntryId == null);
+
+    it("legacy row + pack 12: appends ONE correction row (+11*qty basis), then books the REVERSAL of min(returned, remaining)", async () => {
+      // The line sold 5 selling-units at pack 12 = 60 TRUE pieces (post-correction). Returning
+      // all 60 (a full return of the line) closes it — netSales/categoryTax book the exact
+      // remaining, not a pro-rated share. returnedPieces is in PIECES (the return's own known
+      // quantity), never the pre-pack "5" — conflating the two axes is exactly the class of
+      // bug this whole guard exists to prevent.
+      const result = await service.resolveParkedReversal(
+        prisma,
+        parked({ returnedPieces: 60 }),
+        12,
+      );
+
+      expect(corrections()).toHaveLength(1);
+      expect(corrections()[0]).toMatchObject({
+        entryType: "SALE",
+        correctsEntryId: "s-1",
+        orderItemId: "oi-1",
+        invoiceItemId: "ii-1",
+        qty: 0,
+        unitBasisQty: 55, // 5 * (12 - 1)
+        netSales: 0,
+        categoryTax: 0,
+      });
+
+      // Full line remaining (60 corrected pieces, no prior reversal): the reversal books the
+      // WHOLE thing, closing the line.
+      expect(reversals()).toHaveLength(1);
+      expect(reversals()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        orderItemId: "oi-1",
+        invoiceItemId: "ii-1",
+        netSales: -50,
+        categoryTax: -10,
+      });
+      expect(result.outcome).toBe("booked");
+      // Opus LOW: verdictAfter is the POST-correction verdict — this row was legacy before the
+      // fix landed, but reads piece-axis now that it has (proves the restatement actually took).
+      expect(result.verdictAfter).toBe("piece-axis");
+      expect(result.correctionEntryId).toBe(corrections()[0].id);
+      expect(result.resolvedEntryId).toBe(reversals()[0].id);
+    });
+
+    it("legacy row + pack 12, a PARTIAL return (5 of the 60 corrected pieces): pro-rates 5/60 of the line, never the full amount", async () => {
+      const result = await service.resolveParkedReversal(prisma, parked({ returnedPieces: 5 }), 12);
+      expect(result.outcome).toBe("booked");
+      // 5/60 of $50 = $4.17, 5/60 of $10 tax = $0.83 — never the full $50/$10 a pre-fix
+      // conflation of "5 selling units" with "5 pieces" would have booked.
+      expect(reversals()[0].netSales).toBeCloseTo(-4.17, 2);
+      expect(reversals()[0].categoryTax).toBeCloseTo(-0.83, 2);
+      expect(reversals()[0].netSales).not.toBe(-50);
+    });
+
+    it("piece-axis after the pack: NO correction row — the row already holds pieces, books directly", async () => {
+      // unitBasisQty already > qty (60 vs 5) — already the pieces axis, nothing to correct.
+      saleRows = [saleRow({ unitBasisQty: 60 })];
+      const result = await service.resolveParkedReversal(prisma, parked(), 12);
+
+      expect(corrections()).toHaveLength(0);
+      expect(reversals()).toHaveLength(1);
+      expect(result.outcome).toBe("booked");
+      expect(result.verdictAfter).toBe("piece-axis");
+      expect(result.correctionEntryId).toBeNull();
+    });
+
+    it("unknown after the pack: refuses — no correction row, no reversal row, still parked", async () => {
+      // unitBasisQty (3) < qty (5) even after folding the supplied pack in: classifySaleAxis's
+      // own "malformed" branch — never silently treated as either axis.
+      saleRows = [saleRow({ unitBasisQty: 3 })];
+      const result = await service.resolveParkedReversal(prisma, parked(), 12);
+
+      expect(result.outcome).toBe("unresolvable");
+      expect(result.unresolvableReason).toMatch(/unitBasisQty is less than qty/);
+      expect(corrections()).toHaveLength(0);
+      expect(reversals()).toHaveLength(0);
+    });
+
+    it("remaining shrunk since parking (a later credit note reversed part of the line): books the CAPPED amount, not the original returnedPieces", async () => {
+      // The line sold 60 pieces (post-pack); a credit note already reversed 50 of them, so only
+      // 10 remain. The parked row still says 5 pieces returned — well under the 10 remaining,
+      // so this specific case books the full 5. Prove the CAP itself with a bigger request.
+      priorReversals = [
+        {
+          invoiceItemId: "ii-1",
+          orderItemId: "oi-1",
+          qty: -1,
+          unitBasisQty: -50,
+          netSales: -45,
+          categoryTax: -9,
+        },
+      ];
+      const result = await service.resolveParkedReversal(
+        prisma,
+        parked({ returnedPieces: 20 }),
+        12,
+      );
+
+      // Only 10 pieces remained (60 - 50); the requested 20 is capped there, not booked in full.
+      // SA-167: the 10 that could not be booked are REPORTED (a bare "booked" never hides them).
+      expect(result.outcome).toBe("partial");
+      expect(result.unbookedPieces).toBe(10);
+      expect(result.bookedPieces).toBe(10);
+      expect(result.bookedPieces).not.toBe(20);
+    });
+
+    it("SA-089a(a) / SA error E50 fix: fully voided BEFORE any correction — nothing written on that row (not even the SALE correction); leftover pieces are reported as partial", async () => {
+      // The prior fixture here (unitBasisQty: -60 against a still-legacy qty:5 sale) was
+      // IMPOSSIBLE: a reversal booked LINE_UNIT against a sale that was never yet corrected can
+      // only be box-denominated (|unitBasisQty| == |qty|), never already piece-denominated. The
+      // real box-axis reversal for "all 5 boxes already returned" is qty:-5/unitBasisQty:-5.
+      priorReversals = [
+        {
+          invoiceItemId: "ii-1",
+          orderItemId: "oi-1",
+          qty: -5,
+          unitBasisQty: -5,
+          netSales: -50,
+          categoryTax: -10,
+        },
+      ];
+      const result = await service.resolveParkedReversal(prisma, parked(), 12);
+
+      // SA-193: nothing was written, but the returned pieces that no row could take are REPORTED —
+      // a leftover is never hidden behind "closed".
+      expect(result.outcome).toBe("partial");
+      expect(result.unbookedPieces).toBeGreaterThan(0);
+      expect(result.resolvedEntryId).toBeNull();
+      expect(result.bookedPieces).toBe(0);
+      expect(reversals()).toHaveLength(0);
+      // E50: the old code decided "closed" only AFTER unconditionally writing the SALE's
+      // +qty*(pack-1) correction, manufacturing Σr*(pack-1) phantom units on an
+      // already-fully-reversed line (a voided 5-box line at pack 12 read +50 instead of 0).
+      // SA-089a(a): closed is decided on the box axis FIRST, so a truly voided line writes
+      // NOTHING — no SALE correction, no reversal correction, no REVERSAL row.
+      expect(corrections()).toHaveLength(0);
+      expect(result.verdictAfter).toBe("legacy"); // unchanged: nothing was corrected
+    });
+
+    it("SA-089a(b) worked example (ii): restates BOTH the SALE and an earlier box-axis reversal — SALE +55, reversal correction −22, remaining 36, booked −24, line ends at 12", async () => {
+      // 2 of the 5 boxes already returned LINE_UNIT against the still-legacy sale — box-axis
+      // (|unitBasisQty| == |qty| == 2), same worked example the shared cross-lane fixture
+      // (parked-reversal-correction.fixture.ts's buildCorrectionCase) uses.
+      priorReversals = [
+        {
+          id: "r-prior-1",
+          tenantId: "t1",
+          trackedCategoryId: "cat-A",
+          trackedSubcategoryId: null,
+          orderId: "ord-1",
+          invoiceId: "inv-1",
+          invoiceItemId: "ii-1",
+          orderItemId: "oi-1",
+          correctsEntryId: null,
+          qty: -2,
+          unitBasisQty: -2,
+          netSales: -20,
+          categoryTax: -4,
+          soldAt: new Date("2026-08-01T00:00:00Z"),
+        },
+      ];
+      const result = await service.resolveParkedReversal(
+        prisma,
+        parked({ returnedPieces: 24 }),
+        12,
+      );
+
+      expect(corrections()).toHaveLength(2);
+      const saleCorrection = corrections().find((c) => c.entryType === "SALE");
+      const reversalCorrection = corrections().find((c) => c.entryType === "REVERSAL");
+      expect(saleCorrection).toMatchObject({ correctsEntryId: "s-1", unitBasisQty: 55 });
+      // The reversal correction points at the PRIOR reversal's own id, never at the sale.
+      expect(reversalCorrection).toMatchObject({
+        correctsEntryId: "r-prior-1",
+        unitBasisQty: -22,
+      });
+      // E50's bug would have left remaining at qty*pack - Σr = 58 and booked -24 against that —
+      // the fix's remaining is (qty-Σr)*pack = 36.
+      expect(result.outcome).toBe("booked");
+      expect(result.bookedPieces).toBe(24);
+      expect(reversals()).toHaveLength(1);
+      expect(reversals()[0]).toMatchObject({ unitBasisQty: -24 });
+      // Line ends at 12 (36 remaining - 24 booked) — not directly asserted here (that's the
+      // NEXT call's remaining, proven by the shared cross-lane fixture's real-Postgres spec),
+      // but 36 - 24 = 12 is exactly SA-089a(ii)'s own worked figure.
+      expect(result.verdictAfter).toBe("piece-axis");
+    });
+
+    it("SA-070 hazard 2: after the correction row lands, the SAME sale row re-classifies as piece-axis — a second resolution attempt on it would never re-park", async () => {
+      await service.resolveParkedReversal(prisma, parked(), 12);
+      expect(corrections()).toHaveLength(1);
+
+      // Simulate the classifier being asked about this row again later (e.g. a subsequent
+      // return on the same line) — it must now read piece-axis on its own, corrections and all,
+      // never legacy/unknown again.
+      const corrected = saleRows.find((s) => s.id === "s-1");
+      const verdict = classifySaleAxis(
+        {
+          entryType: corrected.entryType,
+          qty: corrected.qty,
+          unitBasisQty: corrected.unitBasisQty,
+        },
+        { boxes: null, pieces: null, unitLabel: null, unitsPerBox: 12 },
+        corrections().map((c) => ({ qty: c.qty, unitBasisQty: c.unitBasisQty })),
+        12,
+      );
+      expect(verdict.state).toBe("piece-axis");
+    });
+
+    it("no line at all (deleted invoice item, no order item): the supplied pack stands in as the WHOLE shape, never an unconditional unknown", async () => {
+      invoiceItems = []; // the line resolves to null — loadSaleLineShapes finds nothing
+      const result = await service.resolveParkedReversal(prisma, parked(), 12);
+
+      // With no line, the ONLY shape info is the supplied pack itself — boxed, no split, no
+      // label — so the classify proceeds exactly as a box-unaware line would, not an immediate
+      // "unknown: no line to read a shape from" refusal.
+      expect(result.outcome).toBe("booked");
+      // Opus LOW: verdictAfter is the POST-correction verdict — piece-axis once restated.
+      expect(result.verdictAfter).toBe("piece-axis");
+    });
+
+    it("a pack of 1 resolves a line that was never really boxed: piece-axis directly, no correction", async () => {
+      const result = await service.resolveParkedReversal(prisma, parked(), 1);
+      expect(result.verdictAfter).toBe("piece-axis");
+      expect(corrections()).toHaveLength(0);
+      expect(result.outcome).toBe("booked");
+    });
+  });
+
+  // ─── B662: a price change on an ISSUED invoice books an append-only correction row ───
+  describe("correctSaleForPriceChange (B662)", () => {
+    // 6 boxes of 12 (72 pieces) at $40/box: SALE qty 72, net $240, category tax $60.
+    const sale = (over: Record<string, unknown> = {}) => ({
+      id: "sale-1",
+      tenantId: "t1",
+      trackedCategoryId: "cat-A",
+      trackedSubcategoryId: "sub-1",
+      entryType: "SALE",
+      orderId: "ord-1",
+      orderItemId: "oi-1",
+      invoiceId: "inv-1",
+      invoiceItemId: "ii-1",
+      qty: 72,
+      unitBasisQty: 72,
+      netSales: 240,
+      categoryTax: 60,
+      soldAt: new Date("2026-08-15T00:00:00Z"),
+      createdAt: new Date("2026-08-15T00:00:00Z"),
+      correctsEntryId: null,
+      returnId: null,
+      ...over,
+    });
+    const line = (over: Record<string, unknown> = {}) => ({
+      invoiceItemId: "ii-1",
+      qty: 72,
+      netSales: 300, // re-priced: $50/box
+      categoryTax: 75,
+      boxes: 6,
+      unitsPerBox: 12,
+      promoFreeUnits: null,
+      ...over,
+    });
+    const run = (rows: unknown[], lines: any[]) => {
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue(rows);
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      return service.correctSaleForPriceChange({ invoiceId: "inv-1", lines, db: prisma });
+    };
+    const rows = () => prisma.regulatedSalesLedger.createMany.mock.calls[0][0].data;
+
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ["nextTick", "setImmediate"] });
+      jest.setSystemTime(new Date("2026-09-21T15:00:00.000Z"));
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it("an INCREASE books one SALE-type correction: signed deltas, qty 0, both new columns, current period", async () => {
+      expect(await run([sale()], [line()])).toBe(1);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toEqual({
+        tenantId: "t1",
+        trackedCategoryId: "cat-A",
+        trackedSubcategoryId: "sub-1",
+        entryType: "SALE",
+        orderId: "ord-1",
+        orderItemId: "oi-1",
+        invoiceId: "inv-1",
+        invoiceItemId: "ii-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60, // 300 - 240
+        categoryTax: 15, // 75 - 60
+        soldAt: new Date("2026-09-21T15:00:00.000Z"), // never backdated
+        originalSoldAt: new Date("2026-08-15T00:00:00Z"), // the sale date it corrects
+        correctsEntryId: "sale-1",
+        periodBucket: "2026-09", // the CURRENT month, not the sale's
+      });
+    });
+
+    it("a DECREASE books a REVERSAL-type correction with negative deltas", async () => {
+      await run([sale()], [line({ netSales: 180, categoryTax: 45 })]);
+      expect(rows()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        netSales: -60,
+        categoryTax: -15,
+        qty: 0,
+        correctsEntryId: "sale-1",
+      });
+    });
+
+    it("is IDEMPOTENT: repeating the same adjustment (the correction is now held) writes nothing", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      expect(await run([sale(), correction], [line()])).toBe(0);
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("a second, different adjustment corrects only the difference and still points at the ORIGINAL sale", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      await run([sale(), correction], [line({ netSales: 330, categoryTax: 82.5 })]);
+      expect(rows()[0]).toMatchObject({
+        entryType: "SALE",
+        netSales: 30, // 330 - (240 + 60)
+        categoryTax: 7.5,
+        correctsEntryId: "sale-1", // never the earlier correction
+      });
+    });
+
+    it("PARTIAL RETURN in between: the TARGET is the new subtotal prorated to the qty still held", async () => {
+      // 12 pieces (1 box) came back at the OLD price: reversal qty -12, net -40, tax -10.
+      const returned = sale({
+        id: "rev-1",
+        entryType: "REVERSAL",
+        qty: -12,
+        unitBasisQty: -12,
+        netSales: -40,
+        categoryTax: -10,
+        returnId: "ret-1",
+      });
+      await run([sale(), returned], [line()]);
+      // held: qty 60 net 200 tax 50. target = 300 x 60/72 = 250 -> +50; tax 75 x 60/72 = 62.5 -> +12.5
+      expect(rows()[0]).toMatchObject({ entryType: "SALE", netSales: 50, categoryTax: 12.5 });
+      // repeating it is a no-op: the correction now brings the held net to the target exactly
+      const applied = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 50,
+        categoryTax: 12.5,
+        correctsEntryId: "sale-1",
+      });
+      expect(await run([sale(), returned, applied], [line()])).toBe(0);
+    });
+
+    it("B894/SA-576: the target is the pricing package's LINEAR slice — free units do not bend it", async () => {
+      const held = [sale({ netSales: 200, categoryTax: 50 })];
+      const l = line({ promoFreeUnits: 1, netSales: 250, categoryTax: 62.5 });
+      await run(held, [l]);
+      // full qty held: the whole new figure, verbatim
+      expect(creditedThrough(250, 72, 72)).toBe(250);
+      expect(rows()[0]).toMatchObject({ netSales: 50, categoryTax: 12.5 });
+      // and priceCorrectionTarget IS that helper — the same slice rule as a return credit — whatever the free units / split
+      expect(priceCorrectionTarget(250, 60, l)).toBe(creditedThrough(250, 60, 72));
+      const noSplit = { ...l, boxes: null };
+      expect(priceCorrectionTarget(250, 60, noSplit)).toBe(208.33);
+    });
+
+    it("skips a line with no live SALE, a fully returned line, and rounding noise", async () => {
+      expect(await run([], [line()])).toBe(0); // never booked
+      const fullyReturned = sale({
+        id: "rev-1",
+        entryType: "REVERSAL",
+        qty: -72,
+        unitBasisQty: -72,
+        netSales: -240,
+        categoryTax: -60,
+        returnId: "ret-1",
+      });
+      expect(await run([sale(), fullyReturned], [line()])).toBe(0);
+      expect(await run([sale()], [line({ netSales: 240.004, categoryTax: 60.003 })])).toBe(0);
+      expect(prisma.regulatedSalesLedger.createMany).not.toHaveBeenCalled();
+    });
+
+    it("writes one row per changed line, none for an unchanged one, and one query for all of them", async () => {
+      const second = sale({ id: "sale-2", invoiceItemId: "ii-2", orderItemId: "oi-2" });
+      await run(
+        [sale(), second],
+        [line(), line({ invoiceItemId: "ii-2", netSales: 240, categoryTax: 60 })],
+      );
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0].invoiceItemId).toBe("ii-1");
+      expect(prisma.regulatedSalesLedger.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("no lines: no query, no rows", async () => {
+      prisma.regulatedSalesLedger.findMany.mockClear();
+      expect(
+        await service.correctSaleForPriceChange({ invoiceId: "inv-1", lines: [], db: prisma }),
+      ).toBe(0);
+      expect(prisma.regulatedSalesLedger.findMany).not.toHaveBeenCalled();
+    });
+
+    it("update()'s re-sync reverses the NET the ledger holds: the SALE plus every correction pointing at it", async () => {
+      const correction = sale({
+        id: "corr-1",
+        qty: 0,
+        unitBasisQty: 0,
+        netSales: 60,
+        categoryTax: 15,
+        correctsEntryId: "sale-1",
+      });
+      prisma.regulatedSalesLedger.findMany.mockResolvedValue([sale(), correction]);
+      prisma.regulatedSalesLedger.createMany.mockClear();
+      await service.reverseInvoiceEntries({
+        invoiceId: "inv-1",
+        db: prisma,
+        preserveReturns: true,
+      });
+      // 240 + 60 = 300 net, 60 + 15 = 75 tax: reversed in full, so a draft re-sync cannot double count
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({
+        entryType: "REVERSAL",
+        invoiceItemId: "ii-1",
+        qty: -72,
+        netSales: -300,
+        categoryTax: -75,
       });
     });
   });

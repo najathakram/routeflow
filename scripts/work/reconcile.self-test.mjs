@@ -39,6 +39,7 @@ import {
   renderDigestBody,
   renderStatusUpdateBody,
   postStatusUpdateIfDue,
+  decideWorkStatusIssue,
   shouldHaltWrites,
   buildFieldUpdateMutation,
   buildAddItemsMutation,
@@ -47,6 +48,7 @@ import {
   planWrites,
   ISSUE_FIELDS,
 } from "./reconcile.mjs";
+import { readFileSync as readPkgFile } from "node:fs";
 
 let failures = 0;
 function check(name, got, want) {
@@ -984,6 +986,111 @@ const pr = (overrides = {}) => ({
   }
 }
 
+// ── decideWorkStatusIssue (fix: #2043 duplicate-of-#1507) ──────────────────
+{
+  const row = (number, title = "Work board status (auto-updated)") => ({
+    number,
+    title,
+    body: "digest",
+  });
+
+  check(
+    "persisted issue is open and still carries the label -> use it, no gh issue list needed",
+    decideWorkStatusIssue({
+      persisted: { number: 1507, state: "OPEN", labels: [{ name: "work-status" }] },
+    }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "persisted issue was closed -> falls through to the label lookup (not used as-is)",
+    decideWorkStatusIssue({
+      persisted: { number: 1507, state: "CLOSED", labels: [{ name: "work-status" }] },
+      labelRows: [row(1507)],
+      labelAttemptsCount: 1,
+    }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "persisted issue lost the label -> falls through to the label lookup",
+    decideWorkStatusIssue({
+      persisted: { number: 1507, state: "OPEN", labels: [] },
+      labelRows: [row(1507)],
+      labelAttemptsCount: 1,
+    }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "no persisted number, first label attempt finds exactly #1507 -> use it",
+    decideWorkStatusIssue({ persisted: null, labelRows: [row(1507)], labelAttemptsCount: 1 }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "first label attempt comes back empty (the #2043 flake) and no title search yet -> " +
+      "NOT enough evidence to create — caller must retry, never creates on one empty read",
+    decideWorkStatusIssue({ persisted: null, labelRows: [], labelAttemptsCount: 1 }),
+    { action: "insufficient-evidence", number: null, closeDuplicates: [] },
+  );
+
+  check(
+    "first attempt empty, retry (2nd attempt) finds #1507 -> use it, still never created a dup",
+    decideWorkStatusIssue({ persisted: null, labelRows: [row(1507)], labelAttemptsCount: 2 }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "both label attempts empty, title search finds #1507 -> use it",
+    decideWorkStatusIssue({
+      persisted: null,
+      labelRows: [],
+      labelAttemptsCount: 2,
+      titleRows: [row(1507)],
+    }),
+    { action: "use", number: 1507, closeDuplicates: [] },
+  );
+
+  check(
+    "both label attempts empty, title search also empty -> only now create",
+    decideWorkStatusIssue({ persisted: null, labelRows: [], labelAttemptsCount: 2, titleRows: [] }),
+    { action: "create", number: null, closeDuplicates: [] },
+  );
+
+  check(
+    "both label attempts empty, title search not run yet (null) -> still not enough evidence",
+    decideWorkStatusIssue({
+      persisted: null,
+      labelRows: [],
+      labelAttemptsCount: 2,
+      titleRows: null,
+    }),
+    { action: "insufficient-evidence", number: null, closeDuplicates: [] },
+  );
+
+  check(
+    "label lookup finds two open work-status issues (#1507 and dup #2043) -> use the lowest, close the other",
+    decideWorkStatusIssue({
+      persisted: null,
+      labelRows: [row(2043), row(1507)],
+      labelAttemptsCount: 1,
+    }),
+    { action: "use", number: 1507, closeDuplicates: [2043] },
+  );
+
+  check(
+    "title search finds three matches -> use the lowest, close the rest as duplicates",
+    decideWorkStatusIssue({
+      persisted: null,
+      labelRows: [],
+      labelAttemptsCount: 2,
+      titleRows: [row(2043), row(1507), row(3001)],
+    }),
+    { action: "use", number: 1507, closeDuplicates: [2043, 3001] },
+  );
+}
+
 // ── rate limit circuit breaker ───────────────────────────────────────────
 {
   check("shouldHaltWrites: below floor -> halt", shouldHaltWrites(199), true);
@@ -1093,6 +1200,19 @@ const pr = (overrides = {}) => ({
 }
 
 // ── result ────────────────────────────────────────────────────────────────
+// ── VERIFY-PIN (#2285): `npm run verify` runs this self-test ──────────────────
+// Unwired, this file protects nothing (found orphaned in the #2273 sweep), so it pins its own
+// place in the root verify chain, the same pattern as the F-22 self-tests' T10v/T17v (#2283).
+{
+  const pkg = JSON.parse(readPkgFile(new URL("../../package.json", import.meta.url), "utf8"));
+  const verify = typeof pkg.scripts?.verify === "string" ? pkg.scripts.verify : "";
+  check(
+    "VERIFY-PIN: verify chain runs scripts/work/reconcile.self-test.mjs",
+    verify.split("&&").some((step) => step.trim() === "node scripts/work/reconcile.self-test.mjs"),
+    true,
+  );
+}
+
 console.log(
   failures === 0
     ? `\nreconcile.self-test: ALL GREEN`

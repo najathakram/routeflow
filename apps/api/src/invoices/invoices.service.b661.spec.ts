@@ -33,8 +33,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService — B661/B671", () => {
   let service: InvoicesService;
@@ -85,6 +87,10 @@ describe("InvoicesService — B661/B671", () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: mockGateway },
         { provide: EmailService, useValue: mockEmailService },
@@ -104,6 +110,13 @@ describe("InvoicesService — B661/B671", () => {
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
         { provide: NumberingService, useValue: mockNumbering },
@@ -180,7 +193,7 @@ describe("InvoicesService — B661/B671", () => {
     // 2026-09-21: pin today's actual (gap) behavior here rather than silently adding a ledger
     // write to a method that doesn't have one; "duplicate() never re-establishes ledger rows for
     // the copy" is filed as its own follow-up bug (regulated, high) — see the PR body.
-    it("B661 (documents a gap, does not fix it): duplicate() copies a regulated line's boxes/pieces/unitsPerBox verbatim but writes NO ledger rows for the copy", async () => {
+    it("B661/B680: duplicate() copies a regulated line's boxes/pieces/unitsPerBox verbatim and (B680) writes the copy's own ledger rows", async () => {
       const baseInv = {
         id: "inv-reg",
         orderId: null,
@@ -224,9 +237,12 @@ describe("InvoicesService — B661/B671", () => {
       // wired in.
       const copyItem = prisma.invoice.create.mock.calls[0][0].data.items.create[0];
       expect(copyItem).toMatchObject({ qty: 5, boxes: null, pieces: null, unitsPerBox: 12 });
-      // But TODAY nothing calls the ledger — this pins the gap so a future fix's own red-first
-      // test is what flips this assertion, not a silent behavior change inside B661.
-      expect(ledger.writeSaleEntries).not.toHaveBeenCalled();
+      // B680 closed the gap this test used to pin: the copy now books its own SALE rows.
+      expect(ledger.writeSaleEntries).toHaveBeenCalledTimes(1);
+      expect(ledger.writeSaleEntries.mock.calls[0][0]).toMatchObject({
+        invoiceId: "inv-copy",
+        orderId: null,
+      });
     });
   });
 });

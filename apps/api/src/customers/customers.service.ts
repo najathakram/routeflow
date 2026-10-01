@@ -1,3 +1,5 @@
+import { restoredUsernameFor } from "./restore-username";
+import { resumeSchedulesOnRestore } from "../recurring-invoices/recurring-schedule";
 import {
   BadRequestException,
   ConflictException,
@@ -13,6 +15,22 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
+import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
+import {
+  assertNoBlockingInvoices,
+  assertNoDeliveryHistory,
+  assertNoMoneyRecords,
+  assertNoMoneyRecordsInTx,
+  assertRecordFreeInTx,
+  countDeliveryHistory,
+  countMoneyRecords,
+  deleteCustomerRowsFkRaceAs409,
+  deleteDeliveryHistoryCas,
+  deleteMoneyRecordCas,
+  deleteNonBlockingInvoicesCas,
+  readInvoicesAssertingNoneBlocking,
+} from "./customer-delete-preflight";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { roundMoney, remainingCapacity } from "@routeflow/pricing";
@@ -41,6 +59,7 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { customerUpdateData } from "./customer-update-data";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -50,19 +69,17 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-// Cap on how many blocking customers deleteAllCustomers() names in its 409 message.
-const MAX_LISTED_BLOCKERS = 10;
 
 @Injectable()
 export class CustomersService {
@@ -74,7 +91,7 @@ export class CustomersService {
     private readonly storage: StorageService,
     private readonly meter: MeterService,
     private readonly catalog: PlanCatalogService,
-    private readonly entitlements: EntitlementsService,
+    private readonly authority: EntitlementAuthority,
     private readonly commissionEngine: CommissionEngineService,
     // Every path that DESTROYS an invoice must reverse its regulated-sales
     // ledger rows first — the ledger is append-only with no FK to Invoice, so
@@ -91,7 +108,8 @@ export class CustomersService {
   private async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.catalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,
@@ -764,7 +782,7 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -773,44 +791,13 @@ export class CustomersService {
     }
     return this.prisma.forTenant().customer.update({
       where: { id },
-      data: {
-        ...(dto.businessName && { businessName: dto.businessName }),
-        ...(dto.contactName && { contactName: dto.contactName }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
-        ...(dto.deliveryWindowStart !== undefined && {
-          deliveryWindowStart: dto.deliveryWindowStart || null,
-        }),
-        ...(dto.deliveryWindowEnd !== undefined && {
-          deliveryWindowEnd: dto.deliveryWindowEnd || null,
-        }),
-        ...(dto.email !== undefined && { email: dto.email }),
-        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
-        ...(dto.customerType !== undefined && { customerType: dto.customerType }),
-        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
-        ...(dto.salutation !== undefined && { salutation: dto.salutation }),
-        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
-        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
-        ...(dto.taxId !== undefined && { taxId: dto.taxId }),
-        ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
-        ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
-        ...(dto.currency !== undefined && { currency: dto.currency }),
-        ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
-        // "" clears to null ("use the tenant default"); a real label is stored verbatim.
-        ...(dto.defaultPaymentTerms !== undefined && {
-          defaultPaymentTerms: dto.defaultPaymentTerms || null,
-        }),
-        // null clears the deposit default; a number sets/replaces it.
-        ...(dto.defaultDepositPercent !== undefined && {
-          defaultDepositPercent: dto.defaultDepositPercent,
-        }),
-        ...(dto.orderStatusEmails !== undefined && {
-          orderStatusEmails: dto.orderStatusEmails,
-        }),
-      },
+      data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
   }
+
+  /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
+  readonly setCustomerConsent = (...args: compliance.ConsentArgs) =>
+    compliance.writeConsentWithEvidence(this.prisma, ...args);
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
@@ -1929,14 +1916,15 @@ export class CustomersService {
     try {
       return await this.prisma.tenantTransaction(
         async (tx) => {
-          // Move invoices
-          await tx.invoice.updateMany({
+          // Move orders FIRST, then invoices (SA-218, house lock order: Order before Invoice).
+          // Invoices first was an Invoice → Order edge: 40P01 against any Order → Invoice writer.
+          await tx.order.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });
 
-          // Move orders
-          await tx.order.updateMany({
+          // Move invoices
+          await tx.invoice.updateMany({
             where: { customerId: secondaryId },
             data: { customerId: primaryId },
           });
@@ -2133,7 +2121,12 @@ export class CustomersService {
    * cross-tenant ids (returns null → NotFound), preventing a tenant-isolation
    * oracle.
    */
-  async restoreCustomer(id: string, restoreStatus?: string, overrideUsername?: string) {
+  async restoreCustomer(
+    id: string,
+    restoreStatus?: string,
+    overrideUsername?: string,
+    actorUserId?: string,
+  ) {
     const customer = await this.prisma.forTenant().customer.findUnique({
       where: { id },
       select: {
@@ -2166,18 +2159,14 @@ export class CustomersService {
     // email always lived on Customer.email (untouched by the delete), so restoring it here
     // is correct whether or not this row was ever tombstoned; a customer created with no
     // email gets a fresh placeholder, same as create() mints for one today.
-    const tombstoneSuffix = `~removed~${id.slice(0, 8)}`;
-    const currentUsername = customer.user.username;
-    const restoredUsername =
-      overrideUsername ||
-      (currentUsername.endsWith(tombstoneSuffix)
-        ? currentUsername.slice(0, -tombstoneSuffix.length)
-        : currentUsername);
+    const restoredUsername = restoredUsernameFor(id, customer.user.username, overrideUsername);
     const restoredEmail = customer.email ?? `no-email+${crypto.randomUUID()}@placeholder.local`;
 
     try {
       await this.prisma.tenantTransaction(async (tx) => {
         await tx.customer.update({ where: { id }, data: { deletedAt: null } });
+        // F-05 (SA-290): a restore ends a pause — resume its templates from the next occurrence, not a make-up
+        await resumeSchedulesOnRestore(tx, customer, actorUserId);
 
         // F6: a live user may have since claimed this customer's real email (a fresh
         // signup, or another restore) while this one was removed. tx is already
@@ -2271,7 +2260,7 @@ export class CustomersService {
     // since-deleted invoice is still open). Neither showed up in the counts above, so
     // the hard-delete path below ran unconditionally and destroyed real liabilities
     // with no soft-delete, no statement, no audit row.
-    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes] =
+    const [orderCount, invoiceCount, returnCount, advanceBalance, openCreditNotes, money, history] =
       await Promise.all([
         this.prisma.forTenant().order.count({ where: { customerId: id } }),
         this.prisma.forTenant().invoice.count({ where: { customerId: id } }),
@@ -2284,6 +2273,8 @@ export class CustomersService {
           where: { customerId: id, status: { not: "VOID" } },
           select: { amount: true, amountUsed: true },
         }),
+        countMoneyRecords(this.prisma.forTenant(), [id]), // #2587/SA-516: any status, any balance
+        countDeliveryHistory(this.prisma.forTenant(), [id]), // #2591/SA-516b
       ]);
 
     const hasAdvanceBalance = Number(advanceBalance._sum.balance ?? 0) > 0.001;
@@ -2292,8 +2283,14 @@ export class CustomersService {
     const hasOpenCreditNote = openCreditNotes.some(
       (cn) => Number(cn.amount) - Number(cn.amountUsed) > 0.001,
     );
+    const hasMoneyRecords = money.length > 0;
+    const hasDeliveryHistory = history.length > 0;
     const hasFinancialRecords =
-      orderCount + invoiceCount + returnCount > 0 || hasAdvanceBalance || hasOpenCreditNote;
+      orderCount + invoiceCount + returnCount > 0 ||
+      hasAdvanceBalance ||
+      hasOpenCreditNote ||
+      hasMoneyRecords ||
+      hasDeliveryHistory;
 
     if (hasFinancialRecords && !force) {
       const parts = [
@@ -2303,6 +2300,9 @@ export class CustomersService {
       ];
       if (hasAdvanceBalance) parts.push("an outstanding advance balance");
       if (hasOpenCreditNote) parts.push("an open credit note");
+      if (hasMoneyRecords && !hasAdvanceBalance && !hasOpenCreditNote)
+        parts.push("credit notes, payments or advance payments");
+      if (hasDeliveryHistory) parts.push("delivery history");
       throw new ConflictException(
         `Cannot delete customer with existing financial records. ` +
           `Affected: ${parts.join(", ")}. ` +
@@ -2345,40 +2345,15 @@ export class CustomersService {
     // Hard-delete path (only reached when there are no financial records).
     // Delete all dependent non-financial records in correct order.
     await this.prisma.tenantTransaction(async (tx) => {
-      // Payments on invoices
-      const invoices = await tx.invoice.findMany({
-        where: { customerId: id },
-        select: { id: true },
-      });
-      const invoiceIds = invoices.map((i) => i.id);
-      // DEFENSIVE, and deliberately not dead code: this path is only reached
-      // when the pre-flight counted ZERO invoices, but that count is read
-      // OUTSIDE this transaction, so an invoice created in between would be
-      // destroyed here. Reversing keeps the file-wide invariant uniform —
-      // every invoice destruction reverses its ledger entries first.
-      for (const invoiceId of invoiceIds) {
-        await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
-      }
-      if (invoiceIds.length)
-        await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+      // SA-510a (3): this branch runs only for a customer the pre-flight counted record-free, but
+      // that count is read OUTSIDE this tx; refuse (409, rollback) rather than destroy an invoice or
+      // payment created in between.
+      await assertRecordFreeInTx(tx, id);
+      await assertNoMoneyRecordsInTx(tx, [id]); // #2587/SA-516
+      await assertNoDeliveryHistory(tx, [id]); // #2591/SA-516b
 
-      // Invoice items
-      if (invoiceIds.length)
-        await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
-      await tx.invoice.deleteMany({ where: { customerId: id } });
-
-      // Credit notes — order↔credit-note links must be deleted BEFORE the notes
-      // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-      const creditNotes = await tx.creditNote.findMany({
-        where: { customerId: id },
-        select: { id: true },
-      });
-      if (creditNotes.length) {
-        await tx.orderCreditNote.deleteMany({
-          where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-        });
-      }
-      await tx.creditNote.deleteMany({ where: { customerId: id } });
+      // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+      await deleteMoneyRecordCas(tx.creditNote, { customerId: id });
 
       // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
       // by design (PR-1a review) — removes every Return regardless of kind.
@@ -2401,7 +2376,7 @@ export class CustomersService {
         });
         if (transactions.length) {
           const txIds = transactions.map((t) => t.id);
-          await tx.payment.deleteMany({ where: { transactionId: { in: txIds } } });
+          await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txIds } });
           await tx.transactionItem.deleteMany({ where: { transactionId: { in: txIds } } });
           await tx.transaction.deleteMany({ where: { id: { in: txIds } } });
         }
@@ -2446,7 +2421,7 @@ export class CustomersService {
       }
 
       // Route associations (RouteRunStop references RouteStop, so delete run stops first)
-      await tx.routeRunStop.deleteMany({ where: { customerId: id } });
+      await deleteDeliveryHistoryCas(tx, [id]); // #2591: expects zero rows
       await tx.routeCustomer.deleteMany({ where: { customerId: id } });
       await tx.routeStop.deleteMany({ where: { customerId: id } });
 
@@ -2457,11 +2432,11 @@ export class CustomersService {
       });
       if (remainingTxns.length) {
         const txnIds = remainingTxns.map((t) => t.id);
-        await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+        await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
         await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
         await tx.transaction.deleteMany({ where: { customerId: id } });
       }
-      await tx.advancePayment.deleteMany({ where: { customerId: id } });
+      await deleteMoneyRecordCas(tx.advancePayment, { customerId: id });
       await tx.customerPrice.deleteMany({ where: { customerId: id } });
       await tx.customerAddress.deleteMany({ where: { customerId: id } });
 
@@ -2474,7 +2449,7 @@ export class CustomersService {
       await tx.expense.updateMany({ where: { customerId: id }, data: { customerId: null } });
 
       // Finally delete customer + user
-      await tx.customer.delete({ where: { id } });
+      await deleteCustomerRowsFkRaceAs409(tx.customer.delete({ where: { id } })); // #2572
       await tx.user.delete({ where: { id: customer.userId } });
     });
 
@@ -2495,22 +2470,8 @@ export class CustomersService {
   async batchDelete(
     ids: string[],
   ): Promise<{ deleted: number; failed: { id: string; reason: string }[] }> {
-    // Pre-flight: collect per-customer PAID/SENT invoice counts.
-    const blockers = await this.prisma.forTenant().invoice.groupBy({
-      by: ["customerId"],
-      where: {
-        customerId: { in: ids },
-        status: { in: ["PAID", "SENT"] },
-      },
-      _count: { _all: true },
-    });
-
-    if (blockers.length > 0) {
-      const breakdown = blockers.map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
-      throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
-      );
-    }
+    // #2558/SA-510a: the pre-flight breakdown (the tx-side guards live in deleteCustomer).
+    await assertNoBlockingInvoices(this.prisma.forTenant(), ids);
 
     const failed: { id: string; reason: string }[] = [];
     let deleted = 0;
@@ -2554,39 +2515,16 @@ export class CustomersService {
     const customerIds = customers.map((c) => c.id);
     const userIds = customers.map((c) => c.userId);
 
-    // Pre-flight: collect per-customer PAID/SENT invoice counts. Mirrors
-    // batchDelete()'s pre-flight above — financial records from PAID or SENT
-    // invoices must never be silently destroyed, including by a full wipe.
-    const blockers = await this.prisma.forTenant().invoice.groupBy({
-      by: ["customerId"],
-      where: {
-        customerId: { in: customerIds },
-        status: { in: ["PAID", "SENT"] },
-      },
-      _count: { _all: true },
-    });
-
-    if (blockers.length > 0) {
-      // batchDelete() enumerates every blocker because its `ids` are a bounded UI
-      // selection; here they are every customer in the tenant, so cap the list —
-      // a 409 body listing thousands of opaque uuids is unreadable, not actionable.
-      const breakdown = blockers
-        .slice(0, MAX_LISTED_BLOCKERS)
-        .map((b) => `${b.customerId}: ${b._count._all} invoice(s)`);
-      if (blockers.length > MAX_LISTED_BLOCKERS) {
-        breakdown.push(`and ${blockers.length - MAX_LISTED_BLOCKERS} more`);
-      }
-      throw new ConflictException(
-        `Bulk delete blocked — the following customers have PAID or SENT invoices that cannot be destroyed: ${breakdown.join("; ")}.`,
-      );
-    }
+    // #2558/SA-510a: the pre-flight breakdown; re-checked inside the tx, and the delete is a CAS.
+    await assertNoBlockingInvoices(this.prisma.forTenant(), customerIds, { capList: true });
+    await assertNoMoneyRecords(this.prisma.forTenant(), customerIds); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), customerIds); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        const invoices = await tx.invoice.findMany({
-          where: { customerId: { in: customerIds } },
-          select: { id: true },
-        });
+        const invoices = await readInvoicesAssertingNoneBlocking(tx, customerIds); // SA-510a (1)
+        await assertNoMoneyRecordsInTx(tx, customerIds); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, customerIds); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2600,23 +2538,13 @@ export class CustomersService {
           for (const invoiceId of invoiceIds) {
             await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
           }
-          await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+          await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
-        await tx.invoice.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteNonBlockingInvoicesCas(tx, customerIds, invoiceIds.length); // SA-510a (2)
 
-        // Order↔credit-note links must be deleted BEFORE the credit notes
-        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-        const creditNotes = await tx.creditNote.findMany({
-          where: { customerId: { in: customerIds } },
-          select: { id: true },
-        });
-        if (creditNotes.length) {
-          await tx.orderCreditNote.deleteMany({
-            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-          });
-        }
-        await tx.creditNote.deleteMany({ where: { customerId: { in: customerIds } } });
+        // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+        await deleteMoneyRecordCas(tx.creditNote, { customerId: { in: customerIds } });
 
         // Returns must be deleted BEFORE orders (Return has orderId FK on Order). Kind-agnostic
         // by design (PR-1a review) — removes every Return regardless of kind.
@@ -2642,7 +2570,7 @@ export class CustomersService {
           });
           if (txns.length) {
             const txnIds = txns.map((t) => t.id);
-            await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
             await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
@@ -2683,12 +2611,11 @@ export class CustomersService {
           await tx.orderTemplate.deleteMany({ where: { customerId: { in: customerIds } } });
         }
 
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteDeliveryHistoryCas(tx, customerIds); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: customerIds } } });
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.transaction.deleteMany({ where: { customerId: { in: customerIds } } });
-        await tx.advancePayment.deleteMany({ where: { customerId: { in: customerIds } } });
+        await deleteMoneyRecordCas(tx.advancePayment, { customerId: { in: customerIds } });
         await tx.customerPrice.deleteMany({ where: { customerId: { in: customerIds } } });
         await tx.customerAddress.deleteMany({ where: { customerId: { in: customerIds } } });
 
@@ -2703,7 +2630,9 @@ export class CustomersService {
           data: { customerId: null },
         });
 
-        await tx.customer.deleteMany({ where: { id: { in: customerIds } } });
+        await deleteCustomerRowsFkRaceAs409(
+          tx.customer.deleteMany({ where: { id: { in: customerIds } } }),
+        ); // #2572
         await tx.user.deleteMany({ where: { id: { in: userIds } } });
       },
       { timeout: 60_000 },
@@ -2713,8 +2642,23 @@ export class CustomersService {
   }
 
   // ─── Cleanup Imported Customers ───────────────────────────────────────────────
+  // #2629: DISABLED until a real import marker exists — see cleanup-imported-disabled.ts.
 
   async previewImportedCleanup(): Promise<{
+    toDelete: number;
+    toKeep: number;
+    buyers: { id: string; businessName: string }[];
+  }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCleanupPreview();
+  }
+
+  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCustomersCleanup();
+  }
+
+  async runImportedCleanupPreview(): Promise<{
     toDelete: number;
     toKeep: number;
     buyers: { id: string; businessName: string }[];
@@ -2735,7 +2679,12 @@ export class CustomersService {
     };
   }
 
-  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+  /** #2629: the kept body, verbatim (its safety pins still run); no controller reaches it. */
+  async runImportedCustomersCleanup(): Promise<{ deleted: number; preserved: number }> {
+    // #2569: a destructive bulk delete has no all-tenant mode (forTenant() is UNSCOPED without a
+    // tenant); refuse a null tenant exactly as deleteAllCustomers does.
+    if (!this.prisma.getTenantId())
+      throw new ForbiddenException("Deleting imported customers requires a tenant context.");
     const all = await this.prisma.forTenant().customer.findMany({
       select: {
         id: true,
@@ -2750,14 +2699,18 @@ export class CustomersService {
 
     const ids = toDelete.map((c) => c.id);
     const uids = toDelete.map((c) => c.userId);
+    // #2569 (SA-510): the same guards as deleteAllCustomers: the pre-flight breakdown, then the
+    // in-tx re-check and the compare-and-set invoice delete (customer-delete-preflight.ts).
+    await assertNoBlockingInvoices(this.prisma.forTenant(), ids, { capList: true });
+    await assertNoMoneyRecords(this.prisma.forTenant(), ids); // #2587/SA-516
+    await assertNoDeliveryHistory(this.prisma.forTenant(), ids); // #2591/SA-516b
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        // Invoices
-        const invoices = await tx.invoice.findMany({
-          where: { customerId: { in: ids } },
-          select: { id: true },
-        });
+        // Invoices (DRAFT only by now: any blocking one is a 409 and a rollback here)
+        const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
+        await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
+        await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
         const invoiceIds = invoices.map((i) => i.id);
         if (invoiceIds.length) {
           // Reverse each invoice's regulated-sales ledger rows BEFORE its items
@@ -2771,23 +2724,13 @@ export class CustomersService {
           for (const invoiceId of invoiceIds) {
             await this.ledger.reverseInvoiceEntries({ invoiceId, db: tx });
           }
-          await tx.invoicePayment.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
+          await deleteMoneyRecordCas(tx.invoicePayment, { invoiceId: { in: invoiceIds } });
           await tx.invoiceItem.deleteMany({ where: { invoiceId: { in: invoiceIds } } });
         }
-        await tx.invoice.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteNonBlockingInvoicesCas(tx, ids, invoiceIds.length);
 
-        // Credit notes — order↔credit-note links must be deleted BEFORE the notes
-        // (OrderCreditNote.creditNoteId has no onDelete, so the FK restricts the parent delete)
-        const creditNotes = await tx.creditNote.findMany({
-          where: { customerId: { in: ids } },
-          select: { id: true },
-        });
-        if (creditNotes.length) {
-          await tx.orderCreditNote.deleteMany({
-            where: { creditNoteId: { in: creditNotes.map((n) => n.id) } },
-          });
-        }
-        await tx.creditNote.deleteMany({ where: { customerId: { in: ids } } });
+        // #2587/SA-516: credit notes are never destroyed (so no order links to clear either)
+        await deleteMoneyRecordCas(tx.creditNote, { customerId: { in: ids } });
 
         // Returns (must precede orders due to FK). Kind-agnostic by design (PR-1a
         // review) — removes every Return regardless of kind.
@@ -2814,7 +2757,7 @@ export class CustomersService {
           });
           if (txns.length) {
             const txnIds = txns.map((t) => t.id);
-            await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+            await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
             await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
             await tx.transaction.deleteMany({ where: { id: { in: txnIds } } });
           }
@@ -2859,7 +2802,7 @@ export class CustomersService {
         }
 
         // Route associations
-        await tx.routeRunStop.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteDeliveryHistoryCas(tx, ids); // #2591: expects zero rows
         await tx.routeCustomer.deleteMany({ where: { customerId: { in: ids } } });
         await tx.routeStop.deleteMany({ where: { customerId: { in: ids } } });
 
@@ -2870,11 +2813,11 @@ export class CustomersService {
         });
         if (remainingTxns.length) {
           const txnIds = remainingTxns.map((t) => t.id);
-          await tx.payment.deleteMany({ where: { transactionId: { in: txnIds } } });
+          await deleteMoneyRecordCas(tx.payment, { transactionId: { in: txnIds } });
           await tx.transactionItem.deleteMany({ where: { transactionId: { in: txnIds } } });
           await tx.transaction.deleteMany({ where: { customerId: { in: ids } } });
         }
-        await tx.advancePayment.deleteMany({ where: { customerId: { in: ids } } });
+        await deleteMoneyRecordCas(tx.advancePayment, { customerId: { in: ids } });
         await tx.customerPrice.deleteMany({ where: { customerId: { in: ids } } });
         await tx.customerAddress.deleteMany({ where: { customerId: { in: ids } } });
         await tx.contactPerson.deleteMany({ where: { customerId: { in: ids } } });
@@ -2891,7 +2834,7 @@ export class CustomersService {
         await tx.customerLink.deleteMany({ where: { customerId: { in: ids } } });
 
         // Finally delete customer + user rows
-        await tx.customer.deleteMany({ where: { id: { in: ids } } });
+        await deleteCustomerRowsFkRaceAs409(tx.customer.deleteMany({ where: { id: { in: ids } } })); // #2572
         await tx.user.deleteMany({ where: { id: { in: uids } } });
       },
       { timeout: 120_000 },
@@ -2922,11 +2865,13 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",

@@ -16,6 +16,8 @@ import { checkBadgeFor } from "../../../lib/check-badge";
 import { formatPaymentMethod, paymentRowFlags } from "../../../lib/buyer-payments-logic";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { fmtCalendarDate } from "../../../lib/format-date";
+import { invoiceLineQtyText } from "@routeflow/pricing";
+import { invoiceLineUnitNoun, usesUnitDisplay } from "../../../lib/invoice-line-display";
 
 // buyer.ts's BuyerInvoiceItem doesn't declare `msrp` yet even though the
 // server now snapshots it onto every InvoiceItem (display-only, per PIECE)
@@ -202,7 +204,7 @@ export default function CustomerInvoiceDetailScreen() {
             <Text style={styles.sectionTitle}>Payments</Text>
             <View style={styles.detailCard}>
               {invoice.payments.map((pmt, i) => {
-                const method = pmt.method ?? pmt.paymentMethod;
+                const method = pmt.method; // #2703: the API sends `method` (the old `paymentMethod` never existed)
                 const badge = checkBadgeFor({
                   method,
                   status: pmt.status,
@@ -301,8 +303,16 @@ function LineItemRow({ item, last }: { item: BuyerInvoiceItem; last: boolean }) 
           {label}
         </Text>
         <Text style={styles.itemMeta}>
-          {Number(item.qty)} × ${Number(item.unitPrice).toFixed(2)}
-          {unit ? ` / ${unit}` : ""}
+          {/* B758 review: a units_v1 line (Case, Pallet, a factor-1 "5 Piece") shows ITS
+              label via the ONE shared formatter — a bare Number(item.qty) read "36" for a
+              3-Case line instead of "3 Cases". A pack line is unchanged. */}
+          {usesUnitDisplay(item) ? invoiceLineQtyText(item) : Number(item.qty)} × $
+          {Number(item.unitPrice).toFixed(2)}
+          {/* #2046 REQUIRED (Opus): a units_v1 line's own unit noun (Case, Piece), never
+              the fallen-through product.unit — a Case line read "/ ea" and a factor-1
+              Piece line could read "/ box" here despite the qty text above already
+              naming it correctly. The operator invoice screen already does this. */}
+          {item.unitLabel?.trim() ? ` / ${invoiceLineUnitNoun(item)}` : unit ? ` / ${unit}` : ""}
           {item.discount ? ` − $${Number(item.discount).toFixed(2)} disc` : ""}
         </Text>
         {item.notes?.trim() ? (

@@ -18,9 +18,6 @@ function buildProvider() {
     get: () => ({
       secretKey: "sk_test_123",
       webhookSecret: "whsec_billing",
-      priceStarter: "",
-      priceProfessional: "",
-      priceEnterprise: "",
       connectClientId: "ca_123",
       connectWebhookSecret: "whsec_connect_test",
     }),
@@ -70,6 +67,26 @@ describe("StripeConnectOAuthProvider", () => {
       chargesEnabled: true,
       detailsSubmitted: false,
     });
+  });
+
+  // REG-2441: `accounts.retrieve(null)` — the SDK's typing (v22.6.2) is
+  // `retrieve(id: string | null, ...)`, and a null id reads the PLATFORM's
+  // own account (as opposed to `retrieveAccount(accountRef)` above, which
+  // always passes a string) — `completeOAuth` compares this against the
+  // just-connected account to refuse a self-connect.
+  it("retrievePlatformAccountId calls accounts.retrieve(null) and returns its id", async () => {
+    const { provider, stripe } = buildProvider();
+    stripe.accounts.retrieve.mockResolvedValue({ id: "acct_platform_fake" });
+
+    await expect(provider.retrievePlatformAccountId()).resolves.toBe("acct_platform_fake");
+    expect(stripe.accounts.retrieve).toHaveBeenCalledWith(null);
+  });
+
+  it("retrievePlatformAccountId throws rather than returning an empty/missing id", async () => {
+    const { provider, stripe } = buildProvider();
+    stripe.accounts.retrieve.mockResolvedValue({});
+
+    await expect(provider.retrievePlatformAccountId()).rejects.toThrow(/no account id/i);
   });
 
   it("sends deauthorize in Stripe's snake_case shape", async () => {

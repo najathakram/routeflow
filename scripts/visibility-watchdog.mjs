@@ -37,9 +37,34 @@
 // from `process.cwd()`, so this is a convenience, not a requirement.
 //
 // USAGE
-//   node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>]
+//   node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace] [--help]
 //     --minutes  minutes to wait before flipping private (default 45)
 //     --repo     "owner/name" to flip (default najathakram/routeflow)
+//     --replace  stop the watchdog already running (see SINGLE INSTANCE) and take over
+//     --help     print usage and exit 0
+//
+// ARGUMENTS ARE VALIDATED FIRST (#2076)
+// An unknown flag or a bad value prints a usage message and exits 2 BEFORE any side effect: no lock,
+// no `gh` call, no log line. `--help` exits 0 the same way. A stray `--help` probe once started a REAL
+// 45-minute watchdog that flipped the repo private mid-window, because the old parser ignored flags
+// it did not know.
+//
+// SINGLE INSTANCE (#2076)
+// A lock file beside the log (`local-assets/visibility-watchdog.lock`) records the running watchdog's
+// pid, repo and deadline. A second start finds the live pid, prints it and its deadline, logs a
+// `refused` line and exits 3. `--replace` stops the recorded pid first (SIGTERM, only after the pid's
+// command line is confirmed to name this script: `ps` on POSIX, Win32_Process on Windows, so a
+// recycled pid is never killed) and then takes the lock. A lock is STALE, and simply taken over
+// without killing anything, when its pid is dead, when the pid now belongs to ANOTHER process, or
+// when its deadline plus the ~16 min retry budget has passed: a watchdog killed by Stop-Process or a
+// reboot leaves its lock behind, and refusing then would open the public window with no watchdog.
+// The one exception is an "unknown" identity (the `ps` / CIM check itself could not run): that is NOT
+// stale. It is treated as a live watchdog and REFUSES (exit 3, a `refused` log line, `--replace` never
+// kills it) until the deadline plus the retry budget has passed, so the operator investigates instead
+// of the script guessing. Only a positive "other" or "gone" answer, or an overdue lock, is taken over.
+//
+// The lock is removed on exit and on SIGINT/SIGTERM. Two watchdogs must never coexist: the OLDER one's earlier deadline would flip the
+// repo private inside the newer one's public window.
 //
 // FLIP RETRY (2026-09-05)
 // The private flip used to be attempted once, with only the read-back
@@ -175,28 +200,52 @@ function markerRoot() {
   return cachedRoot;
 }
 
+const USAGE = `usage: node scripts/visibility-watchdog.mjs [--minutes <n>] [--repo <owner/name>] [--replace] [--help]
+  --minutes <n>        minutes to wait before flipping private (default ${DEFAULT_MINUTES})
+  --repo <owner/name>  repository to flip (default ${DEFAULT_REPO})
+  --replace            stop the watchdog already running and take over its lock
+  --help               print this message and exit 0`;
+
+class UsageError extends Error {}
+
 function parseArgs(argv) {
   let minutes = DEFAULT_MINUTES;
   let repo = DEFAULT_REPO;
+  let replace = false;
+  let help = false;
+  // A flag value must be a real value: `--minutes --repo x` would otherwise swallow the next flag.
+  const valueOf = (flag, next) => {
+    if (next === undefined || next.startsWith("--")) {
+      throw new UsageError(`${flag} needs a value`);
+    }
+    return next;
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--minutes") {
-      minutes = Number(argv[++i]);
+    if (arg === "--help" || arg === "-h") {
+      help = true;
+    } else if (arg === "--replace") {
+      replace = true;
+    } else if (arg === "--minutes") {
+      minutes = Number(valueOf(arg, argv[++i]));
     } else if (arg.startsWith("--minutes=")) {
       minutes = Number(arg.slice("--minutes=".length));
     } else if (arg === "--repo") {
-      repo = argv[++i];
+      repo = valueOf(arg, argv[++i]);
     } else if (arg.startsWith("--repo=")) {
       repo = arg.slice("--repo=".length);
+    } else {
+      throw new UsageError(`unknown argument: ${arg}`);
     }
   }
+  if (help) return { help: true };
   if (!Number.isFinite(minutes) || minutes < 0) {
-    throw new Error(`invalid --minutes: ${JSON.stringify(minutes)}`);
+    throw new UsageError(`invalid --minutes: ${JSON.stringify(minutes)}`);
   }
   if (!repo || typeof repo !== "string") {
-    throw new Error(`invalid --repo: ${JSON.stringify(repo)}`);
+    throw new UsageError(`invalid --repo: ${JSON.stringify(repo)}`);
   }
-  return { minutes, repo };
+  return { minutes, repo, replace, help: false };
 }
 
 function logFile() {
@@ -309,10 +358,172 @@ function clearFailedMarker() {
   }
 }
 
-async function main() {
-  const { minutes, repo } = parseArgs(process.argv.slice(2));
+// ─── single-instance lock (#2076) ─────────────────────────────────────────────────────────────
+// Lives beside the log, so a test that points the log at a scratch file gets a scratch lock too.
+function lockFile() {
+  const log = logFile();
+  return log.endsWith(".log") ? `${log.slice(0, -4)}.lock` : `${log}.lock`;
+}
+
+/** The parsed lock, or null when it is absent, empty or unparseable. */
+function readLock() {
+  try {
+    return JSON.parse(fs.readFileSync(lockFile(), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM"; // exists, just not ours to signal
+  }
+}
+
+// The longest a watchdog can legitimately outlive its deadline: MAX_ATTEMPTS flip attempts, each two
+// `gh` calls of up to GH_TIMEOUT_MS, plus the backoff sleeps between them (about 16 minutes). A lock
+// whose deadline is older than that belongs to a watchdog that is stuck or gone.
+const RETRY_BUDGET_MS =
+  MAX_ATTEMPTS * 2 * GH_TIMEOUT_MS + DEFAULT_ATTEMPT_DELAYS_MS.reduce((a, b) => a + b, 0);
+
+/**
+ * What the process behind a recorded pid is: "watchdog" (its command line names this script), "other"
+ * (a live process that is NOT ours: the pid was reused), "gone", or "unknown" (the check itself could
+ * not run). POSIX asks `ps`; Windows asks Win32_Process for the command line, since it has no `ps`.
+ * Never trust the pid alone: a watchdog killed by Stop-Process or a reboot leaves its lock behind and
+ * the pid is later handed to some unrelated process.
+ */
+function identify(pid) {
+  if (process.platform === "win32") {
+    const res = spawnSync(
+      "powershell",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`,
+      ],
+      { encoding: "utf8", timeout: GIT_TIMEOUT_MS, killSignal: "SIGKILL" },
+    );
+    if (res.error || res.status !== 0) return "unknown";
+    const cmd = (res.stdout || "").trim();
+    if (!cmd) return "gone";
+    return /visibility-watchdog/.test(cmd) ? "watchdog" : "other";
+  }
+  const res = spawnSync("ps", ["-o", "command=", "-p", String(pid)], {
+    encoding: "utf8",
+    timeout: GIT_TIMEOUT_MS,
+    killSignal: "SIGKILL",
+  });
+  if (res.error) return "unknown";
+  if (res.status !== 0) return "gone"; // ps exits 1 when the pid does not exist (ESRCH)
+  return /visibility-watchdog/.test(res.stdout || "") ? "watchdog" : "other";
+}
+
+/** SIGTERM and wait. A process that is already gone (ESRCH) counts as stopped. */
+async function terminate(pid) {
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (err) {
+    if (err.code === "ESRCH") return true;
+    throw err;
+  }
+  for (let i = 0; i < 50 && pidAlive(pid); i++) await sleep(100);
+  return !pidAlive(pid);
+}
+
+function releaseLock() {
+  const held = readLock();
+  if (held && held.pid === process.pid) fs.rmSync(lockFile(), { force: true });
+}
+
+/**
+ * Create the lock atomically WITH its content: write a private temp file, then hard-link it into
+ * place. `link` fails with EEXIST if the lock exists, and a reader can never observe an empty,
+ * half-written lock (a create-then-write would let a second starter read "" and call it stale).
+ */
+function createLock(file, content) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, content);
+  try {
+    fs.linkSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+/** Take the lock, or report who holds it. {ok:true} | {ok:false, message}. */
+async function acquireLock({ repo, deadline, replace }) {
+  const file = lockFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const mine =
+    JSON.stringify({ pid: process.pid, repo, deadline, startedAt: new Date().toISOString() }) +
+    "\n";
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      createLock(file, mine); // atomic: exactly one starter wins
+      return { ok: true };
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+    }
+    const held = readLock();
+    if (held === null) {
+      // Absent (released between our attempts), or unparseable: give a writer that is mid-flight a
+      // moment, and only call garbage stale after a few looks.
+      if (fs.existsSync(file) && attempt < 3) await sleep(50);
+      else fs.rmSync(file, { force: true });
+      continue;
+    }
+    if (Number.isInteger(held.pid) && held.pid !== process.pid && pidAlive(held.pid)) {
+      const who = `pid ${held.pid} (repo ${held.repo ?? "?"}, deadline ${held.deadline ?? "?"})`;
+      const who2 = identify(held.pid);
+      const overdue = Date.parse(held.deadline ?? "") + RETRY_BUDGET_MS < Date.now();
+      // Stale, never live: the pid now belongs to another process, or its deadline plus the retry
+      // budget has passed. Take over WITHOUT killing anything: the alternative (refusing) leaves the
+      // public window open with no watchdog at all.
+      const stale = who2 === "other" || who2 === "gone" || overdue;
+      if (!stale) {
+        if (!replace) {
+          return {
+            ok: false,
+            message: `already running: ${who}. Pass --replace to stop it and take over.`,
+          };
+        }
+        if (who2 !== "watchdog") {
+          return {
+            ok: false,
+            message: `lock names ${who} but this could not be confirmed as a visibility-watchdog; not killing it. Remove ${file} by hand if it is stale.`,
+          };
+        }
+        if (!(await terminate(held.pid))) {
+          return { ok: false, message: `could not stop ${who}.` };
+        }
+      }
+    }
+    fs.rmSync(file, { force: true }); // dead or reused pid (stale), or just replaced: retake
+  }
+  return { ok: false, message: `could not acquire ${file}` };
+}
+
+async function main({ minutes, repo, replace }) {
   const waitMs = Math.round(minutes * 60_000);
   const deadline = new Date(Date.now() + waitMs).toISOString();
+
+  // One watchdog at a time, decided BEFORE the first `gh` call or log line.
+  const lock = await acquireLock({ repo, deadline, replace });
+  if (!lock.ok) {
+    // Written to the log too: the runbook launches discard stderr, so a refusal that only reaches
+    // stderr is silent, and the window would open with no watchdog and no trace of why.
+    log("refused", lock.message);
+    console.error(`visibility-watchdog: ${lock.message}`);
+    return 3;
+  }
+  process.on("exit", releaseLock);
+  process.on("SIGINT", () => process.exit(130));
+  process.on("SIGTERM", () => process.exit(143));
 
   const startVisibility = readVisibility(repo) ?? "unknown";
   // Read BEFORE the wait so the launch line already carries both the resolved root a human
@@ -375,7 +586,22 @@ async function main() {
   return 1;
 }
 
-main()
+// Validate the arguments before anything else runs: a bad flag or --help never reaches the lock, `gh`
+// or the log (#2076).
+let cli;
+try {
+  cli = parseArgs(process.argv.slice(2));
+} catch (err) {
+  if (!(err instanceof UsageError)) throw err;
+  console.error(`visibility-watchdog: ${err.message}\n${USAGE}`);
+  process.exit(2);
+}
+if (cli.help) {
+  console.log(USAGE);
+  process.exit(0);
+}
+
+main(cli)
   .then((code) => process.exit(code))
   .catch((err) => {
     log("error", `unhandled: ${err && err.message ? err.message : String(err)}`);

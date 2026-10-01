@@ -5,6 +5,8 @@ import type {
   ActiveOrderSummary,
   CancelImpact,
   CustomerPriceHistory,
+  InlineReturnLinesRequest,
+  LineComponentView,
   PriceType,
 } from "@routeflow/types";
 
@@ -54,9 +56,21 @@ export interface Order {
     invoiceNumber: string;
     status: string;
     total: number;
-    /** CREDIT_NOTE payments only (server-scoped include) — sums to the "applied
-     *  $ so far" shown per credit-note intent on the order detail page. */
-    payments?: Array<{ id: string; amount: number | string; creditNoteId?: string | null }>;
+    /** CREDIT_NOTE payments only (server-scoped include), listed by the order's
+     *  "Applied credits" panel (#2404). `creditNote` is attached by the order read
+     *  (InvoicePayment has no relation); `autoApplied` is SA-436 PR-1's column. */
+    payments?: Array<{
+      id: string;
+      amount: number | string;
+      creditNoteId?: string | null;
+      autoApplied: boolean;
+      creditNote?: {
+        id: string;
+        creditNoteNumber: string;
+        reason?: string | null;
+        autoApplied?: boolean;
+      } | null;
+    }>;
   }>;
   /**
    * Credit-note intents applied to this order (join table — survives invoice
@@ -171,6 +185,8 @@ export interface OrderItem {
   notes?: string;
   /** Cumulative qty already covered by issued invoices for this item. */
   invoicedQty?: number;
+  /** #2717 M3: frozen components of a composed (mixed-pack) line; absent on a plain line. */
+  components?: LineComponentView[];
   /** Cumulative qty actually delivered — advanced by the route completeStop flow. */
   deliveredQty?: number;
 }
@@ -242,6 +258,8 @@ export type CreateOrderItem =
       boxes?: number;
       pieces?: number;
       unitPrice?: number;
+      /** #2696(c): required by the server when unitPrice moves off a special (tier) price. */
+      overrideReason?: string;
       notes?: string;
     }
   | {
@@ -278,10 +296,29 @@ export function useCreateOrder() {
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
       /** Staff-only per-order commission override; 0 = exempt. */
       commissionRatePct?: number;
+      /** #2406: an inline return to capture in the SAME write as this order — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being created, never sent here (see
+       *  CreateOrderDto.inlineReturn, apps/api/src/orders/orders.controller.ts). */
+      inlineReturn?: InlineReturnLinesRequest;
+      /** SA-484a: the B215 replay key, sent as the `Idempotency-Key` HEADER (never in the body),
+       *  paired with `inlineReturn.returnKey` — one per save attempt, reused on its retries. */
+      idempotencyKey?: string;
     }
   >({
-    mutationFn: (dto) => apiClient.post("/orders", dto).then((r) => r.data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["orders"] }),
+    mutationFn: ({ idempotencyKey, ...dto }) =>
+      apiClient
+        .post(
+          "/orders",
+          dto,
+          idempotencyKey ? { headers: { "Idempotency-Key": idempotencyKey } } : undefined,
+        )
+        .then((r) => r.data),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this create carried an inline return — refresh any "Returns on this order"
+      // read (GET /returns?orderId=).
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
+    },
   });
 }
 
@@ -438,9 +475,21 @@ export function useUpdateOrderItems() {
        * Staff-only (operator/tenant-admin); the server ignores it otherwise.
        */
       appliedCreditNotes?: { creditNoteId: string; amount?: number }[];
+      /** #2406: an inline return to capture in the SAME write as this edit — `customerId`/
+       *  `orderId` are DERIVED server-side from the order being edited, never sent here (see
+       *  UpdateOrderItemsDto.inlineReturn). */
+      inlineReturn?: InlineReturnLinesRequest;
     }
   >({
-    mutationFn: ({ id, items, orderNotes, replaceAll, shippingFee, appliedCreditNotes }) =>
+    mutationFn: ({
+      id,
+      items,
+      orderNotes,
+      replaceAll,
+      shippingFee,
+      appliedCreditNotes,
+      inlineReturn,
+    }) =>
       apiClient
         .patch<Order>(`/orders/${id}/items`, {
           items,
@@ -448,11 +497,15 @@ export function useUpdateOrderItems() {
           replaceAll,
           shippingFee,
           appliedCreditNotes,
+          inlineReturn,
         })
         .then((r) => r.data),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       qc.setQueryData(["orders", data.id], data);
       qc.invalidateQueries({ queryKey: ["orders"] });
+      // #2406: this write carried an inline return — refresh the order-detail "Returns on
+      // this order" panel (GET /returns?orderId=), which reads the server's own figures.
+      if (variables.inlineReturn) qc.invalidateQueries({ queryKey: ["returns"] });
     },
   });
 }

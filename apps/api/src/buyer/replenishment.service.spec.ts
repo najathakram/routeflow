@@ -30,7 +30,7 @@ describe("ReplenishmentService", () => {
   });
 
   it("infers cadence, suggested qty and state from order history", async () => {
-    const milk = prod({ id: "A", name: "Milk", unit: "gal", imageKeys: ["k1"] });
+    const milk = prod({ id: "A", name: "Milk", unit: "gal", imageKeys: ["products/A/k1.jpg"] });
     const soda = prod({ id: "B", name: "Soda", unit: "case", unitsPerBox: 12 });
     const oneOff = prod({ id: "C", name: "Zeta" });
     prisma.order.findMany.mockResolvedValue([
@@ -65,7 +65,7 @@ describe("ReplenishmentService", () => {
       typicalQty: 6,
       suggestedQty: 6,
       unitsPerBox: null,
-      imageKey: "k1",
+      imageKey: "products/A/k1.jpg",
       state: "low",
     });
 

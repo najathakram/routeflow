@@ -10,17 +10,21 @@
  * — the only call site, in updateOrderItems — still supplies itself). Returns `null` exactly
  * where the original `continue`d (a normalized qty <= 0).
  */
-import { BadRequestException } from "@nestjs/common";
 import {
+  isSpecialTier,
   categoryTaxSnapshotOf,
   computeLineSubtotal,
+  getTierPrice,
   normalizeBoxesPieces,
+  withinStaffOverrideTolerance,
   type PromotionRule,
   type TrackedCategoryRow,
 } from "@routeflow/pricing";
 import { PriceType } from "@prisma/client";
-import { isSpecialTier, rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
+import { rescaleBogoFreeUnits, resolveBuyerLinePrice } from "./buyer-merge-pricing";
+import { decideTierOverride } from "./staff-override";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
+import { decideReplaceAllLinePrice } from "./staff-line-price";
 
 interface ExistingLineForReplaceAll {
   unitPrice: number;
@@ -28,6 +32,26 @@ interface ExistingLineForReplaceAll {
   originalPrice: number | null;
   overrideReason: string | null;
   overriddenBy: string | null;
+}
+
+/**
+ * The pre-edit snapshot of a BOGO counterpart line (any line carrying a free-unit snapshot: it
+ * can be SPECIAL, DISCOUNTED or MANUAL, not only PROMO). `priceType`, its strikethrough base
+ * `originalPrice` and the override attribution are copied VERBATIM: the qty-edit oracle writes
+ * originalPrice / overrideReason / overriddenBy ONLY under isManualOverride, so at an unchanged
+ * price they must survive the replaceAll re-create untouched. Moved out of orders.service.ts.
+ */
+export function buildBogoCounterpart(li: any) {
+  return {
+    qty: Number(li.qty),
+    boxes: li.boxes ?? null,
+    unitPrice: Number(li.unitPrice),
+    priceType: li.priceType,
+    originalPrice: li.originalPrice != null ? Number(li.originalPrice) : null,
+    overrideReason: li.overrideReason ?? null,
+    overriddenBy: li.overriddenBy ?? null,
+    promoFreeUnits: Number(li.promoFreeUnits ?? 0),
+  };
 }
 
 /**
@@ -154,7 +178,8 @@ export function buildReplaceAllLineData(
   const bogoCounterpart = ctx.bogoCounterparts.get(productId);
   const bogoPriceUnchanged =
     bogoCounterpart != null &&
-    (overridePrice === null || Math.abs(overridePrice - bogoCounterpart.unitPrice) <= 0.005);
+    (overridePrice === null ||
+      withinStaffOverrideTolerance(overridePrice, bogoCounterpart.unitPrice));
   // Not a repricing decision ⇒ the line's override attribution survives
   // the re-create, exactly as the qty-edit oracle leaves it untouched.
   const preservedOverride = bogoPriceUnchanged ? bogoCounterpart : null;
@@ -179,13 +204,9 @@ export function buildReplaceAllLineData(
   const replaceAllExisting = sourceLineId
     ? ctx.existingLineById.get(sourceLineId)
     : ctx.existingLineByProduct.get(productId);
-  const replaceAllPriceUnchanged =
-    replaceAllExisting != null &&
-    (overridePrice === null || Math.abs(overridePrice - replaceAllExisting.unitPrice) <= 0.005);
   const replaceAllTierForProduct = ctx.isStaffEdit
     ? (ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier)
     : 1;
-  const replaceAllIsSpecialTier = isSpecialTier(replaceAllTierForProduct);
   const replaceAllHasOverrideReason = !!(
     (item.overrideReason && item.overrideReason.trim()) ||
     (replaceAllExisting?.overrideReason && replaceAllExisting.overrideReason.trim())
@@ -207,27 +228,44 @@ export function buildReplaceAllLineData(
   // own replaceAll:true edit of an EXISTING order (isCreateMerge
   // unset) still needs the guard for a brand-new OR ambiguous line.
   const skipAsCreateMergeNewLine = !!ctx.isCreateMerge && replaceAllExisting == null;
-  if (
-    !bogoPriceUnchanged &&
-    !replaceAllPriceUnchanged &&
-    !skipAsCreateMergeNewLine &&
-    overridePrice !== null &&
-    replaceAllIsSpecialTier &&
-    !replaceAllHasOverrideReason
-  ) {
-    throw new BadRequestException(
-      `A reason is required to change ${product.name ?? "this"} — it's this customer's special price`,
-    );
-  }
-  // An explicit price DIFFERENT from catalog is a genuine operator override
-  // (MANUAL); one that EQUALS catalog is still an operator-typed price and is
-  // stored verbatim as STANDARD/list — unchanged behavior, and the only way to
-  // sell a tiered customer at list for one order. WP1: ONLY a line carrying no
-  // price at all falls through to the tier ladder, and only for staff. A price
-  // the BOGO branch above already treated as unchanged is never a MANUAL
-  // override either, even if it differs from today's catalog list price.
-  const isManualOverride =
-    !bogoPriceUnchanged && overridePrice !== null && overridePrice !== catalogPrice;
+  // #2696(c) SA-558d (i): that NEW line IS a staff create, so it takes create's rule A
+  // (decideTierOverride: tier baseline, the sent reason, the same 400; within ½¢ of tier ⇒ the
+  // tier ladder below) — a fresh order and a folded one price the same payload identically.
+  const createMergeDecision =
+    skipAsCreateMergeNewLine && overridePrice !== null && !bogoPriceUnchanged
+      ? decideTierOverride(product, replaceAllTierForProduct, overridePrice, item.overrideReason)
+      : null;
+  const createMergeOverride = createMergeDecision?.overridden ? createMergeDecision : null;
+  // #2716c / SA-558d: ONE rule (staff-line-price.ts -> decideStaffOverride) for a typed price that
+  // is not the BOGO snapshot's echo. Against a stored counterpart the baseline is its stored
+  // price and an echo is preserved verbatim (never re-stamped); otherwise the tier price. A
+  // special-tier change needs a reason (B465); below list is DISCOUNTED, at/above list MANUAL,
+  // originalPrice = list. WP1: ONLY a line carrying no price at all falls through to the tier
+  // ladder, and only for staff.
+  const replaceAllDecision =
+    !bogoPriceUnchanged && overridePrice !== null && !skipAsCreateMergeNewLine
+      ? decideReplaceAllLinePrice({
+          overridePrice,
+          existing: replaceAllExisting ?? null,
+          tierPrice: Number(getTierPrice(product, replaceAllTierForProduct)),
+          listPrice: catalogPrice,
+          isSpecialTier: isSpecialTier(replaceAllTierForProduct),
+          hasReason: replaceAllHasOverrideReason,
+          skipReasonGuard: skipAsCreateMergeNewLine,
+          productName: product.name,
+        })
+      : null;
+  const isManualOverride = createMergeDecision
+    ? !!createMergeOverride
+    : !!replaceAllDecision?.repriced;
+  // An echo of the stored counterpart keeps that line's own attribution (like the BOGO arm).
+  const echoedExisting =
+    replaceAllDecision &&
+    !replaceAllDecision.repriced &&
+    !replaceAllDecision.restored &&
+    replaceAllExisting
+      ? replaceAllExisting
+      : null;
   const upb = Number(product.unitsPerBox ?? 0);
   // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
   const qtyPieces = boxes != null ? qty : upb > 1 ? qty * upb : qty;
@@ -258,31 +296,38 @@ export function buildReplaceAllLineData(
           newUnits: boxes != null ? boxes : qty,
         }),
       }
-    : overridePrice !== null
+    : createMergeOverride
       ? {
-          unitPrice: overridePrice,
-          originalPrice: isManualOverride ? catalogPrice : null,
-          priceType: isManualOverride ? PriceType.MANUAL : PriceType.STANDARD,
+          unitPrice: createMergeOverride.unitPrice,
+          originalPrice: createMergeOverride.originalPrice,
+          priceType: PriceType[createMergeOverride.priceType],
           freeUnits: 0,
         }
-      : ctx.isStaffEdit
-        ? resolveBuyerLinePrice(
-            product,
-            ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
-            ctx.buyerPromos,
-            qtyPieces,
-            qtyUnits,
-            null,
-            // REG-B109: the exact denomination this line bills with below.
-            { boxes, pieces, unitsPerBox: upb },
-          )
-        : {
-            // Non-staff caller: legacy list pricing, no tier resolution.
-            unitPrice: catalogPrice,
-            originalPrice: null as number | null,
-            priceType: PriceType.STANDARD,
+      : replaceAllDecision
+        ? {
+            unitPrice: replaceAllDecision.unitPrice,
+            originalPrice: replaceAllDecision.originalPrice,
+            priceType: replaceAllDecision.priceType,
             freeUnits: 0,
-          };
+          }
+        : ctx.isStaffEdit
+          ? resolveBuyerLinePrice(
+              product,
+              ctx.operatorCpMap.get(productId) ?? ctx.operatorDefaultTier,
+              ctx.buyerPromos,
+              qtyPieces,
+              qtyUnits,
+              null,
+              // REG-B109: the exact denomination this line bills with below.
+              { boxes, pieces, unitsPerBox: upb },
+            )
+          : {
+              // Non-staff caller: legacy list pricing, no tier resolution.
+              unitPrice: catalogPrice,
+              originalPrice: null as number | null,
+              priceType: PriceType.STANDARD,
+              freeUnits: 0,
+            };
   const unitPrice = priced.unitPrice;
   const subtotal = computeLineSubtotal({
     unitPrice,
@@ -317,12 +362,14 @@ export function buildReplaceAllLineData(
     // incremental UPDATE branch's identical fix.
     overrideReason: isManualOverride
       ? item.overrideReason?.trim()
-        ? item.overrideReason
+        ? createMergeOverride
+          ? item.overrideReason.trim()
+          : item.overrideReason
         : (replaceAllExisting?.overrideReason ?? null)
-      : (preservedOverride?.overrideReason ?? null),
+      : (preservedOverride?.overrideReason ?? echoedExisting?.overrideReason ?? null),
     overriddenBy: isManualOverride
       ? (ctx.userId ?? null)
-      : (preservedOverride?.overriddenBy ?? null),
+      : (preservedOverride?.overriddenBy ?? echoedExisting?.overriddenBy ?? null),
     // Snapshot the regulated category (spec §7).
     trackedCategoryId: product.trackedCategoryId ?? null,
     // RF-3: reporting-only subcategory snapshot (mirrors trackedCategoryId).
@@ -335,4 +382,68 @@ export function buildReplaceAllLineData(
         : null,
     ),
   };
+}
+
+/**
+ * The per-product pairing maps of updateOrderItems' replaceAll rebuild (moved verbatim out of
+ * orders.service.ts, #2717, to keep the size ratchet's ceiling): pre-edit and incoming line counts
+ * per product, and the BUY_N_GET_M counterparts, built once from the PRE-edit lines.
+ */
+export function buildReplaceAllPairing(
+  order: { lineItems?: any[] | null },
+  dto: { items?: Array<{ productId?: string | null }> | null },
+): {
+  preEditLinesByProduct: Map<string, number>;
+  incomingLinesByProduct: Map<string, number>;
+  bogoCounterparts: Map<string, any>;
+} {
+  // B60 (REG-B60): a staff replaceAll at an unchanged/echoed price must
+  // land exactly where a qty edit of the same line lands — reuse the
+  // stored price + priceType and RESCALE (never drop) the line's
+  // BUY_N_GET_M snapshot instead of silently re-creating it at full
+  // price. Built once from the PRE-edit lines, before the delete below
+  // erases them.
+  //
+  // ⚠️ UNAMBIGUOUS PAIRS ONLY. A replaceAll payload carries no line ids,
+  // and an order may legitimately hold SEVERAL lines of one product (the
+  // diff-add branch creates a new row for an id-less item even when a line
+  // for that product exists). Keying a counterpart by productId alone then
+  // hands the snapshot — and its override attribution — to every echoed
+  // line of that product, including a sibling that never earned one: two
+  // lines of prod-X (qty 10 with 2 free units, qty 5 with none) echoed by a
+  // no-op save would bill the second 5.00 x (5-1) = 20.00 instead of 25.00
+  // and stamp it with the first line's overrideReason/overriddenBy. The
+  // qty-edit oracle this arm copies yields 0 free units for that sibling
+  // (storedFreeUnits 0, canEarnNew false), and rescaleBogoFreeUnits' own
+  // contract is that no operator line gains a promo it never had.
+  // There is no sound N-to-N mapping to recover here, so preservation is
+  // registered ONLY when the pairing is unambiguous: exactly one pre-edit
+  // non-cancelled line for that product AND exactly one incoming line for
+  // it. Any other shape falls through to the pre-F06 behavior (re-created
+  // at the resolved price, snapshot dropped) — that shape is not fixed by
+  // F06, but it is never granted a snapshot it did not earn.
+  const preEditLinesByProduct = new Map<string, number>();
+  for (const li of order.lineItems ?? []) {
+    if (!li.productId || li.status === "CANCELLED") continue;
+    preEditLinesByProduct.set(li.productId, (preEditLinesByProduct.get(li.productId) ?? 0) + 1);
+  }
+  const incomingLinesByProduct = new Map<string, number>();
+  for (const it of dto.items ?? []) {
+    if (!it.productId) continue;
+    incomingLinesByProduct.set(it.productId, (incomingLinesByProduct.get(it.productId) ?? 0) + 1);
+  }
+  const bogoCounterparts = new Map<string, any>();
+  for (const li of order.lineItems ?? []) {
+    if (
+      li.productId &&
+      li.status !== "CANCELLED" &&
+      Number((li as any).promoFreeUnits ?? 0) > 0 &&
+      preEditLinesByProduct.get(li.productId) === 1 &&
+      incomingLinesByProduct.get(li.productId) === 1 &&
+      !bogoCounterparts.has(li.productId)
+    ) {
+      bogoCounterparts.set(li.productId, buildBogoCounterpart(li));
+    }
+  }
+  return { preEditLinesByProduct, incomingLinesByProduct, bogoCounterparts };
 }

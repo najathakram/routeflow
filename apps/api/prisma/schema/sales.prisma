@@ -121,6 +121,15 @@ enum ReturnKind {
   INLINE
 }
 
+// #2717 M3 (SA-572): how a document line was composed. NULL = a plain single line (SINGLE is never
+// materialised, plan Q5). FIXED = the RECIPE product sold as sealed packs with frozen component
+// snapshots; FLEX is reserved for M3b.
+enum CompositionMode {
+  SINGLE
+  FIXED
+  FLEX
+}
+
 enum PriceType {
   STANDARD
   SPECIAL
@@ -829,6 +838,11 @@ model OrderItem {
   // (quantity, unit, factor). The factor always comes from the server's ladder
   // at write time, never re-derived from a live product later.
   unitLabel                String?
+  // #2717 M3 (SA-572 I11): composition provenance on the line. recipeId/recipeVersion are plain
+  // strings/ints with NO foreign key: documents never JOIN Recipe (SA-589 confirms). NULL = a plain line.
+  compositionMode          CompositionMode?
+  recipeId                 String?
+  recipeVersion            Int?
   // Scan/insertion order within the order (0-based). Set from the client's item
   // array index at create and preserved/appended on edit, so line display matches
   // the order items were scanned/added (the invoice already reads in insertion
@@ -854,6 +868,7 @@ model OrderItem {
   transactionItems   TransactionItem[]
   invoiceItems       InvoiceItem[]
   changeRequests     ChangeRequest[]
+  components         OrderItemComponent[]
 
   @@index([orderId])
   @@index([productId])
@@ -861,6 +876,31 @@ model OrderItem {
   @@index([tenantId])
   @@index([trackedCategoryId])
   @@index([trackedSubcategoryId])
+}
+
+// #2717 M3 (SA-572 A1/I9/I12): the frozen per-component snapshot of a FIXED order line. Sum of qty
+// equals the line's pieces, enforced in the writing tx (never a CHECK). Nested creates are not
+// tenant-injected, so tenantId is set explicitly. componentProductId is Restrict.
+model OrderItemComponent {
+  id                 String            @id @default(uuid())
+  tenantId           String
+  orderItemId        String
+  componentProductId String
+  qty                Int
+  name               String
+  unitSku            String?
+  unitBarcode        String?
+  barcodeSymbology   BarcodeSymbology?
+  displayUnitPrice4  Decimal?          @db.Decimal(12, 4)
+  position           Int               @default(0)
+  createdAt          DateTime          @default(now())
+
+  orderItem             OrderItem              @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  componentProduct      Product                @relation(fields: [componentProductId], references: [id], onDelete: Restrict)
+
+  @@unique([orderItemId, componentProductId])
+  @@index([componentProductId])
+  @@index([tenantId])
 }
 
 model DeliveryMutation {
@@ -928,6 +968,13 @@ model OrderTemplate {
   isActive   Boolean  @default(true)
   daysOfWeek Int[]
   notes      String?
+  // F-05 (SA-210): provenance, snapshotted at creation. The unattended run's sell channel is derived from
+  // it through the live path's own predicate; NULL = unknown = the STRICTER BUYER_PORTAL channel.
+  createdByRole   UserRole?
+  createdByUserId String?
+  // F-05 (SA-247): the role of whoever last wrote the template's ITEMS. The unattended run sells as STAFF only
+  // when BOTH this and createdByRole are known staff; NULL (unknown) is the stricter BUYER_PORTAL.
+  itemsEditedByRole UserRole?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   tenantId   String?
@@ -951,6 +998,10 @@ model OrderTemplateItem {
   // U1 (A0): the selling unit chosen for this line (OrderItem.unitLabel's twin). Null = the pack,
   // exactly as every existing row is today.
   unitLabel  String?
+  // F-05: a line the unattended run skipped because a selling restriction bans it (NULL = active). Cleared by
+  // an edit of THIS line's product or qty, or by an explicit audited lift; every suspend and lift is an AuditLog row.
+  suspendedAt     DateTime?
+  suspendedReason String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   tenantId   String?
@@ -1097,6 +1148,8 @@ model Return {
   @@index([status])
   @@index([tenantId])
   @@index([kind])
+  // #2118: the external-refund term is keyed on refundedAt (B455) — tenant-window reads.
+  @@index([tenantId, refundedAt])
 }
 
 model ReturnItem {

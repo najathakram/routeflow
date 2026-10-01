@@ -132,7 +132,7 @@ function ReportsTab() {
             value={period}
             max={monthLabel(prev.year, prev.month)}
             onChange={(e) => setPeriod(e.target.value)}
-            className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-9 w-36 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
         </div>
         <Button
@@ -305,14 +305,14 @@ function RangePicker(props: ReturnType<typeof useRangeState>) {
         type="date"
         value={props.from}
         onChange={(e) => props.setFrom(e.target.value)}
-        className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        className="h-9 w-36 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
       <span className="text-sm text-navy/70">to</span>
       <input
         type="date"
         value={props.to}
         onChange={(e) => props.setTo(e.target.value)}
-        className="h-9 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+        className="h-9 w-36 rounded-lg border border-surface-border bg-white px-3 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
       />
     </div>
   );

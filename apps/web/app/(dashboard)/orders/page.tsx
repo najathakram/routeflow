@@ -573,7 +573,9 @@ export default function OrdersPage() {
         title="Orders"
         subtitle={headerSubtitle}
         action={
-          <div className="flex items-center gap-2">
+          // PageHeader (packages/ui): shrink-0 now pairs with max-w-full, so this row
+          // actually gets a narrow-enough box to wrap into at 390px.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               size="sm"
@@ -850,7 +852,7 @@ export default function OrdersPage() {
             value={dateFrom}
             onChange={(e) => setFilter("dateFrom", e.target.value)}
             max={dateTo || undefined}
-            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date from"
           />
           <span className="text-xs text-navy/40">to</span>
@@ -859,7 +861,7 @@ export default function OrdersPage() {
             value={dateTo}
             onChange={(e) => setFilter("dateTo", e.target.value)}
             min={dateFrom || undefined}
-            className="h-10 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded-ctl border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Delivery date to"
           />
           {(dateFrom || dateTo) && (

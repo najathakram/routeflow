@@ -3,7 +3,7 @@
 import * as React from "react";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
-import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { linePack, normalizeBoxesPieces } from "@routeflow/pricing";
 import { unitsLabel } from "@/lib/stock-label";
 import { useReceivePurchaseOrder } from "@/lib/api/inventory";
 import type { POItem, PurchaseOrder } from "./purchase-orders-shared";
@@ -24,8 +24,10 @@ export function ReceivePOModal({
   const { toast } = useToast();
 
   const catalogById = React.useMemo(() => new Map(products.map((p) => [p.id, p])), [products]);
-  const unitsPerBoxFor = (productId: string) =>
-    Number(catalogById.get(productId)?.unitsPerBox ?? 0);
+  // #2734: the line's STORED pack wins (linePack); the live catalog pack is only the fallback,
+  // so a line ordered at pack 12 on a product later repacked to 6 still receives at 12.
+  const unitsPerBoxFor = (item: POItem) =>
+    linePack(item, Number(catalogById.get(item.productId)?.unitsPerBox ?? 0));
   /** Still outstanding on this line — never pre-fill more, the API rejects a
    *  receipt larger than what remains rather than silently under-receiving.
    *  Rounded to the column's 3dp: quantities are Decimal(10,3) and the raw
@@ -48,7 +50,7 @@ export function ReceivePOModal({
   >(
     Object.fromEntries(
       po.items.map((item) => {
-        const upb = unitsPerBoxFor(item.productId);
+        const upb = unitsPerBoxFor(item);
         const split = normalizeBoxesPieces({ qty: outstandingOf(item), unitsPerBox: upb });
         return [item.id, { boxes: String(split.boxes ?? 0), pieces: String(split.pieces ?? 0) }];
       }),
@@ -58,7 +60,7 @@ export function ReceivePOModal({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const items = po.items.map((item) => {
-      const upb = unitsPerBoxFor(item.productId);
+      const upb = unitsPerBoxFor(item);
       if (upb > 1) {
         const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
         const boxes = Math.max(0, Math.trunc(Number(split.boxes) || 0));
@@ -114,7 +116,7 @@ export function ReceivePOModal({
               </thead>
               <tbody className="divide-y divide-surface-border">
                 {po.items.map((item) => {
-                  const upb = unitsPerBoxFor(item.productId);
+                  const upb = unitsPerBoxFor(item);
                   const isBoxed = upb > 1;
                   const split = receivedSplits[item.id] ?? { boxes: "0", pieces: "0" };
                   const ordered = Number(item.qtyOrdered ?? 0);

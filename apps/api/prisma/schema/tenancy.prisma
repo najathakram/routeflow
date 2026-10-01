@@ -151,6 +151,7 @@ model Tenant {
   creditNotes              CreditNote[]
   creditNoteItems          CreditNoteItem[]
   orderCreditNotes         OrderCreditNote[]
+  creditNoteApplyBlocks    CreditNoteApplyBlock[]
   estimates                Estimate[]
   estimateItems            EstimateItem[]
   vendorBills              VendorBill[]
@@ -217,6 +218,7 @@ model Tenant {
   commissionPayouts        CommissionPayout[]
   crmConnection            CrmConnection?
   mailboxConnection        MailboxConnection?
+  onboardingCase           OnboardingCase?
 
   @@index([slug])
   @@index([status])
@@ -264,6 +266,10 @@ model TenantConfig {
   // checksDigestSentForDay above, read/written by
   // inventory/low-stock-digest.service.ts's inventory.sendLowStockDigest job.
   lowStockDigestSentForDay DateTime? @db.Date
+  // SA-436 (#2401): whether sending an invoice sweeps the customer's open credit notes onto it
+  // oldest-first (credit-notes.service autoApplyOldestCreditsInTx). OFF by default (owner ruling):
+  // a send then applies nothing automatically; an order's hand-picked credit intents still settle.
+  creditAutoApplyOnSend    Boolean   @default(false)
   updatedAt                DateTime  @updatedAt
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -297,6 +303,8 @@ model User {
   canActAsDriver      Boolean    @default(false)
   failedLoginAttempts Int        @default(0)
   lockedUntil         DateTime?
+  /// Last successful interactive sign-in (#2159 S1 — the onboarding "drivers have logged in" check).
+  lastLoginAt         DateTime?
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
   deletedAt           DateTime?
@@ -307,6 +315,7 @@ model User {
   driver               Driver?
   deviceTokens         DeviceToken[]
   refreshTokens        RefreshToken[]
+  authHandoffCodes     AuthHandoffCode[]
   stockMovements       StockMovement[]
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
@@ -428,6 +437,7 @@ model BuyerAccount {
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
+  authHandoffCodes         AuthHandoffCode[]
   passwordResetTokens      BuyerPasswordResetToken[]
   emailVerificationTokens  BuyerEmailVerificationToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[]           @relation("MergeAsPrimary")
@@ -478,6 +488,32 @@ model BuyerRefreshToken {
 
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+/// #2653: which realm minted a sign-in handoff code (decided by the minting endpoint, never by a JWT).
+enum HandoffRealm {
+  STAFF
+  BUYER
+}
+
+/// #2653 (SA-542a/b): a one-time in-app sign-in handoff code. Only sha256(code) is stored; a row
+/// lives 60 s and is deleted when consumed. Exactly one of userId (STAFF) / buyerAccountId (BUYER).
+model AuthHandoffCode {
+  tokenHash      String        @id
+  realm          HandoffRealm
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buyerAccountId String?
+  buyerAccount   BuyerAccount? @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+  /// The user's tenant for STAFF (enforced on exchange); NULL for BUYER (an account spans sellers).
+  tenantId       String?
+  deviceId       String
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+
+  @@index([userId])
   @@index([buyerAccountId])
   @@index([expiresAt])
 }

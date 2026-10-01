@@ -1,16 +1,14 @@
 "use client";
 
+import { driverNavItemVisible } from "@/lib/portal-routing";
 import * as React from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  LayoutDashboard,
-  ShoppingCart,
   MapPin,
   Truck,
   Users,
   Package,
-  Layers,
   Settings,
   Bell,
   ChevronRight,
@@ -18,24 +16,10 @@ import {
   ChevronDown,
   ArrowLeft,
   LogOut,
-  User as UserIcon,
   AlertTriangle,
   CheckCircle2,
   Trash2,
-  FileText,
-  BarChart2,
-  Receipt,
-  RotateCcw,
-  FileCheck,
-  FileSpreadsheet,
-  Wallet,
-  Building2,
-  DollarSign,
-  CreditCard,
-  BarChart3,
-  PieChart,
-  ClipboardList,
-  Megaphone,
+  User as UserIcon,
   Search,
   Menu,
   X,
@@ -45,7 +29,6 @@ import {
   ShieldAlert,
   Handshake,
   BadgePercent,
-  type LucideIcon,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { cn, Avatar, ToastProvider } from "@routeflow/ui/web";
@@ -77,106 +60,17 @@ import { useI18n, LOCALES, LOCALE_LABELS } from "@/lib/i18n";
 import { useDriveMode } from "@/lib/drive-mode";
 import { matchPlanGatedRoute, planFlagVisible } from "@/lib/plan-gated-nav";
 import { RouteGuard } from "./_components/gates/RouteGuard";
+import { activeLeafHref } from "./_components/nav-active";
 
-// ─── Nav types & structure ────────────────────────────────────────────────────
-
-type NavLeaf = { kind: "leaf"; label: string; href: string; icon: LucideIcon };
-type NavGroup = { kind: "group"; label: string; icon: LucideIcon; children: NavLeaf[] };
-/** Placeholder row held at a gated entry's position while its addon/entitlement
- *  query is still resolving, so the rail never grows once the answer lands. */
-type NavSkeleton = { kind: "skeleton"; key: string };
-type NavEntry = NavLeaf | NavGroup | NavSkeleton;
-
-/** Full operator nav — all sections visible */
-const OPERATOR_NAV: NavEntry[] = [
-  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  {
-    kind: "group",
-    label: "Orders",
-    icon: ShoppingCart,
-    children: [
-      { kind: "leaf", label: "All Orders", href: "/orders", icon: ShoppingCart },
-      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
-    ],
-  },
-  {
-    kind: "group",
-    label: "Dispatch",
-    icon: Truck,
-    children: [
-      { kind: "leaf", label: "Overview", href: "/dispatch", icon: LayoutDashboard },
-      { kind: "leaf", label: "Routes", href: "/routes", icon: MapPin },
-      { kind: "leaf", label: "Order delivery", href: "/deliveries", icon: Package },
-      { kind: "leaf", label: "Drivers", href: "/drivers", icon: Truck },
-    ],
-  },
-  { kind: "leaf", label: "Customers", href: "/customers", icon: Users },
-  {
-    kind: "group",
-    label: "Warehouse",
-    icon: Package,
-    children: [
-      { kind: "leaf", label: "Inventory", href: "/inventory", icon: Layers },
-      { kind: "leaf", label: "Products", href: "/products", icon: Package },
-      { kind: "leaf", label: "Promotions", href: "/promotions", icon: Megaphone },
-      { kind: "leaf", label: "Suppliers", href: "/suppliers", icon: Building2 },
-      { kind: "leaf", label: "Bills & Purchasing", href: "/vendor-bills", icon: ClipboardList },
-    ],
-  },
-  {
-    kind: "group",
-    label: "Finance",
-    icon: Wallet,
-    children: [
-      { kind: "leaf", label: "Overview", href: "/finance/dashboard", icon: LayoutDashboard },
-      { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
-      { kind: "leaf", label: "Shipments", href: "/shipments", icon: Truck },
-      { kind: "leaf", label: "Estimates", href: "/estimates", icon: FileCheck },
-      { kind: "leaf", label: "Credit Notes", href: "/credit-notes", icon: Receipt },
-      { kind: "leaf", label: "Payments", href: "/finance/payments", icon: CreditCard },
-      {
-        kind: "leaf",
-        label: "Payment Requests",
-        href: "/finance/payment-requests",
-        icon: DollarSign,
-      },
-      {
-        kind: "leaf",
-        label: "Supplier Statements",
-        href: "/finance/statements",
-        icon: FileSpreadsheet,
-      },
-      { kind: "leaf", label: "Reports", href: "/finance/reports", icon: BarChart3 },
-    ],
-  },
-  // Analytics is app-wide (Revenue, Products & Inventory, Customers, Operations),
-  // so it lives at top level rather than nested under Finance.
-  { kind: "leaf", label: "Analytics", href: "/analytics", icon: BarChart2 },
-  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
-];
-
-/** Customer nav — orders, invoices, returns, settings only */
-const CUSTOMER_NAV: NavEntry[] = [
-  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  {
-    kind: "group",
-    label: "Orders",
-    icon: ShoppingCart,
-    children: [
-      { kind: "leaf", label: "My Orders", href: "/orders", icon: ShoppingCart },
-      { kind: "leaf", label: "Returns", href: "/returns", icon: RotateCcw },
-    ],
-  },
-  { kind: "leaf", label: "Invoices", href: "/invoices", icon: FileText },
-  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
-];
-
-/** Driver nav — routes and settings only */
-const DRIVER_NAV: NavEntry[] = [
-  { kind: "leaf", label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { kind: "leaf", label: "My Routes", href: "/routes", icon: MapPin },
-  { kind: "leaf", label: "Settings", href: "/settings", icon: Settings },
-];
+import {
+  OPERATOR_NAV,
+  CUSTOMER_NAV,
+  DRIVER_NAV,
+  defaultOpenGroup,
+  type NavEntry,
+  type NavGroup,
+  type NavLeaf,
+} from "./_components/nav-config";
 
 function getNavForRole(
   role: string | undefined,
@@ -187,10 +81,10 @@ function getNavForRole(
   if (role === "CUSTOMER") return CUSTOMER_NAV;
   if (role === "DRIVER") {
     // Drivers run both recurring routes and ad-hoc delivery trips, so "My
-    // Routes" needs either surface unlocked — not just recurring routes.
-    if (!(routesAccess || deliveryAccess))
-      return DRIVER_NAV.filter((e) => e.kind !== "leaf" || e.href !== "/routes");
-    return DRIVER_NAV;
+    // Routes"/"Today's route" need either surface unlocked — not just
+    // recurring routes. GET /route-runs/my-runs is gated the same way
+    // server-side (RouteRunsController's own @RequireAddon).
+    return DRIVER_NAV.filter((e) => e.kind !== "leaf" || driverNavItemVisible(e.href, access));
   }
 
   // Tenants without either addon never see the Dispatch group — it's gated
@@ -471,13 +365,22 @@ function SidebarNav({
       (e): e is NavGroup =>
         e.kind === "group" && e.children.some((c) => pathname.startsWith(c.href)),
     )?.label ?? null;
-  const [openGroup, setOpenGroup] = React.useState<string | null>(activeGroupLabel);
+  const [openGroup, setOpenGroup] = React.useState<string | null>(() =>
+    defaultOpenGroup(navStructure, pathname),
+  );
 
   React.useEffect(() => {
     if (activeGroupLabel) setOpenGroup(activeGroupLabel);
   }, [activeGroupLabel]);
 
   const toggleGroup = (label: string) => setOpenGroup((cur) => (cur === label ? null : label));
+
+  // Exactly ONE top-level leaf is active: the longest segment-boundary prefix (B918: a bare
+  // startsWith lit both "Today's route" /routes/my-runs and "My Routes" /routes).
+  const activeLeaf = activeLeafHref(
+    navStructure.filter((e): e is NavLeaf => e.kind === "leaf"),
+    pathname,
+  );
 
   return (
     <ul className="flex flex-col gap-0.5">
@@ -502,11 +405,7 @@ function SidebarNav({
             <NavLink
               item={entry}
               collapsed={collapsed}
-              active={
-                entry.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(entry.href)
-              }
+              active={activeLeaf === entry.href}
               onNavigate={onNavigate}
             />
           </li>
@@ -591,12 +490,13 @@ function Header({
   const pathname = usePathname();
   const router = useRouter();
   const { notifications, unreadCount, markAllRead, clear } = useNotifications();
-  const { data: expiring = [] } = useExpiringAuthorizations();
   // Fix-round finding 2-new: usePendingPortalApprovals() now reads a plan flag
   // internally (GET /billing/subscription, @Roles(OPERATOR)) before its own
   // GET /customers/pending-portal-approvals (also OPERATOR-only) — a
   // CUSTOMER/DRIVER on their own /dashboard must fire neither.
   const isStaffRole = user?.role !== "CUSTOMER" && user?.role !== "DRIVER";
+  // #2254: GET /authorizations/expiring-soon is @Roles(OPERATOR) — staff only, like the above.
+  const { data: expiring = [] } = useExpiringAuthorizations({ enabled: isStaffRole });
   // Buyer-connect requests whose sign-in email didn't match the customer
   // record — pinned in the bell until the seller approves or declines
   // (server-derived, so it's immune to mark-all-read/clear/localStorage loss).

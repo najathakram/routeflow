@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { DRIVER_CRITICAL_NETWORK_MODE } from "../live-online";
 import { apiClient } from "../api-client";
 import { invalidateOrderCaches } from "./orders";
 import type { InvoiceStatus, RouteAnalysisResult, RouteSettings, StopETA } from "@routeflow/types";
@@ -41,6 +42,18 @@ export interface RouteRunOrderItem {
    * lib/short-pick.ts#isUnitAwareLine.
    */
   unitLabel?: string | null;
+  /**
+   * B785/SA-116: pieces delivered at every OTHER visit (any run/stop), projected per stop by the
+   * run read from evidence rows. DISPLAY-ONLY (SA-367b): it prices the remaining money in
+   * lib/short-pick.ts; it never decides a quantity.
+   */
+  deliveredSoFar?: number | null;
+  /**
+   * SA-366/SA-367a: the server-computed remaining for THIS stop — the same value the completion
+   * bound accepts up to (0 for a cancelled line or a line of a cancelled/draft order). Every
+   * quantity decision in lib/short-pick.ts reads it. Absent (an older api) ⇒ an empty stepper.
+   */
+  remaining?: number | null;
 }
 
 export interface RouteRunOrder {
@@ -403,6 +416,9 @@ export function useCompleteWithPayment() {
       qc.invalidateQueries({ queryKey: ["route-runs", runId] });
       qc.invalidateQueries({ queryKey: ["route-runs", "active"] });
     },
+    // #2265: never PAUSE offline — fail fast so the api-client interceptor queues the completion
+    // and payment.tsx's "queued" branch runs (on web, TanStack's default "online" mode paused it).
+    networkMode: DRIVER_CRITICAL_NETWORK_MODE,
   });
 }
 

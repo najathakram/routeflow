@@ -17,6 +17,7 @@ import { AppConfig } from "../config/configuration";
 import { JwtPayload } from "./jwt-payload.interface";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { escapeHtml } from "../common/html-escape";
+import { isLoginEligible, isSignInBlocked } from "./login-eligibility";
 
 export interface DeviceInfo {
   userAgent?: string;
@@ -61,12 +62,12 @@ export class AuthService {
       }
     }
 
-    if (!user || user.deletedAt !== null) return null;
-    // Account lockout: a locked account fails WITHOUT running bcrypt (no
+    // Deleted, or the account lockout: refused WITHOUT running bcrypt (no
     // timing oracle, no counter churn) and with the same null as any bad
     // credential — enumeration-safe. Time-based auto-unlock; TENANT_ADMIN can
-    // clear it early via POST /users/:id/unlock.
-    if (user.lockedUntil && user.lockedUntil > new Date()) return null;
+    // clear it early via POST /users/:id/unlock. The rule itself lives in
+    // login-eligibility.ts (one rule for every sign-in path, #2653).
+    if (!user || isSignInBlocked(user)) return null;
     // Google-only accounts have no password
     if (!user.password) return null;
     const valid = await bcrypt.compare(password, user.password);
@@ -98,7 +99,7 @@ export class AuthService {
     // gated safely without a schema discriminator (e.g. a nullable
     // `emailVerifiedAt` column or a distinct `PENDING_VERIFICATION` status) —
     // proposed as a follow-up, not built here.
-    if (user.status !== "ACTIVE") return null;
+    if (!isLoginEligible(user)) return null;
     if (user.failedLoginAttempts > 0 || user.lockedUntil) {
       await this.prisma.user.update({
         where: { id: user.id },
@@ -107,6 +108,20 @@ export class AuthService {
     }
     const { password: _pw, ...result } = user;
     return result;
+  }
+
+  /**
+   * #2159 S1: stamp `User.lastLoginAt` on every interactive session mint (password, Google,
+   * email-verification, set/change password) — the onboarding "admin / drivers have signed in"
+   * checks read it. Best-effort: a failed stamp never blocks a sign-in. Platform impersonation
+   * mints its own tokens elsewhere and deliberately does not come through here.
+   */
+  private async touchLastLogin(userId: string): Promise<void> {
+    try {
+      await this.prisma.user.update({ where: { id: userId }, data: { lastLoginAt: new Date() } });
+    } catch (err) {
+      this.logger.warn(`lastLoginAt stamp failed for user ${userId}: ${(err as Error).message}`);
+    }
   }
 
   /** 10 consecutive failures → 15-minute lock. The per-IP login throttle
@@ -143,6 +158,7 @@ export class AuthService {
     if (!user.tenantId && user.role !== "SUPER_ADMIN") {
       throw new UnauthorizedException("Tenant not found");
     }
+    await this.touchLastLogin(user.id);
 
     // Fetch tenant slug if user belongs to a tenant
     let tenantSlug: string | null = null;
@@ -678,6 +694,7 @@ export class AuthService {
    */
   private async mintSessionForUser(user: User, deviceInfo?: DeviceInfo) {
     await this.prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    await this.touchLastLogin(user.id);
 
     const jwtConfig = this.configService.get<AppConfig["jwt"]>("jwt")!;
 

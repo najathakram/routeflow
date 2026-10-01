@@ -13,6 +13,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildIssuePRIndex } from "./reconcile.mjs";
 
 const REPO_OWNER = "najathakram";
 const REPO_NAME = "routeflow";
@@ -53,9 +54,26 @@ export function branchName(kind, number, title) {
 }
 
 /**
+ * Whether an assigned open issue currently holds its `lane:*` lock. An issue
+ * holds its lane only while its work is In progress: closed -> never; no
+ * assignee -> never; assigned with a linked OPEN, non-draft ("ready for
+ * review") PR -> no longer (that's In review, per docs/work/WORKFLOW.md rule
+ * 4 and reconcile.mjs's deriveIssueStatus); assigned with only a draft PR, or
+ * no linked PR yet, -> yes. `linkedPRs` is every PR linked to this issue by
+ * any of reconcile.mjs's three methods (see resolveLinkedIssueNumbers /
+ * buildIssuePRIndex), each { state, isDraft }.
+ */
+export function issueHoldsLane(issue, linkedPRs = []) {
+  if (issue.state === "CLOSED") return false;
+  if (!(issue.assignees ?? []).length) return false;
+  const hasOpenReadyPR = linkedPRs.some((pr) => pr.state === "OPEN" && !pr.isDraft);
+  return !hasOpenReadyPR;
+}
+
+/**
  * issue: { number, state, labels, assignees }. laneHolders: every OTHER open
- * issue that carries the same lane label, each { number, assignees }.
- * Returns { ok: true } or { ok: false, reason }.
+ * issue that carries the same lane label, each { number, holdsLane } (see
+ * issueHoldsLane). Returns { ok: true } or { ok: false, reason }.
  */
 export function canClaim(issue, laneHolders = []) {
   if (issue.state === "CLOSED") return { ok: false, reason: `#${issue.number} is closed` };
@@ -65,7 +83,7 @@ export function canClaim(issue, laneHolders = []) {
   if ((issue.assignees ?? []).length) {
     return { ok: false, reason: `#${issue.number} is already assigned` };
   }
-  const holder = laneHolders.find((h) => h.number !== issue.number && (h.assignees ?? []).length);
+  const holder = laneHolders.find((h) => h.number !== issue.number && h.holdsLane);
   if (holder) return { ok: false, reason: `lane held by #${holder.number}` };
   return { ok: true };
 }
@@ -123,6 +141,23 @@ function fetchIssue(number) {
   ]);
 }
 
+/** Open PRs repo-wide, with just the fields resolveLinkedIssueNumbers/
+ * buildIssuePRIndex (from reconcile.mjs) need to link them to issues. */
+function fetchOpenPRs() {
+  return ghJson([
+    "pr",
+    "list",
+    "--repo",
+    REPO,
+    "--state",
+    "open",
+    "--json",
+    "number,state,isDraft,body,headRefName,closingIssuesReferences",
+    "--limit",
+    "100",
+  ]);
+}
+
 function fetchLaneHolders(lane, excludeNumber) {
   if (!lane) return [];
   const rows = ghJson([
@@ -135,11 +170,16 @@ function fetchLaneHolders(lane, excludeNumber) {
     "--state",
     "open",
     "--json",
-    "number,assignees",
+    "number,state,assignees",
     "--limit",
     "100",
-  ]);
-  return rows.filter((r) => r.number !== excludeNumber);
+  ]).filter((r) => r.number !== excludeNumber);
+  if (!rows.length) return rows;
+  const prIndex = buildIssuePRIndex(fetchOpenPRs());
+  return rows.map((r) => ({
+    ...r,
+    holdsLane: issueHoldsLane(r, prIndex.get(r.number) ?? []),
+  }));
 }
 
 function parseArgs(argv) {
