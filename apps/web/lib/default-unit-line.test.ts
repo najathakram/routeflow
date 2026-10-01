@@ -5,6 +5,7 @@ import {
   isPendingDefaultUnit,
   keepsDefaultStart,
   mergeResolvedLines,
+  refreshUnitsAnswer,
   resolvePendingDefaultUnits,
   startLineOnDefault,
 } from "./default-unit-line";
@@ -48,6 +49,7 @@ const line = (over: Record<string, unknown> = {}): TestLine => ({
   ...over,
 });
 const deps = (units: ProductUnitLevel[] | Error, over = {}) => ({
+  isStaff: true,
   unitsEnabled: true,
   unitsKnown: true,
   getUnits: jest.fn(async () => {
@@ -284,5 +286,43 @@ describe("SA-626d lead folds N2 + N3 (web)", () => {
     const cur = [{ ...before[0]!, note: "leave at back door" } as TestLine];
     const merged = mergeResolvedLines(cur, before, done);
     expect(merged[0]).toMatchObject({ unitLabel: "Bottle", note: "leave at back door" });
+  });
+});
+
+describe("SA-626g N10 + N9 (web): try again refetches the units answer; the read is staff-only", () => {
+  it("a failed subscription read blocks; try again refetches it and the line then resolves", async () => {
+    const failed = deps([BOTTLE, CASE_LEVEL], { unitsKnown: false, unitsEnabled: false });
+    expect((await resolvePendingDefaultUnits([line()], failed)).blocked).toEqual(["t1"]);
+    const refetch = jest.fn(async () => ({ isSuccess: true, flags: ["flag.units_v1"] }));
+    const retried = await refreshUnitsAnswer(failed, refetch, "flag.units_v1");
+    expect(refetch).toHaveBeenCalledTimes(1);
+    const second = await resolvePendingDefaultUnits([line()], retried);
+    expect(second.blocked).toEqual([]);
+    expect(second.lines[0]!.unitLabel).toBe("Bottle");
+  });
+
+  it("a refetch that fails again stays blocked; a known answer / a non-staff caller never refetches", async () => {
+    const failed = deps([BOTTLE], { unitsKnown: false, unitsEnabled: false });
+    const bad = jest.fn(async () => {
+      throw new Error("offline");
+    });
+    const still = await refreshUnitsAnswer(failed, bad, "flag.units_v1");
+    expect((await resolvePendingDefaultUnits([line()], still)).blocked).toEqual(["t1"]);
+    const known = jest.fn(async () => ({ isSuccess: true, flags: [] as string[] }));
+    await refreshUnitsAnswer(deps([BOTTLE]), known, "flag.units_v1");
+    await refreshUnitsAnswer(
+      deps([BOTTLE], { isStaff: false, unitsKnown: false }),
+      known,
+      "flag.units_v1",
+    );
+    expect(known).not.toHaveBeenCalled();
+  });
+
+  it("N9: a non-staff caller makes no read and clears the flag", async () => {
+    const d = deps([BOTTLE, CASE_LEVEL], { isStaff: false });
+    const { lines, blocked } = await resolvePendingDefaultUnits([line()], d);
+    expect(blocked).toEqual([]);
+    expect(lines[0]!.startOnDefaultUnit).toBe(false);
+    expect(d.getUnits).not.toHaveBeenCalled();
   });
 });

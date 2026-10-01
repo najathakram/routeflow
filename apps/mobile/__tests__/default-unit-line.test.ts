@@ -4,6 +4,7 @@ import {
   applyUnitOption,
   isPendingDefaultUnit,
   isStaffRole,
+  refreshUnitsAnswer,
   keepsDefaultStart,
   mergeResolvedDefaults,
   resolvePendingDefaultUnits,
@@ -370,5 +371,38 @@ describe("SA-626d lead folds N2 + N3", () => {
       note: "leave at back door",
       noteOpen: true,
     });
+  });
+});
+
+describe("SA-626g N10: 'try again' on the blocked message REFETCHES the units answer", () => {
+  it("a failed subscription read blocks; try again refetches it and the line then resolves", async () => {
+    const failed = deps([BOTTLE, ...CASE_ONLY], { unitsKnown: false, unitsEnabled: false });
+    const first = await resolvePendingDefaultUnits({ p1: flagged() }, failed);
+    expect(first.blocked).toEqual(["p1"]);
+
+    const refetch = jest.fn(async () => ({ isSuccess: true, flags: ["flag.units_v1"] }));
+    const retried = await refreshUnitsAnswer(failed, refetch, "flag.units_v1");
+    expect(refetch).toHaveBeenCalledTimes(1);
+    const second = await resolvePendingDefaultUnits({ p1: flagged() }, retried);
+    expect(second.blocked).toEqual([]);
+    expect(second.items.p1!.unitLabel).toBe("Bottle");
+  });
+
+  it("a refetch that fails again keeps the line blocked (never the pack); a known answer is not refetched; non-staff never refetch", async () => {
+    const failed = deps([BOTTLE], { unitsKnown: false, unitsEnabled: false });
+    const bad = jest.fn(async () => {
+      throw new Error("offline");
+    });
+    const still = await refreshUnitsAnswer(failed, bad, "flag.units_v1");
+    expect((await resolvePendingDefaultUnits({ p1: flagged() }, still)).blocked).toEqual(["p1"]);
+
+    const known = jest.fn(async () => ({ isSuccess: true, flags: [] as string[] }));
+    await refreshUnitsAnswer(deps([BOTTLE]), known, "flag.units_v1");
+    await refreshUnitsAnswer(
+      deps([BOTTLE], { isStaff: false, unitsKnown: false }),
+      known,
+      "flag.units_v1",
+    );
+    expect(known).not.toHaveBeenCalled();
   });
 });
