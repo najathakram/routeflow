@@ -23,6 +23,7 @@ import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./app
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
   loadLineCredits,
+  countCreditableInvoices,
   loadOrderPool,
   lockOrderPoolRows,
   pooledRefundRefusal,
@@ -163,20 +164,25 @@ export class CreditNotesService {
     // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
     // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
     let pool: OrderPool | null = null;
-    if (invoice.orderId && ((opts.pooledRefund?.length ?? 0) > 0 || lineItems)) {
-      const p = await loadOrderPool(db, invoice.orderId, {
+    if (
+      invoice.orderId &&
+      ((opts.pooledRefund?.length ?? 0) > 0 || lineItems) &&
+      (await countCreditableInvoices(db, invoice.orderId)) >= 2 // a lone invoice never pays for a pool read
+    ) {
+      pool = await loadOrderPool(db, invoice.orderId, {
         excludeCreditNoteId: opts.excludeCreditNoteId,
       });
-      if (p.invoiceCount >= 2) pool = p;
     }
     if (pool)
       for (const r of opts.pooledRefund ?? []) {
         const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
         if (refusal)
-          throw cnBad(
-            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
-            `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
-          );
+          // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            pooled: true,
+            message: `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
+          });
       }
 
     if (!lineItems) return [];
@@ -601,7 +607,7 @@ export class CreditNotesService {
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
             // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
-            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId);
+            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
             }

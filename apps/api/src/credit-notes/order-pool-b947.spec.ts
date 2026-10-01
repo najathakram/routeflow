@@ -1,4 +1,5 @@
 import {
+  countCreditableInvoices,
   loadOrderPool,
   lockOrderPoolRows,
   pooledRefundRefusal,
@@ -130,17 +131,19 @@ describe("B947 order pool", () => {
       order.push(`${s.join("?").match(/FROM "(\w+)"/)![1]}:${v}`);
       return Promise.resolve(0);
     });
-    await lockOrderPoolRows(f.db, "inv-x");
+    await lockOrderPoolRows(f.db, "inv-x", "t-1");
     expect(order).toEqual(["Order:ord-1", "Invoice:inv-y", "Invoice:inv-x"]);
+    // N4: every lock is tenant-scoped (the tenant id is the SECOND bound value)
+    for (const call of f.exec.mock.calls) expect(call[2]).toBe("t-1");
     // the sort is the DB's (`orderBy id asc`): the fake returns them as given, the query asks for ascending ids
     expect(f.db.invoice.findMany.mock.calls[0][0].orderBy).toEqual([{ id: "asc" }]);
     const single = fakeDb({ invoices: [X] });
     single.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: "ord-1" });
-    await lockOrderPoolRows(single.db, "inv-x");
+    await lockOrderPoolRows(single.db, "inv-x", "t-1");
     expect(single.exec).not.toHaveBeenCalled(); // one creditable invoice: the single-invoice lock stays enough
     const noOrder = fakeDb({ invoices: [X, Y] });
     noOrder.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: null });
-    await lockOrderPoolRows(noOrder.db, "inv-x");
+    await lockOrderPoolRows(noOrder.db, "inv-x", "t-1");
     expect(noOrder.exec).not.toHaveBeenCalled();
   });
 
@@ -172,6 +175,38 @@ describe("B947 order pool", () => {
     );
     expect(pooledTakeRefusal(pool, "pp", { amount: 0.01, qty: 11 })).not.toBeNull();
     expect(pooledTakeRefusal(pool, "pp", { amount: 0.01, qty: null })).toBeNull(); // amount-only: money rules
+  });
+
+  it("N7: the itemless term excludes VOID notes in the query (a missing VOID filter turns this red)", async () => {
+    const { db } = fakeDb({
+      invoices: [X, Y],
+      itemless: [{ id: "cn-lump", returnItems: [{ productId: "pa", qty: 1 }] }],
+    });
+    await loadOrderPool(db, "ord-1");
+    expect(db.creditNote.findMany.mock.calls[0][0].where).toMatchObject({
+      status: { not: "VOID" },
+      items: { none: {} },
+    });
+    expect(db.creditNoteItem.findMany.mock.calls[0][0].where.creditNote).toMatchObject({
+      status: { not: "VOID" },
+    });
+  });
+
+  it("N2: the Return read is scoped to THIS order (another order's refund lump merely queued to apply here is not attributed)", async () => {
+    const { db } = fakeDb({
+      invoices: [X, Y],
+      itemless: [{ id: "cn-foreign", returnItems: [{ productId: "pa", qty: 1 }] }],
+    });
+    await loadOrderPool(db, "ord-1");
+    expect(db.return.findMany.mock.calls[0][0].where).toMatchObject({ orderId: "ord-1" });
+  });
+
+  it("N6: countCreditableInvoices asks only for the count with the same creditable predicate", async () => {
+    const db: any = { invoice: { count: jest.fn().mockResolvedValue(1) } };
+    expect(await countCreditableInvoices(db, "ord-1")).toBe(1);
+    expect(db.invoice.count).toHaveBeenCalledWith({
+      where: { orderId: "ord-1", status: { notIn: ["VOID", "WRITTEN_OFF"] } },
+    });
   });
 
   it("the creditable set is the one predicate priceReturn uses (VOID / WRITTEN_OFF are excluded in the query)", async () => {

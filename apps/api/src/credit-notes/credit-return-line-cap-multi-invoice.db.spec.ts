@@ -15,6 +15,11 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { CreditNotesService } from "./credit-notes.service";
 import { ReturnsService } from "../returns/returns.service";
+import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
+import { InlineReturnsService } from "../returns/inline-returns.service";
+import { IdempotencyService } from "../common/idempotency.service";
+import { EncryptionService } from "../common/encryption.service";
+import { SystemConfigService } from "../system-config/system-config.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { AuditService } from "../audit/audit.service";
@@ -22,11 +27,6 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
-import { IdempotencyService } from "../common/idempotency.service";
-import { EncryptionService } from "../common/encryption.service";
-import { SystemConfigService } from "../system-config/system-config.service";
-import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
-import { InlineReturnsService } from "../returns/inline-returns.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -40,6 +40,7 @@ describeDb(
     let tenantCtx: TenantContextService;
     let creditNotes: CreditNotesService;
     let returns: ReturnsService;
+    let inline: any;
     const tenantIds: string[] = [];
     let seq = 0;
     let cnSeq = 0;
@@ -80,6 +81,23 @@ describeDb(
       }).compile();
       creditNotes = mod.get(CreditNotesService);
       returns = mod.get(ReturnsService);
+      // B948: a REAL InlineReturnsService (same Object.create wiring as inline-returns-capture-concurrency.db.spec.ts)
+      const systemConfig = new SystemConfigService(
+        prisma,
+        new EncryptionService({ get: () => undefined } as any),
+      );
+      inline = Object.assign(Object.create(InlineReturnsService.prototype), {
+        prisma,
+        gateway: anyMethod,
+        ledger: mod.get(RegulatedLedgerService),
+        creditNotes,
+        numbering: {
+          reserveNext: jest.fn().mockImplementation(async () => `RTN-B947-${RUN}-I${++rtnSeq}`),
+        },
+        addonService: { hasAddon: async () => true },
+        quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
+        idempotency: new IdempotencyService(),
+      });
     });
 
     afterAll(async () => {
@@ -182,6 +200,7 @@ describeDb(
       const [lineA, lineB] = [await line(X.id, pA.id, "A"), await line(X.id, pB.id, "B")];
       const lineC = await line(Y.id, pC.id, "C");
       return {
+        userId: user.id,
         tenantId,
         customerId: customer.id,
         orderId: order.id,
@@ -278,15 +297,17 @@ describeDb(
       expect(await status(ret.id)).toBe("REFUNDED");
     }, 60_000);
 
-    it("5. a product on the order but on NO creditable invoice line keeps today's behaviour (the check cannot refuse what it cannot place)", async () => {
+    it("5. a product on the order but on NO creditable invoice line keeps TODAY's behaviour: it prices at 0, resolves REFUNDED and mints NO credit note", async () => {
+      // Today's code (not changed by B947): priceReturn prices a refund from the billed lines, a product with no billed line
+      // is $0, and processRefund resolves a $0 refund without minting (`refundAmount <= 0.001 -> return updated`).
       const s = await seed("unplaced");
       const stray = await prisma.product.create({
         data: { tenantId: s.tenantId, name: `stray ${RUN}`, unit: "each", pricePerUnit: 10 },
       });
       const ret = await receivedReturn(s, stray.id);
-      // priceReturn prices from the billed lines, so a product with no billed line refunds nothing creditable
-      await expect(refund(s, ret.id)).rejects.toBeDefined();
-      expect(await status(ret.id)).toBe("RECEIVED");
+      await refund(s, ret.id);
+      expect(await status(ret.id)).toBe("REFUNDED");
+      expect(await mintedNotes(s)).toHaveLength(0);
     }, 60_000);
 
     it("7. THE OTHER DIRECTION: a return refund of A first (a lump sum on the latest invoice Y), then a credit note item on A on X is REFUSED (400 CREDIT_NOTE_OVER_HEADROOM) and nothing is minted", async () => {
@@ -300,14 +321,20 @@ describeDb(
       expect(await mintedNotes(s)).toHaveLength(before);
     }, 60_000);
 
-    it("8. the same after the refund's credit note is VOIDED: the credit note item on A succeeds", async () => {
+    it("8. the headroom RE-OPENS when the refund's lump note is VOID: the credit note item on A then succeeds", async () => {
+      // A refund's note backs a REFUNDED return, so voidWithReversal refuses it (CREDIT_NOTE_RETURN_BACKED: cancel the return
+      // instead, and a REFUNDED return cannot be cancelled). This case tests the pool's VOID filter, so the note is set VOID
+      // directly (the state an invoice-destroying or legacy void leaves).
       const s = await seed("refund-void-cn");
       const ret = await receivedReturn(s, s.pA.id);
       await refund(s, ret.id);
       const refundNote = (await prisma.creditNote.findFirst({
         where: { tenantId: s.tenantId, invoiceId: s.Y.id },
       }))!;
-      await inTenant(s, () => creditNotes.voidWithReversal(refundNote.id, null as any));
+      await expect(creditItemOnX(s, s.lineA, 100)).rejects.toMatchObject({
+        response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
+      });
+      await prisma.creditNote.update({ where: { id: refundNote.id }, data: { status: "VOID" } });
       await expect(creditItemOnX(s, s.lineA, 100)).resolves.toBeDefined();
     }, 60_000);
 
@@ -352,6 +379,48 @@ describeDb(
           } as any),
         ),
       ).resolves.toBeDefined();
+    }, 60_000);
+
+    async function inlineReturnOfA(s: Seed) {
+      const carrying = await prisma.order.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderNumber: `ORD-B947-${RUN}-C${++rtnSeq}`,
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          status: "DELIVERED",
+        } as any,
+      });
+      return tenantCtx.run(s.tenantId, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: carrying.id,
+            items: [{ productId: s.pA.id, qty: 1 }],
+            returnKey: `b947-${RUN}-${rtnSeq}`,
+          },
+          {
+            sub: s.userId,
+            username: "operator",
+            role: "OPERATOR" as any,
+            status: "ACTIVE" as any,
+            forcePasswordChange: false,
+            tenantId: s.tenantId,
+            tenantSlug: "x",
+          },
+        ),
+      );
+    }
+
+    it("11. THIRD DOOR: a refund lump of A on the latest invoice, then an INLINE return of A sourced to the older invoice's line is REFUSED 409 RETURN_REFUND_OVER_LINE_HEADROOM", async () => {
+      const s = await seed("refund-then-inline");
+      const ret = await receivedReturn(s, s.pA.id);
+      await refund(s, ret.id);
+      await expect(inlineReturnOfA(s)).rejects.toMatchObject({
+        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+      });
     }, 60_000);
 
     it("6. race: a credit note item on A and a return refund of A racing never total more than $100 on A, and neither 500s", async () => {

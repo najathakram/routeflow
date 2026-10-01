@@ -179,7 +179,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
     ]);
     creditNotesCreate.mockRejectedValue(
-      new BadRequestException({ code: "CREDIT_NOTE_OVER_HEADROOM", message: "over" }),
+      new BadRequestException({ code: "CREDIT_NOTE_OVER_HEADROOM", pooled: true, message: "over" }),
     );
     withReturn(
       order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
@@ -187,6 +187,25 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     await expect(service.processRefund("ret-1")).rejects.toMatchObject({
       response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
     });
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ret-1", status: "REFUNDED", creditNoteId: null } }),
+    );
+  });
+
+  it("B947 N5: the latest invoice's own TOTAL cap (an OVER_HEADROOM that is not the pool's) keeps its own error: never relabelled 'line is worth', and the claim is still compensated", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A, LINE_B] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    creditNotesCreate.mockRejectedValue(
+      new BadRequestException({ code: "CREDIT_NOTE_OVER_HEADROOM", message: "invoice total" }),
+    );
+    withReturn(
+      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
+    );
+    const err = await service.processRefund("ret-1").catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "CREDIT_NOTE_OVER_HEADROOM" });
     expect(prisma.return.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "ret-1", status: "REFUNDED", creditNoteId: null } }),
     );

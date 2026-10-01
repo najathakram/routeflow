@@ -1059,10 +1059,13 @@ export class ReturnsService {
       // SA-628: a racing credit note / refund that took the line's headroom between the pre-check and the mint is the SAME
       // refusal (409 RETURN_REFUND_OVER_LINE_HEADROOM), never the credit note's own over-headroom 400.
       const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+      const pooledRefusal =
+        (err as { getResponse?: () => { pooled?: boolean } })?.getResponse?.()?.pooled === true;
       if (
-        (refundItems || pooledRefund) &&
-        (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
-          code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)
+        (refundItems &&
+          (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
+            code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)) ||
+        (pooledRefund && pooledRefusal) // B947: the pool's own refusal; the invoice-total cap keeps its own wording
       ) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,

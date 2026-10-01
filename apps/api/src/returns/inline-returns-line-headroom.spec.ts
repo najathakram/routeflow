@@ -21,6 +21,11 @@ const run = (chunks: any[], over: { cn?: any[]; inline?: any[]; items?: any[] } 
             : Promise.resolve(over.items ?? [A]),
         ),
     },
+    // B947: the order pool probe (a lone creditable invoice: no pool)
+    invoice: {
+      findFirst: jest.fn().mockResolvedValue({ orderId: null }),
+      count: jest.fn().mockResolvedValue(1),
+    },
     creditNoteItem: { findMany: jest.fn().mockResolvedValue(over.cn ?? []) },
     creditNote: { findMany: jest.fn().mockResolvedValue([]) },
     return: { findMany: jest.fn().mockResolvedValue([]) },

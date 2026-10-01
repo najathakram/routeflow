@@ -44,8 +44,11 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
 import {
+  countCreditableInvoices,
   lineTakeRefusal,
   loadLineCredits,
+  loadOrderPool,
+  pooledTakeRefusal,
   toHeadroomLine,
   type HeadroomLine,
 } from "../credit-notes/line-credit-headroom";
@@ -592,6 +595,7 @@ export class InlineReturnsService {
       // only a new row version (40001 on its wake-up, then its bounded retry re-reads) makes it see this return (B948 race).
       await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id = ${invoiceId} AND "tenantId" = ${tenantId}`;
     }
+    const productTakes = new Map<string, { qty: number; amount: number }>(); // B947: the same takes, by PRODUCT
     for (const invoiceId of invoiceIds) {
       const rows: any[] = await tx.invoiceItem.findMany({
         where: { invoiceId },
@@ -612,6 +616,12 @@ export class InlineReturnsService {
       for (const line of lines) {
         const take = takes.get(line.id);
         if (!take) continue;
+        if (line.productId) {
+          const pt = productTakes.get(line.productId) ?? { qty: 0, amount: 0 };
+          pt.qty += take.qty / (line.piecesPerQty ?? 1);
+          pt.amount += take.amount;
+          productTakes.set(line.productId, pt);
+        }
         // the chunk's pieces, on the line's own qty axis (a boxed selling-unit line counts boxes)
         const refusal = lineTakeRefusal(line, credited, {
           qty: take.qty / (line.piecesPerQty ?? 1),
@@ -630,6 +640,31 @@ export class InlineReturnsService {
             remainingQty: refusal.remainingQty,
           });
         }
+      }
+    }
+    // B947 (third door): the order's creditable invoices POOL per product. A refund lump minted on the LATEST invoice (or a credit
+    // note item on another invoice's line) is invisible to the per-invoice read above, so the same takes are checked against the
+    // ORDER POOL when the order has 2+ creditable invoices. The Order lock is already held (SA-214), so no further lock is taken.
+    const orderRow: { orderId: string | null } | null = await tx.invoice.findFirst({
+      where: { id: invoiceIds[0] },
+      select: { orderId: true },
+    });
+    if (orderRow?.orderId && (await countCreditableInvoices(tx, orderRow.orderId)) >= 2) {
+      const pool = await loadOrderPool(tx, orderRow.orderId);
+      for (const [productId, take] of productTakes) {
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
+        if (refusal)
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+            message:
+              "This return would credit more than the order's invoice lines are worth: part of it was already credited " +
+              "(by a credit note, a refund or an earlier return on another invoice). Adjust the quantity or issue the credit note manually.",
+            productId: refusal.productId,
+            requested: refusal.requestedAmount,
+            remaining: refusal.remainingAmount,
+            requestedQty: refusal.requestedQty,
+            remainingQty: refusal.remainingQty,
+          });
       }
     }
   }

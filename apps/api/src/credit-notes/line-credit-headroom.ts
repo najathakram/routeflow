@@ -369,7 +369,13 @@ export async function loadOrderPool(
     const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
       await db.return.findMany({
         // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
-        where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
+        // `orderId`: an order-linked note (OrderCreditNote) can be ANOTHER order's refund lump merely queued to apply here; its
+        // Return belongs to that other order and must not be attributed to this order's lines (a false refusal otherwise).
+        where: {
+          creditNoteId: { in: itemless.map((c) => c.id) },
+          kind: { not: "INLINE" },
+          orderId,
+        },
         select: { items: { select: { productId: true, qty: true } } },
       });
     const qtyByProduct = new Map<string, number>();
@@ -433,7 +439,11 @@ export function pooledTakeRefusal(
  * BEFORE any credit is read, only when the invoice's order has 2+ creditable invoices (a lone invoice keeps today's single
  * invoice lock). Call it on a tx client, FIRST in the transaction, so no writer ever takes an Invoice and then the Order.
  */
-export async function lockOrderPoolRows(tx: any, invoiceId: string): Promise<void> {
+export async function lockOrderPoolRows(
+  tx: any,
+  invoiceId: string,
+  tenantId: string | null,
+): Promise<void> {
   const inv: { orderId: string | null } | null = await tx.invoice.findFirst({
     where: { id: invoiceId },
     select: { orderId: true },
@@ -445,7 +455,12 @@ export async function lockOrderPoolRows(tx: any, invoiceId: string): Promise<voi
     orderBy: [{ id: "asc" }],
   });
   if (siblings.length < 2) return;
-  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} AND "tenantId" = ${tenantId} FOR UPDATE`;
   for (const s of siblings)
-    await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${s.id} FOR UPDATE`;
+    await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${s.id} AND "tenantId" = ${tenantId} FOR UPDATE`;
+}
+
+/** B947: how many creditable invoices the order has (the pool only matters from 2): ONE cheap count before any pool read. */
+export async function countCreditableInvoices(db: any, orderId: string): Promise<number> {
+  return db.invoice.count({ where: { orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } } });
 }
