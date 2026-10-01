@@ -238,6 +238,15 @@ export function continuousFrameScanned(
 }
 
 /**
+ * Hold-to-scan RELEASE: drops the steady-read streaks (and nothing else) so a re-grab has to earn a fresh steady read,
+ * instead of a stale 2-frame streak from before the release counting towards it. Gate and buffer are untouched: an item
+ * already resolved stays deduped, a queued one stays queued.
+ */
+export function resetSteadyRead<S extends ContinuousScanState>(state: S): S {
+  return { ...state, steady: createSteadyReadState() };
+}
+
+/**
  * The in-flight resolve settled — drain whatever the buffer queued. Generic over the
  * caller's own state shape (plain `ScanEngineState`, or `ContinuousScanState` with its
  * extra `steady` field) so a continuous-mode caller's `steady` streaks survive the spread
