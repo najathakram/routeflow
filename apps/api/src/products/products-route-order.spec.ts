@@ -20,6 +20,13 @@ describe("ProductsModule controller order", () => {
     );
   });
 
+  it("ProductFamiliesController is registered before ProductsController (GET sku-available must not be captured by GET :id)", () => {
+    expect(block.indexOf("ProductFamiliesController")).toBeGreaterThanOrEqual(0);
+    expect(block.indexOf("ProductFamiliesController")).toBeLessThan(
+      block.indexOf("ProductsController"),
+    );
+  });
+
   it("the bulk route is a literal path segment, the single route a param: the two shapes that collide", () => {
     const bulk = readFileSync(join(__dirname, "product-portal-visibility.controller.ts"), "utf8");
     expect(bulk).toMatch(/@Patch\("portal-visibility"\)/);

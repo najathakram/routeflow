@@ -2,8 +2,9 @@ import type { Prisma } from "@prisma/client";
 
 /**
  * WS6 / WS8 (SA-606): the ONE "a product that can be sold" predicate — active and NOT a FAMILY container (a
- * FAMILY is non-stocked and non-sellable). Every staff picker and scan resolution composes this; the buyer builder
- * (`buyer/buyer-product-visibility.ts`) imports it, never a copy (L-167). `extra` is AND-composed as its own clause, so
+ * FAMILY is non-stocked and non-sellable). The buyer builder (`buyer/buyer-product-visibility.ts`) composes it and
+ * never keeps a copy (L-167); staff write paths refuse a FAMILY line through `assertSellableLines`
+ * (`products/sellable-lines.ts`), which states the same rule for an order/invoice/estimate/PO line. `extra` is AND-composed as its own clause, so
  * it can narrow but never widen.
  */
 export function sellableProductWhere(extra?: Prisma.ProductWhereInput): Prisma.ProductWhereInput {

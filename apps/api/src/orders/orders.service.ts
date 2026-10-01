@@ -1599,6 +1599,11 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+    // A BUYER naming a hidden product or a FAMILY container gets the buyer 409 (the cart's blocked-lines dialog), so
+    // that gate runs BEFORE the staff-facing FAMILY 400 below. (An archived product is not judged by the gate.)
+    if (user.role === UserRole.CUSTOMER && !options.allowArchived) {
+      assertBuyerMayOrder(products, new Set());
+    }
     assertSellableLines(products); // WS8: a FAMILY is never a line
 
     // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
@@ -1625,8 +1630,6 @@ export class OrdersService implements OnApplicationBootstrap {
           `Product ${archivedCreate.sku ?? archivedCreate.name} is archived`,
         );
       }
-      // A portal-hidden product is a 409 SELLING_RESTRICTED for a BUYER (WS6); staff are unaffected.
-      if (user.role === UserRole.CUSTOMER) assertBuyerMayOrder(products, new Set());
     }
 
     // RF-4: load the regulated section (TrackedCategory) tax config for every
@@ -3593,6 +3596,8 @@ export class OrdersService implements OnApplicationBootstrap {
                   })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            // buyer 409 first (blocked-lines dialog), then the staff-facing FAMILY 400 (same order as create)
+            if (user?.role === UserRole.CUSTOMER) assertBuyerMayOrder(addProducts, new Set());
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
             // a diff-add's own pack-line create() below needs its own scoped load.
@@ -3613,7 +3618,6 @@ export class OrdersService implements OnApplicationBootstrap {
                 `Product ${archivedAdd.sku ?? archivedAdd.name} is archived`,
               );
             }
-            if (user?.role === UserRole.CUSTOMER) assertBuyerMayOrder(addProducts, new Set());
 
             for (const item of dto.items) {
               // New unlisted item (no id, no productId, has name + unitPrice).
