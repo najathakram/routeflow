@@ -25,6 +25,7 @@ export const VALID_RETURN_REASONS = [
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { Prisma } from "@prisma/client";
+import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -79,14 +80,6 @@ export interface FindAllReturnsOptions {
   kind?: "STANDARD" | "INLINE" | "ALL";
   page?: number;
   limit?: number;
-}
-
-/** B959: a returned item that was not billed on the order, so it got no refund (reported, never a silent $0). */
-export interface UnbilledItem {
-  productId: string;
-  name: string;
-  qty: number;
-  message: string;
 }
 
 @Injectable()
@@ -632,7 +625,7 @@ export class ReturnsService {
     invoiceId?: string;
     items?: RefundItem[];
     pooledRefund?: Array<{ productId: string; qty: number }>;
-    unbilledItems?: UnbilledItem[];
+    unbilledItems?: UnbilledReturnItem[];
   }> {
     const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
     if (refusal === "NOTHING_CREDITABLE") {
@@ -662,7 +655,7 @@ export class ReturnsService {
           "None of the returned items were billed on this order, so there is nothing to refund. " +
           "Cancel the return, or credit it manually if a refund is owed.",
       });
-    let unbilledItems: UnbilledItem[] | undefined;
+    let unbilledItems: UnbilledReturnItem[] | undefined;
     if (unbilledQty.size > 0) {
       const names: Array<{ id: string; name: string | null }> =
         (await this.prisma.forTenant().product.findMany({
@@ -1024,7 +1017,7 @@ export class ReturnsService {
       invoiceId?: string;
       items?: RefundItem[];
       pooledRefund?: Array<{ productId: string; qty: number }>;
-      unbilledItems?: UnbilledItem[];
+      unbilledItems?: UnbilledReturnItem[];
     } =
       method === "EXTERNAL_REFUND"
         ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
@@ -1037,7 +1030,7 @@ export class ReturnsService {
       unbilledItems,
     } = basis;
     // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
-    const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledItem[] }) =>
+    const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledReturnItem[] }) =>
       unbilledItems && unbilledItems.length > 0 && r ? { ...r, unbilledItems } : r;
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist

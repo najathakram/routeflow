@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
-import type { CreateReturnItemDto, ReturnKind } from "@routeflow/types";
-export type { CreateReturnItemDto } from "@routeflow/types";
+import type { CreateReturnItemDto, ReturnKind, UnbilledReturnItem } from "@routeflow/types";
+export type { CreateReturnItemDto, UnbilledReturnItem } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -194,13 +194,6 @@ export interface ProcessRefundDto {
   method?: RefundMethod;
 }
 
-/** B959: a returned item that was NOT billed on the order, so it got no refund (a mixed return still refunds the billed part). */
-export interface UnbilledReturnItem {
-  productId: string;
-  name: string;
-  qty: number;
-  message: string;
-}
 export type ProcessRefundResult = Return & { unbilledItems?: UnbilledReturnItem[] };
 
 export function useProcessRefund() {
