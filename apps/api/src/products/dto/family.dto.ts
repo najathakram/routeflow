@@ -31,6 +31,14 @@ const moneyMessage = (field: string, required: boolean) => (a: { value?: unknown
 
 const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
 
+/**
+ * SA-606g: the ONE create-side blank rule. null / "" / whitespace-only means OMITTED (a variant then inherits the family
+ * cost, a family has none); anything else is trimmed. Used as the DTO @Transform AND by the service, so HTTP and a caller
+ * that bypasses the DTO behave identically. Update rows and every price stay STRICT (null / "" is a 400).
+ */
+export const blankToUndefined = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+
 const trimmed = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim() : value;
 
@@ -42,7 +50,8 @@ export class FamilyVariantDto {
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   @Matches(MONEY, { message: moneyMessage("pricePerUnit", true) }) pricePerUnit: string;
-  @ValidateIf(notUndefined)
+  @IsOptional()
+  @Transform(({ value }) => blankToUndefined(value))
   @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
@@ -55,7 +64,8 @@ export class FamilyInfoDto {
   @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
   pricePerUnit?: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
-  @ValidateIf(notUndefined)
+  @IsOptional()
+  @Transform(({ value }) => blankToUndefined(value))
   @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
