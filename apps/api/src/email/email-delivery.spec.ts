@@ -279,31 +279,52 @@ describe("EmailService.send — delivery ctx rows", () => {
     expect(res.delivered).toBe(true);
   });
 
-  it.each(["x@placeholder.local", "no-email+1@IMPORTED.local"])(
-    "sentinel recipient %s with a delivery ctx writes NO row",
-    async (to) => {
-      const { svc, deliveries } = make(
-        jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox" }),
+  const SENTINEL_ERR = "Recipient is an internal placeholder address (no real email on file).";
+
+  it.each([
+    ["3f2a9c1e-uuid-1@placeholder.local", "placeholder.local"],
+    ["no-email+1@IMPORTED.local", "IMPORTED.local"],
+  ])(
+    "sentinel recipient %s with a delivery ctx records ONE masked FAILED row, no transport",
+    async (to, domain) => {
+      const mailbox = jest.fn().mockResolvedValue({ delivered: true, transport: "mailbox" });
+      const { svc, deliveries } = make(mailbox);
+      const res = await svc.send({ to, subject: "s", html: "<p>x</p>", delivery: ctx } as any);
+      expect(res).toEqual({ delivered: false, transport: "none", error: SENTINEL_ERR });
+      expect(mailbox).not.toHaveBeenCalled();
+      expect(deliveries.record).toHaveBeenCalledTimes(1);
+      const row = deliveries.record.mock.calls[0][0];
+      expect(row).toEqual(
+        expect.objectContaining({
+          tenantId: "t1",
+          kind: "STAFF_NEW_ORDER",
+          entityType: "Order",
+          entityId: "o1",
+          status: "FAILED",
+          error: SENTINEL_ERR,
+          attempts: 0,
+          toAddress: `***@${domain}`,
+        }),
       );
-      await svc.send({ to, subject: "s", html: "<p>x</p>", delivery: ctx } as any);
-      expect(deliveries.record).not.toHaveBeenCalled();
+      expect(row.toAddress).not.toContain(to.split("@")[0]);
     },
   );
 
-  it("internal-placeholder refusal (delivered:false, transport:none) writes NO row", async () => {
-    // A sentinel recipient (@placeholder.local / @imported.local) is never mailed or recorded.
-    const mailbox = jest
-      .fn()
-      .mockResolvedValue({ delivered: false, transport: "mailbox", error: "refused" });
-    const { svc, deliveries } = make(mailbox);
+  it("sentinel refusal: a record failure never changes the result", async () => {
+    const { svc } = make(jest.fn(), { record: jest.fn().mockRejectedValue(new Error("down")) });
     const res = await svc.send({
-      to: "placeholder@imported.local",
+      to: "x@placeholder.local",
       subject: "s",
       html: "<p>x</p>",
       delivery: ctx,
     } as any);
+    expect(res).toEqual({ delivered: false, transport: "none", error: SENTINEL_ERR });
+  });
+
+  it("sentinel recipient WITHOUT a delivery ctx writes no row", async () => {
+    const { svc, deliveries } = make(jest.fn());
+    const res = await svc.send({ to: "x@placeholder.local", subject: "s", html: "<p>x</p>" });
     expect(res.delivered).toBe(false);
-    expect(res.transport).toBe("none");
     expect(deliveries.record).not.toHaveBeenCalled();
   });
 });

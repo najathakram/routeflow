@@ -1186,9 +1186,31 @@ export class EmailService {
     params: EmailSendParams & { delivery?: EmailDeliveryContext },
   ): Promise<EmailSendResult> {
     // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
-    // BEFORE any transport, delivery row or delegation (so a refusal writes no EmailDelivery row).
+    // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
+    // FAILED row (SA-615(3)); without a ctx nothing is recorded.
     const refusedTo = this.refuseSentinel(params.to);
-    if (refusedTo) return refusedTo;
+    if (refusedTo) {
+      const ctx = params.delivery;
+      if (ctx) {
+        try {
+          await this.deliveries.record({
+            tenantId: ctx.tenantId,
+            kind: ctx.kind,
+            toAddress: `***${this.logRecipient(params.to)}`,
+            entityType: ctx.entityType,
+            entityId: ctx.entityId,
+            status: "FAILED",
+            providerMessageId: null,
+            error: refusedTo.error,
+            attempts: 0,
+            sentAt: null,
+          });
+        } catch {
+          // audit failure must never change the refusal result
+        }
+      }
+      return refusedTo;
+    }
 
     const { delivery, ...rest } = params;
     if (!delivery) return this.sendUnrecorded(rest);
@@ -1203,27 +1225,25 @@ export class EmailService {
         error: (err as Error)?.message ?? "Email send failed",
       };
     }
-    {
-      try {
-        await this.deliveries.record({
-          tenantId: delivery.tenantId,
-          kind: delivery.kind,
-          toAddress: params.to,
-          entityType: delivery.entityType,
-          entityId: delivery.entityId,
-          status: result.delivered ? "SENT" : "FAILED",
-          providerMessageId: result.delivered ? (result.id ?? null) : null,
-          error: result.delivered
-            ? null
-            : sanitizeDeliveryError(
-                result.error ?? result.smtpFallbackReason ?? "Email was not delivered",
-              ),
-          attempts: 1,
-          sentAt: result.delivered ? new Date() : null,
-        });
-      } catch {
-        // audit failure must never change the send result
-      }
+    try {
+      await this.deliveries.record({
+        tenantId: delivery.tenantId,
+        kind: delivery.kind,
+        toAddress: params.to,
+        entityType: delivery.entityType,
+        entityId: delivery.entityId,
+        status: result.delivered ? "SENT" : "FAILED",
+        providerMessageId: result.delivered ? (result.id ?? null) : null,
+        error: result.delivered
+          ? null
+          : sanitizeDeliveryError(
+              result.error ?? result.smtpFallbackReason ?? "Email was not delivered",
+            ),
+        attempts: 1,
+        sentAt: result.delivered ? new Date() : null,
+      });
+    } catch {
+      // audit failure must never change the send result
     }
     return result;
   }
