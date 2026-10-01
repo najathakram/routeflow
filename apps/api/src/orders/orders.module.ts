@@ -55,6 +55,6 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
   ],
   controllers: [OrdersController],
   providers: [OrdersService, ChangeRequestsService, PolicyOversellReader],
-  exports: [OrdersService, ChangeRequestsService],
+  exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
 })
 export class OrdersModule {}
