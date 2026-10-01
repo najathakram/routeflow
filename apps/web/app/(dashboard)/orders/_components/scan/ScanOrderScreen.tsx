@@ -108,10 +108,12 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const [holding, setHolding] = React.useState(false);
   const holdingRef = React.useRef(false);
   const releaseHold = React.useCallback(() => {
+    const wasHolding = holdingRef.current;
     holdingRef.current = false;
     setHolding(false);
-    // a re-grab must earn a FRESH steady read, not inherit a stale streak from before the release
-    engineRef.current = resetSteadyRead(engineRef.current);
+    // a re-grab must earn a FRESH steady read, not inherit a stale streak from before the release. Only a REAL release
+    // resets it: a window blur in Continuous mode must not restart a streak (the default path stays unchanged).
+    if (wasHolding) engineRef.current = resetSteadyRead(engineRef.current);
   }, []);
   const startHold = React.useCallback(() => {
     holdingRef.current = true;
@@ -416,6 +418,12 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // cursor) with its cue and feedback hidden. Scanning resumes when the sheet closes.
   const camera = useContinuousScanCamera({ enabled: live && !editorOpen, onDetect: handleFrame });
 
+  // A hold never outlives what can still deliver its release: closing / pausing the screen, a camera error (the button
+  // unmounts, so its pointerup never arrives) or leaving Hold mode all end it, so the next session starts released.
+  React.useEffect(() => {
+    if (!live || camera.error || scanMode !== "hold") releaseHold();
+  }, [live, camera.error, scanMode, releaseHold]);
+
   // Retry due scans every tick while the screen is live. Nothing retries under the price sheet (a
   // line landing under the operator's cursor) or under the create-product dialog, and nothing while
   // the browser reports it is offline; the browser's `online` event makes everything due at once.
@@ -585,7 +593,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 
       {/* Camera strip: wide and short (a barcode is held that way); object-cover crops the frame
           for display only — zxing still reads all of it. */}
-      <div className="relative h-36 shrink-0 bg-black sm:h-44">
+      <div className={cn("relative h-36 shrink-0 bg-black sm:h-44", scanMode === "hold" && "mb-7")}>
         {camera.error ? (
           <div className="flex h-full items-center justify-center px-4 text-center text-sm text-white/80">
             {camera.error}
@@ -624,9 +632,13 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
                 onKeyUp={(e) => {
                   if (e.key === " " || e.key === "Enter") releaseHold();
                 }}
+                // focus leaving mid keyboard-hold: the keyup would land elsewhere and the hold would stick
+                onBlur={releaseHold}
                 onContextMenu={(e) => e.preventDefault()}
                 className={cn(
-                  "absolute bottom-2 left-1/2 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg",
+                  // straddles the strip's bottom edge (half inside the free 20% under the aim box, half in the margin below),
+                  // so the thumb never covers the barcode
+                  "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg",
                   holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
                 )}
               />
@@ -651,7 +663,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
               aria-pressed={scanMode === m}
               onClick={() => setScanMode(m)}
               className={cn(
-                "rounded-full border px-2.5 py-0.5 font-medium",
+                "min-h-[44px] rounded-full border px-3 font-medium",
                 scanMode === m
                   ? "border-brand-500 bg-brand-50 text-brand-600"
                   : "border-surface-border text-navy/60 hover:text-navy",

@@ -8,6 +8,7 @@ import {
   createContinuousScanState,
   createSteadyReadState,
   isWithinAimBox,
+  resetSteadyRead,
   scanSettled,
   trackSteadyRead,
   type AimBoxRect,
@@ -154,7 +155,7 @@ export function ScanCamera({
   React.useEffect(() => {
     if (!decode && aimAssist) {
       steadyRef.current = createSteadyReadState();
-      assistRef.current = { ...assistRef.current, steady: createSteadyReadState() };
+      assistRef.current = resetSteadyRead(assistRef.current);
     }
   }, [decode, aimAssist]);
 
