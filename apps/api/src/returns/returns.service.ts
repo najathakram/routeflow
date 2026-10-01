@@ -38,6 +38,7 @@ import {
   loadOrderPool,
   pooledRefundRefusal,
   type HeadroomLine,
+  type OrderPool,
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -55,7 +56,7 @@ import {
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
-import { standardRestockResolver } from "./returns-restock-pieces";
+import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -633,6 +634,32 @@ export class ReturnsService {
     // there is no source invoice for create() to cap against, so nothing to gate.
     if (creditable.length === 0) return { amount, invoiceId };
 
+    // B965 (SA-628l): a STANDARD return's qty is in its order line's OWN unit, so a product sold on lines with different pack
+    // factors (2 boxes of 12 on one line, 12 loose pieces on another) has no single piece count: every line-unit sum below
+    // would add boxes to pieces. create() already refuses to record one (SA-158); this is the refund door's safety net for
+    // legacy RECEIVED rows, refused BEFORE the claim. EXTERNAL_REFUND (priceReturn only) stays the escape hatch.
+    const returnedByProduct = new Map<string, number>();
+    for (const it of items)
+      returnedByProduct.set(
+        it.productId,
+        (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
+      );
+    const packBases =
+      order?.id && (order.lineItems?.length ?? 0) > 0
+        ? await standardPackBases(this.prisma.forTenant(), order.id, order.lineItems)
+        : new Map<string, ProductPackBasis>();
+    for (const productId of returnedByProduct.keys()) {
+      const basis = packBases.get(productId);
+      if (basis && ("mixed" in basis || ("unknown" in basis && !basis.singleUnit)))
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
+          message:
+            "This product was sold in different units on this order (for example boxes and loose pieces), so the return " +
+            "cannot be priced as one quantity. Credit it per line via an inline return, or manually.",
+          productId,
+        });
+    }
+
     // The credit is always minted against ONE invoice — the only creditable one, or
     // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
     // undefined) credit would skip create()'s per-invoice cap entirely. Both shapes
@@ -697,14 +724,12 @@ export class ReturnsService {
     // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
     let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
     if (creditable.length >= 2 && order?.id) {
-      const returnedByProduct = new Map<string, number>();
-      for (const it of items)
-        returnedByProduct.set(
-          it.productId,
-          (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
-        );
       const pool = await loadOrderPool(this.prisma.forTenant(), order.id);
-      for (const [productId, qty] of returnedByProduct) {
+      // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
+      const returnedPieces = new Map<string, number>();
+      for (const [productId, qty] of returnedByProduct)
+        returnedPieces.set(productId, this.poolPieces(packBases, pool, productId, qty));
+      for (const [productId, qty] of returnedPieces) {
         const refused = pooledRefundRefusal(pool, productId, qty);
         if (refused)
           throw new ConflictException({
@@ -720,7 +745,7 @@ export class ReturnsService {
             qtyUnit: refused.qtyUnit,
           });
       }
-      pooledRefund = [...returnedByProduct].map(([productId, qty]) => ({ productId, qty }));
+      pooledRefund = [...returnedPieces].map(([productId, qty]) => ({ productId, qty }));
     }
 
     const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
@@ -744,6 +769,35 @@ export class ReturnsService {
       ...(refundItems ? { items: refundItems } : {}),
       ...(pooledRefund ? { pooledRefund } : {}),
     };
+  }
+
+  /**
+   * A STANDARD return's qty (the order line's own unit) in PIECES for the order pool (B967). One factor: the order lines'
+   * (`standardReturnPieces`), or, when no line carries a pack (the legacy all-unresolvable shape), the pool's own single
+   * pieces-per-qty of the product. Different factors are never converted: the door refused them above.
+   */
+  private poolPieces(
+    bases: Map<string, ProductPackBasis>,
+    pool: OrderPool,
+    productId: string,
+    qty: number,
+  ): number {
+    const basis = bases.get(productId);
+    if (basis && "factor" in basis) return standardReturnPieces(bases, productId, qty).pieces;
+    const factors = new Set(
+      pool.lines
+        .filter((l) => l.productId === productId && l.qty > 0)
+        .map((l) => l.piecesPerQty ?? 1),
+    );
+    if (factors.size > 1)
+      throw new ConflictException({
+        code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
+        message:
+          "This product was invoiced in different units, so the return cannot be priced as one quantity. " +
+          "Credit it per line via an inline return, or manually.",
+        productId,
+      });
+    return qty * ([...factors][0] ?? 1);
   }
 
   /**
@@ -942,11 +996,9 @@ export class ReturnsService {
             },
             lineItems: {
               select: {
-                productId: true,
-                qty: true,
+                ...PACK_LINE_SELECT, // B965: the pack evidence the mixed-unit gate reads (id, split, unit label, product pack)
                 unitPrice: true,
                 subtotal: true,
-                status: true,
               },
             },
           },

@@ -80,10 +80,15 @@ export function refusalCopy(code: string | null | undefined): string {
 export const RETURN_REFUND_OVER_LINE_HEADROOM_COPY =
   "This refund would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier refund). Refund it outside RouteFlow, or issue the credit note manually.";
 
-/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM (by `response.data.code`), else the caller's own text. */
+/** B965: a standard return of a product that was sold on lines with different pack sizes has no single piece count to refund. */
+export const RETURN_MIXED_UNIT_PRODUCT_COPY =
+  "This product was sold in different units on this order (for example boxes and loose pieces), so RouteFlow can't price this return as one quantity. Credit it per line with an inline return, or refund it manually.";
+
+/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM and RETURN_MIXED_UNIT_PRODUCT (by `response.data.code`), else the caller's own text. */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
+  if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;
   return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM
     ? RETURN_REFUND_OVER_LINE_HEADROOM_COPY
     : otherwise;

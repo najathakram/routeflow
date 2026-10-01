@@ -94,6 +94,7 @@ export function planProductRefund(
   productId: string,
   qty: number,
   mode: PlanMode = "refund",
+  qtyTol: number = EPS,
 ): { items: RefundItem[]; price: number; amount: number; refusal?: RefundRefusal } {
   const mine = lines.filter((l) => l.productId === productId && l.qty > 0);
   const billedQty = mine.reduce((t, l) => t + l.qty, 0);
@@ -133,7 +134,7 @@ export function planProductRefund(
       qtyUnit: "line",
     },
   });
-  if (mode === "refund" && (wanted > roomQty + EPS || price > roomAmount + tol)) return refuse();
+  if (mode === "refund" && (wanted > roomQty + qtyTol || price > roomAmount + tol)) return refuse();
 
   // qty: paid lines first, $0 lines last, each in line order
   const order = mine
@@ -394,13 +395,47 @@ export async function loadOrderPool(
   return { invoiceCount: invoices.length, lines, credited };
 }
 
-/** A return refund of `qty` pieces of `productId` against the pool: null when it fits, else the refusal. Never clips. */
+/**
+ * The pool in PIECES (B967): each line's qty and its credited qty times its own `piecesPerQty`, every factor then 1. NO round3
+ * before the multiply (1.8333 boxes of room is 22 pieces; rounding to 1.833 first makes it 21.996).
+ */
+export function toPiecesPool(pool: OrderPool): OrderPool {
+  const factor = new Map(pool.lines.map((l) => [l.id, l.piecesPerQty ?? 1]));
+  const credited = new Map<string, LineCredit>();
+  for (const [id, c] of pool.credited)
+    credited.set(id, { ...c, qty: c.qty * (factor.get(id) ?? 1) });
+  return {
+    ...pool,
+    lines: pool.lines.map((l) => ({ ...l, qty: l.qty * (l.piecesPerQty ?? 1), piecesPerQty: 1 })),
+    credited,
+  };
+}
+
+/**
+ * A return refund of `qty` PIECES of `productId` against the pool: null when it fits, else the refusal. Never clips.
+ * INVARIANT (B965/B967): the pool and the credit-note mint count in pieces, but a STANDARD return's qty is in its order line's
+ * own selling unit, so the caller converts it at the boundary with `standardReturnPieces` (one factor) BEFORE this check. A
+ * product on lines with different pack factors has no single factor: the refund door refuses it (`RETURN_MIXED_UNIT_PRODUCT`),
+ * it is never converted. The tolerance is EPS per line scaled by that line's pieces-per-qty, like `pooledTakeRefusal`.
+ */
 export function pooledRefundRefusal(
   pool: OrderPool,
   productId: string,
   qty: number,
 ): RefundRefusal | null {
-  return planProductRefund(pool.lines, pool.credited, productId, qty, "refund").refusal ?? null;
+  const qtyTol = pool.lines
+    .filter((l) => l.productId === productId && l.qty > 0)
+    .reduce((t, l) => t + EPS * (l.piecesPerQty ?? 1), 0);
+  const inPieces = toPiecesPool(pool);
+  const { refusal } = planProductRefund(
+    inPieces.lines,
+    inPieces.credited,
+    productId,
+    qty,
+    "refund",
+    Math.max(EPS, qtyTol),
+  );
+  return refusal ? { ...refusal, qtyUnit: "pieces" } : null;
 }
 
 /**

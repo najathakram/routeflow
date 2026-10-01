@@ -38,6 +38,11 @@ const ALLOWED: Record<string, Reviewed> = {
       "the DELETE/UPDATE strings are deliberately bad examples fed to its own assertReadOnlySql refusal check, never executed",
     localOnly: false,
   },
+  "report-b965-mixed-unit-returns.mjs": {
+    reason:
+      "the DELETE/UPDATE strings are deliberately bad examples fed to its own assertReadOnlySql refusal check, never executed",
+    localOnly: false,
+  },
   "report-b673-next-delivery-overcharge.mjs": {
     reason:
       "the DELETEs are strings fed to its own assertReadOnlySql refusal checks, never executed",
