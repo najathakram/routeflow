@@ -212,7 +212,9 @@ export class CreditNotesService {
           `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
         );
       const amt = li.amount;
-      if (!(amt > 0))
+      // a refund row for a FREE line (subtotal 0) carries its qty at amount 0 (SA-628a); nothing else may be $0
+      const freeRefundRow = opts.ledgerReversedByReturn && Number(line.subtotal) <= 0 && amt === 0;
+      if (!(amt > 0) && !freeRefundRow)
         throw cnBad(
           API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           "Credit line amount must be greater than 0",
@@ -532,10 +534,11 @@ export class CreditNotesService {
         // `tx` read (the pre-check above ran on a separate, non-tx snapshot).
         cn = await this.prisma.tenantTransaction(
           async (tx: any) => {
-            // SA-628 / SA-214 lock order: the INVOICE row first, so a concurrent credit note and return refund on the same
-            // invoice serialise on it and the second sees the first's credit in the shared per-line headroom.
+            // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
+            // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
+            // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
             if (dto.invoiceId) {
-              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE`;
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
             }
             const cnItemsData = await this.validateAndBuildCnItems(tx, dto, internal);
 

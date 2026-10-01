@@ -722,13 +722,24 @@ export class ReturnsService {
         .reduce((n, l) => n + l.qty, 0);
       if (billedQty <= 0) continue;
       const refundQty = Math.min(returnedQty, billedQty); // the same cap priceReturn applies
-      const { items, shortfallQty } = allocateProductQty(lines, credited, productId, refundQty);
-      if (shortfallQty > 0) {
+      const { items, shortfallQty, refusal } = allocateProductQty(
+        lines,
+        credited,
+        productId,
+        refundQty,
+        "refund",
+      );
+      if (refusal || shortfallQty > 0) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
           message:
             "This refund would credit more than the invoice line is worth: part of it was already credited " +
             "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+          productId,
+          requested: refusal?.requestedAmount ?? null,
+          remaining: refusal?.remainingAmount ?? null,
+          requestedQty: refusal?.requestedQty ?? refundQty,
+          remainingQty: refusal?.remainingQty ?? null,
         });
       }
       out.push(...items);
@@ -814,6 +825,34 @@ export class ReturnsService {
     }
 
     let amount = 0;
+    // SA-628a: a single creditable invoice (the itemised mint) is priced with the SAME per-line fill the mint uses, so the
+    // preview shows what will be minted (a product split across lines of different prices priced pooled would under-quote).
+    const only = creditable.length === 1 ? creditable[0] : null;
+    const onlyLines: HeadroomLine[] = (only?.items ?? []).map((it: any) => ({
+      id: it.id,
+      productId: it.productId ?? null,
+      subtotal: Number(it.subtotal),
+      qty: Number(it.qty),
+    }));
+    if (only && onlyLines.length > 0 && onlyLines.every((l) => l.id)) {
+      const returned = new Map<string, number>();
+      for (const item of items) {
+        returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
+      }
+      for (const [productId, qty] of returned) {
+        const billedQty = billedQtyByProduct.get(productId) ?? 0;
+        if (billedQty <= 0) continue;
+        const { items: filled } = allocateProductQty(
+          onlyLines,
+          new Map(),
+          productId,
+          Math.min(qty, billedQty),
+          "count",
+        );
+        amount += filled.reduce((n, it) => n + it.amount, 0);
+      }
+      return { amount: roundMoney(amount), invoiceId: only.id, creditable };
+    }
     for (const item of items) {
       const billedQty = billedQtyByProduct.get(item.productId) ?? 0;
       if (billedQty <= 0) continue;

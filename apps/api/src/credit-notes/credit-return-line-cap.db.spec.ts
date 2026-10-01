@@ -106,7 +106,7 @@ describeDb(
      * A SENT 2-line invoice: A = $100 and B = $100 (subtotals). `taxPct` > 0 adds that % of tax per line at the INVOICE level
      * (so a line's value including tax is 100 * (1 + taxPct/100)).
      */
-    async function seed(label: string, taxPct = 0, qtyA = 1) {
+    async function seed(label: string, taxPct = 0, qtyA = 1, freeA = false) {
       seq += 1;
       const slug = assertTestTenant(
         `qa-capret-${RUN}-${seq}-${label}`,
@@ -131,9 +131,9 @@ describeDb(
           tenantId,
           customerId: customer.id,
           orderNumber: `ORD-CAPRET-${RUN}-${seq}`,
-          subtotal: 200,
+          subtotal: freeA ? 100 : 200,
           tax: 0,
-          total: 200,
+          total: freeA ? 100 : 200,
           status: "DELIVERED",
         } as any,
       });
@@ -146,12 +146,13 @@ describeDb(
             productId: p.id,
             name: p.name,
             qty,
-            unitPrice: 100 / qty,
-            subtotal: 100,
+            unitPrice: p === pA && freeA ? 0 : 100 / qty,
+            subtotal: p === pA && freeA ? 0 : 100,
           } as any,
         });
       }
-      const tax = (200 * taxPct) / 100;
+      const base = freeA ? 100 : 200;
+      const tax = (base * taxPct) / 100;
       const invoice = await prisma.invoice.create({
         data: {
           tenantId,
@@ -159,9 +160,9 @@ describeDb(
           orderId: order.id,
           invoiceNumber: `INV-CAPRET-${RUN}-${seq}`,
           status: "SENT",
-          subtotal: 200,
+          subtotal: base,
           taxAmount: tax,
-          total: 200 + tax,
+          total: base + tax,
         },
       });
       const item = (productId: string, description: string) => {
@@ -173,8 +174,8 @@ describeDb(
             productId,
             description,
             qty,
-            unitPrice: 100 / qty,
-            subtotal: 100,
+            unitPrice: productId === pA.id && freeA ? 0 : 100 / qty,
+            subtotal: productId === pA.id && freeA ? 0 : 100,
           },
         });
       };
@@ -341,6 +342,54 @@ describeDb(
       );
       await expect(refund(s, (await receivedReturn(s, s.pA.id)).id)).resolves.toBeDefined(); // 100 + 100 <= 200
       await expect(creditNoteItem(s, s.lineB, 100)).rejects.toBeDefined(); // the INVOICE total still caps the sum
+    });
+
+    it("9. SA-628a B1: a FREE ($0) line is refunded at amount 0 (not refused); the paid line next to it is untouched and creditable", async () => {
+      const s = await seed("free", 0, 2, true);
+      const ret = await receivedReturn(s, s.pA.id, 1);
+      await expect(refund(s, ret.id)).resolves.toBeDefined(); // all-free refund: return REFUNDED, no credit note
+      const notes = await prisma.creditNote.count({ where: { tenantId: s.tenantId } });
+      expect(notes).toBe(0);
+      expect((await prisma.return.findUnique({ where: { id: ret.id } }))?.status).toBe("REFUNDED");
+      await expect(creditNoteItem(s, s.lineB, 100)).resolves.toBeDefined();
+    });
+
+    it("10. SA-628a B2: qty is left but the MONEY is short ($100/10pc, $50 credited as 1pc, 9 pcs back = $90) is REFUSED 409 with {requested, remaining}", async () => {
+      const s = await seed("moneyshort", 0, 10);
+      await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount: 50,
+          items: [{ invoiceItemId: s.lineA.id, amount: 50, qty: 1 }],
+        } as any),
+      );
+      const err = await refund(s, (await receivedReturn(s, s.pA.id, 9)).id).catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({
+        code: "RETURN_REFUND_OVER_LINE_HEADROOM",
+        requested: 90,
+        remaining: 50,
+      });
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(50); // nothing minted
+    });
+
+    it("11. SA-628a (a): a legacy itemless refund note counts through its return LINK whatever the return status (PROCESSED too)", async () => {
+      const s = await seed("legacy-processed");
+      const cn = await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount: 100,
+        } as any),
+      );
+      const ret = await receivedReturn(s, s.pA.id, 1);
+      await prisma.return.update({
+        where: { id: ret.id },
+        data: { status: "PROCESSED", creditNoteId: cn.id } as any,
+      });
+      // line A is fully consumed by the legacy refund: a $1 item credit on A must be refused (the invoice total has room)
+      await expect(creditNoteItem(s, s.lineA, 1)).rejects.toBeDefined();
+      await expect(creditNoteItem(s, s.lineB, 100)).resolves.toBeDefined();
     });
   },
 );

@@ -154,4 +154,77 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     });
     expect(prisma.return.updateMany).toHaveBeenCalledTimes(2); // the claim, then the B68 compensation back to RECEIVED
   });
+
+  it("SA-628a: the 409 carries {productId, requested, remaining} in money and qty", async () => {
+    prisma.creditNoteItem.findMany.mockResolvedValue([
+      { invoiceItemId: "line-a", amount: 33.33, qty: 0.333 },
+    ]);
+    withReturn(order([invoice("inv-1")]));
+    const err = await service.processRefund("ret-1").catch((e) => e);
+    expect(err.getResponse()).toMatchObject({
+      code: "RETURN_REFUND_OVER_LINE_HEADROOM",
+      productId: "pa",
+      requested: 100,
+      remaining: 66.67,
+    });
+  });
+
+  it("SA-628a: qty room is left but the money is short => refused, never clipped", async () => {
+    const ten = { id: "line-a", productId: "pa", qty: 10, subtotal: 100 };
+    prisma.creditNoteItem.findMany.mockResolvedValue([
+      { invoiceItemId: "line-a", amount: 50, qty: 1 },
+    ]);
+    withReturn(order([invoice("inv-1", [ten, LINE_B])]), [{ productId: "pa", qty: 9 }]);
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM", requested: 90, remaining: 50 },
+    });
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+  });
+
+  it("SA-628a B1: a $0 (free) line takes its qty at amount 0 and is not refused; an all-free refund mints no credit note", async () => {
+    const free = { id: "line-a", productId: "pa", qty: 2, subtotal: 0 };
+    withReturn(order([invoice("inv-1", [free, LINE_B])]), [{ productId: "pa", qty: 1 }]);
+    await service.processRefund("ret-1");
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "REFUNDED" }) }),
+    );
+  });
+
+  it("SA-628a: a PRICED line next to a free line of the same product is still itemised in line order", async () => {
+    const free = { id: "line-f", productId: "pa", qty: 2, subtotal: 0 };
+    const paid = { id: "line-a", productId: "pa", qty: 10, subtotal: 100 };
+    withReturn(order([invoice("inv-1", [paid, free])]), [{ productId: "pa", qty: 11 }]);
+    await service.processRefund("ret-1");
+    expect(creditNotesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        items: [
+          { invoiceItemId: "line-a", amount: 100, qty: 10 },
+          { invoiceItemId: "line-f", amount: 0, qty: 1 },
+        ],
+      }),
+      { ledgerReversedByReturn: true },
+    );
+  });
+
+  it("SA-628a: the preview prices the same per-line fill the mint uses (a product split across lines of different prices)", async () => {
+    const cheap = { id: "line-c", productId: "pa", qty: 1, subtotal: 50 };
+    const dear = { id: "line-d", productId: "pa", qty: 1, subtotal: 100 };
+    const ret = {
+      id: "ret-1",
+      kind: "STANDARD",
+      status: "RECEIVED",
+      items: [{ productId: "pa", qty: 1 }],
+      order: order([invoice("inv-1", [dear, cheap])]),
+    };
+    // mint fill order: dear first => $100 (pooled would quote $75)
+    withReturn(ret.order);
+    await service.processRefund("ret-1");
+    expect(creditNotesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 100 }),
+      expect.anything(),
+    );
+    expect((service as any).priceReturn(ret.items, ret.order).amount).toBe(100);
+  });
 });
