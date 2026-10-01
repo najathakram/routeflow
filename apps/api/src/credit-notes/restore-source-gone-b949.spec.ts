@@ -13,7 +13,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
  * SOURCE_DELETED marker) would turn a provenance-less credit into spendable wallet money. The single restore primitive
  * (restoreCreditFromPaymentInTx) refuses (409 CREDIT_NOTE_SOURCE_GONE), so EVERY path that restores refuses: voidInvoice and
  * order cancel/delete (releaseCreditsInTx), the explicit unapply, the order-edit untick (pullBackOrderCreditPair) and the
- * shrink. Atomic: checked before the FIRST write of the operation. The only exception is the marked note's OWN void/cancel.
+ * shrink. Atomic: checked before the first RESTORE of the operation (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back, proved through the services in restore-source-gone-services.db.spec.ts). The only exception is the marked note's OWN void/cancel.
  * Real-Postgres proof: credit-notes/restore-source-gone.db.spec.ts.
  */
 describe("CreditNotesService: B949 a SOURCE_DELETED note is never restored to spendable", () => {
@@ -179,6 +179,74 @@ describe("CreditNotesService: B949 a SOURCE_DELETED note is never restored to sp
       await expect(run()).rejects.toMatchObject({ response: { code: "CREDIT_NOTE_SOURCE_GONE" } });
       noWrites();
     }
+  });
+
+  it("N2: the settle SHRINK refuses too: an invoice shrunk below what a marked note's application covers is refused whole, before any restore", async () => {
+    const at = (n: number) => new Date(2026, 0, n);
+    prisma.orderCreditNote.findMany.mockResolvedValue([]);
+    prisma.creditNoteApplyBlock.findMany.mockResolvedValue([]);
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv-1",
+        total: 70, // shrunk from 100: $30 over-collected
+        payments: [
+          {
+            id: "p-m",
+            method: "CREDIT_NOTE",
+            creditNoteId: MARKED,
+            amount: 40,
+            status: "PAID",
+            createdAt: at(1),
+          },
+          {
+            id: "p-o",
+            method: "CREDIT_NOTE",
+            creditNoteId: ORDINARY,
+            amount: 60,
+            status: "PAID",
+            createdAt: at(2),
+          },
+        ],
+      },
+    ]);
+    await expect(service.settleOrderCreditsInTx(prisma, "ord-1", "t-1")).rejects.toMatchObject({
+      response: { code: "CREDIT_NOTE_SOURCE_GONE" },
+    });
+    noWrites();
+  });
+
+  it("N1 (accepted, fail-closed): the shrink pre-pass reads EVERY credit payment of the invoice, so a marked note refuses the settle even when the excess would only come out of the newer ordinary note", async () => {
+    const at = (n: number) => new Date(2026, 0, n);
+    prisma.orderCreditNote.findMany.mockResolvedValue([]);
+    prisma.creditNoteApplyBlock.findMany.mockResolvedValue([]);
+    prisma.invoice.findMany.mockResolvedValue([
+      {
+        id: "inv-1",
+        total: 90, // only $10 over: the newest (ordinary) payment alone would cover it
+        payments: [
+          {
+            id: "p-m",
+            method: "CREDIT_NOTE",
+            creditNoteId: MARKED,
+            amount: 40,
+            status: "PAID",
+            createdAt: at(1),
+          },
+          {
+            id: "p-o",
+            method: "CREDIT_NOTE",
+            creditNoteId: ORDINARY,
+            amount: 60,
+            status: "PAID",
+            createdAt: at(2),
+          },
+        ],
+      },
+    ]);
+    await expect(service.settleOrderCreditsInTx(prisma, "ord-1", "t-1")).rejects.toMatchObject({
+      response: { code: "CREDIT_NOTE_SOURCE_GONE" },
+    });
+    noWrites();
   });
 
   it("9. after the marked note is VOID-reversed first there is nothing to restore: the original operation succeeds and restores nothing to it", async () => {

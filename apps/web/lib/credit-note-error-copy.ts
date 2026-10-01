@@ -17,7 +17,7 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
   [API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM]:
     "That amount is more than the source invoice still allows to be credited.",
   [API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE]:
-    "The invoice this credit came from is gone or can no longer be credited.",
+    "The invoice this credit came from was deleted, so this credit can't be edited or put back to use. Void that credit note first, then try again.",
   [API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP]:
     "A credit without a source invoice can't be increased. Issue a separate credit instead.",
   [API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY]:

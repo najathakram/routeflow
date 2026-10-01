@@ -18,6 +18,19 @@ describe("creditNoteErrorCopy (#2418 U1: no raw server strings)", () => {
     expect(Object.keys(CREDIT_NOTE_ERROR_COPY).sort()).toEqual([...CREDIT_NOTE_ERROR_CODES].sort());
   });
 
+  it("B949: CREDIT_NOTE_SOURCE_GONE gives staff the way out (void that credit note first) from fixed copy, never the server text", () => {
+    const out = creditNoteErrorCopy(
+      apiError({
+        code: "CREDIT_NOTE_SOURCE_GONE",
+        message:
+          "Credit note CN-2026-0042 came from a deleted invoice. Void that credit note first.",
+      }),
+      "generic",
+    );
+    expect(out).toContain("Void that credit note first");
+    expect(out).not.toContain("CN-2026-0042"); // the number is never rendered from the server string
+  });
+
   it("maps a code to its fixed copy and NEVER returns the server message", () => {
     const secret = "RAW SERVER TEXT cn=CN-2026-0042 cust=Acme Mart";
     for (const code of CREDIT_NOTE_ERROR_CODES) {

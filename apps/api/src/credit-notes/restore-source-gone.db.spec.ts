@@ -171,7 +171,6 @@ describeDb(
 
     it("2. the explicit unapply of the marked note is refused too, and writes nothing", async () => {
       const s = await seed("unapply");
-      await expect(creditNotes.unapplyFromInvoice(s.marked.id, s.invoice.id)).rejects.toBeDefined();
       const err = await tenantCtx
         .run(s.tenantId, () => creditNotes.unapplyFromInvoice(s.marked.id, s.invoice.id))
         .catch((e) => e);
