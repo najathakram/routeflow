@@ -78,6 +78,7 @@ import * as compliance from "./customer-compliance-input";
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { buildCustomersCsv } from "./customers-csv";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -1831,33 +1832,20 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const header =
-      "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
-    const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
-      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
-
-      return [
-        escCsv(c.businessName),
-        escCsv(c.contactName),
-        escCsv(c.email),
-        escCsv(c.phone),
-        escCsv(c.customerType),
-        escCsv(c.user?.status),
-        roundMoney(receivables).toFixed(2),
-        credits.toFixed(2),
-      ].join(",");
-    });
-
-    return [header, ...rows].join("\n");
+    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
+    // receivableBalance itself); the CSV builder only formats.
+    return buildCustomersCsv(
+      customers.map((c) => ({
+        businessName: c.businessName,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+        customerType: c.customerType,
+        status: c.user?.status,
+        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+      })),
+    );
   }
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
