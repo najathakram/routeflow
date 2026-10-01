@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "dev": "node --watch dist/main.js",
+    "dev:control": "node --watch dist/main.js",
     "test": "jest",
     "lint": "eslint \"src/**/*.ts\"",
     "check-types": "tsc --noEmit -p tsconfig.json"

@@ -321,3 +321,25 @@ describe("next --hook", () => {
     expect(r.stdout).toBe("");
   });
 });
+
+describe("git stderr credential scrub", () => {
+  beforeEach(() => {
+    world = makeWorld();
+  });
+
+  it("an error carrying https://user:tok@host/x prints <redacted> and no token", async () => {
+    // a stub git that fails with a credentialed URL in stderr (real git strips userinfo itself)
+    const bin = fs.mkdtempSync(path.join(world.root, "stubgit-"));
+    fs.writeFileSync(
+      path.join(bin, "git"),
+      "#!/bin/sh\necho 'fatal: unable to access https://user:tok@host/x' >&2\nexit 1\n",
+      { mode: 0o755 },
+    );
+    const r = await runCli(world, ["note", "hello"], {
+      env: { PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+    });
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).not.toMatch(/tok/);
+    expect(r.stderr).toContain("<redacted>");
+  });
+});

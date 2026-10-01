@@ -177,10 +177,10 @@ for (const vp of VIEWPORTS) {
 
       test("a11y basics", async ({ page }) => {
         await open(page);
+        const axePkg = "@axe-core/playwright"; // optional dep: variable specifier skips type resolution
         let axeResults: unknown = null;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const AxeBuilder = require("@axe-core/playwright").default;
+          const AxeBuilder = (await import(/* @vite-ignore */ axePkg)).default;
           axeResults = (await new AxeBuilder({ page }).analyze()).violations;
         } catch {
           /* axe not installed: basic checks below */

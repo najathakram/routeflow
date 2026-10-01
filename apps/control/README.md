@@ -5,6 +5,7 @@ imports, deployed in isolation (`railway.toml` watches `apps/control/**` only).
 
 - `npm run control` (repo root) — build if stale, then `ctl serve`.
 - `npm run ctl -- <command>` — run the CLI.
+- `npm run dev:control -w apps/control` — watch-run the server (named so root `npm run dev` skips it).
 - `npm test -w apps/control` — Jest specs under `test/**/*.spec.ts`.
 - Health probe: `GET /api/health?public=1` returns `{"ok":true}`.
 

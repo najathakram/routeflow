@@ -188,7 +188,10 @@ export async function main(argv: string[]): Promise<void> {
     await COMMANDS[args.verb](ctx);
   } catch (e) {
     const code = e instanceof CtlError ? e.code : 5;
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = (e instanceof Error ? e.message : String(e)).replace(
+      /:\/\/[^/@\s]+@/g,
+      "://<redacted>@",
+    );
     if (argv[0] === "next" && argv.includes("--hook")) return; // hook: print nothing, exit 0
     if (argv[0] === "next") {
       // `next` always exits 0 and prints exactly one line, even with --quiet

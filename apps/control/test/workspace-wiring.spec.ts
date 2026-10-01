@@ -29,7 +29,7 @@ describe("apps/control workspace wiring (T5)", () => {
     const s = pkg().scripts ?? {};
     expect(s.build).toBe("tsc -p tsconfig.build.json");
     expect(s.start).toBe("node dist/main.js");
-    expect(s.dev).toBe("node --watch dist/main.js");
+    expect(s["dev:control"]).toBe("node --watch dist/main.js");
     expect(s.test).toBe("jest");
     expect(s.lint).toBe('eslint "src/**/*.ts"');
     expect(s["check-types"]).toBe("tsc --noEmit -p tsconfig.json");
