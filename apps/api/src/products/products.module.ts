@@ -1,4 +1,6 @@
 import { Module } from "@nestjs/common";
+import { ProductFamiliesController } from "./product-families.controller";
+import { ProductFamiliesService } from "./product-families.service";
 import { ProductsController } from "./products.controller";
 import { ProductsService } from "./products.service";
 import { ProductUnitsController } from "./product-units.controller";
@@ -14,9 +16,27 @@ import { SystemConfigModule } from "../system-config/system-config.module";
 import { GatewaysModule } from "../gateways/gateways.module";
 
 @Module({
-  imports: [AuthModule, StorageModule, BillingModule, SystemConfigModule, GatewaysModule, SalesFactsModule],
-  controllers: [ProductsController, ProductUnitsController, RecipesController],
-  providers: [ProductsService, ProductUnitsService, RecipesService, ProductsExportService],
+  imports: [
+    AuthModule,
+    StorageModule,
+    BillingModule,
+    SystemConfigModule,
+    GatewaysModule,
+    SalesFactsModule,
+  ],
+  controllers: [
+    ProductFamiliesController,
+    ProductsController,
+    ProductUnitsController,
+    RecipesController,
+  ],
+  providers: [
+    ProductsService,
+    ProductFamiliesService,
+    ProductUnitsService,
+    RecipesService,
+    ProductsExportService,
+  ],
   exports: [ProductsService],
 })
 export class ProductsModule {}

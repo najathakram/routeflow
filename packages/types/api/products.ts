@@ -255,3 +255,101 @@ export interface RecipeDto {
   retiredAt: string | null;
   components: RecipeComponentDto[];
 }
+
+// ─── Reuse API 409 bodies (SA-603a/603i; flat keys, one shape for codes and names) ───────────────────
+/** One ACTIVE product blocking a reactivation, for one code or the name. */
+export interface ProductReactivationHolder {
+  /** BARCODE_TAKEN for a barcode (SA-572b keeps its code); CODE_TAKEN for sku / unitSku; NAME_TAKEN for the name. */
+  code: "CODE_TAKEN" | "BARCODE_TAKEN" | "NAME_TAKEN";
+  field: "sku" | "barcode" | "unitSku" | "name";
+  value: string;
+  productId: string;
+  productName: string;
+  /** Present when this holder can NOT be deactivated in the one call (a FAMILY, or it has ACTIVE variants). */
+  blocked?: "HAS_ACTIVE_VARIANTS";
+}
+
+/**
+ * 409 when reactivating (or creating / renaming) hits an ACTIVE holder. The top-level keys repeat `holders[0]` (the fixed
+ * copy maps from them); `holders` is the COMPLETE set the server derived, which is exactly what `deactivateHolderIds`
+ * must equal on the one-call resolution. A barcode conflict also carries SA-572b's `barcode` key.
+ */
+export interface ProductCodeTakenError extends ProductReactivationHolder {
+  message: string;
+  barcode?: string;
+  holders?: ProductReactivationHolder[];
+}
+/**
+ * The name-taken 409. `productId` / `productName` name the holder, but the DB-unique backstop (a P2002 on an active-name
+ * index) cannot know who holds it, so on that path they are absent.
+ */
+export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "productName"> & {
+  code: "NAME_TAKEN";
+  field: "name";
+  productId?: string;
+  productName?: string;
+};
+
+/** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
+export interface ProductHoldersChangedError {
+  code: "HOLDERS_CHANGED";
+  message: string;
+  holders: [];
+}
+
+// ─── Families (WS8, SA-606): a FAMILY is a non-stocked, non-sellable container; its variants are the sellable rows ──
+export interface FamilyVariantInput {
+  name: string;
+  sku?: string;
+  barcode?: string;
+  unitSku?: string;
+  unitsPerBox?: number;
+  pricePerUnit: string;
+  /** SA-606a: lands in standardCost only (never averageCost / a StockLot); omitted = inherits the family cost. */
+  standardCost?: string;
+}
+
+export interface CreateFamilyRequest {
+  family: {
+    name: string;
+    category?: string;
+    description?: string;
+    pricePerUnit?: string;
+    standardCost?: string;
+  };
+  /** 1..200 rows. */
+  variants: FamilyVariantInput[];
+  /** Copy the family price onto the variants (M2 price authority only matters under mixed_packs). */
+  copyFamilyPrice?: boolean;
+}
+
+/** One conflicting row of a families write. `row` is the variant index, or "family" for the container. */
+export interface FamilyRowConflict {
+  row: number | "family";
+  field: "name" | "sku" | "barcode" | "unitSku";
+  value: string;
+  reason: "CODE_TAKEN" | "NAME_TAKEN" | "DUPLICATE_IN_REQUEST";
+  /** The ACTIVE holder in the same tenant (absent for DUPLICATE_IN_REQUEST). */
+  conflictProductId?: string;
+}
+
+/** 409 FAMILY_ROWS_CONFLICT: EVERY conflict, all-or-nothing (nothing was written). */
+export interface FamilyRowsConflictError {
+  code: "FAMILY_ROWS_CONFLICT";
+  message: string;
+  rows: FamilyRowConflict[];
+}
+
+/** 400 FAMILY_NOT_SELLABLE: a FAMILY container named on a sellable line. */
+export interface FamilyNotSellableError {
+  code: "FAMILY_NOT_SELLABLE";
+  message: string;
+  productIds: string[];
+}
+
+/** PATCH /products/:id/variants body: ALL-OR-NOTHING, at most 200 rows in total. */
+export interface UpdateFamilyVariantsRequest {
+  add?: FamilyVariantInput[];
+  update?: Array<Partial<FamilyVariantInput> & { id: string }>;
+  deactivate?: string[];
+}
