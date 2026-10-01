@@ -644,7 +644,9 @@ export class InlineReturnsService {
     }
     // B947 (third door): the order's creditable invoices POOL per product. A refund lump minted on the LATEST invoice (or a credit
     // note item on another invoice's line) is invisible to the per-invoice read above, so the same takes are checked against the
-    // ORDER POOL when the order has 2+ creditable invoices. The Order lock is already held (SA-214), so no further lock is taken.
+    // ORDER POOL when the order has 2+ creditable invoices. The Order lock the caller holds is the CARRYING order's, NOT the source
+    // order's: this return is serialised against a credit note / refund on the source order through the SOURCE-INVOICE row write above
+    // (create() locks every creditable invoice of the source order, so the row sets overlap on the source invoices).
     const orderRow: { orderId: string | null } | null = await tx.invoice.findFirst({
       where: { id: invoiceIds[0] },
       select: { orderId: true },

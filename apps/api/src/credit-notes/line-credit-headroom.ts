@@ -444,6 +444,8 @@ export async function lockOrderPoolRows(
   invoiceId: string,
   tenantId: string | null,
 ): Promise<void> {
+  // `"tenantId" = ${null}` is never true in SQL: a null tenant would lock NOTHING and look like it worked. Fail closed.
+  if (!tenantId) throw new Error("lockOrderPoolRows: a tenant context is required");
   const inv: { orderId: string | null } | null = await tx.invoice.findFirst({
     where: { id: invoiceId },
     select: { orderId: true },

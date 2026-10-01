@@ -147,6 +147,14 @@ describe("B947 order pool", () => {
     expect(noOrder.exec).not.toHaveBeenCalled();
   });
 
+  it("SA-628g: lockOrderPoolRows FAILS CLOSED without a tenant (a null tenant in the lock predicate would lock NOTHING)", async () => {
+    const f = fakeDb({ invoices: [X, Y] });
+    f.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: "ord-1" });
+    await expect(lockOrderPoolRows(f.db, "inv-x", null)).rejects.toThrow(/tenant/i);
+    expect(f.exec).not.toHaveBeenCalled();
+    expect(f.db.invoice.findFirst).not.toHaveBeenCalled(); // refused before any read
+  });
+
   it("loadOrderPool itself takes NO lock (the writers lock first, so the lock order never inverts)", async () => {
     const f = fakeDb({ invoices: [X, Y] });
     await loadOrderPool(f.db, "ord-1");
