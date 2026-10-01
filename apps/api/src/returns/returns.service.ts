@@ -30,6 +30,14 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
+import {
+  addCredits,
+  allocateProductQty,
+  loadLineCredits,
+  type HeadroomLine,
+  type RefundItem,
+} from "../credit-notes/line-credit-headroom";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { roundMoney } from "@routeflow/pricing";
 import type { ProcessRefundDto } from "./dto/process-refund.dto";
 import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
@@ -440,7 +448,7 @@ export class ReturnsService {
                   status: true,
                   total: true,
                   createdAt: true,
-                  items: { select: { productId: true, qty: true, subtotal: true } },
+                  items: { select: { id: true, productId: true, qty: true, subtotal: true } },
                 },
               },
               lineItems: {
@@ -596,7 +604,7 @@ export class ReturnsService {
   private async billedBasisFor(
     items: any[],
     order?: any,
-  ): Promise<{ amount: number; invoiceId?: string }> {
+  ): Promise<{ amount: number; invoiceId?: string; items?: RefundItem[] }> {
     const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException("Nothing billed on this order can be refunded");
@@ -664,7 +672,62 @@ export class ReturnsService {
           `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
       );
     }
+    // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
+    // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
+    // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
+    // note's items must belong to its one invoice).
+    if (creditable.length === 1 && latest) {
+      const refundItems = await this.itemiseRefund(items, latest);
+      if (refundItems.length > 0) {
+        const total = roundMoney(refundItems.reduce((n, it) => n + it.amount, 0));
+        return { amount: total, invoiceId, items: refundItems };
+      }
+    }
     return { amount, invoiceId };
+  }
+
+  /**
+   * SA-628: the refund as per-line items against `invoice`, filled in line order under what each line still has (qty AND
+   * net amount, after item-bearing credit notes and the legacy itemless-refund term). REFUSES (409
+   * RETURN_REFUND_OVER_LINE_HEADROOM), never clips, when a returned product has more qty than its lines can still absorb.
+   * An invoice whose items carry no id (never the real query) stays a lump sum.
+   */
+  private async itemiseRefund(returnItems: any[], invoice: any): Promise<RefundItem[]> {
+    const lines: HeadroomLine[] = (invoice?.items ?? []).map((it: any) => ({
+      id: it.id,
+      productId: it.productId ?? null,
+      subtotal: Number(it.subtotal),
+      qty: Number(it.qty),
+    }));
+    if (lines.length === 0 || lines.some((l) => !l.id)) return [];
+    const returnedByProduct = new Map<string, number>();
+    for (const it of returnItems) {
+      returnedByProduct.set(
+        it.productId,
+        (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
+      );
+    }
+    let credited = await loadLineCredits(this.prisma.forTenant(), invoice.id, lines);
+    const out: RefundItem[] = [];
+    for (const [productId, returnedQty] of returnedByProduct) {
+      const billedQty = lines
+        .filter((l) => l.productId === productId)
+        .reduce((n, l) => n + l.qty, 0);
+      if (billedQty <= 0) continue;
+      const refundQty = Math.min(returnedQty, billedQty); // the same cap priceReturn applies
+      const { items, shortfallQty } = allocateProductQty(lines, credited, productId, refundQty);
+      if (shortfallQty > 0) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message:
+            "This refund would credit more than the invoice line is worth: part of it was already credited " +
+            "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+        });
+      }
+      out.push(...items);
+      credited = addCredits(credited, items);
+    }
+    return out;
   }
 
   /**
@@ -796,7 +859,7 @@ export class ReturnsService {
                 status: true,
                 total: true,
                 createdAt: true,
-                items: { select: { productId: true, qty: true, subtotal: true } },
+                items: { select: { id: true, productId: true, qty: true, subtotal: true } },
               },
             },
             lineItems: {
@@ -822,10 +885,11 @@ export class ReturnsService {
     // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the
     // mint-time gates: a RECEIVED return on a VOID-only (or fully credited) order must
     // still be resolvable by "refunded outside RouteFlow", or it is stuck forever.
-    const { amount: refundAmount, invoiceId: sourceInvoiceId } =
+    const basis: { amount: number; invoiceId?: string; items?: RefundItem[] } =
       method === "EXTERNAL_REFUND"
         ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
+    const { amount: refundAmount, invoiceId: sourceInvoiceId, items: refundItems } = basis;
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
@@ -864,6 +928,17 @@ export class ReturnsService {
         invoiceId: sourceInvoiceId,
         amount: refundAmount,
         reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
+        // SA-628: an ITEMISED credit (trackedCategoryId null on its rows, so no second ledger reversal: receive() already
+        // reversed the returned regulated goods) counted by the shared per-line headroom.
+        ...(refundItems && refundItems.length > 0
+          ? {
+              items: refundItems.map((it) => ({
+                invoiceItemId: it.invoiceItemId,
+                amount: it.amount,
+                qty: it.qty,
+              })),
+            }
+          : {}),
       });
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
@@ -887,6 +962,21 @@ export class ReturnsService {
         this.logger.error(
           `Compensation failed for return ${id} (amount ${refundAmount}, invoice ${sourceInvoiceId ?? "none"}): ${(compErr as Error)?.message}`,
         );
+      }
+      // SA-628: a racing credit note / refund that took the line's headroom between the pre-check and the mint is the SAME
+      // refusal (409 RETURN_REFUND_OVER_LINE_HEADROOM), never the credit note's own over-headroom 400.
+      const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+      if (
+        refundItems &&
+        (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
+          code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)
+      ) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+          message:
+            "This refund would credit more than the invoice line is worth: part of it was already credited " +
+            "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+        });
       }
       throw err;
     }
@@ -1034,7 +1124,7 @@ export class ReturnsService {
                 status: true,
                 total: true,
                 createdAt: true,
-                items: { select: { productId: true, qty: true, subtotal: true } },
+                items: { select: { id: true, productId: true, qty: true, subtotal: true } },
               },
             },
             lineItems: {
