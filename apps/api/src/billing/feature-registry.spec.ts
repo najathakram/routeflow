@@ -330,7 +330,7 @@ describe("FEATURE_REGISTRY (feature grants PR-1)", () => {
 
   it("DARK_PLAN_FLAGS (plan-flag-policy.ts) parity: exactly the dark RequirePlanFlag keys", () => {
     // DARK_PLAN_FLAGS is DEFINED in plan-flag-policy.ts (split out of plan-flag.guard.ts for the
-    // 2026-08-23/Lite-L2 rollout, REMOVE by 2026-10-01) and RE-EXPORTED from plan-flag.guard.ts —
+    // 2026-08-23/Lite-L2 rollout, review by 2027-01-31) and RE-EXPORTED from plan-flag.guard.ts —
     // scan the file that actually declares the literal, not the re-export. Do not point this back
     // at plan-flag.guard.ts; it no longer contains the `new Set([...])` text.
     const policyText = fs.readFileSync(
