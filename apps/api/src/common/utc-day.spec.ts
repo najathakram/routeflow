@@ -14,7 +14,11 @@ const SOURCE = ts.transpileModule(readFileSync(join(__dirname, "utc-day.ts"), "u
 }).outputText;
 
 /** Runs the real startOfUtcDay on each ISO input in a fresh node process whose zone is `tz`. */
-function inZone(tz: string, inputs: string[]): { hostDay: number; out: string[] } {
+function inZone(
+  tz: string,
+  inputs: string[],
+  fn: "startOfUtcDay" | "isoWeekdayUtc" = "startOfUtcDay",
+): { hostDay: number; out: (string | number)[] } {
   const script = `
     const m = { exports: {} };
     new Function("module", "exports", ${JSON.stringify(SOURCE)})(m, m.exports);
@@ -22,7 +26,10 @@ function inZone(tz: string, inputs: string[]): { hostDay: number; out: string[] 
     const hostDay = new Date("2026-01-15T00:30:00.000Z").getDate();
     process.stdout.write(JSON.stringify({
       hostDay,
-      out: inputs.map((v) => m.exports.startOfUtcDay(new Date(v)).toISOString()),
+      out: inputs.map((v) => {
+        const r = m.exports[${JSON.stringify(fn)}](new Date(v));
+        return r instanceof Date ? r.toISOString() : r;
+      }),
     }));
   `;
   const stdout = execFileSync(process.execPath, ["-e", script, JSON.stringify(inputs)], {
@@ -57,6 +64,30 @@ describe("startOfUtcDay (B955)", () => {
     "returns the UTC midnight of the UTC day under TZ=%s",
     (tz) => {
       expect(inZone(tz, INPUTS).out).toEqual(EXPECTED);
+    },
+  );
+});
+
+describe("isoWeekdayUtc (B955: the daily generator's weekday is the UTC weekday)", () => {
+  // Just after UTC midnight Thu is still WEDNESDAY in LA; just before UTC midnight Wed is already
+  // THURSDAY in Tokyo. Sunday must be 7 (ISO), not 0.
+  const CASES: [string, number][] = [
+    ["2026-01-15T00:30:00.000Z", 4], // Thu UTC (Wed 16:30 in LA)
+    ["2026-01-14T23:30:00.000Z", 3], // Wed UTC (Thu 08:30 in Tokyo)
+    ["2026-01-18T00:30:00.000Z", 7], // Sun UTC (Sat in LA)
+    ["2026-01-12T23:59:59.999Z", 1], // Mon UTC (Tue in Tokyo)
+  ];
+
+  it.each(["America/Los_Angeles", "Asia/Tokyo", "UTC", "Pacific/Kiritimati"])(
+    "returns the UTC ISO weekday near midnight under TZ=%s",
+    (tz) => {
+      expect(
+        inZone(
+          tz,
+          CASES.map(([iso]) => iso),
+          "isoWeekdayUtc",
+        ).out,
+      ).toEqual(CASES.map(([, day]) => day));
     },
   );
 });

@@ -9,3 +9,9 @@ export function startOfUtcDay(date: Date): Date {
   d.setUTCHours(0, 0, 0, 0);
   return d;
 }
+
+/** ISO weekday (1 = Monday … 7 = Sunday) of the UTC calendar day an instant falls on (B955). */
+export function isoWeekdayUtc(date: Date): number {
+  const d = date.getUTCDay();
+  return d === 0 ? 7 : d;
+}

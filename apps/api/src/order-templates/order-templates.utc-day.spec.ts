@@ -95,4 +95,30 @@ describe("OrderTemplatesService.generateDailyOrders — UTC day window (B955)", 
       where: { templateId: "t1", createdAt: { gte: new Date("2026-01-15T00:00:00.000Z") } },
     });
   });
+
+  it("selects templates by the UTC ISO weekday (23:30Z Wednesday is already Thursday in Tokyo)", async () => {
+    jest.useFakeTimers({
+      now: new Date("2026-01-14T23:30:00.000Z"),
+      doNotFake: [
+        "nextTick",
+        "setImmediate",
+        "setTimeout",
+        "setInterval",
+        "clearTimeout",
+        "clearInterval",
+        "queueMicrotask",
+      ],
+    });
+    prisma.tenant.findMany.mockResolvedValue([{ id: "tn-1" }]);
+    prisma.orderTemplate.findMany.mockResolvedValue([]);
+    prisma.orderTemplate.count.mockResolvedValue(0);
+
+    await service.generateDailyOrders();
+
+    expect(prisma.orderTemplate.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ daysOfWeek: { has: 3 } }), // Wednesday, UTC
+      }),
+    );
+  });
 });
