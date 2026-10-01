@@ -1,0 +1,291 @@
+/**
+ * HIGH money bug (F2-confirmed): a line can be credited past its value by combining a CREDIT NOTE with a RETURN REFUND.
+ * On a 2-line $200 invoice, line A ($100) can be credited $133.33: a $33.33 credit note on A, then a full return refund of A
+ * ($100). The returns refund mints an ITEMLESS lump-sum credit note that `ReturnsService.billedBasisFor` checks only against
+ * INVOICE headroom, while the credit-note per-line cap (`CreditNotesService.create`, `priorForLine`) counts only item-bearing
+ * notes, so neither side sees the other.
+ *
+ * RED-FIRST proof (tests only, no production code): these cases assert the INVARIANT, "the total credited against a line
+ * (CN items on it + refunds of returns of its product) never exceeds the line's value", so they hold whether the SA rules
+ * REFUSE or CLIP the over-crediting call. Order, partial/full, multi-line, tax share and a concurrency probe are covered.
+ * Cases 3 (partial boundary), 6 (VOID frees headroom) and 7 (non-attributable credits unchanged) follow the SA ruling.
+ *
+ * Runs only under `npm run local:test:db` (jest.db.config.js). Every tenant is a throwaway `qa-capret-<run>-<n>` slug
+ * approved by `assertTestTenant`, deleted in FK order in afterAll.
+ */
+import { randomUUID } from "crypto";
+import { Test } from "@nestjs/testing";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { CreditNotesService } from "./credit-notes.service";
+import { ReturnsService } from "../returns/returns.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NumberingService } from "../import/numbering.service";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+const RUN = randomUUID().slice(0, 8);
+
+describeDb(
+  "a line is never credited past its value across credit notes AND return refunds — real Postgres",
+  () => {
+    let prisma: PrismaService;
+    let tenantCtx: TenantContextService;
+    let creditNotes: CreditNotesService;
+    let returns: ReturnsService;
+    const tenantIds: string[] = [];
+    let seq = 0;
+    let cnSeq = 0;
+    let rtnSeq = 0;
+
+    beforeAll(async () => {
+      requireLocalDatabaseUrl();
+      tenantCtx = new TenantContextService();
+      prisma = new PrismaService(tenantCtx);
+      await prisma.$connect();
+      const anyMethod = new Proxy({}, { get: () => jest.fn() }); // the socket gateway: nothing under test
+      const mod = await Test.createTestingModule({
+        providers: [
+          CreditNotesService,
+          ReturnsService,
+          RegulatedLedgerService,
+          CommissionEngineService,
+          AuditService,
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: EntitlementsService,
+            useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          },
+          { provide: RouteFlowGateway, useValue: anyMethod },
+          {
+            provide: NumberingService,
+            useValue: {
+              reserveNext: jest.fn().mockImplementation(async () => `CN-CAPRET-${RUN}-${++cnSeq}`),
+            },
+          },
+        ],
+      }).compile();
+      creditNotes = mod.get(CreditNotesService);
+      returns = mod.get(ReturnsService);
+    });
+
+    afterAll(async () => {
+      const swallow = () => undefined; // a failed cleanup must never mask a test's result
+      for (const tenantId of tenantIds) {
+        const where = { where: { tenantId } };
+        await prisma.returnItem.deleteMany(where).catch(swallow);
+        await prisma.return.deleteMany(where).catch(swallow);
+        await prisma.creditNoteItem.deleteMany(where).catch(swallow);
+        await prisma.creditNote.deleteMany(where).catch(swallow);
+        await prisma.invoiceItem.deleteMany(where).catch(swallow);
+        await prisma.invoice.deleteMany(where).catch(swallow);
+        await prisma.orderItem.deleteMany(where).catch(swallow);
+        await prisma.order.deleteMany(where).catch(swallow);
+        await prisma.product.deleteMany(where).catch(swallow);
+        await prisma.customer.deleteMany(where).catch(swallow);
+        await prisma.user.deleteMany(where).catch(swallow);
+        await prisma.auditLog.deleteMany(where).catch(swallow);
+        await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+      }
+      await prisma?.$disconnect();
+    });
+
+    /**
+     * A SENT 2-line invoice: A = $100 and B = $100 (subtotals). `taxPct` > 0 adds that % of tax per line at the INVOICE level
+     * (so a line's value including tax is 100 * (1 + taxPct/100)).
+     */
+    async function seed(label: string, taxPct = 0) {
+      seq += 1;
+      const slug = assertTestTenant(
+        `qa-capret-${RUN}-${seq}-${label}`,
+        "credit-return-line-cap.db.spec.ts",
+      );
+      const tenant = await prisma.tenant.create({ data: { slug, name: `cap ${slug}` } });
+      tenantIds.push(tenant.id);
+      const tenantId = tenant.id;
+      const user = await prisma.user.create({
+        data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+      });
+      const mk = (name: string) =>
+        prisma.product.create({
+          data: { tenantId, name: `${name} ${slug}`, unit: "each", pricePerUnit: 100 },
+        });
+      const [pA, pB] = [await mk("A"), await mk("B")];
+      const order = await prisma.order.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderNumber: `ORD-CAPRET-${RUN}-${seq}`,
+          subtotal: 200,
+          tax: 0,
+          total: 200,
+          status: "DELIVERED",
+        } as any,
+      });
+      for (const p of [pA, pB]) {
+        await prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: p.id,
+            name: p.name,
+            qty: 1,
+            unitPrice: 100,
+            subtotal: 100,
+          } as any,
+        });
+      }
+      const tax = (200 * taxPct) / 100;
+      const invoice = await prisma.invoice.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderId: order.id,
+          invoiceNumber: `INV-CAPRET-${RUN}-${seq}`,
+          status: "SENT",
+          subtotal: 200,
+          taxAmount: tax,
+          total: 200 + tax,
+        },
+      });
+      const item = (productId: string, description: string) =>
+        prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId: invoice.id,
+            productId,
+            description,
+            qty: 1,
+            unitPrice: 100,
+            subtotal: 100,
+          },
+        });
+      const [lineA, lineB] = [await item(pA.id, "A"), await item(pB.id, "B")];
+      return {
+        tenantId,
+        customerId: customer.id,
+        orderId: order.id,
+        invoiceId: invoice.id,
+        pA,
+        pB,
+        lineA,
+        lineB,
+        taxPct,
+      };
+    }
+    type Seed = Awaited<ReturnType<typeof seed>>;
+
+    /** A RECEIVED, whole-line return of `productId` (qty 1 = the full line). */
+    async function receivedReturn(s: Seed, productId: string) {
+      rtnSeq += 1;
+      return prisma.return.create({
+        data: {
+          tenantId: s.tenantId,
+          orderId: s.orderId,
+          customerId: s.customerId,
+          reason: "DAMAGED",
+          status: "RECEIVED",
+          returnNumber: `RTN-CAPRET-${RUN}-${rtnSeq}`,
+          items: { create: [{ tenantId: s.tenantId, productId, qty: 1 }] },
+        } as any,
+      });
+    }
+    const inTenant = <T>(s: Seed, fn: () => Promise<T>) => tenantCtx.run(s.tenantId, fn);
+    const creditNoteItem = (s: Seed, line: { id: string }, amount: number) =>
+      inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount,
+          items: [{ invoiceItemId: line.id, amount }],
+        } as any),
+      );
+    const refund = (s: Seed, returnId: string) =>
+      inTenant(s, () => returns.processRefund(returnId));
+
+    /** CN items booked on a line (non-VOID) + refunds of REFUNDED returns of the line's product (their itemless credit notes). */
+    async function creditedOnLine(
+      s: Seed,
+      line: { id: string },
+      productId: string,
+    ): Promise<number> {
+      const items = await prisma.creditNoteItem.findMany({
+        where: {
+          tenantId: s.tenantId,
+          invoiceItemId: line.id,
+          creditNote: { status: { not: "VOID" } },
+        },
+        select: { amount: true },
+      });
+      const refunded = await prisma.return.findMany({
+        where: {
+          tenantId: s.tenantId,
+          status: "REFUNDED",
+          creditNoteId: { not: null },
+          items: { some: { productId } },
+        },
+        select: { refundAmount: true },
+      });
+      return (
+        Math.round(
+          (items.reduce((n, i) => n + Number(i.amount), 0) +
+            refunded.reduce((n, r) => n + Number(r.refundAmount ?? 0), 0)) *
+            100,
+        ) / 100
+      );
+    }
+    const lineValue = (s: Seed) => Math.round(100 * (1 + s.taxPct / 100) * 100) / 100;
+    const attempt = (p: Promise<unknown>) => p.catch((e) => e); // refuse OR clip: the invariant holds either way
+
+    it("1. RED REPRO: a $33.33 credit note on A then a FULL return refund of A can never total more than A's value", async () => {
+      const s = await seed("cn-then-return");
+      await creditNoteItem(s, s.lineA, 33.33);
+      await attempt(refund(s, (await receivedReturn(s, s.pA.id)).id));
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s)); // today: 133.33
+    });
+
+    it("2. reverse order: a full return refund of A first, then a $33.33 credit note on A, never totals more than A's value", async () => {
+      const s = await seed("return-then-cn");
+      await refund(s, (await receivedReturn(s, s.pA.id)).id);
+      await attempt(creditNoteItem(s, s.lineA, 33.33));
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s)); // today: 133.33
+    });
+
+    it("4. multi-line: A cannot borrow B's slack (the invoice total has room), and B stays creditable in full", async () => {
+      const s = await seed("multi-line");
+      await creditNoteItem(s, s.lineA, 100); // A fully credited by a credit note
+      await attempt(refund(s, (await receivedReturn(s, s.pA.id)).id)); // a return of A on top: over-credits A from B's slack
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s));
+      await expect(creditNoteItem(s, s.lineB, 100)).resolves.toBeDefined(); // B untouched, still fully creditable
+    });
+
+    it("5. tax share: with 10% tax a line is worth $110; credit note + return refund together never exceed $110", async () => {
+      const s = await seed("tax", 10);
+      await creditNoteItem(s, s.lineA, 60);
+      await attempt(refund(s, (await receivedReturn(s, s.pA.id)).id));
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s)); // 110.00
+    });
+
+    it("8. concurrency: a credit note and a return refund racing on the SAME line never total more than its value, and neither 500s", async () => {
+      const s = await seed("race");
+      const ret = await receivedReturn(s, s.pA.id);
+      const results = await Promise.allSettled([creditNoteItem(s, s.lineA, 60), refund(s, ret.id)]);
+      for (const r of results) {
+        if (r.status === "rejected") {
+          // a refusal is a 4xx (BadRequest / Conflict); a raw serialization / deadlock error would surface as a 500
+          expect((r.reason as { getStatus?: () => number }).getStatus?.()).toBeLessThan(500);
+        }
+      }
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s));
+    });
+  },
+);
