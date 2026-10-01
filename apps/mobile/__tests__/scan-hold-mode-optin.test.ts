@@ -36,8 +36,9 @@ describe("BarcodeScanner: Hold mode exists only behind aimAssist", () => {
     expect(src).toMatch(/const holdMode = aimAssist && scanMode === "hold"/);
   });
   it("decoding is gated by shouldDecode(mode, holding) on top of active/paused", () => {
-    expect(src).toMatch(/shouldDecode\(holdMode \? "hold" : "continuous", holding\)/);
-    expect(src).toMatch(/active=\{active && !paused && shouldDecode\(/);
+    expect(src).toMatch(/decode=\{shouldDecode\(holdMode \? "hold" : "continuous", holding\)\}/);
+    // the long-pinned REG-B263-C polarity of `active` is untouched
+    expect(src).toMatch(/active=\{active && !paused\}/);
   });
   it("draws the round hold button (press-in holds, press-out releases) only in Hold mode", () => {
     expect(src).toMatch(/holdMode \? \(/);
@@ -47,15 +48,18 @@ describe("BarcodeScanner: Hold mode exists only behind aimAssist", () => {
   });
   it("the Scan mode toggle is rendered only when aimAssist is on", () => {
     expect(src).toMatch(/aimAssist \? \(/);
-    expect(src).toMatch(/accessibilityLabel="Scan mode: Hold to scan"/);
-    expect(src).toMatch(/accessibilityLabel="Scan mode: Continuous"/);
+    expect(src).toMatch(/Scan mode: Hold to scan/);
+    expect(src).toMatch(/Scan mode: Continuous/);
   });
 });
 
 describe("ScanCamera: a release drops the stale steady streak (assist only)", () => {
   const src = read("components/ScanCamera.tsx");
-  it("resets the steady-read refs when the camera goes inactive under aimAssist", () => {
-    expect(src).toMatch(/if \(!active && aimAssist\)/);
+  it("takes a `decode` prop (default true) that drops frames, and resets the steady-read refs when it goes false under aimAssist", () => {
+    expect(src).toMatch(/decode\?: boolean/);
+    expect(src).toMatch(/decode = true/);
+    expect(src).toMatch(/if \(!decode\) return;/);
+    expect(src).toMatch(/if \(!decode && aimAssist\)/);
     expect(src).toMatch(/steadyRef\.current = createSteadyReadState\(\)/);
   });
 });

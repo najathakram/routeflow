@@ -116,7 +116,8 @@ export function BarcodeScanner({
         onScanned={guardedScan}
         onOutcome={handleOutcome}
         continuous={continuous}
-        active={active && !paused && shouldDecode(holdMode ? "hold" : "continuous", holding)}
+        active={active && !paused}
+        decode={shouldDecode(holdMode ? "hold" : "continuous", holding)}
         aimAssist={aimAssist}
         aimBox={aimAssist ? AIM_BOX : undefined}
       />
