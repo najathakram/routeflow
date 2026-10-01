@@ -24,12 +24,6 @@ map routine" / "Lessons learned routine"). A feature or bug PR doesn't hand-edit
 the same diff; the landing coordinator's docs-only follow-up updates the affected rows (status,
 percentDone, prs[]), citing the merged sha.
 
-**Not here — lane status.** Per-lane current/next/blocked/done state is not a roadmap field: it
-lives on the `ctl/state` branch, written only by `npm run ctl` (see `CLAUDE.md` § Control
-system). The control dashboard reads these three registers through adapters and never edits
-them; a status the dashboard infers that disagrees with a row here is shown as `register lag`,
-and the bookkeeping PR still updates the row.
-
 ## Commit / PR trailer convention
 
 Reference the row a change is about in the commit or PR body, e.g. `Feature: F-07`,

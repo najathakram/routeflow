@@ -29,12 +29,7 @@
       {
         "hooks": [
           { "type": "command", "command": "node scripts/campaign/plane-triage.mjs --brief" },
-          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" },
-          {
-            "type": "command",
-            "command": "node -e \"const f='apps/control/bin/ctl.mjs';if(require('fs').existsSync(f))require('child_process').spawnSync(process.execPath,[f,'next','--hook'],{stdio:'inherit',timeout:8000})\"",
-            "timeout": 10
-          }
+          { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" }
         ]
       }
     ],

@@ -24,7 +24,7 @@
 //   node closeout.mjs <runDir> [--project <dir>] [--session <id> | --latest]
 //       [--dry] [--no-usage --reason "<why>"] [--branch <name>] [--pr <n>]
 //       [--ledger <file>] [--runlog <file>]
-//       [--light [--scale small|major] [--findings <json>]] [--task <RF-id>]
+//       [--light [--scale small|major] [--findings <json>]]
 //   node closeout.mjs selftest
 //
 // NO runDir? (SS8, 2026-09-16) This script needs a run directory and a
@@ -1808,10 +1808,6 @@ function runMain(argv) {
   };
 
   printReport(summary);
-  if (typeof flags.task === "string" && /^[A-Za-z0-9._-]+$/.test(flags.task)) {
-    // Control system: operator line only -- never executed here.
-    console.log(`MANUAL: npm run ctl -- done ${flags.task}`);
-  }
   return summary;
 }
 
@@ -1823,7 +1819,6 @@ Usage:
       [--dry] [--no-usage --reason "<why>"] [--branch <name>] [--pr <n>]
       [--ledger <file>] [--runlog <file>]
       [--light [--scale small|major] [--findings <json>]]
-      [--task <RF-id>]   (prints the \`npm run ctl -- done <RF-id>\` line for the operator; not run)
 
   node closeout.mjs selftest
 

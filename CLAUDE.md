@@ -151,13 +151,6 @@ pending` trailer, which Gate 3 accepts in place of an updated entry. A fix with 
   missing the fields), overflow to `ARCHIVE.md`. Entries are generalizable rules, not incident
   diaries, and carry **no client identifiers** (this repo goes public for CI).
 
-## Control system
-
-Lane state lives on orphan branch `ctl/state`, written only by `npm run ctl -- start|done|block|…`
-(never by hand, never in a PR). Start every session with `npm run ctl -- next --lane <lane>`;
-paste `npm run ctl -- pr-body <task>` into every PR body. Master registers keep
-Bookkeeping Option B. Full rule: `.claude/control/README.md`.
-
 ## Money discipline
 
 All line/tax/total math lives in `packages/pricing` (`@routeflow/pricing`) — api, web and mobile

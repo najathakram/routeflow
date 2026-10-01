@@ -2,7 +2,10 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 
-const OUT = "/Users/maznahamanullah/code/routeflow/local-assets/proofs/2026-09-30/control";
+// Proofs go to the gitignored local-assets/ (never into git); override with CONTROL_PROOF_DIR.
+const OUT =
+  process.env.CONTROL_PROOF_DIR ??
+  path.resolve(__dirname, "../../../../local-assets/proofs/control");
 const VIEWPORTS = [
   { name: "1440", width: 1440, height: 900 },
   { name: "768", width: 768, height: 1024 },
