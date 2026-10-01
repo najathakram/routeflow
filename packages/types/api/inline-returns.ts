@@ -221,12 +221,13 @@ export interface InlineReturnRecord {
   refundedAt?: string | null;
   kind: "INLINE";
   returnKey?: string | null;
-  /** "DRIVER_CAP" while a driver-captured return awaits approval above the driver cap —
+  /** "DRIVER_CAP" while a driver-captured return awaits approval above the driver cap, or "ALREADY_RETURNED" (B961, wins over
+   *  DRIVER_CAP) while it awaits staff approval WITH a reason because its chunk is goods already returned or credited —
    *  an OFFICE capture never sets this (PR 1 asserts it stays null/absent). */
   holdReason?: string | null;
   heldAmount?: number | null;
   /** B961: true on a capture/replay response whose return is HELD because its chunk is "already returned or credited"
-   *  (not persisted: re-derived from the hold's audit row), with the readable sentence for the driver. */
+   *  (not persisted: derived from `holdReason === "ALREADY_RETURNED"`), with the readable sentence for the driver. */
   alreadyReturnedHold?: boolean;
   holdMessage?: string;
   /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park

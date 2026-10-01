@@ -484,7 +484,7 @@ export class InlineReturnsService {
       await this.reverseLedgerForReturn(tx, created);
     } else {
       if (arHeld) {
-        // B961: the marker approve() reads to demand a reason, and the staff-facing record of WHY it is held.
+        // B961: EVIDENCE of why it is held (staff-facing). The hold itself is the `holdReason` COLUMN (SA-071f N3): approve() reads that.
         await tx.auditLog.create({
           data: {
             userId: user.sub,
@@ -518,7 +518,7 @@ export class InlineReturnsService {
             heldAmount: priced.total,
             priorCredit,
             orderGross: cap,
-            reason: "DRIVER_CAP",
+            reason: arHeld ? ALREADY_RETURNED_HOLD_REASON : "DRIVER_CAP",
           },
         },
       });
@@ -526,7 +526,7 @@ export class InlineReturnsService {
 
     return {
       replayed: false as const,
-      // B961: tell the driver WHY it is held (readable; not persisted: approve() re-derives it from the hold audit row)
+      // B961: tell the driver WHY it is held (readable; not persisted: derived from the `holdReason` COLUMN, here and on a replay)
       ret: arHeld
         ? { ...created, alreadyReturnedHold: true, holdMessage: ALREADY_RETURNED_HOLD_MESSAGE }
         : created,

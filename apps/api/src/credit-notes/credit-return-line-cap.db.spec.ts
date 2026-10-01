@@ -591,9 +591,11 @@ describeDb(
           orderId: s.orderId,
           invoiceNumber: `INV-CAPRET-${RUN}-Y${++rtnSeq}`,
           status: "SENT",
-          subtotal: 50,
+          // Y must have room for A's whole $100 refund (the lump sum lands here), or the standard refund is refused and the
+          // precondition is never built (F2's finding on the first push)
+          subtotal: 100,
           taxAmount: 0,
-          total: 50,
+          total: 100,
           items: {
             create: [
               {
@@ -601,8 +603,8 @@ describeDb(
                 productId: s.pB.id,
                 description: "B later",
                 qty: 1,
-                unitPrice: 50,
-                subtotal: 50,
+                unitPrice: 100,
+                subtotal: 100,
               },
             ],
           },
