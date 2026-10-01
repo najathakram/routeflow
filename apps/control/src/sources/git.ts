@@ -100,11 +100,60 @@ export function assertOrigin(origin: string): string {
   return origin;
 }
 
-/** The process environment minus every CONTROL_* variable (secrets never reach a git child). */
-function childEnv(): Record<string, string | undefined> {
+/**
+ * HTTPS auth for git children, through git's env config (git >= 2.31): one extra header scoped to
+ * `base`, plus `http.<base>.followRedirects=false` (URL-scoped, so a scoped `true` set in any other
+ * config cannot beat it: env config is applied last). Nothing is written to .git/config, argv or a URL; the
+ * entries live only in the child's environment.
+ *
+ * What is guaranteed: the header is only sent to the configured base, and git never follows a
+ * redirect (a 302 is a failure, `returned error: 302`), so the token cannot reach another host
+ * or host name. The URL scoping alone is NOT enough: curl drops the header on the redirected GET,
+ * but git then switches its base URL to the redirect target and sends the following POST to it
+ * WITH the header (proven against two local servers in test/git-auth-redirect.spec.ts).
+ */
+export function gitAuthEnv(token: string, base = "https://github.com/"): Record<string, string> {
+  const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: `http.${base}.extraheader`,
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+    GIT_CONFIG_KEY_1: `http.${base}.followRedirects`,
+    GIT_CONFIG_VALUE_1: "false",
+  };
+}
+
+let authToken: string | null = null;
+let authBase: string | undefined;
+/** Set (or clear, with null) the token every git child authenticates with. */
+export function setGitAuth(token: string | null, base?: string): void {
+  authToken = token === null || token === "" ? null : token;
+  authBase = base;
+}
+
+/** The auth entries appended after any GIT_CONFIG_COUNT entries the process env already has. */
+function authEntries(): Record<string, string> {
+  if (authToken === null) return {};
+  const own = gitAuthEnv(authToken, authBase);
+  const raw = process.env.GIT_CONFIG_COUNT;
+  const n = raw !== undefined && /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
+  return {
+    GIT_CONFIG_COUNT: String(n + 2),
+    [`GIT_CONFIG_KEY_${n}`]: own.GIT_CONFIG_KEY_0,
+    [`GIT_CONFIG_VALUE_${n}`]: own.GIT_CONFIG_VALUE_0,
+    [`GIT_CONFIG_KEY_${n + 1}`]: own.GIT_CONFIG_KEY_1,
+    [`GIT_CONFIG_VALUE_${n + 1}`]: own.GIT_CONFIG_VALUE_1,
+  };
+}
+
+/**
+ * The process environment minus every CONTROL_* variable (secrets never reach a git child), plus
+ * the HTTPS auth entries when `setGitAuth` was called (merged after the scrub).
+ */
+export function childEnv(): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("CONTROL_")) out[k] = v;
-  return out;
+  return { ...out, ...authEntries() };
 }
 
 function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitResult {

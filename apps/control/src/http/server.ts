@@ -82,6 +82,8 @@ export interface ControlDeps {
   rateLimitDelayMs?: number;
   pingMs?: number;
   masterDir?: string;
+  /** Origin of the master clone (the product repo); defaults to `env.origin` (fixtures, tests). */
+  masterOrigin?: string;
   log?: (line: string) => void;
 }
 
@@ -177,17 +179,33 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   const secure = !cfg.local;
   const LOCAL_SESSION: Session = { iat: 0, exp: Number.MAX_SAFE_INTEGER, nonce: "local" };
   const log = deps.log ?? ((): void => undefined);
+  // Git sends the token as `Authorization: Basic base64("x-access-token:<token>")` and can echo
+  // that header or a `remote:` body into an error, so the Basic forms are secrets too. The longest
+  // form comes first so a full header is replaced whole.
+  const basicOf = (t: string): string => Buffer.from(`x-access-token:${t}`).toString("base64");
   const secrets = [
     cfg.password,
     cfg.sessionSecret,
     cfg.webhookSecret,
     cfg.githubToken,
-    cfg.deployKeyB64,
     cfg.railwayToken,
-  ].filter((s): s is string => typeof s === "string" && s.length >= 6);
+  ]
+    .filter((s): s is string => typeof s === "string" && s.length >= 6)
+    .flatMap((s) =>
+      s === cfg.githubToken ? [`Authorization: Basic ${basicOf(s)}`, basicOf(s), s] : [s],
+    );
   const redact = (m: string): string => secrets.reduce((acc, s) => acc.split(s).join("***"), m);
-  const errText = (e: unknown): string =>
-    redact(oneLine(e instanceof Error ? e.message : String(e)));
+  /** Redact FIRST, then cut: a cut prefix of a secret no longer matches the secret. */
+  const safeLine = (s: string, n = 200): string => oneLine(redact(s), n);
+  const errText = (e: unknown): string => safeLine(e instanceof Error ? e.message : String(e));
+  /** Rethrow with a redacted message (the poller cuts messages to length before we see them). */
+  const scrubbed = async <T>(f: () => Promise<T>): Promise<T> => {
+    try {
+      return await f();
+    } catch (e) {
+      throw new Error(redact(e instanceof Error ? e.message : String(e)));
+    }
+  };
 
   const limiter = createLimiter();
   const sse = createSse({ pingMs: deps.pingMs });
@@ -249,12 +267,33 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   };
 
   const ensureMaster = (): boolean => {
-    if (fs.existsSync(path.join(masterDir, ".git"))) return true;
+    if (fs.existsSync(path.join(masterDir, ".git"))) {
+      // a clone left by an older boot keeps its old origin (e.g. ssh); the configured one wins
+      if (deps.masterOrigin !== undefined) {
+        try {
+          const want = assertOrigin(deps.masterOrigin);
+          const cur = gitTry(masterDir, ["remote", "get-url", "origin"]);
+          if (!cur.ok || cur.out.trim() !== want) {
+            const set = gitTry(masterDir, [
+              "remote",
+              cur.ok ? "set-url" : "add",
+              "--",
+              "origin",
+              want,
+            ]);
+            return set.ok;
+          }
+        } catch {
+          /* a bad masterOrigin leaves the clone as it was */
+        }
+      }
+      return true;
+    }
     try {
-      assertOrigin(env.origin);
+      const origin = assertOrigin(deps.masterOrigin ?? env.origin);
       fs.mkdirSync(masterDir, { recursive: true });
       const a = gitTry(masterDir, ["init", "-q"]);
-      const b = gitTry(masterDir, ["remote", "add", "--", "origin", env.origin]);
+      const b = gitTry(masterDir, ["remote", "add", "--", "origin", origin]);
       return a.ok && b.ok;
     } catch {
       return false;
@@ -277,7 +316,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     );
     if (!r.ok) {
       if (cfg.fixtureDir) return; // a fixture origin has no master branch: expected, not a warning
-      throw new Error(oneLine(r.err || "fetch failed", 160));
+      throw new Error(safeLine(r.err || "fetch failed", 160));
     }
     const sha = gitTry(masterDir, [
       "rev-parse",
@@ -320,7 +359,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
       pulls.set(n, {
         ok: r.ok,
         tick: tickCount,
-        why: r.ok ? "" : oneLine(r.err || "fetch failed", 100),
+        why: r.ok ? "" : safeLine(r.err || "fetch failed", 100),
       });
     }
   };
@@ -407,7 +446,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     }
     if (compactWarning) all.push(compactWarning);
     if (stateError) all.push(`state: ${stateError}`);
-    return [...new Set(all.map((w) => redact(oneLine(w))))].slice(0, MAX_WARNINGS);
+    return [...new Set(all.map((w) => safeLine(w)))].slice(0, MAX_WARNINGS);
   };
 
   /** Re-fold the clone with the cached GitHub / Railway reads. Local only: no network. Returns true when the served version moved. */
@@ -421,7 +460,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
       }
       const tree = S.readTree(cloneDir);
       const regs = loadRegs();
-      regsWarnings = regs.warnings.map((w) => oneLine(w, 160));
+      regsWarnings = regs.warnings.map((w) => safeLine(w, 160));
       env.registers = { tasks: regs.tasks, releases: regs.releases };
       const base = { tasks: regs.tasks, releases: regs.releases };
       const events = S.liveEvents(tree);
@@ -539,8 +578,8 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     const res = await runTick(
       {
         github: deps.github,
-        fetchState: () => locked(syncState),
-        fetchMaster: () => locked(() => Promise.resolve(fetchMaster())),
+        fetchState: () => scrubbed(() => locked(syncState)),
+        fetchMaster: () => scrubbed(() => locked(() => Promise.resolve(fetchMaster()))),
         railway: readRailway,
         lastWebhookAt: () => webhookAt,
         now: () => env.now(),

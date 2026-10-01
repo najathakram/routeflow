@@ -22,7 +22,7 @@ describe("T28 config: loadConfig", () => {
     CONTROL_PASSWORD: "pw-pw-pw-pw",
     CONTROL_SESSION_SECRET: "x".repeat(40),
     CONTROL_GITHUB_TOKEN: "ghp_x",
-    CONTROL_DEPLOY_KEY_B64: "dGVzdA==",
+    CONTROL_STATE_REPO: "acme/acme-control-state",
     CONTROL_REPO: "acme/acme",
     CONTROL_PORT: "8080",
   };
@@ -42,7 +42,7 @@ describe("T28 config: loadConfig", () => {
     "CONTROL_PASSWORD",
     "CONTROL_SESSION_SECRET",
     "CONTROL_GITHUB_TOKEN",
-    "CONTROL_DEPLOY_KEY_B64",
+    "CONTROL_STATE_REPO",
     "CONTROL_REPO",
   ])(
     "non-local without %s throws an error that names the variable (never a default password)",

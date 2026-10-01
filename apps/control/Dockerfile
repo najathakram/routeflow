@@ -21,7 +21,8 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-RUN apk add --no-cache git openssh-client
+# git over HTTPS only (one read-only token): no ssh client in the image
+RUN apk add --no-cache git
 
 COPY --from=builder /app/apps/control/dist         ./apps/control/dist
 # tsc emits only .ts output: the page assets (client.js, styles.css) ride along from src

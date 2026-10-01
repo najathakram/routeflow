@@ -9,10 +9,12 @@ export interface Config {
   password?: string;
   sessionSecret?: string;
   webhookSecret?: string;
+  /** One read-only token (contents:read) for both repos and the GitHub poller. */
   githubToken?: string;
-  deployKeyB64?: string;
-  /** `owner/name` of the GitHub repository. */
+  /** `owner/name` of the product repository (PR/CI reads and the master clone). */
   repo?: string;
+  /** `owner/name` of the separate state repository (the ctl/state branch). Never the product repo. */
+  stateRepo?: string;
   fixtureDir?: string;
   railwayToken?: string;
   railwayProjectId?: string;
@@ -22,6 +24,8 @@ export interface Config {
   masterDir?: string;
   /** The origin the browser sees (e.g. https://control.example); else derived from the request. */
   publicOrigin?: string;
+  /** One line each, printed at boot; never carries a value. */
+  warnings: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -30,9 +34,24 @@ export const REQUIRED_NON_LOCAL = [
   "CONTROL_PASSWORD",
   "CONTROL_SESSION_SECRET",
   "CONTROL_GITHUB_TOKEN",
-  "CONTROL_DEPLOY_KEY_B64",
   "CONTROL_REPO",
+  "CONTROL_STATE_REPO",
 ] as const;
+
+/** The product repo can never be the state repo: state never lives in routeflow. */
+const PRODUCT_REPO = "najathakram/routeflow";
+/**
+ * Lower-case, then strip trailing `/`, `.`, `.git` and `.wiki` repeatedly until stable, so every
+ * spelling (`Owner/Name.`, `name..git`, `name.git.`) matches.
+ */
+const normaliseRepo = (v: string): string => {
+  let r = v.trim().toLowerCase();
+  for (;;) {
+    const next = r.replace(/(\/|\.git|\.wiki|\.)$/, "");
+    if (next === r) return r;
+    r = next;
+  }
+};
 
 const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 const opt = (env: Env, k: string): string | undefined => {
@@ -52,6 +71,24 @@ export function loadConfig(env: Env): Config {
   }
   const repo = opt(env, "CONTROL_REPO");
   if (repo !== undefined && !REPO_RE.test(repo)) problems.push("CONTROL_REPO must be owner/name");
+  const stateRepo = opt(env, "CONTROL_STATE_REPO");
+  if (stateRepo !== undefined) {
+    if (normaliseRepo(stateRepo) === PRODUCT_REPO) {
+      problems.push(
+        `CONTROL_STATE_REPO must not be ${PRODUCT_REPO} (state never lives in the product repo)`,
+      );
+    } else if (repo !== undefined && normaliseRepo(stateRepo) === normaliseRepo(repo)) {
+      problems.push(
+        "CONTROL_STATE_REPO must not equal CONTROL_REPO (state never lives in the product repo)",
+      );
+    } else if (!REPO_RE.test(stateRepo)) {
+      problems.push("CONTROL_STATE_REPO must be owner/name");
+    }
+  }
+  const warnings: string[] = [];
+  if (opt(env, "CONTROL_DEPLOY_KEY_B64") !== undefined) {
+    warnings.push("control: CONTROL_DEPLOY_KEY_B64 is no longer used; remove it");
+  }
   const portRaw = opt(env, "CONTROL_PORT") ?? opt(env, "PORT");
   let port = local ? 4317 : 3000;
   if (portRaw !== undefined) {
@@ -79,8 +116,8 @@ export function loadConfig(env: Env): Config {
     sessionSecret,
     webhookSecret: opt(env, "CONTROL_WEBHOOK_SECRET"),
     githubToken: opt(env, "CONTROL_GITHUB_TOKEN"),
-    deployKeyB64: opt(env, "CONTROL_DEPLOY_KEY_B64"),
     repo,
+    stateRepo,
     fixtureDir: opt(env, "CONTROL_FIXTURE"),
     railwayToken: opt(env, "CONTROL_RAILWAY_TOKEN"),
     railwayProjectId: opt(env, "CONTROL_RAILWAY_PROJECT_ID"),
@@ -88,5 +125,6 @@ export function loadConfig(env: Env): Config {
     stateDir: opt(env, "CONTROL_STATE_DIR"),
     masterDir: opt(env, "CONTROL_MASTER_DIR"),
     publicOrigin,
+    warnings,
   };
 }
