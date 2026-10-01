@@ -1372,7 +1372,7 @@ export class CreditNotesService {
     const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
     if (!(restore > 0.001)) return 0;
     // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
-    // credit with no provenance; every path that restores refuses, before it writes anything.
+    // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
     if (payment.creditNoteId !== opts.voidingNoteId)
       await this.refuseSourceGoneRestores(tx, [payment]);
 
