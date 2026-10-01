@@ -219,4 +219,41 @@ describe("settleStockForEdit writes THIS edit's backorder into the sink", () => 
     await expect(run([prod(3)], 2, 7, sink, false)).rejects.toBeInstanceOf(ConflictException);
     expect(sink.backorderByProduct.size).toBe(0);
   });
+
+  it.each([[NaN], [Infinity]])(
+    "N3 on the edit path: final qty %p -> 409 INVENTORY_QUANTITY_INVALID naming the product, no write",
+    async (qty) => {
+      const products = [prod(3)];
+      const tx = fakeTx(products);
+      const err: any = await settleStockForEdit(
+        deps,
+        tx,
+        order,
+        held(2),
+        final(qty),
+        undefined,
+        undefined,
+        { allowOversell: true, sink: newSink() },
+      ).catch((e) => e);
+      expect(err).toBeInstanceOf(ConflictException);
+      expect(err.getResponse()).toMatchObject({ code: "INVENTORY_QUANTITY_INVALID" });
+      expect(err.getResponse().message).toContain("Widget");
+      expect(products[0].currentStock).toBe(3);
+      expect(tx.product.update).not.toHaveBeenCalled();
+      expect(tx.stockMovement.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("N5 on the edit path: a negative requested total is a RangeError, no write", async () => {
+    const products = [prod(3)];
+    const tx = fakeTx(products);
+    await expect(
+      settleStockForEdit(deps, tx, order, held(2), final(-4), undefined, undefined, {
+        allowOversell: true,
+        sink: newSink(),
+      }),
+    ).rejects.toBeInstanceOf(RangeError);
+    expect(products[0].currentStock).toBe(3);
+    expect(tx.product.update).not.toHaveBeenCalled();
+  });
 });

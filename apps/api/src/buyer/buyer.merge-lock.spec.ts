@@ -229,6 +229,24 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     expect(result).toEqual({ id: "order-merged" });
   });
 
+  it("backorderPieces: the merged order response is stamped from THIS fold's overshoot (null passes through)", async () => {
+    ordersService.updateOrderItems.mockImplementationOnce(async (_id, _dto, _u, opts) => {
+      opts.stockSink.backorderByProduct.set("prod-a", 2);
+    });
+    ordersService.findOne.mockResolvedValueOnce({
+      id: "order-merged",
+      lineItems: [
+        { id: "li-1", productId: "prod-a", qty: 3, boxes: null, pieces: null, unitsPerBox: null },
+      ],
+    });
+    const dto = { items: [{ productId: "prod-a", qty: 3 }] };
+    const res: any = await controller.createOrder(dto as any, MOCK_CTX as any);
+    expect(res.lineItems[0].backorderPieces).toBe(2);
+
+    ordersService.findOne.mockResolvedValueOnce(null);
+    expect(await controller.createOrder(dto as any, MOCK_CTX as any)).toBeNull();
+  });
+
   it("maps a LockTimeoutError to 409 MERGE_IN_PROGRESS and never writes items", async () => {
     locks.withAdvisoryLock.mockImplementationOnce(async () => {
       throw new locks.LockTimeoutError("order-merge", MOCK_CTX.customerId, 20_000);
