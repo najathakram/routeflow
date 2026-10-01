@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -337,10 +338,25 @@ export class GoogleOAuthService {
     if (existingByGoogleId) throw new ForbiddenException("google_id_taken");
     if (user.googleId) throw new ForbiddenException("google_already_linked");
 
-    await this.prisma.user.update({
-      where: { id: linkUserId },
-      data: { googleId, forcePasswordChange: false },
-    });
+    // Link by compare-and-set (oauth-account-link.ts, shared with sign-in): only the first writer
+    // wins. A lost race to a DIFFERENT sub is refused like the read-time check above; to the SAME
+    // sub it is a harmless duplicate (nothing to repeat, no second notification).
+    let linked: boolean;
+    try {
+      ({ linked } = await casLinkProviderId({
+        updateMany: (args) => this.prisma.user.updateMany(args as any),
+        findUnique: (id) => this.prisma.user.findUnique({ where: { id } }),
+        row: user,
+        column: "googleId",
+        sub: googleId,
+        data: { forcePasswordChange: false },
+        extraWhere: { tenantId: user.tenantId },
+      }));
+    } catch (e) {
+      if (e instanceof ConflictException) throw new ForbiddenException("google_already_linked");
+      throw e;
+    }
+    if (!linked) return;
 
     this.logger.log(`Google account linked for user ${linkUserId}`);
 
