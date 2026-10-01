@@ -30,6 +30,7 @@ const acct = (over: Partial<Acct>): Acct => ({
 
 function build(primary: Acct, secondary: Acct) {
   const calls: Array<{ id: string; data: Record<string, unknown> }> = [];
+  const order: string[] = [];
   const tx = {
     customerLink: { updateMany: jest.fn() },
     buyerAccount: {
@@ -50,10 +51,18 @@ function build(primary: Acct, secondary: Acct) {
       }),
     },
     customerLink: { findMany: jest.fn().mockResolvedValue([]) },
-    $transaction: jest.fn(async (fn: (t: typeof tx) => Promise<void>) => fn(tx)),
+    $transaction: jest.fn(async (fn: (t: typeof tx) => Promise<void>) => {
+      order.push("transaction");
+      return fn(tx);
+    }),
   } as any;
   const email = { sendMergeCompleteEmail: jest.fn().mockResolvedValue(undefined) } as any;
-  return { service: new BuyerMergeService(prisma, email), calls };
+  const apple = {
+    revokeForBuyer: jest.fn(async (id: string) => {
+      order.push(`revoke:${id}`);
+    }),
+  } as any;
+  return { service: new BuyerMergeService(prisma, email, apple), calls, apple, order };
 }
 
 describe("BuyerMergeService.executeMerge — appleId (follow-up on #2486)", () => {
@@ -103,5 +112,44 @@ describe("BuyerMergeService.executeMerge — appleId (follow-up on #2486)", () =
     expect(deleted).toBeTruthy();
     const lastS = [...calls].reverse().find((c) => c.id === "S" && "appleId" in c.data);
     expect(lastS?.data.appleId).toBeNull();
+  });
+});
+
+describe("BuyerMergeService.executeMerge — revokes the discarded Apple grant at Apple (B944)", () => {
+  it("both accounts have an Apple identity: the SECONDARY's token is revoked at Apple, before the transaction clears it", async () => {
+    const { service, apple, order } = build(
+      acct({ id: "P", appleId: "apple-sub-P" }),
+      acct({ id: "S", appleId: "apple-sub-S", appleRefreshTokenEnc: "enc:tok" }),
+    );
+    await service.executeMerge("req-1");
+    expect(apple.revokeForBuyer).toHaveBeenCalledTimes(1);
+    expect(apple.revokeForBuyer).toHaveBeenCalledWith("S");
+    expect(order.indexOf("revoke:S")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("revoke:S")).toBeLessThan(order.indexOf("transaction"));
+  });
+
+  it("the primary inherits the secondary's grant (it had none): nothing is revoked", async () => {
+    const { service, apple } = build(
+      acct({ id: "P" }),
+      acct({ id: "S", appleId: "apple-sub-S", appleRefreshTokenEnc: "enc:tok" }),
+    );
+    await service.executeMerge("req-1");
+    expect(apple.revokeForBuyer).not.toHaveBeenCalled();
+  });
+
+  it("no Apple identity on the secondary: nothing is revoked", async () => {
+    const { service, apple } = build(acct({ id: "P", appleId: "apple-sub-P" }), acct({ id: "S" }));
+    await service.executeMerge("req-1");
+    expect(apple.revokeForBuyer).not.toHaveBeenCalled();
+  });
+
+  it("a failing revoke never fails or blocks the merge", async () => {
+    const { service, apple, calls } = build(
+      acct({ id: "P", appleId: "apple-sub-P" }),
+      acct({ id: "S", appleId: "apple-sub-S", appleRefreshTokenEnc: "enc:tok" }),
+    );
+    apple.revokeForBuyer.mockRejectedValue(new Error("apple down"));
+    await expect(service.executeMerge("req-1")).resolves.toBeDefined();
+    expect(calls.some((c) => c.id === "S" && c.data.status === "DELETED")).toBe(true);
   });
 });

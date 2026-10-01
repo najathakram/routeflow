@@ -9,6 +9,7 @@ import {
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 
 @Injectable()
@@ -16,6 +17,7 @@ export class BuyerMergeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Buyer: initiate merge ────────────────────────────────────────────────────
@@ -381,6 +383,15 @@ export class BuyerMergeService {
 
     const linksToTransfer = secondaryLinks.filter((l) => !primaryTenantIds.has(l.tenantId));
     const conflictingLinks = secondaryLinks.filter((l) => primaryTenantIds.has(l.tenantId));
+
+    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
+    // token is about to be discarded (cleared in the transaction). Revoke it AT APPLE first, while
+    // it is still readable, so that grant does not stay alive at Apple. Best-effort: a failure is
+    // logged inside revokeForBuyer and never blocks the merge. If the primary inherits the grant
+    // instead, nothing is revoked.
+    if (secondaryAccount.appleId && primaryAccount.appleId) {
+      await this.appleOAuth.revokeForBuyer(secondaryAccount.id).catch(() => undefined);
+    }
 
     await this.prisma.$transaction(async (tx) => {
       // 1. Transfer non-conflicting CustomerLinks
