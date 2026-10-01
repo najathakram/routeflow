@@ -77,3 +77,13 @@ describe("no screen other than the driver's reaches the store", () => {
     expect(out).toEqual(["components/BarcodeScanner.tsx"]);
   });
 });
+
+describe("BarcodeScanner: the hold ends when the app goes to the background (AppState)", () => {
+  const src = readFileSync(join(__dirname, "..", "components", "BarcodeScanner.tsx"), "utf8");
+  it("listens to AppState changes and drops the hold when the app is no longer active, and cleans up", () => {
+    expect(src).toMatch(/AppState\.addEventListener\("change"/);
+    expect(src).toMatch(/!==\s*"active"/);
+    expect(src).toMatch(/setHolding\(false\)/);
+    expect(src).toMatch(/\.remove\(\)/);
+  });
+});

@@ -1172,6 +1172,45 @@ describe("ScanOrderScreen", () => {
       expect(holdButton().className).toMatch(/-bottom-7/);
     });
 
+    it("2 UN-HELD frames never count: then hold + 1 frame is NOT a scan (the streak does not advance while un-held)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.pointerDown(holdButton());
+      await act(async () => detect("111"));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("switching mode MID-HOLD releases it: back in Hold mode the button is up and frames are ignored", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Continuous mode" }));
+      fireEvent.click(screen.getByRole("button", { name: "Hold to scan mode" }));
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("the hold button is DESCRIBED by a visible hint, and blocks the iOS long-press callout", () => {
+      useHoldMode();
+      setup();
+      const btn = holdButton();
+      const id = btn.getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      const hint = document.getElementById(id as string);
+      expect(hint).toBeInTheDocument();
+      expect(hint).toBeVisible();
+      expect(hint).toHaveTextContent(/hold the button while the barcode is in the box/i);
+      expect(btn.className).toMatch(/\[-webkit-touch-callout:none\]/);
+    });
+
     it("the hold button is a real round target (>= 56px) at the bottom centre of the camera strip", () => {
       useHoldMode();
       setup();
