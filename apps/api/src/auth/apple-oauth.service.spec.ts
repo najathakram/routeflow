@@ -174,7 +174,10 @@ describe("AppleOAuthService — isConfigured() with every APPLE_* var unset or b
 
   it("is false when all four are unset", async () => {
     const { service } = await buildService({
-      configOverrides: Object.fromEntries(ALL.map((k) => [k, undefined])),
+      configOverrides: Object.fromEntries(ALL.map((k) => [k, undefined])) as unknown as Record<
+        string,
+        string
+      >,
     });
     expect(service.isConfigured()).toBe(false);
     expect(service.isNotificationConfigured()).toBe(false);
