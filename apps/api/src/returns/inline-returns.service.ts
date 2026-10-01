@@ -523,6 +523,9 @@ export class InlineReturnsService {
       db,
       { excludeInvoiceIds },
     );
+    // B948 (Opus r1, B215 class): the SAME line-headroom refusal, read-only (no Invoice write, no lock), BEFORE the caller's
+    // un-tx'd revert commits SENT->DRAFT; the in-tx check stays as the race backstop.
+    await this.assertWithinLineHeadroom(db, priced.chunks, { readOnly: true });
     return priced.total; // the dry-run total: a gate only; the edit path reserves ahead regardless (SA-292)
   }
 
@@ -566,6 +569,7 @@ export class InlineReturnsService {
   private async assertWithinLineHeadroom(
     tx: any,
     chunks: Array<{ sourceInvoiceItemId: string | null; pieces: number; subtotal: number }>,
+    opts: { readOnly?: boolean } = {},
   ): Promise<void> {
     const takes = new Map<string, { qty: number; amount: number }>();
     for (const c of chunks) {
@@ -583,7 +587,7 @@ export class InlineReturnsService {
     const invoiceIds = [...new Set(srcRows.map((l) => l.invoiceId))].sort();
     if (invoiceIds.length === 0) return; // the source line was deleted: provenance only, nothing to cap
     const tenantId = this.prisma.getTenantId();
-    for (const invoiceId of invoiceIds) {
+    for (const invoiceId of opts.readOnly ? [] : invoiceIds) {
       // A WRITE, not just a lock: a concurrent credit note's Serializable tx took its snapshot before it waited on this row, so
       // only a new row version (40001 on its wake-up, then its bounded retry re-reads) makes it see this return (B948 race).
       await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id = ${invoiceId} AND "tenantId" = ${tenantId}`;

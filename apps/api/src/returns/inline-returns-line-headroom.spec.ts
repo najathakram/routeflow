@@ -111,4 +111,27 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
     expect(at).toBeGreaterThan(src.indexOf("priceInlineReturn("));
     expect(at).toBeLessThan(src.indexOf("sumInlineReturnCredit(tx, dto.orderId)"));
   });
+
+  it("B215 class: the READ-ONLY variant refuses the same over-line capture with NO Invoice write or lock", async () => {
+    const { tx } = run([chunk("a", 1, 100)]);
+    const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
+      prisma: { getTenantId: () => "t1" },
+    });
+    tx.creditNoteItem.findMany.mockResolvedValue([{ invoiceItemId: "a", amount: 60, qty: 0.6 }]);
+    await expect(
+      svc.assertWithinLineHeadroom(tx, [chunk("a", 1, 100)], { readOnly: true }),
+    ).rejects.toMatchObject({ response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" } });
+    expect(tx.$executeRaw).not.toHaveBeenCalled();
+  });
+  it("source pin: preflightCapture runs the read-only headroom check before it returns (so the order edit refuses BEFORE the invoice revert)", () => {
+    const src = readFileSync(join(__dirname, "inline-returns.service.ts"), "utf8");
+    const pre = src.slice(
+      src.indexOf("async preflightCapture("),
+      src.indexOf("captureInTx + the credit issue"),
+    );
+    expect(pre).toMatch(/assertWithinLineHeadroom\(db, priced\.chunks, \{ readOnly: true \}\)/);
+    expect(pre.indexOf("assertWithinLineHeadroom")).toBeLessThan(
+      pre.indexOf("return priced.total"),
+    );
+  });
 });
