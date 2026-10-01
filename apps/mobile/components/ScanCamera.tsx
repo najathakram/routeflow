@@ -143,6 +143,15 @@ export function ScanCamera({
     }
   }, []);
 
+  // Hold to scan: while the camera is inactive (the hold button is up) a half-built streak must not survive into the next
+  // hold, so a re-grab earns a fresh steady read. aimAssist only; the default path is untouched.
+  React.useEffect(() => {
+    if (!active && aimAssist) {
+      steadyRef.current = createSteadyReadState();
+      assistRef.current = { ...assistRef.current, steady: createSteadyReadState() };
+    }
+  }, [active, aimAssist]);
+
   /** aimAssist + continuous: same resolve/drain cycle, but through the composed engine's buffer. */
   const resolveAssisted = React.useCallback(async (code: string) => {
     try {
