@@ -210,6 +210,11 @@ describe("control.yml — its own CI job (lead ruling 2026-10-01)", () => {
     expect(joined).toMatch(/^\s+cache:\s*npm\s*$/m);
   });
 
+  it("the checkout step does not persist the token into .git/config (persist-credentials: false)", () => {
+    const step = block(CONTROL_YML, /^ {6}- uses: actions\/checkout@v\d+\s*$/, 6);
+    expect(step.join("\n")).toMatch(/^ {10}persist-credentials:\s*false\s*$/m);
+  });
+
   it("uses ci.yml's checkout/setup-node versions and the same NODE_VERSION", () => {
     for (const action of ["actions/checkout", "actions/setup-node"]) {
       const re = new RegExp(`uses:\\s*(${action}@v\\d+)\\b`);
@@ -272,12 +277,14 @@ describe("ci.yml — Verify no longer runs control", () => {
     expect(step.join("\n")).toMatch(/^ {8}run:\s*npm run verify\s*$/m);
     const m = /^ {10}VERIFY_EXCLUDE:\s*"([^"]*)"\s*$/m.exec(step.join("\n"));
     expect(m).not.toBeNull();
+    // EXACTLY the one allow-listed name: scripts/verify-turbo.mjs refuses anything else loudly, and a
+    // ci.yml edit that adds another workspace must fail here, not only at the first CI run
     expect(
       (m as RegExpExecArray)[1]
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean),
-    ).toContain("@routeflow/control");
+    ).toEqual(["@routeflow/control"]);
   });
 
   it("VERIFY_EXCLUDE is set nowhere else in ci.yml (it must not leak into the e2e job)", () => {

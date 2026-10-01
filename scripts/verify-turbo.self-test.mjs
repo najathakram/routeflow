@@ -42,6 +42,7 @@ import {
   excludedLine,
   jestPassthrough,
   LOW_MEM_THRESHOLD_BYTES,
+  VERIFY_EXCLUDE_ALLOWED,
   parseVerifyExclude,
   planTurboCalls,
 } from "./verify-turbo.mjs";
@@ -554,7 +555,18 @@ check(
   true,
 );
 
-// parseVerifyExclude: comma list, trimmed, de-duplicated, empties dropped, unknown/garbage ignored.
+// parseVerifyExclude: comma list, trimmed, de-duplicated, empties dropped. ONLY the allow-list
+// (exactly @routeflow/control) is accepted: anything else is refused LOUDLY, so a later ci.yml edit
+// can never silently exclude api/web (lead ruling 2026-10-01).
+const thrown = (f) => {
+  try {
+    f();
+    return null;
+  } catch (e) {
+    return String(e && e.message);
+  }
+};
+check("VX1a the allow-list is EXACTLY @routeflow/control", [...VERIFY_EXCLUDE_ALLOWED], [CONTROL]);
 check(
   "VX1 unset / empty / whitespace / only commas parse to []",
   [
@@ -576,27 +588,60 @@ check(
   [[CONTROL], [CONTROL]],
 );
 check(
-  "VX4 duplicates collapse, order of first appearance kept, empties between names dropped",
-  parseVerifyExclude(` ${CONTROL} ,, @routeflow/web ,${CONTROL}, `, KNOWN),
-  [CONTROL, "@routeflow/web"],
-);
-check(
-  "VX5 an unknown workspace is ignored (a typo can never exclude something else)",
-  parseVerifyExclude(`@routeflow/nope,${CONTROL},control`, KNOWN),
+  "VX4 duplicates collapse and empties between names are dropped",
+  parseVerifyExclude(` ${CONTROL} ,, ${CONTROL}, `, KNOWN),
   [CONTROL],
 );
+const REFUSED = [
+  "@routeflow/api",
+  "@routeflow/web",
+  "@routeflow/mobile",
+  "@routeflow/pricing",
+  "@routeflow/nope",
+  "@routeflow/control-x",
+  "@routeflow/Control",
+  "@ROUTEFLOW/control",
+  "control",
+  "!@routeflow/control",
+  "--force",
+  "--filter=!@routeflow/api",
+  "@routeflow/*",
+  "*",
+  "a b",
+  "$(x)",
+  ";ls",
+  `${CONTROL}\n--force`,
+  `${CONTROL} @routeflow/web`,
+];
+for (const bad of REFUSED) {
+  const msg = thrown(() => parseVerifyExclude(bad, KNOWN));
+  check(
+    `VX5 ${JSON.stringify(bad)} is refused loudly, naming the allow-list`,
+    [typeof msg === "string", /may only name @routeflow\/control/.test(msg ?? "")],
+    [true, true],
+  );
+}
 check(
-  "VX6 garbage (flag-shaped, negated, inner whitespace, shell metacharacters) is ignored even " +
-    "WITHOUT a known list — it can never become a turbo flag",
+  "VX6 a refused name next to the allowed one still refuses (no partial exclusion), with or without " +
+    "a known list",
   [
-    parseVerifyExclude("--help,!@routeflow/web,a b,$(x),;ls,@@x,-rf", undefined),
-    parseVerifyExclude(`--help,${CONTROL}`, undefined),
+    typeof thrown(() => parseVerifyExclude(`${CONTROL},@routeflow/api`, KNOWN)),
+    typeof thrown(() => parseVerifyExclude(`@routeflow/api,${CONTROL}`, undefined)),
+    typeof thrown(() => parseVerifyExclude(`--help,${CONTROL}`, undefined)),
   ],
-  [[], [CONTROL]],
+  ["string", "string", "string"],
 );
 check(
-  "VX6b a space-separated list is NOT a list (comma only) — one garbage token, ignored",
-  parseVerifyExclude(`${CONTROL} @routeflow/web`, KNOWN),
+  "VX6b the refusal message shows the offending name JSON-quoted and truncated (no raw control chars)",
+  [
+    /"\\u0007|\\u0007/.test(thrown(() => parseVerifyExclude("x\u0007y", KNOWN)) ?? ""),
+    (thrown(() => parseVerifyExclude("z".repeat(500), KNOWN)) ?? "").length < 400,
+  ],
+  [true, true],
+);
+check(
+  "VX6c an allow-listed name that is absent from the graph is dropped (nothing to exclude)",
+  parseVerifyExclude(CONTROL, ["@routeflow/api"]),
   [],
 );
 
@@ -849,6 +894,7 @@ if (process.platform !== "win32") {
       return {
         status: r.status,
         out: r.stdout,
+        err: r.stderr,
         calls: readFileSync(log, "utf8").split("\n").filter(Boolean),
       };
     };
@@ -864,7 +910,7 @@ if (process.platform !== "win32") {
         false,
       ],
     );
-    const on = runMain({ VERIFY_EXCLUDE: ` ${CONTROL} ,nope` });
+    const on = runMain({ VERIFY_EXCLUDE: ` ${CONTROL} ` });
     check(
       "VX20 main(): VERIFY_EXCLUDE reaches the FULL argv and prints the one-line banner",
       [
@@ -892,17 +938,24 @@ if (process.platform !== "win32") {
         ],
       ],
     );
-    const junk = runMain({ VERIFY_EXCLUDE: "nope,--help" });
-    check(
-      "VX22 main(): an all-unknown VERIFY_EXCLUDE is a no-op (no filter, no banner)",
-      [junk.calls, /EXCLUDED FROM THIS RUN/.test(junk.out)],
-      [
+    for (const bad of [
+      "nope,--help",
+      "@routeflow/api",
+      `${CONTROL},@routeflow/web`,
+      "@routeflow/*",
+    ]) {
+      const junk = runMain({ VERIFY_EXCLUDE: bad });
+      check(
+        `VX22 main(): VERIFY_EXCLUDE=${JSON.stringify(bad)} is refused loudly: exit 1, the allow-list message on stderr, NO turbo call, no banner`,
         [
-          "turbo run check-types lint test test:repo-truth --concurrency=2 --continue=dependencies-successful",
+          junk.status,
+          /VERIFY_EXCLUDE may only name @routeflow\/control/.test(junk.err),
+          junk.calls,
+          /EXCLUDED FROM THIS RUN/.test(junk.out),
         ],
-        false,
-      ],
-    );
+        [1, true, [], false],
+      );
+    }
 
     // VX23-26: the exit status is the FIRST non-zero one AND every planned call still runs. The stub
     // above used to exit 0 always, so "exit with the last non-zero status" and "stop after the

@@ -130,6 +130,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          # nothing in this job pushes: do not leave the workflow token in .git/config for later steps
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         with:

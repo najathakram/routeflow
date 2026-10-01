@@ -301,6 +301,8 @@ jobs:
       # of THIS turbo scope — product PRs neither run nor wait on its Jest suite. It is still gated
       # on every PR that touches it by that workflow, and locally by the pre-push scope (developers
       # do not set this variable, so a local FULL_VERIFY still runs control).
+      # The script ACCEPTS ONLY that one name and exits 1 on any other (an allow-list, so a later edit
+      # here cannot silently exclude api/web); widening it means editing scripts/verify-turbo.mjs.
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: npm run verify
         env:

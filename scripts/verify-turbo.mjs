@@ -67,22 +67,32 @@ export function buildArgv(args, turboFlags, passthrough = []) {
  * `@routeflow/control`). ci.yml's Verify step sets it; developers do NOT, so a local FULL_VERIFY
  * and the pre-push affected scope still run control.
  *
- * Pure. Trims each entry, drops empties and duplicates (first appearance wins), and IGNORES anything
- * that is not a workspace name: a name of an unknown workspace (typo) is dropped when `knownNames`
- * is given, and anything that is not shaped like an npm package name (flag-shaped, negated, inner
- * whitespace, shell metacharacters) is dropped even without it — a malformed value can never turn
- * into a turbo flag or exclude something it did not name. A non-string is `[]`.
+ * ALLOW-LIST, not a free list: only EXACTLY the names in `VERIFY_EXCLUDE_ALLOWED` are accepted and
+ * anything else is REFUSED LOUDLY (a thrown Error, `main()` exits 1 before any turbo call), so a
+ * later ci.yml edit, a typo or a hostile value can never silently exclude api, web or anything else
+ * from the shared Verify. Widening the list is a deliberate edit of this file (and its self-test).
+ *
+ * Pure. Trims each entry, drops empties and duplicates (first appearance wins). An allow-listed
+ * name that is absent from `knownNames` (the workspace was removed) is dropped: nothing to exclude.
+ * A non-string (the variable is unset) is `[]`.
  */
-const PACKAGE_NAME = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i;
+export const VERIFY_EXCLUDE_ALLOWED = Object.freeze(["@routeflow/control"]);
 export function parseVerifyExclude(raw, knownNames) {
   if (typeof raw !== "string") return [];
   const known = knownNames ? new Set(knownNames) : null;
   const out = [];
   for (const part of raw.split(",")) {
     const name = part.trim();
-    if (!name || !PACKAGE_NAME.test(name) || out.includes(name)) continue;
+    if (!name) continue;
+    if (!VERIFY_EXCLUDE_ALLOWED.includes(name)) {
+      throw new Error(
+        `VERIFY_EXCLUDE may only name ${VERIFY_EXCLUDE_ALLOWED.join(", ")} (CI verifies that ` +
+          `workspace in its own job); refusing ${JSON.stringify(name.slice(0, 60))}. Widening the ` +
+          `allow-list is a deliberate edit of scripts/verify-turbo.mjs.`,
+      );
+    }
     if (known && !known.has(name)) continue;
-    out.push(name);
+    if (!out.includes(name)) out.push(name);
   }
   return out;
 }
@@ -245,10 +255,17 @@ export function main() {
   }
 
   const scope = decideScope(ROOT);
-  const excluded = parseVerifyExclude(
-    process.env.VERIFY_EXCLUDE,
-    loadWorkspaces(ROOT).map((w) => w.name),
-  );
+  let excluded;
+  try {
+    excluded = parseVerifyExclude(
+      process.env.VERIFY_EXCLUDE,
+      loadWorkspaces(ROOT).map((w) => w.name),
+    );
+  } catch (e) {
+    // refuse BEFORE any turbo call: a bad exclusion list must never run a narrowed verify
+    console.error(`verify: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
   const banner = excludedLine(excluded);
   if (banner) console.log(banner);
 
