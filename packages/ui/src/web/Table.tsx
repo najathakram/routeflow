@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-table";
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { cn } from "./utils";
+import { ScrollShadow } from "./ScrollShadow";
 
 export interface TableProps<TData> {
   data: TData[];
@@ -44,7 +45,10 @@ export function Table<TData>({
   });
 
   return (
-    <div className={cn("w-full overflow-auto rounded-lg border border-surface-border", className)}>
+    <ScrollShadow
+      className={cn("w-full rounded-lg border border-surface-border", className)}
+      scrollerClassName="overflow-auto"
+    >
       <table className="w-full text-sm">
         <thead className="border-b border-surface-border bg-surface-raised">
           {table.getHeaderGroups().map((headerGroup) => (
@@ -141,6 +145,6 @@ export function Table<TData>({
           )}
         </tbody>
       </table>
-    </div>
+    </ScrollShadow>
   );
 }
