@@ -63,8 +63,17 @@ export function scanLevelsForHit(code: string, product: any): SellLevel[] {
       });
 }
 
+/** #2784: a code that resolves at BOTH levels is "shared"; only then may the new line start on the default unit. */
+export function scanCodeIsShared(code: string, product: any): boolean {
+  const levels = scanLevelsForHit(code, product);
+  return levels.includes("BOX") && levels.includes("UNIT");
+}
+
 export function scanLevelForHit(code: string, product: any): SellLevel {
-  return resolveScanSellLevel({ unitsPerBox: product?.unitsPerBox }, scanLevelsForHit(code, product));
+  return resolveScanSellLevel(
+    { unitsPerBox: product?.unitsPerBox },
+    scanLevelsForHit(code, product),
+  );
 }
 
 export interface ScanCodeHandlerDeps {
@@ -73,7 +82,11 @@ export interface ScanCodeHandlerDeps {
    * (vs incremented an existing one) so a caller can undo the scan; a caller that does not care
    * returns nothing and `created` defaults to true.
    */
-  addLineItem: (product: any, level: SellLevel) => { created: boolean } | void;
+  addLineItem: (
+    product: any,
+    level: SellLevel,
+    opts?: { startOnDefaultUnit?: boolean },
+  ) => { created: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
   toast: ToastFn;
@@ -141,7 +154,11 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
     if (!result.notFound && result.product) {
       // addLineItem clears search + refocuses — outside the try above: a throw here is a real
       // bug, never a connectivity failure, and must never be silently queued/re-added.
-      const added = deps.addLineItem(result.product, scanLevelForHit(code, result.product));
+      const level = scanLevelForHit(code, result.product);
+      // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
+      const added = scanCodeIsShared(code, result.product)
+        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+        : deps.addLineItem(result.product, level);
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a

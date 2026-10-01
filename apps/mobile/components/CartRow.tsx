@@ -238,6 +238,13 @@ export function CartRow({
         }}
         product={product}
         tier={tier}
+        // Only while no qty/price edit consumed the flag (the screen clears it) and no operator price (Opus #2865 B2/r2).
+        startOnDefaultUnit={
+          line.startOnDefaultUnit != null &&
+          line.startOnDefaultUnit === line.qty &&
+          line.priceSource !== "operator" &&
+          line.unitPrice == null
+        }
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />
