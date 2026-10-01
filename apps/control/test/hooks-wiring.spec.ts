@@ -35,7 +35,7 @@ describe("T60 hooks wiring (R31)", () => {
     const ctl = ctlHook();
     expect(ctl).toBeDefined();
     expect(ctl).toContain("next");
-    expect(ctl).toContain("--quiet");
+    expect(ctl).toContain("--hook");
     const s = read(".claude/settings.json");
     expect(s).toContain("plane-triage.mjs");
     expect(s).toContain("check-git-hooks.mjs");
@@ -51,6 +51,31 @@ describe("T60 hooks wiring (R31)", () => {
       timeout: 60000,
     });
     expect(r.status).toBe(0);
+  });
+
+  it("the hook command is a cross-platform node -e (no POSIX shell), timeout 10, valid JSON", () => {
+    const cmd = ctlHook() as string;
+    expect(cmd.startsWith("node -e ")).toBe(true);
+    expect(cmd).not.toMatch(/\[ -f|; exit 0|2>\/dev\/null|&&/);
+    expect(cmd).toContain("existsSync");
+    const hook = (JSON.parse(read(".claude/settings.json")).hooks.SessionStart as any[])
+      .flatMap((g) => g.hooks as any[])
+      .find((h) => h.command === cmd);
+    expect(hook.timeout).toBe(10);
+  });
+
+  it("running the hook command with no lane exits 0 quickly and prints nothing", () => {
+    const cmd = ctlHook() as string;
+    const t0 = Date.now();
+    const r = spawnSync("sh", ["-c", cmd], {
+      cwd: ROOT,
+      env: { ...process.env, CTL_LANE: "", CONTROL_STATE_ORIGIN: "file:///nonexistent/none.git" },
+      encoding: "utf8",
+      timeout: 30000,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 
   it("closeout.mjs accepts --task <RF-id> and emits a ctl done line", () => {

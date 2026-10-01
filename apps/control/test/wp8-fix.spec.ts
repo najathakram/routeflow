@@ -288,3 +288,36 @@ describe("round 3", () => {
     expect(lineCount(r.stdout)).toBeLessThanOrEqual(30);
   });
 });
+
+describe("next --hook", () => {
+  beforeEach(() => {
+    world = makeWorld();
+    world.seedBranch("ctl/state", baseState(4));
+  });
+
+  it("origin gone: reads the local clone only, < 2 s, exit 0, prints the brief", async () => {
+    expect((await runCli(world, ["note", "a"])).code).toBe(0);
+    fs.renameSync(world.originDir, world.originDir + ".gone");
+    const t0 = Date.now();
+    const r = await runCli(world, ["next", "--hook"]);
+    const ms = Date.now() - t0;
+    fs.renameSync(world.originDir + ".gone", world.originDir);
+    expect(r.code).toBe(0);
+    expect(ms).toBeLessThan(2000);
+    expect(r.stdout).toMatch(/lane lane-u/);
+    expect(lineCount(r.stdout)).toBeLessThanOrEqual(30);
+  });
+
+  it("no clone yet: prints nothing, exit 0, and does not create a clone", async () => {
+    const r = await runCli(world, ["next", "--hook"], { machine: "z" });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(fs.existsSync(world.cloneDirOf("z"))).toBe(false);
+  });
+
+  it("no lane: prints nothing, exit 0", async () => {
+    const r = await runCli(world, ["next", "--hook"], { lane: null });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("");
+  });
+});

@@ -21,14 +21,19 @@ function newestMtime(dir) {
   return newest;
 }
 
-if (
+const stale =
   !existsSync(dist) ||
   !existsSync(stamp) ||
-  statSync(stamp).mtimeMs < newestMtime(join(root, "src"))
-) {
+  statSync(stamp).mtimeMs < newestMtime(join(root, "src"));
+const hook = process.argv.slice(2).includes("--hook");
+
+// SessionStart hook: never build, never print; a missing or stale build is a silent no-op.
+if (hook && stale) process.exit(0);
+
+if (stale) {
   const tsc = createRequire(import.meta.url).resolve("typescript/bin/tsc");
   const r = spawnSync(process.execPath, [tsc, "-p", join(root, "tsconfig.build.json")], {
-    stdio: "inherit",
+    stdio: ["inherit", 2, "inherit"], // tsc stdout -> stderr: stdout stays the CLI's own
     cwd: root,
   });
   if (r.error) console.error(r.error);

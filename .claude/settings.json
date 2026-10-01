@@ -32,7 +32,7 @@
           { "type": "command", "command": "node scripts/check-git-hooks.mjs --warn" },
           {
             "type": "command",
-            "command": "[ -f apps/control/bin/ctl.mjs ] && node apps/control/bin/ctl.mjs next --quiet 2>/dev/null; exit 0",
+            "command": "node -e \"const f='apps/control/bin/ctl.mjs';if(require('fs').existsSync(f))require('child_process').spawnSync(process.execPath,[f,'next','--hook'],{stdio:'inherit',timeout:8000})\"",
             "timeout": 10
           }
         ]

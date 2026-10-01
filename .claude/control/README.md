@@ -5,7 +5,7 @@ gitignored. See `apps/control/README.md`.
 
 ## Rule text (full)
 
-## Control system (lanes, tasks, events)
+### Control system (lanes, tasks, events)
 
 Fleet state lives on the orphan branch **`ctl/state`** (per-lane `events/<lane>.jsonl`, append-
 only) and is shown by the private control dashboard (Railway service `apps/control`; locally

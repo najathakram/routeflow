@@ -170,6 +170,16 @@ export async function snapshot(ctx: Ctx, mode: SnapMode = "fresh"): Promise<Snap
   });
 }
 
+/** Hook mode: the existing clone as it is. No clone, no fetch, no lock, nothing written. */
+function snapshotHook(ctx: Ctx): Snapshot | null {
+  const clone = path.resolve(ctx.env.cloneDir);
+  if (!fs.existsSync(path.join(clone, ".git"))) return null;
+  const tree = readTree(clone);
+  const errors = validateEvents(textsOf(tree), validationContext(ctx.registers), tree.snap?.acc);
+  const state = foldDir(clone, ctx.env.registers, ctx.env.now());
+  return { clone, tree, state, errors };
+}
+
 function knownLane(state: ControlState, lane: string): boolean {
   return has(state.lanes, lane) && state.lanes[lane].kind !== "unregistered";
 }
@@ -587,14 +597,16 @@ const JSON_MAX = 16 * 1024;
 /** `next` never fails: any problem becomes exactly one `control: INVALID|UNAVAILABLE ...` line. */
 // TODO(WP7): add PR facts (CI, review, mergeable) and the merged-PR nudge once WP5 state lands.
 const next: Command = async (ctx) => {
-  const quiet = ctx.args.flags.quiet === true;
+  const hook = ctx.args.flags.hook === true;
+  const quiet = ctx.args.flags.quiet === true || hook;
   const say = (line: string): void => {
     if (!quiet) ctx.out(line.replace(/\s+/g, " ").slice(0, 120) + "\n");
   };
   try {
     if (ctx.lane === null) return say("control: no lane (use --lane, CTL_LANE or `ctl lane use`)");
     assertLaneName(ctx.lane);
-    const snap = await snapshot(ctx);
+    const snap = hook ? snapshotHook(ctx) : await snapshot(ctx);
+    if (snap === null) return; // hook: no clone yet, print nothing
     if (snap.errors.length > 0) {
       const e = snap.errors[0];
       // printed even with --quiet: session start must see broken state
@@ -647,6 +659,7 @@ const next: Command = async (ctx) => {
       }),
     );
   } catch (e) {
+    if (hook) return; // the SessionStart hook never prints an error
     // corrupt state (exit 3) is INVALID; everything else (network, missing branch, IO) UNAVAILABLE
     ctx.out(
       controlFailure(

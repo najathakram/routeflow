@@ -42,7 +42,7 @@ const VALUE_FLAGS = new Set([
   "since",
   "task",
 ]);
-const BOOL_FLAGS = new Set(["json", "quiet"]);
+const BOOL_FLAGS = new Set(["json", "quiet", "hook"]);
 
 const USAGE = `usage: ctl <verb> [args]
   next [--lane X] [--json] [--quiet]   start | done [--pr n] | block --reason "..." | unblock
@@ -189,6 +189,7 @@ export async function main(argv: string[]): Promise<void> {
   } catch (e) {
     const code = e instanceof CtlError ? e.code : 5;
     const msg = e instanceof Error ? e.message : String(e);
+    if (argv[0] === "next" && argv.includes("--hook")) return; // hook: print nothing, exit 0
     if (argv[0] === "next") {
       // `next` always exits 0 and prints exactly one line, even with --quiet
       process.stdout.write(controlFailure(code === 3 ? 3 : 5, msg));
