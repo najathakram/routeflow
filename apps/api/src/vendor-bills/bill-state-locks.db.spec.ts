@@ -458,4 +458,88 @@ describeDb("Bill-state locks — real Postgres, parked first writer", () => {
     expect(sum).toBe(60);
     expect(Number(finalBill.totalPaid)).toBe(60);
   });
+
+  // Not a race: create() nests its lines, so they carry a NULL tenantId, and update() used to
+  // replace them with a tenant-scoped deleteMany that cannot see them — the old line stayed beside
+  // the new one. The replacement is now parent-scoped (`items: { deleteMany: {} }`).
+  it("(p) editing a bill's lines replaces them: one line, and receive posts only the new one", async () => {
+    const w = await seedWorld("p");
+    const bill = await draftBill(w); // one line, qty 10
+    // a legacy line written before lines were stamped: explicitly NULL tenantId, via the raw client
+    await A.prisma.vendorBillItem.create({
+      data: {
+        vendorBillId: bill.id,
+        description: "Legacy",
+        qty: 3,
+        unitCost: 6,
+        tenantId: null,
+      },
+    });
+    await A.prisma.vendorBillItem.updateMany({
+      where: { vendorBillId: bill.id },
+      data: { tenantId: null },
+    });
+    await A.prisma.vendorBill.update({ where: { id: bill.id }, data: { totalOwed: 78 } });
+    await inTenant(A, w, () =>
+      A.bills.update(bill.id, {
+        items: [{ productId: w.productId, description: "Widget", qty: 4, unitCost: 6 }],
+      }),
+    );
+    let items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
+    console.log(`B285(p) observed after edit: lines=${items.map((i) => i.qty)}`);
+    expect(items.map((i) => Number(i.qty))).toEqual([4]);
+    // the new line is stamped with the tenant
+    expect(items[0].tenantId).toBe(w.tenantId);
+
+    // editing the edited bill again (its line now carries the tenant stamp or not) replaces again
+    await inTenant(A, w, () =>
+      A.bills.update(bill.id, {
+        items: [{ productId: w.productId, description: "Widget", qty: 7, unitCost: 6 }],
+      }),
+    );
+    items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
+    expect(items.map((i) => Number(i.qty))).toEqual([7]);
+
+    await inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId));
+    console.log(`B285(p) observed after receive: stock=${(await productOf(w)).currentStock}`);
+    expect(Number((await productOf(w)).currentStock)).toBe(57); // 50 + 7, not + 10 + 7
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    expect(Number(finalBill.totalOwed)).toBe(42); // 7 x 6
+  });
+
+  it("(p2) an edit that clears every line leaves none", async () => {
+    const w = await seedWorld("p2");
+    const bill = await draftBill(w);
+    await inTenant(A, w, () => A.bills.update(bill.id, { items: [] }));
+    const items = await A.prisma.vendorBillItem.findMany({ where: { vendorBillId: bill.id } });
+    expect(items).toHaveLength(0);
+  });
+
+  it("(q) a payment that rounds to zero is refused, not written as a 0.00 row", async () => {
+    const w = await seedWorld("q");
+    const bill = await draftBill(w);
+    await expect(pay(A, w, bill.id, 0.004)).rejects.toThrow(/greater than zero/i);
+    const rows = await A.prisma.billPayment.findMany({ where: { vendorBillId: bill.id } });
+    expect(rows).toHaveLength(0);
+  });
+
+  it("(r) revertToDraft() vs a parked payment: the revert is refused and stock stays with the bill", async () => {
+    const w = await seedWorld("r");
+    const bill = await draftBill(w);
+    await inTenant(A, w, () => A.bills.receive(bill.id, undefined, w.userId));
+    const [first, second] = await race(
+      () => pay(A, w, bill.id, 20),
+      () => inTenant(C, w, () => C.bills.revertToDraft(bill.id)),
+    );
+    const finalBill = await A.prisma.vendorBill.findUniqueOrThrow({ where: { id: bill.id } });
+    console.log(
+      `B285(r) observed: first=${first.status} second=${second.status}/${codeOf(second)} ` +
+        `stock=${(await productOf(w)).currentStock} status=${finalBill.status} totalPaid=${finalBill.totalPaid}`,
+    );
+    expect(first.status).toBe("fulfilled");
+    expect(codeOf(second)).toBe("BILL_STATE_CHANGED");
+    expect(Number((await productOf(w)).currentStock)).toBe(60);
+    expect(finalBill.status).toBe("PARTIAL");
+    expect(Number(finalBill.totalPaid)).toBe(20);
+  });
 });
