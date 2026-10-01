@@ -1,6 +1,7 @@
 import {
   continuousFrameScanned,
   createContinuousScanState,
+  manualScanned,
   scanSettled,
   type ContinuousScanState,
 } from "./scan-engine";
@@ -321,5 +322,14 @@ describe("continuousFrameScanned — SA-384a: a slow held code (iOS Code 39, ~50
     expect(run.accepts).toBe(1);
     feed(run, "CODE39", 2, 6000, 11000);
     expect(run.accepts).toBe(2);
+  });
+});
+
+describe("manualScanned keeps the caller's own state shape (web ScanOrderScreen holds a ContinuousScanState)", () => {
+  it("a manual entry mid-session preserves the steady-read streaks, in the TYPE as well as at runtime", () => {
+    const start = continuousFrameScanned(createContinuousScanState(), "123", 1000).next;
+    const step = manualScanned(start, "999");
+    // `.steady` must typecheck: manualScanned is generic over the caller's state, not widened to ScanEngineState.
+    expect(step.next.steady).toEqual(start.steady);
   });
 });
