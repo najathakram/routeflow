@@ -562,5 +562,16 @@ describeDb(
       expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
       expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
     });
+
+    it("18. B948 race: a $60 credit note item and an inline return of the whole line racing on A never total more than $100, and neither 500s", async () => {
+      const s = await seed("race-inline");
+      const results = await Promise.allSettled([creditNoteItem(s, s.lineA, 60), inlineReturn(s)]);
+      for (const r of results) {
+        if (r.status === "rejected") {
+          expect((r.reason as { getStatus?: () => number }).getStatus?.()).toBeLessThan(500);
+        }
+      }
+      expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
+    });
   },
 );

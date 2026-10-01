@@ -107,6 +107,8 @@ export class CreditNotesService {
             qty: true,
             boxes: true,
             unitsPerBox: true,
+            pieces: true,
+            product: { select: { unitsPerBox: true } },
             trackedCategoryId: true,
             categoryTaxAmount: true,
           },

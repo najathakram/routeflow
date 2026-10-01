@@ -2,6 +2,7 @@ import {
   addCredits,
   planProductRefund,
   lineTakeRefusal,
+  piecesPerQtyOf,
   loadLineCredits,
   type HeadroomLine,
 } from "./line-credit-headroom";
@@ -252,5 +253,15 @@ describe("inline term (B948, SA-628a (c)): an inline return's ReturnItems count 
     const free: HeadroomLine = { id: "f", productId: "p", subtotal: 0, qty: 2 };
     expect(lineTakeRefusal(free, new Map(), { qty: 2, amount: 0 })).toBeNull();
     expect(lineTakeRefusal(free, new Map(), { qty: 3, amount: 0 })).not.toBeNull();
+  });
+});
+
+describe("piecesPerQtyOf resolves the pack like the inline pricing", () => {
+  it("box-split => 1; own snapshot; own split; product pack; else 1", () => {
+    expect(piecesPerQtyOf({ boxes: 2, unitsPerBox: 12 })).toBe(1);
+    expect(piecesPerQtyOf({ unitsPerBox: 12 })).toBe(12);
+    expect(piecesPerQtyOf({ qty: 24, boxes: null, product: { unitsPerBox: 6 } })).toBe(6);
+    expect(piecesPerQtyOf({ qty: 2, product: { unitsPerBox: 12 } })).toBe(12);
+    expect(piecesPerQtyOf({ qty: 2 })).toBe(1);
   });
 });

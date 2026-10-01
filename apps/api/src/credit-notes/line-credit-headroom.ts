@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { packFromOwnSplit, roundMoney } from "@routeflow/pricing";
 
 /**
  * SA-628 — ONE per-line credit headroom for credit notes AND return refunds (a line may never be credited past its value
@@ -21,11 +21,26 @@ export interface HeadroomLine {
   /** pieces per unit of `qty` (inline ReturnItem.qty is PIECES; a boxed selling-unit line's qty is boxes). Default 1. */
   piecesPerQty?: number;
 }
-/** The pieces-per-qty factor of an invoice line: `boxes != null ? 1 : max(1, unitsPerBox)` (the pricing engine's piecesQty rule). */
+/**
+ * The pieces-per-qty factor of an invoice line, resolved exactly like the inline pricing's `piecesQty`: a box-split line's qty is
+ * already pieces (1); else the line's own pack snapshot, else the pack its own boxes/pieces split recovers, else the product's
+ * current pack; a selling-unit line's qty is boxes.
+ */
 export const piecesPerQtyOf = (it: {
+  qty?: unknown;
   boxes?: number | null;
+  pieces?: number | null;
   unitsPerBox?: number | null;
-}): number => (it.boxes != null ? 1 : Math.max(1, Number(it.unitsPerBox ?? 1)));
+  product?: { unitsPerBox?: number | null } | null;
+}): number => {
+  if (it.boxes != null) return 1;
+  const upb =
+    it.unitsPerBox ??
+    packFromOwnSplit({ qty: Number(it.qty ?? 0), boxes: it.boxes, pieces: it.pieces }) ??
+    it.product?.unitsPerBox ??
+    null;
+  return Math.max(1, Number(upb) || 1);
+};
 /** An invoice item row as a HeadroomLine. */
 export const toHeadroomLine = (it: any): HeadroomLine => ({
   id: it.id,

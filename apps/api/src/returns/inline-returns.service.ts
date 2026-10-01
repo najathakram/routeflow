@@ -584,7 +584,9 @@ export class InlineReturnsService {
     if (invoiceIds.length === 0) return; // the source line was deleted: provenance only, nothing to cap
     const tenantId = this.prisma.getTenantId();
     for (const invoiceId of invoiceIds) {
-      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+      // A WRITE, not just a lock: a concurrent credit note's Serializable tx took its snapshot before it waited on this row, so
+      // only a new row version (40001 on its wake-up, then its bounded retry re-reads) makes it see this return (B948 race).
+      await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id = ${invoiceId} AND "tenantId" = ${tenantId}`;
     }
     for (const invoiceId of invoiceIds) {
       const rows: any[] = await tx.invoiceItem.findMany({
@@ -596,6 +598,8 @@ export class InlineReturnsService {
           qty: true,
           boxes: true,
           unitsPerBox: true,
+          pieces: true,
+          product: { select: { unitsPerBox: true } },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });

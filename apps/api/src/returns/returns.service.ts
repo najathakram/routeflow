@@ -457,6 +457,8 @@ export class ReturnsService {
                       subtotal: true,
                       boxes: true,
                       unitsPerBox: true,
+                      pieces: true,
+                      product: { select: { unitsPerBox: true } },
                     },
                     orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                   },
@@ -887,6 +889,8 @@ export class ReturnsService {
                     subtotal: true,
                     boxes: true,
                     unitsPerBox: true,
+                    pieces: true,
+                    product: { select: { unitsPerBox: true } },
                   },
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                 },
@@ -1166,6 +1170,8 @@ export class ReturnsService {
                     subtotal: true,
                     boxes: true,
                     unitsPerBox: true,
+                    pieces: true,
+                    product: { select: { unitsPerBox: true } },
                   },
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                 },
