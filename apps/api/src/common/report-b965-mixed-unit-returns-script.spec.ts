@@ -39,7 +39,7 @@ describe("B965 sizing script", () => {
     const sql = String(r.stdout).trim();
     expect(sql.startsWith("SELECT")).toBe(true);
     expect(sql).toContain(`r."kind" = 'STANDARD'`);
-    expect(sql).toContain(`'RECEIVED', 'APPROVED'`);
+    expect(sql).toContain(`'PENDING', 'APPROVED', 'IN_TRANSIT', 'RECEIVED'`);
     expect(sql).toContain(`oi."boxes" IS NOT NULL OR oi."pieces" IS NOT NULL`);
     expect(sql).toContain(`GROUP BY m."status"`);
     expect(sql.replace(/;\s*$/, "")).not.toContain(";");

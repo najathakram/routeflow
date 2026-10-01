@@ -632,12 +632,11 @@ export class ReturnsService {
     }
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
-    if (creditable.length === 0) return { amount, invoiceId };
-
     // B965 (SA-628l): a STANDARD return's qty is in its order line's OWN unit, so a product sold on lines with different pack
     // factors (2 boxes of 12 on one line, 12 loose pieces on another) has no single piece count: every line-unit sum below
     // would add boxes to pieces. create() already refuses to record one (SA-158); this is the refund door's safety net for
-    // legacy RECEIVED rows, refused BEFORE the claim. EXTERNAL_REFUND (priceReturn only) stays the escape hatch.
+    // legacy RECEIVED rows, refused BEFORE the claim and BEFORE the never-invoiced shortcut (its order-line pricing adds boxes to
+    // pieces and mints with no cap). EXTERNAL_REFUND (priceReturn only) stays the escape hatch.
     const returnedByProduct = new Map<string, number>();
     for (const it of items)
       returnedByProduct.set(
@@ -659,6 +658,8 @@ export class ReturnsService {
           productId,
         });
     }
+
+    if (creditable.length === 0) return { amount, invoiceId };
 
     // The credit is always minted against ONE invoice — the only creditable one, or
     // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
@@ -784,16 +785,19 @@ export class ReturnsService {
   ): number {
     const basis = bases.get(productId);
     if (basis && "factor" in basis) return standardReturnPieces(bases, productId, qty).pieces;
+    // An UNKNOWN basis (a boxed line with no pack proof, or billed across several invoice items) has an order-line unit the
+    // pool's own factor cannot vouch for: refused, never converted. Only a product with no live order line at all (the
+    // fixture / pre-line shape) takes the pool's own single factor.
     const factors = new Set(
       pool.lines
         .filter((l) => l.productId === productId && l.qty > 0)
         .map((l) => l.piecesPerQty ?? 1),
     );
-    if (factors.size > 1)
+    if ((basis && "unknown" in basis) || factors.size > 1)
       throw new ConflictException({
         code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
         message:
-          "This product was invoiced in different units, so the return cannot be priced as one quantity. " +
+          "This product's quantity cannot be priced as one unit across this order's invoices. " +
           "Credit it per line via an inline return, or manually.",
         productId,
       });

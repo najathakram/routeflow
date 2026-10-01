@@ -1,13 +1,15 @@
-// B965 sizing: READ-ONLY, COUNT-ONLY. How many STANDARD returns still RECEIVED or APPROVED (so a refund is still ahead of them)
+// B965 sizing: READ-ONLY, COUNT-ONLY. How many STANDARD returns still open (PENDING, APPROVED, IN_TRANSIT or RECEIVED, so a refund may still be ahead of them)
 // sit on an order where a returned product's live lines MIX pack evidence: a line with a boxes/pieces split beside a box-unaware
 // line of a boxed product (e.g. 12 loose pieces beside 2 boxes of 12)? A STANDARD return's qty is in its order line's own unit, so
 // such a product has no single piece count. create() has refused to record one since SA-158 (409, "inline, per line"); these are
 // the legacy rows that predate it. The refund door now refuses them too (409 RETURN_MIXED_UNIT_PRODUCT, before the claim); the
 // operator resolves each with an inline per-line return, a manual credit, or EXTERNAL_REFUND.
 //
-// An APPROXIMATION from the stored columns alone (it does not run the invoice-item pack resolver): it counts every return the
-// door MAY refuse, so treat the number as an upper bound. Output is the return status and integers ONLY: never an id, tenant,
-// customer, product or amount.
+// A HEURISTIC from the stored order-line columns alone (it does not run the invoice-item pack resolver the door uses): it flags a
+// returned product whose live lines differ in pack evidence (a boxes/pieces split, a unit-aware factor-1 label, or a boxed snapshot
+// of a given size). It can MISS what the door refuses through invoice evidence alone (a line billed across several invoice items,
+// two box-unaware lines resolved differently), so read it as a sizing estimate, not a bound. Output is the return status and
+// integers ONLY: never an id, tenant, customer, product or amount.
 // One READ ONLY transaction, always rolled back; the SQL has no parameters. Safety rests on READ ONLY + ROLLBACK, NOT on a
 // target check: it does not refuse a non-local database (the B768 ruling: owner-run reports reach prod through the shared
 // resolver on purpose).
@@ -34,10 +36,15 @@ export function buildSql() {
     `  JOIN "OrderItem" oi ON oi."orderId" = r."orderId" AND oi."productId" = ri."productId"`,
     `                     AND oi."status"::text <> 'CANCELLED'`,
     `  JOIN "Product" p ON p."id" = oi."productId"`,
-    `  WHERE r."kind" = 'STANDARD' AND r."status"::text IN ('RECEIVED', 'APPROVED')`,
+    `  WHERE r."kind" = 'STANDARD' AND r."status"::text IN ('PENDING', 'APPROVED', 'IN_TRANSIT', 'RECEIVED')`,
     `  GROUP BY r."id", r."status", ri."productId"`,
-    `  HAVING bool_or(oi."boxes" IS NOT NULL OR oi."pieces" IS NOT NULL)`,
-    `     AND bool_or(oi."boxes" IS NULL AND oi."pieces" IS NULL`,
+    `  HAVING count(DISTINCT CASE`,
+    `           WHEN oi."boxes" IS NOT NULL OR oi."pieces" IS NOT NULL THEN 'split'`,
+    `           WHEN btrim(COALESCE(oi."unitLabel", '')) <> '' AND oi."unitsPerBox" = 1 THEN 'unit1'`,
+    `           WHEN COALESCE(oi."unitsPerBox", 0) > 1 THEN 'boxed:' || oi."unitsPerBox"::text`,
+    `           WHEN COALESCE(p."unitsPerBox", 0) > 1 THEN 'boxed:' || p."unitsPerBox"::text`,
+    `           ELSE 'plain' END) > 1`,
+    `     AND bool_or(NOT (oi."boxes" IS NOT NULL OR oi."pieces" IS NOT NULL)`,
     `                 AND (COALESCE(oi."unitsPerBox", 0) > 1 OR COALESCE(p."unitsPerBox", 0) > 1))`,
     `) m`,
     `GROUP BY m."status"`,
@@ -70,7 +77,7 @@ export function formatReport(rows) {
   }
   lines.push(
     "",
-    `${total} open STANDARD return(s) on a mixed-unit product (${rows.length} status group(s)); an upper bound`,
+    `${total} open STANDARD return(s) on a mixed-unit product (${rows.length} status group(s)); a sizing estimate`,
     "Each is a return the refund door refuses (RETURN_MIXED_UNIT_PRODUCT): resolve it inline per line, manually, or EXTERNAL_REFUND.",
   );
   return lines.join("\n");

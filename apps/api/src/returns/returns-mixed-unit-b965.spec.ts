@@ -159,6 +159,16 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 
+  it("a NEVER-INVOICED order is gated too: the order-line fallback would add boxes to pieces and mint with no cap", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    withReturn([], [BOX_LINE, LOOSE_LINE], [{ productId: "pp", qty: 12 }]);
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_MIXED_UNIT_PRODUCT" },
+    });
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+  });
+
   it("single-unit BOXED product is unchanged: 1 of 2 boxes refunds half the line", async () => {
     withReturn([invoice("inv-1", [invItem("i1", {})])], [BOX_LINE], [{ productId: "pp", qty: 1 }]);
     await service.processRefund("ret-1");
@@ -266,5 +276,21 @@ describe("ReturnsService.processRefund — the order pool in PIECES (B967)", () 
     expect(creditNotesCreate.mock.calls[0][1]).toMatchObject({
       pooledRefund: [{ productId: "pp", qty: 18 }],
     });
+  });
+
+  it("a box-unaware line billed across SEVERAL invoice items has no factor to convert with: refused, never converted with the invoice's own factor", async () => {
+    // l1 (2 boxes) was billed as two split invoice items (12 pieces each): the order line's unit is boxes, the pool's is pieces
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { orderItemId: "l1", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+      { orderItemId: "l1", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+    ]);
+    poolRead();
+    creditNoteItems();
+    withReturn(2);
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_MIXED_UNIT_PRODUCT" },
+    });
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 });

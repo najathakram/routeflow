@@ -413,10 +413,13 @@ export function toPiecesPool(pool: OrderPool): OrderPool {
 
 /**
  * A return refund of `qty` PIECES of `productId` against the pool: null when it fits, else the refusal. Never clips.
- * INVARIANT (B965/B967): the pool and the credit-note mint count in pieces, but a STANDARD return's qty is in its order line's
- * own selling unit, so the caller converts it at the boundary with `standardReturnPieces` (one factor) BEFORE this check. A
- * product on lines with different pack factors has no single factor: the refund door refuses it (`RETURN_MIXED_UNIT_PRODUCT`),
- * it is never converted. The tolerance is EPS per line scaled by that line's pieces-per-qty, like `pooledTakeRefusal`.
+ * INVARIANT (B965/B967): this check counts in pieces, like the credit-note mint. A STANDARD return's qty is in its order line's
+ * own selling unit, so the caller converts it at the boundary (`ReturnsService.poolPieces` -> `standardReturnPieces`, one
+ * factor) BEFORE this check. A product on lines with different pack factors, or whose factor is unknown, is never converted:
+ * the refund door refuses it (`RETURN_MIXED_UNIT_PRODUCT`). KNOWN, not widened here: the single-invoice itemiser and
+ * `priceReturn` still price in line units, and the legacy itemless term of `loadOrderPool` attributes a Return's line-unit qty
+ * onto invoice lines, so a pre-SA-628 refund on a box-unaware line is under-counted in pieces. The tolerance is EPS per line
+ * scaled by that line's pieces-per-qty, like `pooledTakeRefusal`.
  */
 export function pooledRefundRefusal(
   pool: OrderPool,
