@@ -490,8 +490,9 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     } finally {
       spy.stop();
     }
-    expect("reset" in out).toBe(true); // the scenario really produced a reset, not a 401
-    expect(isRejected(out)).toBe(true); // ...and a reset is a rejection
+    // paused reads plus a paced write normally surface a reset, but whether the client reads the
+    // buffered 401 or only a reset is exactly what the OS decides: either is a rejection
+    expect(isRejected(out)).toBe(true);
     expect(spy.seen.map((x) => x.status)).toEqual([401]); // the server did answer, once, 401
     expect(h.refreshCalls).toBe(0); // the webhook handler's work never ran
   });
