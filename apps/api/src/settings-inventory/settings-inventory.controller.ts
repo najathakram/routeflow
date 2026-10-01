@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Patch, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
-import type { InventorySettings, UpdateInventorySettingsRequest } from "@routeflow/types";
+import type { InventorySettings } from "@routeflow/types";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -29,10 +29,7 @@ export class SettingsInventoryController {
   @Patch()
   @Roles(UserRole.TENANT_ADMIN)
   @ApiOperation({ summary: "Change out-of-stock ordering (audited policy write)" })
-  update(
-    @Body() body: UpdateInventorySettingsRequest | unknown,
-    @CurrentUser() user: JwtPayload,
-  ): Promise<InventorySettings> {
+  update(@Body() body: unknown, @CurrentUser() user: JwtPayload): Promise<InventorySettings> {
     return this.settings.update(body, user);
   }
 }

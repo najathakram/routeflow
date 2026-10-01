@@ -75,6 +75,14 @@ describe("settings/inventory roles (real RolesGuard)", () => {
     expect(can(proto.get, operator)).toBe(true);
   });
 
+  it("GET: CUSTOMER and DRIVER are refused, and the metadata is pinned to OPERATOR", () => {
+    const customer = { sub: "u3", username: "c", role: "CUSTOMER", tenantId: "t1" } as JwtPayload;
+    const driver = { sub: "u4", username: "d", role: "DRIVER", tenantId: "t1" } as JwtPayload;
+    expect(can(proto.get, customer)).toBe(false);
+    expect(can(proto.get, driver)).toBe(false);
+    expect(Reflect.getMetadata("roles", proto.get)).toEqual([UserRole.OPERATOR]);
+  });
+
   it("PATCH: TENANT_ADMIN only, OPERATOR is refused", () => {
     expect(can(proto.update, admin)).toBe(true);
     expect(can(proto.update, operator)).toBe(false);
@@ -173,16 +181,33 @@ describe("PATCH /settings/inventory", () => {
     },
   );
 
-  it("extra body fields are ignored", async () => {
+  it("a non-string reason is a 400 on field reason, set() never called", async () => {
+    const { controller, policies } = build();
+    const err = await controller
+      .update({ buyerOversell: "backorder", reason: 123 } as never, admin)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse().details).toEqual({ field: "reason" });
+    expect(policies.set).not.toHaveBeenCalled();
+  });
+
+  it("extra body fields are ignored (a body tenantId never picks the tenant)", async () => {
     const { controller, policies } = build();
     await controller.update(
-      { buyerOversell: "backorder", scopeType: "CUSTOMER", value: "off", key: "x" } as never,
+      {
+        buyerOversell: "backorder",
+        scopeType: "CUSTOMER",
+        value: "off",
+        key: "x",
+        tenantId: "t2",
+      } as never,
       admin,
     );
     const arg = policies.set.mock.calls[0][0];
     expect(arg.scopeType).toBe("TENANT");
     expect(arg.key).toBe("orders.buyerOversell");
     expect(arg.value).toBe("backorder");
+    expect(arg.tenantId).toBe("t1");
   });
 
   it("a set() rejection propagates as-is", async () => {
