@@ -275,3 +275,30 @@ describe("fragments", () => {
     for (const k of PANELS) expect(h).toContain(f[k]);
   });
 });
+
+describe("B939 a ready-to-merge PR stays on the dashboard", () => {
+  const withReady = (): any => {
+    const s = base();
+    const pr = s.prs.find((p: any) => p.pr === 2801);
+    pr.state = "ready";
+    pr.review = "approved";
+    pr.ci = "green";
+    pr.mergeable = "clean";
+    return s;
+  };
+  const panel = (html: string, key: string): string =>
+    new RegExp(`<section[^>]*data-panel="${key}"[\\s\\S]*?</section>`).exec(html)?.[0] ?? "";
+
+  it("lists the ready PR in Open pull requests and counts it", () => {
+    const html = render(withReady());
+    const prs = panel(html, "prs");
+    expect(prs).toContain("#2801");
+    // 2801 (ready) + 2810 (open) are both open work; the merged 2788 is not
+    expect(prs).toMatch(/<h2[^>]*>Open pull requests <span class="count">2<\/span>/);
+  });
+
+  it("shows the ready PR as the lane's PR chip", () => {
+    const lanes = panel(render(withReady()), "lanes");
+    expect(lanes).toContain("#2801");
+  });
+});

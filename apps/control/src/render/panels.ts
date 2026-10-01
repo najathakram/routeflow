@@ -594,7 +594,9 @@ const HB_GLYPH: Record<string, string> = { live: "●", stale: "◐", silent: "�
 
 function prFor(c: Ctx, taskId: string | null | undefined): PrView | undefined {
   if (!taskId) return undefined;
-  const open = c.v.prs.filter((p) => p.state === "open" || p.state === "draft");
+  const open = c.v.prs.filter(
+    (p) => p.state === "open" || p.state === "ready" || p.state === "draft",
+  );
   return open.find(
     (p) => p.links?.task === taskId || p.links?.bug === taskId || p.links?.feature === taskId,
   );
@@ -886,7 +888,7 @@ function deployCell(p: PrView): string {
 }
 function prsPanel(c: Ctx): string {
   const open = c.v.prs
-    .filter((p) => p.state === "open" || p.state === "draft")
+    .filter((p) => p.state === "open" || p.state === "ready" || p.state === "draft")
     .sort((a, b) => b.pr - a.pr);
   const recent = (iso: string | null) => !!iso && c.nowMs - Date.parse(iso) <= 7 * DAY;
   const merged = c.v.prs.filter((p) => p.state === "merged" && recent(p.mergedAt));
