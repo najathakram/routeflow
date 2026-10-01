@@ -795,3 +795,64 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
     expect(JSON.stringify(err.getResponse())).not.toMatch(/omit the field/);
   });
 });
+
+describe("SA-606i: the family price is REQUIRED on create (no implicit $0.00), HTTP == service", () => {
+  const info = (extra: Record<string, unknown> = {}) => ({ name: "F", ...extra });
+  const oneVariant = [{ name: "A", pricePerUnit: "1" }];
+  const errs = async (plain: Record<string, unknown>) =>
+    validate(plainToInstance(CreateFamilyDto, plain) as object, { whitelist: true });
+  const flat = (e: Awaited<ReturnType<typeof errs>>[number]): string[] => [
+    ...Object.values(e.constraints ?? {}),
+    ...(e.children ?? []).flatMap(flat),
+  ];
+
+  it("a create with NO family price is a 400 over HTTP (readable 'required') and in the service", async () => {
+    const plain = { family: info(), variants: oneVariant };
+    const e = await errs(plain);
+    expect(e.length).toBeGreaterThan(0);
+    expect(e.flatMap(flat).join(" | ")).toMatch(/pricePerUnit is required/);
+    await expect(build().service.createFamily(plain as never, ACTOR)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it("copyFamilyPrice WITHOUT a family price is the same 400 and NOTHING is written", async () => {
+    const h = build();
+    await expect(
+      h.service.createFamily(
+        { family: info(), variants: oneVariant, copyFamilyPrice: true } as never,
+        ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(h.tx.products).toHaveLength(0);
+    expect(h.tx.calls).not.toContain("product.create");
+  });
+
+  it('an explicit "0.00" is allowed (a deliberate free family), with and without copyFamilyPrice', async () => {
+    const plain = { family: info({ pricePerUnit: "0.00" }), variants: oneVariant };
+    expect(await errs(plain)).toEqual([]);
+    const a = build();
+    await a.service.createFamily(plain as never, ACTOR);
+    expect(
+      a.tx.products.find((p) => (p as Record<string, unknown>).kind === "FAMILY"),
+    ).toMatchObject({
+      pricePerUnit: "0.00",
+    });
+    const b = build();
+    await b.service.createFamily({ ...plain, copyFamilyPrice: true } as never, ACTOR);
+    expect(
+      b.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT"),
+    ).toMatchObject({ pricePerUnit: "0.00" });
+  });
+
+  it("money() has no implicit fallback: a missing / null / blank price anywhere is a 400, never $0.00", async () => {
+    for (const bad of [undefined, null, "", "  "]) {
+      await expect(
+        build().service.createFamily(
+          { family: info({ pricePerUnit: bad }), variants: oneVariant } as never,
+          ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+});
