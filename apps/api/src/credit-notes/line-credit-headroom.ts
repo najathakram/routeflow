@@ -97,6 +97,29 @@ export function allocateProductQty(
     items.push({ invoiceItemId: line.id, qty: round3(take), amount });
     left = round3(left - take);
   }
+  if (mode === "refund" && left > EPS) {
+    // the lines' remaining QTY cannot absorb the request: refuse, never clip (SA-628a B2)
+    const mine = lines.filter((l) => l.productId === productId && l.qty > 0);
+    const rem = (l: HeadroomLine) => {
+      const d = credited.get(l.id) ?? { amount: 0, qty: 0 };
+      return {
+        q: Math.max(0, round3(l.qty - d.qty)),
+        a: l.subtotal > EPS ? Math.max(0, roundMoney(l.subtotal - d.amount)) : 0,
+      };
+    };
+    const unit = mine.length ? mine[0].subtotal / mine[0].qty : 0;
+    return {
+      items: [],
+      shortfallQty: round3(left),
+      refusal: {
+        productId,
+        requestedAmount: roundMoney(unit * qty),
+        remainingAmount: roundMoney(mine.reduce((t, l) => t + rem(l).a, 0)),
+        requestedQty: round3(qty),
+        remainingQty: round3(mine.reduce((t, l) => t + rem(l).q, 0)),
+      },
+    };
+  }
   return { items, shortfallQty: left > EPS ? left : 0 };
 }
 
