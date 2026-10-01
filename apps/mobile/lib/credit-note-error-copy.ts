@@ -73,3 +73,16 @@ export function refusalCopy(code: string | null | undefined): string {
     "This can't be changed right now. Nothing was changed.",
   );
 }
+
+/** SA-628 (B946): the refund of a return that would credit a line past its value (a credit note or an earlier refund already took part of it). */
+export const RETURN_REFUND_OVER_LINE_HEADROOM_COPY =
+  "This refund would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier refund). Refund it outside RouteFlow, or issue the credit note manually.";
+
+/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM (by `response.data.code`), else the caller's own text. */
+export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
+  const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
+    ?.data?.code;
+  return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM
+    ? RETURN_REFUND_OVER_LINE_HEADROOM_COPY
+    : otherwise;
+}
