@@ -14,17 +14,63 @@ describe("allocateProductQty (SA-628: one shared per-line headroom)", () => {
     expect(r.items).toEqual([{ invoiceItemId: "a", qty: 1, amount: 100 }]);
     expect(r.shortfallQty).toBe(0);
   });
-  it("a prior $33.33 credit on A leaves 66.67: the refund of the whole line is a SHORTFALL on qty? no: it takes the rest, never 100", () => {
-    const credited = new Map([["a", { amount: 33.33, qty: 0.3333 }]]);
+  it("REFUND mode never clips: a prior $33.33 credit leaves $66.67 of a $100 line, so returning the whole line is a refusal", () => {
+    const credited = new Map([["a", { amount: 33.33, qty: 0.333 }]]);
     const r = allocateProductQty([A, B], credited, "pa", 1);
-    // only 0.667 qty / $66.67 remain on A: the rest of the return cannot be credited
+    expect(r.items).toEqual([]);
+    expect(r.refusal).toMatchObject({
+      productId: "pa",
+      requestedAmount: 100,
+      remainingAmount: 66.67,
+    });
+  });
+  it("COUNT mode (the legacy history term) MAY clip to what the line has left", () => {
+    const credited = new Map([["a", { amount: 33.33, qty: 0.333 }]]);
+    const r = allocateProductQty([A, B], credited, "pa", 1, "count");
     expect(r.items).toEqual([{ invoiceItemId: "a", qty: 0.667, amount: 66.67 }]);
-    expect(r.shortfallQty).toBeCloseTo(0.333, 3);
+    expect(r.refusal).toBeUndefined();
+  });
+  it("REFUND mode: qty is left but the money is short ($100/10pc line, $50 credited with explicit qty 1, 9 pcs back = $90 > $50) is a refusal", () => {
+    const line: HeadroomLine = { id: "x", productId: "p", subtotal: 100, qty: 10 };
+    const r = allocateProductQty([line], new Map([["x", { amount: 50, qty: 1 }]]), "p", 9);
+    expect(r.items).toEqual([]);
+    expect(r.refusal).toMatchObject({
+      productId: "p",
+      requestedAmount: 90,
+      remainingAmount: 50,
+      requestedQty: 9,
+      remainingQty: 9,
+    });
+  });
+  it("REFUND mode: an exact rest within 1 cent is allowed (it takes the line's remaining amount)", () => {
+    const line: HeadroomLine = { id: "x", productId: "p", subtotal: 100, qty: 3 };
+    const r = allocateProductQty([line], new Map([["x", { amount: 66.67, qty: 2 }]]), "p", 1);
+    expect(r.refusal).toBeUndefined();
+    expect(r.items).toEqual([{ invoiceItemId: "x", qty: 1, amount: 33.33 }]);
+  });
+  it("a $0 line takes its qty at amount 0: money binds only when the line has money (a free unit is NOT refused)", () => {
+    const free: HeadroomLine = { id: "f", productId: "p", subtotal: 0, qty: 2 };
+    const r = allocateProductQty([free], new Map(), "p", 2);
+    expect(r.items).toEqual([{ invoiceItemId: "f", qty: 2, amount: 0 }]);
+    expect(r.shortfallQty).toBe(0);
+    expect(r.refusal).toBeUndefined();
+  });
+  it("$100/10pc + a $0/2pc line of one product: a full 12-pc return is $100 + $0, not a refusal", () => {
+    const lines: HeadroomLine[] = [
+      { id: "paid", productId: "p", subtotal: 100, qty: 10 },
+      { id: "free", productId: "p", subtotal: 0, qty: 2 },
+    ];
+    const r = allocateProductQty(lines, new Map(), "p", 12);
+    expect(r.items).toEqual([
+      { invoiceItemId: "paid", qty: 10, amount: 100 },
+      { invoiceItemId: "free", qty: 2, amount: 0 },
+    ]);
+    expect(r.shortfallQty).toBe(0);
   });
   it("a fully credited line takes nothing and the whole qty is a shortfall (B's slack is never borrowed)", () => {
     const r = allocateProductQty([A, B], new Map([["a", { amount: 100, qty: 1 }]]), "pa", 1);
     expect(r.items).toEqual([]);
-    expect(r.shortfallQty).toBe(1);
+    expect(r.shortfallQty).toBe(1); // qty is gone: a shortfall (the caller refuses 409)
   });
   it("a product on two lines fills them in order, closing the first exactly", () => {
     const two: HeadroomLine[] = [
@@ -73,6 +119,18 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
         }),
       }),
     );
+  });
+  it("the legacy term keys on the CN LINK, not the return status: a PROCESSED return counts and no status filter is sent", async () => {
+    const db = {
+      creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+      creditNote: { findMany: jest.fn().mockResolvedValue([{ id: "cn-old" }]) },
+      return: { findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pa", qty: 1 }] }]) },
+    };
+    const out = await loadLineCredits(db, "inv", [A, B]);
+    expect(out.get("a")).toEqual({ amount: 100, qty: 1 });
+    const where = db.return.findMany.mock.calls[0][0].where;
+    expect(where).toEqual({ creditNoteId: { in: ["cn-old"] } });
+    expect(where).not.toHaveProperty("status");
   });
   it("no itemless notes: no return lookup at all", async () => {
     const db = {
