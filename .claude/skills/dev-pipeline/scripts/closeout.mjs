@@ -105,6 +105,7 @@ import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../../../../scripts/lib/check-git-hooks.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const SCRIPT_DIR = path.dirname(__filename);
@@ -286,7 +287,10 @@ function firstLine(s) {
 function resolveProjectViaGit(cwd) {
   let res;
   try {
-    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    res = spawnSync("git", ["-C", cwd, "rev-parse", "--git-common-dir"], {
+      encoding: "utf8",
+      env: scrubbedGitEnv(),
+    });
   } catch {
     return null;
   }
@@ -1308,7 +1312,7 @@ function stepCodeMap({ project, result }) {
 
 function gitInfo(project) {
   const run = (args) => {
-    const r = spawnSync("git", args, { cwd: project, encoding: "utf8" });
+    const r = spawnSync("git", args, { cwd: project, encoding: "utf8", env: scrubbedGitEnv() });
     return r.status === 0 ? r.stdout.trim() : null;
   };
   const branch = run(["branch", "--show-current"]);
@@ -2512,7 +2516,9 @@ function runSelftest() {
     // given (the exact 2026-09-11 bug: a worktree's own path encodes to a
     // ~/.claude/projects/<enc> dir that never existed).
     function runGitCmd(args, cwd) {
-      return spawnSync("git", args, { cwd, encoding: "utf8" });
+      // Scrub git's repo-scoped env (GIT_DIR ...): under a git hook it would re-point this fixture
+      // at the real repository (fixture-git-env-scrub.spec.ts).
+      return spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
     }
     const gitMainRepo = path.join(tmpBase, "git-main-repo");
     fs.mkdirSync(gitMainRepo, { recursive: true });

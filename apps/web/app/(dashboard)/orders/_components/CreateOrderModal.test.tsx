@@ -317,8 +317,11 @@ describe("CreateOrderModal", () => {
       await screen.findByRole("dialog", { name: "Scan items" });
       return utils;
     };
+    // Steady-read is DEFAULT ON (owner ruling 2026-09-24): one deliberate scan = the same code held for three frames.
     const scanCode = async (code: string) => {
       await act(async () => {
+        cameraDetect!(code);
+        cameraDetect!(code);
         cameraDetect!(code);
       });
     };
