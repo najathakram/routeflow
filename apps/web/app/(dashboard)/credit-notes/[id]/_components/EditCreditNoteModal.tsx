@@ -224,7 +224,7 @@ export function EditCreditNoteModal({
           </p>
           {preview.isError && (
             <p role="alert" data-testid="reissue-preview-error" className="text-danger">
-              We couldn't check what this change affects. Go back and try again.
+              We couldn&apos;t check what this change affects. Go back and try again.
             </p>
           )}
           {(preview.data?.refusalCode || preview.data?.refusal) && (

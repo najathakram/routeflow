@@ -100,7 +100,7 @@ export function VoidCreditNoteDialog({
             className="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-danger"
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            We couldn't check what this void affects. Close this window and try again.
+            We couldn&apos;t check what this void affects. Close this window and try again.
           </p>
         )}
         {refused && (
