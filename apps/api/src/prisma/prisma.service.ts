@@ -52,6 +52,9 @@ export function isTxClient(db: unknown): boolean {
   return db != null && typeof (db as { $connect?: unknown }).$connect !== "function";
 }
 
+const MIN_STATS_LOG_MS = 60_000;
+const MAX_TIMER_MS = 2 ** 31 - 1; // Node clamps a longer delay to 1 ms
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   /** SA-619: warn (dark) / throw (enforced) on a missing tenant context. Injected in tests. */
@@ -88,15 +91,19 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   /**
    * Log `TENANT_CONTEXT_STATS {...}` every TENANT_CONTEXT_STATS_LOG_MS (default 15 min; 0 disables;
-   * anything that is not a non-negative integer falls back to the default). Zeros are logged too, so
+   * anything outside [60 s, 2^31-1 ms] falls back to the default: a value like 15 (meant as minutes)
+   * must not log every 15 ms, and Node clamps a larger delay to 1 ms). Zeros are logged too, so
    * "72 h of zero warns" is readable from the logs alone. The timer never keeps the process alive.
    */
   startStatsLog(env: NodeJS.ProcessEnv = process.env): void {
     this.stopStatsLog();
     const raw = env.TENANT_CONTEXT_STATS_LOG_MS;
     const parsed = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
-    const ms = Number.isInteger(parsed) && parsed >= 0 ? parsed : 15 * 60_000;
-    if (ms === 0) return;
+    if (parsed === 0) return;
+    const ms =
+      Number.isInteger(parsed) && parsed >= MIN_STATS_LOG_MS && parsed <= MAX_TIMER_MS
+        ? parsed
+        : 15 * 60_000;
     const logger = new Logger("TenantContext");
     this.statsTimer = setInterval(() => logger.log(this.tenantGuard.statsLine()), ms);
     this.statsTimer.unref?.();

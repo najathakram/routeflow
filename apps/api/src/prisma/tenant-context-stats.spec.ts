@@ -41,12 +41,12 @@ describe("PrismaService tenant-context stats (SA-619 PR-2a)", () => {
     expect(log).toHaveBeenCalledTimes(2);
   });
 
-  it("TENANT_CONTEXT_STATS_LOG_MS overrides the interval; 0 disables; junk falls back to the default", () => {
+  it("TENANT_CONTEXT_STATS_LOG_MS overrides the interval; 0 disables; out-of-range or junk falls back to the default (never a flood)", () => {
     jest.useFakeTimers();
     const log = jest.spyOn(Logger.prototype, "log").mockImplementation(() => undefined);
     const a = make().prisma;
-    a.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: "1000" });
-    jest.advanceTimersByTime(3_000);
+    a.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: "60000" }); // the lower bound is accepted
+    jest.advanceTimersByTime(3 * 60_000);
     expect(log).toHaveBeenCalledTimes(3);
     a.stopStatsLog();
     log.mockClear();
@@ -54,19 +54,33 @@ describe("PrismaService tenant-context stats (SA-619 PR-2a)", () => {
     b.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: "0" });
     jest.advanceTimersByTime(60 * 60_000);
     expect(log).not.toHaveBeenCalled();
-    const c = make().prisma;
-    c.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: "banana" });
-    jest.advanceTimersByTime(15 * 60_000);
-    expect(log).toHaveBeenCalledTimes(1);
-    c.stopStatsLog();
+    for (const bad of ["banana", "15", "59999", "-5", "1.5", "2147483648", "99999999999"]) {
+      const c = make().prisma;
+      c.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: bad });
+      jest.advanceTimersByTime(60_000); // a flood would have logged a thousand times by now
+      expect(log).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(14 * 60_000);
+      expect(log).toHaveBeenCalledTimes(1);
+      c.stopStatsLog();
+      log.mockClear();
+    }
   });
 
-  it("the timer never keeps the process alive (unref'd)", () => {
+  it("the upper bound (2^31-1 ms) is accepted as the interval", () => {
     const { prisma } = make();
     const t = jest.spyOn(global, "setInterval");
+    prisma.startStatsLog({ TENANT_CONTEXT_STATS_LOG_MS: "2147483647" });
+    expect(t.mock.calls[0][1]).toBe(2147483647);
+    prisma.stopStatsLog();
+  });
+
+  it("the timer never keeps the process alive: unref() is actually CALLED", () => {
+    const { prisma } = make();
+    const unref = jest.fn();
+    jest.spyOn(global, "setInterval").mockReturnValue({ unref } as any);
+    jest.spyOn(global, "clearInterval").mockImplementation(() => undefined);
     prisma.startStatsLog({});
-    const handle: any = t.mock.results[0].value;
-    expect(typeof handle.unref).toBe("function");
+    expect(unref).toHaveBeenCalledTimes(1);
     prisma.stopStatsLog();
   });
 });

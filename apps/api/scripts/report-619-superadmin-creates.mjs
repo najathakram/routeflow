@@ -6,6 +6,8 @@
 // The model list is DERIVED from the Prisma schema folder (a new nullable-tenant model is covered
 // automatically). Output is model names and integers ONLY: never an id, tenant name, slug or value.
 // One READ ONLY transaction, always rolled back; the SQL has no parameters (nothing user-supplied reaches it).
+// Safety rests on READ ONLY + ROLLBACK, NOT on a target check: it does not refuse a non-local database (the
+// B768 ruling: owner-run reports reach prod through the shared resolver on purpose).
 //
 //   node apps/api/scripts/report-619-superadmin-creates.mjs --self-test
 //   node apps/api/scripts/report-619-superadmin-creates.mjs --print-sql     # no connection: paste into psql

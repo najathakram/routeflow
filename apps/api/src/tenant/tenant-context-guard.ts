@@ -142,7 +142,7 @@ export class TenantContextGuard {
   /**
    * SA-620c: a nested write the tenant walker had to repair (DARK): a cross-tenant child overridden with the
    * context tenant, or the depth cap hit. A warn + counter; the walker itself throws when enforced, so this is
-   * only reached in dark mode. `detail` is model + path: never a tenant id or row data.
+   * only reached in dark mode (in ENFORCED mode these NESTED_* counters UNDERCOUNT: the walker throws first). `detail` is model + path: never a tenant id or row data.
    */
   nestedViolation(kind: "CROSS_TENANT_CHILD" | "DEPTH", detail: string): void {
     const v: Violation = kind === "DEPTH" ? "NESTED_DEPTH" : "NESTED_CROSS_TENANT";
