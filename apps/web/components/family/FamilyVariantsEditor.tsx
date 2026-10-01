@@ -166,7 +166,10 @@ export function FamilyVariantsEditor({
   };
 
   return (
-    <div className="space-y-3" data-testid="family-variants-editor">
+    <div
+      className="space-y-3 rounded-lg border border-surface-border bg-white p-5 shadow-card"
+      data-testid="family-variants-editor"
+    >
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-navy">Variants</h3>
         {canEdit && !editing && (

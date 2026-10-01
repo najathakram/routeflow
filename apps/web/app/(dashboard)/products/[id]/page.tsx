@@ -2412,11 +2412,8 @@ export default function ProductDetailPage() {
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
 
-            {/* WS8: a family's variants are edited as one all-or-nothing grid */}
             {product.kind === "FAMILY" && (
-              <div className="rounded-lg border border-surface-border bg-white p-5 shadow-card">
-                <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
-              </div>
+              <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
             )}
 
             {/* Variants section — only for non-variant (parent) products */}
