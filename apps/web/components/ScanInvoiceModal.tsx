@@ -58,6 +58,7 @@ import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-l
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
+import { RECORDS_FAILED_COPY, SCAN_FAILED_COPY } from "@/lib/reason-copy";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fmt = (n: number | null | undefined) =>
@@ -725,8 +726,6 @@ export function ScanInvoiceModal({
       const msg: string = err?.response?.data?.message ?? "";
       const code: string | undefined = err?.response?.data?.code;
       const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
-      // PO intent shows fixed copy only, never the server's own words.
-      const shownMsg = intent === "purchase-order" ? "" : msg;
       // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
       // never the server's raw message.
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
@@ -741,7 +740,7 @@ export function ScanInvoiceModal({
             ? SCAN_LOCK_BODY
             : isApiKeyError
               ? "Go to Settings → AI & Integrations to add your Claude API key."
-              : shownMsg || "Please check the file and try again.",
+              : SCAN_FAILED_COPY,
           variant: "error",
         });
         setStep("upload");
@@ -752,7 +751,7 @@ export function ScanInvoiceModal({
             ? SCAN_LOCK_BODY
             : isApiKeyError
               ? "Anthropic API key not configured — see Settings → AI & Integrations."
-              : shownMsg || "Scan failed. Retry, or check the file.",
+              : SCAN_FAILED_COPY,
         });
       }
     } finally {
@@ -1390,13 +1389,10 @@ export function ScanInvoiceModal({
               );
             } else {
               // Bill was created but receive failed — surface the issue but don't lose the bill
-              const rmsg =
-                (intent === "purchase-order"
-                  ? undefined
-                  : (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
-                      ?.message) ??
-                "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
-              notes.push(`Supplier bill ${rmsg}`);
+              console.error(receiveErr);
+              notes.push(
+                "Supplier bill created in Draft (could not auto-receive, open the bill and click Receive to update stock)",
+              );
             }
           }
         } else {
@@ -1438,16 +1434,12 @@ export function ScanInvoiceModal({
         });
         return { ok: false, duplicate: true, notes };
       }
+      console.error(err);
+      // Keep status "scanned" so the invoice stays editable + creatable. The server text is never
+      // shown (#1965): the invoice carries the closed sentence only. A plan gate that closed after
+      // the page loaded reads as the lock copy.
       const planLocked = intent === "purchase-order" && isScanPlanLock(err);
-      const msg = planLocked
-        ? SCAN_LOCK_BODY
-        : intent === "purchase-order"
-          ? "We couldn't create the purchase order. Check the details and try again."
-          : err?.response?.data?.message ||
-            err?.message ||
-            "Failed to create records. Please try again.";
-      // Keep status "scanned" so the invoice stays editable + creatable.
-      patchInvoiceById(invoiceId, { error: msg });
+      patchInvoiceById(invoiceId, { error: planLocked ? SCAN_LOCK_BODY : RECORDS_FAILED_COPY });
       return { ok: false, duplicate: false, notes };
     }
   };

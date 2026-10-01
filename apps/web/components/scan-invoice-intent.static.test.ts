@@ -26,18 +26,13 @@ describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
       /poIntentRefusal\(\s*intent,\s*inv\.raisePo,\s*poBlockReason,\s*inv\.createMode,?\s*\)/,
     );
   });
-  it("a plan lock on the create step also reads as the lock copy", () => {
-    expect(src).toMatch(/planLocked\s*\? SCAN_LOCK_BODY\s*: intent === \"purchase-order\"/);
+  it("a plan lock on the create step also reads as the lock copy (closed copy otherwise)", () => {
+    expect(src).toMatch(/error: planLocked \? SCAN_LOCK_BODY : RECORDS_FAILED_COPY/);
   });
   it("PO intent hides the create-mode selector and labels the footer for a purchase order", () => {
     expect(src).toMatch(
       /intent !== "purchase-order" && \(\s*<div>\s*<p className="mb-2 text-sm font-semibold text-navy">\s*What would you like to create\?/,
     );
     expect(src).toMatch(/"Create purchase order"/);
-  });
-  it("PO intent never shows the server's words on scan, create or receive failures", () => {
-    expect(src).toMatch(/const shownMsg = intent === "purchase-order" \? "" : msg/);
-    expect(src).toMatch(/We couldn't create the purchase order\. Check the details/);
-    expect(src).toMatch(/intent === "purchase-order"\s*\? undefined\s*: \(receiveErr/);
   });
 });
