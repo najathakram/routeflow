@@ -9,6 +9,11 @@ import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
+import {
+  buyerVisibleProductWhere,
+  isBuyerVisibleProduct,
+  NO_BUYER_RESTRICTIONS,
+} from "./buyer-product-visibility";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
@@ -137,19 +142,17 @@ export class BuyerCatalogService {
       andWhere.push({ id: { in: favs.map((f) => f.productId) } });
     }
 
-    const opts =
-      hiddenIds.size > 0 || andWhere.length > 0
-        ? {
-            ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
-            ...(andWhere.length > 0 ? { andWhere } : {}),
-          }
-        : undefined;
+    // One shared buyer-visibility predicate (active + portal-visible + parent visible).
+    andWhere.push(buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS) as Record<string, unknown>);
+    const opts = {
+      ...(hiddenIds.size > 0 ? { excludeTrackedCategoryIds: [...hiddenIds] } : {}),
+      andWhere,
+    };
 
     const result = await this.productsService.findAll(
       {
         search: query.search,
         category: query.category,
-        isActive: true,
         page: fetchAll ? 1 : page,
         limit: fetchAll ? 0 : limit,
       },
@@ -267,16 +270,17 @@ export class BuyerCatalogService {
    */
   async getCatalogCounts(customerId: string, buyerAccountId: string) {
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
-    const baseWhere: Record<string, unknown> = { isActive: true };
+    const gateOr: Record<string, unknown>[] = [];
     // Same NULL trap as products.service.findAll: `notIn` never matches NULL,
     // so keying this on trackedCategoryId zeroed every rail count for
     // untracked products whenever a license-gated category existed.
     if (hiddenIds.size > 0) {
-      baseWhere.OR = [
-        { trackedCategoryId: null },
-        { trackedCategoryId: { notIn: [...hiddenIds] } },
-      ];
+      gateOr.push({ trackedCategoryId: null }, { trackedCategoryId: { notIn: [...hiddenIds] } });
     }
+    const baseWhere = buyerVisibleProductWhere(
+      NO_BUYER_RESTRICTIONS,
+      gateOr.length > 0 ? { OR: gateOr } : undefined,
+    );
 
     const [total, byCategory, newCount, favRows, estimates, promos] = await Promise.all([
       this.prisma.forTenant().product.count({ where: baseWhere }),
@@ -326,7 +330,7 @@ export class BuyerCatalogService {
     const product = await this.productsService.findOne(productId);
 
     // Buyers must not see inactive/discontinued products
-    if (!(product as any).isActive) {
+    if (!isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, product as any)) {
       throw new NotFoundException("Product not found");
     }
 
@@ -347,8 +351,10 @@ export class BuyerCatalogService {
     // only sorts isActive desc), every other buyer surface lists active products
     // only, and such a row would quote a price whose link dead-ends on this
     // endpoint's own isActive 404.
-    const activeVariants: any[] = ((product as any).variants ?? []).filter(
-      (v: any) => v.isActive !== false,
+    // The visibility twin (never an inline copy of the rule, L-167): a variant shows only when sellable, visible
+    // and its parent (this product, already visible) is visible.
+    const activeVariants: any[] = ((product as any).variants ?? []).filter((v: any) =>
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, { ...v, parent: { portalVisible: true } }),
     );
     // Tier overrides for the parent AND every variant row in one query: a variant
     // carrying its own CustomerPrice must price identically here and on its own
@@ -413,7 +419,7 @@ export class BuyerCatalogService {
    */
   async getCategories() {
     const products = await this.prisma.forTenant().product.findMany({
-      where: { isActive: true, category: { not: null } },
+      where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { category: { not: null } }),
       select: { category: true },
       distinct: ["category"],
       orderBy: { category: "asc" },
@@ -428,9 +434,10 @@ export class BuyerCatalogService {
    */
   async getFavorites(buyerAccountId: string, customerId: string) {
     const favorites = await this.prisma.forTenant().buyerFavorite.findMany({
+      // SA-606 M3: hidden favourites are KEPT (as "no longer available online" stubs) — only the read below decides.
       where: { buyerAccountId, customerId },
       include: {
-        product: true,
+        product: { include: { parent: { select: { portalVisible: true } } } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -438,11 +445,16 @@ export class BuyerCatalogService {
     // Filter out inactive products + W7-gated regulated products (categories the
     // buyer isn't licensed for) so favorites never leak a hidden product.
     const { hiddenIds } = await this.visibility.computeGate(customerId);
-    const activeFavorites = favorites.filter(
+    const liveFavorites = favorites.filter(
       (f) =>
         f.product.isActive &&
         !(f.product.trackedCategoryId && hiddenIds.has(f.product.trackedCategoryId)),
     );
+    // The ONE visibility twin decides: a favourite the tenant hid (or whose parent is hidden) is a stub, not a price.
+    const visible = (f: (typeof liveFavorites)[number]) =>
+      isBuyerVisibleProduct(NO_BUYER_RESTRICTIONS, f.product as any);
+    const activeFavorites = liveFavorites.filter(visible);
+    const unavailableFavorites = liveFavorites.filter((f) => !visible(f));
 
     // Load customer pricing tier + overrides
     const customer = await this.prisma
@@ -460,9 +472,18 @@ export class BuyerCatalogService {
     const cpMap = new Map(cpOverrides.map((cp) => [cp.productId, cp.pricingTier]));
     const priceHist = await this.getRememberedPrices(customerId);
 
-    return activeFavorites.map((f) => {
+    const stubs = unavailableFavorites.map((f) => ({
+      id: f.id,
+      productId: f.productId,
+      name: f.product.name,
+      unavailable: true as const,
+      unavailableText: "No longer available online",
+      createdAt: f.createdAt,
+    }));
+    const live = activeFavorites.map((f) => {
       const effectiveTier = cpMap.get(f.productId) ?? defaultTier;
       return {
+        unavailable: false as const,
         id: f.id,
         productId: f.productId,
         name: f.product.name,
@@ -482,6 +503,7 @@ export class BuyerCatalogService {
         createdAt: f.createdAt,
       };
     });
+    return [...live, ...stubs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   /**
@@ -494,9 +516,9 @@ export class BuyerCatalogService {
     tenantId: string,
   ) {
     // Verify the product exists and is active
-    const product = await this.prisma
-      .forTenant()
-      .product.findFirst({ where: { id: productId, isActive: true } });
+    const product = await this.prisma.forTenant().product.findFirst({
+      where: buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS, { id: productId }),
+    });
     if (!product) throw new NotFoundException("Product not found");
 
     try {

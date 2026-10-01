@@ -72,6 +72,7 @@ import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
 import { ProductLabelsCard } from "./ProductLabelsCard";
+import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
@@ -2392,6 +2393,7 @@ export default function ProductDetailPage() {
             )}
 
             <ProductLabelsCard productId={product.id} />
+            <ProductPortalVisibilityCard product={product} />
             <ProductUnitsCard product={product} />
 
             {/* Sales demand — real data from invoiced sales. In its own file (unlike
