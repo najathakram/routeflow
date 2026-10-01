@@ -172,7 +172,7 @@ export class AppleOAuthService {
     nonce: string,
     tenantSlug: string | undefined,
     context: "staff" | "buyer-standalone",
-  ): Promise<{ appleId: string; email: string }> {
+  ): Promise<{ appleId: string; email: string | null }> {
     const nonceKey = `${NONCE_KEY_PREFIX}${nonce}`;
     let stored: string | null = null;
     try {
@@ -217,12 +217,22 @@ export class AppleOAuthService {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
-    // Apple sends email_verified as either a boolean or the string "true"/"false".
-    if (payload.email_verified !== true && payload.email_verified !== "true") {
+    if (typeof payload.sub !== "string") {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
-    if (typeof payload.sub !== "string" || typeof payload.email !== "string") {
+    // Apple sends the email claim only on the FIRST sign-in; later tokens omit it (and
+    // email_verified). An ABSENT email is allowed (the caller then matches by sub only and refuses
+    // anything that would need an email). A PRESENT email must be a string and verified.
+    if (payload.email === undefined) {
+      return { appleId: payload.sub, email: null };
+    }
+    // A present-but-empty email is malformed (Apple omits the claim instead): refuse it.
+    if (typeof payload.email !== "string" || !payload.email) {
+      throw new UnauthorizedException("apple_token_invalid");
+    }
+    // Apple sends email_verified as either a boolean or the string "true"/"false".
+    if (payload.email_verified !== true && payload.email_verified !== "true") {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
@@ -248,7 +258,7 @@ export class AppleOAuthService {
       dto.tenantSlug,
       dto.context,
     );
-    const name = dto.fullName ?? email;
+    const name = dto.fullName ?? email ?? "Apple user";
 
     if (dto.context === "staff") {
       return this.handleStaffAuth(dto.tenantSlug, appleId, email, deviceInfo);
@@ -261,12 +271,13 @@ export class AppleOAuthService {
   private async handleStaffAuth(
     tenantSlug: string | undefined,
     appleId: string,
-    email: string,
+    email: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<AppleAuthResult> {
     if (!tenantSlug) throw new BadRequestException("tenantSlug required");
-    // SA-598 P1: a falsy sub/email refuses before ANY query (an undefined filter would widen).
-    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+    // SA-598 P1: a falsy sub refuses before ANY query (an undefined filter would widen). A missing
+    // email is allowed only for an already-bound sub (resolveBySubThenEmail allowSubOnly).
+    if (!appleId) throw new ForbiddenException("unauthorized");
 
     const tenant = await this.prisma.tenant.findFirst({ where: { slug: tenantSlug } });
     if (!tenant) throw new ForbiddenException("tenant_suspended");
@@ -286,6 +297,7 @@ export class AppleOAuthService {
       column: "appleId",
       sub: appleId,
       email,
+      allowSubOnly: true,
     });
 
     // SA-418 §3: no auto-create on the staff flow — a relay or otherwise-unmatched
@@ -326,7 +338,7 @@ export class AppleOAuthService {
 
   private async handleBuyerAuth(
     appleId: string,
-    email: string,
+    email: string | null,
     name: string,
     authorizationCode: string,
   ): Promise<AppleAuthResult> {
@@ -334,8 +346,9 @@ export class AppleOAuthService {
     // exactly (google-oauth.service.ts). apple_email_is_staff belongs only to a future
     // tenant-scoped portal context; the staff match itself stays tenant-scoped (handleStaffAuth).
 
-    // SA-598 P1: a falsy sub/email refuses before ANY query.
-    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+    // SA-598 P1: a falsy sub refuses before ANY query; a missing email is allowed only for an
+    // already-bound sub (it never auto-creates an account: see the create branch below).
+    if (!appleId) throw new ForbiddenException("unauthorized");
 
     let buyer = await resolveBySubThenEmail({
       findFirst: (args) => this.prisma.buyerAccount.findFirst(args as any),
@@ -343,6 +356,7 @@ export class AppleOAuthService {
       column: "appleId",
       sub: appleId,
       email,
+      allowSubOnly: true,
     });
 
     if (buyer) {
@@ -352,7 +366,7 @@ export class AppleOAuthService {
       // Mirrors google-oauth.service.ts:636 exactly — Apple attests the mailbox it
       // authenticated only when it matches the account's OWN email, not one found via
       // a previously-linked appleId with a different email on file.
-      const appleAttestsMailbox = buyer.email.toLowerCase() === email;
+      const appleAttestsMailbox = email !== null && buyer.email.toLowerCase() === email;
 
       // SA-418 §4 / google-oauth.service.ts:640-715, byte-for-byte: neutralize a
       // password that was never mailbox-verified once Apple proves the mailbox.
@@ -390,7 +404,7 @@ export class AppleOAuthService {
             .send({
               to: buyer.email,
               subject: "Apple Sign-In linked to your RouteFlow account",
-              html: `<p>Sign in with Apple (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              html: `<p>Sign in with Apple (<strong>${escapeHtml(email ?? buyer.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
               senderClass: "platform",
             })
             .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
@@ -417,6 +431,9 @@ export class AppleOAuthService {
         }
       }
     } else {
+      // Defensive: with no bound sub the resolver already refused a missing email, so this is
+      // unreachable; never create an account without an email.
+      if (!email) throw new ForbiddenException("unauthorized");
       const randomBytes = crypto.randomBytes(32).toString("hex");
       const passwordHash = await bcrypt.hash(randomBytes, 10);
       buyer = await this.prisma.buyerAccount.create({

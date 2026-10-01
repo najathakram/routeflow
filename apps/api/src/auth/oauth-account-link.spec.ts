@@ -36,6 +36,69 @@ describe.each(COLUMNS)("oauth-account-link (%s)", (column, mismatchCode) => {
       }
     });
 
+    describe("allowSubOnly (Apple: the identity token omits email after the first sign-in)", () => {
+      it("a bound sub resolves with NO email, in one query", async () => {
+        const bound = row({ id: "bound", [column]: "sub-1" });
+        const findFirst = jest.fn().mockResolvedValueOnce(bound);
+        const out = await resolveBySubThenEmail({
+          findFirst,
+          baseWhere: BASE,
+          column,
+          sub: "sub-1",
+          email: undefined,
+          allowSubOnly: true,
+        });
+        expect(out).toBe(bound);
+        expect(findFirst).toHaveBeenCalledTimes(1);
+      });
+
+      it("no bound sub and no email: refused 403 after the single sub query; never an email query", async () => {
+        for (const email of [undefined, null, ""]) {
+          const findFirst = jest.fn().mockResolvedValue(null);
+          await expect(
+            resolveBySubThenEmail({
+              findFirst,
+              baseWhere: BASE,
+              column,
+              sub: "sub-1",
+              email,
+              allowSubOnly: true,
+            }),
+          ).rejects.toThrow(ForbiddenException);
+          expect(findFirst).toHaveBeenCalledTimes(1);
+        }
+      });
+
+      it("a falsy sub is still refused before ANY query", async () => {
+        const findFirst = jest.fn();
+        await expect(
+          resolveBySubThenEmail({
+            findFirst,
+            baseWhere: BASE,
+            column,
+            sub: "",
+            email: "a@example.com",
+            allowSubOnly: true,
+          }),
+        ).rejects.toThrow(ForbiddenException);
+        expect(findFirst).not.toHaveBeenCalled();
+      });
+
+      it("without the flag a missing email is still refused before any query (Google's contract)", async () => {
+        const findFirst = jest.fn();
+        await expect(
+          resolveBySubThenEmail({
+            findFirst,
+            baseWhere: BASE,
+            column,
+            sub: "sub-1",
+            email: undefined,
+          }),
+        ).rejects.toThrow(ForbiddenException);
+        expect(findFirst).not.toHaveBeenCalled();
+      });
+    });
+
     it("the sub match wins over a row that merely shares the email (email never queried)", async () => {
       const bound = row({ id: "bound", [column]: "sub-1", email: "other@example.com" });
       const findFirst = jest.fn().mockResolvedValueOnce(bound);

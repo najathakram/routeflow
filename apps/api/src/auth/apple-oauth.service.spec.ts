@@ -126,7 +126,7 @@ async function signIdentityToken(
   privateKey: jose.KeyLike,
   overrides: Partial<{
     sub: string;
-    email: string;
+    email: string | null;
     email_verified: boolean | string;
     nonce: string;
     aud: string;
@@ -135,11 +135,15 @@ async function signIdentityToken(
     kid: string;
   }> = {},
 ) {
-  const claims: Record<string, unknown> = {
-    email: overrides.email ?? "buyer@example.com",
-    email_verified: overrides.email_verified ?? true,
-    nonce: overrides.nonce,
-  };
+  // `email: null` models Apple's later sign-ins, whose identity token OMITS email and email_verified.
+  const claims: Record<string, unknown> =
+    overrides.email === null
+      ? { nonce: overrides.nonce }
+      : {
+          email: overrides.email ?? "buyer@example.com",
+          email_verified: overrides.email_verified ?? true,
+          nonce: overrides.nonce,
+        };
   const expiresAt =
     overrides.expiresIn === "-1h"
       ? Math.floor(Date.now() / 1000) - 3600
@@ -761,6 +765,30 @@ describe("AppleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 fo
       expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
     });
 
+    it("a token WITHOUT an email claim signs in when the appleId is already bound (Apple omits email after the first sign-in)", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce({ ...STAFF, appleId: "apple-sub-1" });
+
+      await expect(staffSignIn(env, { email: null })).resolves.toMatchObject({ kind: "staff" });
+
+      expect(env.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("no email claim AND no bound appleId: refused 403 before any email lookup or write", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(staffSignIn(env, { email: null })).rejects.toThrow(
+        new ForbiddenException("unauthorized"),
+      );
+      // sub lookup only; a null email must never widen the where into an unscoped match
+      expect(env.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
     it("the email fallback is ordered createdAt,id and stays tenant-scoped", async () => {
       const env = await buildService();
       env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
@@ -852,6 +880,37 @@ describe("AppleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 fo
   });
 
   describe("buyer", () => {
+    it("a token WITHOUT an email claim signs in a buyer whose appleId is already bound", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst.mockResolvedValueOnce({ ...BUYER, appleId: "apple-sub-1" });
+      env.prisma.customerLink.count.mockResolvedValue(0);
+
+      await expect(buyerSignIn(env, { email: null })).resolves.toMatchObject({ kind: "buyer" });
+
+      expect(env.prisma.buyerAccount.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+      // No email attested, so no emailVerified upgrade and no "linked" mail is sent.
+      expect(env.prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("no email claim AND no bound appleId: never auto-creates an account, 403", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst.mockResolvedValue(null);
+
+      await expect(buyerSignIn(env, { email: null })).rejects.toThrow(
+        new ForbiddenException("unauthorized"),
+      );
+      expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+    });
+
+    it("an email claim that is present but not verified is still refused (unchanged)", async () => {
+      const env = await buildService();
+      await expect(buyerSignIn(env, { email_verified: false })).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
     it("resolves by appleId FIRST: the email is never queried when the sub matches", async () => {
       const env = await buildService();
       env.prisma.buyerAccount.findFirst.mockResolvedValueOnce({ ...BUYER, appleId: "apple-sub-1" });
