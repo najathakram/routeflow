@@ -10,11 +10,11 @@ import {
   useDeactivateRecurringInvoice,
   useActivateRecurringInvoice,
   useRunRecurringInvoice,
-  isRetryableRunFailure,
   type RecurringInvoice,
 } from "@/lib/api/invoices";
 import { useRouter } from "next/navigation";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { describeRunFailure } from "@/lib/reason-copy";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -182,13 +182,12 @@ export default function RecurringInvoicesPage() {
               </div>
 
               {ri.lastRunStatus === "FAILED" && ri.lastError && (
-                <p className="mt-1 truncate text-xs text-danger" title={ri.lastError}>
+                <p className="mt-1 text-xs text-danger">
                   {/* REG-B106: the retry hint appears ONLY when the cycle produced no
                       invoice. A cycle that billed and then failed to finalize is already
-                      invoiced — re-running it would bill the customer twice. */}
-                  {isRetryableRunFailure(ri.lastError)
-                    ? `${ri.lastError} — use Run Now to retry.`
-                    : ri.lastError}
+                      invoiced — re-running it would bill the customer twice. The raw
+                      lastError is never shown (#1965): describeRunFailure maps it. */}
+                  {describeRunFailure(ri.lastError).text}
                 </p>
               )}
 

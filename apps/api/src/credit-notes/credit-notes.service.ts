@@ -20,6 +20,7 @@ import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
+import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -1992,6 +1993,9 @@ export class CreditNotesService {
             throw new BadRequestException("expiresAt must be a valid ISO date");
         }
         if (!sameDate(cn.expiresAt ?? null, next)) {
+          // #2848: an expiry change could revive an orphan's value; refused once its source is gone.
+          if (await hasSourceDeletedMarker(tx, id))
+            throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
           if (cn.status !== "ISSUED")
             throw cnBad(
               API_ERROR_CODES.CREDIT_NOTE_EXPIRY_NOT_EDITABLE,

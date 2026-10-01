@@ -270,6 +270,57 @@ describe("CreditNoteReissueService (#2648)", () => {
         noWrites();
       });
 
+      it("#2848: a note with a SOURCE_DELETED marker is refused entirely, even at <= its amount", async () => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
+        prisma.auditLog.findFirst.mockResolvedValue({ id: "al-1" });
+        await expect(
+          service.reissue(
+            "cn-old",
+            { amount: 10, expiresAt: "2999-01-01T00:00:00.000Z" },
+            "k",
+            "u",
+          ),
+        ).rejects.toThrow(
+          new ConflictException("This credit's source invoice was deleted; it can't be edited."),
+        );
+        expect(prisma.auditLog.findFirst).toHaveBeenCalledWith({
+          where: { entityType: "CreditNote", entityId: "cn-old", action: "SOURCE_DELETED" },
+          select: { id: true },
+        });
+        noWrites();
+      });
+
+      it("#2848 (SA-608f): the marker is ALSO checked inside the tx, so a concurrent deleteInvoice refuses rather than caps", async () => {
+        // The pre-check sees no marker; by the time the tx holds the locks, deleteInvoice has committed it.
+        prisma.auditLog.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: "al-1" });
+        await expect(
+          service.reissue("cn-old", { amount: 10 }, "k", "u"), // sourced at pre-read, <= the old amount
+        ).rejects.toThrow(
+          new ConflictException("This credit's source invoice was deleted; it can't be edited."),
+        );
+        expect(creditNotes.insertCreditNoteInTx).not.toHaveBeenCalled();
+        expect(idem.save).not.toHaveBeenCalled();
+      });
+
+      it("#2848 (SA-608f) + PR-C: the IN-TX marker refusal also carries CREDIT_NOTE_SOURCE_GONE (409)", async () => {
+        prisma.auditLog.findFirst.mockResolvedValueOnce(null).mockResolvedValue({ id: "al-1" });
+        const err: any = await service
+          .reissue("cn-old", { amount: 10 }, "k", "u")
+          .catch((e: unknown) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+      });
+
+      it("#2848 + PR-C: a SOURCE_DELETED marker refusal carries CREDIT_NOTE_SOURCE_GONE (409)", async () => {
+        prisma.creditNote.findFirst.mockResolvedValue({ ...ORPHAN });
+        prisma.auditLog.findFirst.mockResolvedValue({ id: "al-1" });
+        const err: any = await service
+          .reissue("cn-old", { amount: 10 }, "k", "u")
+          .catch((e: unknown) => e);
+        expect(err?.getStatus?.()).toBe(409);
+        expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+      });
+
       it("a sourced note is not subject to the no-invoice cap", async () => {
         await service.reissue("cn-old", { amount: 9999 }, "k", "u"); // OLD is $50 with invoiceId
         expect(creditNotes.insertCreditNoteInTx).toHaveBeenCalledTimes(1);

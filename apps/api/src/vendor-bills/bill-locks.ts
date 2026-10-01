@@ -13,7 +13,12 @@ export async function lockBillRows(
   tenantId: string | null,
   ids: Iterable<string>,
 ): Promise<void> {
-  for (const id of [...new Set(ids)].sort()) {
+  const unique = [...new Set(ids)].sort();
+  if (unique.length === 0) return;
+  // Fail closed: `"tenantId" = NULL` matches no row, so a missing tenant would lock NOTHING and
+  // the caller would carry on believing it holds the lock.
+  if (!tenantId) throw new Error("lockBillRows needs a tenant: refusing to lock nothing");
+  for (const id of unique) {
     await tx.$executeRaw`SELECT id FROM "VendorBill" WHERE id = ${id} AND "tenantId" = ${tenantId} FOR UPDATE`;
   }
 }
