@@ -366,7 +366,7 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     "ERR_STREAM_WRITE_AFTER_END",
     "ERR_STREAM_DESTROYED",
   ]);
-  type Outcome = { status: number } | { reset: string } | { other: string };
+  type Outcome = { status: number; head?: string } | { reset: string } | { other: string };
   const classifyError = (code: string): Outcome =>
     RESET_CODES.has(code) ? { reset: code } : { other: code };
   /** Rejected = the client read a 401, or its socket was reset (the server closed first). */
@@ -396,7 +396,8 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       s.on("data", (d) => {
         buf += d.toString();
         const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
-        if (m) end({ status: Number(m[1]) });
+        // keep the head so a status that is NOT a 401 can be diagnosed (B950: a 400 on macOS)
+        if (m) end({ status: Number(m[1]), head: buf.slice(0, 300) });
       });
       s.on("error", (e: NodeJS.ErrnoException) => {
         const code = e.code ?? "UNKNOWN";
@@ -414,10 +415,14 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       });
     });
   /** Every status the server sends, with the bytes its connection had read by then. */
+  type Seen = { status: number; bytesRead: number; destroyed: boolean };
+  type ClientErr = { code?: string; message: string };
   const spyResponses = (port: number) => {
     const http = require("http");
     const orig = http.ServerResponse.prototype.end;
-    const seen: Array<{ status: number; bytesRead: number; destroyed: boolean }> = [];
+    const origEmit = http.Server.prototype.emit;
+    const seen: Seen[] = [];
+    const clientErrors: ClientErr[] = [];
     http.ServerResponse.prototype.end = function (this: any, ...a: unknown[]) {
       // scoped by the SERVER's own address: `socket.localPort` is cleared once a socket is destroyed,
       // which would hide exactly the responses sent on reset connections (the macOS shape), and an
@@ -432,11 +437,47 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       }
       return orig.apply(this, a);
     };
+    // Node answers a request its parser rejects with a bare `400 Bad Request` written straight to the
+    // socket (the default `clientError` handling), which never passes through ServerResponse: only
+    // this event shows that the SERVER sent such a 400
+    http.Server.prototype.emit = function (this: any, ev: string, ...a: any[]) {
+      if (ev === "clientError" && this.address?.()?.port === port) {
+        clientErrors.push({ code: a[0]?.code, message: String(a[0]?.message ?? a[0]) });
+      }
+      return origEmit.call(this, ev, ...a);
+    };
     return {
       seen,
+      clientErrors,
       stop: (): void => {
         http.ServerResponse.prototype.end = orig;
+        http.Server.prototype.emit = origEmit;
       },
+    };
+  };
+  /** What the sockets did, for a failure message and for CONTROL_TEST_VERBOSE. */
+  const floodReport = (outcomes: Outcome[], seen: Seen[], clientErrors: ClientErr[]) => {
+    const tally: Record<string, number> = {};
+    for (const o of outcomes) {
+      const k =
+        "status" in o
+          ? `status ${o.status}`
+          : "reset" in o
+            ? `reset ${o.reset}`
+            : `other ${o.other}`;
+      tally[k] = (tally[k] ?? 0) + 1;
+    }
+    const statuses: Record<string, number> = {};
+    for (const x of seen) statuses[String(x.status)] = (statuses[String(x.status)] ?? 0) + 1;
+    const bad = outcomes.filter((o) => !isRejected(o));
+    return {
+      tally,
+      notRejectedCount: bad.length,
+      notRejected: bad.slice(0, 5),
+      answered: seen.length,
+      destroyed: seen.filter((x) => x.destroyed).length,
+      statuses,
+      clientErrors: clientErrors.slice(0, 5),
     };
   };
 
@@ -449,6 +490,33 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     for (const other of ["ECONNREFUSED", "ETIMEDOUT", "TIMEOUT", "UNKNOWN"]) {
       expect(isRejected({ other })).toBe(false);
     }
+  });
+
+  it("floodReport says what the sockets did: tally, the first non-rejected outcomes with their response head, the server's statuses and parser-level client errors", () => {
+    const rep = floodReport(
+      [
+        { status: 401 },
+        { reset: "EPIPE" },
+        { status: 400, head: "HTTP/1.1 400 Bad Request" },
+        { other: "TIMEOUT" },
+      ],
+      [{ status: 401, bytesRead: 1, destroyed: false }],
+      [{ code: "HPE_INVALID_METHOD", message: "Parse Error" }],
+    );
+    expect(rep.tally).toEqual({
+      "status 401": 1,
+      "reset EPIPE": 1,
+      "status 400": 1,
+      "other TIMEOUT": 1,
+    });
+    expect(rep.notRejectedCount).toBe(2);
+    expect(rep.notRejected).toEqual([
+      { status: 400, head: "HTTP/1.1 400 Bad Request" },
+      { other: "TIMEOUT" },
+    ]);
+    expect(rep.answered).toBe(1);
+    expect(rep.statuses).toEqual({ "401": 1 });
+    expect(rep.clientErrors).toEqual([{ code: "HPE_INVALID_METHOD", message: "Parse Error" }]);
   });
 
   it("classifyError pins the reset codes: the server-closed-first codes are resets, environmental ones are not", () => {
@@ -535,8 +603,15 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     } finally {
       spy.stop();
     }
+    // what the sockets did, built BEFORE any assertion so a failing run still reports it
+    const report = floodReport(outcomes, spy.seen, spy.clientErrors);
+    if (process.env.CONTROL_TEST_VERBOSE) console.info("B950 flood", JSON.stringify(report));
     // client side: every upload ended as a 401 or a reset, never another status or another error
-    expect(outcomes.filter((o) => !isRejected(o))).toEqual([]);
+    if (report.notRejectedCount > 0) {
+      throw new Error(
+        `B950 flood: ${report.notRejectedCount} of 200 uploads were neither a 401 nor a reset: ${JSON.stringify(report)}`,
+      );
+    }
     // server side (the platform-independent proof): it sent no 2xx, answered every live connection
     // 401, and the handler's work (a refresh) never ran for a forged delivery. The cap itself is
     // proven by the over-cap test above, "never buffered" by the live-memory test.
@@ -550,26 +625,6 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     expect(seen.filter((x) => x.destroyed && ![401, 413].includes(x.status))).toEqual([]);
     // sanity only (the client sends exactly the declared body): never more than the declared body
     expect(Math.max(...seen.map((x) => x.bytesRead))).toBeLessThanOrEqual(MB.length + 4096);
-    if (process.env.CONTROL_TEST_VERBOSE) {
-      const tally: Record<string, number> = {};
-      for (const o of outcomes) {
-        const k =
-          "status" in o
-            ? `status ${o.status}`
-            : "reset" in o
-              ? `reset ${o.reset}`
-              : `other ${o.other}`;
-        tally[k] = (tally[k] ?? 0) + 1;
-      }
-      console.info(
-        "B950 flood",
-        JSON.stringify({
-          tally,
-          answered: seen.length,
-          destroyed: seen.filter((x) => x.destroyed).length,
-        }),
-      );
-    }
     expect(outcomes.filter((o) => "status" in o).length).toBeLessThanOrEqual(seen.length);
     expect(h.refreshCalls).toBe(0);
     const body = JSON.stringify({ a: 1 });
