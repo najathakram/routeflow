@@ -1127,9 +1127,18 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     };
     /** the standard-return read (kind STANDARD) and the inline read share db.returnItem: answer each with its own rows */
     const returnRows = (rows: unknown[], standard: unknown[] = []) =>
-      (db.returnItem.findMany as jest.Mock).mockImplementation(async (args: any) =>
-        args?.where?.return?.kind === "STANDARD" ? standard : rows,
-      );
+      (db.returnItem.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        if (args?.where?.return?.kind === "STANDARD") return standard;
+        // honour the order filter (eq or in), like the database: an order must see ONLY its own returns
+        const so = args?.where?.sourceOrderId;
+        const wanted: string[] | null =
+          so == null ? null : typeof so === "string" ? [so] : (so.in ?? null);
+        return wanted
+          ? (rows as Array<{ sourceOrderId?: string }>).filter(
+              (r) => r.sourceOrderId != null && wanted.includes(r.sourceOrderId),
+            )
+          : rows;
+      });
     // inside the 90-day window: nothing; the lifetime read (a window far wider) sees the 120-day-old sale
     const soldLongAgo = () =>
       (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
@@ -1189,10 +1198,12 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
         orderId: "order-a",
         items: [{ ...oldLine.items[0], id: "invitem-a" }],
       };
-      // pricing window (has issueDate): only B; lifetime (none): A and B
-      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) =>
-        args?.where?.issueDate ? [lineB] : [lineA, lineB],
-      );
+      // the 90-day pricing read sees only B; any wider (lifetime) read, dated or undated, sees A and B
+      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        const since: Date | undefined = args?.where?.issueDate?.gte;
+        const days = since ? (Date.now() - since.getTime()) / 86_400_000 : Infinity;
+        return days > 200 ? [lineA, lineB] : [lineB];
+      });
       returnRows([{ productId: "prod-1", qty: 10, sourceOrderId: "order-b" }]); // B fully returned
       const result = await quote({ pieces: 10 });
       expect(result.chunks).toEqual([
