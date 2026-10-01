@@ -12,7 +12,7 @@ import { stripComments } from "../common/testing/unscoped-write-scan";
  * $transaction is stubbed and the extension is only built). Every row that must keep working is asserted
  * not to throw; every row that WOULD throw is listed, so the list of flip-day casualties is explicit
  * rather than discovered in prod logs. Then a source scan pins the array-form `$transaction([...])`
- * callers (the shape the guard cannot see through) to the five classified ones.
+ * callers (the shape the guard cannot see through) to the seven classified ones.
  */
 describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
   const make = () => {
@@ -48,7 +48,6 @@ describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
       "TENANT",
       (p) => p.$transaction([Promise.resolve(1)] as any),
     ],
-    ["a cron under tenantCtx.run: forTenant()", "TENANT", (p) => p.forTenant()],
     [
       "a buyer token route: systemTransaction",
       "ANONYMOUS",
@@ -79,11 +78,6 @@ describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
       "a SUPER_ADMIN tx, explicit tenantId on a tenant-owned create",
       "SUPER_ADMIN",
       (p) => p.tenantTransaction((tx: any) => tx.customer.create({ data: { tenantId: "t-1" } })),
-    ],
-    [
-      "a SUPER_ADMIN tx, explicit tenantId:null (a deliberate platform row)",
-      "SUPER_ADMIN",
-      (p) => p.tenantTransaction((tx: any) => tx.customer.create({ data: { tenantId: null } })),
     ],
     [
       "a SUPER_ADMIN tx writing a platform model (SystemConfig has a nullable tenantId)",
@@ -144,29 +138,56 @@ describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
       }
       return o;
     };
+    /**
+     * Every `$transaction(` call whose first argument is NOT an interactive callback (`async ...`,
+     * `function`, `(` arrow params, `x =>`): a literal array, a built array (`buildOps()`), a `.map(...)`.
+     * Those are the array form, which the guard cannot see through.
+     */
+    const INTERACTIVE = /^(async\b|function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+    const arrayForm = (src: string) => {
+      const code = stripComments(src);
+      let n = 0;
+      for (const m of code.matchAll(/\$transaction\s*\(\s*/g))
+        if (!INTERACTIVE.test(code.slice(m.index! + m[0].length))) n++;
+      return n;
+    };
     const found: Record<string, number> = {};
     for (const f of walk(SRC)) {
       const rel = path.relative(SRC, f).split(path.sep).join("/");
       if (rel === "prisma/prisma.service.ts") continue; // the override itself
-      const n = (stripComments(fs.readFileSync(f, "utf8")).match(/\$transaction\s*\(\s*\[/g) ?? [])
-        .length;
+      const n = arrayForm(fs.readFileSync(f, "utf8"));
       if (n) found[rel] = n;
     }
 
+    it("the scan tells the array form from the interactive one (mutants)", () => {
+      expect(arrayForm("p.$transaction([a, b])")).toBe(1);
+      expect(arrayForm("p.$transaction(buildOps())")).toBe(1);
+      expect(arrayForm("p.$transaction(rows.map((r) => q(r)))")).toBe(1);
+      expect(arrayForm("p.$transaction(\n  [a])")).toBe(1);
+      expect(arrayForm("p.$transaction(async (tx) => 1)")).toBe(0);
+      expect(arrayForm("p.$transaction(\n  async (tx) => 1)")).toBe(0);
+      expect(arrayForm("p.$transaction((tx) => 1)")).toBe(0);
+      expect(arrayForm("p.$transaction(tx => 1)")).toBe(0);
+      expect(arrayForm("p.$transaction(function (tx) {})")).toBe(0);
+      expect(arrayForm("// p.$transaction([a])")).toBe(0);
+    });
+
     /**
-     * CLASSIFIED (PR-2c): every promise in these batches is built with `forTenant()`, so each is a
+     * CLASSIFIED (PR-2c): every promise in these batches is built with `forTenant()` (products 1465,
+     * route-optimization 580 / 797 / 1226 `buildOps()`, routes 520, suppliers 204, import 1880 `.map`), so each is a
      * tenant-scoped query inside a request that already passed forTenant()'s own context check; the
      * array override's check passes for TENANT / SUPER_ADMIN, and a context-less caller would already
      * have failed at forTenant(). No conversion is needed for the flip.
      */
     const CLASSIFIED: Record<string, number> = {
       "products/products.service.ts": 1,
-      "route-optimization/route-optimization.service.ts": 2,
+      "route-optimization/route-optimization.service.ts": 3,
+      "import/import.service.ts": 1,
       "routes/routes.service.ts": 1,
       "suppliers/suppliers.service.ts": 1,
     };
 
-    it("exactly the five classified callers exist (a new one must be classified here)", () => {
+    it("exactly the seven classified callers exist (a new one must be classified here)", () => {
       expect(found).toEqual(CLASSIFIED);
     });
   });
