@@ -18,6 +18,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -177,6 +178,7 @@ describe("OrdersService.updateOrderItems — units_v1 (A1) staff conversion", ()
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

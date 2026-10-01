@@ -1,3 +1,4 @@
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -64,6 +65,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
 
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -218,6 +220,7 @@ describe("OrderTemplatesService — stock decrement + regulated levy on generate
       const authGuard = { checkAuthorized: jest.fn() };
       const mod = await Test.createTestingModule({
         providers: [
+          oversellReaderOffProvider,
           OrderTemplatesService,
           { provide: PrismaService, useValue: prisma },
           { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
