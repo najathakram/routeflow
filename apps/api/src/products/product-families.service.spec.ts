@@ -548,4 +548,51 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+  it("N2: a whitespace-only price or update cost is a 400 (trimmed first), never $0", async () => {
+    await expect(
+      build().service.createFamily(dto([variant("A", { pricePerUnit: "   " })]), ACTOR),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const famRow = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const k1 = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+    } as never;
+    for (const bad of [{ pricePerUnit: "  " }, { standardCost: " \t " }]) {
+      await expect(
+        build({ products: [famRow, k1] }).service.updateVariants(
+          "fam",
+          { update: [{ id: "k1", ...bad }] } as never,
+          ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it("N3: a null over HTTP gets a READABLE message (price is required / omit the field), not 'must be non-negative'", async () => {
+    const msgs = async (cls: new () => object, plain: Record<string, unknown>) => {
+      const errs = await validate(plainToInstance(cls, plain) as object, { whitelist: true });
+      const flat = (e: (typeof errs)[number]): string[] => [
+        ...Object.values(e.constraints ?? {}),
+        ...(e.children ?? []).flatMap(flat),
+      ];
+      return errs.flatMap(flat).join(" | ");
+    };
+    expect(
+      await msgs(CreateFamilyDto, {
+        family: { name: "F" },
+        variants: [{ name: "A", pricePerUnit: null }],
+      }),
+    ).toMatch(/pricePerUnit is required/);
+    expect(
+      await msgs(UpdateFamilyVariantsDto, { update: [{ id: "k1", pricePerUnit: null }] }),
+    ).toMatch(/omit the field/);
+    expect(
+      await msgs(UpdateFamilyVariantsDto, { update: [{ id: "k1", standardCost: null }] }),
+    ).toMatch(/omit the field/);
+    // a malformed (non-null) value keeps the amount message
+    expect(
+      await msgs(UpdateFamilyVariantsDto, { update: [{ id: "k1", pricePerUnit: "abc" }] }),
+    ).toMatch(/non-negative/);
+  });
 });
