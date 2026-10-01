@@ -42,7 +42,6 @@ describe("allow-listed endpoints are still queued", () => {
     ["patch", "/route-runs/run-1/stops/stop-1"],
     ["post", "/route-runs/run-1/stops/stop-1/complete-with-payment"],
     ["post", "/route-runs/run-1/stops/stop-1/pod-artifact"],
-    ["post", "/orders/ord-1/change-requests"],
     ["post", "/orders/ord-1/change-requests/cr-1/resolve"],
   ];
 
@@ -67,6 +66,7 @@ describe("every other mutation is online-only", () => {
     ["patch", "/orders/ord-1/status"],
     ["patch", "/orders/ord-1/items"],
     ["post", "/orders/sell"],
+    ["post", "/orders/ord-1/change-requests"],
     ["post", "/drafts"],
     ["patch", "/drafts/d-1"],
     ["post", "/drivers/me/location"],

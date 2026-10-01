@@ -7,7 +7,7 @@ import {
 
 /**
  * B923: ONLY an explicit allow-list of offline-safe endpoints may enter the offline queue. Everything
- * else is online-only. These are the 8 offline-designed flows (idempotency header or queue-aware
+ * else is online-only. These are the 7 offline-designed flows (idempotency header or queue-aware
  * callers): order create, return create, inline-return capture, the driver's stop status / completion /
  * POD attach, and the at-door change request + its resolve.
  */
@@ -19,7 +19,6 @@ describe("isOfflineSafe (B923)", () => {
     ["PATCH", "/route-runs/run-1/stops/stop-1"],
     ["POST", "/route-runs/run-1/stops/stop-1/complete-with-payment"],
     ["POST", "/route-runs/run-1/stops/stop-1/pod-artifact"],
-    ["POST", "/orders/ord-1/change-requests"],
     ["POST", "/orders/ord-1/change-requests/cr-1/resolve"],
   ];
 
@@ -31,8 +30,15 @@ describe("isOfflineSafe (B923)", () => {
     },
   );
 
-  it("the allow-list has exactly the 8 approved entries", () => {
-    expect(OFFLINE_SAFE_ENDPOINTS).toHaveLength(8);
+  it("the allow-list has exactly the 7 approved entries", () => {
+    expect(OFFLINE_SAFE_ENDPOINTS).toHaveLength(7);
+  });
+
+  it("POST /orders/:id/change-requests is online-only (no server dedupe yet, B936): replay could double-create", () => {
+    expect(isOfflineSafe("POST", "/orders/ord-1/change-requests")).toBe(false);
+    expect(
+      OFFLINE_SAFE_ENDPOINTS.some((e) => e.pattern.test("/orders/ord-1/change-requests")),
+    ).toBe(false);
   });
 
   const BLOCKED: Array<[string, string]> = [

@@ -79,14 +79,6 @@ export const OFFLINE_SAFE_ENDPOINTS: readonly OfflineSafeEntry[] = [
   },
   {
     method: "POST",
-    pattern: /^\/orders\/[^/]+\/change-requests$/,
-    reason: "An at-the-door order change raised offline must not be lost.",
-    replaySafety: "idempotent-by-contract",
-    replayNote:
-      "NOT de-duplicated server-side today (change-requests.service create has no key or unique constraint): a replay after a lost response can create a second PENDING request. Open follow-up: client key + server dedupe, or move to online-only.",
-  },
-  {
-    method: "POST",
     pattern: /^\/orders\/[^/]+\/change-requests\/[^/]+\/resolve$/,
     reason: "The driver resolves or declines an at-door change at the stop while offline.",
     replaySafety: "idempotent-by-contract",
