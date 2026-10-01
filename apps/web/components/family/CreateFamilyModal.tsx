@@ -1,0 +1,203 @@
+"use client";
+
+import * as React from "react";
+import { useRouter } from "next/navigation";
+import { Button, Modal, useToast } from "@routeflow/ui/web";
+import { useCreateFamily, checkCodeAvailable } from "@/lib/api/product-families";
+import { getFamilyConflicts } from "@/lib/family-conflicts";
+import {
+  blankRow,
+  toCreateRequest,
+  validateFamilyForm,
+  type FamilyForm,
+  type GridRow,
+} from "@/lib/family-grid";
+import { FamilyVariantsGrid, type CellMessage } from "./FamilyVariantsGrid";
+
+const emptyForm = (): FamilyForm => ({
+  name: "",
+  category: "",
+  description: "",
+  pricePerUnit: "",
+  standardCost: "",
+  copyFamilyPrice: false,
+  rows: [blankRow("r0")],
+});
+
+const FIELD_NOUN: Record<string, string> = { sku: "SKU", barcode: "barcode", unitSku: "unit code" };
+
+/**
+ * WS8: "New family" — the family's own fields plus a grid of variants, created in ONE all-or-nothing
+ * call. Client rules mirror the API; a refused write marks EVERY conflicting cell at once.
+ */
+export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const router = useRouter();
+  const create = useCreateFamily();
+  const [form, setForm] = React.useState<FamilyForm>(emptyForm);
+  const [showErrors, setShowErrors] = React.useState(false);
+  /** Server conflicts and advisory availability notes, `row:field` -> message. Edited cells drop theirs. */
+  const [serverCells, setServerCells] = React.useState<Record<string, CellMessage>>({});
+  const [familyServerMessages, setFamilyServerMessages] = React.useState<string[]>([]);
+  const [summary, setSummary] = React.useState<string | null>(null);
+
+  const validation = React.useMemo(() => validateFamilyForm(form), [form]);
+
+  const cellMessages: Record<string, CellMessage> = { ...serverCells };
+  if (showErrors) {
+    for (const [i, fields] of Object.entries(validation.rows)) {
+      for (const [field, message] of Object.entries(fields ?? {})) {
+        cellMessages[`${i}:${field}`] = { message: message as string };
+      }
+    }
+  }
+
+  const setRows = (rows: GridRow[]) => {
+    // A cell the operator changed no longer carries its server message.
+    setServerCells((prev) => {
+      const next = { ...prev };
+      for (const key of Object.keys(prev)) {
+        const [i, field] = key.split(":");
+        const before = form.rows[Number(i)];
+        const after = rows[Number(i)];
+        if (!before || !after || before[field as keyof GridRow] !== after[field as keyof GridRow])
+          delete next[key];
+      }
+      return next;
+    });
+    setForm((f) => ({ ...f, rows }));
+  };
+
+  const onCodeBlur = async (i: number, field: "sku" | "barcode" | "unitSku", value: string) => {
+    const res = await checkCodeAvailable(value);
+    if (!res || res.available) return;
+    setServerCells((prev) => ({
+      ...prev,
+      [`${i}:${field}`]: {
+        message: `The ${FIELD_NOUN[field]} "${value}" is already used by another product.`,
+        productId: res.takenBy?.productId,
+      },
+    }));
+  };
+
+  const submit = () => {
+    setShowErrors(true);
+    setSummary(null);
+    setFamilyServerMessages([]);
+    if (!validation.valid) return;
+    create.mutate(toCreateRequest(form), {
+      onSuccess: (res) => {
+        toast({ title: "Family created", variant: "success" });
+        onClose();
+        setForm(emptyForm());
+        setShowErrors(false);
+        setServerCells({});
+        router.push(`/products/${res.family.id}`);
+      },
+      onError: (err) => {
+        const conflicts = getFamilyConflicts(err);
+        if (conflicts?.kind === "ROWS") {
+          setServerCells(conflicts.cells);
+          setFamilyServerMessages(conflicts.familyMessages);
+          setSummary(conflicts.summary);
+          return;
+        }
+        toast({ title: "Couldn't create the family. Please try again.", variant: "error" });
+      },
+    });
+  };
+
+  const field = (
+    label: string,
+    key: keyof Pick<
+      FamilyForm,
+      "name" | "category" | "description" | "pricePerUnit" | "standardCost"
+    >,
+    error?: string,
+    opts?: { placeholder?: string },
+  ) => (
+    <label className="flex flex-col gap-1 text-sm font-medium text-navy">
+      {label}
+      <input
+        aria-label={label}
+        aria-invalid={error ? "true" : undefined}
+        value={form[key]}
+        placeholder={opts?.placeholder}
+        onChange={(e) => {
+          setForm((f) => ({ ...f, [key]: e.target.value }));
+          if (key === "name") setFamilyServerMessages([]);
+        }}
+        className="rounded border border-surface-border bg-white px-2 py-1.5 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-brand-500"
+      />
+      {error && <span className="text-xs font-normal text-danger">{error}</span>}
+    </label>
+  );
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="New family"
+      description="A family groups variants (flavors, sizes). It is a container: you sell and stock its variants."
+      className="max-w-5xl"
+      scroll
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={create.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={create.isPending}>
+            Create family
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {field(
+            "Family name",
+            "name",
+            (showErrors ? validation.family.name : undefined) ?? familyServerMessages[0],
+          )}
+          {field("Category", "category")}
+          {field(
+            "Family price",
+            "pricePerUnit",
+            showErrors ? validation.family.pricePerUnit : undefined,
+          )}
+          {field(
+            "Family cost",
+            "standardCost",
+            showErrors ? validation.family.standardCost : undefined,
+            { placeholder: "Optional" },
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-sm text-navy">
+          <input
+            type="checkbox"
+            checked={form.copyFamilyPrice}
+            onChange={(e) => setForm((f) => ({ ...f, copyFamilyPrice: e.target.checked }))}
+          />
+          Copy the family price onto the variants
+        </label>
+        {summary && (
+          <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-sm text-danger">
+            {summary}
+          </p>
+        )}
+        {showErrors && validation.formError && (
+          <p role="alert" className="text-sm text-danger">
+            {validation.formError}
+          </p>
+        )}
+        <FamilyVariantsGrid
+          rows={form.rows}
+          onChange={setRows}
+          cellMessages={cellMessages}
+          onCodeBlur={onCodeBlur}
+          disabled={create.isPending}
+        />
+      </div>
+    </Modal>
+  );
+}
