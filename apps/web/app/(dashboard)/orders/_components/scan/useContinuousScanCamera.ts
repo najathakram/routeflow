@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import type { AimBoxRect, BarcodeBoundsLike } from "@routeflow/scanning";
+import { aimBoxInVideoPixels, boundsFromResultPoints } from "@/lib/scan-aim";
 import {
   classifyScannerError,
   hasTorch,
@@ -8,6 +10,16 @@ import {
   openCamera,
   setTorch,
 } from "@/lib/scan-camera";
+
+/**
+ * The geometry of one decoded frame, for the aim-box filter (owner ruling 2026-09-24): `bounds` is the barcode's box in the
+ * VIDEO FRAME's pixel space (from zxing's result points) and `aimBox` is the drawn box in that same space. Either is
+ * `undefined` when it cannot be known (no result points, video not sized yet), and the filter then fails OPEN.
+ */
+export interface ScanFrame {
+  bounds?: BarcodeBoundsLike;
+  aimBox?: AimBoxRect;
+}
 
 export interface ContinuousScanCamera {
   /** Attach to the preview `<video>`. */
@@ -39,7 +51,7 @@ export function useContinuousScanCamera({
   onDetect,
 }: {
   enabled: boolean;
-  onDetect: (code: string) => void;
+  onDetect: (code: string, frame: ScanFrame) => void;
 }): ContinuousScanCamera {
   const videoRef = React.useRef<HTMLVideoElement>(null);
   const controlsRef = React.useRef<{ stop: () => void } | null>(null);
@@ -79,7 +91,19 @@ export function useContinuousScanCamera({
         const reader = new BrowserMultiFormatReader();
         const controls = await reader.decodeFromStream(stream, videoRef.current!, (result) => {
           if (!active || !result) return;
-          onDetectRef.current(result.getText());
+          const video = videoRef.current;
+          const aimBox = video
+            ? aimBoxInVideoPixels({
+                videoWidth: video.videoWidth,
+                videoHeight: video.videoHeight,
+                clientWidth: video.clientWidth,
+                clientHeight: video.clientHeight,
+              })
+            : null;
+          onDetectRef.current(result.getText(), {
+            bounds: boundsFromResultPoints(result.getResultPoints?.()),
+            aimBox: aimBox ?? undefined,
+          });
         });
         // Disabled/unmounted while zxing was still waiting on the preview: nothing would ever
         // stop these controls, so stop them here rather than leave the camera live.
