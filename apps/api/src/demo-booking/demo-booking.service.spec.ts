@@ -470,7 +470,9 @@ describe("DemoBookingService.create", () => {
 
     expect(booking.status).toBe(DemoBookingStatus.CONFIRMED); // the booking itself still succeeds
     expect(booking.emailDelivered).toBe(false);
-    const warnLine = warnSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes(booking.id));
+    const warnLine = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .find((line) => line.includes(booking.id));
     expect(warnLine).toBeDefined();
     expect(warnLine).toContain("booker");
   });
@@ -483,7 +485,9 @@ describe("DemoBookingService.create", () => {
     const { booking } = await service.create(input);
 
     expect(booking.emailDelivered).toBe(true); // the booker's own send still succeeded
-    const warnLine = warnSpy.mock.calls.map((c) => String(c[0])).find((line) => line.includes(booking.id));
+    const warnLine = warnSpy.mock.calls
+      .map((c) => String(c[0]))
+      .find((line) => line.includes(booking.id));
     expect(warnLine).toBeDefined();
     expect(warnLine).toContain("admin");
   });
