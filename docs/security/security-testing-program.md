@@ -96,17 +96,17 @@ bespoke one:
 
 ## 3. Tool landscape (Node/TypeScript, 2026)
 
-| Category | Best-in-class | OSS/pricing note | Source |
-| --- | --- | --- | --- |
-| SAST | CodeQL, Semgrep, SonarQube Community, Snyk Code | CodeQL is free on public repos (GHAS ≈ $30/committer/mo for private repos); Semgrep's OSS engine is free with a free tier for teams ≤ 10 contributors; SonarQube Community is free self-hosted; Snyk Code has a free tier around 200 tests/mo | [safeguard.sh](https://safeguard.sh/resources/blog/best-sast-tools-2026), [konvu.com](https://konvu.com/compare/semgrep-vs-codeql) |
-| SCA | `npm audit` → Dependabot/Renovate → Socket / Snyk Open Source → OSV-Scanner | `npm audit` is free but noisy and has no reachability analysis; Dependabot/Renovate are free; Socket and Snyk Open Source add behavioral, install-time malware detection; OSV-Scanner (Google) is OSS | [pkgpulse.com/npm-audit](https://www.pkgpulse.com/guides/why-npm-audit-is-broken), [pkgpulse.com/supply-chain](https://www.pkgpulse.com/guides/npm-supply-chain-security-guide-2026) |
-| Secrets | gitleaks + TruffleHog + GitHub push protection | All three OSS/free — gitleaks for pre-commit, TruffleHog for liveness verification, GitHub push protection free on public repos (part of GHAS for private); layering all three catches more than any one alone | [dev.to](https://dev.to/chintanshah35/trufflehog-vs-gitleaks-vs-github-secret-scanning-why-most-ci-scanners-fail-2026-1372) |
-| DAST | OWASP ZAP, Nuclei, Burp Suite | ZAP is OSS with an Automation Framework supporting authenticated scans; Nuclei is OSS, template-driven; Burp Suite Enterprise is commercial (~$10-40k/yr) | [guptadeepak.com](https://guptadeepak.com/tools/top-5-dast-tools-2026/) |
-| Container/IaC | Trivy, Grype+Syft, Docker Scout, Hadolint | Trivy is OSS with the broadest coverage; Grype+Syft OSS; Docker Scout has a free tier; Hadolint (Dockerfile linting) is OSS | [aikido.dev](https://www.aikido.dev/blog/top-container-scanning-tools), [lucaberton.com](https://lucaberton.com/blog/trivy-vs-grype-2026/) |
-| SBOM | Syft → CycloneDX/SPDX | Generate with Syft, emit CycloneDX or SPDX; the EU Cyber Resilience Act introduces reporting duties from September 2026 and requires a full SBOM by December 2027 | [appsecsanta.com](https://appsecsanta.com/sca-tools/sbom-tools-comparison), [github.com/anchore/syft](https://github.com/anchore/syft) |
-| Headers/runtime | helmet (in use), securityheaders.com, Mozilla Observatory | helmet already in use; securityheaders.com's scanner is live and free (its paid API retired April 2026); Mozilla Observatory was archived in 2025 — reference only, not actionable | [dev.to/guardr](https://dev.to/guardr/securityheaderscom-api-is-gone-heres-the-migration-4461) |
-| Fuzzing | ZAP fuzzer / ffuf; `fast-check` | ZAP's fuzzer or ffuf for endpoint fuzzing; `fast-check` for property-based tests, specifically valuable for money-math invariants | — |
-| License | FOSSA, ScanCode | FOSSA is commercial; ScanCode is OSS | — |
+| Category        | Best-in-class                                                               | OSS/pricing note                                                                                                                                                                                                                              | Source                                                                                                                                                                               |
+| --------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SAST            | CodeQL, Semgrep, SonarQube Community, Snyk Code                             | CodeQL is free on public repos (GHAS ≈ $30/committer/mo for private repos); Semgrep's OSS engine is free with a free tier for teams ≤ 10 contributors; SonarQube Community is free self-hosted; Snyk Code has a free tier around 200 tests/mo | [safeguard.sh](https://safeguard.sh/resources/blog/best-sast-tools-2026), [konvu.com](https://konvu.com/compare/semgrep-vs-codeql)                                                   |
+| SCA             | `npm audit` → Dependabot/Renovate → Socket / Snyk Open Source → OSV-Scanner | `npm audit` is free but noisy and has no reachability analysis; Dependabot/Renovate are free; Socket and Snyk Open Source add behavioral, install-time malware detection; OSV-Scanner (Google) is OSS                                         | [pkgpulse.com/npm-audit](https://www.pkgpulse.com/guides/why-npm-audit-is-broken), [pkgpulse.com/supply-chain](https://www.pkgpulse.com/guides/npm-supply-chain-security-guide-2026) |
+| Secrets         | gitleaks + TruffleHog + GitHub push protection                              | All three OSS/free — gitleaks for pre-commit, TruffleHog for liveness verification, GitHub push protection free on public repos (part of GHAS for private); layering all three catches more than any one alone                                | [dev.to](https://dev.to/chintanshah35/trufflehog-vs-gitleaks-vs-github-secret-scanning-why-most-ci-scanners-fail-2026-1372)                                                          |
+| DAST            | OWASP ZAP, Nuclei, Burp Suite                                               | ZAP is OSS with an Automation Framework supporting authenticated scans; Nuclei is OSS, template-driven; Burp Suite Enterprise is commercial (~$10-40k/yr)                                                                                     | [guptadeepak.com](https://guptadeepak.com/tools/top-5-dast-tools-2026/)                                                                                                              |
+| Container/IaC   | Trivy, Grype+Syft, Docker Scout, Hadolint                                   | Trivy is OSS with the broadest coverage; Grype+Syft OSS; Docker Scout has a free tier; Hadolint (Dockerfile linting) is OSS                                                                                                                   | [aikido.dev](https://www.aikido.dev/blog/top-container-scanning-tools), [lucaberton.com](https://lucaberton.com/blog/trivy-vs-grype-2026/)                                           |
+| SBOM            | Syft → CycloneDX/SPDX                                                       | Generate with Syft, emit CycloneDX or SPDX; the EU Cyber Resilience Act introduces reporting duties from September 2026 and requires a full SBOM by December 2027                                                                             | [appsecsanta.com](https://appsecsanta.com/sca-tools/sbom-tools-comparison), [github.com/anchore/syft](https://github.com/anchore/syft)                                               |
+| Headers/runtime | helmet (in use), securityheaders.com, Mozilla Observatory                   | helmet already in use; securityheaders.com's scanner is live and free (its paid API retired April 2026); Mozilla Observatory was archived in 2025 — reference only, not actionable                                                            | [dev.to/guardr](https://dev.to/guardr/securityheaderscom-api-is-gone-heres-the-migration-4461)                                                                                       |
+| Fuzzing         | ZAP fuzzer / ffuf; `fast-check`                                             | ZAP's fuzzer or ffuf for endpoint fuzzing; `fast-check` for property-based tests, specifically valuable for money-math invariants                                                                                                             | —                                                                                                                                                                                    |
+| License         | FOSSA, ScanCode                                                             | FOSSA is commercial; ScanCode is OSS                                                                                                                                                                                                          | —                                                                                                                                                                                    |
 
 ## 4. The RouteFlow program: three tiers
 
@@ -182,13 +182,13 @@ Critical 24-72 hours, High 30 days, Medium 60-90 days, Low 90-180 days.
 
 ## 6. What Claude Code can already run
 
-| Tool | How to run | Covers | Limits |
-| --- | --- | --- | --- |
-| `/security-review` | Free; diffs the working tree against `origin/HEAD` | Injection, authz/authn, crypto/secrets handling, XSS, data exposure | Report-only; reviews new code in the diff, not the whole codebase |
-| `/code-review ultra [PR#]` | User-triggered, billed; deep multi-agent cloud review | Broad code quality and correctness | Not security-specific |
-| dev-pipeline security lens | Automatic | Runs an Opus `edge-cases-and-security` lens on files the pipeline classifies HIGH-risk | Only fires inside a dev-pipeline run |
-| `code-modernization:security-auditor` agent | Installed, needs enabling | OWASP/CWE checklist; runs `npm audit` | Not yet enabled in this repo |
-| `security-guidance` plugin | Installed, enablement unconfirmed | Pattern-based plus LLM diff and commit-time cross-file review | Enablement needs to be confirmed |
+| Tool                                        | How to run                                            | Covers                                                                                 | Limits                                                            |
+| ------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `/security-review`                          | Free; diffs the working tree against `origin/HEAD`    | Injection, authz/authn, crypto/secrets handling, XSS, data exposure                    | Report-only; reviews new code in the diff, not the whole codebase |
+| `/code-review ultra [PR#]`                  | User-triggered, billed; deep multi-agent cloud review | Broad code quality and correctness                                                     | Not security-specific                                             |
+| dev-pipeline security lens                  | Automatic                                             | Runs an Opus `edge-cases-and-security` lens on files the pipeline classifies HIGH-risk | Only fires inside a dev-pipeline run                              |
+| `code-modernization:security-auditor` agent | Installed, needs enabling                             | OWASP/CWE checklist; runs `npm audit`                                                  | Not yet enabled in this repo                                      |
+| `security-guidance` plugin                  | Installed, enablement unconfirmed                     | Pattern-based plus LLM diff and commit-time cross-file review                          | Enablement needs to be confirmed                                  |
 
 None of the above performs DAST, fuzzing, or live exploitation — those remain the gap this
 program's mid/high tiers (ZAP lane, pentest) are meant to close.
@@ -222,34 +222,34 @@ Medium 4.0–6.9, Low < 4.0 — and a finding already fixed elsewhere is closed 
 
 ### Plane — ROAD epic "Security program — tooling & hardening (ASVS L1→L3)"
 
-| # | Title | Labels | Priority | Effort | Acceptance |
-| - | --- | --- | --- | --- | --- |
-| 1 | CodeQL / SAST scanning in CI | security, infra | high | S | `codeql.yml` (javascript-typescript) on PR + weekly; owner decides GHAS-while-private vs public-window-only |
-| 2 | Trivy image scan on deploy builds | security, infra | medium | S | Step after each Docker build in `deploy-production.yml` before GHCR push; fail on Critical / report on High |
-| 3 | gitleaks secrets scanning (pre-commit + nightly history) | security, infra | high | S | `.husky/pre-commit` step + nightly full-history job; `.gitleaks.toml` allowlist for compose `*-change-me` throwaways |
-| 4 | SBOM per image (Syft → CycloneDX) | security, infra | medium | S | SBOM artifact per image build; deploy runbook updated |
-| 5 | SECURITY.md disclosure policy | security, docs | medium | S | Contact, scope (approved test tenants only), SLA bands, safe harbor |
-| 6 | Adopt review tooling (`/security-review` on auth/tenancy/uploads/crypto PRs; evaluate `security-guidance` + `code-modernization:security-auditor`) | security, infra | medium | S | Decision recorded; CONTEXT/CLAUDE pointer in a close-out commit |
-| 7 | Authenticated DAST lane (OWASP ZAP vs local compose stack) | security, infra | high | M | `npm run local:dast` against the `test` tenant only; baseline report under `local-assets/` |
-| 8 | Executable authz matrix spec — endpoint × role × tenant | security, api | high | L | Jest spec enumerating every controller route; asserts guard chain + cross-tenant 404/403; fails on any new unguarded route |
-| 9 | Mobile MASVS pass (STORAGE/NETWORK/PLATFORM) | security, mobile | medium | M | Checklist over `apps/mobile/lib` auth/secure-key/oauth-state; findings to registry; cert-pinning decision |
-| 10 | ASVS 5.0 L2 checklist pass + external pentest scoping | security | medium | L | L2 gaps listed; pentest RFP scope (approved test tenants, PTES phases); owner-action to procure |
-| 11 | Mobile Docker runner non-root (F12-003 remainder) | security, infra | low | S | `apps/mobile/Dockerfile` runner uses `nginx-unprivileged` or adds `USER` |
-| OPS | Next/React RSC CVE patch-level check (CVE-2025-55182/55183/55184, CVE-2026-23864) | security, infra | high | — | Due 2026-09-18, recurs per Next/React bump |
+| #   | Title                                                                                                                                              | Labels           | Priority | Effort | Acceptance                                                                                                                 |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | -------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| 1   | CodeQL / SAST scanning in CI                                                                                                                       | security, infra  | high     | S      | `codeql.yml` (javascript-typescript) on PR + weekly; owner decides GHAS-while-private vs public-window-only                |
+| 2   | Trivy image scan on deploy builds                                                                                                                  | security, infra  | medium   | S      | Step after each Docker build in `deploy-production.yml` before GHCR push; fail on Critical / report on High                |
+| 3   | gitleaks secrets scanning (pre-commit + nightly history)                                                                                           | security, infra  | high     | S      | `.husky/pre-commit` step + nightly full-history job; `.gitleaks.toml` allowlist for compose `*-change-me` throwaways       |
+| 4   | SBOM per image (Syft → CycloneDX)                                                                                                                  | security, infra  | medium   | S      | SBOM artifact per image build; deploy runbook updated                                                                      |
+| 5   | SECURITY.md disclosure policy                                                                                                                      | security, docs   | medium   | S      | Contact, scope (approved test tenants only), SLA bands, safe harbor                                                        |
+| 6   | Adopt review tooling (`/security-review` on auth/tenancy/uploads/crypto PRs; evaluate `security-guidance` + `code-modernization:security-auditor`) | security, infra  | medium   | S      | Decision recorded; CONTEXT/CLAUDE pointer in a close-out commit                                                            |
+| 7   | Authenticated DAST lane (OWASP ZAP vs local compose stack)                                                                                         | security, infra  | high     | M      | `npm run local:dast` against the `test` tenant only; baseline report under `local-assets/`                                 |
+| 8   | Executable authz matrix spec — endpoint × role × tenant                                                                                            | security, api    | high     | L      | Jest spec enumerating every controller route; asserts guard chain + cross-tenant 404/403; fails on any new unguarded route |
+| 9   | Mobile MASVS pass (STORAGE/NETWORK/PLATFORM)                                                                                                       | security, mobile | medium   | M      | Checklist over `apps/mobile/lib` auth/secure-key/oauth-state; findings to registry; cert-pinning decision                  |
+| 10  | ASVS 5.0 L2 checklist pass + external pentest scoping                                                                                              | security         | medium   | L      | L2 gaps listed; pentest RFP scope (approved test tenants, PTES phases); owner-action to procure                            |
+| 11  | Mobile Docker runner non-root (F12-003 remainder)                                                                                                  | security, infra  | low      | S      | `apps/mobile/Dockerfile` runner uses `nginx-unprivileged` or adds `USER`                                                   |
+| OPS | Next/React RSC CVE patch-level check (CVE-2025-55182/55183/55184, CVE-2026-23864)                                                                  | security, infra  | high     | —      | Due 2026-09-18, recurs per Next/React bump                                                                                 |
 
 F12-003's remainder (mobile Docker runner still root) is tracked as Plane task 11 above — it is
 not a bug-registry item.
 
 ### Registry — batch F48 (ids assigned at filing: B355–B360)
 
-| Id | Finding | Severity | Tier |
-| --- | --- | --- | --- |
-| B355 | F11-002 — web tokens in `localStorage` | high | T2 |
-| B356 | F5-003 — shared JWT signing secret / no identity-type claim | medium | T1 |
-| B357 | F9-006 — `X-Forwarded-For` spoofing of throttler + audit IP | medium | T1 |
-| B358 | F12-005 — mobile OAuth deep-link without PKCE/state | medium | T1 |
-| B359 | F3-005 remainder — buyer registration enumeration via 409 | low | T1 |
-| B360 | F4-003 remainder — 9 `@Body() dto: any` routes | low | T1 |
+| Id   | Finding                                                     | Severity | Tier |
+| ---- | ----------------------------------------------------------- | -------- | ---- |
+| B355 | F11-002 — web tokens in `localStorage`                      | high     | T2   |
+| B356 | F5-003 — shared JWT signing secret / no identity-type claim | medium   | T1   |
+| B357 | F9-006 — `X-Forwarded-For` spoofing of throttler + audit IP | medium   | T1   |
+| B358 | F12-005 — mobile OAuth deep-link without PKCE/state         | medium   | T1   |
+| B359 | F3-005 remainder — buyer registration enumeration via 409   | low      | T1   |
+| B360 | F4-003 remainder — 9 `@Body() dto: any` routes              | low      | T1   |
 
 ## 9. Sources
 

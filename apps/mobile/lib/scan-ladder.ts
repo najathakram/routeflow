@@ -171,10 +171,7 @@ export function makeScanHandler<T extends ScanMatchable>(
       if (!result.notFound && result.product?.id) {
         // The server's `scanMatch.levels` (or, failing that, the resolved product's own
         // codes) says which level the code carries.
-        return settle(
-          "accepted",
-          deps.accept(result.product, scanLevel(trimmed, result.product)),
-        );
+        return settle("accepted", deps.accept(result.product, scanLevel(trimmed, result.product)));
       }
     } catch (err: any) {
       if (controller.signal.aborted) {

@@ -220,9 +220,9 @@ export function DemoScheduler() {
             </p>
           ) : (
             <p>
-              Your spot is booked — but we could not confirm your email delivered. Save the
-              details below, and reach out to <strong>{site.email}</strong> if you do not hear
-              from us before your walkthrough.
+              Your spot is booked — but we could not confirm your email delivered. Save the details
+              below, and reach out to <strong>{site.email}</strong> if you do not hear from us
+              before your walkthrough.
             </p>
           )}
         </div>
