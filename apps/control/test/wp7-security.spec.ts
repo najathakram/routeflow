@@ -396,8 +396,8 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       s.on("data", (d) => {
         buf += d.toString();
         const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
-        // keep the head so a status that is NOT a 401 can be diagnosed (B950: a 400 on macOS)
-        if (m) end({ status: Number(m[1]), head: buf.slice(0, 300) });
+        // keep the whole header block so a status that is NOT a 401 can be diagnosed (B950: a 400 on macOS)
+        if (m) end({ status: Number(m[1]), head: buf.split("\r\n\r\n")[0].slice(0, 2000) });
       });
       s.on("error", (e: NodeJS.ErrnoException) => {
         const code = e.code ?? "UNKNOWN";
@@ -416,7 +416,15 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     });
   /** Every status the server sends, with the bytes its connection had read by then. */
   type Seen = { status: number; bytesRead: number; destroyed: boolean };
-  type ClientErr = { code?: string; message: string };
+  type ClientErr = {
+    code?: string;
+    message: string;
+    /** the bytes AT the parse error (Node's `bytesParsed` offset into its `rawPacket`) */
+    raw?: string;
+    at?: number;
+    chunk?: number;
+    bytesRead?: number;
+  };
   const spyResponses = (port: number) => {
     const http = require("http");
     const orig = http.ServerResponse.prototype.end;
@@ -442,7 +450,29 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     // this event shows that the SERVER sent such a 400
     http.Server.prototype.emit = function (this: any, ev: string, ...a: any[]) {
       if (ev === "clientError" && this.address?.()?.port === port) {
-        clientErrors.push({ code: a[0]?.code, message: String(a[0]?.message ?? a[0]) });
+        // diagnostics must never break the server's own event chain: swallow anything odd
+        try {
+          // the bytes the parser rejected: Node attaches the whole chunk as `rawPacket` and the offset
+          // of the error as `bytesParsed` (HPE errors only), so this shows WHAT the parser choked on
+          // (body bytes? a second request line?) and how much of the connection it had read
+          const rawPacket: Buffer | undefined = a[0]?.rawPacket;
+          const at: number | undefined = rawPacket ? (a[0]?.bytesParsed ?? 0) : undefined;
+          clientErrors.push({
+            code: a[0]?.code,
+            message: String(a[0]?.message ?? a[0]),
+            raw:
+              rawPacket && at !== undefined
+                ? Buffer.from(rawPacket)
+                    .subarray(at, at + 48)
+                    .toString("latin1")
+                : undefined,
+            at,
+            chunk: rawPacket?.length,
+            bytesRead: a[1]?.bytesRead,
+          });
+        } catch {
+          clientErrors.push({ message: "clientError capture failed" });
+        }
       }
       return origEmit.call(this, ev, ...a);
     };
@@ -455,6 +485,9 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       },
     };
   };
+  /** Parser rejections only: Node also emits `clientError` for ECONNRESET and timeouts, which are not. */
+  const parserErrors = (errs: ClientErr[]): ClientErr[] =>
+    errs.filter((e) => e.code?.startsWith("HPE_"));
   /** What the sockets did, for a failure message and for CONTROL_TEST_VERBOSE. */
   const floodReport = (outcomes: Outcome[], seen: Seen[], clientErrors: ClientErr[]) => {
     const tally: Record<string, number> = {};
@@ -501,7 +534,16 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
         { other: "TIMEOUT" },
       ],
       [{ status: 401, bytesRead: 1, destroyed: false }],
-      [{ code: "HPE_INVALID_METHOD", message: "Parse Error" }],
+      [
+        {
+          code: "HPE_INVALID_METHOD",
+          message: "Parse Error",
+          raw: "aaaaaaaa",
+          at: 0,
+          chunk: 65536,
+          bytesRead: 1048749,
+        },
+      ],
     );
     expect(rep.tally).toEqual({
       "status 401": 1,
@@ -516,7 +558,124 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     ]);
     expect(rep.answered).toBe(1);
     expect(rep.statuses).toEqual({ "401": 1 });
-    expect(rep.clientErrors).toEqual([{ code: "HPE_INVALID_METHOD", message: "Parse Error" }]);
+    expect(rep.clientErrors).toEqual([
+      {
+        code: "HPE_INVALID_METHOD",
+        message: "Parse Error",
+        raw: "aaaaaaaa",
+        at: 0,
+        chunk: 65536,
+        bytesRead: 1048749,
+      },
+    ]);
+  });
+
+  it("a rejected delivery closes its connection: bytes sent after the 401 are never parsed as a new request (no HPE clientError)", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let head = "";
+    let timedOut = false;
+    try {
+      await new Promise<void>((resolve) => {
+        const s = net.connect(h!.port, "127.0.0.1");
+        let buf = "";
+        let junk = false;
+        const t = setTimeout(() => {
+          timedOut = true; // the server never closed the connection
+          s.destroy();
+          resolve();
+        }, 3000);
+        s.on("data", (d) => {
+          buf += d.toString();
+          if (!junk && /^HTTP\/1\.1 401/.test(buf)) {
+            junk = true;
+            head = buf;
+            // the delivery was rejected; whatever the client sends NOW must not be parsed as a new
+            // request (the MacBook's HPE_INVALID_METHOD: leftover bytes read as a request line)
+            s.write("XXXXXXXX\r\n\r\n");
+          }
+        });
+        s.on("error", () => {}); // the junk write may EPIPE once the server has closed
+        s.on("close", () => {
+          clearTimeout(t);
+          resolve();
+        });
+        s.on("connect", () => {
+          s.write(headWith(`sha256=${"0".repeat(64)}`, 5));
+          s.write("hello");
+        });
+      });
+      await sleep(200);
+    } finally {
+      spy.stop();
+    }
+    expect(head).toMatch(/^HTTP\/1\.1 401/);
+    expect(head.toLowerCase()).toContain("connection: close"); // the server announces the close
+    expect(timedOut).toBe(false); // ...and really closes the connection after the response
+    expect(parserErrors(spy.clientErrors)).toEqual([]); // so nothing is ever parsed as a new request
+    expect(h.refreshCalls).toBe(0);
+  });
+
+  it("the EARLY 401 (a malformed signature, refused before the body is read) also announces Connection: close and closes", async () => {
+    h = await startServer({ webhook: true });
+    let head = "";
+    let timedOut = false;
+    await new Promise<void>((resolve) => {
+      const s = net.connect(h!.port, "127.0.0.1");
+      const t = setTimeout(() => {
+        timedOut = true;
+        s.destroy();
+        resolve();
+      }, 3000);
+      s.on("data", (d) => (head += d.toString()));
+      s.on("error", () => {});
+      s.on("close", () => {
+        clearTimeout(t);
+        resolve();
+      });
+      s.on("connect", () => {
+        s.write(headWith("sha256=zz", 5));
+        s.write("hello");
+      });
+    });
+    expect(head).toMatch(/^HTTP\/1\.1 401/);
+    expect(head.toLowerCase()).toContain("connection: close");
+    expect(timedOut).toBe(false);
+  });
+
+  it("bytes beyond the declared Content-Length reproduce the MacBook shape: a bare 400 first, a clientError with the offending bytes, the server's 401 recorded on a destroyed socket", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      // declares 5 body bytes, sends them plus junk in the same write: the parser reads the junk as
+      // the start of a NEW request (HPE_INVALID_METHOD) while the first request's handler is still
+      // awaiting its body, so Node's default clientError reply (a bare 400) can beat the 401
+      out = await upload(
+        h.port,
+        headWith(`sha256=${"0".repeat(64)}`, 5),
+        [Buffer.from("helloXXXXXXXXXXXX\r\n\r\n")],
+        { maxMs: 8000 },
+      );
+      await sleep(300);
+    } finally {
+      spy.stop();
+    }
+    expect(spy.clientErrors.length).toBeGreaterThan(0);
+    expect(spy.clientErrors[0].code).toBe("HPE_INVALID_METHOD");
+    expect(spy.clientErrors[0].raw).toContain("XXXX"); // the exact bytes the parser choked on
+    expect(spy.clientErrors[0].bytesRead).toBeGreaterThan(0);
+    // the server's own answer was exactly one 401, recorded on a socket Node had already destroyed
+    expect(spy.seen.map((x) => x.status)).toEqual([401]);
+    expect(spy.seen[0].destroyed).toBe(true);
+    expect(h.refreshCalls).toBe(0);
+    // the client read Node's bare parser 400 (no app security headers, `Connection: close` only) or,
+    // depending on the OS, only a reset: whichever the OS delivers (the lesson of B950), never the 401
+    expect(
+      "reset" in out ||
+        (out as { status: number; head?: string }).head ===
+          "HTTP/1.1 400 Bad Request\r\nConnection: close",
+    ).toBe(true);
   });
 
   it("classifyError pins the reset codes: the server-closed-first codes are resets, environmental ones are not", () => {
@@ -585,7 +744,9 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       spy.stop();
     }
     expect("status" in out ? out.status === 413 : "reset" in out).toBe(true);
+    if ("status" in out) expect((out.head ?? "").toLowerCase()).toContain("connection: close");
     expect(spy.seen.map((x) => x.status)).toEqual([413]);
+    expect(parserErrors(spy.clientErrors)).toEqual([]);
     expect(h.refreshCalls).toBe(0);
   });
 
@@ -610,6 +771,13 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     if (report.notRejectedCount > 0) {
       throw new Error(
         `B950 flood: ${report.notRejectedCount} of 200 uploads were neither a 401 nor a reset: ${JSON.stringify(report)}`,
+      );
+    }
+    // the pin (lead ruling B950): the HTTP parser never rejected a byte on this server. A parser
+    // error here is Node's bare 400 (HPE_INVALID_METHOD) racing the real 401, the MacBook failure
+    if (parserErrors(spy.clientErrors).length > 0) {
+      throw new Error(
+        `B950 flood: the HTTP parser rejected bytes (${parserErrors(spy.clientErrors).length} HPE error(s)): ${JSON.stringify(report)}`,
       );
     }
     // server side (the platform-independent proof): it sent no 2xx, answered every live connection
