@@ -128,6 +128,7 @@ function requireDbLocksMock(): any {
   return require("../common/db-locks");
 }
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   BadRequestException,
@@ -219,6 +220,7 @@ async function buildOrdersService(
 ): Promise<OrdersService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       { provide: PrismaService, useValue: prisma },
       { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
@@ -1540,6 +1542,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },
         { provide: BuyerDashboardService, useValue: {} },
@@ -1619,7 +1622,10 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     // normalizeScanCode instead of matching the raw string.
     const candidates = normalizeScanCode(SCANNED);
     expect(candidates).toContain("012345678905");
-    expect(scopedProductFindMany.mock.calls[0][0].where.OR).toEqual(
+    // M4a-1: the shared findScanMatches ANDs the buyer's scope ({ isActive: true }) with the code OR.
+    const where = scopedProductFindMany.mock.calls[0][0].where;
+    expect(where.AND[0]).toEqual({ isActive: true });
+    expect(where.AND[1].OR).toEqual(
       expect.arrayContaining([
         { barcode: { in: candidates } },
         { sku: { in: candidates } },

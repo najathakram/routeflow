@@ -13,6 +13,10 @@ export type Product = {
   /** Retail-unit code — scannable, so the local scan fast path must see it. */
   unitSku?: string | null;
   barcode?: string | null;
+  /** M1 `ProductBarcode` rows (additive on the list/detail payload) — the local scan fast path reads them. */
+  barcodes?: Array<{ code: string; level: "BOX" | "UNIT" }> | null;
+  /** #2717 M4a-1: on a scan-lookup response, which code hit and the levels it has (server-resolved). */
+  scanMatch?: { code: string; levels: Array<"BOX" | "UNIT"> } | null;
   unit?: string;
   pricePerUnit: number | string;
   // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The

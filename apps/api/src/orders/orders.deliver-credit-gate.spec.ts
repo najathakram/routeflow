@@ -12,6 +12,7 @@ jest.mock("./driver-edit-access", () => ({
 jest.mock("../invoices/invoices.service", () => ({ InvoicesService: jest.fn() }));
 jest.mock("../notifications/notifications.service", () => ({ NotificationsService: jest.fn() }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import * as fs from "fs";
 import * as path from "path";
 import { Test } from "@nestjs/testing";
@@ -106,6 +107,7 @@ describe("OrdersService.changeStatus — B585 credit check at delivery", () => {
       );
     const module = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,
