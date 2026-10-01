@@ -37,6 +37,7 @@ const flagged = (over: Partial<LineState> = {}): LineState => ({
 });
 const deps = (units: ProductUnitLevel[] | Error, over = {}) => ({
   unitsEnabled: true,
+  unitsKnown: true,
   getUnits: jest.fn(async () => {
     if (units instanceof Error) throw units;
     return units;
@@ -123,6 +124,13 @@ describe("startLineOnDefault / resolvePendingDefaultUnits (tray Confirm with the
     expect(blocked).toEqual([]);
     expect(items.p1!.startOnDefaultUnit).toBeUndefined();
     expect(d.getUnits).not.toHaveBeenCalled();
+  });
+
+  it("the units answer still loading: nothing is resolved and the line is blocked (loading is not 'off')", async () => {
+    const d = deps([BOTTLE], { unitsEnabled: false, unitsKnown: false });
+    const { items, blocked } = await resolvePendingDefaultUnits({ p1: flagged() }, d);
+    expect(blocked).toEqual(["p1"]);
+    expect(items.p1!.startOnDefaultUnit).toBe(1);
   });
 
   it("a flagged line whose product record is missing is blocked, not guessed", async () => {

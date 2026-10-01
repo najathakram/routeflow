@@ -41,6 +41,8 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import { applyUnitOption } from "../lib/default-unit-line";
+import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { resolveScanSellLevel } from "@routeflow/scanning";
@@ -891,26 +893,14 @@ function ProductPickView({
    * pack behaviour byte for byte.
    */
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const isPack = option.value === "";
-      return {
-        ...m,
-        [id]: {
-          ...prev,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          unitFactor: isPack ? undefined : option.factorToBase,
-          // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
-          startOnDefaultUnit: undefined,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          unitPrice: undefined,
-        },
-      };
-    });
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option) } : m));
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const resolveDefaultUnits = useDefaultUnitResolver(
+    items,
+    setItems,
+    (id) => productById.get(id),
+    effectiveTierFor,
+  );
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
@@ -1788,7 +1778,13 @@ function ProductPickView({
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
-    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+    const { items: lines, blocked } = await resolveDefaultUnits(items);
+    if (blocked.length) {
+      showToast("Couldn't load the selling units. Check your connection and try again.");
+      return endSubmit();
+    }
+    setItems(() => lines);
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
