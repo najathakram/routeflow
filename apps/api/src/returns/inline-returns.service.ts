@@ -43,6 +43,13 @@ import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { NumberingService } from "../import/numbering.service";
+import {
+  lineTakeRefusal,
+  loadLineCredits,
+  toHeadroomLine,
+  type HeadroomLine,
+} from "../credit-notes/line-credit-headroom";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { IdempotencyService } from "../common/idempotency.service";
 import { AddonService } from "../billing/addon.service";
 import { NO_RESTOCK_REASONS } from "./returns.service";
@@ -332,6 +339,9 @@ export class InlineReturnsService {
       tx,
     );
 
+    // B948 / SA-628a (c): a source line may never be credited past its value by a credit note + an inline return.
+    await this.assertWithinLineHeadroom(tx, priced.chunks);
+
     // §4 N-5: Σ (committed credit of non-cancelled inline returns already on this
     // order), read under the carrying-order lock just taken — the driver cap compares
     // Σ+this return's total against the order's gross (config driverCreditCap = 0 =
@@ -513,6 +523,9 @@ export class InlineReturnsService {
       db,
       { excludeInvoiceIds },
     );
+    // B948 (Opus r1, B215 class): the SAME line-headroom refusal, read-only (no Invoice write, no lock), BEFORE the caller's
+    // un-tx'd revert commits SENT->DRAFT; the in-tx check stays as the race backstop.
+    await this.assertWithinLineHeadroom(db, priced.chunks, { readOnly: true });
     return priced.total; // the dry-run total: a gate only; the edit path reserves ahead regardless (SA-292)
   }
 
@@ -545,6 +558,80 @@ export class InlineReturnsService {
       capIntentToOrderBalance: true,
     });
     return { ...captured, minted };
+  }
+
+  /**
+   * B948 / SA-628a (c): refuses (409 RETURN_REFUND_OVER_LINE_HEADROOM, never clips) a capture whose chunks would credit a source
+   * invoice line past what it still has under the ONE shared per-line headroom (credit-note items + the legacy itemless term +
+   * earlier inline returns). Lock order Order (already held) -> Invoice rows (id-sorted, tenant-scoped) -> credit reads (SA-214).
+   * Chunks with no source line (unreferenced pricing) carry no line to cap.
+   */
+  private async assertWithinLineHeadroom(
+    tx: any,
+    chunks: Array<{ sourceInvoiceItemId: string | null; pieces: number; subtotal: number }>,
+    opts: { readOnly?: boolean } = {},
+  ): Promise<void> {
+    const takes = new Map<string, { qty: number; amount: number }>();
+    for (const c of chunks) {
+      if (!c.sourceInvoiceItemId) continue;
+      const t = takes.get(c.sourceInvoiceItemId) ?? { qty: 0, amount: 0 };
+      t.qty += Number(c.pieces);
+      t.amount += Number(c.subtotal);
+      takes.set(c.sourceInvoiceItemId, t);
+    }
+    if (takes.size === 0) return;
+    const srcRows: Array<{ id: string; invoiceId: string }> = await tx.invoiceItem.findMany({
+      where: { id: { in: [...takes.keys()] } },
+      select: { id: true, invoiceId: true },
+    });
+    const invoiceIds = [...new Set(srcRows.map((l) => l.invoiceId))].sort();
+    if (invoiceIds.length === 0) return; // the source line was deleted: provenance only, nothing to cap
+    const tenantId = this.prisma.getTenantId();
+    for (const invoiceId of opts.readOnly ? [] : invoiceIds) {
+      // A WRITE, not just a lock: a concurrent credit note's Serializable tx took its snapshot before it waited on this row, so
+      // only a new row version (40001 on its wake-up, then its bounded retry re-reads) makes it see this return (B948 race).
+      await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id = ${invoiceId} AND "tenantId" = ${tenantId}`;
+    }
+    for (const invoiceId of invoiceIds) {
+      const rows: any[] = await tx.invoiceItem.findMany({
+        where: { invoiceId },
+        select: {
+          id: true,
+          productId: true,
+          subtotal: true,
+          qty: true,
+          boxes: true,
+          unitsPerBox: true,
+          pieces: true,
+          product: { select: { unitsPerBox: true } },
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      const lines: HeadroomLine[] = rows.map(toHeadroomLine);
+      const credited = await loadLineCredits(tx, invoiceId, lines);
+      for (const line of lines) {
+        const take = takes.get(line.id);
+        if (!take) continue;
+        // the chunk's pieces, on the line's own qty axis (a boxed selling-unit line counts boxes)
+        const refusal = lineTakeRefusal(line, credited, {
+          qty: take.qty / (line.piecesPerQty ?? 1),
+          amount: take.amount,
+        });
+        if (refusal) {
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+            message:
+              "This return would credit more than the invoice line is worth: part of it was already credited " +
+              "(by a credit note or an earlier return). Adjust the quantity or issue the credit note manually.",
+            productId: refusal.productId,
+            requested: refusal.requestedAmount,
+            remaining: refusal.remainingAmount,
+            requestedQty: refusal.requestedQty,
+            remainingQty: refusal.remainingQty,
+          });
+        }
+      }
+    }
   }
 
   /**

@@ -1,4 +1,4 @@
-import { roundMoney } from "@routeflow/pricing";
+import { packFromOwnSplit, roundMoney } from "@routeflow/pricing";
 
 /**
  * SA-628 — ONE per-line credit headroom for credit notes AND return refunds (a line may never be credited past its value
@@ -18,7 +18,37 @@ export interface HeadroomLine {
   productId: string | null;
   subtotal: number;
   qty: number;
+  /** pieces per unit of `qty` (inline ReturnItem.qty is PIECES; a boxed selling-unit line's qty is boxes). Default 1. */
+  piecesPerQty?: number;
 }
+/**
+ * The pieces-per-qty factor of an invoice line, resolved exactly like the inline pricing's `piecesQty`: a box-split line's qty is
+ * already pieces (1); else the line's own pack snapshot, else the pack its own boxes/pieces split recovers, else the product's
+ * current pack; a selling-unit line's qty is boxes.
+ */
+export const piecesPerQtyOf = (it: {
+  qty?: unknown;
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  product?: { unitsPerBox?: number | null } | null;
+}): number => {
+  if (it.boxes != null) return 1;
+  const upb =
+    it.unitsPerBox ??
+    packFromOwnSplit({ qty: Number(it.qty ?? 0), boxes: it.boxes, pieces: it.pieces }) ??
+    it.product?.unitsPerBox ??
+    null;
+  return Math.max(1, Number(upb) || 1);
+};
+/** An invoice item row as a HeadroomLine. */
+export const toHeadroomLine = (it: any): HeadroomLine => ({
+  id: it.id,
+  productId: it.productId ?? null,
+  subtotal: Number(it.subtotal),
+  qty: Number(it.qty),
+  piecesPerQty: piecesPerQtyOf(it),
+});
 export interface LineCredit {
   amount: number;
   qty: number;
@@ -137,6 +167,33 @@ export function planProductRefund(
   return { items, price, amount: roundMoney(items.reduce((t, i) => t + i.amount, 0)) };
 }
 
+/**
+ * A take of `qty` pieces worth `amount` against ONE line (an inline return chunk, which is already line-specific): null when it
+ * fits the line's remaining qty and money (money only binds a line that has money; one cent of tolerance plus the drift of the
+ * prior credit items, like `planProductRefund`), else the refusal. Never clips.
+ */
+export function lineTakeRefusal(
+  line: HeadroomLine,
+  credited: ReadonlyMap<string, LineCredit>,
+  take: { qty: number; amount: number },
+): RefundRefusal | null {
+  const d = credited.get(line.id) ?? { amount: 0, qty: 0 };
+  const remainingQty = Math.max(0, round3(line.qty - d.qty));
+  const hasMoney = line.subtotal > EPS;
+  const remainingAmount = hasMoney ? Math.max(0, roundMoney(line.subtotal - d.amount)) : 0;
+  const tol = CENT + Math.min(0.04, 0.005 * (d.items ?? 0));
+  const qtyOver = take.qty > remainingQty + EPS;
+  const moneyOver = hasMoney && take.amount > remainingAmount + tol;
+  if (!qtyOver && !moneyOver) return null;
+  return {
+    productId: line.productId ?? "",
+    requestedAmount: roundMoney(take.amount),
+    remainingAmount,
+    requestedQty: round3(take.qty),
+    remainingQty,
+  };
+}
+
 /** Adds `items` onto `credited` (a new map). */
 export function addCredits(
   credited: ReadonlyMap<string, LineCredit>,
@@ -183,6 +240,28 @@ export async function loadLineCredits(
     credited.set(k, {
       amount: prev.amount + Number(r.amount),
       qty: prev.qty + Number(r.qty ?? 0),
+      items: (prev.items ?? 0) + 1,
+    });
+  }
+
+  // INLINE term (B948, SA-628a (c)): an inline return mints a STANDALONE itemless credit note (no invoiceId), so neither term
+  // below sees it; its ReturnItems record the source line, so count them (net `subtotal` + qty). Held (DRIVER_CAP) returns count
+  // too: their credit lands at approve(). CANCELLED / REJECTED ones credit nothing.
+  const inlineRows: Array<{ sourceInvoiceItemId: string | null; qty: unknown; subtotal: unknown }> =
+    (await db.returnItem?.findMany?.({
+      where: {
+        sourceInvoiceItemId: { in: ids },
+        return: { kind: "INLINE", status: { notIn: ["CANCELLED", "REJECTED"] } },
+      },
+      select: { sourceInvoiceItemId: true, qty: true, subtotal: true },
+    })) ?? [];
+  for (const r of inlineRows) {
+    const k = r.sourceInvoiceItemId ?? "";
+    const prev = credited.get(k) ?? { amount: 0, qty: 0 };
+    const factor = lines.find((l) => l.id === k)?.piecesPerQty ?? 1;
+    credited.set(k, {
+      amount: prev.amount + Number(r.subtotal ?? 0),
+      qty: prev.qty + Number(r.qty ?? 0) / factor,
       items: (prev.items ?? 0) + 1,
     });
   }

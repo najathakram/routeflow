@@ -12,6 +12,7 @@ import {
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
+  INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE,
   groupQuoteChunks,
   hasAnyQtyEntered,
   isBoxedProduct,
@@ -791,5 +792,26 @@ describe("#2695 (SA-557): the staff credit price override on the wire", () => {
         /^Widget: /,
       );
     });
+  });
+});
+
+describe("extractRefusalMessage: the line-headroom 409 (B948)", () => {
+  it("shows FIXED copy for RETURN_REFUND_OVER_LINE_HEADROOM and never the raw server message", () => {
+    const err = {
+      response: {
+        status: 409,
+        data: { code: "RETURN_REFUND_OVER_LINE_HEADROOM", message: "raw server text cn=CN-1" },
+      },
+    };
+    const out = extractRefusalMessage(err);
+    expect(out).toBe(INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE);
+    expect(out).not.toMatch(/raw server text/);
+  });
+  it("any other refusal keeps its existing message", () => {
+    expect(
+      extractRefusalMessage({
+        response: { status: 400, data: { code: "OTHER", message: "named" } },
+      }),
+    ).toBe("named");
   });
 });

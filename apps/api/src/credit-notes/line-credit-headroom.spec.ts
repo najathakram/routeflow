@@ -1,6 +1,8 @@
 import {
   addCredits,
   planProductRefund,
+  lineTakeRefusal,
+  piecesPerQtyOf,
   loadLineCredits,
   type HeadroomLine,
 } from "./line-credit-headroom";
@@ -195,5 +197,71 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
       id: { not: "cn-x" },
     });
     expect(db.creditNote.findMany.mock.calls[0][0].where).toMatchObject({ id: { not: "cn-x" } });
+  });
+});
+
+describe("inline term (B948, SA-628a (c)): an inline return's ReturnItems count against the source line", () => {
+  const db = (inline: unknown[]) => ({
+    creditNoteItem: { findMany: jest.fn().mockResolvedValue([]) },
+    creditNote: { findMany: jest.fn().mockResolvedValue([]) },
+    return: { findMany: jest.fn() },
+    returnItem: { findMany: jest.fn().mockResolvedValue(inline) },
+  });
+  it("counts the net subtotal + qty of a live inline return keyed on sourceInvoiceItemId (cancelled/rejected excluded in the query)", async () => {
+    const d = db([{ sourceInvoiceItemId: "a", qty: 1, subtotal: 100 }]);
+    const out = await loadLineCredits(d, "inv", [A, B]);
+    expect(out.get("a")).toMatchObject({ amount: 100, qty: 1 });
+    expect(d.returnItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          sourceInvoiceItemId: { in: ["a", "b"] },
+          return: { kind: "INLINE", status: { notIn: ["CANCELLED", "REJECTED"] } },
+        },
+      }),
+    );
+  });
+  it("converts the pieces to the line's own qty axis (a boxed selling-unit line of 2 boxes x 12: 12 pieces = 1 box)", async () => {
+    const boxed: HeadroomLine = {
+      id: "bx",
+      productId: "p",
+      subtotal: 120,
+      qty: 2,
+      piecesPerQty: 12,
+    };
+    const out = await loadLineCredits(
+      db([{ sourceInvoiceItemId: "bx", qty: 12, subtotal: 60 }]),
+      "inv",
+      [boxed],
+    );
+    expect(out.get("bx")).toMatchObject({ amount: 60, qty: 1 });
+  });
+  it("a credit note's item AND an inline return on one line add up (the $160-on-$100 repro)", async () => {
+    const d = db([{ sourceInvoiceItemId: "a", qty: 1, subtotal: 100 }]);
+    d.creditNoteItem.findMany.mockResolvedValue([{ invoiceItemId: "a", amount: 60, qty: 0.6 }]);
+    const out = await loadLineCredits(d, "inv", [A]);
+    expect(out.get("a")).toMatchObject({ amount: 160, qty: 1.6 });
+  });
+  it("lineTakeRefusal: the inline capture after a $60 credit note refuses a whole-line $100 take; a $40 take fits", () => {
+    const credited = new Map([["a", { amount: 60, qty: 0.6, items: 1 }]]);
+    expect(lineTakeRefusal(A, credited, { qty: 1, amount: 100 })).toMatchObject({
+      requestedAmount: 100,
+      remainingAmount: 40,
+    });
+    expect(lineTakeRefusal(A, credited, { qty: 0.4, amount: 40 })).toBeNull();
+  });
+  it("lineTakeRefusal: a free line binds on qty only", () => {
+    const free: HeadroomLine = { id: "f", productId: "p", subtotal: 0, qty: 2 };
+    expect(lineTakeRefusal(free, new Map(), { qty: 2, amount: 0 })).toBeNull();
+    expect(lineTakeRefusal(free, new Map(), { qty: 3, amount: 0 })).not.toBeNull();
+  });
+});
+
+describe("piecesPerQtyOf resolves the pack like the inline pricing", () => {
+  it("box-split => 1; own snapshot; own split; product pack; else 1", () => {
+    expect(piecesPerQtyOf({ boxes: 2, unitsPerBox: 12 })).toBe(1);
+    expect(piecesPerQtyOf({ unitsPerBox: 12 })).toBe(12);
+    expect(piecesPerQtyOf({ qty: 24, boxes: null, product: { unitsPerBox: 6 } })).toBe(6);
+    expect(piecesPerQtyOf({ qty: 2, product: { unitsPerBox: 12 } })).toBe(12);
+    expect(piecesPerQtyOf({ qty: 2 })).toBe(1);
   });
 });
