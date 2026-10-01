@@ -247,6 +247,25 @@ export function assertStateOrigin(url: string): string {
   return t;
 }
 
+const verifiedOrigins = new Set<string>();
+
+/**
+ * The state-origin refusal for an origin that arrives inside an `Env` (the library's own entry
+ * points call it through `checkEnv`), so no caller can skip the CLI/config validation by building
+ * an `Env` by hand. It is exactly `assertStateOrigin`, plus: the string must already be the
+ * trimmed one (git is handed `env.origin` verbatim). A SUCCESS is remembered per origin string for
+ * the life of the process, because the check spawns offline git probes and the server calls the
+ * entry points constantly; a refusal is never remembered, so every call with a refused origin
+ * fails again. Exit 2 on refusal.
+ */
+export function assertEnvOrigin(origin: string): string {
+  if (verifiedOrigins.has(origin)) return origin;
+  const t = assertStateOrigin(origin);
+  if (t !== origin) throw new CtlError(2, "bad origin: surrounding whitespace");
+  verifiedOrigins.add(origin);
+  return origin;
+}
+
 /** The directory holding the `origin` file: CONTROL_CONFIG_DIR, else `<XDG config>/routeflow-control`. */
 export function originConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.CONTROL_CONFIG_DIR;

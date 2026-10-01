@@ -22,6 +22,7 @@ import {
   gitTry,
 } from "../sources/git";
 import {
+  assertEnvOrigin,
   redactUrl,
   removeOriginFile,
   resolveStateOrigin,
@@ -242,7 +243,8 @@ function runInit(ctx: Ctx): void {
     return;
   }
 
-  const origin = assertOrigin(ctx.env.origin);
+  // the push below writes the state: same refusal as every other state entry point
+  const origin = assertEnvOrigin(assertOrigin(ctx.env.origin));
   const remote = gitAnywhere(["ls-remote", "--heads", "--", origin, `refs/heads/${branch}`], {
     timeoutMs: cloneTimeoutMs(),
   });

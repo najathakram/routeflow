@@ -24,6 +24,7 @@ import {
   gitTry,
 } from "./git";
 import type { Env } from "./git";
+import { assertEnvOrigin } from "./origin";
 import { withLock } from "./lock";
 
 export { CtlError } from "./git";
@@ -215,8 +216,15 @@ export function foldDir(dir: string, registers: Env["registers"], now?: string):
 
 /* ------------------------------------------------------------------ clone handling */
 
+/**
+ * Every entry point that clones, fetches or pushes the state starts here. The origin gets the same
+ * refusal as `ctl origin set` (the product repo, ext::/fd::, insteadOf aliases of it), so an `Env`
+ * built by hand cannot bypass the CLI/config validation. The server's separate master clone (the
+ * product repo, on purpose) never goes through an `Env`, so it is not subject to this.
+ */
 function checkEnv(env: Env): void {
   assertOrigin(env.origin);
+  assertEnvOrigin(env.origin);
   assertBranchName(env.stateBranch);
   assertBranchName(env.archiveBranch);
 }
@@ -354,6 +362,7 @@ export async function ensureClone(env: Env): Promise<string> {
 
 /** Fetch the state branch and hard-reset the checkout to it (never merge, never stash). */
 export function syncClone(env: Env, clone: string): void {
+  checkEnv(env);
   assertOwned(env, clone);
   const b = env.stateBranch;
   // a git call killed by its timeout can leave the index lock behind; we hold the clone lock

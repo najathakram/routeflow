@@ -18,6 +18,9 @@ const B64 = Buffer.from("x-access-token:" + TOKEN).toString("base64");
 const HEADER = `Authorization: Basic ${B64}`;
 const KEY = "http.https://github.com/.extraheader";
 const FOLLOW = "http.https://github.com/.followRedirects";
+// the generic entry every git child gets, token or not: a rename alias or transfer redirect must
+// fail loudly instead of silently sending a push to a different repo
+const GENERIC = "http.followRedirects";
 
 const SAVED = { ...process.env };
 let shim: GitShim | undefined;
@@ -83,22 +86,51 @@ describe("childEnv with setGitAuth", () => {
     process.env.CONTROL_SECRET_PROBE = "leak-me-please";
     process.env.CONTROL_GITHUB_TOKEN = TOKEN;
     G().setGitAuth(TOKEN);
+    delete process.env.GIT_CONFIG_COUNT;
     const env = G().childEnv();
-    expect(env.GIT_CONFIG_COUNT).toBe("2");
+    expect(env.GIT_CONFIG_COUNT).toBe("3");
     expect(env.GIT_CONFIG_KEY_0).toBe(KEY);
     expect(env.GIT_CONFIG_VALUE_0).toBe(HEADER);
     expect(env.GIT_CONFIG_KEY_1).toBe(FOLLOW);
     expect(env.GIT_CONFIG_VALUE_1).toBe("false");
+    expect(env.GIT_CONFIG_KEY_2).toBe(GENERIC);
+    expect(env.GIT_CONFIG_VALUE_2).toBe("false");
     expect(Object.keys(env).filter((k) => k.startsWith("CONTROL_"))).toEqual([]);
     expect(JSON.stringify(env)).not.toContain("leak-me-please");
   });
-  it("without auth set (or after setGitAuth(null)) adds nothing", () => {
+  it("without auth set (or after setGitAuth(null)) there is no header, only the generic no-redirect entry", () => {
     delete process.env.GIT_CONFIG_COUNT;
-    expect(G().childEnv().GIT_CONFIG_COUNT).toBeUndefined();
+    const only = (env: Record<string, string>): void => {
+      expect(env.GIT_CONFIG_COUNT).toBe("1");
+      expect(env.GIT_CONFIG_KEY_0).toBe(GENERIC);
+      expect(env.GIT_CONFIG_VALUE_0).toBe("false");
+      expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+      expect(JSON.stringify(env)).not.toContain("extraheader");
+    };
+    only(G().childEnv());
     G().setGitAuth(TOKEN);
     G().setGitAuth(null);
-    expect(G().childEnv().GIT_CONFIG_COUNT).toBeUndefined();
-    expect(G().childEnv().GIT_CONFIG_KEY_0).toBeUndefined();
+    only(G().childEnv());
+  });
+  it("without auth, an inherited GIT_CONFIG_COUNT is kept and the generic entry goes after it", () => {
+    process.env.GIT_CONFIG_COUNT = "2";
+    process.env.GIT_CONFIG_KEY_0 = "user.name";
+    process.env.GIT_CONFIG_VALUE_0 = "zed";
+    process.env.GIT_CONFIG_KEY_1 = "core.abbrev";
+    process.env.GIT_CONFIG_VALUE_1 = "9";
+    const env = G().childEnv();
+    expect(env.GIT_CONFIG_COUNT).toBe("3");
+    expect(env.GIT_CONFIG_KEY_0).toBe("user.name");
+    expect(env.GIT_CONFIG_VALUE_1).toBe("9");
+    expect(env.GIT_CONFIG_KEY_2).toBe(GENERIC);
+    expect(env.GIT_CONFIG_VALUE_2).toBe("false");
+    expect(env.GIT_CONFIG_KEY_3).toBeUndefined();
+  });
+  it("without auth, a CONTROL_* variable still never reaches the child", () => {
+    process.env.CONTROL_SECRET_PROBE = "leak-me-please";
+    const env = G().childEnv();
+    expect(Object.keys(env).filter((k) => k.startsWith("CONTROL_"))).toEqual([]);
+    expect(JSON.stringify(env)).not.toContain("leak-me-please");
   });
   it("appends after an existing GIT_CONFIG_COUNT instead of clobbering it", () => {
     process.env.GIT_CONFIG_COUNT = "2";
@@ -108,21 +140,24 @@ describe("childEnv with setGitAuth", () => {
     process.env.GIT_CONFIG_VALUE_1 = "9";
     G().setGitAuth(TOKEN);
     const env = G().childEnv();
-    expect(env.GIT_CONFIG_COUNT).toBe("4");
+    expect(env.GIT_CONFIG_COUNT).toBe("5");
     expect(env.GIT_CONFIG_KEY_0).toBe("user.name");
     expect(env.GIT_CONFIG_VALUE_1).toBe("9");
     expect(env.GIT_CONFIG_KEY_2).toBe(KEY);
     expect(env.GIT_CONFIG_VALUE_2).toBe(HEADER);
     expect(env.GIT_CONFIG_KEY_3).toBe(FOLLOW);
     expect(env.GIT_CONFIG_VALUE_3).toBe("false");
+    expect(env.GIT_CONFIG_KEY_4).toBe(GENERIC);
+    expect(env.GIT_CONFIG_VALUE_4).toBe("false");
   });
   it("treats a junk GIT_CONFIG_COUNT as zero", () => {
     process.env.GIT_CONFIG_COUNT = "banana";
     G().setGitAuth(TOKEN);
     const env = G().childEnv();
-    expect(env.GIT_CONFIG_COUNT).toBe("2");
+    expect(env.GIT_CONFIG_COUNT).toBe("3");
     expect(env.GIT_CONFIG_KEY_0).toBe(KEY);
     expect(env.GIT_CONFIG_KEY_1).toBe(FOLLOW);
+    expect(env.GIT_CONFIG_KEY_2).toBe(GENERIC);
   });
 });
 
@@ -146,6 +181,35 @@ describe("a real git child", () => {
   it("with no auth set the header is absent", () => {
     delete process.env.GIT_CONFIG_COUNT;
     expect(G().gitTry(tmp(), ["config", "--get", KEY]).ok).toBe(false);
+  });
+  it("with no auth set every git child still has redirects off (git itself reports false)", () => {
+    delete process.env.GIT_CONFIG_COUNT;
+    const r = G().gitTry(tmp(), [
+      "config",
+      "--get-urlmatch",
+      GENERIC,
+      "https://example.test/x.git",
+    ]);
+    expect(r.ok).toBe(true);
+    expect(r.out.trim()).toBe("false");
+    // and gitAnywhere (the clone and origin probes) gets it too
+    const any = G().gitAnywhere([
+      "config",
+      "--get-urlmatch",
+      GENERIC,
+      "https://example.test/x.git",
+    ]);
+    expect(any.out.trim()).toBe("false");
+  });
+  it("the generic entry beats a global followRedirects=true, with or without a token", () => {
+    const cfg = path.join(tmp(), "gitconfig");
+    fs.writeFileSync(cfg, "[http]\n\tfollowRedirects = true\n");
+    process.env.GIT_CONFIG_GLOBAL = cfg;
+    delete process.env.GIT_CONFIG_COUNT;
+    const url = "https://example.test/x.git";
+    expect(G().gitTry(tmp(), ["config", "--get-urlmatch", GENERIC, url]).out.trim()).toBe("false");
+    G().setGitAuth(TOKEN);
+    expect(G().gitTry(tmp(), ["config", "--get-urlmatch", GENERIC, url]).out.trim()).toBe("false");
   });
   it("the token is in no argv, and not in .git/config after init + fetch from a file:// repo", () => {
     shim = installGitShim();

@@ -131,24 +131,39 @@ export function setGitAuth(token: string | null, base?: string): void {
   authBase = base;
 }
 
-/** The auth entries appended after any GIT_CONFIG_COUNT entries the process env already has. */
+/**
+ * The config entries appended after any GIT_CONFIG_COUNT entries the process env already has.
+ *
+ * ALWAYS the generic `http.followRedirects=false`, token or not: a GitHub rename alias or a repo
+ * transfer answers 301/302, and git's default would follow it, so a CLI push could land in a
+ * different repo without anyone noticing. With it, the redirect is a loud failure
+ * (`returned error: 302`). When a token is set, the URL-scoped header + no-redirect pair from
+ * `gitAuthEnv` goes first, then the generic entry. `opts.env` (applied after this) still wins.
+ */
 function authEntries(): Record<string, string> {
-  if (authToken === null) return {};
-  const own = gitAuthEnv(authToken, authBase);
   const raw = process.env.GIT_CONFIG_COUNT;
   const n = raw !== undefined && /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
-  return {
-    GIT_CONFIG_COUNT: String(n + 2),
-    [`GIT_CONFIG_KEY_${n}`]: own.GIT_CONFIG_KEY_0,
-    [`GIT_CONFIG_VALUE_${n}`]: own.GIT_CONFIG_VALUE_0,
-    [`GIT_CONFIG_KEY_${n + 1}`]: own.GIT_CONFIG_KEY_1,
-    [`GIT_CONFIG_VALUE_${n + 1}`]: own.GIT_CONFIG_VALUE_1,
-  };
+  const out: Record<string, string> = {};
+  let i = n;
+  if (authToken !== null) {
+    const own = gitAuthEnv(authToken, authBase);
+    out[`GIT_CONFIG_KEY_${i}`] = own.GIT_CONFIG_KEY_0;
+    out[`GIT_CONFIG_VALUE_${i}`] = own.GIT_CONFIG_VALUE_0;
+    i++;
+    out[`GIT_CONFIG_KEY_${i}`] = own.GIT_CONFIG_KEY_1;
+    out[`GIT_CONFIG_VALUE_${i}`] = own.GIT_CONFIG_VALUE_1;
+    i++;
+  }
+  out[`GIT_CONFIG_KEY_${i}`] = "http.followRedirects";
+  out[`GIT_CONFIG_VALUE_${i}`] = "false";
+  i++;
+  return { GIT_CONFIG_COUNT: String(i), ...out };
 }
 
 /**
  * The process environment minus every CONTROL_* variable (secrets never reach a git child), plus
- * the HTTPS auth entries when `setGitAuth` was called (merged after the scrub).
+ * the GIT_CONFIG_* entries of `authEntries` (always the no-redirect default; the HTTPS auth pair too
+ * when `setGitAuth` was called), merged after the scrub.
  */
 export function childEnv(): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
