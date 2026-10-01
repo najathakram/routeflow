@@ -202,25 +202,62 @@ const regOf = (t: TaskState, key: string): unknown => {
   return isObj(r) ? r[key] : undefined;
 };
 /** Provenance badge: glyph + word, never color alone. `reg` = the register's own value. */
-function badge(d: Derived<unknown> | undefined, c: Ctx, reg?: unknown, loud = false): Raw {
+function badge(
+  d: Derived<unknown> | undefined,
+  c: Ctx,
+  reg?: unknown,
+  loud = false,
+  compact = false,
+): Raw {
   if (!d) return EMPTY;
   const ref = d.ref ? ` · ${d.ref}` : "";
+  let g = "▤";
+  let label = "register";
+  let cls = "reg";
+  let title = "";
   if (d.source === "reported") {
-    if (reg !== undefined && reg !== d.value)
-      return h`<span class="badge ov" title="${"register: " + (reg === null ? "none" : part(reg))}">✎ overridden${ref}</span>`;
-    return h`<span class="badge rep">◆ reported${ref}</span>`;
+    const over = reg !== undefined && reg !== d.value;
+    g = over ? "✎" : "◆";
+    label = (over ? "overridden" : "reported") + ref;
+    cls = over ? "ov" : "rep";
+    if (over) title = "register: " + plain(reg);
+  } else if (d.source === "inferred") {
+    g = "⟳";
+    label = (c.stale ? "old · inferred" : "inferred") + (d.ref ? ` from ${d.ref}` : "");
+    cls = "inf";
+  } else if (!loud) return EMPTY;
+  // compact (table cells): the glyph alone, the full text in title + aria-label
+  if (compact) {
+    const full = `${label}${title ? " · " + title : ""}`;
+    return h`<span class="badge ${cls}" title="${full}" aria-label="${full}">${g}</span>`;
   }
-  if (d.source === "inferred") {
-    const from = d.ref ? ` from ${d.ref}` : "";
-    return h`<span class="badge inf">${c.stale ? "⟳ old · inferred" : "⟳ inferred"}${from}</span>`;
-  }
-  return loud ? h`<span class="badge reg">▤ register</span>` : EMPTY;
+  return h`<span class="badge ${cls}"${title ? h` title="${title}"` : EMPTY}>${g} ${label}</span>`;
+}
+/** Primitive to text for attribute values (escaped once, by `h`). */
+const plain = (v: unknown): string =>
+  typeof v === "string" || typeof v === "number" ? String(v) : "none";
+
+/** Alternate values (register vs reported/inferred) as text: the drawer repeats every title=. */
+function altText(t: TaskState): string {
+  const out: string[] = [];
+  const one = (k: "status" | "priority" | "release", d: Derived<unknown> | undefined) => {
+    if (!d || d.source === "register") return;
+    const reg = regOf(t, k);
+    const how = d.source === "inferred" ? "inferred" : "reported";
+    out.push(
+      `${k} ${how}${d.ref ? " " + d.ref : ""}${reg !== undefined ? ` (register: ${plain(reg)})` : ""}`,
+    );
+  };
+  one("status", t.status);
+  one("priority", t.priority);
+  one("release", t.release);
+  return out.join(" · ");
 }
 
 /** A task id that opens the drawer; everything the drawer needs rides as data attributes. */
 function taskBtn(t: TaskState | undefined, id: string): Raw {
   if (!t) return mono(id);
-  return h`<button type="button" class="tid mono" data-task="${t.id}" data-title="${t.title}" data-status="${val(t.status)}" data-priority="${val(t.priority)}" data-release="${val(t.release) ?? ""}" data-lane="${val(t.lane) ?? ""}" data-areas="${(val(t.areas) ?? []).join("\n")}" data-pr="${val(t.pr) ?? ""}">${t.id}</button>`;
+  return h`<button type="button" class="tid mono" data-task="${t.id}" data-title="${t.title}" data-status="${val(t.status)}" data-priority="${val(t.priority)}" data-release="${val(t.release) ?? ""}" data-lane="${val(t.lane) ?? ""}" data-areas="${(val(t.areas) ?? []).join("\n")}" data-pr="${val(t.pr) ?? ""}" data-alt="${altText(t)}">${t.id}</button>`;
 }
 const linkTask = (id: string | null | undefined, c: Ctx): Raw =>
   id ? taskBtn(c.v.tasks[id], id) : EMPTY;
@@ -361,7 +398,7 @@ function frame(c: Ctx, key: PanelKey, o: FrameOpts, body: Raw): string {
     ? h`<div class="skeleton row"></div><div class="skeleton row"></div><div class="skeleton row short"></div>`
     : body;
   if (o.fold)
-    return h`<details class="fold" data-fold="${key}" open><summary><h2 id="h-${key}">${o.title}${n}</h2></summary>${inner}</details>`
+    return h`<h2 id="h-${key}">${o.title}${n}</h2><details class="fold" data-fold="${key}" open><summary>Details</summary>${inner}</details>`
       .s;
   return h`<h2 id="h-${key}">${o.title}${n}</h2>${inner}`.s;
 }
@@ -388,10 +425,10 @@ function prChip(p: PrView): Raw {
   const conflict = p.mergeable === "conflicting";
   return h`<span class="chip pr ${conflict ? "bad" : ""}" title="${"review: " + p.review + " · " + p.files + " files"}">#${p.pr} · ${ciText(p.ci)} · ${conflict ? "conflicts" : p.mergeable}</span>`;
 }
-function releaseChip(t: TaskState, c: Ctx): Raw {
+function releaseChip(t: TaskState, c: Ctx, compact = false): Raw {
   const rid = val(t.release);
   if (!rid) return EMPTY;
-  return h`<span class="chip rel">${rid}</span> ${badge(t.release, c, regOf(t, "release"))}`;
+  return h`<span class="chip rel">${rid}</span> ${badge(t.release, c, regOf(t, "release"), false, compact)}`;
 }
 
 function laneCard(c: Ctx, l: LaneState): Raw {
@@ -447,13 +484,15 @@ function blockersPanel(c: Ctx): string {
   const body = rows.length ? capped(rows, "rows") : empty(raw("No blockers"));
   return frame(c, "blockers", { title: "Blockers", count: rows.length || undefined }, body);
 }
+/** First PR number in a waste subject ("PR #12 + #34" gives 12). */
+const prNum = (subject: string): string => /^PR #(\d+)/.exec(subject)?.[1] ?? "";
 function wastePanel(c: Ctx): string {
   const sorted = [...c.v.waste].sort(
     (a, b) => naturalCompare(a.rule, b.rule) || naturalCompare(a.key, b.key),
   );
   const rows = sorted.map(
     (w) =>
-      h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> ${chip(w.rule)} <strong>${w.subject}</strong> <span>${w.why}</span> <span class="mut">${w.since ? ago(w.since, c) : EMPTY}</span> <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}">${w.action || "Ack"}</button>${/^PR #\d+/.test(w.subject) ? h` <button type="button" class="btn" data-act="superseded" data-pr="${w.subject.replace(/\D+/g, "")}">Mark superseded</button>` : EMPTY}</span></li>`,
+      h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> ${chip(w.rule)} <strong>${w.subject}</strong> <span>${w.why}</span> <span class="mut">${w.since ? ago(w.since, c) : EMPTY}</span> <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}">${w.action || "Ack"}</button>${prNum(w.subject) ? h` <button type="button" class="btn" data-act="superseded" data-pr="${prNum(w.subject)}">Mark superseded</button>` : EMPTY}</span></li>`,
   );
   const body = rows.length
     ? capped(rows, "rows")
@@ -537,10 +576,10 @@ function queuePanel(c: Ctx): string {
   const rows = all.slice(0, 10).map(({ t, reason }) => {
     const lane = val(t.lane);
     const prev = lane ? (val(c.v.lanes[lane]?.next) ?? "") : "";
-    return h`<tr><td>${prioPill(val(t.priority))}</td><th scope="row">${taskBtn(t, t.id)}</th><td class="ttl">${t.title}</td><td>${releaseChip(t, c)}</td><td class="c-opt">${t.effort}</td><td class="mono">${lane ?? "any"}</td><td class="mut">${reason}</td><td><button type="button" class="btn" data-act="next" data-task="${t.id}" data-lane="${lane ?? ""}" data-prev="${prev}" aria-label="${"Set " + t.id + " as next"}">★ Set next</button></td></tr>`;
+    return h`<tr><td>${prioPill(val(t.priority))}</td><th scope="row">${taskBtn(t, t.id)}</th><td class="ttl">${t.title}</td><td class="c-opt">${releaseChip(t, c, true)}</td><td class="c-opt">${t.effort}</td><td class="mono">${lane ?? "any"}</td><td class="mut c-opt">${reason}</td><td><button type="button" class="btn" data-act="next" data-task="${t.id}" data-lane="${lane ?? ""}" data-prev="${prev}" aria-label="${"Set " + t.id + " as next"}">★</button></td></tr>`;
   });
   const body = rows.length
-    ? h`<div class="tw"><table class="tbl queue"><thead><tr><th scope="col">Pri</th><th scope="col">ID</th><th scope="col">Title</th><th scope="col">Release</th><th scope="col" class="c-opt">Effort</th><th scope="col">Lane</th><th scope="col">Reason</th><th scope="col">Action</th></tr></thead><tbody>${join(rows)}</tbody></table></div>${all.length > 10 ? h`<p class="mut small">+${all.length - 10} more eligible</p>` : EMPTY}`
+    ? h`<div class="tw"><table class="tbl queue"><thead><tr><th scope="col">Pri</th><th scope="col">ID</th><th scope="col">Title</th><th scope="col" class="c-opt">Release</th><th scope="col" class="c-opt">Effort</th><th scope="col">Lane</th><th scope="col" class="c-opt">Reason</th><th scope="col">Action</th></tr></thead><tbody>${join(rows)}</tbody></table></div>${all.length > 10 ? h`<p class="mut small">+${all.length - 10} more eligible</p>` : EMPTY}`
     : empty(raw("Queue empty"));
   return frame(c, "queue", { title: "Queue — top 10", count: all.length || undefined }, body);
 }
@@ -654,7 +693,7 @@ function piggybackPanel(c: Ctx): string {
           return h`<div class="pig"><p><strong class="mono">${l}</strong>${area ? h` <span class="mut">(${area})</span>` : EMPTY} · ${c.v.piggyback[l].length} cheap win${c.v.piggyback[l].length === 1 ? "" : "s"}</p><ul class="rows">${join(
             c.v.piggyback[l].map(
               (p) =>
-                h`<li>${taskBtn(c.v.tasks[p.id], p.id)} ${p.severity ? sevPill(p.severity) : EMPTY} <span class="mut">score ${p.score ?? "—"}</span> ${p.sensitive ? chip("sensitive", "warn") : EMPTY} <span class="ttl">${p.title ?? ""}</span> <button type="button" class="btn" data-act="assign" data-task="${p.id}" data-lane="${l}">Assign to ${l}</button></li>`,
+                h`<li>${taskBtn(c.v.tasks[p.id], p.id)} ${p.severity ? sevPill(p.severity) : EMPTY} <span class="mut">score ${p.score ?? "—"}</span> ${p.sensitive ? chip("sensitive", "warn") : EMPTY} <span class="ttl">${p.title ?? ""}</span> <button type="button" class="btn" data-act="assign" data-task="${p.id}" data-lane="${l}" data-prev-lane="${val(c.v.tasks[p.id]?.lane) ?? ""}">Assign to ${l}</button></li>`,
             ),
           )}</ul></div>`;
         }),
@@ -709,7 +748,7 @@ function timelinePanel(c: Ctx): string {
     ? h`<ol class="rows tl">${join(
         rows.map(
           (e) =>
-            h`<li><span class="glyph" aria-hidden="true">${glyph(e.by)}</span> <span class="mono">${ago(e.ts, c)}</span> · <span class="mono">${e.lane}</span> · ${VERB[e.type] ?? e.type} ${e.task ? linkTask(e.task, c) : EMPTY} <span class="mut">${e.by}</span></li>`,
+            h`<li><span class="glyph" aria-hidden="true">${glyph(e.by)}</span> <span class="mono">${ago(e.ts, c)}</span> · <span class="mono">${e.lane}</span> · ${Object.hasOwn(VERB, e.type) ? VERB[e.type] : e.type} ${e.task ? linkTask(e.task, c) : EMPTY} <span class="mut">${e.by}</span></li>`,
         ),
       )}</ol>`
     : empty(raw("No activity yet"));

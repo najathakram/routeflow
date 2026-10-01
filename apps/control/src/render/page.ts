@@ -57,6 +57,10 @@ export function renderPage(state: unknown, opts: RenderOpts): string {
   const lines = headerLines(c);
   const releases = Object.keys(c.v.releases).sort(naturalCompare).join(",");
   const lanes = Object.keys(c.v.lanes).sort(naturalCompare).join(",");
+  const nexts = Object.keys(c.v.lanes)
+    .sort(naturalCompare)
+    .map((k) => `${k}:${c.v.lanes[k].next?.value ?? ""}`)
+    .join(",");
 
   const tools = h`<div class="tools">${
     opts.local
@@ -72,7 +76,7 @@ export function renderPage(state: unknown, opts: RenderOpts): string {
 <div id="banners" class="banners">${banners(c)}</div>
 <main id="main" class="grid">${join(MAIN_PANELS.map((k) => section(k, frags[k])))}</main>
 <footer class="sources">${section("sources", frags.sources)}</footer>
-<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" data-releases="${releases}" data-lanes="${lanes}" hidden><div class="drawer-h"><h3 id="drawer-title">Task</h3><button type="button" class="btn" data-act="close-drawer" aria-label="Close">×</button></div><div id="drawer-body"></div></aside>
+<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" data-releases="${releases}" data-lanes="${lanes}" data-nexts="${nexts}" hidden><div class="drawer-h"><h3 id="drawer-title">Task</h3><button type="button" class="btn" data-act="close-drawer" aria-label="Close">×</button></div><div id="drawer-body"></div></aside>
 <div id="scrim" class="scrim" hidden></div>
 <dialog id="legend" class="legend" aria-labelledby="legend-title"><h3 id="legend-title">Legend and shortcuts</h3><dl>${join(
     LEGEND.map(([k, v]) => h`<dt>${k}</dt><dd>${v}</dd>`),

@@ -374,6 +374,7 @@ input[type="number"] {
   border-radius: var(--r-ctl);
   padding: 4px 10px;
   min-height: 32px;
+  white-space: nowrap;
 }
 .btn {
   cursor: pointer;
@@ -394,7 +395,8 @@ input[type="number"] {
   background: transparent;
   text-decoration: underline;
 }
-.spin {
+.btn.busy::after {
+  content: "";
   display: inline-block;
   width: 12px;
   height: 12px;
@@ -450,9 +452,6 @@ footer.sources {
   min-height: 32px;
   display: flex;
   align-items: center;
-}
-.fold > summary h2 {
-  margin: 0;
 }
 .fold.sub > summary,
 .more > summary {
@@ -636,6 +635,9 @@ footer.sources {
 }
 .tbl tbody th {
   font-weight: 600;
+}
+.tbl .badge {
+  white-space: nowrap;
 }
 .ov-matrix {
   display: none;
@@ -832,22 +834,13 @@ kbd {
   .ov-matrix {
     display: block;
   }
-  .ov-list {
+  .ov-matrix + .ov-list {
     display: none;
   }
 }
 @media (min-width: 1400px) {
   .lanes {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .grid > .p-queue {
-    grid-column: 1 / 6;
-  }
-  .grid > .p-bugs {
-    grid-column: 6 / 9;
-  }
-  .grid > .p-prs {
-    grid-column: 9 / 13;
   }
 }
 @media (max-width: 900px) {
@@ -912,7 +905,7 @@ kbd {
 }
 @media (prefers-reduced-motion: reduce) {
   .skeleton,
-  .spin,
+  .btn.busy::after,
   .toast,
   .drawer {
     animation: none;
