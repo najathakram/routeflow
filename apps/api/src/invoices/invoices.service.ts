@@ -5174,6 +5174,16 @@ export class InvoicesService {
 
   async deleteInvoice(id: string) {
     return withAfterCommit(this.prisma, async (tx, after) => {
+      // SA-608g (SA-214: Order -> Invoice -> CreditNote): read the invoice UNLOCKED only for its order,
+      // lock the order, then the invoice (never the invoice first: adjustInvoicedQtyForInvoice writes the
+      // order's items below, so Invoice -> Order would invert SA-214 against an order-edit sync), and
+      // RE-READ under the lock. Once the invoice is locked, a reissue's mint (KEY SHARE on it) waits, so
+      // the sourced-note reads below cannot miss a note that commits in between and be SET NULL orphaned.
+      const peek = await tx.invoice.findUnique({ where: { id }, select: { orderId: true } });
+      if (!peek) throw new NotFoundException("Invoice not found");
+      if (peek.orderId)
+        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },

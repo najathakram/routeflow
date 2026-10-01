@@ -57,6 +57,7 @@ describe("CreditNoteReissueService (#2648)", () => {
     prisma.return.findFirst.mockResolvedValue(null);
     prisma.customer.findFirst.mockResolvedValue({ id: "cust-1", businessName: "Acme Mart" });
     prisma.creditNoteItem.count.mockResolvedValue(0);
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", orderId: "ord-src" });
     creditNotes = {
       validateAndBuildCnItems: jest.fn().mockResolvedValue([]),
       voidWithReversalInTx: jest
@@ -94,6 +95,23 @@ describe("CreditNoteReissueService (#2648)", () => {
       .map((c: any[]) => c[0].data)
       .find((d: any) => d.action === action);
 
+  it("SA-608g: a note with NO source invoice passes no extra lock set, and one whose invoice has no order passes only the invoice", async () => {
+    prisma.creditNote.findFirst.mockResolvedValue({ ...OLD, invoiceId: null, amount: 30 });
+    await service.reissue("cn-old", { amount: 20 }, "key-a", "user-1");
+    expect(creditNotes.voidWithReversalInTx.mock.calls[0][5]).toEqual({
+      orderIds: [],
+      invoiceIds: [],
+    });
+    creditNotes.voidWithReversalInTx.mockClear();
+    prisma.creditNote.findFirst.mockResolvedValue({ ...OLD });
+    prisma.invoice.findFirst.mockResolvedValue({ id: "inv-1", orderId: null });
+    await service.reissue("cn-old", { amount: 20 }, "key-b", "user-1");
+    expect(creditNotes.voidWithReversalInTx.mock.calls[0][5]).toEqual({
+      orderIds: [],
+      invoiceIds: ["inv-1"],
+    });
+  });
+
   it("voids the old note, then mints an unapplied replacement on the same tx, in that order", async () => {
     const res = await service.reissue("cn-old", { amount: 20 }, "key-1", "user-1");
 
@@ -104,7 +122,17 @@ describe("CreditNoteReissueService (#2648)", () => {
     expect(recapOrder).toBeLessThan(mintOrder);
     const voidTx = creditNotes.voidWithReversalInTx.mock.calls[0][0];
     expect(creditNotes.insertCreditNoteInTx.mock.calls[0][0]).toBe(voidTx);
-    expect(creditNotes.voidWithReversalInTx).toHaveBeenCalledWith(voidTx, "cn-old", "user-1", null);
+    // SA-608g: the SOURCE invoice (and its order) ride into the void's own sorted lock sets, so the
+    // reissue never takes KEY SHARE on the invoice AFTER holding the note (CN -> Invoice) while
+    // deleteInvoice holds the invoice and wants the note.
+    expect(creditNotes.voidWithReversalInTx).toHaveBeenCalledWith(
+      voidTx,
+      "cn-old",
+      "user-1",
+      null,
+      undefined,
+      { orderIds: ["ord-src"], invoiceIds: ["inv-1"] },
+    );
     expect(prisma.tenantTransaction).toHaveBeenLastCalledWith(expect.any(Function), {
       isolationLevel: "Serializable",
     });
