@@ -5,10 +5,12 @@
 
 ## Before the flip (evidence)
 
-1. **72 hours of zero `MISSING` and `SUPER_ADMIN_CREATE` warns, from EVERY replica.** The guard counters are
-   per-process: read the `TENANT_CONTEXT_STATS` log line of each replica (default every 15 min;
-   `TENANT_CONTEXT_STATS_LOG_MS`, allowed 60000..2147483647, 0 disables) and `GET platform-admin/tenant-context/stats`
-   per instance. One quiet replica proves nothing about another.
+1. **72 hours of ZERO for ALL FOUR counters, from EVERY replica:** `MISSING`, `SUPER_ADMIN_CREATE`,
+   `NESTED_CROSS_TENANT` and `NESTED_DEPTH`. The nested walker (cross-tenant child, depth cap) flips on the SAME
+   `TENANT_CONTEXT_ENFORCE` flag, so a quiet `MISSING` alone does not clear it. The counters are per-process: read the
+   `TENANT_CONTEXT_STATS` log line of each replica (default every 15 min; `TENANT_CONTEXT_STATS_LOG_MS`, allowed
+   60000..2147483647, 0 disables) and `GET platform-admin/tenant-context/stats` per instance. One quiet replica
+   proves nothing about another.
 2. **Blast radius of old NULL-tenant rows:** `node apps/api/scripts/report-619-superadmin-creates.mjs`
    (read-only, count-only; owner-run through `railway run --service postgres`). Rows with `tenantId IS NULL` on the
    nullable-tenant models are what a SUPER_ADMIN or context-less create wrote; the flip does not refuse deliberate
