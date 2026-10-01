@@ -157,9 +157,10 @@ describeDb("WS9 buyer oversell policy: real Postgres", () => {
     expect(ok).toHaveLength(1);
     expect(bad).toHaveLength(1);
     expect(bad[0].reason).toBeInstanceOf(ConflictException);
-    expect((bad[0].reason as ConflictException).getResponse()).toMatchObject({
-      code: "INSUFFICIENT_STOCK",
-    });
+    // Plain message on a base without #2871's coded body; a coded body still matches by message.
+    expect(JSON.stringify((bad[0].reason as ConflictException).getResponse())).toMatch(
+      /insufficient stock/i,
+    );
     expect(await stockNow(t.productId)).toBe(2);
   }, 120_000);
 

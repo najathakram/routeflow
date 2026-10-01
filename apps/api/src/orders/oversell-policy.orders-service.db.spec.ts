@@ -107,9 +107,9 @@ describeDb(
       );
 
     /** The edit path: PATCH-style per-line qty change through the REAL OrdersService.updateOrderItems(). */
-    const editQty = (orderId: string, lineId: string, qty: number, user: JwtPayload) =>
+    const editQty = (orderId: string, qty: number, user: JwtPayload) =>
       tenantCtx.run(tenantId, () =>
-        orders.updateOrderItems(orderId, { replaceAll: false, items: [{ id: lineId, qty }] }, user),
+        orders.updateOrderItems(orderId, { items: [{ productId, qty }] } as any, user),
       );
 
     const stockNow = async () =>
@@ -236,6 +236,7 @@ describeDb(
     beforeEach(async () => {
       await wipeOrders();
       await raw.policyValue.deleteMany({ where: { tenantId } });
+      policies.invalidate(tenantId); // the 30 s cache must not carry a prior case's row
       await raw.product.update({ where: { id: productId }, data: { currentStock: 5 } });
       readerRead.mockClear();
     });
@@ -316,14 +317,12 @@ describeDb(
       // Catches: updateOrderItems hard-coding allowOversell = true into settleStockForEdit.
       const created = await createOrder(buyer(0), 2);
       expect(await stockNow()).toBe(3);
-      const line = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
-      await expect(editQty(created.id, line.id, 7, buyer(0))).rejects.toBeInstanceOf(
+      await expect(editQty(created.id, 7, buyer(0))).rejects.toBeInstanceOf(
         ConflictException,
       );
       expect(await stockNow()).toBe(3);
-      expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: line.id } })).qty)).toBe(
-        2,
-      );
+      const kept = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
+      expect(Number(kept.qty)).toBe(2);
     }, 120_000);
 
     it("(5b) EDIT path, TENANT backorder: the same edit succeeds and the extra 5 is decremented (stock -2)", async () => {
@@ -331,12 +330,10 @@ describeDb(
       await setPolicy("backorder");
       const created = await createOrder(buyer(0), 2);
       expect(await stockNow()).toBe(3);
-      const line = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
-      await editQty(created.id, line.id, 7, buyer(0));
+      await editQty(created.id, 7, buyer(0));
       expect(await stockNow()).toBe(-2);
-      expect(Number((await raw.orderItem.findUniqueOrThrow({ where: { id: line.id } })).qty)).toBe(
-        7,
-      );
+      const edited = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
+      expect(Number(edited.qty)).toBe(7);
       expect(await orderCount()).toBe(1);
     }, 120_000);
 
