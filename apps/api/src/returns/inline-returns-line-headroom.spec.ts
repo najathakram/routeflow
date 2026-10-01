@@ -113,11 +113,14 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
   });
 
   it("B215 class: the READ-ONLY variant refuses the same over-line capture with NO Invoice write or lock", async () => {
-    const { tx } = run([chunk("a", 1, 100)]);
+    const { tx, p } = run([chunk("a", 1, 100)], {
+      cn: [{ invoiceItemId: "a", amount: 60, qty: 0.6 }],
+    });
+    await p.catch(() => undefined); // the locking variant, already awaited: not under test here
+    tx.$executeRaw.mockClear();
     const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma: { getTenantId: () => "t1" },
     });
-    tx.creditNoteItem.findMany.mockResolvedValue([{ invoiceItemId: "a", amount: 60, qty: 0.6 }]);
     await expect(
       svc.assertWithinLineHeadroom(tx, [chunk("a", 1, 100)], { readOnly: true }),
     ).rejects.toMatchObject({ response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" } });

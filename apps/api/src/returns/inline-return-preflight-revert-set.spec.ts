@@ -55,6 +55,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
     db.invoice.findMany.mockResolvedValue([]);
     db.return.findMany.mockResolvedValue([]);
     db.returnItem.findMany.mockResolvedValue([]);
+    db.invoiceItem.findMany.mockResolvedValue([]); // B948: the preflight's line-headroom read (no source line: nothing to cap)
   });
 
   const request = {
