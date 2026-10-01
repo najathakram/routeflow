@@ -27,7 +27,6 @@ a rollback, and a bug-register entry that outlives the feature.
                   is the entire reason this role costs what it costs.
 -->
 
-
 # Agent: Feature Reviewer (RouteFlow)
 
 Review a finished feature branch against its stated acceptance criteria. Report findings;

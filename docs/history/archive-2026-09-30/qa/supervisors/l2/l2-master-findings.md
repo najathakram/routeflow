@@ -186,7 +186,7 @@ Note: W8/W9/W10 findings (real-time, cross-role, concurrency) are pending and wi
 
 - **Domain:** finance/pricing
 - **Source:** W3-009, confirmed by L1-B
-- **Issue:** `invoices.service.ts:1038–1041` accepts payments within $0.001 of the remaining balance. A payment of `remaining + $0.0001` is accepted, creating an `alreadyPaid` value that exceeds `invoice.total` and results in negative AR.
+- **Issue:** `invoices.service.ts:1038–1041` accepts payments within $0.001 of the remaining balance. A payment of `remaining + $0.0001`is accepted, creating an`alreadyPaid`value that exceeds`invoice.total` and results in negative AR.
 - **Fix:** Use zero tolerance (reject if `payment > remaining`) or route any overpayment to an `AdvancePayment` record rather than allowing a negative balance.
 
 ### RF-024 — Order consolidation propagates stale subtotals without revalidation

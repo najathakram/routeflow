@@ -22,7 +22,12 @@ interface P {
   name?: string;
 }
 const boxed: P = {
-  id: "p1", name: "6-pack", barcode: "4000000000019", sku: "COLA-6", unitSku: "2000000000012", unitsPerBox: 6,
+  id: "p1",
+  name: "6-pack",
+  barcode: "4000000000019",
+  sku: "COLA-6",
+  unitSku: "2000000000012",
+  unitsPerBox: 6,
 };
 
 function harness(products: P[], resolve?: () => Promise<BarcodeResolveResult<P>>) {
@@ -52,7 +57,13 @@ describe("scan ladder — level from the shared resolver (local fast path)", () 
   });
 
   it("a UNIT-only ProductBarcode row code (unknown to the legacy columns) -> UNIT; a BOX-only row code -> BOX", async () => {
-    const p: P = { ...boxed, barcodes: [{ code: "ROW-U", level: "UNIT" }, { code: "ROW-B", level: "BOX" }] };
+    const p: P = {
+      ...boxed,
+      barcodes: [
+        { code: "ROW-U", level: "UNIT" },
+        { code: "ROW-B", level: "BOX" },
+      ],
+    };
     const u = harness([p]);
     await u.scan("ROW-U");
     expect(u.accepted).toEqual([{ id: "p1", level: "UNIT" }]);
@@ -62,7 +73,13 @@ describe("scan ladder — level from the shared resolver (local fast path)", () 
   });
 
   it("a row code held at BOTH levels -> the product default unit, BOX at upb 6 (R2, SA-580b)", async () => {
-    const p: P = { ...boxed, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };
+    const p: P = {
+      ...boxed,
+      barcodes: [
+        { code: "SH", level: "BOX" },
+        { code: "SH", level: "UNIT" },
+      ],
+    };
     const { scan, accepted } = harness([p]);
     await scan("SH");
     expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
@@ -74,7 +91,12 @@ describe("SA-595: sku/unitSku still resolve when the product has barcode rows (l
   it.each([
     ["unitSku hit -> UNIT (not the default BOX)", "2000000000012", 6, "UNIT"],
     ["sku hit -> BOX", "COLA-6", 6, "BOX"],
-    ["sku hit at upb 1 keeps today's raw BOX (R4 shape is applied by the line)", "COLA-6", 1, "BOX"],
+    [
+      "sku hit at upb 1 keeps today's raw BOX (R4 shape is applied by the line)",
+      "COLA-6",
+      1,
+      "BOX",
+    ],
   ])("%s", async (_n, code, upb, level) => {
     const { scan, accepted } = harness([{ ...boxed, unitsPerBox: upb, barcodes: rows }]);
     await scan(code);
@@ -83,7 +105,10 @@ describe("SA-595: sku/unitSku still resolve when the product has barcode rows (l
 });
 
 describe("SA-595a R4: a sku hit at upb <= 1 reaches accept as BOX with no unit prompt", () => {
-  it.each([["upb 1", 1], ["upb null", null]] as const)("%s -> one accept, level BOX", async (_n, upb) => {
+  it.each([
+    ["upb 1", 1],
+    ["upb null", null],
+  ] as const)("%s -> one accept, level BOX", async (_n, upb) => {
     const { scan, accepted } = harness([{ ...boxed, unitsPerBox: upb }]);
     await scan("COLA-6");
     expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
@@ -92,15 +117,29 @@ describe("SA-595a R4: a sku hit at upb <= 1 reaches accept as BOX with no unit p
 
 describe("scan ladder — a shared code on an upb<=1 product adds a UNIT (SA-580b)", () => {
   it("local shared row code, upb 1 -> UNIT; upb 6 stays BOX", async () => {
-    const plain: P = { ...boxed, unitsPerBox: 1, barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }] };
+    const plain: P = {
+      ...boxed,
+      unitsPerBox: 1,
+      barcodes: [
+        { code: "SH", level: "BOX" },
+        { code: "SH", level: "UNIT" },
+      ],
+    };
     const { scan, accepted } = harness([plain]);
     await scan("SH");
     expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
   });
 
   it("shared scanMatch from the server rung, upb 1 -> UNIT", async () => {
-    const remote: P = { ...boxed, unitsPerBox: 1, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } };
-    const { scan, accepted } = harness([], async () => ({ product: remote, source: "barcode" }) as any);
+    const remote: P = {
+      ...boxed,
+      unitsPerBox: 1,
+      scanMatch: { code: "SH", levels: ["UNIT", "BOX"] },
+    };
+    const { scan, accepted } = harness(
+      [],
+      async () => ({ product: remote, source: "barcode" }) as any,
+    );
     await scan("SH");
     expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
   });
@@ -113,7 +152,10 @@ describe("SA-580c: a shared code on a units_v1 product = the picker tap as-is (N
     const p = {
       ...boxed,
       units: [{ label: "Piece", isDefaultSelling: true }],
-      barcodes: [{ code: "SH", level: "BOX" }, { code: "SH", level: "UNIT" }],
+      barcodes: [
+        { code: "SH", level: "BOX" },
+        { code: "SH", level: "UNIT" },
+      ],
     } as P;
     const { scan, accepted } = harness([p]);
     await scan("SH");
@@ -124,14 +166,20 @@ describe("SA-580c: a shared code on a units_v1 product = the picker tap as-is (N
 describe("scan ladder — level from the server rung", () => {
   it("uses the server's scanMatch levels (UNIT-only) when the local list misses", async () => {
     const remote: P = { ...boxed, scanMatch: { code: "ROW-U", levels: ["UNIT"] } };
-    const { scan, accepted } = harness([], async () => ({ product: remote, source: "barcode" }) as any);
+    const { scan, accepted } = harness(
+      [],
+      async () => ({ product: remote, source: "barcode" }) as any,
+    );
     await scan("ROW-U");
     expect(accepted).toEqual([{ id: "p1", level: "UNIT" }]);
   });
 
   it("a shared scanMatch -> the default unit, BOX at upb 6 (SA-580b)", async () => {
     const remote: P = { ...boxed, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } };
-    const { scan, accepted } = harness([], async () => ({ product: remote, source: "barcode" }) as any);
+    const { scan, accepted } = harness(
+      [],
+      async () => ({ product: remote, source: "barcode" }) as any,
+    );
     await scan("SH");
     expect(accepted).toEqual([{ id: "p1", level: "BOX" }]);
   });
@@ -211,8 +259,8 @@ describe("no caller keeps the deleted scanUnitKind (SA-580: every caller moves t
   });
 
   it("no mobile source file mentions scanUnitKind", () => {
-    const offenders = FILES.filter((f) => fs.readFileSync(f, "utf8").includes("scanUnitKind")).map((f) =>
-      path.relative(ROOT, f),
+    const offenders = FILES.filter((f) => fs.readFileSync(f, "utf8").includes("scanUnitKind")).map(
+      (f) => path.relative(ROOT, f),
     );
     expect(offenders).toEqual([]);
   });

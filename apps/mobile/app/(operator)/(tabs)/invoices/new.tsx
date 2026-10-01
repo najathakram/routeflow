@@ -56,11 +56,7 @@ import { createScanAttempt, createWedgeSubmitHandler } from "../../../../lib/wed
 import { createScanAcceptGuard } from "../../../../lib/scan-accept-guard";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
-import {
-  findExactScanMatch,
-  levelsForScan,
-  looksLikeScanCode,
-} from "../../../../lib/wedge-scan";
+import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../../../../lib/wedge-scan";
 import { useAuthStore } from "../../../../lib/auth-store";
 import { hasUnsavedInvoiceDraft, shouldConfirmDiscard } from "../../../../lib/discard-guard";
 // Compose "<Parent> - <Variant>" so variants don't show as "Strawberry" alone.
