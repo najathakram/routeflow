@@ -64,6 +64,7 @@ import {
 import { escapeHtml } from "../common/html-escape";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "../billing/price-override";
 import { issueSetPasswordLink } from "../users/set-password-token";
+import { assertSafeTextCell } from "../common/safe-text-cell";
 
 @Injectable()
 export class PlatformAdminService {
@@ -267,6 +268,7 @@ export class PlatformAdminService {
 
   async createTenant(dto: CreateTenantDto, adminId: string | null = null) {
     const { slug, businessName, adminEmail, adminUsername, plan } = dto;
+    assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
 
     const RESERVED_SLUGS = ["admin", "api", "app", "www", "platform", "auth", "health", "static"];
     if (RESERVED_SLUGS.includes(slug.toLowerCase()))
