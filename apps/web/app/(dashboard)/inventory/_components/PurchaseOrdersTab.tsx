@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, EmptyState, Skeleton, useToast } from "@routeflow/ui/web";
 import { poDisplayTotal } from "@routeflow/pricing";
@@ -27,7 +28,7 @@ import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
 import { isEditable } from "./purchase-orders-edit";
 import { PurchaseOrderReadOnlyLines } from "./PurchaseOrderReadOnlyLines";
 
-function poStatusBadge(status: POStatus) {
+export function poStatusBadge(status: POStatus) {
   const map: Record<
     POStatus,
     { variant: "neutral" | "info" | "warning" | "success"; label: string }
@@ -329,7 +330,12 @@ export function PurchaseOrdersTab({
                 <React.Fragment key={po.id}>
                   <tr className="transition-colors hover:bg-surface-raised/40">
                     <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
-                      {po.poNumber}
+                      <Link
+                        href={`/purchase-orders/${po.id}`}
+                        className="text-brand-500 hover:underline"
+                      >
+                        {po.poNumber}
+                      </Link>
                     </td>
                     <td className="px-4 py-3 text-navy/70">{po.supplier?.name ?? "—"}</td>
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
