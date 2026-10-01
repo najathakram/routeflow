@@ -15,7 +15,10 @@ jest.mock("@react-pdf/renderer", () => ({
 const mockToBuffer = jest.fn(async (opts: { bcid: string; text: string }) =>
   Buffer.from(`${opts.bcid}:${opts.text}`),
 );
-jest.mock("bwip-js", () => ({ __esModule: true, default: { toBuffer: (o: any) => mockToBuffer(o) } }));
+jest.mock("bwip-js", () => ({
+  __esModule: true,
+  default: { toBuffer: (o: any) => mockToBuffer(o) },
+}));
 
 import { Logger } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
@@ -94,7 +97,10 @@ async function make(mode: string, inv: unknown, slug: string | null = "acme") {
         },
       },
       { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
-      { provide: FeatureConfigService, useValue: { getEffectiveMode: jest.fn().mockResolvedValue(mode) } },
+      {
+        provide: FeatureConfigService,
+        useValue: { getEffectiveMode: jest.fn().mockResolvedValue(mode) },
+      },
     ],
   }).compile();
   return module.get(InvoicePdfService);

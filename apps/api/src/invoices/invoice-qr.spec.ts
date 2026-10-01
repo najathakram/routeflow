@@ -30,12 +30,16 @@ describe("orderQrUrl", () => {
     expect(url.startsWith("https://app.example.com/buyer/portal/")).toBe(true);
   });
 
-  it.each([undefined, "", "   ", "app.example.com", "ftp://app.example.com", "javascript:alert(1)"])(
-    "WEB_URL %p gives no QR (no localhost fallback)",
-    (base) => {
-      expect(orderQrUrl(base as string | undefined, "acme", "o1")).toBeNull();
-    },
-  );
+  it.each([
+    undefined,
+    "",
+    "   ",
+    "app.example.com",
+    "ftp://app.example.com",
+    "javascript:alert(1)",
+  ])("WEB_URL %p gives no QR (no localhost fallback)", (base) => {
+    expect(orderQrUrl(base as string | undefined, "acme", "o1")).toBeNull();
+  });
 
   it("no slug or no order id gives no QR", () => {
     expect(orderQrUrl("https://app.example.com", "", "o1")).toBeNull();

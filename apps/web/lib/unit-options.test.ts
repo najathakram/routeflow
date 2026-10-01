@@ -119,6 +119,15 @@ describe("defaultUnitValue", () => {
       ]),
     ).toBe("Piece");
   });
+
+  it("#2784: skips a corrupt flagged row and takes the next valid one (one resolver, @routeflow/pricing)", () => {
+    expect(
+      defaultUnitValue(product, [
+        level({ label: "Bad", factorToBase: 0, isDefaultSelling: true }),
+        { ...PALLET, isDefaultSelling: true },
+      ]),
+    ).toBe("Pallet");
+  });
 });
 
 describe("client/server agreement — every offered option is one the server accepts and prices the same", () => {

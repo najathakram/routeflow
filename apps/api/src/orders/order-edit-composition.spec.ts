@@ -24,7 +24,12 @@ const oldLine = (o: Record<string, unknown> = {}) => ({
   recipeVersion: 1,
   ...o,
 });
-const storedRow = (orderItemId: string, componentProductId: string, qty: number, position: number) => ({
+const storedRow = (
+  orderItemId: string,
+  componentProductId: string,
+  qty: number,
+  position: number,
+) => ({
   id: `c-${orderItemId}-${componentProductId}`,
   tenantId: "t-1",
   orderItemId,
@@ -76,7 +81,11 @@ describe("captureCompositionCarry / restore", () => {
 
   it("a surviving FIXED line's new row takes the stored stamp and copies the stored rows, no Recipe read", async () => {
     const tx = txFor([storedRow("old-1", A, 16, 0), storedRow("old-1", O, 8, 1)]);
-    const carry = await captureCompositionCarry(tx as never, [oldLine()], [{ productId: RECIPE_P }]);
+    const carry = await captureCompositionCarry(
+      tx as never,
+      [oldLine()],
+      [{ productId: RECIPE_P }],
+    );
     await carry.restore(tx as never, "new-1", { productId: RECIPE_P });
     expect(tx.orderItem.update).toHaveBeenCalledWith({
       where: { id: "new-1" },
@@ -84,8 +93,20 @@ describe("captureCompositionCarry / restore", () => {
     });
     const data = tx.orderItemComponent.createMany.mock.calls[0][0].data;
     expect(data).toEqual([
-      expect.objectContaining({ tenantId: "t-1", orderItemId: "new-1", componentProductId: A, qty: 16, position: 0 }),
-      expect.objectContaining({ tenantId: "t-1", orderItemId: "new-1", componentProductId: O, qty: 8, position: 1 }),
+      expect.objectContaining({
+        tenantId: "t-1",
+        orderItemId: "new-1",
+        componentProductId: A,
+        qty: 16,
+        position: 0,
+      }),
+      expect.objectContaining({
+        tenantId: "t-1",
+        orderItemId: "new-1",
+        componentProductId: O,
+        qty: 8,
+        position: 1,
+      }),
     ]);
     expect(data[0]).not.toHaveProperty("id");
     expect(tx.recipe.findFirst).not.toHaveBeenCalled();
@@ -125,7 +146,10 @@ describe("captureCompositionCarry / restore", () => {
     const tx = txFor([storedRow("old-1", A, 8, 0), storedRow("old-2", A, 16, 0)]);
     const carry = await captureCompositionCarry(
       tx as never,
-      [oldLine({ id: "old-1" }), oldLine({ id: "old-2", position: 1, recipeId: "rec-2", recipeVersion: 2 })],
+      [
+        oldLine({ id: "old-1" }),
+        oldLine({ id: "old-2", position: 1, recipeId: "rec-2", recipeVersion: 2 }),
+      ],
       [{ productId: RECIPE_P }],
     );
     await carry.restore(tx as never, "new-1", { productId: RECIPE_P });
@@ -158,7 +182,9 @@ describe("edit after v2 activates: restore + sync (SA-579 case 8)", () => {
         ],
       }),
       recipeById: jest.fn(),
-      productFacts: jest.fn().mockImplementation(async (ids: string[]) => new Map(ids.map((i) => [i, facts(i)]))),
+      productFacts: jest
+        .fn()
+        .mockImplementation(async (ids: string[]) => new Map(ids.map((i) => [i, facts(i)]))),
     } satisfies RecipeSnapshotPort;
     return { port, ctx: { tenantId: "t-1", enabled: true, port } };
   }
@@ -181,7 +207,11 @@ describe("edit after v2 activates: restore + sync (SA-579 case 8)", () => {
   it("the surviving v1 line (2 -> 3 boxes) is rescaled from its stored per-box counts; the Recipe port is never called", async () => {
     const tx = txFor([storedRow("old-1", A, 16, 0), storedRow("old-1", O, 32, 1)]);
     const { port, ctx } = syncFixture(tx);
-    const carry = await captureCompositionCarry(tx as never, [oldLine()], [{ productId: RECIPE_P }]);
+    const carry = await captureCompositionCarry(
+      tx as never,
+      [oldLine()],
+      [{ productId: RECIPE_P }],
+    );
     await carry.restore(tx as never, "new-1", { productId: RECIPE_P });
     const restored = tx.orderItemComponent.createMany.mock.calls[0][0].data;
     tx.orderItem.findMany.mockResolvedValue([
@@ -209,7 +239,11 @@ describe("edit after v2 activates: restore + sync (SA-579 case 8)", () => {
   it("a NEW line (no counterpart) resolves the ACTIVE recipe and is stamped v2", async () => {
     const tx = txFor([]);
     const { port, ctx } = syncFixture(tx);
-    const carry = await captureCompositionCarry(tx as never, [oldLine()], [{ productId: RECIPE_P }]);
+    const carry = await captureCompositionCarry(
+      tx as never,
+      [oldLine()],
+      [{ productId: RECIPE_P }],
+    );
     // the one pre-edit slot of this product is taken by the surviving line ...
     await carry.restore(tx as never, "new-1", { productId: RECIPE_P });
     tx.orderItem.update.mockClear();
