@@ -65,6 +65,7 @@ export function FamilyVariantsGrid({
   readOnly = false,
   disabled = false,
   showCostHint = true,
+  maxRows = MAX_FAMILY_ROWS,
 }: {
   rows: GridRow[];
   onChange: (rows: GridRow[]) => void;
@@ -75,8 +76,10 @@ export function FamilyVariantsGrid({
   disabled?: boolean;
   /** Create-time only: a blank cost means the family cost. An update cannot clear a cost, so no hint there. */
   showCostHint?: boolean;
+  /** The create form caps the grid at 200; a saved family's cap is on the REQUEST, not its row count. */
+  maxRows?: number;
 }) {
-  const atCap = rows.length >= MAX_FAMILY_ROWS;
+  const atCap = rows.length >= maxRows;
   const setCell = (i: number, field: RowField, value: string) =>
     onChange(rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 

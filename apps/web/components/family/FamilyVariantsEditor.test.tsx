@@ -286,4 +286,52 @@ describe("FamilyVariantsEditor", () => {
     });
     expect(JSON.stringify(toast.mock.calls)).not.toMatch(/SQL exploded/);
   });
+
+  it("B3: clearing a saved cost or units/case is a visible error and nothing is sent (no silent 'saved')", () => {
+    mount();
+    edit();
+    type("Variant 1 cost", "");
+    type("Variant 1 units per case", "");
+    save();
+    expect(screen.getAllByText("Can't be cleared once set. Enter a new value.")).toHaveLength(2);
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("B4: a family with more than 200 saved variants is editable and a one-row change saves (the cap is on the REQUEST)", async () => {
+    const many = Array.from({ length: 205 }, (_, i) => ({
+      id: `m${i}`,
+      name: `M${i}`,
+      variantName: `M${i}`,
+      pricePerUnit: "1.00",
+      isActive: true,
+    }));
+    patch.mockResolvedValueOnce({ data: {} });
+    render(
+      <Providers>
+        <FamilyVariantsEditor familyId="fam1" variants={many as any} />
+      </Providers>,
+    );
+    edit();
+    expect(screen.getByRole("button", { name: "Add variant" })).toBeEnabled();
+    expect(screen.queryByText("A family takes up to 200 variants at a time.")).toBeNull();
+    type("Variant 3 price", "2.00");
+    save();
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/products/fam1/variants", {
+      update: [{ id: "m2", pricePerUnit: "2.00" }],
+    });
+  });
+
+  it("a conflict whose row cannot be matched to a cell still says so (never silent)", async () => {
+    reject(409, {
+      code: "FAMILY_ROWS_CONFLICT",
+      rows: [{ row: 99, field: "sku", value: "X", reason: "CODE_TAKEN" }],
+    });
+    mount();
+    edit();
+    type("Variant 1 price", "3");
+    save();
+    expect(await screen.findByText(/Nothing was saved/)).toBeInTheDocument();
+    expect(toast).not.toHaveBeenCalled();
+  });
 });

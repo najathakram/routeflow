@@ -222,6 +222,32 @@ describe("CreateFamilyModal", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
+  it("B1: 'Copy the family price' is disabled (with the reason) until a family price is entered; clearing it unticks", () => {
+    mount();
+    const copy = screen.getByLabelText(/Copy the family price onto the variants/);
+    expect(copy).toBeDisabled();
+    expect(
+      screen.getByText("Enter a family price to copy it onto the variants."),
+    ).toBeInTheDocument();
+    type("Family price", "2.00");
+    expect(copy).toBeEnabled();
+    expect(screen.queryByText("Enter a family price to copy it onto the variants.")).toBeNull();
+    fireEvent.click(copy);
+    expect(copy).toBeChecked();
+    type("Family price", "");
+    expect(copy).not.toBeChecked();
+    expect(copy).toBeDisabled();
+  });
+
+  it("B1: a form can never post copyFamilyPrice with no family price (no $0.00 family)", async () => {
+    mount();
+    fillValid();
+    expect(screen.getByLabelText(/Copy the family price onto the variants/)).toBeDisabled();
+    submit();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    expect(post.mock.calls[0][1]).not.toHaveProperty("copyFamilyPrice");
+  });
+
   it("blank cost hint is visible (SA-606g: blank = inherits the family cost)", () => {
     mount();
     expect(screen.getByText(/Leave cost blank to use the family cost\./)).toBeInTheDocument();

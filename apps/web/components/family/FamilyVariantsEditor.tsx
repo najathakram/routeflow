@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useUpdateFamilyVariants } from "@/lib/api/product-families";
 import { getFamilyConflicts, familyCellKey } from "@/lib/family-conflicts";
 import {
+  CANNOT_CLEAR_MSG,
   MAX_FAMILY_ROWS,
   diffVariantUpdates,
   patchRowToGridIndex,
@@ -71,11 +72,15 @@ export function FamilyVariantsEditor({
   const [showErrors, setShowErrors] = React.useState(false);
   const [serverCells, setServerCells] = React.useState<Record<string, CellMessage>>({});
   const [summary, setSummary] = React.useState<string | null>(null);
+  const [unmapped, setUnmapped] = React.useState(false);
 
   const canEdit = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
   const request = React.useMemo(() => diffVariantUpdates(original, rows), [original, rows]);
   const changed = Object.keys(request).length > 0;
-  const validation = React.useMemo(() => validateRows(rows), [rows]);
+  const validation = React.useMemo(
+    () => validateRows(rows, { original: baseline, capRows: false }),
+    [rows, baseline],
+  );
 
   const begin = () => {
     setBaseline(live);
@@ -87,10 +92,14 @@ export function FamilyVariantsEditor({
   };
 
   const cellMessages: Record<string, CellMessage> = { ...serverCells };
-  if (showErrors) {
+  {
+    // "Can't be cleared" shows at once: an emptied cell sends nothing, so Save would stay disabled and the
+    // operator would never learn why. Every other rule waits for a Save attempt.
     for (const [i, fields] of Object.entries(validation.rows)) {
       for (const [field, message] of Object.entries(fields ?? {})) {
-        cellMessages[`${i}:${field}`] = { message: message as string };
+        if (showErrors || message === CANNOT_CLEAR_MSG) {
+          cellMessages[`${i}:${field}`] = { message: message as string };
+        }
       }
     }
   }
@@ -115,6 +124,7 @@ export function FamilyVariantsEditor({
     setShowErrors(false);
     setServerCells({});
     setSummary(null);
+    setUnmapped(false);
   };
 
   const [tooMany, setTooMany] = React.useState(false);
@@ -145,7 +155,14 @@ export function FamilyVariantsEditor({
             if (gi != null) mapped[familyCellKey(gi, field as never)] = msg;
           }
           setServerCells(mapped);
-          setSummary(conflicts.summary);
+          // A row that maps to no cell must not leave a silent failure: say so, whatever the cell count.
+          const unmatched = Object.keys(mapped).length === 0;
+          setUnmapped(unmatched);
+          setSummary(
+            unmatched
+              ? "Nothing was saved. A conflicting row could not be matched to a cell. Reload the page and try again."
+              : conflicts.summary,
+          );
           return;
         }
         if (conflicts?.kind === "PRICE_AUTHORITY") {
@@ -198,7 +215,7 @@ export function FamilyVariantsEditor({
           A single save takes up to {MAX_FAMILY_ROWS} changes. Save in smaller batches.
         </p>
       )}
-      {editing && summary && Object.keys(serverCells).length > 0 && (
+      {editing && summary && (unmapped || Object.keys(serverCells).length > 0) && (
         <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-sm text-danger">
           {summary}
         </p>
@@ -211,6 +228,7 @@ export function FamilyVariantsEditor({
       <FamilyVariantsGrid
         rows={editing ? rows : live}
         showCostHint={false}
+        maxRows={Infinity}
         onChange={onRowsChange}
         cellMessages={editing ? cellMessages : {}}
         readOnly={!editing}

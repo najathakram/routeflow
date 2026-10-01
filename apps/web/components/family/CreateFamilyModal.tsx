@@ -132,7 +132,13 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
         value={form[key]}
         placeholder={opts?.placeholder}
         onChange={(e) => {
-          setForm((f) => ({ ...f, [key]: e.target.value }));
+          const value = e.target.value;
+          // Clearing the family price drops "copy it onto the variants" (it would copy nothing: $0.00).
+          setForm((f) => ({
+            ...f,
+            [key]: value,
+            ...(key === "pricePerUnit" && !value.trim() ? { copyFamilyPrice: false } : {}),
+          }));
           if (key === "name") setFamilyServerMessages([]);
         }}
         className="rounded border border-surface-border bg-white px-2 py-1.5 text-sm font-normal focus:outline-none focus:ring-2 focus:ring-brand-500"
@@ -182,14 +188,22 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
             { placeholder: "Optional" },
           )}
         </div>
-        <label className="flex items-center gap-2 text-sm text-navy">
-          <input
-            type="checkbox"
-            checked={form.copyFamilyPrice}
-            onChange={(e) => setForm((f) => ({ ...f, copyFamilyPrice: e.target.checked }))}
-          />
-          Copy the family price onto the variants
-        </label>
+        <div>
+          <label className="flex items-center gap-2 text-sm text-navy">
+            <input
+              type="checkbox"
+              checked={form.copyFamilyPrice}
+              disabled={!form.pricePerUnit.trim()}
+              onChange={(e) => setForm((f) => ({ ...f, copyFamilyPrice: e.target.checked }))}
+            />
+            Copy the family price onto the variants
+          </label>
+          {!form.pricePerUnit.trim() && (
+            <p className="mt-1 text-xs text-navy/60">
+              Enter a family price to copy it onto the variants.
+            </p>
+          )}
+        </div>
         {summary && (Object.keys(serverCells).length > 0 || familyServerMessages.length > 0) && (
           <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-sm text-danger">
             {summary}

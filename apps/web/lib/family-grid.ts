@@ -65,16 +65,23 @@ export interface FamilyValidation {
 
 const PRICE_MSG = "Enter a price like 1.50.";
 const DUP_MSG = "Appears more than once.";
+export const CANNOT_CLEAR_MSG = "Can't be cleared once set. Enter a new value.";
+export const COPY_PRICE_NEEDS_PRICE_MSG = "Enter the family price to copy it onto the variants.";
 const norm = (s: string) => s.trim().toLowerCase();
 
 /** The row rules alone: used by the create dialog (with the family fields) and the detail edit. */
 export function validateRows(
   rowsIn: GridRow[],
+  opts: { original?: GridRow[]; capRows?: boolean } = {},
 ): Pick<FamilyValidation, "valid" | "rows" | "formError"> {
+  const capRows = opts.capRows ?? true;
+  const savedById = new Map(
+    (opts.original ?? []).filter((r) => r.id).map((r) => [r.id as string, r]),
+  );
   const rows: FamilyValidation["rows"] = {};
   let formError: string | null = null;
   if (rowsIn.length < 1) formError = "Add at least one variant.";
-  else if (rowsIn.length > MAX_FAMILY_ROWS)
+  else if (capRows && rowsIn.length > MAX_FAMILY_ROWS)
     formError = `A family takes up to ${MAX_FAMILY_ROWS} variants at a time.`;
 
   const set = (i: number, field: RowField, msg: string) => {
@@ -93,6 +100,14 @@ export function validateRows(
     const upb = r.unitsPerBox.trim();
     if (upb && !(/^\d+$/.test(upb) && Number(upb) >= 1))
       set(i, "unitsPerBox", "Whole number, 1 or more.");
+    // An update has no "clear" for units/case or cost (the API 400s / ignores it): refuse visibly rather
+    // than let Save report success while the old value stays.
+    const before = r.id ? savedById.get(r.id) : undefined;
+    if (before) {
+      for (const f of ["unitsPerBox", "standardCost"] as const) {
+        if (before[f].trim() && !r[f].trim()) set(i, f, CANNOT_CLEAR_MSG);
+      }
+    }
   });
 
   // Duplicates inside the grid, flagged on EVERY row that repeats (blank values never count).
@@ -112,6 +127,8 @@ export function validateFamilyForm(f: FamilyForm): FamilyValidation {
   const family: FamilyValidation["family"] = {};
   if (!f.name.trim()) family.name = "Enter a family name.";
   if (f.pricePerUnit.trim() && !MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
+  // Copying the family price with none entered would save the family and every variant at $0.00.
+  if (f.copyFamilyPrice && !f.pricePerUnit.trim()) family.pricePerUnit = COPY_PRICE_NEEDS_PRICE_MSG;
   if (f.standardCost.trim() && !COST.test(f.standardCost.trim()))
     family.standardCost = "Enter a cost like 0.80.";
   const r = validateRows(f.rows);

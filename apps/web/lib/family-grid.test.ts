@@ -277,3 +277,54 @@ describe("requestRowCount — the server caps add + update + deactivate, not the
     expect(requestRowCount(diffVariantUpdates(saved, edited))).toBe(250);
   });
 });
+
+describe("B1 (#2919): copy-family-price needs a family price (else every variant saves at $0.00)", () => {
+  it("ticked with a blank family price -> an error on the family price, form invalid", () => {
+    const v = validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "" }));
+    expect(v.family.pricePerUnit).toBe("Enter the family price to copy it onto the variants.");
+    expect(v.valid).toBe(false);
+  });
+  it("ticked with a price -> fine; unticked with a blank price -> fine (variants carry their own)", () => {
+    expect(validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "2.00" })).valid).toBe(
+      true,
+    );
+    expect(validateFamilyForm(form({ copyFamilyPrice: false, pricePerUnit: "" })).valid).toBe(true);
+  });
+});
+
+describe("B3 (#2919): a saved cost / units-per-case cannot be silently cleared", () => {
+  const saved = (over: Partial<GridRow> = {}): GridRow => ({
+    ...row({ key: "s1", name: "S1", unitsPerBox: "12", standardCost: "0.80" }),
+    id: "id1",
+    ...over,
+  });
+  it("clearing either on a saved row is a visible per-cell error (the update has no 'clear')", () => {
+    const v = validateRows([saved({ unitsPerBox: "", standardCost: "" })], { original: [saved()] });
+    expect(v.rows[0]).toMatchObject({
+      unitsPerBox: "Can't be cleared once set. Enter a new value.",
+      standardCost: "Can't be cleared once set. Enter a new value.",
+    });
+    expect(v.valid).toBe(false);
+  });
+  it("blank stays blank (never set) and a changed value are fine; a NEW row may leave them blank", () => {
+    const original = [saved({ unitsPerBox: "", standardCost: "" })];
+    expect(validateRows([saved({ unitsPerBox: "", standardCost: "" })], { original }).valid).toBe(
+      true,
+    );
+    expect(
+      validateRows([saved({ unitsPerBox: "6", standardCost: "1" })], { original: [saved()] }).valid,
+    ).toBe(true);
+    expect(validateRows([row({ key: "n" })], { original: [saved()] }).valid).toBe(true);
+  });
+});
+
+describe("B4 (#2919): the row cap belongs to the create form, not to a saved family", () => {
+  it("validateRows with capRows:false accepts more than 200 rows (the REQUEST is what the server caps)", () => {
+    const many = Array.from({ length: MAX_FAMILY_ROWS + 5 }, (_, i) =>
+      row({ key: `k${i}`, name: `V${i}` }),
+    );
+    expect(validateRows(many).formError).toBe("A family takes up to 200 variants at a time.");
+    expect(validateRows(many, { capRows: false }).formError).toBeNull();
+    expect(validateRows(many, { capRows: false }).valid).toBe(true);
+  });
+});

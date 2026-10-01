@@ -21,4 +21,20 @@ describe("products/[id]/page.tsx — family wiring (WS8)", () => {
   it("the legacy variants card is skipped for a family", () => {
     expect(src).toMatch(/\{!product\.parentProductId && product\.kind !== "FAMILY" && \(/);
   });
+
+  it("B2 (#2919): a FAMILY shows no stock or sell UI — no Out-of-Stock badge, no Stock & Cost card, no Make variant", () => {
+    // the header badge reads getStockStatus, which answers IN_STOCK (no badge) for a FAMILY
+    expect(src).toMatch(
+      /function getStockStatus\([^)]*kind\?: string\)[^{]*\{\s*if \(kind === "FAMILY"\) return "IN_STOCK"/,
+    );
+    expect(src).toMatch(/getStockStatus\(currentStock, product\.isActive, product\.kind\)/);
+    // the Stock & Cost card (Set cost, movements) is not rendered for a family
+    expect(src).toMatch(/product\.kind !== "FAMILY" && \(\s*<ProductStockCostCard/);
+    // "Make variant of…" is not offered on a family
+    expect(src).toMatch(/isOperator && !product\.parentProductId && product\.kind !== "FAMILY"/);
+  });
+
+  it("the page stays under its size-ratchet cap (the Stock & Cost card lives in its own component)", () => {
+    expect(src.split("\n").length).toBeLessThanOrEqual(2967);
+  });
 });
