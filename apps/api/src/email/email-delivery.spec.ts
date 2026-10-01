@@ -29,11 +29,14 @@ describe("sanitizeDeliveryError", () => {
     expect(sanitizeDeliveryError(undefined)).toBeNull();
   });
 
-  it("replaces every email address with <redacted>", () => {
+  it("masks every email address via redactAddresses (local part masked, domain kept) and IP literals", () => {
     const out = sanitizeDeliveryError(
       "550 rejected jane@example.com and cc bob.x+1@sub.acme.io ok",
     );
-    expect(out).toBe("550 rejected <redacted> and cc <redacted> ok");
+    expect(out).toBe("550 rejected ***@example.com and cc ***@sub.acme.io ok");
+    expect(sanitizeDeliveryError("connect EHOSTUNREACH 10.0.1.4:587")).toBe(
+      "connect EHOSTUNREACH [address]:587",
+    );
   });
 
   it("truncates to 500 chars", () => {
@@ -144,7 +147,7 @@ describe("EmailDeliveryService.record (best-effort audit)", () => {
       status: "FAILED",
       error: "rejected bob@example.com",
     });
-    expect(create.mock.calls[0][0].data.error).toBe("rejected <redacted>");
+    expect(create.mock.calls[0][0].data.error).toBe("rejected ***@example.com");
   });
 });
 

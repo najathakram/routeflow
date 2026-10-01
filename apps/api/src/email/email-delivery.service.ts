@@ -2,14 +2,14 @@ import { Injectable, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import type { EmailDeliveryStatus } from "@routeflow/types";
 import type { EmailKind } from "./email-kinds";
+import { redactAddresses } from "./redact-addresses";
 
 const ERROR_MAX = 500;
-const EMAIL_RE = /[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g;
 
-/** Redact every email address and cap at 500 chars (provider text can echo recipients). */
+/** Mask addresses (local part masked, domain kept) and IP literals via `redactAddresses`, then cap at 500 chars (provider text can echo recipients). */
 export function sanitizeDeliveryError(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined) return null;
-  return String(raw).replace(EMAIL_RE, "<redacted>").slice(0, ERROR_MAX);
+  return redactAddresses(String(raw)).slice(0, ERROR_MAX);
 }
 
 /** Optional `EmailService.send({ delivery })` context: asks for one audit row for that send. */

@@ -32,9 +32,7 @@ describe("syncOrderLineCompositions", () => {
   it("a config read that throws reads as off (never fails the order write)", async () => {
     const t = tx();
     const cfg = { getEffectiveMode: jest.fn().mockRejectedValue(new Error("down")) };
-    await expect(
-      syncOrderLineCompositions(t as never, "o-1", "t-1", cfg),
-    ).resolves.toBeUndefined();
+    await expect(syncOrderLineCompositions(t as never, "o-1", "t-1", cfg)).resolves.toBeUndefined();
     expect(t.orderItem.findMany).not.toHaveBeenCalled();
   });
 

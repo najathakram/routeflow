@@ -33,11 +33,12 @@ import {
 import { UpdateProductDto } from "./dto/update-product.dto";
 import { BulkAssignParentDto } from "./dto/bulk-assign-parent.dto";
 import { BulkSetMsrpDto } from "./dto/bulk-set-msrp.dto";
-import { ListProductsDto, StockStatusFilter } from "./dto/list-products.dto";
+import { ListProductsDto } from "./dto/list-products.dto";
 import { ImportProductsDto } from "./dto/import-products.dto";
 import { isValidItemType, isValidUom, templateByKey } from "../regulated/template-registry";
-import { normalizeScanCode, pickBestScanMatch } from "../common/barcode-normalize";
-import { buildScanSearchOr } from "./scan-search";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "./scan-match";
+import { buildProductListWhere } from "./product-list-where";
 import { assertPackKeepsLevelsValid } from "./unit-pack-rules";
 import { isMsrpBelowWholesale, wholesalePerPiece } from "../common/msrp";
 import { TOBACCO_CATEGORY_NAME, isTobaccoCategoryName } from "../common/tobacco-category";
@@ -315,89 +316,7 @@ export class ProductsService {
     const limit = fetchAll ? 10_000 : limitRaw;
     const skip = (page - 1) * limit;
 
-    const where: any = {};
-    if (query.search) {
-      where.OR = [
-        { name: { contains: query.search, mode: "insensitive" } },
-        { sku: { contains: query.search, mode: "insensitive" } },
-        { barcode: { contains: query.search, mode: "insensitive" } },
-        { unitSku: { contains: query.search, mode: "insensitive" } },
-      ];
-    } else if (query.scanCode) {
-      // Scan-fallback rung: same four columns, but contains-matched against
-      // EVERY normalizeScanCode candidate instead of the raw decode — the raw
-      // string misses whenever this camera's decode differs from the stored
-      // shape (iOS 13-digit vs a 12-digit code kept in the product name).
-      // OR: [] when the code yields no candidates — matches nothing, correctly.
-      where.OR = buildScanSearchOr(query.scanCode);
-    }
-    if (query.category) where.category = query.category;
-    if (query.isActive !== undefined) where.isActive = query.isActive;
-    if (query.isTobacco !== undefined) where.isTobacco = query.isTobacco;
-    // W7 buyer gate: exclude regulated categories the buyer isn't licensed for (set
-    // internally by BuyerCatalogService — never from buyer input). In the query so
-    // pagination counts stay correct.
-    if (opts?.excludeTrackedCategoryIds?.length) {
-      // Hide license-gated categories WITHOUT hiding untracked products.
-      // Prisma's `notIn` never matches NULL rows, so the previous bare filter
-      // (`trackedCategoryId: { notIn: [...] }`) made every product with NO
-      // tracked category vanish the moment a tenant had one requiresLicense
-      // category — on a live tenant that hid 1,757 of 1,823 products from
-      // every unlicensed buyer. NULL must be allowed back in explicitly.
-      // AND-pushed (not where.trackedCategoryId) so it can't collide with the
-      // regulated fold-in below or a search OR.
-      where.AND = [
-        ...((where.AND as Record<string, unknown>[] | undefined) ?? []),
-        {
-          OR: [
-            { trackedCategoryId: null },
-            { trackedCategoryId: { notIn: opts.excludeTrackedCategoryIds } },
-          ],
-        },
-      ];
-    }
-
-    // Regulated-section filter ("any" | "none" | <sectionId>). When the internal
-    // buyer-catalog exclusion already occupies where.trackedCategoryId, fold this
-    // clause into AND so BOTH apply.
-    if (query.section) {
-      const clause =
-        query.section === "any" ? { not: null } : query.section === "none" ? null : query.section;
-      if (where.trackedCategoryId !== undefined) {
-        where.AND = [...(where.AND ?? []), { trackedCategoryId: clause }];
-      } else {
-        where.trackedCategoryId = clause;
-      }
-    }
-
-    // Server-side stock-status filtering so pagination counts are accurate
-    if (query.stockStatus === StockStatusFilter.OUT_OF_STOCK) {
-      // "Out" = inactive OR zero/negative stock. Keep it as its own disjunction
-      // AND-ed with any search OR — reusing `where.OR` would merge the two into a
-      // single OR, so every out-of-stock product would match regardless of the
-      // search text (and every search hit would show even if in stock).
-      const outOfStock = [{ isActive: false }, { currentStock: { lte: 0 } }];
-      if (where.OR) {
-        where.AND = [...(where.AND ?? []), { OR: where.OR }, { OR: outOfStock }];
-        delete where.OR;
-      } else {
-        where.OR = outOfStock;
-      }
-    } else if (query.stockStatus === StockStatusFilter.LOW) {
-      where.isActive = true;
-      // lte:5 covers 0, negatives, and low stock; null check invalid for Decimal in Prisma 7.7
-      where.currentStock = { lte: 5 };
-    } else if (query.stockStatus === StockStatusFilter.IN_STOCK) {
-      where.isActive = true;
-      where.currentStock = { gt: 5 };
-    }
-
-    // Internal-only extra AND clauses (buyer catalog v2 smart collections —
-    // set by BuyerCatalogService, never from client input). Folded via AND so
-    // they compose with the search OR and the stock-status OR.
-    if (opts?.andWhere?.length) {
-      where.AND = [...(where.AND ?? []), ...opts.andWhere];
-    }
+    const where: any = buildProductListWhere(query, opts);
 
     // Always include `parent` so the web can compose "<Parent> - <Variant>"
     // display names for line items. The parent row is small (no nested
@@ -638,44 +557,14 @@ export class ProductsService {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    const include = { variants: { where: { isActive: true } }, parent: true };
-    const db = this.prisma.forTenant();
-
-    // Tier 1 — exact. Rides @@unique([tenantId, barcode|sku|unitSku]) and the
-    // @@index([barcode]) / @@index([unitSku]) as a BitmapOr of index scans:
-    // at most MAX_SCAN_CANDIDATES probes per column.
-    let matches = await db.product.findMany({
-      where: {
-        OR: [
-          { barcode: { in: candidates } },
-          { sku: { in: candidates } },
-          { unitSku: { in: candidates } },
-        ],
-      },
-      include,
-    });
-
-    // Tier 2 — case-insensitive, MISS ONLY. Prisma emits ILIKE for
-    // `mode: "insensitive"`, which a btree can't serve, so this is a
-    // tenant-scoped seq scan. It runs only on the path that used to 404
-    // outright, and camera-decoded EAN/UPC codes (all digits) never reach it —
-    // it exists for typed or lowercased alpha SKUs.
-    if (matches.length === 0) {
-      matches = await db.product.findMany({
-        where: {
-          OR: candidates.flatMap((c) => [
-            { barcode: { equals: c, mode: "insensitive" as const } },
-            { sku: { equals: c, mode: "insensitive" as const } },
-            { unitSku: { equals: c, mode: "insensitive" as const } },
-          ]),
-        },
-        include,
-        take: 25,
-      });
-    }
-
-    if (matches.length === 0) throw new NotFoundException("Product not found");
-    return pickBestScanMatch(matches, candidates);
+    const hit = await findScanMatches(
+      this.prisma.forTenant(),
+      candidates,
+      {},
+      { variants: { where: { isActive: true } }, parent: true },
+    );
+    if (!hit) throw new NotFoundException("Product not found");
+    return { ...hit.product, scanMatch: hit.scanMatch };
   }
 
   /**

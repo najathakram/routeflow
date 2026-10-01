@@ -125,6 +125,7 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ORDER_STATUS_VALUES", "OrderStatus"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
+  ["HANDOFF_REALM_VALUES", "HandoffRealm"],
   // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
   // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
   ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
@@ -239,6 +240,10 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for IntakeSectionKey + IntakeSectionStatus (#2159 S2, 2026-09-27): two brand-new Prisma
 // enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
 // packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
+// Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
+// 20260929190000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (110 → 111, after M1's four, M2's RecipeStatus and M3's CompositionMode).
+
 // Triage for ProductKind + PackagingLevel + BarcodeSymbology + BarcodeOrigin (#2717 M1, SA-572a,
 // #2728 P1, 2026-09-28): four brand-new Prisma enums (migration
 // 20260928230000_2717_m1_catalog_barcodes_images) — mirrored immediately in
@@ -253,7 +258,8 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // mirrored as `POLICY_SCOPE_TYPE_VALUES` + its `ENUM_TABLE` row (110 → 111).
 // Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
 // `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
-const PINNED_PRISMA_ENUM_COUNT = 112;
+// Master's HandoffRealm (#2653, SA-542b) lands on top of the bundle's two (112 → 113).
+const PINNED_PRISMA_ENUM_COUNT = 113;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
