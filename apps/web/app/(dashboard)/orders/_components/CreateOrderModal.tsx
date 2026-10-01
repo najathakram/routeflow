@@ -21,12 +21,18 @@ import { useCreateDraft, useUpdateDraft, useDeleteDraft, useDraft } from "@/lib/
 import { draftDeviceLabel, type OrderDraftPayload } from "@/lib/drafts";
 import { apiClient } from "@/lib/api-client";
 import { orderCreatedToast } from "./order-created-toast";
-import { mergeQtyIntoLine, mergedLineMessage, newLineQty } from "./add-line-merge";
+import {
+  mergePieceIntoLine,
+  mergeQtyIntoLine,
+  mergedLineMessage,
+  newLineQtyForLevel,
+} from "./add-line-merge";
 import {
   isSpecialTier,
   getTierPrice,
   computeLineSubtotal,
   normalizeBoxesPieces,
+  type SellLevel,
 } from "@routeflow/pricing";
 import {
   applyTypedPrice,
@@ -134,6 +140,8 @@ interface LineItem {
   sellBy?: "case" | "unit";
   /** units_v1: the non-pack unit this line sells by (`undefined` = the pack); see LineItemRowItem. */
   unitLabel?: string;
+  /** #2784 UI-only: a NEW line from the picker tap / a shared-code scan starts on the default selling unit. */
+  startOnDefaultUnit?: boolean;
   /** UI-only: the pack fields a unit switch overwrote (restored when the pack is chosen again). */
   packBase?: PackBase;
   /**
@@ -365,12 +373,12 @@ export function CreateOrderModal({
   // ./scan/useScanCodeHandler so the redesigned scan screen can reuse it.
   const barcodeScanHandlerRef = useScanCodeHandler({
     // A thunk: addLineItem is declared further down and is read only when a code is scanned.
-    addLineItem: (product) => {
+    addLineItem: (product, level, opts) => {
       // SA-090/Opus item 1: `created` comes from addLineItem's OWN return value now — it is
       // decided inside the setLineItems updater, against the true latest state, never from a
       // closure-captured `lineItems` read here beforehand (which a same-tick retry-plus-live-scan
       // race of the same product could make stale — see addLineItem's own comment).
-      const { created } = addLineItem(product);
+      const { created } = addLineItem(product, level, opts);
       return { created };
     },
     onUnknownCode: (code) => {
@@ -549,24 +557,38 @@ export function CreateOrderModal({
       const pieces = li.pieces ?? 0;
       // Never step a case-packed line below one case (or its loose pieces) — undo must not zero it.
       const boxes = Math.max(pieces > 0 ? 0 : 1, (li.boxes ?? 0) + dir);
-      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces };
+      return { ...li, boxes, qty: boxes * li.unitsPerBox + pieces, startOnDefaultUnit: false };
     }
-    return { ...li, qty: Math.max(1, li.qty + dir) };
+    return { ...li, qty: Math.max(1, li.qty + dir), startOnDefaultUnit: false };
   };
 
-  const addLineItem = (product: any): { created: boolean } => {
+  const addLineItem = (
+    product: any,
+    level: SellLevel = "BOX",
+    opts?: { startOnDefaultUnit?: boolean },
+  ): { created: boolean } => {
     const n = 1; // #2696: every pick / scan adds one (the quick-add Qty field is gone)
+    // #2717 M4a-1 (SA-580 R1/R4): a UNIT scan on a boxed product adds one loose PIECE, never a
+    // case; a picker click (no level) and every BOX/shared scan keep today's whole-case add. For
+    // upb <= 1 there is no box/unit distinction, so the line shape is unchanged either way.
+    const unitScan = level === "UNIT" && Number(product.unitsPerBox ?? 0) > 1;
     // Already in the list: MERGE (sum) into that line instead of adding a duplicate.
     //  - order_ui_v2: +1 for a scan / plain pick, +N for a typed qty. Box-aware: a case-packed line
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
-    const merge = (li: LineItem): LineItem =>
-      orderUiV2
-        ? mergeQtyIntoLine(li, n)
-        : scanV2
-          ? stepLineUnit(li, 1)
-          : { ...li, qty: li.qty + 1 };
+    // A merge is a qty edit: it CONSUMES startOnDefaultUnit (a second scan before the ladder loads must not let the
+    // picker re-apply the default over a line that already grew).
+    const merge = (li: LineItem): LineItem => ({
+      ...(unitScan
+        ? mergePieceIntoLine(li, n)
+        : orderUiV2
+          ? mergeQtyIntoLine(li, n)
+          : scanV2
+            ? stepLineUnit(li, 1)
+            : { ...li, qty: li.qty + 1 }),
+      startOnDefaultUnit: false,
+    });
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
     const newTempId = product.id + "-" + Date.now();
@@ -605,8 +627,9 @@ export function CreateOrderModal({
         : hasHistDiscount
           ? ("DISCOUNTED" as const)
           : priceType,
-      ...newLineQty(upb, n),
+      ...newLineQtyForLevel(upb, level, n),
       unitsPerBox: upb,
+      startOnDefaultUnit: opts?.startOnDefaultUnit,
       unitCost: product.averageCost != null ? Number(product.averageCost) : undefined,
       category: product.category ?? undefined,
       trackedCategoryId: product.trackedCategoryId ?? null,
@@ -695,7 +718,8 @@ export function CreateOrderModal({
 
   /** A pick from the search dropdown: +1 (#2696 — no typed quick-add qty). */
   const addPicked = (product: any) => {
-    addLineItem(product);
+    // #2784: the picker tap starts a NEW line on the product's default selling unit (OrderLineUnitPicker applies it).
+    addLineItem(product, undefined, { startOnDefaultUnit: true });
   };
 
   const removeLineItem = (tempId: string) => {
@@ -772,14 +796,16 @@ export function CreateOrderModal({
   /** #2696 (b): a typed qty on a plain (non-case) line — a whole number, at least 1 (like the −). */
   const setQty = (tempId: string, value: number) => {
     const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, qty } : li)));
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, qty, startOnDefaultUnit: false } : li)),
+    );
   };
 
   const updateQty = (tempId: string, delta: number) => {
     setLineItems((prev) =>
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
-        return { ...li, qty: Math.max(1, li.qty + delta) };
+        return { ...li, qty: Math.max(1, li.qty + delta), startOnDefaultUnit: false };
       }),
     );
   };
@@ -791,7 +817,12 @@ export function CreateOrderModal({
         const boxes = Math.max(0, isNaN(value) ? 0 : value);
         const pieces = li.pieces ?? 0;
         const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, boxes, qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0) };
+        return {
+          ...li,
+          boxes,
+          qty: Math.max(qty, boxes > 0 || pieces > 0 ? qty : 0),
+          startOnDefaultUnit: false,
+        };
       }),
     );
   };
@@ -803,7 +834,7 @@ export function CreateOrderModal({
         const pieces = Math.max(0, isNaN(value) ? 0 : value);
         const boxes = li.boxes ?? 0;
         const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
-        return { ...li, pieces, qty };
+        return { ...li, pieces, qty, startOnDefaultUnit: false };
       }),
     );
   };
@@ -816,13 +847,21 @@ export function CreateOrderModal({
       prev.map((li) => {
         if (li.tempId !== tempId) return li;
         const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
-        return { ...li, boxes: n.boxes ?? 0, pieces: n.pieces ?? 0, qty: n.qty };
+        return {
+          ...li,
+          boxes: n.boxes ?? 0,
+          pieces: n.pieces ?? 0,
+          qty: n.qty,
+          startOnDefaultUnit: false,
+        };
       }),
     );
   };
 
   const setSellBy = (tempId: string, sellBy: "case" | "unit") =>
-    setLineItems((prev) => prev.map((li) => (li.tempId === tempId ? { ...li, sellBy } : li)));
+    setLineItems((prev) =>
+      prev.map((li) => (li.tempId === tempId ? { ...li, sellBy, startOnDefaultUnit: false } : li)),
+    );
 
   /** The effective price tier for a product on this order (per-product override, else the customer's). */
   const tierForProduct = (productId: string) =>
@@ -836,10 +875,15 @@ export function CreateOrderModal({
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
       if (!target) return prev;
-      const next = applyLineUnit(target, option, {
-        tier: tierForProduct(target.productId),
-        keepQty: refresh,
-      });
+      // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount (list <-> scan screen) can never
+      // re-apply the default over the operator's choice (Opus #2865 B1).
+      const next = {
+        ...applyLineUnit(target, option, {
+          tier: tierForProduct(target.productId),
+          keepQty: refresh,
+        }),
+        startOnDefaultUnit: false,
+      };
       const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
       if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
       return prev
@@ -860,13 +904,17 @@ export function CreateOrderModal({
             overrideReason: undefined,
             unitPrice: revertPrice,
             priceType: li.specialPrice != null ? "SPECIAL" : "STANDARD",
+            startOnDefaultUnit: false,
           };
         }
         // #2696(c): the server's own rule A (@routeflow/pricing decideStaffOverride) — within ½¢
         // of the special / list price is no override; below list DISCOUNTED, at/above MANUAL (an
         // upsell: the base is hidden from the customer server-side, shown green to the operator).
         const next = applyTypedPrice(li, value);
-        return next.discountedPrice == null ? { ...next, overrideReason: undefined } : next;
+        const consumed = { ...next, startOnDefaultUnit: false };
+        return consumed.discountedPrice == null
+          ? { ...consumed, overrideReason: undefined }
+          : consumed;
       }),
     );
   };
@@ -1325,6 +1373,7 @@ export function CreateOrderModal({
         <OrderLineUnitPicker
           line={li}
           tier={tierForProduct(li.productId)}
+          startOnDefaultUnit={li.startOnDefaultUnit}
           onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
         />
       }

@@ -188,6 +188,19 @@ export default defineConfig({
       },
     },
 
+    // ── CSV export then and there ──────────────────────────────────────────────
+    // Products export popover, per-card analytics CSVs, product insights export;
+    // every endpoint mocked. Self-skips on builds predating each control.
+    {
+      name: "csv-export",
+      testMatch: /63-csv-export\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Search survives Back ───────────────────────────────────────────────────
     // Back-navigation restoration of a list search — the one behavior no other spec
     // covers (nothing else in the suite calls goBack). Read-only: it types in search
@@ -451,6 +464,14 @@ export default defineConfig({
     {
       name: "cancelled-edit-banner",
       testMatch: /27-cancelled-edit-banner\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
+    {
+      name: "invoice-edit-pending-mirror",
+      testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },

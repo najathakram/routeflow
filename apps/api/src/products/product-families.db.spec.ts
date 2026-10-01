@@ -336,6 +336,16 @@ describeDb("WS8 families API — real Postgres", () => {
       ),
     );
     const famId = created.family.id;
+    const stockOf = async () => {
+      const f = await prisma.product.findUniqueOrThrow({ where: { id: famId } });
+      return {
+        averageCost: f.averageCost?.toString() ?? null,
+        standardCost: f.standardCost?.toString() ?? null,
+        currentStock: f.currentStock.toString(),
+        lots: await prisma.stockLot.count({ where: { tenantId, productId: famId } }),
+      };
+    };
+    const familyBefore = await stockOf();
     const refusedFamily = async (p: Promise<unknown>) => {
       const err = await p.catch((e) => e);
       expect(err).toBeInstanceOf(BadRequestException);
@@ -365,6 +375,8 @@ describeDb("WS8 families API — real Postgres", () => {
       await refusedFamily(inventory.setCostBasis(famId, { unitCost: 2 } as any, user.id));
     });
     // nothing was written for the FAMILY
+    // ...and the family's own cost / stock columns and lot count are untouched (no phantom stock, no cost basis)
+    expect(await stockOf()).toEqual(familyBefore);
     expect(await prisma.stockMovement.count({ where: { tenantId, productId: famId } })).toBe(0);
     expect(await prisma.stockCountLine.count({ where: { tenantId, productId: famId } })).toBe(0);
     // and a real VARIANT still goes through the same entry

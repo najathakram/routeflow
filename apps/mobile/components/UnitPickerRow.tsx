@@ -4,7 +4,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import type { LadderProduct } from "@routeflow/pricing";
 import { useProductUnits, useUnitsEnabled } from "../lib/api/product-units";
-import { buildUnitOptions, unitOptionDetail, type UnitOption } from "../lib/unit-options";
+import {
+  buildUnitOptions,
+  defaultStartOption,
+  unitOptionDetail,
+  type UnitOption,
+} from "../lib/unit-options";
 import { OptionPickerSheet, type PickerOption } from "./OptionPickerSheet";
 
 /** The line fields this control reads (structurally satisfied by CartRow's/DraftItemCard's own line). */
@@ -40,6 +45,7 @@ export function UnitPickerRow({
   tier,
   onChange,
   style,
+  startOnDefaultUnit = false,
 }: {
   line: UnitPickerLine;
   /**
@@ -60,6 +66,8 @@ export function UnitPickerRow({
    * adding 2–8px of dead space to EVERY row for every tenant.
    */
   style?: StyleProp<ViewStyle>;
+  /** #2784: a NEW line starts on the level flagged `isDefaultSelling` (once, never over a held unit). */
+  startOnDefaultUnit?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const enabled = useUnitsEnabled();
@@ -77,6 +85,14 @@ export function UnitPickerRow({
       return []; // display-only: a bad tier never blocks the cart (the server 400s on save)
     }
   }, [enabled, units, product, tier, packPrice]);
+
+  const startedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!startOnDefaultUnit || startedRef.current || options.length <= 1 || !units) return;
+    startedRef.current = true; // one shot per mount: a later choice is never re-overridden
+    const start = defaultStartOption(product, units, tier, { hasUnit: !!line.unitLabel });
+    if (start) onChange(start);
+  }, [startOnDefaultUnit, options, units, product, tier, line.unitLabel, onChange]);
 
   // Mirrors web's UnitPicker: a product with no ladder (or only the pack) shows no control at all.
   if (options.length <= 1) return null;

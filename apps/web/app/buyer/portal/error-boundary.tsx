@@ -42,11 +42,6 @@ export class BuyerPortalErrorBoundary extends React.Component<
             <h2 className="text-lg font-semibold text-navy mb-2">Something went wrong</h2>
             <p className="text-sm text-navy/70 mb-6">
               An unexpected error occurred. Please try refreshing the page.
-              {this.state.error?.message && (
-                <span className="mt-2 block text-xs text-navy/70 font-mono">
-                  {this.state.error.message}
-                </span>
-              )}
             </p>
             <div className="flex items-center justify-center gap-3">
               <Button

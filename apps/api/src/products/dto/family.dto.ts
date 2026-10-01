@@ -21,7 +21,23 @@ const MONEY = /^\d{1,8}(\.\d+)?$/;
 const COST = /^\d{1,6}(\.\d+)?$/;
 
 // An explicit null is NOT "omitted": it must fail the money rule, never silently write $0 (Tier 1, #2881 r3).
+/** Readable messages for a null (Tier 1, #2881 r3): a price is required; an optional amount is omitted, never null. */
+const moneyMessage = (field: string, required: boolean) => (a: { value?: unknown }) =>
+  a.value === null
+    ? required
+      ? `${field} is required`
+      : `${field} cannot be null; omit the field to leave it unchanged`
+    : `${field} must be a non-negative amount`;
+
 const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
+
+/**
+ * SA-606g: the ONE create-side blank rule. null / "" / whitespace-only means OMITTED (a variant then inherits the family
+ * cost, a family has none); anything else is trimmed. Used as the DTO @Transform AND by the service, so HTTP and a caller
+ * that bypasses the DTO behave identically. Update rows and every price stay STRICT (null / "" is a 400).
+ */
+export const blankToUndefined = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
 
 const trimmed = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim() : value;
@@ -33,9 +49,10 @@ export class FamilyVariantDto {
   @IsOptional() @Transform(trimmed) @IsString() barcode?: string;
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" }) pricePerUnit: string;
-  @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", true) }) pricePerUnit: string;
+  @IsOptional()
+  @Transform(({ value }) => blankToUndefined(value))
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 
@@ -44,11 +61,12 @@ export class FamilyInfoDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @ValidateIf(notUndefined)
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
   pricePerUnit?: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
-  @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @IsOptional()
+  @Transform(({ value }) => blankToUndefined(value))
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 
@@ -73,10 +91,10 @@ export class FamilyVariantUpdateDto {
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   @ValidateIf(notUndefined)
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
   pricePerUnit?: string;
   @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 

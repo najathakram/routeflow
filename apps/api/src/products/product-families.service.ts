@@ -48,6 +48,7 @@ import type {
   FamilyVariantUpdateDto,
   UpdateFamilyVariantsDto,
 } from "./dto/family.dto";
+import { blankToUndefined } from "./dto/family.dto";
 
 /**
  * WS8 (SA-606): families. A FAMILY (kind FAMILY, parentProductId null) is a non-stocked, NON-SELLABLE container; its
@@ -67,7 +68,7 @@ const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean 
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
 /** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
 const given = (v: unknown, field: string): void => {
-  if (v === null || v === "") {
+  if (v === null || (typeof v === "string" && v.trim() === "")) {
     throw new BadRequestException(
       `${field} cannot be ${v === null ? "null" : "empty"}; omit the field to leave it unchanged.`,
     );
@@ -77,7 +78,7 @@ const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
 const money = (v: string | undefined | null, fallback = 0): string => {
-  const r = roundMoney(v != null && v !== "" ? Number(v) : fallback);
+  const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
 };
@@ -146,13 +147,15 @@ export class ProductFamiliesService {
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
     given(dto.family.pricePerUnit, "family pricePerUnit");
-    if (blank(dto.family.standardCost)) cost4(dto.family.standardCost as string);
+    const familyCost = blankToUndefined(dto.family.standardCost);
+    if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {
       if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
       given(v.pricePerUnit, "pricePerUnit");
       // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      if (blank(v.standardCost)) cost4(v.standardCost as string);
+      const c = blankToUndefined(v.standardCost);
+      if (c !== undefined) cost4(c);
     }
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
@@ -197,9 +200,7 @@ export class ProductFamiliesService {
             name: familyName,
             unit: "each",
             pricePerUnit: familyPrice,
-            ...(dto.family.standardCost != null && dto.family.standardCost !== ""
-              ? { standardCost: cost4(dto.family.standardCost) }
-              : {}),
+            ...(familyCost !== undefined ? { standardCost: cost4(familyCost) } : {}),
             category: dto.family.category ?? null,
             description: dto.family.description ?? null,
             kind: "FAMILY",
@@ -215,7 +216,7 @@ export class ProductFamiliesService {
               family.id,
               v,
               dto.copyFamilyPrice ? familyPrice : undefined,
-              dto.family.standardCost,
+              familyCost,
             ),
           });
           variants.push({ id: created.id, name: created.name });
@@ -250,7 +251,7 @@ export class ProductFamiliesService {
     prices?: string | Record<FamilyPriceColumn, Prisma.Decimal>,
     familyCost?: string | null,
   ): Prisma.ProductUncheckedCreateInput {
-    const cost = blank(v.standardCost) ?? familyCost;
+    const cost = blankToUndefined(v.standardCost) ?? familyCost;
     const own = typeof prices === "string" ? prices : money(v.pricePerUnit);
     const col = (c: FamilyPriceColumn): string =>
       prices && typeof prices !== "string" ? prices[c].toString() : own;
@@ -344,7 +345,8 @@ export class ProductFamiliesService {
       given(v.pricePerUnit, "pricePerUnit");
       // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      if (blank(v.standardCost)) cost4(v.standardCost as string);
+      const c = blankToUndefined(v.standardCost);
+      if (c !== undefined) cost4(c);
     }
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));

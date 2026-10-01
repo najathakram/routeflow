@@ -13,6 +13,10 @@ export type Product = {
   /** Retail-unit code — scannable, so the local scan fast path must see it. */
   unitSku?: string | null;
   barcode?: string | null;
+  /** M1 `ProductBarcode` rows (additive on the list/detail payload) — the local scan fast path reads them. */
+  barcodes?: Array<{ code: string; level: "BOX" | "UNIT" }> | null;
+  /** #2717 M4a-1: on a scan-lookup response, which code hit and the levels it has (server-resolved). */
+  scanMatch?: { code: string; levels: Array<"BOX" | "UNIT"> } | null;
   unit?: string;
   pricePerUnit: number | string;
   // Tier price columns (Decimal, serialised as strings; 0 ⇒ inherit list). The
@@ -67,6 +71,8 @@ export type LineState = {
    * `submitOrder`'s catalogPayload builder.
    */
   unitLabel?: string | null;
+  /** #2784 UI-only: the qty a NEW picker-tap line was created with. The default unit applies only while `qty` still equals it (any qty edit ends the default-start; a boxed qty is total pieces, so a fixed `qty <= 1` guard would never match) and no operator price is typed. UnitPickerRow applies it once. */
+  startOnDefaultUnit?: number;
   /**
    * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
    * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's

@@ -22,12 +22,14 @@ import {
   compareLineKeysDesc,
   lineKeyOf,
   returnNettingDate,
+  salePiecesOf,
 } from "./sales-facts.rules";
 import type {
   AttributedCreditEvent,
   InstantWindow,
   ProductCreditEvents,
   ProductLifetime,
+  ProductPeriodStats,
   ProductSaleFact,
   ReturnedQtyEvent,
   UnattributedCreditEvent,
@@ -344,6 +346,47 @@ export class SalesFactsService {
       for (const inv of invoices as any[]) {
         for (const it of inv.items ?? []) out.set(it.id, it.productId ?? null);
       }
+    }
+    return out;
+  }
+
+  /**
+   * Accrual sales of MANY products in one window, one grouped read (a catalog export's stats
+   * columns). Same status filter, tenant scope and pieces rule (`salePiecesOf`) as
+   * `productSaleFacts`; nothing here reads an order or any payment status. `packNow` is the
+   * gate for a snapshot-less line (the live product pack, never a multiplier).
+   */
+  async periodProductStats(
+    tenantId: string,
+    productIds: string[],
+    issueWindow: InstantWindow,
+    packNow: Map<string, number | null>,
+  ): Promise<Map<string, ProductPeriodStats>> {
+    const out = new Map<string, ProductPeriodStats>();
+    if (productIds.length === 0) return out;
+    const items = await this.db().invoiceItem.findMany({
+      where: {
+        productId: { in: productIds },
+        invoice: { tenantId, status: ACCRUAL_STATUS_FILTER, issueDate: issueWindow },
+      },
+      select: {
+        productId: true,
+        qty: true,
+        subtotal: true,
+        boxes: true,
+        pieces: true,
+        unitsPerBox: true,
+        invoice: { select: { issueDate: true } },
+      },
+    });
+    for (const it of items as any[]) {
+      const id = it.productId as string;
+      const acc = out.get(id) ?? { pieces: 0, gross: 0, lastSold: null };
+      acc.pieces += salePiecesOf({ ...it, qty: Number(it.qty) }, packNow.get(id) ?? null) ?? 0;
+      acc.gross += Number(it.subtotal);
+      const at = it.invoice?.issueDate as Date | undefined;
+      if (at && (!acc.lastSold || at > acc.lastSold)) acc.lastSold = at;
+      out.set(id, acc);
     }
     return out;
   }
