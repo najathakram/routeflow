@@ -1,4 +1,5 @@
 import type { TenantKind } from "./tenant-context.service";
+import { findNestedWithoutTenant } from "./nested-tenant-walk";
 
 /**
  * SA-619 PR-1: what happens when `forTenant()` / `tenantTransaction()` runs with no tenant scope, or
@@ -145,6 +146,20 @@ export function checkCreateHasTenant(
   args: any,
   kind: TenantKind = "SUPER_ADMIN",
 ): void {
+  // SA-620: the nested children are checked by the SAME walker that stamps them on the TENANT path, on
+  // every write that can carry a nested create (create, upsert, update, updateMany), for any parent.
+  const nestedData =
+    operation === "upsert"
+      ? [args?.create, args?.update]
+      : operation === "create" ||
+          operation === "update" ||
+          operation === "updateMany" ||
+          operation === "updateManyAndReturn"
+        ? [args?.data]
+        : [];
+  for (const d of nestedData)
+    for (const child of findNestedWithoutTenant(model, d))
+      guard.superAdminCreate(child.model, "create", kind);
   if (!isTenantOwned(model)) return;
   if (operation === "create" && !hasTenant(args?.data))
     guard.superAdminCreate(model, operation, kind);
@@ -177,7 +192,16 @@ export function superAdminCreateExtension(
   };
 }
 
-const WRITE_OPS = new Set(["create", "createMany", "createManyAndReturn", "upsert"]);
+const WRITE_OPS = new Set([
+  "create",
+  "createMany",
+  "createManyAndReturn",
+  "upsert",
+  // an update can carry a nested create (SA-620); only the nested children are checked, never the row
+  "update",
+  "updateMany",
+  "updateManyAndReturn",
+]);
 
 /**
  * SA-619a: a transaction proxy for every NON-TENANT kind. Only the WRITE methods of tenant-owned

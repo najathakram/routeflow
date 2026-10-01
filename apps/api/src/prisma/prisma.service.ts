@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
+import { isTenantOwnedModel, stampNestedTenant } from "../tenant/nested-tenant-walk";
 import {
   TenantContextGuard,
   readEnforceFlag,
@@ -10,25 +11,9 @@ import {
   wrapTxWithCreateCheck,
 } from "../tenant/tenant-context-guard";
 
-/** SA-619: the models that carry a tenantId column (from the generated data model), built once. */
-let tenantOwnedModels: Set<string> | null = null;
-export function isTenantOwnedModel(model: string): boolean {
-  if (!tenantOwnedModels) {
-    tenantOwnedModels = new Set(
-      (Prisma as any).dmmf?.datamodel?.models
-        ?.filter((m: { fields: Array<{ name: string }> }) =>
-          m.fields.some((f) => f.name === "tenantId"),
-        )
-        .map((m: { name: string }) => m.name) ?? [],
-    );
-    // An empty set would make every create check pass silently (e.g. a generator without `Prisma.dmmf`).
-    if (tenantOwnedModels.size === 0)
-      new Logger("TenantContext").error(
-        "Prisma.dmmf exposes no tenant-owned models: the SA-619 create check is INACTIVE",
-      );
-  }
-  return tenantOwnedModels.has(model);
-}
+// SA-619/SA-620: the tenant-owned model list and the nested-write walker live in ONE module (derived from
+// the generated data model); re-exported here for the callers that import it from the service.
+export { isTenantOwnedModel };
 
 /** The first stack frame outside this file and the guard: where a context-less call came from. */
 function callSite(): string {
@@ -199,10 +184,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             const fn = modelTarget[method];
             if (typeof fn !== "function" || typeof method !== "string") return fn;
 
+            // A Prisma delegate is the model name with a lower-case first letter (SA-620: the nested walker
+            // is keyed on the model name).
+            const modelClass = modelName.charAt(0).toUpperCase() + modelName.slice(1);
+
             if (WRITE_METHODS.has(method)) {
               return (args: any = {}) => {
                 if (method === "create") {
-                  args = { ...args, data: { ...args.data, tenantId } };
+                  args = {
+                    ...args,
+                    data: stampNestedTenant(modelClass, { ...args.data, tenantId }, tenantId),
+                  };
                 } else if (method === "createMany" || method === "createManyAndReturn") {
                   const data = Array.isArray(args.data)
                     ? args.data.map((d: any) => ({ ...d, tenantId }))
@@ -220,7 +212,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                   // tenant id or a compound unique, so the gap is unexploited.
                   args = {
                     ...args,
-                    create: { ...args.create, tenantId },
+                    create: stampNestedTenant(modelClass, { ...args.create, tenantId }, tenantId),
+                    ...(args.update
+                      ? { update: stampNestedTenant(modelClass, args.update, tenantId) }
+                      : {}),
                   };
                 }
                 return fn.call(modelTarget, args);
@@ -230,6 +225,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
             if (SCOPED_METHODS.has(method)) {
               return (args: any = {}) => {
                 args = { ...args, where: { ...args.where, tenantId } };
+                // An edit that adds lines (`update.data.items.create`) stamps the nested children too.
+                if (
+                  (method === "update" ||
+                    method === "updateMany" ||
+                    method === "updateManyAndReturn") &&
+                  args.data
+                )
+                  args = { ...args, data: stampNestedTenant(modelClass, args.data, tenantId) };
                 return fn.call(modelTarget, args);
               };
             }
@@ -307,7 +310,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
               }
 
               case "create":
-                args.data = { ...args.data, tenantId };
+                // SA-620: nested relation creates get the tenant too (one DMMF walker, everywhere).
+                args.data = stampNestedTenant(model, { ...args.data, tenantId }, tenantId);
                 return query(args);
 
               case "createMany":
@@ -319,16 +323,22 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
               case "upsert":
                 args.where = { ...args.where, tenantId };
-                args.create = { ...args.create, tenantId };
+                args.create = stampNestedTenant(model, { ...args.create, tenantId }, tenantId);
+                if (args.update) args.update = stampNestedTenant(model, args.update, tenantId);
+                return query(args);
+
+              // An edit that adds lines (`update.data.items.create`) stamps the nested children too.
+              case "update":
+              case "updateMany":
+              case "updateManyAndReturn":
+                args.where = { ...args.where, tenantId };
+                if (args.data) args.data = stampNestedTenant(model, args.data, tenantId);
                 return query(args);
 
               case "findMany":
               case "findFirst":
               case "findFirstOrThrow":
               case "count":
-              case "update":
-              case "updateMany":
-              case "updateManyAndReturn":
               case "delete":
               case "deleteMany":
               case "aggregate":
