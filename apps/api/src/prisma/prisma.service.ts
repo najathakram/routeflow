@@ -544,7 +544,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
         try {
           this.tenantGuard?.missingContext(kind, callSite);
         } catch (e) {
-          return Promise.reject(e); // a rejection, like every other $transaction failure, never a sync throw
+          return Promise.reject(e instanceof Error ? e : new Error(String(e))); // a rejection, like every other $transaction failure, never a sync throw
         }
       }
     }
