@@ -257,6 +257,8 @@ export class InlineReturnsService {
       user,
       db,
     );
+    // B961: a staff order create without the already-returned reason refuses HERE, before the number is reserved.
+    this.alreadyReturnedPolicy(lines.items, priced.chunks, user);
     return priced.total;
   }
 

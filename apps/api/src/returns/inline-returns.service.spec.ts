@@ -1186,6 +1186,18 @@ describe("InlineReturnsService", () => {
       expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
     });
 
+    it("the NEW-order preflight refuses a staff return without the reason BEFORE a credit-note number is reserved", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const code = await codeOf(
+        service.preflightNewOrderReturn(
+          { items: [{ productId: "prod-1", qty: 6 }], returnKey: "k-new" } as any,
+          "cust-1",
+          OPERATOR,
+        ),
+      );
+      expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
+    });
+
     describe("approving an already-returned hold", () => {
       const HELD_AR: any = {
         id: "ret-held",
