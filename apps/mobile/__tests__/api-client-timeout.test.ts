@@ -94,7 +94,7 @@ describe("api-client — offline-enqueue hardening (REG-B196)", () => {
     const originalError = fakeTimeout({
       url: "/orders",
       method: "post",
-      headers: {},
+      headers: { "Idempotency-Key": "k-0" },
       data: JSON.stringify(body),
     });
 

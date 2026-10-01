@@ -1,7 +1,7 @@
 import axios, { type InternalAxiosRequestConfig } from "axios";
 import { Platform } from "react-native";
 import { useOfflineQueue } from "../store/offlineQueue";
-import { ONLINE_REQUIRED_MESSAGE, isOfflineSafe } from "./offline-allowlist";
+import { ONLINE_REQUIRED_MESSAGE, isOfflineQueueable } from "./offline-allowlist";
 import { OP_KEYS, DRIVER_KEYS, CURRENT_ROLE_KEY, type CurrentRole } from "./auth-keys";
 import { toSecureStoreKey } from "./secure-key";
 
@@ -162,7 +162,10 @@ apiClient.interceptors.response.use(
     // enqueued and the caller gets a plain "You're offline" error that is NOT `isOfflineQueued` (screens
     // treat that flag as a pending success). A queue REPLAY carries `_offlineQueued`, so legacy entries
     // persisted before this rule still drain and fail/retry through the normal classification.
-    if (wouldQueue && !isOfflineSafe(original?.method ?? "", original?.url ?? "")) {
+    if (
+      wouldQueue &&
+      !isOfflineQueueable(original?.method ?? "", original?.url ?? "", original?.headers)
+    ) {
       return Promise.reject(
         Object.assign(new Error(ONLINE_REQUIRED_MESSAGE), { isOnlineRequired: true }),
       );

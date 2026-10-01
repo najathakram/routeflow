@@ -46,7 +46,10 @@ describe("allow-listed endpoints are still queued", () => {
   ];
 
   it.each(ALLOWED)("%s %s is enqueued once and rejects isOfflineQueued", async (method, url) => {
-    await expect(rejected()(netErr(url, method))).rejects.toMatchObject({ isOfflineQueued: true });
+    // keyed entries are queued only with their key (B1), so every allow-listed call carries one here
+    await expect(
+      rejected()(netErr(url, method, { headers: { "idempotency-key": "k-0" } })),
+    ).rejects.toMatchObject({ isOfflineQueued: true });
     expect(mockEnqueue).toHaveBeenCalledTimes(1);
     expect(mockEnqueue.mock.calls[0][0]).toMatchObject({ endpoint: url });
   });
@@ -114,7 +117,11 @@ describe("the existing guards are unchanged", () => {
 
   it("a timeout while the app KNOWS it is offline follows the allow-list", async () => {
     mockOnline = false;
-    await expect(rejected()(netErr("/returns", "post", {}, "ECONNABORTED"))).rejects.toMatchObject({
+    await expect(
+      rejected()(
+        netErr("/returns", "post", { headers: { "idempotency-key": "k-0" } }, "ECONNABORTED"),
+      ),
+    ).rejects.toMatchObject({
       isOfflineQueued: true,
     });
     await expect(
@@ -143,5 +150,40 @@ describe("the existing guards are unchanged", () => {
     const err = netErr("/orders", "get");
     await expect(rejected()(err)).rejects.toBe(err);
     expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("B1 (runtime): an entry that relies on an Idempotency-Key is queued ONLY when the request carries it", () => {
+  const KEYED: Array<[string, string]> = [
+    ["post", "/orders"],
+    ["post", "/returns"],
+    ["post", "/route-runs/run-1/stops/stop-1/complete-with-payment"],
+  ];
+
+  it.each(KEYED)(
+    "%s %s without the header is online-only, with it is queued",
+    async (method, url) => {
+      let err: any;
+      try {
+        await rejected()(netErr(url, method));
+      } catch (e) {
+        err = e;
+      }
+      expect(mockEnqueue).not.toHaveBeenCalled();
+      expect(err?.isOnlineRequired).toBe(true);
+      expect(err?.isOfflineQueued).toBeUndefined();
+
+      await expect(
+        rejected()(netErr(url, method, { headers: { "Idempotency-Key": "k-1" } })),
+      ).rejects.toMatchObject({ isOfflineQueued: true });
+      expect(mockEnqueue).toHaveBeenCalledTimes(1);
+      expect(mockEnqueue.mock.calls[0][0].headers).toEqual({ "Idempotency-Key": "k-1" });
+    },
+  );
+
+  it("an idempotent-by-contract entry needs no header", async () => {
+    await expect(
+      rejected()(netErr("/route-runs/run-1/stops/stop-1", "patch")),
+    ).rejects.toMatchObject({ isOfflineQueued: true });
   });
 });

@@ -98,6 +98,26 @@ export function isOfflineSafe(method: string, url: string): boolean {
   return OFFLINE_SAFE_ENDPOINTS.some((e) => e.method === m && e.pattern.test(path));
 }
 
+function hasIdempotencyKey(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object") return false;
+  return Object.entries(headers as Record<string, unknown>).some(
+    ([k, v]) => k.toLowerCase() === "idempotency-key" && typeof v === "string" && v.length > 0,
+  );
+}
+
+/**
+ * B923 (B1): the queue replays a request after its response was lost, so an entry whose safety IS an
+ * Idempotency-Key (`replaySafety: "idempotency-key"`) may be queued only when THIS request carries one.
+ * Enforced at runtime in the interceptor for every screen, not per call site.
+ */
+export function isOfflineQueueable(method: string, url: string, headers?: unknown): boolean {
+  const m = method.toUpperCase();
+  const path = pathOf(url);
+  const entry = OFFLINE_SAFE_ENDPOINTS.find((e) => e.method === m && e.pattern.test(path));
+  if (!entry) return false;
+  return entry.replaySafety !== "idempotency-key" || hasIdempotencyKey(headers);
+}
+
 /** A path segment that contains a digit or an upper-case letter is an id, not a route word. */
 function normalizeForCount(endpoint: string): string {
   return pathOf(endpoint)

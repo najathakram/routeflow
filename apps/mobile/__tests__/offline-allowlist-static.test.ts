@@ -63,23 +63,6 @@ describe("offline allow-list static guard (B923)", () => {
       });
     }
   });
-
-  it("an entry that claims an Idempotency-Key really has one at its call site", () => {
-    for (const e of OFFLINE_SAFE_ENDPOINTS.filter((x) => x.replaySafety === "idempotency-key")) {
-      const files = new Set<string>();
-      for (const [k, fs_] of sites) {
-        const { method, path: p } = split(k);
-        if (method === e.method && e.pattern.test(p)) fs_.forEach((f) => files.add(f));
-      }
-      const text = [...files]
-        .map((f) => fs.readFileSync(path.resolve(__dirname, "..", f), "utf8"))
-        .join("\n");
-      // comments must not satisfy the check
-      const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-      expect({ entry: e.pattern.source, hasKey: /idempotency-?key/i.test(code) }).toEqual({
-        entry: e.pattern.source,
-        hasKey: true,
-      });
-    }
-  });
+  // B1b: the Idempotency-Key claim is enforced at RUNTIME by isOfflineQueueable (api-client-offline-allowlist.test.ts),
+  // not by grepping call-site text, which a comment or an unrelated hook in the same file could satisfy.
 });
