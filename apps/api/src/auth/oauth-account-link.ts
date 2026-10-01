@@ -91,5 +91,8 @@ export async function casLinkProviderId<
   if (!fresh) throw new ForbiddenException("unauthorized");
   const bound = fresh[column];
   if (bound && bound !== sub) throw new ConflictException(MISMATCH_CODE[column]);
+  // Lost the CAS but the row still has NO sub: this was not a race (e.g. the row left the scoped
+  // `extraWhere`), so nothing was linked. Never report success for a link that did not happen.
+  if (!bound) throw new ForbiddenException("unauthorized");
   return { row: fresh, linked: false };
 }

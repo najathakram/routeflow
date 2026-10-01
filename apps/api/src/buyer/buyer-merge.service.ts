@@ -384,15 +384,6 @@ export class BuyerMergeService {
     const linksToTransfer = secondaryLinks.filter((l) => !primaryTenantIds.has(l.tenantId));
     const conflictingLinks = secondaryLinks.filter((l) => primaryTenantIds.has(l.tenantId));
 
-    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
-    // token is about to be discarded (cleared in the transaction). Revoke it AT APPLE first, while
-    // it is still readable, so that grant does not stay alive at Apple. Best-effort: a failure is
-    // logged inside revokeForBuyer and never blocks the merge. If the primary inherits the grant
-    // instead, nothing is revoked.
-    if (secondaryAccount.appleId && primaryAccount.appleId) {
-      await this.appleOAuth.revokeForBuyer(secondaryAccount.id).catch(() => undefined);
-    }
-
     await this.prisma.$transaction(async (tx) => {
       // 1. Transfer non-conflicting CustomerLinks
       if (linksToTransfer.length > 0) {
@@ -466,6 +457,17 @@ export class BuyerMergeService {
         data: { status: BuyerMergeRequestStatus.COMPLETED, completedAt: new Date() },
       });
     });
+
+    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
+    // token was just discarded by the transaction. Revoke it AT APPLE now, from the value loaded
+    // BEFORE the merge, and only after the merge COMMITTED (a failed merge leaves the secondary's
+    // grant alone). If the primary inherited the grant instead, nothing is revoked. Best-effort:
+    // revokeRefreshToken logs and never throws; the .catch is belt and braces.
+    if (secondaryAccount.appleId && primaryAccount.appleId) {
+      await this.appleOAuth
+        .revokeRefreshToken(secondaryAccount.appleRefreshTokenEnc, secondaryAccount.id)
+        .catch(() => undefined);
+    }
 
     // 7. Send notification emails (outside transaction)
     try {
