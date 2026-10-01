@@ -650,9 +650,11 @@ export class ReturnsService {
       for (const it of inv.items ?? []) if (Number(it.qty) > 0) billedProducts.add(it.productId);
     const unbilledQty = new Map<string, number>();
     for (const it of items)
-      if (!billedProducts.has(it.productId))
+      if (Number(it.qty) > 0 && !billedProducts.has(it.productId))
         unbilledQty.set(it.productId, (unbilledQty.get(it.productId) ?? 0) + Number(it.qty));
-    const returnedProducts = new Set(items.map((it: any) => it.productId));
+    const returnedProducts = new Set(
+      items.filter((it: any) => Number(it.qty) > 0).map((it: any) => it.productId),
+    );
     if (returnedProducts.size > 0 && unbilledQty.size === returnedProducts.size)
       throw new BadRequestException({
         code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
@@ -853,7 +855,7 @@ export class ReturnsService {
     amount: number;
     invoiceId?: string;
     creditable: any[];
-    refusal?: "NOTHING_CREDITABLE";
+    refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED";
   } {
     const allInvoices = order?.invoices ?? [];
 
@@ -930,8 +932,15 @@ export class ReturnsService {
     }
     amount = roundMoney(amount);
 
+    // B959: nothing the customer returned was billed on any creditable invoice (a billed $0 line is billed): the preview says
+    // so (amount 0 WITH a reason) and billedBasisFor refuses it, instead of a plain $0.
+    const nothingBilled =
+      [...returned].length > 0 &&
+      [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
+    const why = nothingBilled ? { refusal: "NOTHING_BILLED" as const } : {};
+
     if (creditable.length === 1) {
-      return { amount, invoiceId: creditable[0].id, creditable };
+      return { amount, invoiceId: creditable[0].id, creditable, ...why };
     }
 
     // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
@@ -941,7 +950,7 @@ export class ReturnsService {
       const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return bt - at;
     })[0];
-    return { amount, invoiceId: latest.id, creditable };
+    return { amount, invoiceId: latest.id, creditable, ...why };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto) {

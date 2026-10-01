@@ -194,9 +194,18 @@ export interface ProcessRefundDto {
   method?: RefundMethod;
 }
 
+/** B959: a returned item that was NOT billed on the order, so it got no refund (a mixed return still refunds the billed part). */
+export interface UnbilledReturnItem {
+  productId: string;
+  name: string;
+  qty: number;
+  message: string;
+}
+export type ProcessRefundResult = Return & { unbilledItems?: UnbilledReturnItem[] };
+
 export function useProcessRefund() {
   const qc = useQueryClient();
-  return useMutation<Return, Error, ProcessRefundDto>({
+  return useMutation<ProcessRefundResult, Error, ProcessRefundDto>({
     mutationFn: ({ id, ...data }) =>
       apiClient.post(`/returns/${id}/refund`, data).then((r) => r.data),
     onSuccess: (_, { id }) => {

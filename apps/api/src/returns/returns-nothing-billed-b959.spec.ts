@@ -106,9 +106,13 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
   it("4. EXTERNAL_REFUND is untouched: it mints nothing by design and still resolves an unbilled-only return", async () => {
     withReturn(order([invoice("inv-1", [LINE_A])]), [{ productId: "pz", qty: 1 }]);
     const res: any = await service.processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any);
-    expect(res.status ?? "REFUNDED").toBeDefined();
-    expect(prisma.return.updateMany).toHaveBeenCalled();
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: "REFUNDED", refundMethod: "EXTERNAL_REFUND" }),
+      }),
+    );
     expect(create).not.toHaveBeenCalled();
+    expect(res.unbilledItems).toBeUndefined(); // the external path does not run the billed-basis gate
   });
 
   it("5. an order with NO invoice rows keeps the legacy order-line basis (no refusal); a VOID-only order keeps its own refusal", async () => {
@@ -131,5 +135,67 @@ describe("ReturnsService.processRefund: B959 nothing billed", () => {
     const err = await service.processRefund("ret-1").catch((e) => e);
     expect(err.message).toMatch(/Nothing billed on this order can be refunded/);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it("6. a FREE billed line + an unbilled item: no refusal (free is billed), $0 resolves REFUNDED with no credit note, and the unbilled item is NAMED in the result (the silent-$0 scenario)", async () => {
+    const free = { id: "line-free", productId: "pf", qty: 1, subtotal: 0 };
+    withReturn(order([invoice("inv-1", [free, LINE_A])]), [
+      { productId: "pf", qty: 1 },
+      { productId: "pz", qty: 2 },
+    ]);
+    const res: any = await service.processRefund("ret-1");
+    expect(create).not.toHaveBeenCalled();
+    expect(res.unbilledItems).toEqual([expect.objectContaining({ productId: "pz", qty: 2 })]);
+  });
+
+  it("7. a mixed return across 2+ creditable invoices (the order pool path): the unbilled item causes no pool refusal and is reported", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    withReturn(
+      order([
+        invoice("inv-1", [LINE_A]),
+        {
+          ...invoice("inv-2", [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }]),
+          createdAt: new Date("2026-02-01"),
+        },
+      ]),
+      [
+        { productId: "pa", qty: 1 },
+        { productId: "pz", qty: 1 },
+      ],
+    );
+    const res: any = await service.processRefund("ret-1");
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(res.unbilledItems).toEqual([expect.objectContaining({ productId: "pz" })]);
+  });
+
+  it("8. a qty-0 item is ignored: it neither counts toward 'nothing billed' nor appears as an unbilled line", async () => {
+    withReturn(order([invoice("inv-1", [LINE_A])]), [
+      { productId: "pa", qty: 1 },
+      { productId: "pz", qty: 0 },
+    ]);
+    const res: any = await service.processRefund("ret-1");
+    expect(res.unbilledItems).toBeUndefined();
+  });
+
+  it("9. the PREVIEW agrees: an unbilled-only return prices $0 WITH the reason NOTHING_BILLED (not a plain $0); a billed return has no reason", () => {
+    const o = order([invoice("inv-1", [LINE_A])]);
+    expect((service as any).priceReturn([{ productId: "pz", qty: 1 }], o)).toMatchObject({
+      amount: 0,
+      refusal: "NOTHING_BILLED",
+    });
+    expect((service as any).priceReturn([{ productId: "pa", qty: 1 }], o).refusal).toBeUndefined();
+    // a mixed return is NOT a refusal (the billed part is refunded)
+    expect(
+      (service as any).priceReturn(
+        [
+          { productId: "pa", qty: 1 },
+          { productId: "pz", qty: 1 },
+        ],
+        o,
+      ).refusal,
+    ).toBeUndefined();
   });
 });
