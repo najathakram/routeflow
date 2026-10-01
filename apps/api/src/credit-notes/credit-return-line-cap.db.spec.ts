@@ -616,24 +616,150 @@ describeDb(
         where: { tenantId: s.tenantId, invoiceId: null, items: { none: {} } },
       });
 
-    it("21. B961 (F2 repro): A was already refunded by a STANDARD return; an inline return of A is no longer auto-credited: staff need a reason", async () => {
+    const staffUser = (s: Seed) => ({
+      sub: s.userId,
+      username: "operator",
+      role: "OPERATOR" as any,
+      status: "ACTIVE" as any,
+      forcePasswordChange: false,
+      tenantId: s.tenantId,
+      tenantSlug: "x",
+    });
+    /** All credit-note money minted for this tenant (the lump refund + any inline credit). */
+    const totalCredited = async (s: Seed) =>
+      Number(
+        (
+          await prisma.creditNote.aggregate({
+            where: { tenantId: s.tenantId, status: { not: "VOID" } },
+            _sum: { amount: true },
+          })
+        )._sum.amount ?? 0,
+      );
+
+    it("21. B961 (F2 repro, SA-071d): A already refunded by a STANDARD return (lump on a later invoice); an inline return of A is an UNREFERENCED chunk flagged 'already returned or credited', never auto-credited: staff need a reason", async () => {
       const s = await refundedOnLaterInvoice("ar-staff");
-      const before = await inlineCredits(s);
+      expect(await totalCredited(s)).toBe(100); // the standard refund of A, once
+      // (1)+(2): the quote prices it unreferenced (no source line) and flags it
+      const quote = await tenantCtx.run(s.tenantId, () =>
+        inline.quoteService.quote(
+          { customerId: s.customerId, items: [{ productId: s.pA.id, boxes: 0, pieces: 1 }] },
+          staffUser(s),
+        ),
+      );
+      expect(quote.chunks).toHaveLength(1);
+      expect(quote.chunks[0]).toMatchObject({
+        sourceInvoiceItemId: null,
+        alreadyReturned: true,
+      });
+      expect(["CUSTOMER_PRICE", "TIER", "BASE"]).toContain(quote.chunks[0].priceSource);
+      // (5): without the confirm nothing is credited: the total stays $100 on the $100 line
       const err = await inlineReturn(s).catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({
         code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
       });
-      expect(await inlineCredits(s)).toBe(before); // nothing credited (was: a second $100 on a $100 line)
-      const ok = await inlineReturn(s, 1, "customer kept the original credit slip");
-      expect(ok).toBeDefined();
-      const audit = await prisma.auditLog.findFirst({
+      expect(await totalCredited(s)).toBe(100);
+      // (4): staff + a reason is allowed AND audited with the actor and the reason
+      await inlineReturn(s, 1, "customer kept the original credit slip");
+      const audit: any = await prisma.auditLog.findFirst({
         where: {
           tenantId: s.tenantId,
           action: "inline_return.already_returned_credit",
           userId: s.userId,
         },
       });
-      expect(audit).not.toBeNull();
+      expect(audit?.meta?.items?.[0]).toMatchObject({
+        productId: s.pA.id,
+        reason: "customer kept the original credit slip",
+      });
+      expect(await totalCredited(s)).toBe(200); // the deliberate, audited second credit
+    });
+
+    it("21b. B961 (SA-071d): the same capture by a DRIVER is HELD for the office: not credited, not restocked, audited", async () => {
+      const s = await refundedOnLaterInvoice("ar-driver");
+      const driverUser = await prisma.user.create({
+        data: {
+          email: `drv-${RUN}-${++rtnSeq}@example.invalid`,
+          username: `drv-${RUN}-${rtnSeq}`,
+          role: "DRIVER",
+          tenantId: s.tenantId,
+        },
+      });
+      const driver = await prisma.driver.create({
+        data: { userId: driverUser.id, tenantId: s.tenantId },
+      });
+      const route = await prisma.route.create({
+        data: { name: `r ${RUN} ${rtnSeq}`, tenantId: s.tenantId },
+      });
+      const routeStop = await prisma.routeStop.create({
+        data: { routeId: route.id, stopNumber: 1, tenantId: s.tenantId },
+      });
+      const run = await prisma.routeRun.create({
+        data: {
+          routeId: route.id,
+          driverId: driver.id,
+          status: "IN_PROGRESS",
+          scheduledDate: new Date(),
+          tenantId: s.tenantId,
+        },
+      });
+      const stop = await prisma.routeRunStop.create({
+        data: {
+          routeRunId: run.id,
+          routeStopId: routeStop.id,
+          customerId: s.customerId,
+          stopNumber: 1,
+          status: "IN_PROGRESS",
+          podPhotoUrls: [],
+          tenantId: s.tenantId,
+        },
+      });
+      const carrying = await prisma.order.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderNumber: `ORD-CAPRET-${RUN}-D${++rtnSeq}`,
+          subtotal: 0,
+          tax: 0,
+          total: 1000,
+          status: "DELIVERED",
+          routeRunId: run.id,
+          routeRunStopId: stop.id,
+        } as any,
+      });
+      const held: any = await tenantCtx.run(s.tenantId, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: carrying.id,
+            items: [{ productId: s.pA.id, qty: 1 }],
+            routeRunStopId: stop.id,
+            returnKey: `capret-${RUN}-D${rtnSeq}`,
+          },
+          {
+            sub: driverUser.id,
+            username: "driver",
+            role: "DRIVER" as any,
+            status: "ACTIVE" as any,
+            forcePasswordChange: false,
+            tenantId: s.tenantId,
+            tenantSlug: "x",
+          },
+        ),
+      );
+      expect(held.status).toBe("RECEIVED");
+      expect(held.holdReason).toBe("DRIVER_CAP");
+      expect(held.creditNoteId ?? null).toBeNull();
+      expect(String(held.holdMessage)).toMatch(/already returned or credited/i);
+      expect(await totalCredited(s)).toBe(100); // never auto-credited
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            tenantId: s.tenantId,
+            action: "inline_return.already_returned_hold",
+            entityId: held.id,
+          },
+        }),
+      ).toBe(1);
     });
 
     it("22. B961: a product NEVER invoiced (not on any invoice) is unchanged: an inline return needs no reason", async () => {
