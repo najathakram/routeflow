@@ -11,6 +11,8 @@ export type InventoryBuyerOversellMode = (typeof INVENTORY_BUYER_OVERSELL_MODES)
 
 export interface InventorySettings {
   buyerOversell: InventoryBuyerOversellMode;
+  /** Customers pinned to their own value for this setting (they ignore the tenant default). */
+  customerOverrides: number;
 }
 
 export interface UpdateInventorySettingsRequest {

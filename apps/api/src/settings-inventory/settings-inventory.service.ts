@@ -26,7 +26,17 @@ export class SettingsInventoryService {
   async get(): Promise<InventorySettings> {
     const tenantId = requireTenantContext(this.prisma);
     const raw = await this.policies.resolve(tenantId, "orders.buyerOversell", {});
-    return { buyerOversell: toMode(raw) };
+    return { buyerOversell: toMode(raw), customerOverrides: await this.countOverrides(tenantId) };
+  }
+
+  /**
+   * Active CUSTOMER-scope rows for the key: a customer pinned to a different value than the tenant
+   * default, so the screen can never read "off" while some customers can still backorder.
+   */
+  private async countOverrides(tenantId: string): Promise<number> {
+    const rows = await this.policies.listActive(tenantId);
+    return rows.filter((r) => r.key === "orders.buyerOversell" && r.scopeType === "CUSTOMER")
+      .length;
   }
 
   async update(body: unknown, user: JwtPayload): Promise<InventorySettings> {
@@ -41,7 +51,7 @@ export class SettingsInventoryService {
       reason,
       actor: actorOf(user),
     });
-    return { buyerOversell };
+    return { buyerOversell, customerOverrides: await this.countOverrides(tenantId) };
   }
 }
 
