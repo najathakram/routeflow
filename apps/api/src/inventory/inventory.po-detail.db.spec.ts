@@ -259,13 +259,15 @@ describeDb("PO detail read — receipts + linked bill — real Postgres", () => 
     const w = await seedWorld("d5a", 50, 2);
     const po0 = await receivedPo(w, 20, 4);
     const foreign = await seedWorld("d5b", 50, 2);
+    // the PO's OWN product id and supplier, written under the OTHER tenant: only tenant scope can
+    // exclude it (the product and supplier filters would let it through)
     await prisma.stockMovement.create({
       data: {
-        productId: foreign.productId,
+        productId: w.productId,
         type: "PURCHASE",
         quantity: 99,
         reference: po0.poNumber,
-        supplierId: foreign.supplierId,
+        supplierId: w.supplierId,
         tenantId: foreign.tenantId,
       },
     });
@@ -297,5 +299,43 @@ describeDb("PO detail read — receipts + linked bill — real Postgres", () => 
     const po: any = await inTenant(w, () => service.getPurchaseOrder(created.id));
     expect(po.vendorBill).toMatchObject({ id: bill.id, billNumber: bill.billNumber });
     expect(po.vendorBill.status).toBeDefined();
+  });
+
+  // -- 7. a supplier-only edit leaves the receipts on the old supplier: they must still show ---
+  it("a supplier-only edit of a received PO still lists its receipts (they carry the old supplier)", async () => {
+    const w = await seedWorld("d7", 50, 2);
+    const po0 = await receivedPo(w, 20, 4);
+    const other = await prisma.supplier.create({
+      data: { name: "New supplier", tenantId: w.tenantId },
+    });
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po0.id,
+        { supplierId: other.id, reapplyInventory: true } as never,
+        w.userId,
+      ),
+    );
+    const po: any = await inTenant(w, () => service.getPurchaseOrder(po0.id));
+    expect(po.supplier.id).toBe(other.id);
+    expect(po.receipts.map((r: any) => r.kind)).toEqual(["RECEIPT"]);
+    expect(Number(po.receipts[0].quantity)).toBe(20);
+  });
+
+  // -- 8. a planted "reversal" that points at nothing of this PO is not shown ----------------
+  it("an ADJUSTMENT with the reversal prefix but no matching receipt is ignored", async () => {
+    const w = await seedWorld("d8", 50, 2);
+    const po0 = await receivedPo(w, 20, 4);
+    await prisma.stockMovement.create({
+      data: {
+        productId: w.productId,
+        type: "ADJUSTMENT",
+        quantity: -5,
+        reference: po0.poNumber,
+        notes: "PO edit reversal - reverses not-a-real-movement",
+        tenantId: w.tenantId,
+      },
+    });
+    const po: any = await inTenant(w, () => service.getPurchaseOrder(po0.id));
+    expect(po.receipts.map((r: any) => r.kind)).toEqual(["RECEIPT"]);
   });
 });

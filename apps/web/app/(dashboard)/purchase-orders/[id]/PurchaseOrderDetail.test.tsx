@@ -2,6 +2,7 @@ import * as React from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { PurchaseOrderDetail } from "./PurchaseOrderDetail";
 import { poActions } from "./po-detail-logic";
+import { fmtDate } from "@/lib/formatting";
 
 const setTitle = jest.fn();
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle }) }));
@@ -198,6 +199,34 @@ describe("PurchaseOrderDetail", () => {
     planFlag = { enabled: true, resolved: true, failed: false };
     show(po());
     expect(screen.queryByRole("link", { name: /Open bill/ })).toBeNull();
+  });
+
+  it("a VOID bill is shown as voided, not as a live bill", () => {
+    show(po({ vendorBill: { id: "b1", billNumber: "BILL-2026-0003", status: "VOID" } }));
+    expect(screen.getByText("Bill voided")).toBeInTheDocument();
+  });
+
+  it("receipt dates are timestamps in the viewer's zone, not pinned-UTC calendar days", () => {
+    const at = "2026-10-03T02:30:00.000Z";
+    show(
+      po({
+        status: "PARTIAL",
+        receipts: [
+          {
+            id: "m1",
+            kind: "RECEIPT",
+            productId: "p1",
+            productName: "Widget",
+            quantity: 5,
+            unitCost: 4,
+            at,
+          },
+        ],
+      }),
+    );
+    const section = screen.getByRole("region", { name: "Receipts" });
+    const cell = within(section).getAllByRole("row")[1].querySelectorAll("td")[0];
+    expect(cell.textContent).toBe(fmtDate(at));
   });
 
   it("loading shows a skeleton, not the not-found copy", () => {

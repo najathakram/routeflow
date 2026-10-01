@@ -6,7 +6,6 @@ import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "l
 import { Badge, Button, EmptyState, Skeleton, useToast } from "@routeflow/ui/web";
 import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
-import { unitsLabel } from "@/lib/stock-label";
 import { fmtCalendarDate } from "@/lib/formatting";
 import {
   usePurchaseOrders,
@@ -14,14 +13,7 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import {
-  resolveStoredPOLineAmounts,
-  type POItem,
-  type POStatus,
-  type PurchaseOrder,
-  type Supplier,
-  linePack,
-} from "./purchase-orders-shared";
+import type { POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";

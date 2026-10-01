@@ -6,7 +6,7 @@ import { ArrowLeft, FileText, PackageCheck, Pencil, Send } from "lucide-react";
 import { Button, EmptyState, PageHeader, Skeleton, useToast } from "@routeflow/ui/web";
 import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
-import { fmtCalendarDate } from "@/lib/formatting";
+import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { usePageTitle } from "@/lib/page-title-context";
 import { usePlanFlag } from "@/lib/api/plan-flags";
 import { planFlagVisible } from "@/lib/plan-gated-nav";
@@ -189,16 +189,23 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           <dt className="text-xs font-medium text-navy/70">Bill</dt>
           <dd className="text-navy">
             {bill ? (
-              canOpenBill ? (
-                <Link
-                  href={`/vendor-bills/${bill.id}`}
-                  className="inline-flex items-center gap-1 text-brand-500 hover:underline"
-                >
-                  <FileText className="h-4 w-4" /> Open bill {bill.billNumber}
-                </Link>
-              ) : (
-                <span>Billed ({bill.billNumber})</span>
-              )
+              <div className="space-y-0.5">
+                {bill.status === "VOID" && (
+                  <span className="block text-xs font-medium text-amber-700">Bill voided</span>
+                )}
+                {canOpenBill ? (
+                  <Link
+                    href={`/vendor-bills/${bill.id}`}
+                    className="inline-flex items-center gap-1 text-brand-500 hover:underline"
+                  >
+                    <FileText className="h-4 w-4" /> Open bill {bill.billNumber}
+                  </Link>
+                ) : (
+                  <span>
+                    {bill.status === "VOID" ? "Voided" : "Billed"} ({bill.billNumber})
+                  </span>
+                )}
+              </div>
             ) : (
               <span className="text-navy/70">No bill yet</span>
             )}
@@ -240,7 +247,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               <tbody className="divide-y divide-surface-border">
                 {receipts.map((r) => (
                   <tr key={r.id}>
-                    <td className="px-3 py-2 text-navy/70">{fmtCalendarDate(r.at)}</td>
+                    <td className="px-3 py-2 text-navy/70">{fmtDate(r.at)}</td>
                     <td className="px-3 py-2 font-medium text-navy">{r.productName ?? "—"}</td>
                     <td className="px-3 py-2 text-navy/70">
                       {r.kind === "REVERSAL" ? "Correction" : "Received"}

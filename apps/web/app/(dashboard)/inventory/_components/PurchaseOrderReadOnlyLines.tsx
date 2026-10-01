@@ -15,7 +15,7 @@ export function PurchaseOrderReadOnlyLines({
   catalogById: Map<string, { id: string; name?: string; unitsPerBox?: number | null }>;
 }) {
   return (
-    <div className="rounded-lg border border-surface-border overflow-hidden bg-white">
+    <div className="rounded-lg border border-surface-border overflow-x-auto bg-white">
       <table className="w-full text-xs">
         <thead className="bg-surface-raised text-navy/70">
           <tr>

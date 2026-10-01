@@ -1260,9 +1260,34 @@ export class InventoryService {
       },
       orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
     });
+    // A receipt is this PO's when it carries the PO's supplier. A supplier-only edit of a received
+    // PO changes the header but leaves the receipts on the OLD supplier, so for a product whose net
+    // posted quantity (own-supplier receipts + corrections) does not match what the line says was
+    // received, widen to any supplier for that product rather than show "nothing received" while
+    // stock was posted.
+    const qtyReceivedByProduct = new Map<string, number>();
+    for (const i of po.items) {
+      qtyReceivedByProduct.set(
+        i.productId,
+        (qtyReceivedByProduct.get(i.productId) ?? 0) + Number(i.qtyReceived),
+      );
+    }
+    const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
+    const ownSupplier = purchases.filter((m) => m.supplierId === po.supplierId);
+    const widened = new Set<string>();
+    for (const [productId, want] of qtyReceivedByProduct) {
+      const net = ownSupplier
+        .filter((m) => m.productId === productId)
+        .reduce((t, m) => t + Number(m.quantity), 0);
+      if (want > 0 && Math.abs(net - want) > 0.0005) widened.add(productId);
+    }
+    const receiptRows = purchases.filter(
+      (m) => m.supplierId === po.supplierId || widened.has(m.productId),
+    );
+    const receiptIds = new Set(receiptRows.map((m) => m.id));
     const receipts: PurchaseOrderReceipt[] = [];
     for (const m of movements) {
-      if (m.type === MovementType.PURCHASE && m.supplierId === po.supplierId) {
+      if (m.type === MovementType.PURCHASE && receiptIds.has(m.id)) {
         receipts.push({
           id: m.id,
           kind: "RECEIPT",
@@ -1273,6 +1298,10 @@ export class InventoryService {
           at: m.createdAt.toISOString(),
         });
       } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        // Free text is not trusted on its own (B608): a correction shows only when it points at one
+        // of this PO's own receipts.
+        const reversesId = m.notes.slice(prefix.length).trim();
+        if (!receiptIds.has(reversesId)) continue;
         receipts.push({
           id: m.id,
           kind: "REVERSAL",
@@ -1281,7 +1310,7 @@ export class InventoryService {
           quantity: Number(m.quantity),
           unitCost: m.unitCost == null ? null : Number(m.unitCost),
           at: m.createdAt.toISOString(),
-          reversesId: m.notes.slice(prefix.length).trim(),
+          reversesId,
         });
       }
     }
