@@ -121,7 +121,7 @@ async function main() {
   const { resolveReportDbUrl } = await import("./lib/report-db-url.mjs");
   const url = resolveReportDbUrl(TAG);
   if (!url) {
-    console.error(`${TAG}: no usable DATABASE_URL: refusing to run`);
+    console.error(`${TAG}: no usable database URL: refusing to run`);
     process.exit(2);
   }
   const { default: pg } = await import("pg");
