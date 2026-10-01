@@ -448,7 +448,10 @@ export class ReturnsService {
                   status: true,
                   total: true,
                   createdAt: true,
-                  items: { select: { id: true, productId: true, qty: true, subtotal: true } },
+                  items: {
+                    select: { id: true, productId: true, qty: true, subtotal: true },
+                    orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
+                  },
                 },
               },
               lineItems: {
@@ -657,33 +660,37 @@ export class ReturnsService {
     // many invoices the order has, so a lone invoice that already carries a credit
     // note (an earlier partial return, or an operator-issued credit) would otherwise
     // sail past this method and throw inside create() after the claim had committed.
+    // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
+    // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
+    // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
+    // note's items must belong to its one invoice; the older invoices' lines are NOT counted: a known residual).
+    // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
+    let refundItems: RefundItem[] | undefined;
+    let effectiveAmount = amount;
+    if (creditable.length === 1 && latest) {
+      const itemised = await this.itemiseRefund(items, latest);
+      if (itemised.length > 0) {
+        refundItems = itemised;
+        effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
+      }
+    }
+
     const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
       where: { status: { not: "VOID" }, invoiceId },
       _sum: { amount: true },
     });
     const latestRoom = Number(latest?.total ?? 0) - Number((latestAgg as any)?._sum?.amount ?? 0);
-    if (amount > latestRoom + 0.001) {
+    if (effectiveAmount > latestRoom + 0.001) {
       // The operator reads this string verbatim, so it names the invoice the way the
       // UI does. `invoiceNumber` is selected by every caller that can reach this line
       // (processRefund's query); the `?? invoiceId` fallback covers only the impossible
       // case of a row that lost the field, and a UUID there is a bug, not a label.
       throw new BadRequestException(
-        `Refund ${amount} exceeds the remaining room ${roundMoney(latestRoom)} on invoice ` +
+        `Refund ${effectiveAmount} exceeds the remaining room ${roundMoney(latestRoom)} on invoice ` +
           `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
       );
     }
-    // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
-    // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
-    // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
-    // note's items must belong to its one invoice).
-    if (creditable.length === 1 && latest) {
-      const refundItems = await this.itemiseRefund(items, latest);
-      if (refundItems.length > 0) {
-        const total = roundMoney(refundItems.reduce((n, it) => n + it.amount, 0));
-        return { amount: total, invoiceId, items: refundItems };
-      }
-    }
-    return { amount, invoiceId };
+    return { amount: effectiveAmount, invoiceId, ...(refundItems ? { items: refundItems } : {}) };
   }
 
   /**
@@ -859,7 +866,10 @@ export class ReturnsService {
                 status: true,
                 total: true,
                 createdAt: true,
-                items: { select: { id: true, productId: true, qty: true, subtotal: true } },
+                items: {
+                  select: { id: true, productId: true, qty: true, subtotal: true },
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
+                },
               },
             },
             lineItems: {
@@ -923,23 +933,27 @@ export class ReturnsService {
     // undefined for a zero-invoice (legacy) or VOID-sourced order.
     let cn: Awaited<ReturnType<CreditNotesService["create"]>>;
     try {
-      cn = await this.creditNotes.create({
-        customerId: ret.customerId,
-        invoiceId: sourceInvoiceId,
-        amount: refundAmount,
-        reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
-        // SA-628: an ITEMISED credit (trackedCategoryId null on its rows, so no second ledger reversal: receive() already
-        // reversed the returned regulated goods) counted by the shared per-line headroom.
-        ...(refundItems && refundItems.length > 0
-          ? {
-              items: refundItems.map((it) => ({
-                invoiceItemId: it.invoiceItemId,
-                amount: it.amount,
-                qty: it.qty,
-              })),
-            }
-          : {}),
-      });
+      cn = await this.creditNotes.create(
+        {
+          customerId: ret.customerId,
+          invoiceId: sourceInvoiceId,
+          amount: refundAmount,
+          reason: `Refund for return ${ret.returnNumber ?? ret.id.slice(0, 8)}`,
+          // SA-628: an ITEMISED credit (trackedCategoryId null on its rows, so no second ledger reversal: receive() already
+          // reversed the returned regulated goods) counted by the shared per-line headroom.
+          ...(refundItems && refundItems.length > 0
+            ? {
+                items: refundItems.map((it) => ({
+                  invoiceItemId: it.invoiceItemId,
+                  amount: it.amount,
+                  qty: it.qty,
+                })),
+              }
+            : {}),
+        },
+        // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
+        { ledgerReversedByReturn: true },
+      );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
       // must not strand the return in REFUNDED with no credit note — compensate the
@@ -1124,7 +1138,10 @@ export class ReturnsService {
                 status: true,
                 total: true,
                 createdAt: true,
-                items: { select: { id: true, productId: true, qty: true, subtotal: true } },
+                items: {
+                  select: { id: true, productId: true, qty: true, subtotal: true },
+                  orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
+                },
               },
             },
             lineItems: {

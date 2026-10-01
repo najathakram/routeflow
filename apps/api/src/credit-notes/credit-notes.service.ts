@@ -79,7 +79,7 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string } = {},
+    opts: { excludeCreditNoteId?: string; ledgerReversedByReturn?: boolean } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -108,6 +108,7 @@ export class CreditNotesService {
             trackedCategoryId: true,
             categoryTaxAmount: true,
           },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic line order for the shared headroom (SA-628)
         },
       },
     });
@@ -257,10 +258,14 @@ export class CreditNotesService {
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
         // live product — a product's category may have drifted, and only a line
         // that actually sold regulated has a matching SALE row to reverse.
-        trackedCategoryId: line.trackedCategoryId ?? null,
+        // SA-628: a RETURN REFUND note is itemised only so the shared per-line headroom counts it; receive() already reversed
+        // the returned regulated goods, so its rows carry NO category and NO tax (a second reversal would double-file them).
+        trackedCategoryId: opts.ledgerReversedByReturn ? null : (line.trackedCategoryId ?? null),
         amount: roundMoney(amt),
         qty,
-        categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+        categoryTax: opts.ledgerReversedByReturn
+          ? 0
+          : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
     if (Math.abs(sum - dto.amount) > 0.01)
@@ -430,20 +435,23 @@ export class CreditNotesService {
     return created;
   }
 
-  async create(dto: {
-    customerId: string;
-    invoiceId?: string;
-    amount: number;
-    reason?: string;
-    // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
-    // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
-    // NOTHING in the regulated ledger (returned regulated goods go through the returns
-    // path, which attributes by product). This is what prevents a credit that concerned
-    // non-regulated goods from proportionally reversing regulated excise sales.
-    items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
-    /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
-    expiresAt?: string;
-  }) {
+  async create(
+    dto: {
+      customerId: string;
+      invoiceId?: string;
+      amount: number;
+      reason?: string;
+      // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
+      // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
+      // NOTHING in the regulated ledger (returned regulated goods go through the returns
+      // path, which attributes by product). This is what prevents a credit that concerned
+      // non-regulated goods from proportionally reversing regulated excise sales.
+      items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+      /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
+      expiresAt?: string;
+    },
+    internal: { ledgerReversedByReturn?: boolean } = {},
+  ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
 
@@ -486,7 +494,7 @@ export class CreditNotesService {
     // standalone (non-tx) read of everything this create can be rejected for, so
     // a rejected request burns none of the tenant's CREDIT_NOTE series. Runs on
     // `forTenant()`, never `tx` — nothing is open yet.
-    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto);
+    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto, internal);
 
     // Hoisted ABOVE the SERIALIZABLE tx below (never `{ tx }`): under
     // SERIALIZABLE a blocked counter UPDATE ABORTS (P2034) rather than waiting,
@@ -529,7 +537,7 @@ export class CreditNotesService {
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE`;
             }
-            const cnItemsData = await this.validateAndBuildCnItems(tx, dto);
+            const cnItemsData = await this.validateAndBuildCnItems(tx, dto, internal);
 
             // REG-B267-E: the customer summary the response carries comes from the
             // tenant-scoped pre-read above rather than from `create({ include })`.
