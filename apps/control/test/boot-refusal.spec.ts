@@ -5,48 +5,30 @@
  * token can write (either repo) or cannot be verified, a normal boot with the two log lines when
  * both repos answer 403, and no half-booted process when a later boot step rejects.
  *
- * The compiled copy goes to a private out dir (never dist/, which wp7-security spawns in parallel).
+ * The compiled copy is the once-per-run build (test/global-setup.ts), never `dist/`.
  * The GitHub base is redirected to the fake server by the Jest-only seam in main.ts
  * (CONTROL_TEST_GITHUB_BASE, honoured only when JEST_WORKER_ID is set), so nothing leaves 127.0.0.1.
  */
-import { execFileSync, spawn } from "child_process";
-import * as fs from "fs";
+import { spawn } from "child_process";
 import * as http from "http";
 import * as net from "net";
 import * as path from "path";
+import { buildPrivateDist } from "./helpers/build-dist";
+import type { PrivateDist } from "./helpers/build-dist";
 
 jest.setTimeout(120_000);
 
-const CONTROL = path.join(__dirname, "..");
-// stays inside apps/control (the compiled server resolves the shared denylist relative to itself);
-// apps/control/.gitignore ignores it so a killed run cannot leave files for `git add -A`
-const OUT = path.join(CONTROL, `.dist-boot-refusal-${process.pid}`);
+// the once-per-run build from test/global-setup.ts (a private one when run outside it)
+let dist: PrivateDist;
 const TOKEN = "tok-FAKE-boot-refusal-0123456789";
 const B64 = Buffer.from("x-access-token:" + TOKEN).toString("base64");
 const PRODUCT = "acme/acme";
 const STATE = "acme/acme-control-state";
 
 beforeAll(() => {
-  execFileSync(
-    "node",
-    [
-      require.resolve("typescript/bin/tsc"),
-      "-p",
-      "tsconfig.build.json",
-      "--outDir",
-      OUT,
-      "--incremental",
-      "false",
-    ],
-    { cwd: CONTROL, stdio: "pipe" },
-  );
-  fs.cpSync(path.join(CONTROL, "src/render/assets"), path.join(OUT, "render/assets"), {
-    recursive: true,
-  });
+  dist = buildPrivateDist("boot-refusal");
 });
-afterAll(() => {
-  fs.rmSync(OUT, { recursive: true, force: true });
-});
+afterAll(() => dist?.cleanup());
 
 interface Fake {
   base: string;
@@ -124,7 +106,7 @@ function boot(
       ...over,
     };
     for (const k of Object.keys(env)) if (env[k] === UNSET) delete env[k];
-    const child = spawn("node", [path.join(OUT, "main.js")], {
+    const child = spawn("node", [dist.main], {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });

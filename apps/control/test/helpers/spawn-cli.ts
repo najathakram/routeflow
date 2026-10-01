@@ -15,7 +15,7 @@ import type { World } from "./temp-repo";
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 export const CTL_BIN = path.resolve(APP_ROOT, "bin", "ctl.mjs");
-const DIST_CTL = path.join(APP_ROOT, "dist", "cli", "ctl.js");
+const OWN_DIST_CTL = path.join(APP_ROOT, "dist", "cli", "ctl.js");
 const STAMP = path.join(APP_ROOT, "dist", ".ctl-build-stamp");
 const BUILD_LOCK = path.join(os.tmpdir(), "routeflow-ctl-test-build.lock");
 
@@ -29,15 +29,28 @@ function newestMtime(dir: string): number {
   return newest;
 }
 
+/** The once-per-run build (test/global-setup.ts) when jest published one, else `dist/`. */
+const sharedCtl = (): string | null => {
+  const dir = process.env.CONTROL_TEST_DIST;
+  const ctl = dir ? path.join(dir, "cli", "ctl.js") : null;
+  return ctl !== null && fs.existsSync(ctl) ? ctl : null;
+};
+/** The compiled CLI entry a spawned `ctl` runs. */
+export const distCtl = (): string => sharedCtl() ?? OWN_DIST_CTL;
+
 const fresh = (): boolean =>
-  fs.existsSync(DIST_CTL) &&
+  fs.existsSync(OWN_DIST_CTL) &&
   fs.existsSync(STAMP) &&
   fs.statSync(STAMP).mtimeMs >= newestMtime(path.join(APP_ROOT, "src"));
 
 let built: Promise<void> | null = null;
 
-/** Build dist once per jest run (module promise) and once across workers (tmpdir lock dir). */
+/**
+ * Nothing to build under jest's globalSetup (the shared build exists). Otherwise build `dist/` once
+ * per jest run (module promise) and once across workers (tmpdir lock dir).
+ */
 function ensureBuilt(): Promise<void> {
+  if (sharedCtl() !== null) return Promise.resolve();
   built ??= (async () => {
     const deadline = Date.now() + 240_000;
     while (!fresh()) {
@@ -124,7 +137,7 @@ export async function runCli(
     const child = spawn(
       process.execPath,
       ["-e", "require(process.env.CTL_DIST).main(process.argv.slice(1))", "--", ...args],
-      { cwd, env: { ...env, CTL_DIST: DIST_CTL } as any },
+      { cwd, env: { ...env, CTL_DIST: distCtl() } as any },
     );
     let stdout = "";
     let stderr = "";

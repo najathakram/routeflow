@@ -49,7 +49,8 @@ describe("1 the image carries the denylist, and boot refuses without it", () => 
   });
 });
 
-// B1: built here, not assumed: `turbo test` does not build dist/, so a fresh checkout has none
+// B1: built, not assumed: `turbo test` does not build dist/, so a fresh checkout has none. The build
+// is the once-per-run one from test/global-setup.ts (a private build when run outside it).
 let dist: PrivateDist;
 beforeAll(() => {
   dist = buildPrivateDist("wp7");
