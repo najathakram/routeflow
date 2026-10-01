@@ -88,7 +88,12 @@ export function useContinuousScanCamera({
         trackRef.current = track;
         setTorchAvailable(hasTorch(track));
 
-        const reader = new BrowserMultiFormatReader();
+        // Steady-read (3 frames of the same value, streak gap 700 ms, absence ~800 ms) is tuned for a ~100 ms read cadence;
+        // zxing's own defaults wait 500 ms after every decode AND after every miss, which would starve it (see the test).
+        const reader = new BrowserMultiFormatReader(undefined, {
+          delayBetweenScanSuccess: 100,
+          delayBetweenScanAttempts: 100,
+        });
         const controls = await reader.decodeFromStream(stream, videoRef.current!, (result) => {
           if (!active || !result) return;
           const video = videoRef.current;

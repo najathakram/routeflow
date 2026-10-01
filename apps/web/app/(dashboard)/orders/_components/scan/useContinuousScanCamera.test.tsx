@@ -89,6 +89,20 @@ describe("useContinuousScanCamera", () => {
     expect(stop).not.toHaveBeenCalled();
   });
 
+  it("reads fast enough for steady-read: zxing's default 500 ms throttles would stretch a 3-frame streak past its gap window", async () => {
+    // @zxing/browser waits delayBetweenScanSuccess (default 500 ms) after every decode and delayBetweenScanAttempts
+    // (default 500 ms) after a miss; steady-read resets a streak after 700 ms and treats ~800 ms as an absence, so a held
+    // code on a slow phone would never scan (or be re-accepted after one missed decode). Keep the cadence well inside it.
+    const { BrowserMultiFormatReader } = jest.requireMock("@zxing/browser");
+    BrowserMultiFormatReader.mockClear();
+    render(<Harness enabled onDetect={jest.fn()} probe={probe} />);
+    await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
+    expect(BrowserMultiFormatReader).toHaveBeenCalledWith(undefined, {
+      delayBetweenScanSuccess: 100,
+      delayBetweenScanAttempts: 100,
+    });
+  });
+
   it("aim box + steady-read inputs: every decode carries the result-point bounds and the DRAWN box in video pixels", async () => {
     const onDetect = jest.fn();
     render(<Harness enabled onDetect={onDetect} probe={probe} />);
