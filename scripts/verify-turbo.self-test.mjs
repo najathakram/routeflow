@@ -39,8 +39,11 @@ import {
   buildArgv,
   buildTurboFlags,
   chooseVerifyDefaults,
+  excludedLine,
   jestPassthrough,
   LOW_MEM_THRESHOLD_BYTES,
+  parseVerifyExclude,
+  planTurboCalls,
 } from "./verify-turbo.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -539,6 +542,346 @@ check(
     "--maxWorkers=2",
   ],
 );
+
+// VX: VERIFY_EXCLUDE — workspaces CI verifies in their OWN job (apps/control, lead ruling
+// 2026-10-01), taken out of the shared Verify's turbo scope. Pure builders first, then the real
+// `main()` against a stub `npx` so the env var is proven to reach the argv end to end.
+const CONTROL = "@routeflow/control";
+const KNOWN = workspaces.map((w) => w.name);
+check(
+  "VX0 the real graph has @routeflow/control (the name ci.yml's VERIFY_EXCLUDE uses)",
+  KNOWN.includes(CONTROL),
+  true,
+);
+
+// parseVerifyExclude: comma list, trimmed, de-duplicated, empties dropped, unknown/garbage ignored.
+check(
+  "VX1 unset / empty / whitespace / only commas parse to []",
+  [
+    parseVerifyExclude(undefined, KNOWN),
+    parseVerifyExclude("", KNOWN),
+    parseVerifyExclude("   ", KNOWN),
+    parseVerifyExclude(" , ,,", KNOWN),
+  ],
+  [[], [], [], []],
+);
+check(
+  "VX2 a non-string (null / number / object) parses to []",
+  [parseVerifyExclude(null, KNOWN), parseVerifyExclude(5, KNOWN), parseVerifyExclude({}, KNOWN)],
+  [[], [], []],
+);
+check(
+  "VX3 one name, and the same name with surrounding whitespace, parse to that name",
+  [parseVerifyExclude(CONTROL, KNOWN), parseVerifyExclude(`  ${CONTROL}\t`, KNOWN)],
+  [[CONTROL], [CONTROL]],
+);
+check(
+  "VX4 duplicates collapse, order of first appearance kept, empties between names dropped",
+  parseVerifyExclude(` ${CONTROL} ,, @routeflow/web ,${CONTROL}, `, KNOWN),
+  [CONTROL, "@routeflow/web"],
+);
+check(
+  "VX5 an unknown workspace is ignored (a typo can never exclude something else)",
+  parseVerifyExclude(`@routeflow/nope,${CONTROL},control`, KNOWN),
+  [CONTROL],
+);
+check(
+  "VX6 garbage (flag-shaped, negated, inner whitespace, shell metacharacters) is ignored even " +
+    "WITHOUT a known list — it can never become a turbo flag",
+  [
+    parseVerifyExclude("--help,!@routeflow/web,a b,$(x),;ls,@@x,-rf", undefined),
+    parseVerifyExclude(`--help,${CONTROL}`, undefined),
+  ],
+  [[], [CONTROL]],
+);
+check(
+  "VX6b a space-separated list is NOT a list (comma only) — one garbage token, ignored",
+  parseVerifyExclude(`${CONTROL} @routeflow/web`, KNOWN),
+  [],
+);
+
+const FLAGS = buildTurboFlags("");
+const run = (plan, passthrough = []) =>
+  plan.calls.map((c) =>
+    buildArgv(c.args, FLAGS, c.jest ? passthrough : []).filter((a) => a !== "turbo" && a !== "run"),
+  );
+const FULL = { mode: "full", reason: "CI" };
+const NEG = `--filter=!${CONTROL}`;
+
+// FULL scope: nothing excluded is byte-identical to the pre-change argv.
+check(
+  "VX7 FULL, nothing excluded, unsplit: the ONE bundled call, byte-identical to before",
+  run(planTurboCalls({ scope: FULL, excluded: [], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "test:repo-truth",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX8 FULL, nothing excluded, split (JEST_MAX_WORKERS): ct+lint, then jest tasks with the passthrough",
+  run(planTurboCalls({ scope: FULL, excluded: [], splitJest: true }), ["--", "--maxWorkers=2"]),
+  [
+    ["check-types", "lint", "--concurrency=2", "--continue=dependencies-successful"],
+    [
+      "test",
+      "test:repo-truth",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX9 FULL unsplit: the negative filter rides on the one bundled call",
+  run(planTurboCalls({ scope: FULL, excluded: [CONTROL], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "test:repo-truth",
+      NEG,
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX10 FULL split: the negative filter rides on BOTH calls, and --maxWorkers only on the jest one",
+  run(planTurboCalls({ scope: FULL, excluded: [CONTROL], splitJest: true }), [
+    "--",
+    "--maxWorkers=2",
+  ]),
+  [
+    ["check-types", "lint", NEG, "--concurrency=2", "--continue=dependencies-successful"],
+    [
+      "test",
+      "test:repo-truth",
+      NEG,
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX11 FULL with two exclusions: one negative filter each, in the given order, no positive filter",
+  planTurboCalls({ scope: FULL, excluded: [CONTROL, "@routeflow/web"], splitJest: false }).calls[0]
+    .args,
+  ["check-types", "lint", "test", "test:repo-truth", NEG, "--filter=!@routeflow/web"],
+);
+
+// AFFECTED scope.
+const AFF = (workspacesList) => ({ mode: "scoped", workspaces: workspacesList, changed: [] });
+const A = ["@routeflow/api", "@routeflow/pricing"];
+check(
+  "VX12 AFFECTED, nothing excluded, unsplit: the old two calls (positive filters + api repo-truth)",
+  run(planTurboCalls({ scope: AFF(A), excluded: [], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX13 AFFECTED, nothing excluded, split: the old three calls, passthrough on the two jest ones",
+  run(planTurboCalls({ scope: AFF(A), excluded: [], splitJest: true }), ["--", "--maxWorkers=2"]),
+  [
+    [
+      "check-types",
+      "lint",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+    [
+      "test",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX14 AFFECTED: an excluded workspace is dropped from the positive filters (both paths); others stay",
+  [
+    planTurboCalls({
+      scope: AFF([...A, CONTROL]),
+      excluded: [CONTROL],
+      splitJest: false,
+    }).calls.map((c) => c.args),
+    planTurboCalls({ scope: AFF([...A, CONTROL]), excluded: [CONTROL], splitJest: true }).calls.map(
+      (c) => c.args,
+    ),
+  ],
+  [
+    [
+      ["check-types", "lint", "test", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test:repo-truth", "--filter=@routeflow/api"],
+    ],
+    [
+      ["check-types", "lint", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test:repo-truth", "--filter=@routeflow/api"],
+    ],
+  ],
+);
+check(
+  "VX15 AFFECTED: no negative filter is ever added (they would WIDEN a positive-filtered run)",
+  planTurboCalls({ scope: AFF([...A, CONTROL]), excluded: [CONTROL], splitJest: false })
+    .calls.flatMap((c) => c.args)
+    .some((a) => a.startsWith("--filter=!")),
+  false,
+);
+check(
+  "VX16 AFFECTED: nothing left after the exclusion (and api repo-truth excluded too) = no calls + a note",
+  (() => {
+    const plan = planTurboCalls({
+      scope: AFF([CONTROL]),
+      excluded: [CONTROL, "@routeflow/api"],
+      splitJest: false,
+    });
+    return [plan.calls, /nothing left to verify/i.test(plan.note ?? "")];
+  })(),
+  [[], true],
+);
+check(
+  "VX17 AFFECTED: only the control workspace in scope, control excluded: no workspace call, " +
+    "but the always-run api repo-truth tripwire still runs",
+  planTurboCalls({ scope: AFF([CONTROL]), excluded: [CONTROL], splitJest: false }).calls.map(
+    (c) => c.args,
+  ),
+  [["test:repo-truth", "--filter=@routeflow/api"]],
+);
+check(
+  "VX18 excludedLine: silent when nothing is excluded, one explanatory line otherwise",
+  [excludedLine([]), excludedLine([CONTROL]), excludedLine([CONTROL, "@routeflow/web"])],
+  [
+    null,
+    "EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control",
+    "EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control, @routeflow/web",
+  ],
+);
+
+// End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
+// the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
+// stub is a shell script; Windows' npx is a .cmd and `shell: true`).
+if (process.platform !== "win32") {
+  const stubDir = mkdtempSync(join(tmpdir(), "verify-turbo-stub-"));
+  try {
+    const log = join(stubDir, "calls.log");
+    writeFileSync(join(stubDir, "npx"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 0\n`, {
+      mode: 0o755,
+    });
+    const runMain = (extraEnv) => {
+      writeFileSync(log, "");
+      const env = {
+        ...cleanGitEnv(),
+        PATH: `${stubDir}:${process.env.PATH}`,
+        CI: "1",
+        ...extraEnv,
+      };
+      delete env.FULL_VERIFY;
+      if (!("JEST_MAX_WORKERS" in extraEnv)) delete env.JEST_MAX_WORKERS;
+      if (!("VERIFY_EXCLUDE" in extraEnv)) delete env.VERIFY_EXCLUDE;
+      const r = spawnSync(process.execPath, [join(ROOT, "scripts", "verify-turbo.mjs")], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env,
+      });
+      return {
+        status: r.status,
+        out: r.stdout,
+        calls: readFileSync(log, "utf8").split("\n").filter(Boolean),
+      };
+    };
+    const off = runMain({});
+    check(
+      "VX19 main(): VERIFY_EXCLUDE unset = one turbo call, no negative filter, no banner",
+      [off.status, off.calls, /EXCLUDED FROM THIS RUN/.test(off.out)],
+      [
+        0,
+        [
+          "turbo run check-types lint test test:repo-truth --concurrency=2 --continue=dependencies-successful",
+        ],
+        false,
+      ],
+    );
+    const on = runMain({ VERIFY_EXCLUDE: ` ${CONTROL} ,nope` });
+    check(
+      "VX20 main(): VERIFY_EXCLUDE reaches the FULL argv and prints the one-line banner",
+      [
+        on.status,
+        on.calls,
+        on.out.split("\n").filter((l) => l.startsWith("EXCLUDED FROM THIS RUN")),
+      ],
+      [
+        0,
+        [
+          `turbo run check-types lint test test:repo-truth ${NEG} --concurrency=2 --continue=dependencies-successful`,
+        ],
+        ["EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control"],
+      ],
+    );
+    const split = runMain({ VERIFY_EXCLUDE: CONTROL, JEST_MAX_WORKERS: "2" });
+    check(
+      "VX21 main(): on the split (JEST_MAX_WORKERS) path BOTH calls carry the negative filter",
+      [split.status, split.calls],
+      [
+        0,
+        [
+          `turbo run check-types lint ${NEG} --concurrency=2 --continue=dependencies-successful`,
+          `turbo run test test:repo-truth ${NEG} --concurrency=2 --continue=dependencies-successful -- --maxWorkers=2`,
+        ],
+      ],
+    );
+    const junk = runMain({ VERIFY_EXCLUDE: "nope,--help" });
+    check(
+      "VX22 main(): an all-unknown VERIFY_EXCLUDE is a no-op (no filter, no banner)",
+      [junk.calls, /EXCLUDED FROM THIS RUN/.test(junk.out)],
+      [
+        [
+          "turbo run check-types lint test test:repo-truth --concurrency=2 --continue=dependencies-successful",
+        ],
+        false,
+      ],
+    );
+  } finally {
+    rmSync(stubDir, { recursive: true, force: true });
+  }
+}
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
 const W = path.win32;
