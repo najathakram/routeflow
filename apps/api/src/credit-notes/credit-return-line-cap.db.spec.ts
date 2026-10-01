@@ -49,7 +49,13 @@ describeDb(
       tenantCtx = new TenantContextService();
       prisma = new PrismaService(tenantCtx);
       await prisma.$connect();
-      const anyMethod = new Proxy({}, { get: () => jest.fn() }); // the socket gateway: nothing under test
+      // The socket gateway: nothing under test. NEVER answer `then` (or a symbol): Nest would await the proxy as a thenable and hang.
+      const anyMethod = new Proxy(
+        {},
+        {
+          get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()),
+        },
+      );
       const mod = await Test.createTestingModule({
         providers: [
           CreditNotesService,
@@ -229,11 +235,17 @@ describeDb(
         },
         select: { amount: true },
       });
+      // A refund is counted ONCE: an ITEMISED refund note is already in `items` above; only a legacy ITEMLESS refund note
+      // (master before SA-628) is counted through its return's refundAmount.
+      const itemlessNotes = await prisma.creditNote.findMany({
+        where: { tenantId: s.tenantId, status: { not: "VOID" }, items: { none: {} } },
+        select: { id: true },
+      });
       const refunded = await prisma.return.findMany({
         where: {
           tenantId: s.tenantId,
           status: "REFUNDED",
-          creditNoteId: { not: null },
+          creditNoteId: { in: itemlessNotes.map((n) => n.id) },
           items: { some: { productId } },
         },
         select: { refundAmount: true },
