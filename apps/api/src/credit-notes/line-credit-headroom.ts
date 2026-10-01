@@ -32,17 +32,34 @@ export interface RefundItem {
 const EPS = 0.001;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
+export interface RefundRefusal {
+  productId: string;
+  requestedAmount: number;
+  remainingAmount: number;
+  requestedQty: number;
+  remainingQty: number;
+}
+/** "refund": REFUSE, never clip (a refund that would take a line past its value). "count": the legacy history term, which MAY clip. */
+export type AllocMode = "refund" | "count";
+
+const CENT = 0.01 + 1e-9;
+
 /**
- * Sequential fill of `qty` pieces of `productId` across that product's lines, in the order given: each line takes at most what
- * it still has (qty AND amount), a partial take is priced at the line's linear value (subtotal / qty), and the take that CLOSES
- * a line takes exactly the rest of its amount (no rounding residue). `shortfallQty` > 0 means the lines cannot absorb it all.
+ * Sequential fill of `qty` pieces of `productId` across that product's lines, in the order given.
+ *  - QTY room governs every line; MONEY binds only when the line has money (a $0 line takes its qty at amount 0, SA-628a).
+ *  - A partial take is priced at the line's linear value (subtotal / qty); the take that CLOSES a line takes exactly its remaining
+ *    amount, which in "refund" mode must be within 1 cent of the linear value.
+ *  - "refund" mode never clips: a take whose linear value exceeds the line's remaining money by more than a cent returns
+ *    `refusal` (and no items); "count" mode (the legacy loader) clips to what the line has left and skips a spent line.
+ * `shortfallQty` > 0 means the lines' remaining QTY cannot absorb it all.
  */
 export function allocateProductQty(
   lines: readonly HeadroomLine[],
   credited: ReadonlyMap<string, LineCredit>,
   productId: string,
   qty: number,
-): { items: RefundItem[]; shortfallQty: number } {
+  mode: AllocMode = "refund",
+): { items: RefundItem[]; shortfallQty: number; refusal?: RefundRefusal } {
   const items: RefundItem[] = [];
   let left = round3(qty);
   for (const line of lines) {
@@ -50,13 +67,33 @@ export function allocateProductQty(
     if (line.productId !== productId || !(line.qty > 0)) continue;
     const done = credited.get(line.id) ?? { amount: 0, qty: 0 };
     const remainingQty = Math.max(0, round3(line.qty - done.qty));
-    const remainingAmount = Math.max(0, roundMoney(line.subtotal - done.amount));
-    if (remainingQty <= EPS || remainingAmount <= EPS) continue;
+    if (remainingQty <= EPS) continue;
+    const hasMoney = line.subtotal > EPS;
+    const remainingAmount = hasMoney ? Math.max(0, roundMoney(line.subtotal - done.amount)) : 0;
     const take = Math.min(left, remainingQty);
     const closes = take >= remainingQty - EPS;
-    const amount = closes
-      ? remainingAmount
-      : Math.min(remainingAmount, roundMoney((take * line.subtotal) / line.qty));
+    const linear = hasMoney ? roundMoney((take * line.subtotal) / line.qty) : 0;
+    if (mode === "refund") {
+      const over = closes
+        ? Math.abs(linear - remainingAmount) > CENT
+        : linear > remainingAmount + CENT;
+      if (hasMoney && over) {
+        return {
+          items: [],
+          shortfallQty: round3(left),
+          refusal: {
+            productId,
+            requestedAmount: linear,
+            remainingAmount,
+            requestedQty: take,
+            remainingQty,
+          },
+        };
+      }
+    } else if (hasMoney && remainingAmount <= EPS) {
+      continue; // count mode: a spent line has nothing left to count
+    }
+    const amount = !hasMoney ? 0 : closes ? remainingAmount : Math.min(remainingAmount, linear);
     items.push({ invoiceItemId: line.id, qty: round3(take), amount });
     left = round3(left - take);
   }
@@ -113,7 +150,8 @@ export async function loadLineCredits(
   if (itemless.length > 0) {
     const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
       await db.return.findMany({
-        where: { creditNoteId: { in: itemless.map((c) => c.id) }, status: "REFUNDED" },
+        // keyed on the CN LINK, not the return status: legacy PROCESSED rows exist (SA-628a)
+        where: { creditNoteId: { in: itemless.map((c) => c.id) } },
         select: { items: { select: { productId: true, qty: true } } },
       });
     const qtyByProduct = new Map<string, number>();
@@ -124,7 +162,7 @@ export async function loadLineCredits(
     }
     let acc: ReadonlyMap<string, LineCredit> = credited;
     for (const [productId, qty] of qtyByProduct) {
-      acc = addCredits(acc, allocateProductQty(lines, acc, productId, qty).items);
+      acc = addCredits(acc, allocateProductQty(lines, acc, productId, qty, "count").items);
     }
     return new Map(acc);
   }
