@@ -587,19 +587,35 @@ export class AppleOAuthService {
    * proceed regardless.
    */
   async revokeForBuyer(buyerAccountId: string): Promise<void> {
+    let enc: string | null | undefined;
     try {
       const buyer = await this.prisma.buyerAccount.findUnique({
         where: { id: buyerAccountId },
         select: { appleRefreshTokenEnc: true },
       });
-      if (!buyer?.appleRefreshTokenEnc) return;
+      enc = buyer?.appleRefreshTokenEnc;
+    } catch (e) {
+      this.logger.warn(`Apple revoke failed for buyer ${buyerAccountId}: ${(e as Error).message}`);
+      return;
+    }
+    await this.revokeRefreshToken(enc, buyerAccountId);
+  }
 
-      const refreshToken = this.encryption.decrypt(buyer.appleRefreshTokenEnc);
+  /**
+   * Revoke an already-loaded ENCRYPTED Apple refresh token (no DB read), for callers that must
+   * revoke AFTER their own transaction cleared the stored value (buyer merge, B944). Same
+   * guarantees as revokeForBuyer: a failure is logged (buyer id only, never the token) and never
+   * thrown.
+   */
+  async revokeRefreshToken(enc: string | null | undefined, buyerAccountId: string): Promise<void> {
+    if (!enc) return;
+    try {
+      const refreshToken = this.encryption.decrypt(enc);
       const clientSecret = await this.buildClientSecret();
       const res = await fetch(APPLE_REVOKE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        // a slow Apple endpoint must never hang sign-in or account deletion
+        // a slow Apple endpoint must never hang sign-in, account deletion or a merge
         signal: AbortSignal.timeout(APPLE_HTTP_TIMEOUT_MS),
         body: new URLSearchParams({
           client_id: this.bundleId(),
@@ -662,7 +678,13 @@ export class AppleOAuthService {
     try {
       await this.applyNotificationEvent(payload);
     } catch (e) {
-      await this.redis.del(jtiKey).catch(() => undefined);
+      await this.redis.del(jtiKey).catch(() => {
+        // Never lose this silently: if the delete fails, Apple's retry of this jwt will be
+        // treated as a replay and ignored until the jti expires (the jti value is not logged).
+        this.logger.warn(
+          "Apple notification jti could not be released after a failed write: the retry may be ignored as a replay",
+        );
+      });
       throw e;
     }
   }
