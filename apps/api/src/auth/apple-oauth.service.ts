@@ -644,15 +644,10 @@ export class AppleOAuthService {
     const jti = payload.jti;
     if (typeof jti !== "string" || !jti)
       throw new UnauthorizedException("apple_notification_invalid");
+    const jtiKey = `${NOTIFICATION_JTI_KEY_PREFIX}${jti}`;
     let firstSeen: unknown;
     try {
-      firstSeen = await this.redis.set(
-        `${NOTIFICATION_JTI_KEY_PREFIX}${jti}`,
-        "1",
-        "EX",
-        NOTIFICATION_JTI_TTL_SECS,
-        "NX",
-      );
+      firstSeen = await this.redis.set(jtiKey, "1", "EX", NOTIFICATION_JTI_TTL_SECS, "NX");
     } catch {
       throw new ServiceUnavailableException("apple_notification_unavailable");
     }
@@ -661,6 +656,18 @@ export class AppleOAuthService {
       return;
     }
 
+    // The jti is marked BEFORE the writes (so a concurrent duplicate cannot double-process). If the
+    // writes then fail (Apple gets a 500 and retries the SAME jwt), free the jti so the retry runs
+    // instead of being swallowed as a replay and losing the revoke/delete event.
+    try {
+      await this.applyNotificationEvent(payload);
+    } catch (e) {
+      await this.redis.del(jtiKey).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  private async applyNotificationEvent(payload: Record<string, unknown>): Promise<void> {
     let event: { type?: string; sub?: string };
     try {
       event = typeof payload.events === "string" ? JSON.parse(payload.events) : {};

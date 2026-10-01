@@ -47,6 +47,9 @@ function makeMockRedis() {
       store.set(key, val);
       return "OK";
     }),
+    del: jest.fn(async (key: string) => {
+      return store.delete(key) ? 1 : 0;
+    }),
     getdel: jest.fn(async (key: string) => {
       const v = store.has(key) ? store.get(key)! : null;
       store.delete(key);
@@ -1201,6 +1204,27 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
     await expect(service.handleNotification(token)).resolves.toBeUndefined();
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
     expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a transient write failure frees the jti, so Apple's retry of the same token is processed (not swallowed as a replay)", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.buyerAccount.update
+      .mockRejectedValueOnce(new Error("transient db error"))
+      .mockResolvedValue(undefined);
+    const token = await signNotification(privateKey, { jti: "jti-retry" });
+
+    await expect(service.handleNotification(token)).rejects.toThrow("transient db error");
+    // Apple retries the SAME jwt after our 500: it must run again and clear the link.
+    await expect(service.handleNotification(token)).resolves.toBeUndefined();
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(2);
+    expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledTimes(1);
+
+    // And once it succeeded, a third delivery IS a replay.
+    prisma.buyerAccount.update.mockClear();
+    await service.handleNotification(token);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
   });
 
   it("two DIFFERENT notifications (different jti) are both processed", async () => {
