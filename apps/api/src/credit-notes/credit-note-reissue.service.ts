@@ -1,3 +1,4 @@
+import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import {
   BadRequestException,
   ConflictException,
@@ -224,9 +225,18 @@ export class CreditNoteReissueService {
     const sourceInvoice = old.invoiceId
       ? await db.invoice.findFirst({ where: { id: old.invoiceId }, select: { orderId: true } })
       : null;
+    // B947: the recap is pooled across the order's creditable invoices, so every one of them joins the void's sorted lock set.
+    const siblings = sourceInvoice?.orderId
+      ? await db.invoice.findMany({
+          where: { orderId: sourceInvoice.orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
+          select: { id: true },
+        })
+      : [];
     const lockExtra = {
       orderIds: sourceInvoice?.orderId ? [sourceInvoice.orderId] : [],
-      invoiceIds: old.invoiceId ? [old.invoiceId] : [],
+      invoiceIds: [
+        ...new Set([...(old.invoiceId ? [old.invoiceId] : []), ...siblings.map((i: any) => i.id)]),
+      ],
     };
 
     let outcome: { replayed: boolean; stored: StoredReissue };
