@@ -6,6 +6,11 @@
  * safe. A NEW writer of these fields therefore fails here until it calls the guard, which is how
  * the "DTO decorator alone leaves doors open" gap stays closed. B964 extends GUARDED (a new model
  * and its fields) and reuses the same scan; nothing else needs to change.
+ *
+ * KNOWN BLIND SPOT (SA-629g): the scan reads field NAMES inside the call text, so a spread write
+ * such as `customer.update({ data: { ...dto } })` or `data: someVariable` names no field and is
+ * not seen. Today's writers all spell the fields out; a new writer that spreads a DTO must call
+ * the guard anyway (and a reviewer should look for the spread).
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +18,8 @@ import { join } from "node:path";
 /** model accessor -> the guarded fields written under it. Extend for B964 (addresses, licenses…). */
 const GUARDED: Record<string, readonly string[]> = {
   customer: ["businessName", "contactName", "displayName"],
+  // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
+  tenant: ["name"],
 };
 
 const GUARD_CALLS = ["assertSafeCustomerNames", "customerNameViolation", "assertSafeTextCell"];
@@ -69,6 +76,11 @@ describe("text-cell writer scan (B956)", () => {
     expect(files).toContain("customers/customers.service.ts");
     expect(files).toContain("import/import.service.ts");
     expect(files).toContain("platform-admin/tenant-mirror.service.ts");
+    expect(hits).toContainEqual({ file: "tenants/tenants.service.ts", hit: "tenant.name" });
+    expect(hits).toContainEqual({
+      file: "platform-admin/platform-admin.service.ts",
+      hit: "tenant.name",
+    });
   });
 
   it("every writer of a guarded field calls the shared guard or is explicitly exempt", () => {
