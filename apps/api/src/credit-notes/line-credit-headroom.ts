@@ -22,6 +22,8 @@ export interface HeadroomLine {
 export interface LineCredit {
   amount: number;
   qty: number;
+  /** how many prior credit items sit in `amount` (each carries <= half a cent of rounding drift) */
+  items?: number;
 }
 export interface RefundItem {
   invoiceItemId: string;
@@ -31,6 +33,7 @@ export interface RefundItem {
 
 const EPS = 0.001;
 const round3 = (n: number): number => Math.round(n * 1000) / 1000;
+const CENT = 0.01 + 1e-9;
 
 export interface RefundRefusal {
   productId: string;
@@ -39,89 +42,99 @@ export interface RefundRefusal {
   requestedQty: number;
   remainingQty: number;
 }
-/** "refund": REFUSE, never clip (a refund that would take a line past its value). "count": the legacy history term, which MAY clip. */
-export type AllocMode = "refund" | "count";
-
-const CENT = 0.01 + 1e-9;
+/** "refund": REFUSE, never clip. "count": the legacy history term, which clips to what the lines have left. */
+export type PlanMode = "refund" | "count";
 
 /**
- * Sequential fill of `qty` pieces of `productId` across that product's lines, in the order given.
- *  - QTY room governs every line; MONEY binds only when the line has money (a $0 line takes its qty at amount 0, SA-628a).
- *  - A partial take is priced at the line's linear value (subtotal / qty); the take that CLOSES a line takes exactly its remaining
- *    amount, which in "refund" mode must be within 1 cent of the linear value.
- *  - "refund" mode never clips: a take whose linear value exceeds the line's remaining money by more than a cent returns
- *    `refusal` (and no items); "count" mode (the legacy loader) clips to what the line has left and skips a spent line.
- * `shortfallQty` > 0 means the lines' remaining QTY cannot absorb it all.
+ * ONE function for the refund PRICE and its ITEMISATION, used by the mint, the refund preview and the legacy history term
+ * (SA-628b), so they can never disagree.
+ *  - PRICE: master's pooled average, `qty x sum(subtotal) / sum(qty)` over the product's lines (money-neutral vs master).
+ *  - CAP ("refund" mode): refuse (`refusal`, no items) when the qty exceeds the lines' summed qty room, or the price exceeds
+ *    their summed money room by more than a cent plus the rounding drift of the prior credit ITEMS (0.5 cent each, capped at
+ *    5 cents total). Never clips. "count" mode clips instead.
+ *  - ITEMISATION: qty fills PAID lines first (line order), $0 lines last at amount 0; the price is then distributed over the
+ *    same paid takes in order, each up to its line's remaining money, so the items sum to the price exactly.
  */
-export function allocateProductQty(
+export function planProductRefund(
   lines: readonly HeadroomLine[],
   credited: ReadonlyMap<string, LineCredit>,
   productId: string,
   qty: number,
-  mode: AllocMode = "refund",
-): { items: RefundItem[]; shortfallQty: number; refusal?: RefundRefusal } {
-  const items: RefundItem[] = [];
-  let left = round3(qty);
-  for (const line of lines) {
+  mode: PlanMode = "refund",
+): { items: RefundItem[]; price: number; amount: number; refusal?: RefundRefusal } {
+  const mine = lines.filter((l) => l.productId === productId && l.qty > 0);
+  const billedQty = mine.reduce((t, l) => t + l.qty, 0);
+  if (mine.length === 0 || billedQty <= 0) return { items: [], price: 0, amount: 0 };
+  const billedSubtotal = mine.reduce((t, l) => t + l.subtotal, 0);
+  const wanted = round3(Math.min(qty, billedQty));
+  const price = roundMoney((wanted * billedSubtotal) / billedQty);
+
+  const room = (l: HeadroomLine) => {
+    const d = credited.get(l.id) ?? { amount: 0, qty: 0 };
+    return {
+      qty: Math.max(0, round3(l.qty - d.qty)),
+      amount: l.subtotal > EPS ? Math.max(0, roundMoney(l.subtotal - d.amount)) : 0,
+      prior: d.items ?? 0,
+    };
+  };
+  const rooms = mine.map(room);
+  const roomQty = round3(rooms.reduce((t, r) => t + r.qty, 0));
+  const roomAmount = roundMoney(rooms.reduce((t, r) => t + r.amount, 0));
+  const priorItems = rooms.reduce((t, r) => t + r.prior, 0);
+  const tol = CENT + Math.min(0.04, 0.005 * priorItems);
+  const refuse = (): {
+    items: RefundItem[];
+    price: number;
+    amount: number;
+    refusal: RefundRefusal;
+  } => ({
+    items: [],
+    price,
+    amount: 0,
+    refusal: {
+      productId,
+      requestedAmount: price,
+      remainingAmount: roomAmount,
+      requestedQty: wanted,
+      remainingQty: roomQty,
+    },
+  });
+  if (mode === "refund" && (wanted > roomQty + EPS || price > roomAmount + tol)) return refuse();
+
+  // qty: paid lines first, $0 lines last, each in line order
+  const order = mine
+    .map((l, i) => ({ l, r: rooms[i] }))
+    .sort((x, y) => Number(y.l.subtotal > EPS) - Number(x.l.subtotal > EPS));
+  let left = wanted;
+  const takes: Array<{ id: string; qty: number; paid: boolean; roomAmount: number }> = [];
+  for (const { l, r } of order) {
     if (left <= EPS) break;
-    if (line.productId !== productId || !(line.qty > 0)) continue;
-    const done = credited.get(line.id) ?? { amount: 0, qty: 0 };
-    const remainingQty = Math.max(0, round3(line.qty - done.qty));
-    if (remainingQty <= EPS) continue;
-    const hasMoney = line.subtotal > EPS;
-    const remainingAmount = hasMoney ? Math.max(0, roundMoney(line.subtotal - done.amount)) : 0;
-    const take = Math.min(left, remainingQty);
-    const closes = take >= remainingQty - EPS;
-    const linear = hasMoney ? roundMoney((take * line.subtotal) / line.qty) : 0;
-    if (mode === "refund") {
-      // the closing take sits on the rounding drift of every earlier partial take (<= half a cent each), so its
-      // tolerance grows with the pieces already credited (capped); other takes get one cent
-      const drift = closes ? Math.min(0.05, 0.005 * Math.ceil(done.qty)) : 0;
-      const over = linear > remainingAmount + CENT + drift;
-      if (hasMoney && over) {
-        return {
-          items: [],
-          shortfallQty: round3(left),
-          refusal: {
-            productId,
-            requestedAmount: roundMoney((Math.min(left, line.qty) * line.subtotal) / line.qty),
-            remainingAmount,
-            requestedQty: take,
-            remainingQty,
-          },
-        };
-      }
-    } else if (!hasMoney || remainingAmount <= EPS) {
-      continue; // count mode: a free or spent line has no money to count (SA-628a)
-    }
-    const amount = !hasMoney ? 0 : closes ? remainingAmount : Math.min(remainingAmount, linear);
-    items.push({ invoiceItemId: line.id, qty: round3(take), amount });
+    const take = Math.min(left, r.qty);
+    if (take <= EPS) continue;
+    takes.push({ id: l.id, qty: round3(take), paid: l.subtotal > EPS, roomAmount: r.amount });
     left = round3(left - take);
   }
-  if (mode === "refund" && left > EPS) {
-    // the lines' remaining QTY cannot absorb the request: refuse, never clip (SA-628a B2)
-    const mine = lines.filter((l) => l.productId === productId && l.qty > 0);
-    const rem = (l: HeadroomLine) => {
-      const d = credited.get(l.id) ?? { amount: 0, qty: 0 };
-      return {
-        q: Math.max(0, round3(l.qty - d.qty)),
-        a: l.subtotal > EPS ? Math.max(0, roundMoney(l.subtotal - d.amount)) : 0,
-      };
-    };
-    const unit = mine.length ? mine[0].subtotal / mine[0].qty : 0;
-    return {
-      items: [],
-      shortfallQty: round3(left),
-      refusal: {
-        productId,
-        requestedAmount: roundMoney(unit * qty),
-        remainingAmount: roundMoney(mine.reduce((t, l) => t + rem(l).a, 0)),
-        requestedQty: round3(qty),
-        remainingQty: round3(mine.reduce((t, l) => t + rem(l).q, 0)),
-      },
-    };
+  // money: the price over the paid takes in order, each up to its line's remaining money
+  let rest = price;
+  const items: RefundItem[] = takes.map((t) => {
+    const amount = t.paid ? roundMoney(Math.min(rest, t.roomAmount)) : 0;
+    rest = roundMoney(rest - amount);
+    return { invoiceItemId: t.id, qty: t.qty, amount };
+  });
+  // a paid line short of money while a later paid line has room: product-level cap (SA-628b), so the remainder lands on
+  // any paid line with money left (a qty-0 item when that line took no pieces)
+  for (const { l, r } of order) {
+    if (rest <= EPS) break;
+    if (l.subtotal <= EPS) continue;
+    const have = items.find((it) => it.invoiceItemId === l.id);
+    const more = roundMoney(Math.min(rest, r.amount - (have?.amount ?? 0)));
+    if (more <= EPS) continue;
+    if (have) have.amount = roundMoney(have.amount + more);
+    else items.push({ invoiceItemId: l.id, qty: 0, amount: more });
+    rest = roundMoney(rest - more);
   }
-  return { items, shortfallQty: left > EPS ? left : 0 };
+  if (mode === "refund" && rest > tol) return refuse(); // the price has nowhere to land
+  return { items, price, amount: roundMoney(items.reduce((t, i) => t + i.amount, 0)) };
 }
 
 /** Adds `items` onto `credited` (a new map). */
@@ -132,7 +145,11 @@ export function addCredits(
   const out = new Map(credited);
   for (const it of items) {
     const prev = out.get(it.invoiceItemId) ?? { amount: 0, qty: 0 };
-    out.set(it.invoiceItemId, { amount: prev.amount + it.amount, qty: prev.qty + it.qty });
+    out.set(it.invoiceItemId, {
+      amount: prev.amount + it.amount,
+      qty: prev.qty + it.qty,
+      items: (prev.items ?? 0) + 1,
+    });
   }
   return out;
 }
@@ -163,7 +180,11 @@ export async function loadLineCredits(
   for (const r of itemRows) {
     const k = r.invoiceItemId ?? "";
     const prev = credited.get(k) ?? { amount: 0, qty: 0 };
-    credited.set(k, { amount: prev.amount + Number(r.amount), qty: prev.qty + Number(r.qty ?? 0) });
+    credited.set(k, {
+      amount: prev.amount + Number(r.amount),
+      qty: prev.qty + Number(r.qty ?? 0),
+      items: (prev.items ?? 0) + 1,
+    });
   }
 
   // LEGACY term: itemless refund credit notes minted by processRefund before SA-628.
@@ -186,7 +207,7 @@ export async function loadLineCredits(
     }
     let acc: ReadonlyMap<string, LineCredit> = credited;
     for (const [productId, qty] of qtyByProduct) {
-      acc = addCredits(acc, allocateProductQty(lines, acc, productId, qty, "count").items);
+      acc = addCredits(acc, planProductRefund(lines, acc, productId, qty, "count").items);
     }
     return new Map(acc);
   }

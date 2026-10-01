@@ -391,5 +391,49 @@ describeDb(
       await expect(creditNoteItem(s, s.lineA, 1)).rejects.toBeDefined();
       await expect(creditNoteItem(s, s.lineB, 100)).resolves.toBeDefined();
     });
+
+    it("12. SA-628b: money-neutral vs master: 1 free + 10 paid ($100), a 1-pc return refunds the pooled $9.09, itemised on the PAID line; the free line is untouched", async () => {
+      const s = await seed("pooled", 0, 10);
+      const free = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: s.invoiceId,
+          productId: s.pA.id,
+          description: "A free",
+          qty: 1,
+          unitPrice: 0,
+          subtotal: 0,
+        },
+      });
+      const ret = await receivedReturn(s, s.pA.id, 1);
+      await refund(s, ret.id);
+      const stored = await prisma.return.findUnique({ where: { id: ret.id } });
+      const cn = await prisma.creditNote.findFirstOrThrow({
+        where: { id: stored!.creditNoteId! },
+        include: { items: true },
+      });
+      expect(Number(cn.amount)).toBe(9.09);
+      expect(cn.items.map((i) => [i.invoiceItemId, Number(i.amount)])).toEqual([
+        [s.lineA.id, 9.09],
+      ]);
+      expect(cn.items.some((i) => i.invoiceItemId === free.id)).toBe(false);
+    });
+
+    it("13. SA-628b FOLD1: a prior $9 / 9-pc credit on a $100/10pc line, then a 1-pc return mints $10 (the pooled price), never the $91 rest", async () => {
+      const s = await seed("closing", 0, 10);
+      await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount: 9,
+          items: [{ invoiceItemId: s.lineA.id, amount: 9, qty: 9 }],
+        } as any),
+      );
+      const ret = await receivedReturn(s, s.pA.id, 1);
+      await refund(s, ret.id);
+      const stored = await prisma.return.findUnique({ where: { id: ret.id } });
+      const cn = await prisma.creditNote.findFirstOrThrow({ where: { id: stored!.creditNoteId! } });
+      expect(Number(cn.amount)).toBe(10);
+    });
   },
 );

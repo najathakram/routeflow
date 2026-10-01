@@ -191,16 +191,16 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: a PRICED line next to a free line of the same product is still itemised in line order", async () => {
+  it("SA-628a: a PRICED line next to a free line of the same product is itemised paid-first at the pooled price (SA-628b)", async () => {
     const free = { id: "line-f", productId: "pa", qty: 2, subtotal: 0 };
     const paid = { id: "line-a", productId: "pa", qty: 10, subtotal: 100 };
     withReturn(order([invoice("inv-1", [paid, free])]), [{ productId: "pa", qty: 11 }]);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 100,
+        amount: 91.67,
         items: [
-          { invoiceItemId: "line-a", amount: 100, qty: 10 },
+          { invoiceItemId: "line-a", amount: 91.67, qty: 10 },
           { invoiceItemId: "line-f", amount: 0, qty: 1 },
         ],
       }),
@@ -208,7 +208,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     );
   });
 
-  it("SA-628a: the preview prices the same per-line fill the mint uses (a product split across lines of different prices)", async () => {
+  it("SA-628a: the preview prices the same pooled price the mint itemises (a product split across lines of different prices)", async () => {
     const cheap = { id: "line-c", productId: "pa", qty: 1, subtotal: 50 };
     const dear = { id: "line-d", productId: "pa", qty: 1, subtotal: 100 };
     const ret = {
@@ -218,13 +218,13 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       items: [{ productId: "pa", qty: 1 }],
       order: order([invoice("inv-1", [dear, cheap])]),
     };
-    // mint fill order: dear first => $100 (pooled would quote $75)
+    // SA-628b: master's pooled price ($75), the same number the mint itemises
     withReturn(ret.order);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100 }),
+      expect.objectContaining({ amount: 75 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order).amount).toBe(100);
+    expect((service as any).priceReturn(ret.items, ret.order).amount).toBe(75);
   });
 });

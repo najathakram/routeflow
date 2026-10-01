@@ -32,7 +32,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import {
   addCredits,
-  allocateProductQty,
+  planProductRefund,
   loadLineCredits,
   type HeadroomLine,
   type RefundItem,
@@ -717,29 +717,24 @@ export class ReturnsService {
     let credited = await loadLineCredits(this.prisma.forTenant(), invoice.id, lines);
     const out: RefundItem[] = [];
     for (const [productId, returnedQty] of returnedByProduct) {
-      const billedQty = lines
-        .filter((l) => l.productId === productId)
-        .reduce((n, l) => n + l.qty, 0);
-      if (billedQty <= 0) continue;
-      const refundQty = Math.min(returnedQty, billedQty); // the same cap priceReturn applies
-      const { items, shortfallQty, refusal } = allocateProductQty(
+      const { items, refusal } = planProductRefund(
         lines,
         credited,
         productId,
-        refundQty,
+        returnedQty,
         "refund",
       );
-      if (refusal || shortfallQty > 0) {
+      if (refusal) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
           message:
             "This refund would credit more than the invoice line is worth: part of it was already credited " +
             "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
           productId,
-          requested: refusal?.requestedAmount ?? null,
-          remaining: refusal?.remainingAmount ?? null,
-          requestedQty: refusal?.requestedQty ?? refundQty,
-          remainingQty: refusal?.remainingQty ?? null,
+          requested: refusal.requestedAmount,
+          remaining: refusal.remainingAmount,
+          requestedQty: refusal.requestedQty,
+          remainingQty: refusal.remainingQty,
         });
       }
       out.push(...items);
@@ -824,42 +819,18 @@ export class ReturnsService {
       }
     }
 
-    let amount = 0;
-    // SA-628a: a single creditable invoice (the itemised mint) is priced with the SAME per-line fill the mint uses, so the
-    // preview shows what will be minted (a product split across lines of different prices priced pooled would under-quote).
-    const only = creditable.length === 1 ? creditable[0] : null;
-    const onlyLines: HeadroomLine[] = (only?.items ?? []).map((it: any) => ({
-      id: it.id,
-      productId: it.productId ?? null,
-      subtotal: Number(it.subtotal),
-      qty: Number(it.qty),
-    }));
-    if (only && onlyLines.length > 0 && onlyLines.every((l) => l.id)) {
-      const returned = new Map<string, number>();
-      for (const item of items) {
-        returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
-      }
-      for (const [productId, qty] of returned) {
-        const billedQty = billedQtyByProduct.get(productId) ?? 0;
-        if (billedQty <= 0) continue;
-        const { items: filled } = allocateProductQty(
-          onlyLines,
-          new Map(),
-          productId,
-          Math.min(qty, billedQty),
-          "count",
-        );
-        amount += filled.reduce((n, it) => n + it.amount, 0);
-      }
-      return { amount: roundMoney(amount), invoiceId: only.id, creditable };
-    }
+    // SA-628b: the pooled average per product (master's price), the same `planProductRefund` price the mint uses, rounded
+    // per product so the preview equals what the mint itemises (money-neutral vs master up to a cent across products).
+    const returned = new Map<string, number>();
     for (const item of items) {
-      const billedQty = billedQtyByProduct.get(item.productId) ?? 0;
+      returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
+    }
+    let amount = 0;
+    for (const [productId, qty] of returned) {
+      const billedQty = billedQtyByProduct.get(productId) ?? 0;
       if (billedQty <= 0) continue;
-      const billedSubtotal = billedSubtotalByProduct.get(item.productId) ?? 0;
-      const perUnit = billedSubtotal / billedQty;
-      const refundQty = Math.min(Number(item.qty), billedQty);
-      amount += refundQty * perUnit;
+      const billedSubtotal = billedSubtotalByProduct.get(productId) ?? 0;
+      amount += roundMoney((Math.min(qty, billedQty) * billedSubtotal) / billedQty);
     }
     amount = roundMoney(amount);
 
