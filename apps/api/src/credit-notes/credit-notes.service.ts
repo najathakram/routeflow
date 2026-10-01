@@ -21,7 +21,16 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
-import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
+import {
+  loadLineCredits,
+  countCreditableInvoices,
+  loadOrderPool,
+  lockOrderPoolRows,
+  pooledRefundRefusal,
+  pooledTakeRefusal,
+  toHeadroomLine,
+  type OrderPool,
+} from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -79,7 +88,13 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string; ledgerReversedByReturn?: boolean } = {},
+    opts: {
+      excludeCreditNoteId?: string;
+      ledgerReversedByReturn?: boolean;
+      // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
+      // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -99,6 +114,7 @@ export class CreditNotesService {
         total: true,
         customerId: true,
         status: true,
+        orderId: true,
         items: {
           select: {
             id: true,
@@ -144,6 +160,30 @@ export class CreditNotesService {
         `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
       );
     }
+
+    // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
+    // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
+    let pool: OrderPool | null = null;
+    if (
+      invoice.orderId &&
+      ((opts.pooledRefund?.length ?? 0) > 0 || lineItems) &&
+      (await countCreditableInvoices(db, invoice.orderId)) >= 2 // a lone invoice never pays for a pool read
+    ) {
+      pool = await loadOrderPool(db, invoice.orderId, {
+        excludeCreditNoteId: opts.excludeCreditNoteId,
+      });
+    }
+    if (pool)
+      for (const r of opts.pooledRefund ?? []) {
+        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        if (refusal)
+          // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            pooled: true,
+            message: `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
+          });
+      }
 
     if (!lineItems) return [];
 
@@ -269,6 +309,33 @@ export class CreditNotesService {
           : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
+    if (pool) {
+      // qty binds only when the operator GAVE one (an amount-only credit's qty is derived from the amount)
+      const explicitQty = new Set(
+        [...mergedByLine.values()].filter((m) => m.qty != null).map((m) => m.invoiceItemId),
+      );
+      const byProduct = new Map<string, { amount: number; qty: number | null }>();
+      for (const row of cnItemsData) {
+        const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
+        if (!productId) continue;
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: null };
+        // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
+        const pieces =
+          row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
+        byProduct.set(productId, {
+          amount: prev.amount + row.amount,
+          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + pieces : prev.qty,
+        });
+      }
+      for (const [productId, take] of byProduct) {
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
+        if (refusal)
+          throw cnBad(
+            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            `Credit of ${refusal.requestedAmount} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingAmount} left, counting refunds already minted on other invoices).`,
+          );
+      }
+    }
     if (Math.abs(sum - dto.amount) > 0.01)
       throw cnBad(
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
@@ -451,7 +518,12 @@ export class CreditNotesService {
       /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
       expiresAt?: string;
     },
-    internal: { ledgerReversedByReturn?: boolean } = {},
+    internal: {
+      ledgerReversedByReturn?: boolean;
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+      /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
+      returnId?: string;
+    } = {},
   ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
@@ -536,6 +608,9 @@ export class CreditNotesService {
             // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
             // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
+            // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
+            // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
             }
@@ -550,7 +625,7 @@ export class CreditNotesService {
             // read"), so five parallel creates lost two even with the number already
             // reserved outside this tx. Customer is never written on this path, so
             // the value read before the tx is still the right one. Same shape out.
-            return this.insertCreditNoteInTx(
+            const created = await this.insertCreditNoteInTx(
               tx,
               {
                 creditNoteNumber,
@@ -564,6 +639,15 @@ export class CreditNotesService {
               tenantId,
               customer,
             );
+            // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
+            // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
+            // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
+            if (internal.returnId)
+              await tx.return.updateMany({
+                where: { id: internal.returnId, creditNoteId: null },
+                data: { creditNoteId: created.id },
+              });
+            return created;
           },
           { isolationLevel: "Serializable" },
         );
