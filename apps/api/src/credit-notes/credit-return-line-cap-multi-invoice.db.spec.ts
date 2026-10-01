@@ -297,16 +297,16 @@ describeDb(
       expect(await status(ret.id)).toBe("REFUNDED");
     }, 60_000);
 
-    it("5. a product on the order but on NO creditable invoice line keeps TODAY's behaviour: it prices at 0, resolves REFUNDED and mints NO credit note", async () => {
-      // Today's code (not changed by B947): priceReturn prices a refund from the billed lines, a product with no billed line
-      // is $0, and processRefund resolves a $0 refund without minting (`refundAmount <= 0.001 -> return updated`).
+    it("5. a product on the order but on NO creditable invoice line is REFUSED 400 RETURN_NOTHING_BILLED (B959: it used to price $0, resolve REFUNDED and mint nothing); the return stays RECEIVED", async () => {
       const s = await seed("unplaced");
       const stray = await prisma.product.create({
         data: { tenantId: s.tenantId, name: `stray ${RUN}`, unit: "each", pricePerUnit: 10 },
       });
       const ret = await receivedReturn(s, stray.id);
-      await refund(s, ret.id);
-      expect(await status(ret.id)).toBe("REFUNDED");
+      await expect(refund(s, ret.id)).rejects.toMatchObject({
+        response: { code: "RETURN_NOTHING_BILLED" },
+      });
+      expect(await status(ret.id)).toBe("RECEIVED"); // never claimed
       expect(await mintedNotes(s)).toHaveLength(0);
     }, 60_000);
 

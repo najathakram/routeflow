@@ -81,6 +81,14 @@ export interface FindAllReturnsOptions {
   limit?: number;
 }
 
+/** B959: a returned item that was not billed on the order, so it got no refund (reported, never a silent $0). */
+export interface UnbilledItem {
+  productId: string;
+  name: string;
+  qty: number;
+  message: string;
+}
+
 @Injectable()
 export class ReturnsService {
   constructor(
@@ -624,6 +632,7 @@ export class ReturnsService {
     invoiceId?: string;
     items?: RefundItem[];
     pooledRefund?: Array<{ productId: string; qty: number }>;
+    unbilledItems?: UnbilledItem[];
   }> {
     const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
     if (refusal === "NOTHING_CREDITABLE") {
@@ -632,6 +641,43 @@ export class ReturnsService {
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
     if (creditable.length === 0) return { amount, invoiceId };
+
+    // B959: which returned products have NO billed line (qty > 0) on any creditable invoice. A billed $0 (free) line IS billed.
+    // Nothing billed at all => refuse (a $0 REFUNDED return with no credit note was a silent under-credit); a MIXED return refunds
+    // the billed part and reports the rest as readable "not billed, no refund" lines.
+    const billedProducts = new Set<string>();
+    for (const inv of creditable)
+      for (const it of inv.items ?? []) if (Number(it.qty) > 0) billedProducts.add(it.productId);
+    const unbilledQty = new Map<string, number>();
+    for (const it of items)
+      if (!billedProducts.has(it.productId))
+        unbilledQty.set(it.productId, (unbilledQty.get(it.productId) ?? 0) + Number(it.qty));
+    const returnedProducts = new Set(items.map((it: any) => it.productId));
+    if (returnedProducts.size > 0 && unbilledQty.size === returnedProducts.size)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
+        message:
+          "None of the returned items were billed on this order, so there is nothing to refund. " +
+          "Cancel the return, or credit it manually if a refund is owed.",
+      });
+    let unbilledItems: UnbilledItem[] | undefined;
+    if (unbilledQty.size > 0) {
+      const names: Array<{ id: string; name: string | null }> =
+        (await this.prisma.forTenant().product.findMany({
+          where: { id: { in: [...unbilledQty.keys()] } },
+          select: { id: true, name: true },
+        })) ?? [];
+      const nameById = new Map(names.map((p) => [p.id, p.name]));
+      unbilledItems = [...unbilledQty].map(([productId, qty]) => {
+        const name = nameById.get(productId) ?? "This item";
+        return {
+          productId,
+          name,
+          qty,
+          message: `${name} was not billed on this order, so no refund was given for it.`,
+        };
+      });
+    }
 
     // The credit is always minted against ONE invoice — the only creditable one, or
     // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
@@ -743,6 +789,7 @@ export class ReturnsService {
       invoiceId,
       ...(refundItems ? { items: refundItems } : {}),
       ...(pooledRefund ? { pooledRefund } : {}),
+      ...(unbilledItems ? { unbilledItems } : {}),
     };
   }
 
@@ -968,6 +1015,7 @@ export class ReturnsService {
       invoiceId?: string;
       items?: RefundItem[];
       pooledRefund?: Array<{ productId: string; qty: number }>;
+      unbilledItems?: UnbilledItem[];
     } =
       method === "EXTERNAL_REFUND"
         ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
@@ -977,7 +1025,11 @@ export class ReturnsService {
       invoiceId: sourceInvoiceId,
       items: refundItems,
       pooledRefund,
+      unbilledItems,
     } = basis;
+    // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
+    const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledItem[] }) =>
+      unbilledItems && unbilledItems.length > 0 && r ? { ...r, unbilledItems } : r;
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
@@ -1002,7 +1054,7 @@ export class ReturnsService {
     // EXTERNAL_REFUND: the money was returned outside RouteFlow. Record it, mint nothing.
     if (method === "EXTERNAL_REFUND") return updated;
 
-    if (refundAmount <= 0.001) return updated;
+    if (refundAmount <= 0.001) return withUnbilled(updated);
 
     // Sequential, NOT nested: create() opens its own Serializable tx and books NO
     // regulated reversal for a lump-sum credit (no items) — the returned regulated
@@ -1080,7 +1132,7 @@ export class ReturnsService {
     }
     await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
 
-    return { ...updated, creditNoteId: cn.id };
+    return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 
   async cancel(id: string, user: JwtPayload) {
