@@ -1,6 +1,6 @@
 {
-  "mappedSha": "c49656393daa69c6b13cd1abe2de730010ab317d",
-  "generatedAt": "2026-10-01T18:00:00.000Z",
+  "mappedSha": "8ae96f96d59ce4482965add2fad34fca90e58732",
+  "generatedAt": "2026-10-01T18:40:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-10-01 — windows 12-27 landings (about 40 PRs through #2920, master `fbb05cd19`) (docs-only bookkeeping).** New `api/landing-2026-10-01-w12-w27.md`, `web/landing-2026-10-01-w12-w27.md` and `mobile/landing-2026-10-01-w12-w27.md` (TOC rows in `api.md`/`web.md`/`mobile.md`), one bullet per PR grouped by area, each grepped at HEAD; `packages.md` gains a \"Landed 2026-10-01 (w12-w27)\" section (scanning, pricing, types, ui). The gate anchors on the last commit touching the map, `mappedSha` was restamped to `f8b58781a` (master after #2923) in the registry PR, which also adds #2921 and #2923 as a late section of the api landing file and files B945-B949. #2937 (B953, CSV guard) and #2939 (B954, PDF UTC dates) are mapped in the same late section, #2904 (B923, offline allow-list) in the mobile landing file, and `mappedSha` is restamped to `c49656393` (master after #2978); #2933 (B947, order-wide pool) and #2978 (B955, UTC day, and the canonical lock-order comment) are in the same late section. No source changed. See CHANGELOG.md."
+  "notes": "**2026-10-01 — windows 12-27 landings (about 40 PRs through #2920, master `fbb05cd19`) (docs-only bookkeeping).** New `api/landing-2026-10-01-w12-w27.md`, `web/landing-2026-10-01-w12-w27.md` and `mobile/landing-2026-10-01-w12-w27.md` (TOC rows in `api.md`/`web.md`/`mobile.md`), one bullet per PR grouped by area, each grepped at HEAD; `packages.md` gains a \"Landed 2026-10-01 (w12-w27)\" section (scanning, pricing, types, ui). The gate anchors on the last commit touching the map, `mappedSha` was restamped to `f8b58781a` (master after #2923) in the registry PR, which also adds #2921 and #2923 as a late section of the api landing file and files B945-B949. #2937 (B953, CSV guard) and #2939 (B954, PDF UTC dates) are mapped in the same late section, #2904 (B923, offline allow-list) in the mobile landing file, and `mappedSha` is restamped to `8ae96f96d` (master after #2935); #2943 (B949), #2936 (B957) and #2935 (B950, control) are in the same late section; #2933 (B947, order-wide pool) and #2978 (B955, UTC day, and the canonical lock-order comment) are in the same late section. No source changed. See CHANGELOG.md."
 }
