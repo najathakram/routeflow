@@ -1,6 +1,6 @@
 {
   "mappedSha": "e23a8b03530602be1e52b3efe2a9867b7f97912f",
-  "generatedAt": "2026-09-30T19:40:00.000Z",
+  "generatedAt": "2026-10-01T04:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-30 \u2014 windows 9 and 11 landings #2185, #2781, #2796, #2795, #2754, #2790 (docs-only bookkeeping).** New `api/landing-2026-09-30-w9-w11.md` (web and packages included) and `mobile/landing-2026-09-30-w9-w11.md` (TOC rows in `api.md`/`mobile.md`), one bullet per PR, each grepped in the merged tree; #2781, #2185 and #2754 span both sides (bullet plus pointer). Gotcha recorded: #2790's local `round4` in `products-export.service.ts` (L-248). No source changed. mappedSha -> e23a8b03. See CHANGELOG.md."
+  "notes": "**2026-09-30 \u2014 drift catch-up: landings #2741, #2778, #2782, #2776, #2769, #2771, #2774, #2664 (docs-only bookkeeping).** New `api/landing-2026-09-30-drift-c38f2b0.md` and `mobile/landing-2026-09-30-drift-c38f2b0.md` (TOC rows in `api.md`/`mobile.md`), one bullet per PR, each grepped at HEAD; #2778, #2774 and #2664 span both sides. These landed before `e23a8b035`, so mappedSha is unchanged. No source changed. See CHANGELOG.md."
 }
