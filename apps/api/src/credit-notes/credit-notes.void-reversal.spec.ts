@@ -388,6 +388,15 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       it("the service has no second void method", () => {
         expect((service as any).voidCreditNote).toBeUndefined();
       });
+      it("the kept URL still answers the voided credit-note row (old clients read .status), not the wrapper", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-a", status: "VOID" });
+        const res: any = await door();
+        expect(res).toMatchObject({ id: "cn-a", status: "VOID" });
+        expect(res.creditNote).toBeUndefined();
+      });
       it("a return-backed note is a 409 CREDIT_NOTE_RETURN_BACKED and NOTHING changes", async () => {
         armNote();
         prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
@@ -418,9 +427,9 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
         armNote();
         armRestore();
         prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
-        const res: any = await door();
+        await door();
         expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-2" } });
-        expect(res.reopened).toHaveLength(2);
+        expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-1" } });
       });
     });
 

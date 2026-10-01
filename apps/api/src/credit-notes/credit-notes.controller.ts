@@ -93,7 +93,11 @@ export class CreditNotesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto?: VoidCreditNoteDto,
   ) {
-    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null, dto?.reason);
+    // the kept URL's response is still the voided credit-note row (old clients read `.status`); the reopened invoices are
+    // what :id/void-with-reversal adds.
+    return this.creditNotesService
+      .voidWithReversal(id, user?.sub ?? null, dto?.reason)
+      .then((r) => r.creditNote);
   }
 
   // SA-436 PR-2 (#2402): the invoices a void-with-reversal reopens, and any refusal. Read-only.
