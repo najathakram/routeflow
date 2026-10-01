@@ -2,7 +2,9 @@ import * as React from "react";
 import { StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ScanOutcome, ScanFeedback } from "../lib/scan-loop";
+import { shouldDecode } from "@routeflow/scanning";
 import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
+import { useScanMode } from "../lib/scan-mode-store";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const WINDOW_SIZE = SCREEN_WIDTH * 0.7;
@@ -55,6 +57,11 @@ export function BarcodeScanner({
   active = true,
   aimAssist = false,
 }: Props) {
+  // Hold to scan (owner ruling 2026-09-24) rides the aimAssist opt-in: a default caller is always Continuous and never reads
+  // the stored mode. In Hold mode the camera stays live but decodes are ignored unless the round button is held.
+  const [scanMode, setScanMode] = useScanMode(aimAssist);
+  const holdMode = aimAssist && scanMode === "hold";
+  const [holding, setHolding] = React.useState(false);
   // Swallow codes while paused rather than unmounting the camera.
   const guardedScan = React.useCallback(
     (code: string) => (paused ? undefined : onScanned(code)),
@@ -109,7 +116,7 @@ export function BarcodeScanner({
         onScanned={guardedScan}
         onOutcome={handleOutcome}
         continuous={continuous}
-        active={active && !paused}
+        active={active && !paused && shouldDecode(holdMode ? "hold" : "continuous", holding)}
         aimAssist={aimAssist}
         aimBox={aimAssist ? AIM_BOX : undefined}
       />
@@ -152,11 +159,47 @@ export function BarcodeScanner({
 
         {/* Bottom dark */}
         <View style={[styles.dark, { flex: 1 }]}>
+          {aimAssist ? (
+            <View style={styles.modeRow}>
+              {(["continuous", "hold"] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    m === "hold" ? "Scan mode: Hold to scan" : "Scan mode: Continuous"
+                  }
+                  accessibilityState={{ selected: scanMode === m }}
+                  onPress={() => {
+                    setHolding(false);
+                    setScanMode(m);
+                  }}
+                  style={[styles.modeChip, scanMode === m && styles.modeChipOn]}
+                >
+                  <Text style={styles.modeChipText}>
+                    {m === "hold" ? "Hold to scan" : "Continuous"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
           <Text style={styles.hint}>
-            {continuous
-              ? "Scan items one after another — tap Done when finished"
-              : "Align barcode within the box"}
+            {holdMode
+              ? "Hold the button while the barcode is in the box"
+              : continuous
+                ? "Scan items one after another — tap Done when finished"
+                : "Align barcode within the box"}
           </Text>
+          {holdMode ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Hold to scan"
+              accessibilityState={{ selected: holding }}
+              activeOpacity={1}
+              onPressIn={() => setHolding(true)}
+              onPressOut={() => setHolding(false)}
+              style={[styles.holdButton, holding && styles.holdButtonOn]}
+            />
+          ) : null}
           {continuous ? (
             <TouchableOpacity style={styles.doneButton} onPress={onClose}>
               <Text style={styles.doneButtonText}>Done</Text>
@@ -190,6 +233,27 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255,255,255,0.8)",
     borderRadius: 12,
   },
+  modeRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  modeChip: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.4)",
+  },
+  modeChipOn: { backgroundColor: "rgba(255,255,255,0.25)", borderColor: "#fff" },
+  modeChipText: { color: "#fff", fontSize: 12, fontWeight: "600" },
+  holdButton: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    marginTop: 12,
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.9)",
+    backgroundColor: "rgba(59,130,246,0.7)",
+  },
+  holdButtonOn: { backgroundColor: "rgba(59,130,246,1)", transform: [{ scale: 0.94 }] },
   hint: {
     color: "rgba(255,255,255,0.75)",
     fontSize: 14,
