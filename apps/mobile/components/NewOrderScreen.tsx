@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { orderErrorMessage } from "../lib/order-error-message";
 import {
   ActivityIndicator,
   AppState,
@@ -2000,8 +2001,7 @@ function ProductPickView({
             setLicenseBlock(blocked);
             return;
           }
-          const msg = body?.message ?? err?.message ?? "Unable to save order.";
-          alertInfo("Couldn't save order", String(msg));
+          alertInfo("Couldn't save order", orderErrorMessage(err, "Unable to save order."));
         },
       },
     );

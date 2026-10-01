@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { orderErrorMessage } from "../../../lib/order-error-message";
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -83,7 +84,7 @@ export default function CartScreen() {
           showToast("Order placed");
           router.replace(`/(customer)/orders/${order.id}`);
         },
-        onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
+        onError: (e: any) => showToast(orderErrorMessage(e, "Try again.")),
       },
     );
   };

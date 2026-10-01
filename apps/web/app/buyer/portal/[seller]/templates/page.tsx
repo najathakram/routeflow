@@ -1,5 +1,6 @@
 "use client";
 
+import { insufficientStockSentence, parseInsufficientStock } from "@routeflow/types";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -173,7 +174,12 @@ export default function BuyerTemplatesPage() {
       setSuccessId(templateId);
       setTimeout(() => setSuccessId(null), 4000);
     } catch (err: any) {
-      setErrorMsg(err?.response?.data?.message ?? "Failed to create order from template.");
+      const short = parseInsufficientStock(err);
+      setErrorMsg(
+        short
+          ? insufficientStockSentence(short.lines)
+          : (err?.response?.data?.message ?? "Failed to create order from template."),
+      );
     } finally {
       setReorderingId(null);
     }

@@ -66,6 +66,23 @@ describe("buyer cart — SELLING_RESTRICTED", () => {
     expect(clearCart).not.toHaveBeenCalled();
   });
 
+  it("a stock shortfall reads as a sentence, never the server text, and keeps the cart (gap 05, create path)", async () => {
+    reject(409, {
+      code: "INSUFFICIENT_STOCK",
+      message: "Insufficient stock: Hemp Gummies (available: 4, requested: 6)",
+      lines: [
+        { productId: "p1", name: "Hemp Gummies", available: 4, requested: 6 },
+        { productId: "p2", name: "Lime", available: 0, requested: 2 },
+      ],
+    });
+    await place();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Only 4 pieces of Hemp Gummies left. Lime is out of stock.",
+    );
+    expect(screen.queryByText(/Insufficient stock|available: 4/)).toBeNull();
+    expect(clearCart).not.toHaveBeenCalled();
+  });
+
   it("any other failure still shows the server message", async () => {
     reject(500, { message: "Boom happened" });
     await place();

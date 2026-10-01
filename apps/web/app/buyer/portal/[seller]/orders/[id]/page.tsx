@@ -1,5 +1,6 @@
 "use client";
 
+import { insufficientStockSentence, parseInsufficientStock } from "@routeflow/types";
 import * as React from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -614,6 +615,11 @@ export default function BuyerOrderDetailPage() {
         setActionError(
           `This order includes regulated items${names ? ` (${names})` : ""} that need a verified license. Submit or renew it on the Licenses page, then try again.`,
         );
+        return;
+      }
+      const short = parseInsufficientStock(err);
+      if (short) {
+        setActionError(insufficientStockSentence(short.lines));
         return;
       }
       setActionError(data?.message ?? "Failed to update order items.");
