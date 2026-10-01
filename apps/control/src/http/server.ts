@@ -29,6 +29,7 @@ import { banners, ctx as renderCtx, headerLines, renderFragments } from "../rend
 import type { Fragments } from "../render/panels";
 import { renderPage } from "../render/page";
 import * as C from "../sources/compact";
+import { denylistAvailable } from "../sources/denylist";
 import { CtlError, assertOrigin, cloneTimeoutMs, gitTry } from "../sources/git";
 import type { Env } from "../sources/git";
 import { withLock } from "../sources/lock";
@@ -63,6 +64,7 @@ import {
   route,
   send,
   sendJson,
+  streamBody,
 } from "./routes";
 import type { Target } from "./routes";
 import { createSse } from "./sse";
@@ -150,6 +152,25 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   const env: Env = { ...deps.env, registers: { tasks: [], releases: [] } };
   if (!cfg.local && (cfg.password === undefined || cfg.sessionSecret === undefined)) {
     throw new Error("control: password and session secret are required unless CONTROL_LOCAL=1");
+  }
+  const onRailway = Boolean(
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_ENVIRONMENT_ID ||
+    process.env.RAILWAY_PROJECT_ID,
+  );
+  if (cfg.local && onRailway) {
+    throw new Error("CONTROL_LOCAL=1 is refused on Railway (it disables login)");
+  }
+  if (!cfg.local) {
+    if ((cfg.password ?? "").length < 16)
+      throw new Error("CONTROL_PASSWORD must be at least 16 characters");
+    if (!cfg.publicOrigin && !cfg.fixtureDir) {
+      throw new Error("CONTROL_PUBLIC_URL is required (the origin writes are checked against)");
+    }
+    if (cfg.fixtureDir && onRailway) throw new Error("CONTROL_FIXTURE is refused on Railway");
+  }
+  if (!denylistAvailable()) {
+    throw new Error("the denylist (scripts/campaign/plane-denylist.json) failed to load");
   }
   const secret = cfg.sessionSecret ?? randomBytes(32).toString("hex");
   const pwHash = cfg.password !== undefined ? hashPassword(cfg.password) : null;
@@ -783,9 +804,11 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     if (!m || !cfg.webhookSecret) {
       return sendJson(res, 401, { error: "bad_signature" }, { Connection: "close" });
     }
-    const body = await readBody(req, WEBHOOK_LIMIT);
+    // the handler needs no body field: hash the bytes as they arrive and keep none of them
+    const mac = createHmac("sha256", cfg.webhookSecret);
+    const body = await streamBody(req, WEBHOOK_LIMIT, (c) => void mac.update(c));
     if (!body.ok) return sendJson(res, 413, { error: "too_large" });
-    const want = createHmac("sha256", cfg.webhookSecret).update(body.buf).digest("hex");
+    const want = mac.digest("hex");
     if (!safeEqual(want, m[1])) return sendJson(res, 401, { error: "bad_signature" });
     const id = req.headers["x-github-delivery"];
     if (typeof id === "string" && id !== "") {

@@ -86,8 +86,10 @@ describe("boot refusals (exit 1 with a clear message)", () => {
     expect(r.stderr).not.toContain("short-pass");
   });
   it("non-local without CONTROL_PUBLIC_URL", () => {
-    const { CONTROL_PUBLIC_URL: _u, ...rest } = FULL;
+    // fixture mode is exempt (its origin is the random local port), so test the real shape
+    const { CONTROL_PUBLIC_URL: _u, CONTROL_FIXTURE: _f, ...rest } = FULL;
     void _u;
+    void _f;
     const r = boot(rest);
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/CONTROL_PUBLIC_URL/);
@@ -275,6 +277,113 @@ describe("5 webhook hardening", () => {
     await post({ "x-hub-signature-256": sign(BODY), "x-github-delivery": "d-b" });
     await new Promise((r) => setTimeout(r, 300));
     expect(h.refreshCalls).toBe(1);
+  });
+});
+
+describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
+  it("200 concurrent fake-signature 1 MB uploads grow memory < 50 MB; a signed delivery still works", async () => {
+    h = await startServer({ webhook: true });
+    const MB = Buffer.alloc(1024 * 1024, 97);
+    if (global.gc) global.gc();
+    const mem = (): number => {
+      const m = process.memoryUsage();
+      return m.heapUsed + m.arrayBuffers;
+    };
+    const base = mem();
+    let peak = base;
+    const t = setInterval(() => (peak = Math.max(peak, mem())), 5);
+    const port = h.port;
+    const codes = await Promise.all(
+      Array.from(
+        { length: 200 },
+        () =>
+          new Promise<number>((resolve) => {
+            const s = net.connect(port, "127.0.0.1");
+            let buf = "";
+            s.on("data", (d) => {
+              buf += d.toString();
+              const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
+              if (m) {
+                s.destroy();
+                resolve(Number(m[1]));
+              }
+            });
+            s.on("error", () => resolve(0));
+            s.on("connect", () => {
+              s.write(
+                `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: sha256=${"0".repeat(64)}\r\nContent-Length: ${MB.length}\r\n\r\n`,
+              );
+              s.write(MB);
+            });
+          }),
+      ),
+    );
+    clearInterval(t);
+    expect(codes.every((c) => c === 401)).toBe(true);
+    expect(peak - base).toBeLessThan(50 * 1024 * 1024);
+    const body = JSON.stringify({ a: 1 });
+    const ok = await h.req("POST", "/api/github-webhook", {
+      headers: {
+        "x-hub-signature-256":
+          "sha256=" + createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex"),
+        "x-github-delivery": "after-flood",
+        "x-github-event": "push",
+      },
+      body,
+    });
+    expect(ok.status).toBe(202);
+  });
+});
+
+describe("production guards live in createControlServer", () => {
+  const make = (config: Record<string, unknown>) => {
+    const { makeWorld } = require("./helpers/temp-repo");
+    const { createControlServer } = require("../src/http/server");
+    const world = makeWorld();
+    try {
+      return createControlServer({
+        config: { local: false, host: "0.0.0.0", port: 0, ...config },
+        env: world.env("g"),
+        github: {
+          poll: async () => ({ prs: [], branches: [], files: {} }),
+          state: { rateLimit: { remaining: 1 } },
+        },
+      });
+    } finally {
+      world.cleanup();
+    }
+  };
+  const ok = {
+    password: "a-long-enough-password",
+    sessionSecret: "s".repeat(40),
+    publicOrigin: "https://control.example.test",
+  };
+  const RAIL = ["RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_ID", "RAILWAY_PROJECT_ID"];
+  const clean = (): void => RAIL.forEach((k) => delete process.env[k]);
+  afterEach(clean);
+
+  it("a valid production config is accepted", () => {
+    expect(() => make(ok)).not.toThrow();
+  });
+  it("a password under 16 characters", () => {
+    expect(() => make({ ...ok, password: "short-pass" })).toThrow(/CONTROL_PASSWORD/);
+  });
+  it("no public origin outside local/fixture mode", () => {
+    expect(() => make({ ...ok, publicOrigin: undefined })).toThrow(/CONTROL_PUBLIC_URL/);
+  });
+  it.each(RAIL)("local mode on Railway (%s)", (k) => {
+    process.env[k] = "x";
+    expect(() => make({ local: true, host: "127.0.0.1" })).toThrow(/CONTROL_LOCAL/);
+  });
+  it("an unloadable denylist", () => {
+    const old = process.env.CONTROL_DENYLIST;
+    process.env.CONTROL_DENYLIST = "/nonexistent/dl.json";
+    try {
+      expect(() => make(ok)).toThrow(/denylist/i);
+    } finally {
+      if (old === undefined) delete process.env.CONTROL_DENYLIST;
+      else process.env.CONTROL_DENYLIST = old;
+    }
   });
 });
 

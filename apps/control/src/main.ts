@@ -11,7 +11,6 @@ import type { Config } from "./config";
 import { createControlServer } from "./http/server";
 import type { ControlDeps } from "./http/server";
 import { setupDeployKey } from "./http/deploykey";
-import { denylistAvailable } from "./sources/denylist";
 import { createGithub } from "./sources/github";
 
 const die = (msg: string): never => {
@@ -28,16 +27,6 @@ try {
 if (config.local && !config.fixtureDir && !config.repo) {
   die("CONTROL_LOCAL=1 needs CONTROL_FIXTURE or CONTROL_REPO");
 }
-
-if (config.local && process.env.RAILWAY_ENVIRONMENT) {
-  die("CONTROL_LOCAL=1 is refused when RAILWAY_ENVIRONMENT is set (it disables login)");
-}
-if (!config.local) {
-  if ((config.password ?? "").length < 16) die("CONTROL_PASSWORD must be at least 16 characters");
-  if (!config.publicOrigin)
-    die("CONTROL_PUBLIC_URL is required (the origin writes are checked against)");
-}
-if (!denylistAvailable()) die("the denylist (scripts/campaign/plane-denylist.json) failed to load");
 
 const cleanups: Array<() => void> = [];
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "routeflow-control-"));
@@ -121,21 +110,26 @@ const stateDir = config.stateDir ?? path.join(tmpRoot, "state");
 const masterDir = config.masterDir ?? path.join(tmpRoot, "master");
 const stamp = (): string => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
-const app = createControlServer({
-  config,
-  env: {
-    origin,
-    cloneDir: stateDir,
-    stateBranch: "ctl/state",
-    archiveBranch: "ctl/archive",
-    registers: { tasks: [], releases: [] },
-    now: stamp,
-  },
-  github,
-  fetch: globalThis.fetch,
-  masterDir,
-  log: (l) => console.log(`[control] ${l}`),
-});
+let app: ReturnType<typeof createControlServer>;
+try {
+  app = createControlServer({
+    config,
+    env: {
+      origin,
+      cloneDir: stateDir,
+      stateBranch: "ctl/state",
+      archiveBranch: "ctl/archive",
+      registers: { tasks: [], releases: [] },
+      now: stamp,
+    },
+    github,
+    fetch: globalThis.fetch,
+    masterDir,
+    log: (l) => console.log(`[control] ${l}`),
+  });
+} catch (e) {
+  app = die(e instanceof Error ? e.message : "boot refused");
+}
 
 let stopping = false;
 const shutdown = (): void => {

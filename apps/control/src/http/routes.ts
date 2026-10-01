@@ -153,3 +153,38 @@ export const redirect = (
   res.writeHead(status, { Location: to, "Content-Length": 0, ...extra });
   res.end();
 };
+
+/**
+ * Stream a body into `sink` chunk by chunk, keeping nothing. Past `limit` the rest is dropped
+ * unhashed. Resolves `{ok:false}` when over the limit or aborted.
+ */
+export function streamBody(
+  req: IncomingMessage,
+  limit: number,
+  sink: (chunk: Buffer) => void,
+): Promise<{ ok: boolean }> {
+  return new Promise((resolve) => {
+    let size = 0;
+    let over = false;
+    let done = false;
+    const finish = (ok: boolean): void => {
+      if (done) return;
+      done = true;
+      resolve({ ok });
+    };
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > limit) over = true;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > limit) over = true;
+      if (!over) sink(c);
+      if (size > limit * 64 + 1_048_576) {
+        finish(false);
+        req.destroy();
+      }
+    });
+    req.on("end", () => finish(!over));
+    req.on("error", () => finish(false));
+    req.on("close", () => finish(false));
+  });
+}
