@@ -113,7 +113,10 @@ describeDb("WS8 families API — real Postgres", () => {
     const post = (name: string) =>
       inTenant(tenantId, () =>
         service.createFamily(
-          { family: { name }, variants: [variant(`${name} kid`, { barcode: "800800" })] } as any,
+          {
+            family: { name, pricePerUnit: "1.00" },
+            variants: [variant(`${name} kid`, { barcode: "800800" })],
+          } as any,
           ACTOR,
         ),
       );

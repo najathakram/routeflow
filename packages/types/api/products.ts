@@ -321,7 +321,8 @@ export interface CreateFamilyRequest {
     name: string;
     category?: string;
     description?: string;
-    pricePerUnit?: string;
+    /** REQUIRED (SA-606i): no implicit $0.00; send "0.00" for a deliberately free family. */
+    pricePerUnit: string;
     standardCost?: string;
   };
   /** 1..200 rows. */
