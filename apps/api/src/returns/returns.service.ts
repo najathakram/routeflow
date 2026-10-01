@@ -35,6 +35,8 @@ import {
   planProductRefund,
   toHeadroomLine,
   loadLineCredits,
+  loadOrderPool,
+  pooledRefundRefusal,
   type HeadroomLine,
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
@@ -617,7 +619,12 @@ export class ReturnsService {
   private async billedBasisFor(
     items: any[],
     order?: any,
-  ): Promise<{ amount: number; invoiceId?: string; items?: RefundItem[] }> {
+  ): Promise<{
+    amount: number;
+    invoiceId?: string;
+    items?: RefundItem[];
+    pooledRefund?: Array<{ productId: string; qty: number }>;
+  }> {
     const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException("Nothing billed on this order can be refunded");
@@ -685,6 +692,36 @@ export class ReturnsService {
       }
     }
 
+    // B947: 2+ creditable invoices keep the lump sum minted on the latest invoice, but the refund is checked against the SAME
+    // per-line headroom, POOLED per product across ALL the creditable invoices (a line on an older invoice was invisible to
+    // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
+    let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
+    if (creditable.length >= 2 && order?.id) {
+      const returnedByProduct = new Map<string, number>();
+      for (const it of items)
+        returnedByProduct.set(
+          it.productId,
+          (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
+        );
+      const pool = await loadOrderPool(this.prisma.forTenant(), order.id);
+      for (const [productId, qty] of returnedByProduct) {
+        const refused = pooledRefundRefusal(pool, productId, qty);
+        if (refused)
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+            message:
+              "This refund would credit more than the order's invoice lines are worth: part of it was already credited " +
+              "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+            productId,
+            requested: refused.requestedAmount,
+            remaining: refused.remainingAmount,
+            requestedQty: refused.requestedQty,
+            remainingQty: refused.remainingQty,
+          });
+      }
+      pooledRefund = [...returnedByProduct].map(([productId, qty]) => ({ productId, qty }));
+    }
+
     const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
       where: { status: { not: "VOID" }, invoiceId },
       _sum: { amount: true },
@@ -700,7 +737,12 @@ export class ReturnsService {
           `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
       );
     }
-    return { amount: effectiveAmount, invoiceId, ...(refundItems ? { items: refundItems } : {}) };
+    return {
+      amount: effectiveAmount,
+      invoiceId,
+      ...(refundItems ? { items: refundItems } : {}),
+      ...(pooledRefund ? { pooledRefund } : {}),
+    };
   }
 
   /**
@@ -919,11 +961,21 @@ export class ReturnsService {
     // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the
     // mint-time gates: a RECEIVED return on a VOID-only (or fully credited) order must
     // still be resolvable by "refunded outside RouteFlow", or it is stuck forever.
-    const basis: { amount: number; invoiceId?: string; items?: RefundItem[] } =
+    const basis: {
+      amount: number;
+      invoiceId?: string;
+      items?: RefundItem[];
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } =
       method === "EXTERNAL_REFUND"
         ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
-    const { amount: refundAmount, invoiceId: sourceInvoiceId, items: refundItems } = basis;
+    const {
+      amount: refundAmount,
+      invoiceId: sourceInvoiceId,
+      items: refundItems,
+      pooledRefund,
+    } = basis;
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
@@ -976,7 +1028,7 @@ export class ReturnsService {
             : {}),
         },
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
-        { ledgerReversedByReturn: true },
+        { ledgerReversedByReturn: true, ...(pooledRefund ? { pooledRefund } : {}) },
       );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
@@ -1005,7 +1057,7 @@ export class ReturnsService {
       // refusal (409 RETURN_REFUND_OVER_LINE_HEADROOM), never the credit note's own over-headroom 400.
       const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
       if (
-        refundItems &&
+        (refundItems || pooledRefund) &&
         (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
           code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)
       ) {

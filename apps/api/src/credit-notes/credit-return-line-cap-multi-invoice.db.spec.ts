@@ -1,0 +1,381 @@
+/**
+ * B947 (HIGH money, interim fix; real Postgres): a return refund on an order with 2+ creditable invoices is headroom-checked
+ * against the order's invoice TOTALS and the LATEST invoice's room only, then minted as a lump sum on the latest invoice. The
+ * per-line refund-mode check B946 (SA-628) added runs for a single creditable invoice only, so a line on an OLDER invoice can
+ * be credited past its value: a credit note item on X's line A, then a return refund of A (lump sum on Y), totals 2 x A.
+ *
+ * The fix under test: the SAME refund-mode check across ALL creditable invoices' lines (a 409 RETURN_REFUND_OVER_LINE_HEADROOM,
+ * refused BEFORE the claim, never clipped), the mint UNCHANGED (still a lump sum on the latest invoice, no items).
+ *
+ * Runs only under `npm run local:test:db`. Every tenant is a throwaway `qa-b947-<run>-<n>` slug approved by `assertTestTenant`.
+ */
+import { randomUUID } from "crypto";
+import { Test } from "@nestjs/testing";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { CreditNotesService } from "./credit-notes.service";
+import { ReturnsService } from "../returns/returns.service";
+import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
+import { CommissionEngineService } from "../sales-agents/commission-engine.service";
+import { AuditService } from "../audit/audit.service";
+import { EntitlementsService } from "../billing/entitlements.service";
+import { RouteFlowGateway } from "../gateways/routeflow.gateway";
+import { NumberingService } from "../import/numbering.service";
+import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { IdempotencyService } from "../common/idempotency.service";
+import { EncryptionService } from "../common/encryption.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
+import { InlineReturnsService } from "../returns/inline-returns.service";
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
+
+const RUN = randomUUID().slice(0, 8);
+
+describeDb(
+  "B947: a line is never credited past its value when a return refund spans 2+ creditable invoices: real Postgres",
+  () => {
+    let prisma: PrismaService;
+    let tenantCtx: TenantContextService;
+    let creditNotes: CreditNotesService;
+    let returns: ReturnsService;
+    const tenantIds: string[] = [];
+    let seq = 0;
+    let cnSeq = 0;
+    let rtnSeq = 0;
+
+    beforeAll(async () => {
+      requireLocalDatabaseUrl();
+      tenantCtx = new TenantContextService();
+      prisma = new PrismaService(tenantCtx);
+      await prisma.$connect();
+      // The socket gateway: nothing under test. NEVER answer `then` (or a symbol): Nest would await the proxy as a thenable and hang.
+      const anyMethod = new Proxy(
+        {},
+        {
+          get: (_t, prop) => (prop === "then" || typeof prop === "symbol" ? undefined : jest.fn()),
+        },
+      );
+      const mod = await Test.createTestingModule({
+        providers: [
+          CreditNotesService,
+          ReturnsService,
+          RegulatedLedgerService,
+          CommissionEngineService,
+          AuditService,
+          { provide: PrismaService, useValue: prisma },
+          {
+            provide: EntitlementsService,
+            useValue: { hasFlag: jest.fn().mockResolvedValue(false) },
+          },
+          { provide: RouteFlowGateway, useValue: anyMethod },
+          {
+            provide: NumberingService,
+            useValue: {
+              reserveNext: jest.fn().mockImplementation(async () => `CN-B947-${RUN}-${++cnSeq}`),
+            },
+          },
+        ],
+      }).compile();
+      creditNotes = mod.get(CreditNotesService);
+      returns = mod.get(ReturnsService);
+    });
+
+    afterAll(async () => {
+      const swallow = () => undefined; // a failed cleanup must never mask a test's result
+      for (const tenantId of tenantIds) {
+        const where = { where: { tenantId } };
+        await prisma.returnItem.deleteMany(where).catch(swallow);
+        await prisma.return.deleteMany(where).catch(swallow);
+        await prisma.creditNoteItem.deleteMany(where).catch(swallow);
+        await prisma.creditNote.deleteMany(where).catch(swallow);
+        await prisma.invoiceItem.deleteMany(where).catch(swallow);
+        await prisma.invoice.deleteMany(where).catch(swallow);
+        await prisma.orderItem.deleteMany(where).catch(swallow);
+        await prisma.order.deleteMany(where).catch(swallow);
+        await prisma.product.deleteMany(where).catch(swallow);
+        await prisma.customer.deleteMany(where).catch(swallow);
+        await prisma.user.deleteMany(where).catch(swallow);
+        await prisma.auditLog.deleteMany(where).catch(swallow);
+        await prisma.tenant.delete({ where: { id: tenantId } }).catch(swallow);
+      }
+      await prisma?.$disconnect();
+    });
+
+    /**
+     * An order with TWO creditable invoices: X (older) bills A ($100) and B ($100); Y (latest) bills C ($100). Each product is
+     * on the order too, so the return belongs to the order. Totals: X $200, Y $100.
+     */
+    async function seed(label: string) {
+      seq += 1;
+      const slug = assertTestTenant(
+        `qa-b947-${RUN}-${seq}-${label}`,
+        "credit-return-line-cap-multi-invoice.db.spec.ts",
+      );
+      const tenant = await prisma.tenant.create({ data: { slug, name: `b947 ${slug}` } });
+      tenantIds.push(tenant.id);
+      const tenantId = tenant.id;
+      const user = await prisma.user.create({
+        data: { email: `${slug}@example.invalid`, username: slug, role: "CUSTOMER", tenantId },
+      });
+      const customer = await prisma.customer.create({
+        data: { userId: user.id, businessName: `c ${label}`, contactName: `c ${label}`, tenantId },
+      });
+      const mk = (name: string) =>
+        prisma.product.create({
+          data: { tenantId, name: `${name} ${slug}`, unit: "each", pricePerUnit: 100 },
+        });
+      const [pA, pB, pC] = [await mk("A"), await mk("B"), await mk("C")];
+      const order = await prisma.order.create({
+        data: {
+          tenantId,
+          customerId: customer.id,
+          orderNumber: `ORD-B947-${RUN}-${seq}`,
+          subtotal: 300,
+          tax: 0,
+          total: 300,
+          status: "DELIVERED",
+        } as any,
+      });
+      for (const p of [pA, pB, pC]) {
+        await prisma.orderItem.create({
+          data: {
+            tenantId,
+            orderId: order.id,
+            productId: p.id,
+            name: p.name,
+            qty: 1,
+            unitPrice: 100,
+            subtotal: 100,
+          } as any,
+        });
+      }
+      const invoice = (n: number, total: number, at: string) =>
+        prisma.invoice.create({
+          data: {
+            tenantId,
+            customerId: customer.id,
+            orderId: order.id,
+            invoiceNumber: `INV-B947-${RUN}-${seq}-${n}`,
+            status: "SENT",
+            subtotal: total,
+            taxAmount: 0,
+            total,
+            createdAt: new Date(at),
+          },
+        });
+      const X = await invoice(1, 200, "2026-01-01T00:00:00Z");
+      const Y = await invoice(2, 100, "2026-02-01T00:00:00Z");
+      const line = (invoiceId: string, productId: string, d: string) =>
+        prisma.invoiceItem.create({
+          data: {
+            tenantId,
+            invoiceId,
+            productId,
+            description: d,
+            qty: 1,
+            unitPrice: 100,
+            subtotal: 100,
+          },
+        });
+      const [lineA, lineB] = [await line(X.id, pA.id, "A"), await line(X.id, pB.id, "B")];
+      const lineC = await line(Y.id, pC.id, "C");
+      return {
+        tenantId,
+        customerId: customer.id,
+        orderId: order.id,
+        X,
+        Y,
+        pA,
+        pB,
+        pC,
+        lineA,
+        lineB,
+        lineC,
+      };
+    }
+    type Seed = Awaited<ReturnType<typeof seed>>;
+
+    async function receivedReturn(s: Seed, productId: string, qty = 1) {
+      rtnSeq += 1;
+      return prisma.return.create({
+        data: {
+          tenantId: s.tenantId,
+          orderId: s.orderId,
+          customerId: s.customerId,
+          reason: "DAMAGED",
+          status: "RECEIVED",
+          returnNumber: `RTN-B947-${RUN}-${rtnSeq}`,
+          items: { create: [{ tenantId: s.tenantId, productId, qty }] },
+        } as any,
+      });
+    }
+    const inTenant = <T>(s: Seed, fn: () => Promise<T>) => tenantCtx.run(s.tenantId, fn);
+    const creditItemOnX = (s: Seed, line: { id: string }, amount: number) =>
+      inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.X.id,
+          amount,
+          items: [{ invoiceItemId: line.id, amount }],
+        } as any),
+      );
+    const refund = (s: Seed, returnId: string) =>
+      inTenant(s, () => returns.processRefund(returnId));
+    const status = async (returnId: string) =>
+      (await prisma.return.findUnique({ where: { id: returnId } }))!.status;
+    const mintedNotes = (s: Seed) =>
+      prisma.creditNote.findMany({
+        where: { tenantId: s.tenantId, status: { not: "VOID" } },
+        select: { amount: true, invoiceId: true, items: { select: { id: true } } },
+      });
+
+    it("1. RED REPRO: a $100 credit note item on X's line A, then a FULL return refund of A (lump sum on the latest invoice Y) is REFUSED 409 and nothing is minted", async () => {
+      const s = await seed("cn-then-return");
+      await creditItemOnX(s, s.lineA, 100);
+      const ret = await receivedReturn(s, s.pA.id);
+      await expect(refund(s, ret.id)).rejects.toMatchObject({
+        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+      });
+      expect(await status(ret.id)).toBe("RECEIVED"); // refused BEFORE the RECEIVED->REFUNDED claim
+      expect(await mintedNotes(s)).toHaveLength(1); // only the credit note item; the refund minted nothing
+    }, 60_000);
+
+    it("2. a refund the lines CAN absorb mints exactly what it minted before: ONE lump-sum credit note (no items) on the LATEST invoice", async () => {
+      const s = await seed("fits");
+      await creditItemOnX(s, s.lineA, 40); // A has $60 left
+      const ret = await receivedReturn(s, s.pB.id); // B is untouched
+      await refund(s, ret.id);
+      expect(await status(ret.id)).toBe("REFUNDED");
+      const notes = await mintedNotes(s);
+      const refundNote = notes.find((n) => n.invoiceId === s.Y.id);
+      expect(refundNote).toBeDefined();
+      expect(Number(refundNote!.amount)).toBe(100);
+      expect(refundNote!.items).toHaveLength(0); // the mint is UNCHANGED: a lump sum, never itemised for 2+ invoices
+    }, 60_000);
+
+    it("3. two refunds of the SAME product in a row: the second is REFUSED (the first's lump sum on Y counts against A's line on X)", async () => {
+      const s = await seed("twice");
+      const r1 = await receivedReturn(s, s.pA.id);
+      await refund(s, r1.id);
+      const r2 = await receivedReturn(s, s.pA.id);
+      await expect(refund(s, r2.id)).rejects.toMatchObject({
+        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+      });
+      expect(await status(r2.id)).toBe("RECEIVED");
+    }, 60_000);
+
+    it("4. boundary: $60 credited on A (of $100), a return of A is REFUSED; after the credit note is VOIDED it succeeds", async () => {
+      const s = await seed("void-frees");
+      const cn: any = await creditItemOnX(s, s.lineA, 60);
+      const ret = await receivedReturn(s, s.pA.id);
+      await expect(refund(s, ret.id)).rejects.toMatchObject({
+        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+      });
+      await inTenant(s, () => creditNotes.voidWithReversal(cn.id, null as any));
+      await refund(s, ret.id);
+      expect(await status(ret.id)).toBe("REFUNDED");
+    }, 60_000);
+
+    it("5. a product on the order but on NO creditable invoice line keeps today's behaviour (the check cannot refuse what it cannot place)", async () => {
+      const s = await seed("unplaced");
+      const stray = await prisma.product.create({
+        data: { tenantId: s.tenantId, name: `stray ${RUN}`, unit: "each", pricePerUnit: 10 },
+      });
+      const ret = await receivedReturn(s, stray.id);
+      // priceReturn prices from the billed lines, so a product with no billed line refunds nothing creditable
+      await expect(refund(s, ret.id)).rejects.toBeDefined();
+      expect(await status(ret.id)).toBe("RECEIVED");
+    }, 60_000);
+
+    it("7. THE OTHER DIRECTION: a return refund of A first (a lump sum on the latest invoice Y), then a credit note item on A on X is REFUSED (400 CREDIT_NOTE_OVER_HEADROOM) and nothing is minted", async () => {
+      const s = await seed("refund-then-cn");
+      const ret = await receivedReturn(s, s.pA.id);
+      await refund(s, ret.id);
+      const before = (await mintedNotes(s)).length;
+      await expect(creditItemOnX(s, s.lineA, 100)).rejects.toMatchObject({
+        response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
+      });
+      expect(await mintedNotes(s)).toHaveLength(before);
+    }, 60_000);
+
+    it("8. the same after the refund's credit note is VOIDED: the credit note item on A succeeds", async () => {
+      const s = await seed("refund-void-cn");
+      const ret = await receivedReturn(s, s.pA.id);
+      await refund(s, ret.id);
+      const refundNote = (await prisma.creditNote.findFirst({
+        where: { tenantId: s.tenantId, invoiceId: s.Y.id },
+      }))!;
+      await inTenant(s, () => creditNotes.voidWithReversal(refundNote.id, null as any));
+      await expect(creditItemOnX(s, s.lineA, 100)).resolves.toBeDefined();
+    }, 60_000);
+
+    it("9. a credit note item on a DIFFERENT product on X (B) is unaffected by a refund of A", async () => {
+      const s = await seed("other-product");
+      const ret = await receivedReturn(s, s.pA.id);
+      await refund(s, ret.id);
+      await expect(creditItemOnX(s, s.lineB, 100)).resolves.toBeDefined();
+    }, 60_000);
+
+    it("10. an invoice with NO order keeps the invoice-only check: a credit note item on it is unaffected by the pool", async () => {
+      const s = await seed("no-order");
+      const solo = await prisma.invoice.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          invoiceNumber: `INV-B947-${RUN}-solo`,
+          status: "SENT",
+          subtotal: 100,
+          taxAmount: 0,
+          total: 100,
+        },
+      });
+      const soloLine = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: solo.id,
+          productId: s.pA.id,
+          description: "A",
+          qty: 1,
+          unitPrice: 100,
+          subtotal: 100,
+        },
+      });
+      await expect(
+        inTenant(s, () =>
+          creditNotes.create({
+            customerId: s.customerId,
+            invoiceId: solo.id,
+            amount: 100,
+            items: [{ invoiceItemId: soloLine.id, amount: 100 }],
+          } as any),
+        ),
+      ).resolves.toBeDefined();
+    }, 60_000);
+
+    it("6. race: a credit note item on A and a return refund of A racing never total more than $100 on A, and neither 500s", async () => {
+      const s = await seed("race");
+      const ret = await receivedReturn(s, s.pA.id);
+      const [a, b] = await Promise.all([
+        creditItemOnX(s, s.lineA, 100).catch((e) => e),
+        refund(s, ret.id).catch((e) => e),
+      ]);
+      for (const r of [a, b]) {
+        if (r instanceof Error) expect((r as any).getStatus?.()).toBeLessThan(500);
+      }
+      const items = await prisma.creditNoteItem.findMany({
+        where: {
+          tenantId: s.tenantId,
+          invoiceItemId: s.lineA.id,
+          creditNote: { status: { not: "VOID" } },
+        },
+        select: { amount: true },
+      });
+      const refunded = (await status(ret.id)) === "REFUNDED" ? 100 : 0;
+      expect(items.reduce((n, i) => n + Number(i.amount), 0) + refunded).toBeLessThanOrEqual(
+        100.01,
+      );
+    }, 60_000);
+  },
+);

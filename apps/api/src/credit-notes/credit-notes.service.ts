@@ -21,7 +21,15 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
-import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
+import {
+  loadLineCredits,
+  loadOrderPool,
+  pooledRefundRefusal,
+  pooledTakeRefusal,
+  toHeadroomLine,
+  type OrderPool,
+} from "./line-credit-headroom";
+import { isTxClient } from "../prisma/prisma.service";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -79,7 +87,13 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string; ledgerReversedByReturn?: boolean } = {},
+    opts: {
+      excludeCreditNoteId?: string;
+      ledgerReversedByReturn?: boolean;
+      // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
+      // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -99,6 +113,7 @@ export class CreditNotesService {
         total: true,
         customerId: true,
         status: true,
+        orderId: true,
         items: {
           select: {
             id: true,
@@ -144,6 +159,26 @@ export class CreditNotesService {
         `Credit note amount (${dto.amount}) would exceed invoice total (${invoiceTotal}). Already credited: ${totalExisting}.`,
       );
     }
+
+    // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
+    // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
+    let pool: OrderPool | null = null;
+    if (invoice.orderId && ((opts.pooledRefund?.length ?? 0) > 0 || lineItems)) {
+      const p = await loadOrderPool(db, invoice.orderId, {
+        excludeCreditNoteId: opts.excludeCreditNoteId,
+        lock: isTxClient(db),
+      });
+      if (p.invoiceCount >= 2) pool = p;
+    }
+    if (pool)
+      for (const r of opts.pooledRefund ?? []) {
+        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        if (refusal)
+          throw cnBad(
+            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
+          );
+      }
 
     if (!lineItems) return [];
 
@@ -269,6 +304,27 @@ export class CreditNotesService {
           : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
+    if (pool) {
+      const byProduct = new Map<string, { amount: number; qty: number; explicit: boolean }>();
+      for (const row of cnItemsData) {
+        const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
+        if (!productId) continue;
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0, explicit: false };
+        byProduct.set(productId, {
+          amount: prev.amount + row.amount,
+          qty: prev.qty + row.qty,
+          explicit: prev.explicit,
+        });
+      }
+      for (const [productId, take] of byProduct) {
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount });
+        if (refusal)
+          throw cnBad(
+            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            `Credit of ${refusal.requestedAmount} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingAmount} left, counting refunds already minted on other invoices).`,
+          );
+      }
+    }
     if (Math.abs(sum - dto.amount) > 0.01)
       throw cnBad(
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
@@ -451,7 +507,10 @@ export class CreditNotesService {
       /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
       expiresAt?: string;
     },
-    internal: { ledgerReversedByReturn?: boolean } = {},
+    internal: {
+      ledgerReversedByReturn?: boolean;
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } = {},
   ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
