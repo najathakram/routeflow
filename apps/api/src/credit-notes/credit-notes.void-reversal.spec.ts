@@ -263,6 +263,61 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(gateway.emitCreditNoteVoided).toHaveBeenCalled();
     });
 
+    it("#2540: the optional void reason is recorded in the VOIDED audit row, trimmed", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "  duplicate of CN-0042  ");
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "VOIDED",
+          meta: expect.objectContaining({ reason: "duplicate of CN-0042" }),
+        }),
+      });
+    });
+
+    it("#2540: no reason (or a blank one) leaves the audit meta without a reason key", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "   ");
+
+      const meta = prisma.auditLog.create.mock.calls[0][0].data.meta;
+      expect(meta).not.toHaveProperty("reason");
+      expect(meta).toHaveProperty("reversed");
+    });
+
+    it("#2540: the reopened invoice's overdue is judged in the TENANT zone, not UTC", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-09-10T03:00:00Z"));
+      try {
+        armNote();
+        armRestore();
+        // Due 2026-09-09: over in UTC (03:00Z on the 10th) but still running in Honolulu (UTC-10).
+        prisma.invoice.findUnique.mockImplementation((args: any) =>
+          Promise.resolve({
+            id: args.where.id,
+            total: args.where.id === "inv-2" ? 40 : 50,
+            dueDate: new Date("2026-09-09T00:00:00Z"),
+            status: "PAID",
+            payments: [],
+          }),
+        );
+        prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "Pacific/Honolulu" });
+
+        await service.voidWithReversal("cn-a", "user-7");
+
+        const statuses = prisma.invoice.update.mock.calls.map((c: any) => c[0].data.status);
+        expect(statuses.length).toBeGreaterThan(0);
+        expect(statuses.every((st: string) => st === "SENT")).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("an unused note voids with no restores and no blocks", async () => {
       armNote({ status: "ISSUED", amountUsed: 0 });
       armRestore();
