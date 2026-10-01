@@ -1,6 +1,20 @@
 import { EmailService } from "./email.service";
 
 jest.mock("nodemailer", () => ({ createTransport: jest.fn() }));
+// B909: never let a unit test reach the real Resend client — a spec that goes
+// red (e.g. a guard regression) must fail on its assertions, not attempt the
+// network. The mocked client REFUSES by default (SDK {data, error} shape);
+// tests that need a delivery result override `(svc as any).resend.emails.send`.
+jest.mock("resend", () => ({
+  Resend: jest.fn().mockImplementation(() => ({
+    emails: {
+      send: jest.fn().mockResolvedValue({
+        data: null,
+        error: { message: "resend is mocked in unit tests (B909)" },
+      }),
+    },
+  })),
+}));
 import * as nodemailer from "nodemailer";
 
 /**
@@ -195,6 +209,15 @@ describe("EmailService — sentinel recipients refused at the choke point (#2854
     });
     expect(res.delivered).toBe(false);
     expect(res.error ?? "").not.toMatch(/placeholder address/i);
+  });
+
+  it("B911: platform-send logs carry the recipient DOMAIN only, never the full address", async () => {
+    const svc = makeService();
+    const warnSpy = jest.spyOn((svc as any).logger, "warn");
+    await svc.sendPlatform({ to: "owner@acme.example", subject: "x", html: "<p>x</p>" });
+    const logged = warnSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toContain("@acme.example");
+    expect(logged).not.toContain("owner@");
   });
 });
 
@@ -2072,5 +2095,177 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     expect(call.text).toBeTruthy();
     expect(call.text).toContain("Acme Widget");
     expect(call.text).toContain("WID-001");
+  });
+});
+
+describe("EmailService — send() logs never carry a full recipient address; Resend messages are redacted (B927, #2873)", () => {
+  const TO = "owner@acme.example";
+  const smtpRows = () => [
+    { key: "email.smtpHost", value: "smtp.example.com" },
+    { key: "email.smtpUser", value: "user@example.com" },
+    { key: "email.smtpPassword", value: "pw" },
+    { key: "email.smtpPort", value: "587" },
+  ];
+  const logged = (svc: EmailService) => {
+    const logger = (svc as any).logger;
+    const spies = (["log", "warn", "error"] as const).map((l) => jest.spyOn(logger, l));
+    return () => spies.flatMap((s) => s.mock.calls.map((c) => String(c[0]))).join("\n");
+  };
+  const noFullAddress = (text: string) => {
+    expect(text).toContain("@acme.example");
+    expect(text).not.toContain("owner@");
+  };
+
+  it("tenant SMTP success log is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m1" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({ systemConfigRows: smtpRows() });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("platform SMTP success log inside send() is domain-only", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m2" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const svc = makeService({
+      smtpHost: "smtp.platform.example",
+      smtpUser: "noreply@platform.example",
+      smtpPass: "pw",
+    });
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend rejection and throw logs in send() are domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: "rejected" } })
+      .mockRejectedValueOnce(new Error("boom"));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("Resend success log in send() is domain-only", async () => {
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: { id: "e1" }, error: null });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("the no-transport 'EMAIL NOT SENT' warning is domain-only", async () => {
+    const svc = makeService();
+    const read = logged(svc);
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    noFullAddress(read());
+  });
+
+  it("the error RETURNED to callers on a Resend rejection/throw is redacted too", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 for owner@acme.example";
+    const svc = makeService({ resendKey: "re_test" });
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockResolvedValueOnce({ data: null, error: { message: leaky } })
+      .mockRejectedValueOnce(new Error(leaky))
+      .mockRejectedValueOnce(new Error(leaky));
+    const results = [
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.send({ to: TO, subject: "x", html: "<p>x</p>" }),
+      await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" }),
+    ];
+    for (const r of results) {
+      expect(r.delivered).toBe(false);
+      expect(r.error ?? "").not.toContain("10.0.1.4");
+      expect(r.error ?? "").not.toContain("owner@");
+      expect(r.error ?? "").toContain("[address]");
+    }
+  });
+
+  it("Resend error text is redacted of address literals in both send() and sendPlatform() logs", async () => {
+    const leaky = "connect ECONNREFUSED 10.0.1.4:443 via ::1:587";
+    const svc = makeService({ resendKey: "re_test" });
+    const read = logged(svc);
+    (svc as any).resend.emails.send = jest
+      .fn()
+      .mockResolvedValue({ data: null, error: { message: leaky } });
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    (svc as any).resend.emails.send = jest.fn().mockRejectedValue(new Error(leaky));
+    await svc.send({ to: TO, subject: "x", html: "<p>x</p>" });
+    await svc.sendPlatform({ to: TO, subject: "x", html: "<p>x</p>" });
+    const text = read();
+    expect(text).not.toContain("10.0.1.4");
+    expect(text).not.toContain("::1:587");
+    expect(text).toContain("[address]");
+  });
+});
+
+describe("redactAddresses — masks IP literals AND email addresses (keeps the domain)", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { redactAddresses } = require("./email.service") as {
+    redactAddresses: (s: string) => string;
+  };
+
+  it("masks a plain address, keeping the domain", () => {
+    expect(redactAddresses("rejected owner@acme.example today")).toBe(
+      "rejected ***@acme.example today",
+    );
+  });
+
+  it("masks the address inside a display-name form", () => {
+    expect(redactAddresses('bad recipient "Acme Store <owner@acme.example>"')).toBe(
+      'bad recipient "Acme Store <***@acme.example>"',
+    );
+  });
+
+  it("masks every address in one string, including plus-tags and subdomains", () => {
+    expect(redactAddresses("to a.b+tag@mail.acme.example, cc c@other.org and d@x.co.uk")).toBe(
+      "to ***@mail.acme.example, cc ***@other.org and ***@x.co.uk",
+    );
+  });
+
+  it("leaves IP masking unchanged", () => {
+    expect(redactAddresses("connect EHOSTUNREACH 10.0.1.4:587")).toBe(
+      "connect EHOSTUNREACH [address]:587",
+    );
+    expect(redactAddresses("connect ECONNREFUSED ::1:587")).toContain("[address]");
+  });
+
+  it("finishes fast on a hostile 50k string with no @ (no quadratic backtracking)", () => {
+    const hostile = "a".repeat(50_000);
+    const started = Date.now();
+    const out = redactAddresses(hostile);
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(out.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("stays fast on other pathological shapes (dots, dashes, colons, many '@')", () => {
+    for (const hostile of [
+      "a.".repeat(25_000),
+      "a-".repeat(25_000),
+      "1:".repeat(25_000),
+      "x@".repeat(25_000),
+      `${"a".repeat(49_000)}@`,
+    ]) {
+      const started = Date.now();
+      redactAddresses(hostile);
+      expect(Date.now() - started).toBeLessThan(500);
+    }
+  });
+
+  it("handles an address and an IP together, and text with neither", () => {
+    expect(redactAddresses("x@acme.example failed at 10.0.1.4")).toBe(
+      "***@acme.example failed at [address]",
+    );
+    expect(redactAddresses("plain message")).toBe("plain message");
   });
 });
