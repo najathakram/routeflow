@@ -136,6 +136,39 @@ export function backorderPiecesForEditDelta(args: {
   return out;
 }
 
+/**
+ * SA-606k: split ONE write's per-product overshoot (`StockOutcomeSink.backorderByProduct`) across
+ * the response's lines. Lines of a product take stock FIRST in request order, so the overshoot
+ * lands on the later lines; the per-line figures sum to min(overshoot, the product's line total).
+ * Pieces only (a boxed line is 2 x 12 = 24, never 2) — the UI converts with the LINE's own
+ * snapshot. Returns one figure per input line, same order.
+ */
+export function attributeBackorderToLines(
+  lines: Array<BackorderLine & { productId: string | null }>,
+  backorderByProduct: ReadonlyMap<string, number>,
+  packByProduct: ReadonlyMap<string, number | null>,
+): number[] {
+  const pieces = lines.map((l) =>
+    l.productId ? linePieces(l, packByProduct.get(l.productId)) : 0,
+  );
+  const totals = new Map<string, number>();
+  lines.forEach((l, i) => {
+    if (l.productId) totals.set(l.productId, round3((totals.get(l.productId) ?? 0) + pieces[i]));
+  });
+  const stockLeft = new Map<string, number>();
+  for (const [id, total] of totals) {
+    const over = Math.min(Math.max(0, backorderByProduct.get(id) ?? 0), total);
+    stockLeft.set(id, round3(total - over));
+  }
+  return lines.map((l, i) => {
+    if (!l.productId) return 0;
+    const left = stockLeft.get(l.productId) ?? 0;
+    const fromStock = Math.min(pieces[i], left);
+    stockLeft.set(l.productId, round3(left - fromStock));
+    return round3(pieces[i] - fromStock);
+  });
+}
+
 export function orderableAndBackorder(args: { stock: number; allowOversell: boolean }): {
   orderable: boolean;
   backorder: boolean;

@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { recordSaleMovement } from "../inventory/sale-movement";
 import { linePieceQty } from "./line-piece-qty";
 
@@ -25,6 +26,74 @@ export interface OrderStockEvent {
   orderId: string;
   notes: string;
   performedById: string | null;
+  /** Buyer backorderPieces: where the locked decrement's own overshoot is written (see below). */
+  sink?: StockOutcomeSink;
+}
+
+/**
+ * SA-606k: what a locked stock write tells its caller. `backorderByProduct` is, per product,
+ * `min(pieces this write asked for, max(0, -counterAfter))` read from the write's OWN result
+ * (RETURNING / the update's counter) — never from an earlier pre-read. `packByProduct` is the live
+ * pack the pieces were sized with (null = none). The caller owns the object; entries accumulate.
+ */
+export interface StockOutcomeSink {
+  backorderByProduct: Map<string, number>;
+  packByProduct: Map<string, number | null>;
+}
+
+export const newStockOutcomeSink = (): StockOutcomeSink => ({
+  backorderByProduct: new Map(),
+  packByProduct: new Map(),
+});
+
+/** Fold one committed attempt's sink into the caller's (no-op when either is absent). */
+export function mergeStockOutcomeSink(
+  into: StockOutcomeSink | undefined,
+  from: StockOutcomeSink | undefined,
+): void {
+  if (!into || !from) return;
+  for (const [id, n] of from.backorderByProduct) {
+    into.backorderByProduct.set(id, round3Pieces((into.backorderByProduct.get(id) ?? 0) + n));
+  }
+  for (const [id, n] of from.packByProduct) into.packByProduct.set(id, n);
+}
+
+const round3Pieces = (n: number) => Math.round(n * 1000) / 1000;
+
+/** N3 (SA-606k split): NaN/Infinity is a product-data problem (409, readable); negative is N5. */
+function assertUsablePieces(
+  name: string,
+  pieces: number,
+  raw?: StockLineUnits & { qty?: unknown },
+) {
+  // `linePieceQty` coerces a NaN qty to 0 (`Number(qty) || 0`), so the raw fields are checked too.
+  const rawBad = [raw?.qty, raw?.boxes, raw?.pieces].some(
+    (v) => v != null && !Number.isFinite(Number(v)),
+  );
+  if (rawBad || !Number.isFinite(pieces)) {
+    throw new ConflictException({
+      code: API_ERROR_CODES.INVENTORY_QUANTITY_INVALID,
+      message: `${name} has a quantity that cannot be counted. Ask the seller to fix the item's unit setup, then try again.`,
+    });
+  }
+  if (pieces < 0) throw new RangeError("order-stock: a sale line has negative pieces");
+}
+
+function recordBackorder(
+  sink: StockOutcomeSink | undefined,
+  productId: string,
+  asked: number,
+  counterAfter: unknown,
+  pack: unknown,
+): void {
+  if (!sink) return;
+  const over = round3Pieces(Math.min(asked, Math.max(0, -Number(counterAfter))));
+  sink.backorderByProduct.set(
+    productId,
+    round3Pieces((sink.backorderByProduct.get(productId) ?? 0) + over),
+  );
+  const n = pack == null ? null : Number(pack);
+  sink.packByProduct.set(productId, n != null && Number.isFinite(n) ? n : null);
 }
 
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
@@ -118,6 +187,12 @@ export async function decrementStockForSale(
     ),
   }));
 
+  // N3: refuse an unusable quantity BEFORE any stock write (the lock above is the only side effect).
+  stockLines.forEach((raw, i) => {
+    const lp = lockedProducts.find((x: any) => x.id === raw.productId);
+    assertUsablePieces(lp?.name ?? raw.productId, pieceLines[i].pieces, raw);
+  });
+
   const oosItems: string[] = [];
   for (const li of pieceLines) {
     const p = lockedProducts.find((lp: any) => lp.id === li.productId);
@@ -173,6 +248,13 @@ export async function decrementStockForSale(
     RETURNING p.id, p."currentStock"
   `;
   for (const row of moved) {
+    recordBackorder(
+      event.sink,
+      row.id,
+      qtyByProduct.get(row.id) ?? 0,
+      row.currentStock,
+      lockedProducts.find((lp: any) => lp.id === row.id)?.unitsPerBox,
+    );
     await recordSaleMovement(tx, {
       productId: row.id,
       quantity: -(qtyByProduct.get(row.id) ?? 0),
@@ -268,7 +350,7 @@ export async function settleStockForEdit(
    * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
-  opts?: { allowOversell?: boolean },
+  opts?: { allowOversell?: boolean; sink?: StockOutcomeSink },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -353,6 +435,11 @@ export async function settleStockForEdit(
     held.set(id, pieces(heldParts, id));
     deliveredHeld.set(id, pieces(deliveredParts, id));
     requested.set(id, pieces(requestedParts, id));
+    const name = products.find((p: any) => p.id === id)?.name ?? id;
+    const rawLines = finalActiveItems.filter((li) => li.productId === id);
+    for (const raw of rawLines.length ? rawLines : [undefined]) {
+      assertUsablePieces(name, requested.get(id)!, raw); // N3, before any write
+    }
     const delta = round3(requested.get(id)! - held.get(id)!);
     if (delta !== 0) deltas.set(id, delta);
   }
@@ -439,6 +526,13 @@ export async function settleStockForEdit(
         where: { id: productId },
         data: { currentStock: { decrement: delta } },
       });
+      recordBackorder(
+        opts?.sink,
+        productId,
+        delta,
+        updated.currentStock,
+        products.find((p: any) => p.id === productId)?.unitsPerBox,
+      );
       await saleRow(productId, -delta, updated);
       continue;
     }

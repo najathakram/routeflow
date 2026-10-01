@@ -1,5 +1,6 @@
 import { UserRole } from "@prisma/client";
 import {
+  attributeBackorderToLines,
   backorderPiecesForLine,
   backorderPiecesForEditDelta,
   backorderPiecesForLines,
@@ -379,5 +380,46 @@ describe("CUSTOMER follows the policy on every non-cron source with exactly one 
       }),
     ).resolves.toBe(true);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe("attributeBackorderToLines (SA-606k: stock-first, request order, sums to the overshoot)", () => {
+  const L = (productId: string, qty: number, extra: object = {}) => ({ productId, qty, ...extra });
+
+  it("one line: 7 against an overshoot of 4 -> 4", () => {
+    expect(attributeBackorderToLines([L("p", 7)], new Map([["p", 4]]), new Map())).toEqual([4]);
+  });
+
+  it("two lines of one product: the first takes the stock, the later one carries the overshoot", () => {
+    // 3 + 4 against 3 in stock -> overshoot 4 lands on the second line
+    expect(
+      attributeBackorderToLines([L("p", 3), L("p", 4)], new Map([["p", 4]]), new Map()),
+    ).toEqual([0, 4]);
+  });
+
+  it("an overshoot that spans lines: 5 + 5 with overshoot 7 -> [2, 5], sum 7", () => {
+    const out = attributeBackorderToLines([L("p", 5), L("p", 5)], new Map([["p", 7]]), new Map());
+    expect(out).toEqual([2, 5]);
+  });
+
+  it("products never bleed into each other", () => {
+    expect(
+      attributeBackorderToLines([L("a", 2), L("b", 6), L("a", 1)], new Map([["b", 3]]), new Map()),
+    ).toEqual([0, 3, 0]);
+  });
+
+  it("a boxed line is in pieces: 2 boxes of 12 with overshoot 14 -> 14", () => {
+    const line = L("p", 24, { boxes: 2, pieces: 0, unitsPerBox: 12 });
+    expect(attributeBackorderToLines([line], new Map([["p", 14]]), new Map([["p", 12]]))).toEqual([
+      14,
+    ]);
+  });
+
+  it("an overshoot larger than the lines (a counter already negative) is capped at the line total", () => {
+    expect(attributeBackorderToLines([L("p", 3)], new Map([["p", 99]]), new Map())).toEqual([3]);
+  });
+
+  it("no entry for the product -> 0 on every line", () => {
+    expect(attributeBackorderToLines([L("p", 3)], new Map(), new Map())).toEqual([0]);
   });
 });

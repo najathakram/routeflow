@@ -1,4 +1,5 @@
 import { ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { UserRole } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
@@ -7,6 +8,8 @@ import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { orderableAndBackorder, resolveOversellAllowed } from "../orders/oversell-policy";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { signableImageKeys } from "../products/product-image-keys";
 import type { BuyerProduct } from "@routeflow/types";
 
@@ -26,6 +29,7 @@ export class BuyerCatalogService {
     private readonly ordersService: OrdersService,
     private readonly replenishment: ReplenishmentService,
     private readonly promotions: PromotionsService,
+    private readonly oversellReader: PolicyOversellReader,
   ) {}
 
   /**
@@ -61,10 +65,27 @@ export class BuyerCatalogService {
    * catalog listing and the single-product detail so a tile and its detail page
    * can never disagree about stock (an OOS tile must stay OOS when opened).
    */
-  private deriveStock(p: {
-    currentStock?: unknown;
-    lowStockThreshold?: unknown;
-  }): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft"> {
+  /**
+   * Once per request: may THIS buyer order past stock (the seller backorders)? Same predicate the
+   * buyer's own checkout uses (CUSTOMER / source "buyer"), so a tile never promises what the order
+   * would refuse. Never read per product.
+   */
+  private allowBackorder(customerId: string): Promise<boolean> {
+    return resolveOversellAllowed(this.oversellReader, {
+      tenantId: this.prisma.getTenantId() as string,
+      role: UserRole.CUSTOMER,
+      source: "buyer",
+      customerId,
+    });
+  }
+
+  private deriveStock(
+    p: {
+      currentStock?: unknown;
+      lowStockThreshold?: unknown;
+    },
+    allowOversell: boolean,
+  ): Pick<BuyerProduct, "inStock" | "stockStatus" | "stockLeft" | "orderable" | "backorder"> {
     const stock = Number(p.currentStock ?? 0);
     const lowThreshold = Number(p.lowStockThreshold ?? 5);
     const stockStatus: BuyerProduct["stockStatus"] =
@@ -75,6 +96,7 @@ export class BuyerCatalogService {
       // Whole units only, floor >= 1 so a fractional Decimal never renders
       // "Only 0 left" while status is LOW (stock > 0 by definition here).
       stockLeft: stockStatus === "LOW" ? Math.max(1, Math.floor(stock)) : null,
+      ...orderableAndBackorder({ stock, allowOversell }),
     };
   }
 
@@ -112,6 +134,7 @@ export class BuyerCatalogService {
 
     // W7 gate: hide products in regulated categories the buyer isn't licensed for.
     const { hiddenIds, locked } = await this.visibility.computeGate(customerId);
+    const allowOversell = await this.allowBackorder(customerId); // one policy read per page
 
     // Smart-collection filter → extra AND clauses (query-level so pagination
     // counts stay correct AND the regulated exclusion composes automatically).
@@ -209,7 +232,7 @@ export class BuyerCatalogService {
           thumbnailUrl: p.thumbnailUrl ?? null,
           imageKeys: ownKeys,
           imageUrls,
-          ...this.deriveStock(p),
+          ...this.deriveStock(p, allowOversell),
         };
       }),
     );
@@ -324,6 +347,7 @@ export class BuyerCatalogService {
    */
   async getProductDetail(productId: string, customerId: string) {
     const product = await this.productsService.findOne(productId);
+    const allowOversell = await this.allowBackorder(customerId);
 
     // Buyers must not see inactive/discontinued products
     if (!(product as any).isActive) {
@@ -389,7 +413,7 @@ export class BuyerCatalogService {
       thumbnailUrl: imageUrls[0] ?? null,
       imageUrls,
       imageKeys: product.imageKeys ?? [],
-      ...this.deriveStock(product),
+      ...this.deriveStock(product, allowOversell),
       variants: activeVariants.map((v: any) => ({
         id: v.id,
         name: v.variantName,

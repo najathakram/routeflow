@@ -46,6 +46,9 @@
 //                    by anything other than whole boxes or a price (#2717 M3).
 //   INVENTORY_SETTING_INVALID — `body.code` of the 400 when PATCH /settings/inventory gets a
 //                    `buyerOversell` that is not exactly "off" or "backorder"; `details.field` names it.
+//   INVENTORY_QUANTITY_INVALID — `body.code` of the 409 when a stock write meets a quantity that is
+//                    NaN/Infinity (a product-data problem); the message names the product. A negative line is a
+//                    caller bug and stays a 500.
 //   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 when a tenant-scoped endpoint is called with no
 //                    tenant context (a SUPER_ADMIN not impersonating, a job): forTenant() would be unscoped.
 //   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
@@ -87,6 +90,7 @@ export const API_ERROR_CODES = {
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
   INVENTORY_SETTING_INVALID: "INVENTORY_SETTING_INVALID",
   TENANT_CONTEXT_REQUIRED: "TENANT_CONTEXT_REQUIRED",
+  INVENTORY_QUANTITY_INVALID: "INVENTORY_QUANTITY_INVALID",
   CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",

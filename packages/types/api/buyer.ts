@@ -240,6 +240,11 @@ export interface BuyerProduct {
   stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   /** Whole units remaining, exposed ONLY while stockStatus === "LOW"; else null. */
   stockLeft: number | null;
+  /** May the buyer add this product? In stock, or out of stock while the seller backorders. Absent
+   *  on an older server: treat as `inStock`. */
+  orderable?: boolean;
+  /** True when ordering it now would be a backorder (stock <= 0 and the seller allows it). */
+  backorder?: boolean;
 }
 
 /** GET /buyer/favorites — NOT a BuyerProduct: `id` is the favorite row's id; the product is
@@ -325,6 +330,10 @@ export interface BuyerOrderLine {
   notes: string | null;
   /** #2717 M3: frozen components of a composed line; absent on a plain line. */
   components?: LineComponentView[];
+  /** Out-of-stock ordering: PIECES of this line the seller must backorder (never boxes - convert
+   *  for display with the line's own pack). Present on the buyer create / merge / edit responses;
+   *  0 when none or when the seller does not backorder. Absent on reads. */
+  backorderPieces?: number;
   product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
 }
 

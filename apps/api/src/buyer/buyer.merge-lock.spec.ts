@@ -207,6 +207,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
       ACTIVE_ORDER.id,
       expect.objectContaining({ replaceAll: true }),
       expect.any(Object),
+      expect.objectContaining({ stockSink: expect.any(Object) }),
     );
   });
 

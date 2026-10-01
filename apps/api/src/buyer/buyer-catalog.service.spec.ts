@@ -8,6 +8,7 @@ import { ProductsService } from "../products/products.service";
 import { StorageService } from "../storage/storage.service";
 import { OrdersService } from "../orders/orders.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 describe("BuyerCatalogService — W7 visibility gate", () => {
@@ -42,6 +43,10 @@ describe("BuyerCatalogService — W7 visibility gate", () => {
         { provide: OrdersService, useValue: ordersService },
         { provide: ReplenishmentService, useValue: replenishment },
         { provide: PromotionsService, useValue: promotions },
+        {
+          provide: PolicyOversellReader,
+          useValue: { read: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = mod.get(BuyerCatalogService);

@@ -317,9 +317,7 @@ describeDb(
       // Catches: updateOrderItems hard-coding allowOversell = true into settleStockForEdit.
       const created = await createOrder(buyer(0), 2);
       expect(await stockNow()).toBe(3);
-      await expect(editQty(created.id, 7, buyer(0))).rejects.toBeInstanceOf(
-        ConflictException,
-      );
+      await expect(editQty(created.id, 7, buyer(0))).rejects.toBeInstanceOf(ConflictException);
       expect(await stockNow()).toBe(3);
       const kept = await raw.orderItem.findFirstOrThrow({ where: { orderId: created.id } });
       expect(Number(kept.qty)).toBe(2);
@@ -347,6 +345,69 @@ describeDb(
       expect(await stockNow()).toBe(5);
       expect(await orderCount()).toBe(0);
       expect(readerRead).not.toHaveBeenCalled();
+    }, 120_000);
+    // Buyer backorderPieces (SA-606k): the sink the buyer controller hands create()/updateOrderItems
+    // is filled from the LOCKED write's own result, so it must equal what the movements show.
+    const sinkOf = () => ({
+      backorderByProduct: new Map<string, number>(),
+      packByProduct: new Map<string, number | null>(),
+    });
+    const createWithSink = (user: JwtPayload, qty: number, sink: ReturnType<typeof sinkOf>) =>
+      tenantCtx.run(tenantId, () =>
+        orders.create({ items: [{ productId, qty }] }, user, {
+          skipAutoMerge: true,
+          stockSink: sink,
+        }),
+      );
+
+    it("(7a) TENANT backorder: 6 against 5 -> the sink says 1, equal to the stock overshoot", async () => {
+      await setPolicy("backorder");
+      const sink = sinkOf();
+      await createWithSink(buyer(0), 6, sink);
+      expect(await stockNow()).toBe(-1);
+      expect(sink.backorderByProduct.get(productId)).toBe(1);
+      const sales = await saleMovements();
+      expect(Number(sales[0].stockAfter)).toBe(-1);
+    }, 120_000);
+
+    it("(7b) enough stock: the sink records 0 and the stock stays non-negative", async () => {
+      await setPolicy("backorder");
+      const sink = sinkOf();
+      await createWithSink(buyer(0), 3, sink);
+      expect(await stockNow()).toBe(2);
+      expect(sink.backorderByProduct.get(productId) ?? 0).toBe(0);
+    }, 120_000);
+
+    it("(7c) EDIT 2 -> 7 with 3 left: this edit overshoots 2 (counter -2); lowering to 2 records 0", async () => {
+      await setPolicy("backorder");
+      const created = await createOrder(buyer(0), 2);
+      const up = sinkOf();
+      await tenantCtx.run(tenantId, () =>
+        orders.updateOrderItems(created.id, { items: [{ productId, qty: 7 }] } as any, buyer(0), {
+          stockSink: up,
+        }),
+      );
+      expect(await stockNow()).toBe(-2);
+      expect(up.backorderByProduct.get(productId)).toBe(2);
+      const down = sinkOf();
+      await tenantCtx.run(tenantId, () =>
+        orders.updateOrderItems(created.id, { items: [{ productId, qty: 2 }] } as any, buyer(0), {
+          stockSink: down,
+        }),
+      );
+      expect(await stockNow()).toBe(3);
+      expect(down.backorderByProduct.get(productId) ?? 0).toBe(0);
+    }, 120_000);
+
+    it("(7d) two concurrent buyer orders of 3 against 5 (backorder): the sinks sum to the overshoot 1", async () => {
+      await setPolicy("backorder");
+      const a = sinkOf();
+      const b = sinkOf();
+      await Promise.all([createWithSink(buyer(0), 3, a), createWithSink(buyer(1), 3, b)]);
+      expect(await stockNow()).toBe(-1);
+      const total =
+        (a.backorderByProduct.get(productId) ?? 0) + (b.backorderByProduct.get(productId) ?? 0);
+      expect(total).toBe(1);
     }, 120_000);
   },
 );

@@ -60,6 +60,8 @@ import {
 import { withAdvisoryLock } from "../common/db-locks";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import { newStockOutcomeSink } from "../orders/order-stock";
+import { withBackorderPieces } from "./buyer-backorder";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -535,6 +537,8 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Create a new order or merge into existing active order" })
   async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
+    // Buyer backorderPieces: the locked stock write reports its overshoot here (order-stock.ts).
+    const sink = newStockOutcomeSink();
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
       // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
@@ -634,6 +638,7 @@ export class BuyerController {
               activeOrder.id,
               { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
               makePseudoUser(ctx),
+              { stockSink: sink },
             );
             // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
             // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
@@ -707,7 +712,10 @@ export class BuyerController {
         }
 
         // Return the updated order
-        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        return withBackorderPieces(
+          await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx)),
+          sink,
+        );
       }
     }
 
@@ -725,7 +733,9 @@ export class BuyerController {
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
     };
-    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx), {
+      stockSink: sink,
+    });
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
@@ -747,7 +757,7 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return merged ?? created;
+    return withBackorderPieces(merged ?? created, sink);
   }
 
   @Patch("orders/:id/items")
@@ -755,12 +765,16 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Edit items on a DRAFT/PENDING order" })
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+    const sink = newStockOutcomeSink();
+    const edited = await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx), {
+      stockSink: sink,
+    });
+    return withBackorderPieces(edited, sink);
   }
 
   @Post("orders/:id/change-requests")

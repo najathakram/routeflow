@@ -119,12 +119,15 @@ import { dueStamp } from "../invoices/invoice-due-dates";
 import {
   decrementStockForSale,
   restoreStockForReopen,
+  mergeStockOutcomeSink,
+  newStockOutcomeSink,
   settleStockForEdit,
   STOCK_LINE_UNIT_SELECT,
   STOCK_SETTLE_SELECT,
   type StockArgs,
   type StockLine,
   type StockLineUnits,
+  type StockOutcomeSink,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
 import { resolveOversellAllowed } from "./oversell-policy";
@@ -1373,7 +1376,13 @@ export class OrdersService implements OnApplicationBootstrap {
     dto: CreateOrderDto,
     user: JwtPayload,
     // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
+    options: {
+      skipAutoMerge?: boolean;
+      allowArchived?: boolean;
+      sourceLines?: SourceLines;
+      /** Buyer backorderPieces: filled with this create's locked-decrement overshoot (see order-stock.ts). */
+      stockSink?: StockOutcomeSink;
+    } = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -2000,6 +2009,8 @@ export class OrdersService implements OnApplicationBootstrap {
     const twin = await reserveReturnNo(inlineRet, customerId, user, idempotencyKey, this as any);
     if (twin) return twin;
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // A retried attempt rolled its writes back, so each attempt reports into its own sink.
+      const attemptSink = options.stockSink ? newStockOutcomeSink() : undefined;
       try {
         order = await this.prisma.tenantTransaction(
           async (tx) => {
@@ -2030,6 +2041,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
+                sink: attemptSink,
               });
             }
 
@@ -2090,6 +2102,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // product row lock indefinitely under contention.
           { timeout: 20000, maxWait: 5000 },
         );
+        mergeStockOutcomeSink(options.stockSink, attemptSink);
         break; // transaction succeeded
       } catch (e: any) {
         if (e?.code === "P2002") {
@@ -2926,6 +2939,8 @@ export class OrdersService implements OnApplicationBootstrap {
     opts?: {
       idempotency?: { key: string; responseHash: string };
       isCreateMerge?: boolean;
+      /** Buyer backorderPieces: filled with THIS edit's locked-settle overshoot (order-stock.ts). */
+      stockSink?: StockOutcomeSink;
     },
   ) {
     assertRemovalsNameALine(dto.items); // #2563: an id-less CANCEL/DELETE, before any read or write
@@ -4224,6 +4239,7 @@ export class OrdersService implements OnApplicationBootstrap {
         if (order.status !== "DRAFT") {
           await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
+            sink: opts?.stockSink,
           });
           creditGate = () =>
             assertWithinCreditLimit(
