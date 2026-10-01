@@ -2,11 +2,12 @@ import * as React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScanOrderScreen } from "./ScanOrderScreen";
 import type { ScanResolution } from "./useScanCodeHandler";
+import type { ScanFrame } from "./useContinuousScanCamera";
 
 // Barcode events are injected through the camera hook (spec §9.1): the real hook needs
 // getUserMedia + zxing, but everything this screen owns — the gate, the buffer, the cue, the
 // list, undo, totals — sits on the far side of `onDetect`.
-let detect: (code: string) => void = () => undefined;
+let detect: (code: string, frame?: ScanFrame) => void = () => undefined;
 let cameraEnabled = false;
 let cameraState: {
   error: string | null;
@@ -21,7 +22,7 @@ jest.mock("./useContinuousScanCamera", () => ({
     onDetect,
   }: {
     enabled: boolean;
-    onDetect: (c: string) => void;
+    onDetect: (c: string, frame?: ScanFrame) => void;
   }) => {
     detect = onDetect;
     cameraEnabled = enabled;
@@ -93,9 +94,13 @@ function setup(
   return { ...utils, props };
 }
 
-const scan = async (code: string) => {
+// Steady-read is DEFAULT ON (owner ruling 2026-09-24): a code counts once the SAME value is held for several frames,
+// so one deliberate scan in these tests is three consecutive frames of the same code.
+const scan = async (code: string, frame?: ScanFrame) => {
   await act(async () => {
-    detect(code);
+    detect(code, frame);
+    detect(code, frame);
+    detect(code, frame);
   });
 };
 
@@ -964,6 +969,48 @@ describe("ScanOrderScreen", () => {
     it("shows no banner once a customer is chosen — scans take the customer's price immediately", () => {
       setup({ hasCustomer: true });
       expect(screen.queryByText(/No customer selected/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("aim box + steady-read (owner ruling 2026-09-24, default ON)", () => {
+    const AIM = { x: 100, y: 120, width: 1000, height: 360 };
+    const inBox = {
+      bounds: { origin: { x: 550, y: 290 }, size: { width: 100, height: 20 } },
+      aimBox: AIM,
+    };
+    const offBox = {
+      bounds: { origin: { x: 20, y: 20 }, size: { width: 100, height: 20 } },
+      aimBox: AIM,
+    };
+
+    it("a single frame (a passing glance) is NOT a scan", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => detect("111", inBox));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("a held in-box code resolves exactly once", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111", inBox);
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+      expect(resolve.mock.calls[0][0]).toBe("111");
+    });
+
+    it("an OFF-CENTRE code never resolves, however long it is held", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111", offBox);
+      await scan("111", offBox);
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("no geometry (frame omitted) fails OPEN: a steady code still resolves", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
     });
   });
 });

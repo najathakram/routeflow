@@ -6,11 +6,11 @@ import { AlertTriangle, Keyboard, Undo2, X, Zap, ZapOff } from "lucide-react";
 import { Button, cn } from "@routeflow/ui/web";
 import {
   cueForOutcome,
-  createScanEngine,
-  frameScanned,
+  continuousFrameScanned,
+  createContinuousScanState,
   manualScanned,
   scanSettled,
-  type ScanEngineState,
+  type ContinuousScanState,
   type ScanEngineStep,
   type ScanOutcome,
 } from "@routeflow/scanning";
@@ -25,7 +25,7 @@ import {
   type PendingScan,
 } from "./pending-scan-queue";
 import type { ScanResolution } from "./useScanCodeHandler";
-import { useContinuousScanCamera } from "./useContinuousScanCamera";
+import { useContinuousScanCamera, type ScanFrame } from "./useContinuousScanCamera";
 import {
   distinctSkuCount,
   popHistory,
@@ -97,7 +97,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 }: ScanOrderScreenProps<T>) {
   const live = open && !paused;
 
-  const engineRef = React.useRef<ScanEngineState>(createScanEngine());
+  const engineRef = React.useRef<ContinuousScanState>(createContinuousScanState());
   const [resolving, setResolving] = React.useState(false);
   const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
@@ -133,7 +133,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // A new session starts clean: fresh gate/buffer clocks, no stale undo stack.
   React.useEffect(() => {
     if (!open) return;
-    engineRef.current = createScanEngine();
+    engineRef.current = createContinuousScanState();
     setResolving(false);
     setHistory([]);
     setHighlightId(null);
@@ -259,7 +259,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   );
 
   const applyStep = React.useCallback(
-    (step: ScanEngineStep) => {
+    (step: ScanEngineStep & { next: ContinuousScanState }) => {
       engineRef.current = step.next;
       if (step.indicator) setResolving(step.indicator === "on");
       if (step.startResolving) void resolveOne(step.startResolving);
@@ -269,8 +269,16 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
 
   // A camera frame decoded `code`. The gate drops per-frame repeats; only a genuine new item (or
   // a deliberate re-present) reaches the resolver.
+  // Aim box (only a code centred in the DRAWN box counts) and steady-read (the same value held over several frames) run
+  // ahead of the gate, DEFAULT ON (owner ruling 2026-09-24): they cut accidental off-centre / passing-glance reads.
   const handleFrame = React.useCallback(
-    (code: string) => applyStep(frameScanned(engineRef.current, code, Date.now())),
+    (code: string, frame?: ScanFrame) =>
+      applyStep(
+        continuousFrameScanned(engineRef.current, code, Date.now(), {
+          bounds: frame?.bounds,
+          aimBox: frame?.aimBox,
+        }),
+      ),
     [applyStep],
   );
 
