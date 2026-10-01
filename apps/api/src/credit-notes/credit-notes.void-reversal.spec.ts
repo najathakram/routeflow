@@ -385,6 +385,13 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
           { reason: "  duplicate  " } as never,
         );
 
+      it("SA-630a: the kept URL is marked deprecated in Swagger", () => {
+        const meta = Reflect.getMetadata(
+          "swagger/apiOperation",
+          CreditNotesController.prototype.voidNote,
+        );
+        expect(meta).toMatchObject({ deprecated: true });
+      });
       it("the service has no second void method", () => {
         expect((service as any).voidCreditNote).toBeUndefined();
       });

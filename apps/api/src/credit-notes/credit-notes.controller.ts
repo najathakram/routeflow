@@ -13,6 +13,7 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { ApiOperation } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
@@ -82,6 +83,11 @@ export class CreditNotesController {
   }
 
   @Post(":id/void")
+  @ApiOperation({
+    deprecated: true,
+    summary:
+      "Void a credit note (use POST :id/void-with-reversal, which also returns the reopened invoices)",
+  })
   @UseGuards(RolesGuard)
   // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
   // lets it satisfy OPERATOR).
