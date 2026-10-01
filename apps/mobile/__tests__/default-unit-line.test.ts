@@ -3,6 +3,7 @@ import type { LineState } from "../lib/cart-line-state";
 import {
   applyUnitOption,
   isPendingDefaultUnit,
+  isStaffRole,
   keepsDefaultStart,
   mergeResolvedDefaults,
   resolvePendingDefaultUnits,
@@ -39,6 +40,7 @@ const flagged = (over: Partial<LineState> = {}): LineState => ({
 const deps = (units: ProductUnitLevel[] | Error, over = {}) => ({
   unitsEnabled: true,
   unitsKnown: true,
+  isStaff: true,
   getUnits: jest.fn(async () => {
     if (units instanceof Error) throw units;
     return units;
@@ -119,7 +121,7 @@ describe("startLineOnDefault / resolvePendingDefaultUnits (tray Confirm with the
     expect(items.p1).toBe(line);
   });
 
-  it("the units feature off: there is no ladder, the pack is the only unit", async () => {
+  it("the units feature off (staff): there is no ladder, the pack is the only unit", async () => {
     const d = deps([BOTTLE], { unitsEnabled: false });
     const { items, blocked } = await resolvePendingDefaultUnits({ p1: flagged() }, d);
     expect(blocked).toEqual([]);
@@ -127,11 +129,32 @@ describe("startLineOnDefault / resolvePendingDefaultUnits (tray Confirm with the
     expect(d.getUnits).not.toHaveBeenCalled();
   });
 
-  it("the units answer still loading: nothing is resolved and the line is blocked (loading is not 'off')", async () => {
+  it("the units answer still loading (staff): nothing is resolved and the line is blocked (loading is not 'off')", async () => {
     const d = deps([BOTTLE], { unitsEnabled: false, unitsKnown: false });
     const { items, blocked } = await resolvePendingDefaultUnits({ p1: flagged() }, d);
     expect(blocked).toEqual(["p1"]);
     expect(items.p1!.startOnDefaultUnit).toBe(1);
+  });
+
+  it("(SA-626f) STAFF: a 403 or any error on the units read BLOCKS, never falls back to the pack", async () => {
+    for (const e of [
+      Object.assign(new Error("forbidden"), { response: { status: 403 } }),
+      Object.assign(new Error("boom"), { response: { status: 500 } }),
+      new Error("Network Error"),
+    ]) {
+      const { items, blocked } = await resolvePendingDefaultUnits({ p1: flagged() }, deps(e));
+      expect(blocked).toEqual(["p1"]);
+      expect(items.p1!.unitLabel).toBeUndefined();
+    }
+  });
+
+  it("(SA-626f) DRIVER / non-staff: never starts on a default unit and makes NO read (the pack is the only legal driver line)", async () => {
+    const d = deps([BOTTLE, ...CASE_ONLY], { isStaff: false });
+    const { items, blocked } = await resolvePendingDefaultUnits({ p1: flagged() }, d);
+    expect(blocked).toEqual([]);
+    expect(items.p1!.unitLabel).toBeUndefined();
+    expect(items.p1!.startOnDefaultUnit).toBeUndefined();
+    expect(d.getUnits).not.toHaveBeenCalled();
   });
 
   it("a flagged line whose product record is missing is blocked, not guessed", async () => {
@@ -231,11 +254,23 @@ describe("SA-626c rulings A + B (owner ruling): a remembered price never decides
   });
 
   it("B: the flag FOLLOWS a pending line on a default-start add, and is consumed by anything else", () => {
-    expect(keepsDefaultStart(undefined, true)).toBe(true); // a new line
-    expect(keepsDefaultStart(flagged({ qty: 12, startOnDefaultUnit: 12 }), true)).toBe(true); // a 2nd fast add
-    expect(keepsDefaultStart(flagged({ qty: 5, startOnDefaultUnit: 1 }), true)).toBe(false); // edited meanwhile
-    expect(keepsDefaultStart(flagged(), false)).toBe(false); // a box-only code never follows
-    expect(keepsDefaultStart({ qty: 1 }, true)).toBe(false); // an existing un-flagged line stays as it was
+    expect(keepsDefaultStart(undefined, true, "OPERATOR")).toBe(true); // a new line
+    // (SA-626f) only STAFF lines are ever flagged: a DRIVER / customer / unknown role never starts on a default unit
+    expect(keepsDefaultStart(undefined, true, "OPERATOR")).toBe(true);
+    expect(keepsDefaultStart(undefined, true, "TENANT_ADMIN")).toBe(true);
+    expect(keepsDefaultStart(undefined, true, "DRIVER")).toBe(false);
+    expect(keepsDefaultStart(undefined, true, "CUSTOMER")).toBe(false);
+    expect(keepsDefaultStart(undefined, true, undefined)).toBe(false);
+    expect(isStaffRole("OPERATOR")).toBe(true);
+    expect(isStaffRole("DRIVER")).toBe(false);
+    expect(keepsDefaultStart(flagged({ qty: 12, startOnDefaultUnit: 12 }), true, "OPERATOR")).toBe(
+      true,
+    ); // a 2nd fast add
+    expect(keepsDefaultStart(flagged({ qty: 5, startOnDefaultUnit: 1 }), true, "OPERATOR")).toBe(
+      false,
+    ); // edited meanwhile
+    expect(keepsDefaultStart(flagged(), false, "OPERATOR")).toBe(false); // a box-only code never follows
+    expect(keepsDefaultStart({ qty: 1 }, true, "OPERATOR")).toBe(false); // an existing un-flagged line stays as it was
   });
 });
 
@@ -303,6 +338,37 @@ describe("SA-626d review: the sheet's mount path and the resolver give the SAME 
     expect(applyUnitOption(other, pack, 12)).toMatchObject({
       unitPrice: 20,
       priceSource: "history",
+    });
+  });
+});
+
+describe("SA-626d lead folds N2 + N3", () => {
+  const opts = buildUnitOptions(product, [BOTTLE], 1);
+  const bottle = opts.find((o) => o.value === "Bottle")!;
+
+  it("N2: a stale picker/sheet re-apply of the unit the line ALREADY holds never resets its quantity", () => {
+    const resolved: LineState = {
+      qty: 5,
+      unitLabel: "Bottle",
+      unitBasePrice: 2,
+      unitFactor: 1,
+      note: "n",
+    };
+    const again = applyUnitOption(resolved, bottle, 12);
+    expect(again.qty).toBe(5);
+    expect(again.unitLabel).toBe("Bottle");
+    expect(again.note).toBe("n");
+  });
+
+  it("N3: a note typed while the units load survives the merge of the resolved unit", () => {
+    const before = { p1: flagged() };
+    const done = { p1: { ...applyUnitOption(before.p1, bottle, 12) } };
+    const cur = { p1: { ...before.p1, note: "leave at back door", noteOpen: true } as LineState };
+    const merged = mergeResolvedDefaults(cur, before, done);
+    expect(merged.p1).toMatchObject({
+      unitLabel: "Bottle",
+      note: "leave at back door",
+      noteOpen: true,
     });
   });
 });
