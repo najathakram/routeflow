@@ -1,5 +1,6 @@
 // SA-429: driver cases here pin other behaviour; ownership is pinned in driver-edit-access*.spec.ts.
 jest.mock("./driver-edit-access", () => ({ assertDriverMayEditOrder: jest.fn() }));
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import {
   NotFoundException,
@@ -137,6 +138,7 @@ describe("SA-404f F2 — order cancel compare-and-set", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: mockQueue },

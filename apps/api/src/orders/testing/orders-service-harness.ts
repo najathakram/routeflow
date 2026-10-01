@@ -27,6 +27,7 @@ jest.mock("../../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -71,6 +72,7 @@ export async function buildOrdersService() {
   const prisma = createMockPrisma();
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       {
         provide: TenantContextService,
