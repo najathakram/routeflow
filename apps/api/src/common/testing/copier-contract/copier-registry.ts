@@ -211,7 +211,8 @@ export const COPIERS: Copier[] = [
   {
     id: "C10",
     file: "credit-notes/credit-notes.service.ts",
-    fn: "create",
+    // #2648: create()'s row + items insert moved into insertCreditNoteInTx (shared with the reissue).
+    fn: "insertCreditNoteInTx",
     target: "CreditNoteItem",
     coverage: "registry-only",
     why: "the rows are `{ ...i, creditNoteId, tenantId }` spread from validateAndBuildCnItems output: no local literal to read",

@@ -10,7 +10,7 @@
 For an existing product, the design system already exists in the code even when no one
 wrote it down. Extract it before designing anything new — a new screen that doesn't cite
 the derived system is inventing its own, silently, screen by screen, until nothing
-matches. Only when extraction turns up genuinely nothing do you _design_ a system, and
+matches. Only when extraction turns up genuinely nothing do you *design* a system, and
 even then the result is written down before any component is built.
 
 ### Concrete extraction steps
@@ -27,7 +27,7 @@ Run these against the target repo (not the pipeline repo) before touching `ux-sp
 3. **Component library directory** — find the shared UI component directory (e.g. a
    `packages/ui`-style workspace, or `components/ui/`). For **every** component, list
    its variants and props, not just that it exists: `Button: variant=primary|secondary|
-ghost|destructive, size=sm|md|lg, disabled, loading`. A component inventory without
+   ghost|destructive, size=sm|md|lg, disabled, loading`. A component inventory without
    variants is useless for reuse decisions.
 4. **Spacing / type / radius / shadow scales** — restate step 1's tokens as one
    numbered scale each (e.g. `space-1 = 4px, space-2 = 8px, ...`). This is what the
@@ -82,22 +82,22 @@ to prevent.
 Use the exact installed skill/agent names below — never invent a skill name that isn't
 in this table.
 
-| Need                                                                       | Route                                                                                    |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Problem framing, research synthesis, opportunity sizing, scoping           | `intent:strategize`, `intent:investigate` (agent `intent:ember`)                         |
-| Entry point / unsure which design skill / ethics and dark-pattern check    | `intent:intent` (agent `intent:noor`)                                                    |
-| End-to-end flows, journeys, information architecture                       | `intent:journey`, `intent:organize` (agent `intent:wren`)                                |
-| Screen structure before visuals; lo-fi to click-through                    | `intent:wireframe`                                                                       |
-| UI copy, error messages, empty states, voice                               | `intent:articulate`                                                                      |
-| Engineering handoff spec, variant matrices, test plan for the design       | `intent:specify` (agent `intent:rune`)                                                   |
-| Heuristic / accessibility / resilience audit of an existing design         | `intent:evaluate`, `intent:include`, `intent:fortify` (agent `intent:vigil`)             |
-| Stuck, or the framing feels wrong                                          | `intent:philosopher` (agent `intent:sage`)                                               |
-| Visual craft: polish, hierarchy, boldness, motion, "make it feel designed" | `impeccable:impeccable`                                                                  |
-| Design tokens, palettes, font pairings, style/product-type lookup, charts  | `ui-ux-pro-max:ui-ux-pro-max`, `ui-ux-pro-max:design-system`, `ui-ux-pro-max:ui-styling` |
-| Brand identity, logo, banners, slides                                      | `ui-ux-pro-max:brand`, `ui-ux-pro-max:design`                                            |
-| Multi-artboard visual mockup the owner can tweak by hand                   | `design` (Claude Design canvas artifact)                                                 |
-| Charts and dashboards                                                      | `dataviz`                                                                                |
-| Motion audit / adding or fixing animation                                  | `find-animation-opportunities`, `improve-animations`, `apple-design`, `emil-design-eng`  |
+| Need | Route |
+|---|---|
+| Problem framing, research synthesis, opportunity sizing, scoping | `intent:strategize`, `intent:investigate` (agent `intent:ember`) |
+| Entry point / unsure which design skill / ethics and dark-pattern check | `intent:intent` (agent `intent:noor`) |
+| End-to-end flows, journeys, information architecture | `intent:journey`, `intent:organize` (agent `intent:wren`) |
+| Screen structure before visuals; lo-fi to click-through | `intent:wireframe` |
+| UI copy, error messages, empty states, voice | `intent:articulate` |
+| Engineering handoff spec, variant matrices, test plan for the design | `intent:specify` (agent `intent:rune`) |
+| Heuristic / accessibility / resilience audit of an existing design | `intent:evaluate`, `intent:include`, `intent:fortify` (agent `intent:vigil`) |
+| Stuck, or the framing feels wrong | `intent:philosopher` (agent `intent:sage`) |
+| Visual craft: polish, hierarchy, boldness, motion, "make it feel designed" | `impeccable:impeccable` |
+| Design tokens, palettes, font pairings, style/product-type lookup, charts | `ui-ux-pro-max:ui-ux-pro-max`, `ui-ux-pro-max:design-system`, `ui-ux-pro-max:ui-styling` |
+| Brand identity, logo, banners, slides | `ui-ux-pro-max:brand`, `ui-ux-pro-max:design` |
+| Multi-artboard visual mockup the owner can tweak by hand | `design` (Claude Design canvas artifact) |
+| Charts and dashboards | `dataviz` |
+| Motion audit / adding or fixing animation | `find-animation-opportunities`, `improve-animations`, `apple-design`, `emil-design-eng` |
 
 ## Standing rules
 

@@ -1,7 +1,11 @@
 import { BadRequestException, Inject, Injectable, Logger, Optional } from "@nestjs/common";
-import { roundMoney } from "@routeflow/pricing";
+import { round4, roundMoney } from "@routeflow/pricing";
 import { AuditService } from "../audit/audit.service";
-import { addCalendarDays, InsightWindowError, resolveInsightRange } from "../analytics/demand-range";
+import {
+  addCalendarDays,
+  InsightWindowError,
+  resolveInsightRange,
+} from "../analytics/demand-range";
 import { CSV_BOM, csvRow } from "../common/csv";
 import { roundQty } from "../common/invoiced-sales";
 import { PrismaService } from "../prisma/prisma.service";
@@ -37,8 +41,6 @@ export const PRODUCTS_EXPORT_HEADER = [
   "Last sold date",
 ];
 
-/** Average cost is stored to 4 decimals; a 2dp money round would drop real precision. */
-const round4 = (n: number) => Math.round((n + Number.EPSILON) * 10_000) / 10_000;
 const num = (v: unknown) => (v == null ? null : Number(v));
 const yesNo = (b: boolean) => (b ? "Yes" : "No");
 
@@ -73,7 +75,9 @@ export class ProductsExportService {
     private readonly prisma: PrismaService,
     private readonly facts: SalesFactsService,
     private readonly audit: AuditService,
-    @Optional() @Inject(PRODUCTS_EXPORT_CAP) private readonly cap: number = PRODUCTS_EXPORT_MAX_ROWS,
+    @Optional()
+    @Inject(PRODUCTS_EXPORT_CAP)
+    private readonly cap: number = PRODUCTS_EXPORT_MAX_ROWS,
     @Optional() @Inject(PRODUCTS_EXPORT_BATCH) private readonly batch: number = DEFAULT_BATCH,
   ) {}
 
