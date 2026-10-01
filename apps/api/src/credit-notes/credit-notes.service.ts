@@ -1198,6 +1198,11 @@ export class CreditNotesService {
     actorId: string | null,
     tz: Awaited<ReturnType<typeof tenantTimeZone>>,
     reason?: string | null, // #2540: optional WHY, recorded in the VOIDED audit row
+    // SA-608g: rows the CALLER also needs locked in SA-214 order (the reissue's SOURCE invoice and its
+    // order). They join the SAME sorted sets below, so the reissue never takes KEY SHARE on the invoice
+    // after holding the note (CN -> Invoice) while deleteInvoice holds the invoice and wants the note.
+    // The endpoint passes none: its lock set is unchanged.
+    extra?: { orderIds?: string[]; invoiceIds?: string[] },
   ) {
     const seen: any[] = await this.liveCreditPayments(tx, id);
     // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
@@ -1212,9 +1217,12 @@ export class CreditNotesService {
       ...new Set([
         ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
         ...intentOrders.map((r) => r.orderId),
+        ...(extra?.orderIds ?? []),
       ]),
     ].sort();
-    const invoiceIds = [...new Set(seen.map((p) => p.invoiceId as string))].sort();
+    const invoiceIds = [
+      ...new Set([...seen.map((p) => p.invoiceId as string), ...(extra?.invoiceIds ?? [])]),
+    ].sort();
     for (const orderId of orderIds) {
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
     }
