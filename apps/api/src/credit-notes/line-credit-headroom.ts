@@ -83,7 +83,7 @@ export function allocateProductQty(
           shortfallQty: round3(left),
           refusal: {
             productId,
-            requestedAmount: linear,
+            requestedAmount: roundMoney((Math.min(left, line.qty) * line.subtotal) / line.qty),
             remainingAmount,
             requestedQty: take,
             remainingQty,
