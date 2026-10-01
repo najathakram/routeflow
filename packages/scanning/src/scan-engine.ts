@@ -110,7 +110,11 @@ export function frameScanned(
  * (the W3 fix: the old web `fire(code, true)` bypassed the gate but still
  * fell through the same `busyRef` drop as a camera frame).
  */
-export function manualScanned(state: ScanEngineState, code: string): ScanEngineStep {
+/** Generic over the caller's own state shape (plain `ScanEngineState`, or a `ContinuousScanState` with its `steady` field). */
+export function manualScanned<S extends ScanEngineState>(
+  state: S,
+  code: string,
+): ScanEngineStep & { next: S } {
   const wasResolving = state.buffer.isResolving;
   const result = pushScan(state.buffer, code);
   return {

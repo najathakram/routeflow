@@ -55,9 +55,16 @@ describe("boundsFromResultPoints", () => {
       size: { width: 40, height: 40 },
     });
   });
-  it("is undefined (fail open) for no points / a single point with no extent", () => {
+  it("is undefined (fail open) for no points", () => {
     expect(boundsFromResultPoints([])).toBeUndefined();
     expect(boundsFromResultPoints(undefined)).toBeUndefined();
     expect(boundsFromResultPoints(null)).toBeUndefined();
+  });
+  it("a 1D code (points on ONE scan line, zero height) still gets a non-degenerate rect centred on the line", () => {
+    const b = boundsFromResultPoints([pt(10, 50), pt(50, 50)])!;
+    expect(b.size.width).toBe(40);
+    expect(b.size.height).toBe(1); // never 0: the shared check would read 0 as "no geometry" and accept anywhere
+    expect(b.origin.y + b.size.height / 2).toBe(50);
+    expect(b.origin.x + b.size.width / 2).toBe(30);
   });
 });
