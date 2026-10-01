@@ -8,7 +8,7 @@ import { createMockPrisma } from "../testing/prisma-mock";
  * those locks. Without the invoice lock, a reissue that commits a NEW note with `invoiceId = X`
  * between the read and the final delete is invisible to both, and the delete's SET NULL leaves an
  * UNSPENT, unmarked orphan (a provenance loss that bypasses B214). The real-Postgres two-connection
- * pin is delete-invoice-reissue-race.db.spec.ts.
+ * pin is invoice-delete-credit.db.spec.ts (SA-608g case).
  */
 describe("InvoicesService.deleteInvoice: SA-608g lock order", () => {
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -89,6 +89,14 @@ describe("InvoicesService.deleteInvoice: SA-608g lock order", () => {
       .mockImplementationOnce(() => Promise.resolve(inv([])))
       .mockImplementationOnce(() => Promise.resolve(inv([{ id: "pay-1" }])));
     await expect(run()).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.invoice.delete).not.toHaveBeenCalled();
+  });
+
+  it("an invoice whose order link changed between the peek and the re-read is a 409 (the order lock would be the wrong one)", async () => {
+    prisma.invoice.findUnique
+      .mockImplementationOnce(() => Promise.resolve(inv()))
+      .mockImplementationOnce(() => Promise.resolve(inv([], "ord-OTHER")));
+    await expect(run()).rejects.toThrow(/changed while/i);
     expect(prisma.invoice.delete).not.toHaveBeenCalled();
   });
 

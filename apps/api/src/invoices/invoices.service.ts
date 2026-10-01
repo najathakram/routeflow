@@ -5189,6 +5189,10 @@ export class InvoicesService {
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // The order was locked from the PEEK. If the link moved since (no writer re-points it today:
+      // only A -> null), adjustInvoicedQtyForInvoice below would write an order we never locked.
+      if (inv.orderId !== peek.orderId)
+        throw new ConflictException("The invoice changed while it was being deleted. Try again.");
 
       if (inv.payments.length > 0) {
         throw new BadRequestException(
