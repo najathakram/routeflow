@@ -595,7 +595,12 @@ export class InlineReturnsService {
       // only a new row version (40001 on its wake-up, then its bounded retry re-reads) makes it see this return (B948 race).
       await tx.$executeRaw`UPDATE "Invoice" SET "updatedAt" = now() WHERE id = ${invoiceId} AND "tenantId" = ${tenantId}`;
     }
-    const productTakes = new Map<string, { qty: number; amount: number }>(); // B947: the same takes, by PRODUCT
+    // B947: the same takes, keyed by (SOURCE invoice, product); folded into (SOURCE order, product) below: inline pricing can
+    // spill one product across several orders, so each source order has its OWN pool.
+    const invoiceProductTakes = new Map<
+      string,
+      { invoiceId: string; productId: string; qty: number; amount: number }
+    >();
     for (const invoiceId of invoiceIds) {
       const rows: any[] = await tx.invoiceItem.findMany({
         where: { invoiceId },
@@ -617,10 +622,16 @@ export class InlineReturnsService {
         const take = takes.get(line.id);
         if (!take) continue;
         if (line.productId) {
-          const pt = productTakes.get(line.productId) ?? { qty: 0, amount: 0 };
-          pt.qty += take.qty / (line.piecesPerQty ?? 1);
+          const k = `${invoiceId}::${line.productId}`;
+          const pt = invoiceProductTakes.get(k) ?? {
+            invoiceId,
+            productId: line.productId,
+            qty: 0,
+            amount: 0,
+          };
+          pt.qty += take.qty / (line.piecesPerQty ?? 1); // the line's own qty axis (a boxed selling-unit line counts boxes)
           pt.amount += take.amount;
-          productTakes.set(line.productId, pt);
+          invoiceProductTakes.set(k, pt);
         }
         // the chunk's pieces, on the line's own qty axis (a boxed selling-unit line counts boxes)
         const refusal = lineTakeRefusal(line, credited, {
@@ -642,18 +653,34 @@ export class InlineReturnsService {
         }
       }
     }
-    // B947 (third door): the order's creditable invoices POOL per product. A refund lump minted on the LATEST invoice (or a credit
-    // note item on another invoice's line) is invisible to the per-invoice read above, so the same takes are checked against the
-    // ORDER POOL when the order has 2+ creditable invoices. The Order lock the caller holds is the CARRYING order's, NOT the source
-    // order's: this return is serialised against a credit note / refund on the source order through the SOURCE-INVOICE row write above
-    // (create() locks every creditable invoice of the source order, so the row sets overlap on the source invoices).
-    const orderRow: { orderId: string | null } | null = await tx.invoice.findFirst({
-      where: { id: invoiceIds[0] },
-      select: { orderId: true },
-    });
-    if (orderRow?.orderId && (await countCreditableInvoices(tx, orderRow.orderId)) >= 2) {
-      const pool = await loadOrderPool(tx, orderRow.orderId);
-      for (const [productId, take] of productTakes) {
+    // B947 (third door): each SOURCE order's creditable invoices POOL per product. A refund lump minted on the LATEST invoice (or a
+    // credit note item on another invoice's line) is invisible to the per-invoice read above, so the takes are checked against the
+    // ORDER POOL of EACH source order that has 2+ creditable invoices. The Order lock the caller holds is the CARRYING order's, NOT
+    // the source order's: this return is serialised against a credit note / refund on the source order through the SOURCE-INVOICE
+    // row write above (create() locks every creditable invoice of the source order, so the row sets overlap on the source invoices).
+    const invoiceOrder = new Map<string, string | null>(
+      (
+        (await tx.invoice.findMany({
+          where: { id: { in: invoiceIds } },
+          select: { id: true, orderId: true },
+        })) as Array<{ id: string; orderId: string | null }>
+      ).map((r) => [r.id, r.orderId]),
+    );
+    const takesBySourceOrder = new Map<string, Map<string, { qty: number; amount: number }>>();
+    for (const t of invoiceProductTakes.values()) {
+      const orderId = invoiceOrder.get(t.invoiceId);
+      if (!orderId) continue;
+      const perProduct = takesBySourceOrder.get(orderId) ?? new Map();
+      const prev = perProduct.get(t.productId) ?? { qty: 0, amount: 0 };
+      perProduct.set(t.productId, { qty: prev.qty + t.qty, amount: prev.amount + t.amount });
+      takesBySourceOrder.set(orderId, perProduct);
+    }
+    for (const [orderId, perProduct] of [...takesBySourceOrder].sort(([x], [y]) =>
+      x < y ? -1 : x > y ? 1 : 0,
+    )) {
+      if ((await countCreditableInvoices(tx, orderId)) < 2) continue;
+      const pool = await loadOrderPool(tx, orderId);
+      for (const [productId, take] of perProduct) {
         const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
         if (refusal)
           throw new ConflictException({

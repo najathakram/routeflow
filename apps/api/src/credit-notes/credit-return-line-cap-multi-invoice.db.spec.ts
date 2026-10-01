@@ -414,10 +414,39 @@ describeDb(
       );
     }
 
-    it("11. THIRD DOOR: a refund lump of A on the latest invoice, then an INLINE return of A sourced to the older invoice's line is REFUSED 409 RETURN_REFUND_OVER_LINE_HEADROOM", async () => {
+    it("11. THIRD DOOR (product A billed on BOTH invoices): a $100 credit note item on Y's A line + a refund lump of A, then an INLINE return of A is REFUSED 409 whichever invoice's line it is sourced to", async () => {
+      // Why not "refund A, then inline A" on a product billed ONCE: the quote's prior-returned reader counts the REFUNDED return's
+      // pieces, so the inline return's remaining supply is 0 and the whole request is priced as an UNREFERENCED chunk (no source
+      // line, nothing to cap): a separate matter (see the PR body). Here A is on X (qty 1) AND on Y (qty 1): the supply is 2, the
+      // refund uses 1, one piece remains and is SOURCED to X's or Y's line; the POOL (credit note item + refund lump = $200 of $200)
+      // refuses it either way, and the per-invoice check alone refuses only when it lands on Y.
       const s = await seed("refund-then-inline");
+      const yA = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: s.Y.id,
+          productId: s.pA.id,
+          description: "A",
+          qty: 1,
+          unitPrice: 100,
+          subtotal: 100,
+        },
+      });
+      await prisma.invoice.update({
+        where: { id: s.Y.id },
+        data: { subtotal: 200, total: 200 },
+      });
+      await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.Y.id,
+          amount: 100,
+          items: [{ invoiceItemId: yA.id, amount: 100 }],
+        } as any),
+      );
       const ret = await receivedReturn(s, s.pA.id);
       await refund(s, ret.id);
+      expect(await status(ret.id)).toBe("REFUNDED");
       await expect(inlineReturnOfA(s)).rejects.toMatchObject({
         response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
       });
