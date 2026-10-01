@@ -18,6 +18,7 @@ import type {
   PriceType,
   RouteRunStatusValue,
 } from "./enums";
+import type { LineComponentView } from "./orders";
 import type { DecimalWire } from "./decimal";
 
 export interface LockedCategory {
@@ -322,6 +323,8 @@ export interface BuyerOrderLine {
   unitLabel: string | null;
   /** Per-line note, buyer-visible. */
   notes: string | null;
+  /** #2717 M3: frozen components of a composed line; absent on a plain line. */
+  components?: LineComponentView[];
   product: { id: string; name: string; unit: string; unitsPerBox?: number | null } | null;
 }
 

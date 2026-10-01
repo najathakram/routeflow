@@ -15,6 +15,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
@@ -58,6 +59,7 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { customerUpdateData } from "./customer-update-data";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -71,6 +73,7 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
@@ -779,7 +782,7 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -788,44 +791,13 @@ export class CustomersService {
     }
     return this.prisma.forTenant().customer.update({
       where: { id },
-      data: {
-        ...(dto.businessName && { businessName: dto.businessName }),
-        ...(dto.contactName && { contactName: dto.contactName }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
-        ...(dto.deliveryWindowStart !== undefined && {
-          deliveryWindowStart: dto.deliveryWindowStart || null,
-        }),
-        ...(dto.deliveryWindowEnd !== undefined && {
-          deliveryWindowEnd: dto.deliveryWindowEnd || null,
-        }),
-        ...(dto.email !== undefined && { email: dto.email }),
-        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
-        ...(dto.customerType !== undefined && { customerType: dto.customerType }),
-        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
-        ...(dto.salutation !== undefined && { salutation: dto.salutation }),
-        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
-        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
-        ...(dto.taxId !== undefined && { taxId: dto.taxId }),
-        ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
-        ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
-        ...(dto.currency !== undefined && { currency: dto.currency }),
-        ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
-        // "" clears to null ("use the tenant default"); a real label is stored verbatim.
-        ...(dto.defaultPaymentTerms !== undefined && {
-          defaultPaymentTerms: dto.defaultPaymentTerms || null,
-        }),
-        // null clears the deposit default; a number sets/replaces it.
-        ...(dto.defaultDepositPercent !== undefined && {
-          defaultDepositPercent: dto.defaultDepositPercent,
-        }),
-        ...(dto.orderStatusEmails !== undefined && {
-          orderStatusEmails: dto.orderStatusEmails,
-        }),
-      },
+      data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
   }
+
+  /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
+  readonly setCustomerConsent = (...args: compliance.ConsentArgs) =>
+    compliance.writeConsentWithEvidence(this.prisma, ...args);
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
@@ -2893,11 +2865,13 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",
