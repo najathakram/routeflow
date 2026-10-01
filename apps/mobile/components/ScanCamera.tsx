@@ -40,6 +40,11 @@ export interface ScanCameraProps {
   /** Keep decoding after a scan. Single-shot latches after the first code. */
   continuous?: boolean;
   /**
+   * Hold to scan: false drops every decoded frame while the camera itself stays live (default true, so every caller that
+   * does not pass it is unchanged). Only BarcodeScanner under `aimAssist` ever passes false.
+   */
+  decode?: boolean;
+  /**
    * OPT-IN aim assist (owner ruling 2026-09-24, hybrid ruling 2026-09-29): only a code whose centre is inside `aimBox`
    * counts, and only once the SAME value is held for several frames (steady-read). DEFAULT OFF: the operator / customer
    * callers of this shared camera stay byte-identical; only the driver screen opts in. Applies to continuous AND
@@ -97,6 +102,7 @@ export function ScanCamera({
   onResolvingChange,
   active = true,
   continuous = false,
+  decode = true,
   aimAssist = false,
   aimBox,
   style,
@@ -146,11 +152,11 @@ export function ScanCamera({
   // Hold to scan: while the camera is inactive (the hold button is up) a half-built streak must not survive into the next
   // hold, so a re-grab earns a fresh steady read. aimAssist only; the default path is untouched.
   React.useEffect(() => {
-    if (!active && aimAssist) {
+    if (!decode && aimAssist) {
       steadyRef.current = createSteadyReadState();
       assistRef.current = { ...assistRef.current, steady: createSteadyReadState() };
     }
-  }, [active, aimAssist]);
+  }, [decode, aimAssist]);
 
   /** aimAssist + continuous: same resolve/drain cycle, but through the composed engine's buffer. */
   const resolveAssisted = React.useCallback(async (code: string) => {
@@ -165,6 +171,7 @@ export function ScanCamera({
   }, []);
 
   const handleBarcodeScanned = ({ data, bounds }: { data: string; bounds?: BarcodeBoundsLike }) => {
+    if (!decode) return;
     if (!continuous) {
       if (firedRef.current) return;
       if (aimAssist) {
