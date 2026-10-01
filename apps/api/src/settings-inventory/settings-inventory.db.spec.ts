@@ -102,6 +102,7 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
     const b = await seed();
     expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toEqual({
       buyerOversell: "off",
+      customerOverrides: 0,
     });
 
     await inTenant(a.tenantId, () => controller.update({ buyerOversell: "backorder" }, a.admin));
@@ -112,9 +113,11 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
 
     expect(await inTenant(a.tenantId, () => controller.get(a.admin))).toEqual({
       buyerOversell: "backorder",
+      customerOverrides: 0,
     });
     expect(await inTenant(b.tenantId, () => controller.get(b.admin))).toEqual({
       buyerOversell: "off",
+      customerOverrides: 0,
     });
     expect(await buyerAllowed(a)).toBe(true);
     expect(await buyerAllowed(b)).toBe(false);
@@ -128,6 +131,42 @@ describeDb("settings/inventory — real Postgres (WS9)", () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0].action).toBe("policy.set");
+  });
+
+  it("the SAME PolicyService instance: a cached GET and the buyer resolver both see a PATCH at once", async () => {
+    // Prime the 30 s cache through GET and the buyer resolver, then PATCH on the very same instance:
+    // both reads must flip immediately. Without PolicyService.set()'s invalidate they stay "off".
+    const t = await seed();
+    expect(await inTenant(t.tenantId, () => controller.get(t.admin))).toMatchObject({
+      buyerOversell: "off",
+    });
+    expect(await buyerAllowed(t)).toBe(false);
+
+    await inTenant(t.tenantId, () => controller.update({ buyerOversell: "backorder" }, t.admin));
+
+    expect(await inTenant(t.tenantId, () => controller.get(t.admin))).toMatchObject({
+      buyerOversell: "backorder",
+    });
+    expect(await buyerAllowed(t)).toBe(true);
+  });
+
+  it("customerOverrides counts a customer pin", async () => {
+    const t = await seed();
+    await inTenant(t.tenantId, () =>
+      policies.set({
+        tenantId: t.tenantId,
+        key: "orders.buyerOversell",
+        scopeType: "CUSTOMER",
+        scopeId: t.customerId,
+        value: "backorder",
+        reason: "qa pin",
+        actor: { id: null, name: "qa-admin", impersonatedBy: null },
+      }),
+    );
+    expect(await inTenant(t.tenantId, () => controller.get(t.admin))).toEqual({
+      buyerOversell: "off",
+      customerOverrides: 1,
+    });
   });
 
   it("the superseded row is kept: two patches leave two rows, one active", async () => {

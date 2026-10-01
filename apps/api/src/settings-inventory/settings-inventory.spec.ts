@@ -5,7 +5,7 @@
  * PolicyOversellReader, so "what the admin saved" and "what a buyer order does" cannot drift.
  */
 import "reflect-metadata";
-import { BadRequestException, ForbiddenException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, ValidationPipe } from "@nestjs/common";
 import type { ExecutionContext } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
@@ -16,6 +16,7 @@ import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { BUYER_OVERSELL_MODES } from "../policy/policy-registry";
 import { SettingsInventoryController } from "./settings-inventory.controller";
+import { UpdateInventorySettingsDto } from "./settings-inventory.dto";
 import {
   INVENTORY_SETTINGS_DEFAULT_REASON,
   INVENTORY_SETTINGS_INVALID_MESSAGE,
@@ -26,11 +27,12 @@ const admin = { sub: "u1", username: "admin", role: "TENANT_ADMIN", tenantId: "t
 const operator = { sub: "u2", username: "op", role: "OPERATOR", tenantId: "t1" } as JwtPayload;
 
 /** In-memory stand-in for PolicyService: one TENANT value per tenant, default "off". */
-function fakePolicies(initial?: string) {
+function fakePolicies(initial?: string, active: Array<{ key: string; scopeType: string }> = []) {
   const store = new Map<string, unknown>();
   if (initial !== undefined) store.set("t1", initial);
   return {
     store,
+    listActive: jest.fn(async () => active),
     resolve: jest.fn(async (tenantId: string) => store.get(tenantId) ?? "off"),
     set: jest.fn(async (p: { tenantId: string; value: unknown }) => {
       store.set(p.tenantId, p.value);
@@ -39,8 +41,14 @@ function fakePolicies(initial?: string) {
   };
 }
 
-function build(opts: { tenantId?: string | null; initial?: string } = {}) {
-  const policies = fakePolicies(opts.initial);
+function build(
+  opts: {
+    tenantId?: string | null;
+    initial?: string;
+    active?: Array<{ key: string; scopeType: string }>;
+  } = {},
+) {
+  const policies = fakePolicies(opts.initial, opts.active);
   const tenantId = opts.tenantId === undefined ? "t1" : opts.tenantId;
   const prisma = { getTenantId: jest.fn(() => tenantId) };
   const service = new SettingsInventoryService(policies as any, prisma as any);
@@ -100,19 +108,45 @@ describe("GET /settings/inventory", () => {
     ["OPERATOR", operator],
   ])("%s gets the resolved TENANT value via the string-literal key", async (_n, user) => {
     const { controller, policies } = build({ initial: "backorder" });
-    expect(await controller.get(user)).toEqual({ buyerOversell: "backorder" });
+    expect(await controller.get(user)).toEqual({
+      buyerOversell: "backorder",
+      customerOverrides: 0,
+    });
     expect(policies.resolve).toHaveBeenCalledWith("t1", "orders.buyerOversell", {});
   });
 
   it('is "off" when nothing is stored', async () => {
     const { controller } = build();
-    expect(await controller.get(admin)).toEqual({ buyerOversell: "off" });
+    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 0 });
+  });
+
+  it("N2: customerOverrides counts only active CUSTOMER rows of THIS key", async () => {
+    const { controller } = build({
+      initial: "off",
+      active: [
+        { key: "orders.buyerOversell", scopeType: "CUSTOMER" },
+        { key: "orders.buyerOversell", scopeType: "CUSTOMER" },
+        { key: "orders.buyerOversell", scopeType: "TENANT" },
+        { key: "email.staffOrderMode", scopeType: "CUSTOMER" },
+      ],
+    });
+    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 2 });
+  });
+
+  it("N2: the PATCH response carries the count too", async () => {
+    const { controller } = build({
+      active: [{ key: "orders.buyerOversell", scopeType: "CUSTOMER" }],
+    });
+    expect(await controller.update({ buyerOversell: "backorder" } as never, admin)).toEqual({
+      buyerOversell: "backorder",
+      customerOverrides: 1,
+    });
   });
 
   it('never returns anything but "off" | "backorder" (a corrupt resolved value fails closed)', async () => {
     const { controller, policies } = build();
     policies.resolve.mockResolvedValueOnce("Backorder" as never);
-    expect(await controller.get(admin)).toEqual({ buyerOversell: "off" });
+    expect(await controller.get(admin)).toEqual({ buyerOversell: "off", customerOverrides: 0 });
   });
 });
 
@@ -133,7 +167,7 @@ describe("PATCH /settings/inventory", () => {
       reason: INVENTORY_SETTINGS_DEFAULT_REASON,
       actor: { id: "u1", name: "admin", impersonatedBy: "sa1" },
     });
-    expect(res).toEqual({ buyerOversell: "backorder" });
+    expect(res).toEqual({ buyerOversell: "backorder", customerOverrides: 0 });
   });
 
   it("a client reason is trimmed and used; blank falls back to the fixed reason", async () => {
@@ -268,5 +302,40 @@ describe("contract parity", () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const shared = require("@routeflow/types") as { INVENTORY_BUYER_OVERSELL_MODES: string[] };
     expect([...shared.INVENTORY_BUYER_OVERSELL_MODES]).toEqual([...BUYER_OVERSELL_MODES]);
+  });
+});
+
+describe("PATCH body is a validated DTO (N1)", () => {
+  // The global pipe in main.ts: whitelist + forbidNonWhitelisted + transform.
+  const pipe = new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true });
+  const meta = { type: "body", metatype: UpdateInventorySettingsDto } as const;
+
+  it("an unknown field is a 400 from the pipe", async () => {
+    await expect(
+      pipe.transform({ buyerOversell: "backorder", tenantId: "t2" }, meta),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("the known fields pass through untouched (values are the service's coded 400)", async () => {
+    await expect(
+      pipe.transform({ buyerOversell: "backorder", reason: "r" }, meta),
+    ).resolves.toMatchObject({ buyerOversell: "backorder", reason: "r" });
+    await expect(pipe.transform({ buyerOversell: "bogus" }, meta)).resolves.toMatchObject({
+      buyerOversell: "bogus",
+    });
+  });
+
+  it("the controller binds the DTO and Swagger lists both properties", () => {
+    const types = Reflect.getMetadata(
+      "design:paramtypes",
+      SettingsInventoryController.prototype,
+      "update",
+    );
+    expect(types[0]).toBe(UpdateInventorySettingsDto);
+    const props = Reflect.getMetadata(
+      "swagger/apiModelPropertiesArray",
+      UpdateInventorySettingsDto.prototype,
+    );
+    expect(props).toEqual([":buyerOversell", ":reason"]);
   });
 });
