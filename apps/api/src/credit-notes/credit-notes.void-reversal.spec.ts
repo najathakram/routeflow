@@ -179,6 +179,18 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       ]);
     });
 
+    it("B949: the note's OWN void passes voidingNoteId to every restore (the one exemption from the SOURCE_DELETED guard, scoped to THAT note)", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const restore = jest.spyOn(service as any, "restoreCreditFromPaymentInTx");
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      expect(restore).toHaveBeenCalledTimes(2);
+      for (const call of restore.mock.calls) expect(call[4]).toEqual({ voidingNoteId: "cn-a" });
+      restore.mockRestore();
+    });
+
     it("SA-608g: an optional `extra` set (the reissue's SOURCE invoice and order) joins the SAME sorted Order and Invoice sets, de-duplicated, before the CreditNote", async () => {
       armNote();
       armRestore();
