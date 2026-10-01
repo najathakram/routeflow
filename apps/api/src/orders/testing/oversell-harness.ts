@@ -70,8 +70,8 @@ export const autoMock = () =>
         : (t[k] ??= jest.fn().mockResolvedValue(undefined)),
   });
 
-export type PolicyFor =
-  unknown | ((a: { tenantId: string; customerId?: string | null }) => unknown);
+/** A stored policy value, or a function of the read args that returns one (`unknown` covers both). */
+export type PolicyFor = unknown;
 
 export async function buildOversellOrders(policy: PolicyFor = "off") {
   const prisma = createMockPrisma();
