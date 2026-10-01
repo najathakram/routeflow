@@ -36,8 +36,13 @@ const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
  * cost, a family has none); anything else is trimmed. Used as the DTO @Transform AND by the service, so HTTP and a caller
  * that bypasses the DTO behave identically. Update rows and every price stay STRICT (null / "" is a 400).
  */
-export const blankToUndefined = (v: unknown): string | undefined =>
-  typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined;
+export const blankToUndefined = (v: unknown): unknown => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") return v.trim().length > 0 ? v.trim() : undefined;
+  // ANYTHING else (a JSON number, boolean, object) passes through UNCHANGED so the validator rejects it: only a blank or null
+  // means "omitted"; a non-string must never silently inherit the family cost.
+  return v;
+};
 
 const trimmed = ({ value }: { value: unknown }) =>
   typeof value === "string" ? value.trim() : value;
@@ -61,7 +66,7 @@ export class FamilyInfoDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @ValidateIf(notUndefined)
-  @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", true) })
   pricePerUnit?: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
   @IsOptional()

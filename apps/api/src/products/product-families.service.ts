@@ -67,23 +67,35 @@ const blank = (v: string | undefined | null): string | null =>
 const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean =>
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
 /** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
-const given = (v: unknown, field: string): void => {
+const given = (v: unknown, field: string, mode: "omit" | "required" = "omit"): void => {
   if (v === null || (typeof v === "string" && v.trim() === "")) {
     throw new BadRequestException(
-      `${field} cannot be ${v === null ? "null" : "empty"}; omit the field to leave it unchanged.`,
+      mode === "required"
+        ? `${field} is required`
+        : `${field} cannot be ${v === null ? "null" : "empty"}; omit the field to leave it unchanged.`,
     );
   }
+};
+/** Create-side cost: null / "" / whitespace = omitted; a NON-string (a JSON number) is a 400, never an inherit (SA-606g). */
+const costOf = (v: unknown): string | undefined => {
+  const x = blankToUndefined(v);
+  if (x === undefined) return undefined;
+  if (typeof x !== "string") throw new BadRequestException("standardCost must be a string amount.");
+  return x;
 };
 const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
-const money = (v: string | undefined | null, fallback = 0): string => {
+const money = (v: unknown, fallback = 0): string => {
+  if (v != null && typeof v !== "string")
+    throw new BadRequestException("A price must be a string amount.");
   const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
 };
 /** Decimal(10,4) cost, the same rounding-overflow guard (999999.99999 -> 1000000.0000). */
-const cost4 = (v: string | number): string => {
+const cost4 = (v: unknown): string => {
+  if (typeof v !== "string") throw new BadRequestException("A cost must be a string amount.");
   const r = roundUnitCost(Number(v));
   if (!(r >= 0 && r < 1e6)) throw outOfRange("A cost");
   return r.toFixed(4);
@@ -146,15 +158,15 @@ export class ProductFamiliesService {
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
-    given(dto.family.pricePerUnit, "family pricePerUnit");
-    const familyCost = blankToUndefined(dto.family.standardCost);
+    given(dto.family.pricePerUnit, "pricePerUnit", "required");
+    const familyCost = costOf(dto.family.standardCost);
     if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {
       if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
-      given(v.pricePerUnit, "pricePerUnit");
+      given(v.pricePerUnit, "pricePerUnit", "required");
       // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      const c = blankToUndefined(v.standardCost);
+      const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
     const run = () =>
@@ -251,7 +263,7 @@ export class ProductFamiliesService {
     prices?: string | Record<FamilyPriceColumn, Prisma.Decimal>,
     familyCost?: string | null,
   ): Prisma.ProductUncheckedCreateInput {
-    const cost = blankToUndefined(v.standardCost) ?? familyCost;
+    const cost = costOf(v.standardCost) ?? familyCost;
     const own = typeof prices === "string" ? prices : money(v.pricePerUnit);
     const col = (c: FamilyPriceColumn): string =>
       prices && typeof prices !== "string" ? prices[c].toString() : own;
@@ -342,10 +354,10 @@ export class ProductFamiliesService {
     }
     for (const v of add) {
       if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
-      given(v.pricePerUnit, "pricePerUnit");
+      given(v.pricePerUnit, "pricePerUnit", "required");
       // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      const c = blankToUndefined(v.standardCost);
+      const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
