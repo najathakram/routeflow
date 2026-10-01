@@ -146,14 +146,13 @@ export class ProductFamiliesService {
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
     given(dto.family.pricePerUnit, "family pricePerUnit");
-    given(dto.family.standardCost, "family standardCost");
-    if (dto.family.standardCost != null) cost4(dto.family.standardCost);
+    if (blank(dto.family.standardCost)) cost4(dto.family.standardCost as string);
     for (const v of dto.variants) {
       if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
       given(v.pricePerUnit, "pricePerUnit");
-      given(v.standardCost, "standardCost");
+      // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      if (v.standardCost != null) cost4(v.standardCost);
+      if (blank(v.standardCost)) cost4(v.standardCost as string);
     }
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
@@ -343,9 +342,9 @@ export class ProductFamiliesService {
     for (const v of add) {
       if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
       given(v.pricePerUnit, "pricePerUnit");
-      given(v.standardCost, "standardCost");
+      // a create-side cost that is null / "" means OMITTED (the variant inherits the family's, SA-606a)
       money(v.pricePerUnit);
-      if (v.standardCost != null) cost4(v.standardCost);
+      if (blank(v.standardCost)) cost4(v.standardCost as string);
     }
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));

@@ -520,7 +520,7 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
     }
   });
   it("service level: create / add rows with a null or empty price, and an empty update price or cost, are 400s too", async () => {
-    for (const bad of [{ pricePerUnit: null }, { pricePerUnit: "" }, { standardCost: "" }]) {
+    for (const bad of [{ pricePerUnit: null }, { pricePerUnit: "" }]) {
       await expect(
         build().service.createFamily(dto([variant("A", bad)]), ACTOR),
       ).rejects.toBeInstanceOf(BadRequestException);
