@@ -66,9 +66,16 @@ const blank = (v: string | undefined | null): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean =>
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
-/** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
+/**
+ * A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3).
+ * In "required" mode an ABSENT (undefined) value is refused too (SA-606i): no price is ever implied.
+ */
 const given = (v: unknown, field: string, mode: "omit" | "required" = "omit"): void => {
-  if (v === null || (typeof v === "string" && v.trim() === "")) {
+  if (
+    v === null ||
+    (mode === "required" && v === undefined) ||
+    (typeof v === "string" && v.trim() === "")
+  ) {
     throw new BadRequestException(
       mode === "required"
         ? `${field} is required`
@@ -86,13 +93,16 @@ const costOf = (v: unknown): string | undefined => {
 const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
-const money = (v: unknown, fallback = 0): string => {
-  if (v != null && typeof v !== "string")
-    throw new BadRequestException("A price must be a string amount.");
-  if (v != null && v.trim() !== "" && !Number.isFinite(Number(v))) {
+const money = (v: unknown): string => {
+  // SA-606i: NO implicit fallback. A caller with no price handles that itself (PATCH update rows call this only for a PRESENT
+  // price; everything on create goes through given(..., "required") first).
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new BadRequestException("A price is required and must be a string amount.");
+  }
+  if (!Number.isFinite(Number(v))) {
     throw new BadRequestException("A price must be a non-negative amount.");
   }
-  const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
+  const r = roundMoney(Number(v));
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
 };
@@ -161,9 +171,9 @@ export class ProductFamiliesService {
       throw new BadRequestException(`A family takes 1 to ${MAX_ROWS} variants per request.`);
     }
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
-    const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
     given(dto.family.pricePerUnit, "family pricePerUnit", "required");
+    const familyPrice = money(dto.family.pricePerUnit);
     const familyCost = costOf(dto.family.standardCost);
     if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {
