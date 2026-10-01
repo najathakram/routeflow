@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import * as crypto from "crypto";
@@ -41,7 +42,8 @@ function sha256hex(input: string): string {
 function makeMockRedis() {
   const store = new Map<string, string>();
   return {
-    set: jest.fn(async (key: string, val: string) => {
+    set: jest.fn(async (key: string, val: string, ...args: unknown[]) => {
+      if (args.includes("NX") && store.has(key)) return null;
       store.set(key, val);
       return "OK";
     }),
@@ -1047,6 +1049,7 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience("wrong.bundle.id")
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
@@ -1065,6 +1068,7 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience(BUNDLE_ID)
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
@@ -1094,12 +1098,82 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience("com.someone.else")
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
     await expect(service.handleNotification(signedPayload)).rejects.toThrow(UnauthorizedException);
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
     expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // ─── Replay protection (lead follow-up on #2486) ────────────────────────────────
+  async function signNotification(
+    privateKey: jose.KeyLike,
+    opts: { jti?: string | null; iatSecondsAgo?: number; type?: string; sub?: string } = {},
+  ) {
+    const jwt = new jose.SignJWT({
+      events: JSON.stringify({
+        type: opts.type ?? "consent-revoked",
+        sub: opts.sub ?? "apple-sub-1",
+      }),
+    })
+      .setProtectedHeader({ alg: "RS256", kid: KID })
+      .setIssuer(APPLE_ISSUER)
+      .setAudience(BUNDLE_ID)
+      .setIssuedAt(Math.floor(Date.now() / 1000) - (opts.iatSecondsAgo ?? 0))
+      .setExpirationTime("30d");
+    if (opts.jti !== null) jwt.setJti(opts.jti ?? crypto.randomUUID());
+    return jwt.sign(privateKey);
+  }
+
+  it("a replayed notification (same jti) is ignored: no second write, no error", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    const token = await signNotification(privateKey, { jti: "jti-1" });
+
+    await service.handleNotification(token);
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(1);
+
+    // The user re-links, then an attacker replays the captured token: it must not undo the link.
+    prisma.buyerAccount.update.mockClear();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    await expect(service.handleNotification(token)).resolves.toBeUndefined();
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+    expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("two DIFFERENT notifications (different jti) are both processed", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    await service.handleNotification(await signNotification(privateKey, { jti: "jti-a" }));
+    await service.handleNotification(await signNotification(privateKey, { jti: "jti-b" }));
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(2);
+  });
+
+  it("a token older than the max age (48h) is refused even though its exp is still in the future", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    const old = await signNotification(privateKey, { iatSecondsAgo: 3 * 24 * 3600 });
+    await expect(service.handleNotification(old)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+  });
+
+  it("a token with no jti is refused (it cannot be replay-checked) and writes nothing", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    const noJti = await signNotification(privateKey, { jti: null });
+    await expect(service.handleNotification(noJti)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+  });
+
+  it("when Redis is down the replay check fails closed with a 503 (Apple retries), writing nothing", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    (service as any).redis.set = jest.fn().mockRejectedValue(new Error("redis down"));
+    const token = await signNotification(privateKey);
+    await expect(service.handleNotification(token)).rejects.toThrow(ServiceUnavailableException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+    expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
   });
 });
 

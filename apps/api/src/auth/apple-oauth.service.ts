@@ -43,6 +43,11 @@ const APPLE_REVOKE_URL = `${APPLE_ISSUER}/auth/revoke`;
 const CLOCK_TOLERANCE_SECS = 60;
 const NONCE_TTL_SECS = 600; // 10 minutes (SA-418 §1)
 const NONCE_KEY_PREFIX = "oauth:apple-nonce:";
+/** Max age of an Apple server notification (its `iat`); retries land within hours. */
+const NOTIFICATION_MAX_AGE = "48h";
+const NOTIFICATION_JTI_KEY_PREFIX = "apple:notif:jti:";
+/** Longer than the max age so a jti outlives every token that could still carry it. */
+const NOTIFICATION_JTI_TTL_SECS = 7 * 24 * 3600;
 /** Apple signs identity tokens and server notifications with RS256 only. */
 const APPLE_ALGORITHMS = ["RS256"];
 const APPLE_HTTP_TIMEOUT_MS = 10_000;
@@ -607,10 +612,36 @@ export class AppleOAuthService {
         audience: this.bundleId(),
         algorithms: APPLE_ALGORITHMS,
         clockTolerance: CLOCK_TOLERANCE_SECS,
+        // Replay window: a notification older than this is refused even if its exp is still
+        // ahead. Apple retries failed deliveries for hours, so the cap is generous (48h).
+        maxTokenAge: NOTIFICATION_MAX_AGE,
       });
       payload = result.payload as unknown as Record<string, unknown>;
     } catch {
       throw new UnauthorizedException("apple_notification_invalid");
+    }
+
+    // Replay guard: remember each notification's jti. A captured consent-revoked token replayed
+    // after the user re-linked must not undo the link. A token without a jti cannot be checked,
+    // so it is refused; if the store is down we fail closed (503) so Apple retries later.
+    const jti = payload.jti;
+    if (typeof jti !== "string" || !jti)
+      throw new UnauthorizedException("apple_notification_invalid");
+    let firstSeen: unknown;
+    try {
+      firstSeen = await this.redis.set(
+        `${NOTIFICATION_JTI_KEY_PREFIX}${jti}`,
+        "1",
+        "EX",
+        NOTIFICATION_JTI_TTL_SECS,
+        "NX",
+      );
+    } catch {
+      throw new ServiceUnavailableException("apple_notification_unavailable");
+    }
+    if (firstSeen !== "OK") {
+      this.logger.warn("Apple notification replay ignored (jti already processed)");
+      return;
     }
 
     let event: { type?: string; sub?: string };
