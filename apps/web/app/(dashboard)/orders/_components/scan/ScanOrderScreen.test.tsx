@@ -1112,6 +1112,66 @@ describe("ScanOrderScreen", () => {
       }
     });
 
+    it("a hold does NOT survive closing the scanner: reopen starts released and ignores frames until held again", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      const { rerender, props } = setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      rerender(<ScanOrderScreen {...props} open={false} />);
+      rerender(<ScanOrderScreen {...props} open />);
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("a camera error while held releases the hold (the button unmounts, pointerup would never arrive)", () => {
+      useHoldMode();
+      const { rerender, props } = setup();
+      fireEvent.pointerDown(holdButton());
+      cameraState = { ...cameraState, error: "Camera blocked" };
+      rerender(<ScanOrderScreen {...props} />);
+      cameraState = { ...cameraState, error: null };
+      rerender(<ScanOrderScreen {...props} />);
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("keyboard hold: focus leaving the button (Tab) releases it, since keyup lands elsewhere", () => {
+      useHoldMode();
+      setup();
+      fireEvent.keyDown(holdButton(), { key: " " });
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.blur(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("Continuous mode is unchanged: a window blur mid-streak does NOT restart the steady read", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.blur(window);
+      await act(async () => detect("111"));
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+
+    it("the mode chips and the hold button are real touch targets (chips >= 44px)", () => {
+      setup();
+      expect(screen.getByRole("button", { name: "Continuous mode" }).className).toMatch(
+        /min-h-\[44px\]/,
+      );
+      expect(screen.getByRole("button", { name: "Hold to scan mode" }).className).toMatch(
+        /min-h-\[44px\]/,
+      );
+    });
+
+    it("the hold button straddles the strip's bottom edge so it never covers the aim box", () => {
+      useHoldMode();
+      setup();
+      expect(holdButton().className).toMatch(/-bottom-7/);
+    });
+
     it("the hold button is a real round target (>= 56px) at the bottom centre of the camera strip", () => {
       useHoldMode();
       setup();
