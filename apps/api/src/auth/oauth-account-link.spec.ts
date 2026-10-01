@@ -223,6 +223,14 @@ describe.each(COLUMNS)("oauth-account-link (%s)", (column, mismatchCode) => {
       ).rejects.toThrow(ForbiddenException);
     });
 
+    it("a lost CAS where the row STILL shows no sub (scope mismatch, not a race) is refused, never reported as linked", async () => {
+      const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+      const findUnique = jest.fn().mockResolvedValue(row({ [column]: null }));
+      await expect(
+        casLinkProviderId({ updateMany, findUnique, row: row(), column, sub: "sub-1", data: {} }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
     it("a falsy sub is refused before the write", async () => {
       const updateMany = jest.fn();
       await expect(

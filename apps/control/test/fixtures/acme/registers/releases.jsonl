@@ -1,0 +1,3 @@
+{"id":"R1","name":"Release 1","cutDate":"2026-01-02","goNoGoDate":"2026-01-03","shipDate":"2026-01-05","goal":"Acme baseline: invoices and routes.","status":"done"}
+{"id":"R2","name":"Release 2","cutDate":"2026-01-16","goNoGoDate":"2026-01-17","shipDate":"2026-01-20","goal":"Acme invoice polish.","status":"planned"}
+{"id":"R3","name":"Release 3","cutDate":"2026-02-06","goNoGoDate":"2026-02-07","shipDate":"2026-02-10","goal":"Acme reporting.","status":"planned"}

@@ -1227,6 +1227,42 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
   });
 
+  it("pins the replay-store contract: SET key NX with a 7-day TTL under the apple:notif:jti: prefix", async () => {
+    const { service, privateKey } = await buildService();
+    const redisSet = (service as any).redis.set as jest.Mock;
+    const token = await signNotification(privateKey, { jti: "jti-ttl" });
+    (service as any).prisma.buyerAccount.findFirst.mockResolvedValue(null);
+    (service as any).prisma.user.findMany.mockResolvedValue([]);
+
+    await service.handleNotification(token);
+
+    const call = redisSet.mock.calls.find((c) => String(c[0]).startsWith("apple:notif:jti:"));
+    expect(call).toBeTruthy();
+    expect(call![0]).toBe("apple:notif:jti:jti-ttl");
+    expect(call!.slice(2)).toEqual(["EX", 7 * 24 * 3600, "NX"]);
+    // The TTL must outlive every token that could still carry the jti (maxTokenAge 48h + skew).
+    expect(7 * 24 * 3600).toBeGreaterThan(48 * 3600 + 60);
+  });
+
+  it("a FAILED jti delete is logged, never swallowed silently, and the original write error still surfaces", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.buyerAccount.update.mockRejectedValueOnce(new Error("transient db error"));
+    (service as any).redis.del = jest.fn().mockRejectedValue(new Error("redis del failed"));
+    const warn = jest.spyOn((service as any).logger, "warn");
+
+    await expect(
+      service.handleNotification(await signNotification(privateKey, { jti: "jti-del-fail" })),
+    ).rejects.toThrow("transient db error");
+
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/jti/i);
+    expect(logged).toMatch(/retry/i);
+    // never log the jti value itself
+    expect(logged).not.toContain("jti-del-fail");
+  });
+
   it("two DIFFERENT notifications (different jti) are both processed", async () => {
     const { service, prisma, privateKey } = await buildService();
     prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
@@ -1444,5 +1480,55 @@ describe("AppleOAuthService — issuer pinning", () => {
     ).rejects.toThrow("apple_token_invalid");
     expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
     expect(prisma.buyerAccount.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("AppleOAuthService.revokeRefreshToken — revoke a STORED token without reading the DB (B944 merge ordering)", () => {
+  async function withRealKey() {
+    const { privateKey } = await jose.generateKeyPair("ES256", { extractable: true });
+    const pkcs8 = await jose.exportPKCS8(privateKey);
+    return buildService({ configOverrides: { APPLE_PRIVATE_KEY: pkcs8 } });
+  }
+
+  it("posts the DECRYPTED token to Apple's revoke endpoint with the bundle id as client_id", async () => {
+    const { service } = await withRealKey();
+    fetchStub.mockResolvedValueOnce({ ok: true, status: 200 } as never);
+
+    await service.revokeRefreshToken("enc:the-refresh-token", "buyer-S");
+
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchStub.mock.calls[0] as unknown as [string, { body: URLSearchParams }];
+    expect(url).toBe("https://appleid.apple.com/auth/revoke");
+    expect(init.body.get("token")).toBe("the-refresh-token");
+    expect(init.body.get("client_id")).toBe(BUNDLE_ID);
+    expect(init.body.get("token_type_hint")).toBe("refresh_token");
+  });
+
+  it("no stored token: nothing is sent", async () => {
+    const { service } = await withRealKey();
+    await service.revokeRefreshToken(null, "buyer-S");
+    await service.revokeRefreshToken("", "buyer-S");
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("a non-OK answer or a network failure is logged and NEVER thrown (it must not block the caller)", async () => {
+    const { service } = await withRealKey();
+    const warn = jest.spyOn((service as any).logger, "warn");
+    fetchStub.mockResolvedValueOnce({ ok: false, status: 500 } as never);
+    await expect(service.revokeRefreshToken("enc:t", "buyer-S")).resolves.toBeUndefined();
+    fetchStub.mockRejectedValueOnce(new Error("network down"));
+    await expect(service.revokeRefreshToken("enc:t", "buyer-S")).resolves.toBeUndefined();
+    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(logged).toMatch(/revoke failed/i);
+    expect(logged).not.toContain("enc:t");
+  });
+
+  it("revokeForBuyer still reads the stored token and delegates (unchanged behaviour)", async () => {
+    const { service, prisma } = await withRealKey();
+    prisma.buyerAccount.findUnique.mockResolvedValue({ appleRefreshTokenEnc: "enc:stored" });
+    fetchStub.mockResolvedValueOnce({ ok: true, status: 200 } as never);
+    await service.revokeForBuyer("buyer-1");
+    const [, init] = fetchStub.mock.calls[0] as unknown as [string, { body: URLSearchParams }];
+    expect(init.body.get("token")).toBe("stored");
   });
 });

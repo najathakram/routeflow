@@ -9,6 +9,7 @@ import {
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 
 @Injectable()
@@ -16,6 +17,7 @@ export class BuyerMergeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Buyer: initiate merge ────────────────────────────────────────────────────
@@ -455,6 +457,17 @@ export class BuyerMergeService {
         data: { status: BuyerMergeRequestStatus.COMPLETED, completedAt: new Date() },
       });
     });
+
+    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
+    // token was just discarded by the transaction. Revoke it AT APPLE now, from the value loaded
+    // BEFORE the merge, and only after the merge COMMITTED (a failed merge leaves the secondary's
+    // grant alone). If the primary inherited the grant instead, nothing is revoked. Best-effort:
+    // revokeRefreshToken logs and never throws; the .catch is belt and braces.
+    if (secondaryAccount.appleId && primaryAccount.appleId) {
+      await this.appleOAuth
+        .revokeRefreshToken(secondaryAccount.appleRefreshTokenEnc, secondaryAccount.id)
+        .catch(() => undefined);
+    }
 
     // 7. Send notification emails (outside transaction)
     try {

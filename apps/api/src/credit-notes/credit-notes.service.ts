@@ -21,6 +21,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -78,7 +79,7 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string } = {},
+    opts: { excludeCreditNoteId?: string; ledgerReversedByReturn?: boolean } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -101,11 +102,17 @@ export class CreditNotesService {
         items: {
           select: {
             id: true,
+            productId: true,
             subtotal: true,
             qty: true,
+            boxes: true,
+            unitsPerBox: true,
+            pieces: true,
+            product: { select: { unitsPerBox: true } },
             trackedCategoryId: true,
             categoryTaxAmount: true,
           },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic line order for the shared headroom (SA-628)
         },
       },
     });
@@ -179,22 +186,20 @@ export class CreditNotesService {
     // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
     // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
     // line-attribution quirk, never a net over-refund or a negative filing.
-    const notThisNote = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
-    const priorLineItems = await db.creditNoteItem.findMany({
-      where: {
-        invoiceItemId: { in: [...mergedByLine.keys()] },
-        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" }, ...notThisNote },
-      },
-      select: { invoiceItemId: true, amount: true, qty: true },
-    });
+    // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
+    // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
+    // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    const lineCredits = await loadLineCredits(
+      db,
+      dto.invoiceId,
+      (invoice.items ?? []).map(toHeadroomLine),
+      opts,
+    );
     const creditedByLine = new Map<string, number>();
-    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
-    // cannot be credited for more units than it sold even when its amount cap has headroom.
     const creditedQtyByLine = new Map<string, number>();
-    for (const it of priorLineItems) {
-      const k = it.invoiceItemId ?? "";
-      creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
-      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
+    for (const [k, v] of lineCredits) {
+      creditedByLine.set(k, v.amount);
+      creditedQtyByLine.set(k, v.qty);
     }
 
     let sum = 0;
@@ -206,7 +211,9 @@ export class CreditNotesService {
           `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
         );
       const amt = li.amount;
-      if (!(amt > 0))
+      // a return-refund row may carry its qty at amount 0 (a free line, or a paid line whose share of the pooled price is 0, SA-628b); nothing else may be $0
+      const freeRefundRow = opts.ledgerReversedByReturn && amt === 0 && li.qty != null;
+      if (!(amt > 0) && !freeRefundRow)
         throw cnBad(
           API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
           "Credit line amount must be greater than 0",
@@ -252,10 +259,14 @@ export class CreditNotesService {
         // Snapshot the category as it was AT SALE (the invoice line), NEVER the
         // live product — a product's category may have drifted, and only a line
         // that actually sold regulated has a matching SALE row to reverse.
-        trackedCategoryId: line.trackedCategoryId ?? null,
+        // SA-628: a RETURN REFUND note is itemised only so the shared per-line headroom counts it; receive() already reversed
+        // the returned regulated goods, so its rows carry NO category and NO tax (a second reversal would double-file them).
+        trackedCategoryId: opts.ledgerReversedByReturn ? null : (line.trackedCategoryId ?? null),
         amount: roundMoney(amt),
         qty,
-        categoryTax: roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
+        categoryTax: opts.ledgerReversedByReturn
+          ? 0
+          : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
     if (Math.abs(sum - dto.amount) > 0.01)
@@ -425,20 +436,23 @@ export class CreditNotesService {
     return created;
   }
 
-  async create(dto: {
-    customerId: string;
-    invoiceId?: string;
-    amount: number;
-    reason?: string;
-    // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
-    // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
-    // NOTHING in the regulated ledger (returned regulated goods go through the returns
-    // path, which attributes by product). This is what prevents a credit that concerned
-    // non-regulated goods from proportionally reversing regulated excise sales.
-    items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
-    /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
-    expiresAt?: string;
-  }) {
+  async create(
+    dto: {
+      customerId: string;
+      invoiceId?: string;
+      amount: number;
+      reason?: string;
+      // Optional line linkage: which invoice lines this credit applies to. REQUIRED for
+      // any regulated-ledger reversal — a lump-sum credit with no linkage reverses
+      // NOTHING in the regulated ledger (returned regulated goods go through the returns
+      // path, which attributes by product). This is what prevents a credit that concerned
+      // non-regulated goods from proportionally reversing regulated excise sales.
+      items?: Array<{ invoiceItemId: string; amount: number; qty?: number }>;
+      /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
+      expiresAt?: string;
+    },
+    internal: { ledgerReversedByReturn?: boolean } = {},
+  ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
 
@@ -481,7 +495,7 @@ export class CreditNotesService {
     // standalone (non-tx) read of everything this create can be rejected for, so
     // a rejected request burns none of the tenant's CREDIT_NOTE series. Runs on
     // `forTenant()`, never `tx` — nothing is open yet.
-    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto);
+    await this.validateAndBuildCnItems(this.prisma.forTenant(), dto, internal);
 
     // Hoisted ABOVE the SERIALIZABLE tx below (never `{ tx }`): under
     // SERIALIZABLE a blocked counter UPDATE ABORTS (P2034) rather than waiting,
@@ -519,7 +533,13 @@ export class CreditNotesService {
         // `tx` read (the pre-check above ran on a separate, non-tx snapshot).
         cn = await this.prisma.tenantTransaction(
           async (tx: any) => {
-            const cnItemsData = await this.validateAndBuildCnItems(tx, dto);
+            // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
+            // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
+            // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
+            if (dto.invoiceId) {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            }
+            const cnItemsData = await this.validateAndBuildCnItems(tx, dto, internal);
 
             // REG-B267-E: the customer summary the response carries comes from the
             // tenant-scoped pre-read above rather than from `create({ include })`.
@@ -1178,6 +1198,11 @@ export class CreditNotesService {
     actorId: string | null,
     tz: Awaited<ReturnType<typeof tenantTimeZone>>,
     reason?: string | null, // #2540: optional WHY, recorded in the VOIDED audit row
+    // SA-608g: rows the CALLER also needs locked in SA-214 order (the reissue's SOURCE invoice and its
+    // order). They join the SAME sorted sets below, so the reissue never takes KEY SHARE on the invoice
+    // after holding the note (CN -> Invoice) while deleteInvoice holds the invoice and wants the note.
+    // The endpoint passes none: its lock set is unchanged.
+    extra?: { orderIds?: string[]; invoiceIds?: string[] },
   ) {
     const seen: any[] = await this.liveCreditPayments(tx, id);
     // SA-498a: the lock set is COMPLETE, per SA-214: every order this void writes. That is the
@@ -1192,9 +1217,12 @@ export class CreditNotesService {
       ...new Set([
         ...(seen.map((p) => p.invoice?.orderId).filter(Boolean) as string[]),
         ...intentOrders.map((r) => r.orderId),
+        ...(extra?.orderIds ?? []),
       ]),
     ].sort();
-    const invoiceIds = [...new Set(seen.map((p) => p.invoiceId as string))].sort();
+    const invoiceIds = [
+      ...new Set([...seen.map((p) => p.invoiceId as string), ...(extra?.invoiceIds ?? [])]),
+    ].sort();
     for (const orderId of orderIds) {
       await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
     }
