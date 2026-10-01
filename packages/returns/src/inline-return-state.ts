@@ -268,7 +268,7 @@ export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set
 
 /** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
 export function missingAlreadyReturnedReasons(
-  lines: Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">[],
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">>,
   quote: InlineReturnQuoteResponse,
 ): string[] {
   return [...alreadyReturnedProductIds(quote)].filter(

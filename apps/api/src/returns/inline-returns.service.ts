@@ -483,7 +483,7 @@ export class InlineReturnsService {
               heldAmount: priced.total,
               items: priced.chunks
                 .filter((c) => c.alreadyReturned)
-                .map((c) => ({ productId: c.productId, pieces: c.pieces, subtotal: c.subtotal })),
+                .map((c) => ({ productId: c.productId, qty: c.pieces, subtotal: c.subtotal })),
             },
           },
         });
@@ -536,7 +536,7 @@ export class InlineReturnsService {
     user: JwtPayload,
   ): {
     held: boolean;
-    confirmed: Array<{ productId: string; pieces: number; subtotal: number; reason: string }>;
+    confirmed: Array<{ productId: string; qty: number; subtotal: number; reason: string }>;
   } {
     const flagged = chunks.filter((c) => c.alreadyReturned);
     if (flagged.length === 0) return { held: false, confirmed: [] };
@@ -561,7 +561,7 @@ export class InlineReturnsService {
           productId: c.productId,
         });
       }
-      confirmed.push({ productId: c.productId, pieces: c.pieces, subtotal: c.subtotal, reason });
+      confirmed.push({ productId: c.productId, qty: c.pieces, subtotal: c.subtotal, reason });
     }
     return { held: false, confirmed };
   }
