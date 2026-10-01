@@ -111,7 +111,10 @@ export function evaluate(w: World): string[] {
     // line copier says separately what happens to the frozen component rows: carried (copied from
     // the source line's rows), rederived (rebuilt from the recipe or rescaled from the line's own
     // rows) or na (a line that can never carry components).
-    if (COMPONENT_TARGETS.has(c.target) && !["carried", "rederived", "na"].includes(c.components ?? ""))
+    if (
+      COMPONENT_TARGETS.has(c.target) &&
+      !["carried", "rederived", "na"].includes(c.components ?? "")
+    )
       bad.push(
         `${at}: NEW/UNCLASSIFIED components bucket on ${c.target} — set components to carried, rederived or na`,
       );
