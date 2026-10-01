@@ -313,22 +313,18 @@ export class CreditNotesService {
       };
     });
     if (pool) {
-      // qty binds only when the operator GAVE one (an amount-only credit's qty is derived from the amount)
-      const explicitQty = new Set(
-        [...mergedByLine.values()].filter((m) => m.qty != null).map((m) => m.invoiceItemId),
-      );
-      const byProduct = new Map<string, { amount: number; qty: number | null }>();
+      // Every row's qty binds, derived or typed (in PIECES). With the pool as the only source for refund lumps, an amount-only
+      // credit's derived qty is what keeps the PRODUCT's pieces (and the regulated reversal that follows them) from being credited
+      // past what was billed when lines of the product carry different prices (B960 review).
+      const byProduct = new Map<string, { amount: number; qty: number }>();
       for (const row of cnItemsData) {
         const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
         if (!productId) continue;
-        const prev = byProduct.get(productId) ?? { amount: 0, qty: null };
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0 };
         // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
         const pieces =
           row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
-        byProduct.set(productId, {
-          amount: prev.amount + row.amount,
-          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + pieces : prev.qty,
-        });
+        byProduct.set(productId, { amount: prev.amount + row.amount, qty: prev.qty + pieces });
       }
       for (const [productId, take] of byProduct) {
         const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });

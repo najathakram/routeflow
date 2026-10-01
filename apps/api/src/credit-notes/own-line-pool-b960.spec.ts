@@ -149,4 +149,77 @@ describe("CreditNotesService.validateAndBuildCnItems: B960 own-line check vs the
     );
     expect(byInvoice).toEqual([]);
   });
+
+  describe("OPUS B960 review: qty stays bound at PRODUCT level once the pool is the only source for lumps", () => {
+    // P on A (L1: 10 pieces, $100) and B (L2: 10 pieces, $10; B also bills Q so its invoice total has room). A refund lump of 10
+    // pieces on B prices at the pooled average ($55) and the pool attributes it to L1 (A's id sorts first). Before the review fix
+    // the pool bound qty only for an EXPLICIT qty, so amount-only credits could take 10 + 10 + 4.5 = 24.5 pieces of 20 billed.
+    const l1 = row("a-l1", "pp", 100, 10);
+    const l2 = row("b-l2", "pp", 10, 10);
+    const db = (
+      cn: Array<{ invoiceId: string; invoiceItemId: string; amount: number; qty: number }>,
+      own: any,
+    ) => ({
+      invoice: {
+        findFirst: jest.fn().mockResolvedValue({
+          total: 200,
+          customerId: "cust-1",
+          status: "SENT",
+          orderId: "ord-1",
+          items: [own],
+        }),
+        count: jest.fn().mockResolvedValue(2),
+        findMany: jest.fn().mockResolvedValue([
+          { id: "inv-a", items: [l1] },
+          { id: "inv-b", items: [l2, row("b-q", "pq", 100)] },
+        ]),
+      },
+      creditNote: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 55 } }),
+        findMany: jest.fn(async (args: any) =>
+          args.where.invoiceId === undefined ? [{ id: "cn-lump" }] : [],
+        ),
+      },
+      creditNoteItem: {
+        findMany: jest.fn(async (args: any) =>
+          cn.filter(
+            (r) =>
+              args.where.creditNote.invoiceId === r.invoiceId &&
+              args.where.invoiceItemId.in.includes(r.invoiceItemId),
+          ),
+        ),
+      },
+      returnItem: { findMany: jest.fn().mockResolvedValue([]) },
+      return: {
+        findMany: jest.fn().mockResolvedValue([{ items: [{ productId: "pp", qty: 10 }] }]),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(0),
+    });
+
+    it("an amount-only $10 credit on B's L2 (10 pieces) fits the pool: it passes", async () => {
+      const dto = {
+        customerId: "cust-1",
+        invoiceId: "inv-b",
+        amount: 10,
+        items: [{ invoiceItemId: "b-l2", amount: 10 }],
+      };
+      await expect(service.validateAndBuildCnItems(db([], l2), dto, {})).resolves.toHaveLength(1);
+    });
+
+    it("then an amount-only $45 credit on A's L1 (derived qty 4.5) is REFUSED: no pieces are left in the pool (it used to pass: 24.5 of 20)", async () => {
+      const dto = {
+        customerId: "cust-1",
+        invoiceId: "inv-a",
+        amount: 45,
+        items: [{ invoiceItemId: "a-l1", amount: 45 }],
+      };
+      await expect(
+        service.validateAndBuildCnItems(
+          db([{ invoiceId: "inv-b", invoiceItemId: "b-l2", amount: 10, qty: 10 }], l1),
+          dto,
+          {},
+        ),
+      ).rejects.toMatchObject({ response: { code: "CREDIT_NOTE_OVER_HEADROOM" } });
+    });
+  });
 });
