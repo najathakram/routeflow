@@ -113,6 +113,9 @@ const NON_WRITERS = new Set([
   // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
   // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
   "sales-facts/product-insights.service.ts",
+  // INSUFFICIENT_STOCK: reads the live pack as a DISPLAY GATE only (is `Product.unit` the piece unit
+  // or the pack name?) to label a shortfall sentence — derives no line factor, quantity or price.
+  "orders/stock-shortfall-unit.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

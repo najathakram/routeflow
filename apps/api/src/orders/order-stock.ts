@@ -4,6 +4,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
 import type { InsufficientStockLine } from "@routeflow/types";
 import { linePieceQty } from "./line-piece-qty";
+import { pieceUnitLabel } from "./stock-shortfall-unit";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -86,18 +87,6 @@ const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number =
  * implementation — see REG-B283. Must be called from inside the caller's
  * transaction (the FOR UPDATE lock is only meaningful there).
  */
-/**
- * The unit noun for a stock-shortfall line. `available`/`requested` count PIECES, and for a boxed
- * product `Product.unit` names the PACK ("Box", "case"), so sending it would make "Only 10 Box"
- * overstate stock by unitsPerBox. Only when the product is not packed (unitsPerBox null or <= 1)
- * is `unit` the piece unit; otherwise omit it and clients say "pieces".
- */
-function pieceUnitLabel(p: { unit?: string | null; unitsPerBox?: unknown }): string | undefined {
-  const upb = p.unitsPerBox == null ? null : Number(p.unitsPerBox);
-  if (upb != null && upb > 1) return undefined;
-  return p.unit ?? undefined;
-}
-
 export async function decrementStockForSale(
   deps: OrderStockDeps,
   tx: any,
