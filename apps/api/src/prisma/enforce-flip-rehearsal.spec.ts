@@ -143,11 +143,14 @@ describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
      * `function`, `(` arrow params, `x =>`): a literal array, a built array (`buildOps()`), a `.map(...)`.
      * Those are the array form, which the guard cannot see through.
      */
-    const INTERACTIVE = /^(async\b|function\b|\(|[A-Za-z_$][\w$]*\s*=>)/;
+    // An interactive callback: `async ...`, `function ...`, `x =>`, or arrow PARAMETERS followed by `=>`
+    // (`(tx) =>`, `(tx: T): Promise<R> =>`). A parenthesised expression such as `((ops))` is NOT one.
+    const INTERACTIVE = /^(async\b|function\b|[A-Za-z_$][\w$]*\s*=>|\([^()]*\)\s*(?::[^=;{]*)?=>)/;
     const arrayForm = (src: string) => {
       const code = stripComments(src);
       let n = 0;
-      for (const m of code.matchAll(/\$transaction\s*\(\s*/g))
+      // `$transaction(` and the generic `$transaction<T>(`
+      for (const m of code.matchAll(/\$transaction\s*(?:<[^()]*?>)?\s*\(\s*/g))
         if (!INTERACTIVE.test(code.slice(m.index! + m[0].length))) n++;
       return n;
     };
@@ -170,6 +173,16 @@ describe("SA-619 enforce-flip rehearsal (TENANT_CONTEXT_ENFORCE=true)", () => {
       expect(arrayForm("p.$transaction(tx => 1)")).toBe(0);
       expect(arrayForm("p.$transaction(function (tx) {})")).toBe(0);
       expect(arrayForm("// p.$transaction([a])")).toBe(0);
+      expect(arrayForm("p.$transaction<Row[]>([a, b])")).toBe(1); // generic
+      expect(arrayForm("p.$transaction((ops))")).toBe(1); // a parenthesised expression, not an arrow
+      expect(arrayForm("p.$transaction(ops)")).toBe(1); // an identifier cannot be judged: classify it
+      expect(arrayForm("p.$transaction(...batches)")).toBe(1); // a spread
+      expect(arrayForm("p.$transaction(/* why */ [a])")).toBe(1); // a comment before the argument
+      expect(arrayForm("p.$transaction(\n  // note\n  [a])")).toBe(1);
+      expect(arrayForm("p.$transaction<R>(async (tx) => 1)")).toBe(0);
+      expect(arrayForm("p.$transaction((tx: Prisma.TransactionClient): Promise<void> => x)")).toBe(
+        0,
+      );
     });
 
     /**

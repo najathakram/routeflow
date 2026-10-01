@@ -44,7 +44,12 @@ pass. A scan pins exactly these seven.
 
 ## Flip, watch, roll back
 
-1. Set `TENANT_CONTEXT_ENFORCE=true` on one replica first if the platform allows; watch 500s and the stats line.
-2. Roll back by unsetting the variable (dark again); no deploy of code is needed.
+The flag is read **ONCE, at process boot** (`readEnforceFlag()` when the guard is constructed). Changing the variable
+does nothing until the process restarts, so both the flip and the rollback need a **redeploy / restart**. Railway
+environment variables are shared by every replica of a service, so there is no "one replica first": the whole service
+flips together.
+
+1. Set `TENANT_CONTEXT_ENFORCE=true`, redeploy, and watch 5xx and the stats line on every replica.
+2. Roll back by unsetting it (or `false`) and redeploying; no code change is needed, but it is a deploy, not an instant switch.
 3. The shrink-only inventories (base-client creates, raw-SQL writes) are follow-up work, converted one service per
    commit with owner review; they are not flip blockers.
