@@ -75,7 +75,7 @@ function makeService(
         error: "not_connected",
       }),
     } as any);
-  return new EmailService(config, prisma, encryption, mailboxSend);
+  return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
 }
 
 describe("EmailService — honest send (R5)", () => {
@@ -1875,7 +1875,7 @@ describe("EmailService.sendLowStockDigest (N4)", () => {
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    return new EmailService(config, prisma, encryption, mailboxSend);
+    return new EmailService(config, prisma, encryption, mailboxSend, { record: jest.fn() } as any);
   }
 
   const items = [
@@ -2079,7 +2079,9 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     const mailboxSend = {
       trySend: jest.fn().mockResolvedValue({ delivered: false, transport: "mailbox" }),
     } as any;
-    const svc = new EmailService(config, prisma, encryption, mailboxSend);
+    const svc = new EmailService(config, prisma, encryption, mailboxSend, {
+      record: jest.fn(),
+    } as any);
     const sendSpy = jest
       .spyOn(svc, "send")
       .mockResolvedValue({ delivered: true, transport: "resend" } as any);
@@ -2095,6 +2097,31 @@ describe("EmailService — brand restyle (2026-09-17): shared layout invariants"
     expect(call.text).toBeTruthy();
     expect(call.text).toContain("Acme Widget");
     expect(call.text).toContain("WID-001");
+  });
+});
+
+describe("EmailService — mailbox add-on gate fall-through", () => {
+  it("an `addon_required` mailbox result is a plain skip: the next transport (tenant SMTP) is attempted", async () => {
+    const sendMail = jest.fn().mockResolvedValue({ messageId: "m-smtp" });
+    (nodemailer.createTransport as jest.Mock).mockReturnValue({ sendMail });
+    const trySend = jest
+      .fn()
+      .mockResolvedValue({ delivered: false, transport: "mailbox", error: "addon_required" });
+    const svc = makeService({
+      mailboxSend: { trySend },
+      systemConfigRows: [
+        { key: "email.smtpHost", value: "smtp.example.com" },
+        { key: "email.smtpUser", value: "user@example.com" },
+        { key: "email.smtpPassword", value: "pw" },
+        { key: "email.smtpPort", value: "587" },
+      ],
+    });
+
+    const res = await svc.send({ to: "a@b.com", subject: "x", html: "<p>x</p>" });
+
+    expect(trySend).toHaveBeenCalledTimes(1);
+    expect(sendMail).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ delivered: true, transport: "smtp" });
   });
 });
 
