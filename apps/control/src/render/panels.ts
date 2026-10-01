@@ -497,7 +497,7 @@ function wastePanel(c: Ctx): string {
   );
   const rows = sorted.map(
     (w) =>
-      h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> ${chip(w.rule)} <strong>${w.subject}</strong> <span>${w.why}</span> <span class="mut">${w.since ? ago(w.since, c) : EMPTY}</span> <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}">${w.action || "Ack"}</button>${prNum(w.subject) ? h` <button type="button" class="btn" data-act="superseded" data-pr="${prNum(w.subject)}">Mark superseded</button>` : EMPTY}</span></li>`,
+      h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> ${chip(w.rule)} <strong>${w.subject}</strong> <span>${w.why}</span> <span class="mut">${w.since && !/\d+ (?:d|h|min)\b/.test(w.why) ? ago(w.since, c) : EMPTY}</span> <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}">${w.action || "Ack"}</button>${prNum(w.subject) && (w.rule === "W5" || w.rule === "W9") ? h` <button type="button" class="btn" data-act="superseded" data-pr="${prNum(w.subject)}">Mark superseded</button>` : EMPTY}</span></li>`,
   );
   const body = rows.length
     ? capped(rows, "rows")
@@ -742,6 +742,7 @@ const VERB: Record<string, string> = {
   "bug.fixed": "fixed",
   "waste.ack": "acknowledged waste",
   "lane.registered": "registered lane",
+  "lane.note": "noted on",
 };
 function timelinePanel(c: Ctx): string {
   const rows = [...c.v.timeline]
@@ -753,7 +754,7 @@ function timelinePanel(c: Ctx): string {
     ? h`<ol class="rows tl">${join(
         rows.map(
           (e) =>
-            h`<li><span class="glyph" aria-hidden="true">${glyph(e.by)}</span> <span class="mono">${ago(e.ts, c)}</span> · <span class="mono">${e.lane}</span> · ${Object.hasOwn(VERB, e.type) ? VERB[e.type] : e.type} ${e.task ? linkTask(e.task, c) : EMPTY} <span class="mut">${e.by}</span></li>`,
+            h`<li><span class="glyph" aria-hidden="true">${glyph(e.by)}</span> <span class="mono">${ago(e.ts, c)}</span> · <span class="mono">${e.lane}</span> · ${Object.hasOwn(VERB, e.type) ? VERB[e.type] : e.type} ${e.task ? linkTask(e.task, c) : e.type === "lane.note" || e.type === "lane.registered" ? h`<span class="mono">${Object.hasOwn(c.v.lanes, e.lane) ? c.v.lanes[e.lane].name || e.lane : e.lane}</span>` : EMPTY} <span class="mut">${e.by}</span></li>`,
         ),
       )}</ol>`
     : empty(raw("No activity yet"));

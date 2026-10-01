@@ -10,6 +10,8 @@ import { loadConfig } from "./config";
 import type { Config } from "./config";
 import { createControlServer } from "./http/server";
 import type { ControlDeps } from "./http/server";
+import { setupDeployKey } from "./http/deploykey";
+import { denylistAvailable } from "./sources/denylist";
 import { createGithub } from "./sources/github";
 
 const die = (msg: string): never => {
@@ -27,23 +29,19 @@ if (config.local && !config.fixtureDir && !config.repo) {
   die("CONTROL_LOCAL=1 needs CONTROL_FIXTURE or CONTROL_REPO");
 }
 
+if (config.local && process.env.RAILWAY_ENVIRONMENT) {
+  die("CONTROL_LOCAL=1 is refused when RAILWAY_ENVIRONMENT is set (it disables login)");
+}
+if (!config.local) {
+  if ((config.password ?? "").length < 16) die("CONTROL_PASSWORD must be at least 16 characters");
+  if (!config.publicOrigin)
+    die("CONTROL_PUBLIC_URL is required (the origin writes are checked against)");
+}
+if (!denylistAvailable()) die("the denylist (scripts/campaign/plane-denylist.json) failed to load");
+
 const cleanups: Array<() => void> = [];
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "routeflow-control-"));
 cleanups.push(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
-
-/** Deploy key -> a 0600 file; ssh gets it only through GIT_SSH_COMMAND (never argv-visible content). */
-function installDeployKey(b64: string): void {
-  const key = Buffer.from(b64, "base64").toString("utf8").trim();
-  if (key === "") die("CONTROL_DEPLOY_KEY_B64 is not valid base64");
-  const dir = path.join(tmpRoot, "ssh");
-  fs.mkdirSync(dir, { mode: 0o700 });
-  const file = path.join(dir, "deploy_key");
-  fs.writeFileSync(file, key + "\n", { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
-  process.env.GIT_SSH_COMMAND =
-    `ssh -i '${file}' -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new ` +
-    `-o UserKnownHostsFile='${path.join(dir, "known_hosts")}'`;
-}
 
 /** Fixture mode: a throwaway bare origin seeded with the fixture's state events on ctl/state. */
 function seedFixtureOrigin(fixtureDir: string): string {
@@ -93,7 +91,13 @@ function fixtureGithub(dir: string): ControlDeps["github"] {
   };
 }
 
-if (!config.local && config.deployKeyB64) installDeployKey(config.deployKeyB64);
+if (!config.local && config.deployKeyB64) {
+  try {
+    process.env.GIT_SSH_COMMAND = setupDeployKey(config.deployKeyB64, path.join(tmpRoot, "ssh"));
+  } catch (e) {
+    die(e instanceof Error ? e.message : "deploy key setup failed");
+  }
+}
 
 let origin: string;
 let github: ControlDeps["github"];

@@ -100,6 +100,13 @@ export function assertOrigin(origin: string): string {
   return origin;
 }
 
+/** The process environment minus every CONTROL_* variable (secrets never reach a git child). */
+function childEnv(): Record<string, string | undefined> {
+  const out: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("CONTROL_")) out[k] = v;
+  return out;
+}
+
 function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitResult {
   const r = spawnSync("git", args, {
     cwd,
@@ -110,7 +117,7 @@ function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitRe
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
     env: {
-      ...process.env,
+      ...childEnv(),
       GIT_TERMINAL_PROMPT: "0",
       GIT_ALLOW_PROTOCOL: process.env.GIT_ALLOW_PROTOCOL ?? "file:https:ssh",
       LC_ALL: "C",

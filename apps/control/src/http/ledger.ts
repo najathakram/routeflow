@@ -5,6 +5,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { LedgerRow } from "../domain/prs";
+import { MAX_LINE_BYTES } from "../domain/schema";
+import { denylistAvailable, denylistHit } from "../sources/denylist";
 import { CTL_IDENTITY, CtlError, cloneTimeoutMs, git, gitTry } from "../sources/git";
 import type { Env } from "../sources/git";
 import { withLock } from "../sources/lock";
@@ -36,6 +38,31 @@ export function readLedger(clone: string): LedgerRow[] {
   return out;
 }
 
+const REDACTED = "[redacted]";
+
+/** Redact every string field the denylist flags (the row is kept) and enforce the line cap. */
+export function sanitizeRow(row: LedgerRow): LedgerRow {
+  const scrub = (v: unknown): unknown => {
+    if (typeof v === "string") return denylistHit(JSON.stringify({ v })) ? REDACTED : v;
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v !== null && typeof v === "object") {
+      return Object.fromEntries(
+        Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, scrub(x)]),
+      );
+    }
+    return v;
+  };
+  let out = scrub(row) as LedgerRow;
+  const size = (r: LedgerRow): number => Buffer.byteLength(JSON.stringify(r));
+  if (size(out) > MAX_LINE_BYTES) {
+    const areas = [...out.areas];
+    while (areas.length > 0 && size({ ...out, areas }) > MAX_LINE_BYTES) areas.pop();
+    out = { ...out, areas };
+  }
+  if (size(out) > MAX_LINE_BYTES) out = { ...out, headRef: REDACTED };
+  return out;
+}
+
 const sig = (r: LedgerRow): string => {
   const { at: _at, ...rest } = r;
   void _at;
@@ -45,6 +72,8 @@ const sig = (r: LedgerRow): string => {
 /** Append `rows` (those not already the last row of their PR) in one commit; throws on failure. */
 export async function appendLedger(env: Env, rows: LedgerRow[]): Promise<number> {
   if (rows.length === 0) return 0;
+  if (!denylistAvailable()) throw new CtlError(4, "denylist unavailable: ledger not written");
+  rows = rows.map(sanitizeRow);
   const clone = await ensureClone(env);
   return withLock(lockDirOf(clone), 30_000, () => {
     for (let attempt = 1; attempt <= 4; attempt++) {

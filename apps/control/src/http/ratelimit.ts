@@ -7,6 +7,8 @@ const MAX_TRACKED_IPS = 5_000;
 export interface Limiter {
   blocked(ip: string): boolean;
   fail(ip: string): void;
+  /** Undo the most recent `fail` of this IP (a pre-recorded attempt that turned out valid). */
+  forgive(ip: string): void;
 }
 
 export function createLimiter(opts: { now?: () => number } = {}): Limiter {
@@ -39,6 +41,14 @@ export function createLimiter(opts: { now?: () => number } = {}): Limiter {
         if (!oldest.done) byIp.delete(oldest.value); // bounded memory under a spoofed-address flood
       }
       byIp.set(ip, [...fresh(byIp.get(ip) ?? [], t), t]);
+    },
+    forgive(ip) {
+      const xs = byIp.get(ip);
+      if (!xs || xs.length === 0) return;
+      const t = xs[xs.length - 1];
+      byIp.set(ip, xs.slice(0, -1));
+      const i = all.lastIndexOf(t);
+      if (i >= 0) all.splice(i, 1);
     },
   };
 }

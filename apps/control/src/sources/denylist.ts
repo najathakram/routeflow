@@ -69,6 +69,11 @@ function strings(v: unknown, out: string[] = []): string[] {
   return out;
 }
 
+/** True when the denylist file loads (boot refuses to start otherwise). */
+export function denylistAvailable(): boolean {
+  return load(process.env.CONTROL_DENYLIST || defaultPath()) !== null;
+}
+
 /** Name of the first rule the line matches, else null. Unreadable denylist => refuse everything. */
 export function denylistHit(line: string): string | null {
   const rules = load(process.env.CONTROL_DENYLIST || defaultPath());

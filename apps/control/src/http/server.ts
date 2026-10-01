@@ -116,6 +116,7 @@ const BODY_LIMIT = 16 * 1024;
 const LOGIN_LIMIT = 4 * 1024;
 const WEBHOOK_LIMIT = 1024 * 1024;
 const MAX_WARNINGS = 20;
+const HOOK_MIN_MS = 10_000;
 const LEDGER_CAP = 5_000;
 const SIG_RE = /^sha256=([0-9a-f]{64})$/;
 const HOST_RE = /^(?:[A-Za-z0-9.-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])(?::\d{1,5})?$/;
@@ -627,7 +628,14 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   const sessionOf = (req: http.IncomingMessage): Session | null =>
     cfg.local ? LOCAL_SESSION : readSession(secret, sessionCookie(req), Date.now());
 
+  let boundPort = 0;
+  /** Local mode serves only its own loopback names (a rebinding page cannot reach it). */
+  const localHostOk = (req: http.IncomingMessage): boolean => {
+    const host = req.headers.host;
+    return host === `127.0.0.1:${boundPort}` || host === `localhost:${boundPort}`;
+  };
   const servedOrigin = (req: http.IncomingMessage): string | null => {
+    if (cfg.local) return localHostOk(req) ? `http://${req.headers.host ?? ""}` : null;
     if (cfg.publicOrigin) return cfg.publicOrigin;
     const host = req.headers.host;
     if (typeof host !== "string" || !HOST_RE.test(host)) return null;
@@ -693,14 +701,15 @@ export function createControlServer(deps: ControlDeps): ControlApp {
       );
     }
     if (!originOk(req)) return sendJson(res, 403, { error: "forbidden" });
+    limiter.fail(ip); // count the attempt now, before the body arrives (no slow-body burst)
     const body = await readBody(req, LOGIN_LIMIT);
     if (!body.ok) return sendJson(res, 413, { error: "too_large" });
     const given = new URLSearchParams(body.buf.toString("utf8")).get("password") ?? "";
     if (!verifyPassword(given, pwHash)) {
-      limiter.fail(ip);
       log(`login failed ip=${ip}`);
       return send(res, 401, loginPage("Wrong password."), "text/html; charset=utf-8");
     }
+    limiter.forgive(ip);
     log(`login ok ip=${ip}`);
     redirect(res, "/", { "Set-Cookie": COOKIE(signSession(secret, Date.now()), secure) }, 303);
   });
@@ -764,19 +773,41 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     });
   });
 
+  const deliveries: string[] = [];
+  let lastHookRun = 0;
+  let hookTimer: NodeJS.Timeout | null = null;
   route(table, "POST", "/api/github-webhook", async (req, res) => {
-    const body = await readBody(req, WEBHOOK_LIMIT);
-    if (!body.ok) return sendJson(res, 413, { error: "too_large" });
+    // refuse before reading a byte: no secret, or a signature that cannot possibly match
     const sig = req.headers["x-hub-signature-256"];
     const m = typeof sig === "string" ? SIG_RE.exec(sig) : null;
-    if (!m || !cfg.webhookSecret) return sendJson(res, 401, { error: "bad_signature" });
+    if (!m || !cfg.webhookSecret) {
+      return sendJson(res, 401, { error: "bad_signature" }, { Connection: "close" });
+    }
+    const body = await readBody(req, WEBHOOK_LIMIT);
+    if (!body.ok) return sendJson(res, 413, { error: "too_large" });
     const want = createHmac("sha256", cfg.webhookSecret).update(body.buf).digest("hex");
     if (!safeEqual(want, m[1])) return sendJson(res, 401, { error: "bad_signature" });
-    const kind = req.headers["x-github-event"];
-    if (kind !== "ping") {
+    const id = req.headers["x-github-delivery"];
+    if (typeof id === "string" && id !== "") {
+      if (deliveries.includes(id)) return sendJson(res, 202, { accepted: true, duplicate: true });
+      deliveries.push(id.slice(0, 80));
+      if (deliveries.length > 500) deliveries.shift();
+    }
+    if (req.headers["x-github-event"] !== "ping") {
       webhookAt = env.now();
       webhookPending = true;
-      scheduleRefresh();
+      const wait = lastHookRun + HOOK_MIN_MS - Date.now();
+      if (wait <= 0) {
+        lastHookRun = Date.now();
+        scheduleRefresh();
+      } else if (!hookTimer && !closing) {
+        hookTimer = setTimeout(() => {
+          hookTimer = null;
+          lastHookRun = Date.now();
+          scheduleRefresh();
+        }, wait);
+        hookTimer.unref();
+      }
     }
     sendJson(res, 202, { accepted: true });
   });
@@ -888,6 +919,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
   /* ---------------------------------------------------------------- server */
   const server = http.createServer((req, res) => {
     applyHeaders(res);
+    if (cfg.local && !localHostOk(req)) return sendJson(res, 421, { error: "misdirected" });
     const t: Target | null = parseTarget(req.url);
     if (t === null) return sendJson(res, 404, { error: "not_found" });
     const m = match(table, req.method ?? "", t.pathname);
@@ -916,6 +948,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
         server.listen(port, host, () => {
           server.removeListener("error", reject);
           const a = server.address();
+          boundPort = typeof a === "object" && a ? a.port : port;
           begin();
           resolve({ port: typeof a === "object" && a ? a.port : port });
         });
@@ -926,6 +959,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
         closing = true;
         polling = false;
         if (pollTimer) clearTimeout(pollTimer);
+        if (hookTimer) clearTimeout(hookTimer);
         sse.closeAll();
         const stopped = new Promise<void>((r) => {
           if (!server.listening) return r();
