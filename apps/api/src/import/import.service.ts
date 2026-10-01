@@ -88,6 +88,7 @@ import {
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
 import { claimCodes, codeClaims } from "../products/product-code-release";
+import { IMPORT_CODE_TAKEN_REASON, importReasonForError } from "./import-reasons";
 import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
@@ -1090,6 +1091,8 @@ export class ImportService {
     updated: number;
     skipped: number;
     errors: string[];
+    /** Per-row notes that do not fail a row (e.g. a line whose SKU matches only an inactive item). */
+    warnings?: string[];
     restrictedLines: Array<{
       invoiceNumber: string;
       productId: string;
@@ -1098,6 +1101,7 @@ export class ImportService {
     }>;
   }> {
     const rows = this.parseCsv(buffer);
+    const lineWarnings: string[] = [];
     let imported = 0,
       updated = 0,
       skipped = 0;
@@ -1166,6 +1170,9 @@ export class ImportService {
       const customerName = (first["Customer Name"] || first["Company Name"] || "").trim();
       if (!customerName) {
         skipped++;
+        errors.push(
+          `Invoice ${(first["Invoice Number"] || "").trim() || (first["Invoice ID"] || "").trim() || "(no id)"}: missing customer name`,
+        );
         continue;
       }
 
@@ -1253,6 +1260,7 @@ export class ImportService {
 
       if (!customer) {
         skipped++;
+        errors.push(`Invoice ${customerName}: customer could not be resolved`);
         continue;
       }
 
@@ -1317,6 +1325,8 @@ export class ImportService {
 
       // Build line items; try to match product by SKU
       const itemsData: any[] = [];
+      // N3: buffered per invoice; only an invoice that is actually CREATED contributes them.
+      const groupWarnings: string[] = [];
       for (const row of invoiceRows) {
         const description = (row["Item Name"] || "").replace(/[\n\r]+/g, " ").trim() || "Item";
         const qty = parseImportNumber(row["Quantity"] || "1") || 1;
@@ -1328,22 +1338,49 @@ export class ImportService {
         const sub = roundMoney(line.itemTotal || qty * unitPrice - itemDiscount);
         const sku = (row["SKU"] || "").trim();
 
+        // WS7 (SA-603a): ACTIVE-ONLY matching. Legacy inactive rows may still hold a live code; an
+        // inactive-only hit is no match (line imported unlinked, with a warning), never a link.
         let productId: string | undefined;
+        let skuHeldOnlyByInactive = false;
         if (sku) {
           const product = await this.prisma.forTenant().product.findFirst({
-            where: { sku: { equals: sku, mode: "insensitive" } },
+            where: { isActive: true, sku: { equals: sku, mode: "insensitive" } },
           });
           if (product) productId = product.id;
         }
         if (!productId && sku) {
           const product = await this.prisma.forTenant().product.findFirst({
-            where: { unitSku: { equals: sku, mode: "insensitive" } },
+            where: { isActive: true, unitSku: { equals: sku, mode: "insensitive" } },
           });
           if (product) productId = product.id;
         }
-        if (!productId && description && description !== "Item") {
+        if (!productId && sku) {
+          const inactive = await this.prisma.forTenant().product.findFirst({
+            where: {
+              isActive: false,
+              OR: [
+                { sku: { equals: sku, mode: "insensitive" } },
+                { unitSku: { equals: sku, mode: "insensitive" } },
+              ],
+            },
+            select: { id: true },
+          });
+          if (inactive) {
+            // B2 ruling: the SKU is the stronger identity; a same-name link could pick the wrong
+            // product, so the name fallback below is skipped and the line stays unlinked.
+            skuHeldOnlyByInactive = true;
+            groupWarnings.push(
+              `Invoice ${numberFromSource || customerName}: SKU ${sku} matches only an inactive item; line not linked`,
+            );
+          }
+        }
+        if (!productId && !skuHeldOnlyByInactive && description && description !== "Item") {
           const product = await this.prisma.forTenant().product.findFirst({
-            where: { name: { equals: description, mode: "insensitive" } },
+            where: {
+              isActive: true,
+              name: { equals: description, mode: "insensitive" },
+              kind: { not: "FAMILY" }, // a FAMILY parent is an organising row, never a sellable line
+            },
           });
           if (product) productId = product.id;
         }
@@ -1632,6 +1669,7 @@ export class ImportService {
         }
 
         imported++;
+        lineWarnings.push(...groupWarnings);
       } catch (e: any) {
         // #2468: a deliberate refusal is reported by its reason, not the generic "import failed".
         if (e instanceof ImportRowRefused)
@@ -1692,7 +1730,14 @@ export class ImportService {
       );
     }
 
-    return { imported, updated, skipped, errors, restrictedLines };
+    return {
+      imported,
+      updated,
+      skipped,
+      errors,
+      ...(lineWarnings.length ? { warnings: lineWarnings } : {}),
+      restrictedLines,
+    };
   }
 
   async importPayments(
@@ -2447,7 +2492,7 @@ export class ImportService {
       // throws turns this row's already-pushed plan into a skip with the service's reason —
       // identical wording in both modes.
       const failPlan = (plan: ImportRowPlan, e: unknown) => {
-        const reason = e instanceof HttpException ? e.message : "import failed";
+        const reason = importReasonForError(e);
         if (e instanceof HttpException) errors.push(`${label}: ${reason}`);
         else this.pushRowError(errors, label, e);
         skipped++;
@@ -2488,10 +2533,14 @@ export class ImportService {
       // SKU and barcode are unique per tenant as stored (case-sensitive), so they match exactly.
       let existing: any = null;
       if (sku) {
-        existing = await this.prisma.forTenant().product.findFirst({ where: { sku } });
+        existing = await this.prisma
+          .forTenant()
+          .product.findFirst({ where: { isActive: true, sku } });
       }
       if (!existing && barcode) {
-        existing = await this.prisma.forTenant().product.findFirst({ where: { barcode } });
+        existing = await this.prisma
+          .forTenant()
+          .product.findFirst({ where: { isActive: true, barcode } });
         // W1 (mirrors I1): the row's SKU missed, and the product its barcode found carries a
         // DIFFERENT SKU — rewriting it would be an identity change, never an import update.
         if (existing && sku && existing.sku && existing.sku !== sku) {
@@ -2513,7 +2562,7 @@ export class ImportService {
         }
         // A name is only a key when exactly one product carries it (variants can share one).
         const byName = await this.prisma.forTenant().product.findMany({
-          where: { name: { equals: name, mode: "insensitive" } },
+          where: { isActive: true, name: { equals: name, mode: "insensitive" } },
           take: 2,
         });
         if (byName.length > 1) {
@@ -2754,9 +2803,12 @@ export class ImportService {
       skipped = 0;
     const errors: string[] = [];
 
+    let dataRow = 0;
     for (const row of rows) {
+      dataRow++;
       const name = (row["Item Name"] || "").trim();
       if (!name) {
+        errors.push(`row ${dataRow}: blank name`);
         skipped++;
         continue;
       }
@@ -2765,6 +2817,7 @@ export class ImportService {
       const rawSku = (row["SKU"] || "").trim();
       // If SKU contains commas it's a formatted number (not a real barcode) — skip
       if (rawSku.includes(",")) {
+        errors.push(`row ${dataRow}: SKU "${rawSku}" is a formatted number, not a code`);
         skipped++;
         continue;
       }
@@ -2772,6 +2825,7 @@ export class ImportService {
       // Parse closing stock — handle comma-formatted values like "2,100.00"
       const closingStock = parseImportNumber(row["Closing Stock"] || "0");
       if (isNaN(closingStock)) {
+        errors.push(`row ${dataRow}: closing stock is not a number`);
         skipped++;
         continue;
       }
@@ -2784,6 +2838,7 @@ export class ImportService {
           lowerName.includes("purchase") ||
           lowerName.includes("account"))
       ) {
+        errors.push(`row ${dataRow}: summary row`);
         skipped++;
         continue;
       }
@@ -2791,14 +2846,14 @@ export class ImportService {
       try {
         // Try to find existing product by barcode first, then by name
         let product = rawSku
-          ? await this.prisma
-              .forTenant()
-              .product.findFirst({ where: { OR: [{ barcode: rawSku }, { sku: rawSku }] } })
+          ? await this.prisma.forTenant().product.findFirst({
+              where: { isActive: true, OR: [{ barcode: rawSku }, { sku: rawSku }] },
+            })
           : null;
 
         if (!product) {
           product = await this.prisma.forTenant().product.findFirst({
-            where: { name: { equals: name, mode: "insensitive" } },
+            where: { isActive: true, name: { equals: name, mode: "insensitive" } },
           });
         }
 
@@ -2846,7 +2901,10 @@ export class ImportService {
                 tenantId: tenantIdForZoho,
                 productId: null,
                 actorId: null,
-                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+                // barcode first: the Zoho column is a barcode, so a collision reads as a barcode one.
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null).sort(
+                  (x, y) => Number(y.field === "barcode") - Number(x.field === "barcode"),
+                ),
               });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
@@ -2891,7 +2949,14 @@ export class ImportService {
           created++;
         }
       } catch (e: any) {
-        this.pushRowError(errors, name, e);
+        // SA-603a: a code held by an ACTIVE item is reported from the closed map (never the 409
+        // text, which names the holder); anything else keeps the generic row error.
+        const reason = importReasonForError(e);
+        if ((Object.values(IMPORT_CODE_TAKEN_REASON) as string[]).includes(reason)) {
+          errors.push(`${name}: ${reason}`);
+        } else {
+          this.pushRowError(errors, name, e);
+        }
         skipped++;
       }
     }
