@@ -21,7 +21,7 @@ describe("mobile default selling unit wiring (#2784)", () => {
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
     expect(screen).toMatch(/dflt\?: boolean/);
     expect(screen).toMatch(
-      /if \(keepsDefaultStart\(m\[id\], dflt\)\) line\.startOnDefaultUnit = line\.qty;/,
+      /if \(keepsDefaultStart\(m\[id\], dflt, userRole\)\) line\.startOnDefaultUnit = line\.qty;/,
     );
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true\)/);
     // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
@@ -77,7 +77,8 @@ describe("SA-626c: the default unit is resolved on the LINE, before Confirm (not
 
   it("the screen and the cart row share ONE writer and ONE pending rule (no second copy)", () => {
     expect(screen).toMatch(/applyUnitOption\(m\[id\], option, upbOf\(id\)\)/);
-    expect(screen).toMatch(/useDefaultUnitResolver\(/);
+    // SA-626f: the role gate: a DRIVER makes no subscription read and never starts on a default unit
+    expect(screen).toMatch(/useDefaultUnitResolver\(\s*items,\s*setItems,\s*isStaff,/);
     expect(cartRow).toMatch(/startOnDefaultUnit=\{isPendingDefaultUnit\(line\)\}/);
     expect(defaultUnitLine).toMatch(/export function applyUnitOption/);
   });

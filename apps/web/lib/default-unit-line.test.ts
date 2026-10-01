@@ -263,3 +263,26 @@ describe("SA-626d review: the picker's mount path and the resolver give the SAME
     expect(merged[0]).toBe(cur[0]);
   });
 });
+
+describe("SA-626d lead folds N2 + N3 (web)", () => {
+  const [, bottle] = buildUnitOptions(
+    { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" },
+    [BOTTLE],
+    1,
+  );
+
+  it("N2: a stale picker re-apply of the unit the line ALREADY holds never resets its quantity", () => {
+    const [resolved] = applyUnitToLines([line({ qty: 24, boxes: 2 })], "t1", bottle!, false, 1);
+    expect(resolved).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+    const [again] = applyUnitToLines([{ ...resolved!, qty: 5 }], "t1", bottle!, false, 1);
+    expect(again!.qty).toBe(5);
+  });
+
+  it("N3: a note typed while the units load survives the merge of the resolved unit", () => {
+    const before = [line()];
+    const done = applyUnitToLines(before, "t1", bottle!, false, 1);
+    const cur = [{ ...before[0]!, note: "leave at back door" } as TestLine];
+    const merged = mergeResolvedLines(cur, before, done);
+    expect(merged[0]).toMatchObject({ unitLabel: "Bottle", note: "leave at back door" });
+  });
+});

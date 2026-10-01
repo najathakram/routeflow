@@ -21,15 +21,18 @@ type Items = Record<string, LineState>;
 export function useDefaultUnitResolver(
   items: Items,
   setItems: (fn: (m: Items) => Items) => void,
+  isStaff: boolean,
   productFor: DefaultUnitDeps["productFor"],
   tierFor: DefaultUnitDeps["tierFor"],
 ) {
   const qc = useQueryClient();
-  const sub = useSubscription();
+  // GET /billing/subscription is operator-only: a DRIVER makes no read (and never starts on a default unit, SA-626f).
+  const sub = useSubscription({ enabled: isStaff });
   const unitsKnown = sub.isSuccess;
   const unitsEnabled = (sub.data?.flags ?? []).includes(UNITS_FLAG);
   const depsRef = useRef<DefaultUnitDeps | null>(null);
   depsRef.current = {
+    isStaff,
     unitsEnabled,
     unitsKnown,
     productFor,

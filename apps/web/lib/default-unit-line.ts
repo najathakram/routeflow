@@ -68,8 +68,10 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   if (!target) return prev;
   // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount can never re-apply the default over
   // the operator's choice (Opus #2865 B1).
+  // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
+  const sameUnit = option.kind !== "pack" && target.unitLabel === option.value;
   const next = {
-    ...applyLineUnit(target, option, { tier, keepQty: refresh }),
+    ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit }),
     startOnDefaultUnit: false,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
     ...(option.kind !== "pack" && isPendingDefaultUnit(target)
@@ -153,6 +155,29 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
   return { lines: out, blocked };
 }
 
+const UNIT_FIELDS = [
+  "unitLabel",
+  "unit",
+  "unitsPerBox",
+  "boxes",
+  "pieces",
+  "sellBy",
+  "qty",
+  "listPrice",
+  "unitPrice",
+  "priceType",
+  "specialPrice",
+  "discountedPrice",
+  "unitCost",
+  "packBase",
+  "startOnDefaultUnit",
+] as const;
+function pickUnitFields<T extends DefaultUnitLine>(line: T): Partial<T> {
+  return Object.fromEntries(
+    UNIT_FIELDS.map((k) => [k, (line as Record<string, unknown>)[k]]),
+  ) as Partial<T>;
+}
+
 /** An async resolve never overwrites what the operator did meanwhile: apply it only to a line still pending. */
 export function mergeResolvedLines<T extends DefaultUnitLine>(
   cur: T[],
@@ -166,7 +191,8 @@ export function mergeResolvedLines<T extends DefaultUnitLine>(
     // still pending AND the same count: a 2nd fast add that landed while this resolved must not be overwritten
     if (!b || d === b || !c || !isPendingDefaultUnit(c) || pendingCount(c) !== pendingCount(b))
       continue;
-    out = out.map((li) => (li.tempId === d.tempId ? d : li));
+    // only the unit fields: a note (or any other edit) typed while the units loaded must survive the merge (N3)
+    out = out.map((li) => (li.tempId === d.tempId ? { ...li, ...pickUnitFields(d) } : li));
   }
   return out;
 }

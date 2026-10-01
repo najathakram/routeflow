@@ -11,7 +11,7 @@ import { useTenantStore } from "../tenant-store";
 // next session a stale answer for the rest of the staleTime), gated on `enabled:
 // isAuthenticated` (pre-auth screens mount before a token exists), and a retry budget
 // — this read is load-bearing for section-locking below, so it is not `retry: false`.
-export function useSubscription() {
+export function useSubscription(opts?: { enabled?: boolean }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const tenantSlug = useTenantStore((s) => s.slug);
 
@@ -20,7 +20,7 @@ export function useSubscription() {
     queryFn: () => apiClient.get("/billing/subscription").then((r) => r.data),
     staleTime: 60_000,
     retry: 2,
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && (opts?.enabled ?? true),
   });
 }
 

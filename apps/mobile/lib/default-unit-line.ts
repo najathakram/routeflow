@@ -21,6 +21,7 @@ export function applyUnitOption(
   // explicitly picks the pack again; an operator-typed price is cleared by a unit choice, as always (SA-626d).
   const remembered = prev.priceSource === "history" && prev.unitPrice != null && !prev.unitLabel;
   const restore = isPack && prev.packUnitPrice != null;
+  const sameUnit = !isPack && prev.unitLabel === option.value;
   return {
     ...prev,
     unitLabel: isPack ? undefined : option.value,
@@ -28,12 +29,17 @@ export function applyUnitOption(
     unitFactor: isPack ? undefined : option.factorToBase,
     // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
     startOnDefaultUnit: undefined,
-    // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
-    qty: !isPack && isPendingDefaultUnit(prev) ? pendingCount(prev, unitsPerBox) : 1,
+    // A still-pending line keeps its count (N fast adds = N of the unit); re-applying the unit the line ALREADY holds (a
+    // stale sheet/picker after the resolver ran) keeps its quantity; any other choice resets to 1, as always.
+    qty: sameUnit
+      ? prev.qty
+      : !isPack && isPendingDefaultUnit(prev)
+        ? pendingCount(prev, unitsPerBox)
+        : 1,
     boxes: undefined,
     pieces: undefined,
-    unitPrice: restore ? prev.packUnitPrice : undefined,
-    priceSource: restore ? "history" : undefined,
+    unitPrice: sameUnit ? prev.unitPrice : restore ? prev.packUnitPrice : undefined,
+    priceSource: sameUnit ? prev.priceSource : restore ? "history" : undefined,
     packUnitPrice: isPack ? undefined : remembered ? prev.unitPrice : prev.packUnitPrice,
   };
 }
@@ -58,9 +64,21 @@ export function isPendingDefaultUnit(line: LineState | undefined): boolean {
   );
 }
 
-/** Does this add keep (or start) the default-start flag? A default-start add to a NEW or still-pending line only. */
-export function keepsDefaultStart(prev: LineState | undefined, dflt?: boolean): boolean {
-  return !!dflt && (!prev || isPendingDefaultUnit(prev));
+/**
+ * Only STAFF may sell by a unit (the server's assertMayUseUnits rejects a unit line from any other role), so a DRIVER or
+ * any non-staff role never starts on a default unit: the pack is their only legal line (SA-626f).
+ */
+export function isStaffRole(role?: string | null): boolean {
+  return role === "OPERATOR" || role === "TENANT_ADMIN";
+}
+
+/** Does this add keep (or start) the default-start flag? A STAFF default-start add to a NEW or still-pending line only. */
+export function keepsDefaultStart(
+  prev: LineState | undefined,
+  dflt?: boolean,
+  role?: string | null,
+): boolean {
+  return !!dflt && isStaffRole(role) && (!prev || isPendingDefaultUnit(prev));
 }
 
 /** The line once its ladder is known: on the flagged default unit, or (nothing flagged/offered) left on the pack. */
@@ -77,6 +95,8 @@ export function startLineOnDefault(
 }
 
 export interface DefaultUnitDeps {
+  /** Non-staff never start on a default unit and make NO read (SA-626f). */
+  isStaff: boolean;
   /** `flag.units_v1`: with it off there is no ladder, so the pack is the only unit. */
   unitsEnabled: boolean;
   /** False while the subscription answer is still loading: "off" is not yet known, so nothing may be resolved. */
@@ -99,6 +119,10 @@ export async function resolvePendingDefaultUnits(
   const blocked: string[] = [];
   for (const [id, line] of Object.entries(items)) {
     if (!isPendingDefaultUnit(line)) continue;
+    if (!deps.isStaff) {
+      next[id] = { ...line, startOnDefaultUnit: undefined };
+      continue;
+    }
     if (!deps.unitsKnown) {
       blocked.push(id);
       continue;
@@ -121,6 +145,22 @@ export async function resolvePendingDefaultUnits(
   return { items: next, blocked };
 }
 
+const UNIT_FIELDS = [
+  "unitLabel",
+  "unitBasePrice",
+  "unitFactor",
+  "startOnDefaultUnit",
+  "qty",
+  "boxes",
+  "pieces",
+  "unitPrice",
+  "priceSource",
+  "packUnitPrice",
+] as const;
+function pickUnitFields(line: LineState): Partial<LineState> {
+  return Object.fromEntries(UNIT_FIELDS.map((k) => [k, line[k]])) as Partial<LineState>;
+}
+
 /** An async resolve never overwrites what the buyer did meanwhile: apply it only to a still-pending line at the same qty. */
 export function mergeResolvedDefaults(
   cur: Record<string, LineState>,
@@ -132,7 +172,8 @@ export function mergeResolvedDefaults(
     const c = cur[id];
     if (done[id] === before[id] || !isPendingDefaultUnit(c) || c!.qty !== before[id]?.qty) continue;
     out = out === cur ? { ...cur } : out;
-    out[id] = done[id]!;
+    // only the unit fields: a note (or any other edit) typed while the units loaded must survive the merge
+    out[id] = { ...c!, ...pickUnitFields(done[id]!) };
   }
   return out;
 }
