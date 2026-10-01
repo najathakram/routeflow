@@ -278,13 +278,22 @@ describe("OrderLineUnitPicker: a NEW line starts on the default selling unit (#2
     ).not.toHaveBeenCalled();
   });
 
-  it("Opus #2865 B1/r2: never re-units a line whose PRICE the operator shaped (discounted / manual / typed)", () => {
+  it("Opus #2865 B1/r2: never re-units a line whose price the OPERATOR typed", () => {
+    mockUnits = [FLAGGED];
+    expect(
+      renderPicker({ ...packLine, priceEdited: true }, { startOnDefaultUnit: true }),
+    ).not.toHaveBeenCalled();
+  });
+
+  it("SA-626d: a price the SYSTEM pre-filled from history (discounted / manual) is not a shape: the line still starts on the default unit", () => {
     mockUnits = [FLAGGED];
     const start = { startOnDefaultUnit: true };
-    expect(renderPicker({ ...packLine, discountedPrice: 40 }, start)).not.toHaveBeenCalled();
-    expect(renderPicker({ ...packLine, priceType: "DISCOUNTED" }, start)).not.toHaveBeenCalled();
-    expect(renderPicker({ ...packLine, priceType: "MANUAL" }, start)).not.toHaveBeenCalled();
-    expect(renderPicker({ ...packLine, priceEdited: true }, start)).not.toHaveBeenCalled();
+    expect(
+      renderPicker({ ...packLine, discountedPrice: 40, priceType: "DISCOUNTED" }, start),
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      renderPicker({ ...packLine, discountedPrice: 60, priceType: "MANUAL" }, start),
+    ).toHaveBeenCalledTimes(1);
   });
 
   it("Opus #2865 r2: a realistic BOXED new line (24/box, qty = 24 pieces = 1 box) DOES start on the default: qty is total pieces, never a guard", () => {

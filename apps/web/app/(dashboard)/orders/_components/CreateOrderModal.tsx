@@ -50,6 +50,7 @@ import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-li
 import {
   applyUnitToLines,
   isPendingDefaultUnit,
+  keepsDefaultStart,
   mergeResolvedLines,
 } from "@/lib/default-unit-line";
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
@@ -577,8 +578,8 @@ export function CreateOrderModal({
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
-    // A merge is a qty edit: it CONSUMES startOnDefaultUnit (a second scan before the ladder loads must not let the
-    // picker re-apply the default over a line that already grew).
+    // A merge is a qty edit that CONSUMES startOnDefaultUnit, EXCEPT a default-start add to a still-pending line:
+    // two fast adds before the ladder loads stay "2 of the default unit" (SA-626d), never a pack.
     const merge = (li: LineItem): LineItem => ({
       ...(unitScan
         ? mergePieceIntoLine(li, n)
@@ -587,7 +588,7 @@ export function CreateOrderModal({
           : scanV2
             ? stepLineUnit(li, 1)
             : { ...li, qty: li.qty + 1 }),
-      startOnDefaultUnit: false,
+      startOnDefaultUnit: keepsDefaultStart(li, opts?.startOnDefaultUnit),
     });
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.

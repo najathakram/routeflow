@@ -13,6 +13,10 @@ import { defaultStartOption, type UnitOption } from "./unit-options";
 /** The ONE writer of a chosen unit (the sheet's onChange and the default start). The pack is `option.value === ""`. */
 export function applyUnitOption(prev: LineState, option: UnitOption): LineState {
   const isPack = option.value === "";
+  // A REMEMBERED pack price (history pre-fill) is stashed while the line sells by a unit and re-applied when the buyer
+  // explicitly picks the pack again; an operator-typed price is cleared by a unit choice, as always (SA-626d).
+  const remembered = prev.priceSource === "history" && prev.unitPrice != null && !prev.unitLabel;
+  const restore = isPack && prev.packUnitPrice != null;
   return {
     ...prev,
     unitLabel: isPack ? undefined : option.value,
@@ -23,18 +27,29 @@ export function applyUnitOption(prev: LineState, option: UnitOption): LineState 
     qty: 1,
     boxes: undefined,
     pieces: undefined,
-    unitPrice: undefined,
+    unitPrice: restore ? prev.packUnitPrice : undefined,
+    priceSource: restore ? "history" : undefined,
+    packUnitPrice: !isPack && remembered ? prev.unitPrice : undefined,
   };
 }
 
-/** Still waiting for its default unit: the flag only holds while qty is untouched and no operator price exists. */
+/**
+ * Still waiting for its default unit: the flag only holds while qty is untouched and the operator typed no price. A
+ * REMEMBERED price (`priceSource: "history"`) is the system's pre-fill, not an operator shape, so it does not decide
+ * the unit (owner ruling SA-626d).
+ */
 export function isPendingDefaultUnit(line: LineState | undefined): boolean {
   return (
     line?.startOnDefaultUnit != null &&
     line.startOnDefaultUnit === line.qty &&
     line.priceSource !== "operator" &&
-    line.unitPrice == null
+    (line.unitPrice == null || line.priceSource === "history")
   );
+}
+
+/** Does this add keep (or start) the default-start flag? A default-start add to a NEW or still-pending line only. */
+export function keepsDefaultStart(prev: LineState | undefined, dflt?: boolean): boolean {
+  return !!dflt && (!prev || isPendingDefaultUnit(prev));
 }
 
 /** The line once its ladder is known: on the flagged default unit, or (nothing flagged/offered) left on the pack. */
@@ -46,7 +61,11 @@ export function startLineOnDefault(
 ): LineState {
   if (!isPendingDefaultUnit(line)) return line;
   const start = defaultStartOption(product, units, tier, { hasUnit: !!line.unitLabel });
-  return start ? applyUnitOption(line, start) : { ...line, startOnDefaultUnit: undefined };
+  if (!start) return { ...line, startOnDefaultUnit: undefined };
+  // Fast adds before the ladder loaded: N adds = N of the default unit. A boxed product's qty is total pieces.
+  const upb = Number(product.unitsPerBox ?? 0);
+  const count = Math.max(1, upb > 1 ? Math.round(line.qty / upb) : line.qty);
+  return { ...applyUnitOption(line, start), qty: count };
 }
 
 export interface DefaultUnitDeps {

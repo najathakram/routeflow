@@ -41,7 +41,11 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
-import { applyUnitOption, mergeResolvedDefaults } from "../lib/default-unit-line";
+import {
+  applyUnitOption,
+  keepsDefaultStart,
+  mergeResolvedDefaults,
+} from "../lib/default-unit-line";
 import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
@@ -792,7 +796,7 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (isNew && dflt) line.startOnDefaultUnit = line.qty;
+      if (keepsDefaultStart(m[id], dflt)) line.startOnDefaultUnit = line.qty;
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this

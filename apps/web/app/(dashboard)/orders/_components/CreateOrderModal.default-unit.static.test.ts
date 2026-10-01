@@ -70,7 +70,11 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
     ] as const) {
-      expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({
+      // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), via keepsDefaultStart
+      const rule = name.startsWith("const merge")
+        ? /startOnDefaultUnit: keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)/
+        : /startOnDefaultUnit: false/;
+      expect({ name, consumed: rule.test(slice(name, next)) }).toEqual({
         name,
         consumed: true,
       });

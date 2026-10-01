@@ -26,19 +26,25 @@ export interface DefaultUnitLine extends UnitLine {
   priceEdited?: boolean;
 }
 
-/** The operator has shaped this line (a unit, a typed price, a one-time discount/upsell): never start it on the default. */
-export function isShapedLine(line: {
-  unitLabel?: string;
-  priceEdited?: boolean;
-  discountedPrice?: number;
-  priceType: string;
-}): boolean {
-  return (
-    !!line.unitLabel ||
-    !!line.priceEdited ||
-    line.discountedPrice != null ||
-    line.priceType === "DISCOUNTED" ||
-    line.priceType === "MANUAL"
+/**
+ * The operator has shaped this line (a unit, a typed price): never start it on the default. A price the SYSTEM pre-filled
+ * from the customer's history (DISCOUNTED/MANUAL + discountedPrice at add time) is NOT a shape: a remembered price never
+ * decides the unit (owner ruling SA-626d). Every operator price handler consumes the flag, so a still-set flag means untouched.
+ */
+export function isShapedLine(line: { unitLabel?: string; priceEdited?: boolean }): boolean {
+  return !!line.unitLabel || !!line.priceEdited;
+}
+
+/** Does this add keep (or start) the default-start flag? A default-start add to a still-pending line only. */
+export function keepsDefaultStart(prev: DefaultUnitLine, dflt?: boolean): boolean {
+  return !!dflt && isPendingDefaultUnit(prev);
+}
+
+/** Fast adds before the ladder loaded: N adds = N of the default unit (a boxed line's qty is total pieces). */
+function pendingCount(line: UnitLine): number {
+  return Math.max(
+    1,
+    line.unitsPerBox ? (line.boxes ?? Math.round(line.qty / line.unitsPerBox)) : line.qty,
   );
 }
 
@@ -57,6 +63,7 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   option: UnitOption,
   refresh: boolean,
   tier: Tier,
+  count?: number,
 ): T[] {
   const target = prev.find((li) => li.tempId === tempId);
   if (!target) return prev;
@@ -65,6 +72,7 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   const next = {
     ...applyLineUnit(target, option, { tier, keepQty: refresh }),
     startOnDefaultUnit: false,
+    ...(count != null && option.kind !== "pack" ? { qty: count } : {}),
   };
   const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
   if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
@@ -82,8 +90,8 @@ function defaultOptionFor(
   const product = ladderProductOf(line);
   const value = defaultUnitValue(product, units, tier);
   if (!value) return undefined;
-  const packPrice = line.packBase?.unitPrice ?? line.unitPrice;
-  return buildUnitOptions(product, units, tier, packPrice).find((o) => o.value === value);
+  // Scaled from the TIER pack price, never from a remembered/typed unitPrice (SA-626d): no packPrice argument.
+  return buildUnitOptions(product, units, tier).find((o) => o.value === value);
 }
 
 /** The line once its ladder is known: on the flagged default unit, or (nothing flagged/offered) left on the pack. */
@@ -94,7 +102,9 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
 ): T {
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
-  const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
+  const [only] = option
+    ? applyUnitToLines([line], line.tempId, option, false, tier, pendingCount(line))
+    : [];
   return (only as T | undefined) ?? { ...line, startOnDefaultUnit: false };
 }
 
@@ -134,7 +144,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
       out = option
-        ? applyUnitToLines(out, line.tempId, option, false, tier)
+        ? applyUnitToLines(out, line.tempId, option, false, tier, pendingCount(line))
         : out.map((li) => (li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li));
     } catch {
       blocked.push(line.tempId);

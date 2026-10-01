@@ -64,9 +64,8 @@ describe("isPendingDefaultUnit", () => {
     expect(isPendingDefaultUnit(line({ startOnDefaultUnit: false }))).toBe(false);
     expect(isPendingDefaultUnit(line({ unitLabel: "Case" }))).toBe(false);
     expect(isPendingDefaultUnit(line({ priceEdited: true }))).toBe(false);
-    expect(isPendingDefaultUnit(line({ discountedPrice: 20, priceType: "DISCOUNTED" }))).toBe(
-      false,
-    );
+    // a history pre-fill (DISCOUNTED + discountedPrice at add time) is NOT a shape (SA-626d); a TYPED price sets priceEdited
+    expect(isPendingDefaultUnit(line({ discountedPrice: 20, priceType: "DISCOUNTED" }))).toBe(true);
   });
 });
 
