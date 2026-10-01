@@ -405,7 +405,7 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
             status: Number(m[1]),
             head: buf.split("\r\n\r\n")[0].slice(0, 2000),
             port: s.localPort, // pairs this client with its server-side socket (that socket's remotePort)
-            written: s.bytesWritten, // what this client really wrote: tells client bytes from server over-reads
+            written: s.bytesWritten, // what this client really wrote (the MacBook: exactly head + Content-Length)
           });
         }
       });
@@ -512,9 +512,12 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     errs.filter((e) => e.code?.startsWith("HPE_"));
   /**
    * Lead ruling B950: a 400 read by a client is accepted ONLY when the SERVER explains it on that
-   * socket. The MacBook showed Node's bare parser 400 (HPE_INVALID_METHOD) when the connection had
-   * read MORE than head + Content-Length (extra client bytes after a complete message), while the
-   * server's own answer to every request was a 401 and the handler never ran. A 400 is explained
+   * socket. The MacBook showed Node's bare parser 400 (HPE_INVALID_METHOD) when the server-side
+   * connection had read MORE than head + Content-Length, while the server's own answer to every
+   * request was a 401 and the handler never ran. The client had written EXACTLY head + Content-Length
+   * on every such socket (1048749 bytes, measured by `written`), so the surplus bytes appear on the
+   * SERVER side of the connection: the parser was fed buffered bytes after the message it had already
+   * completed. Why (a macOS/Node read-path quirk is the working hypothesis) is unproven. A 400 is explained
    * when: the server recorded a 401 for that socket (it cannot mean "before": on the MacBook the
    * parser error came first and the handler's 401 followed), the parser error is HPE_INVALID_METHOD,
    * the socket had read more than head + Content-Length, and the handler's work never ran.
@@ -744,7 +747,8 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
   });
 
   /** Everything a forged-delivery flood must satisfy: shared by the 200-upload test and the test that
-   * feeds some sockets bytes beyond Content-Length (the MacBook shape). Throws with the whole report. */
+   * makes some sockets' connections read bytes beyond Content-Length (the MacBook shape). Throws with
+   * the whole report. */
   const checkFlood = (a: {
     spy: ReturnType<typeof spyResponses>;
     outcomes: Outcome[];
@@ -790,7 +794,7 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     expect(a.refreshCalls).toBe(0);
   };
 
-  it("a flood where some sockets send bytes beyond Content-Length (the MacBook shape) passes the SAME checks", async () => {
+  it("a flood where some connections read bytes beyond Content-Length (the MacBook shape, simulated by over-sending clients) passes the SAME checks", async () => {
     h = await startServer({ webhook: true });
     const MB = Buffer.alloc(1024 * 1024, 97);
     const extra = Buffer.alloc(65363, 97);
@@ -810,12 +814,13 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     } finally {
       spy.stop();
     }
-    // the sockets that sent extra bytes are the ones with a parser error, and each is explained
+    // the mini cannot make the server re-read bytes, so these clients really over-send: the server
+    // side sees the same thing as on the MacBook, a connection that read past the message it completed
     expect(parserErrors(spy.clientErrors).length).toBeGreaterThan(0);
     checkFlood({ spy, outcomes, uploads: 40, declared: MB.length, refreshCalls: h.refreshCalls });
   });
 
-  it("bytes beyond the declared Content-Length reproduce the MacBook shape: a bare 400 first, a clientError with the offending bytes, the server's 401 recorded on a destroyed socket", async () => {
+  it("bytes read beyond the declared Content-Length reproduce the MacBook shape: a bare 400 first, a clientError with the offending bytes, the server's 401 recorded on a destroyed socket", async () => {
     h = await startServer({ webhook: true });
     const spy = spyResponses(h.port);
     let out: Outcome;
