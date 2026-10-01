@@ -120,6 +120,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         amount: 50,
         items: [{ invoiceItemId: "line-a", amount: 50, qty: 1 }],
       }),
+      { ledgerReversedByReturn: true },
     );
   });
 
