@@ -32,6 +32,7 @@ import {
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -928,6 +929,7 @@ export default function BuyerOrderDetailPage() {
                             {li.notes}
                           </p>
                         )}
+                        <ComponentSubLines components={li.components} />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
                         <span>{Number(li.qty)}</span>

@@ -316,6 +316,7 @@ model User {
   driver               Driver?
   deviceTokens         DeviceToken[]
   refreshTokens        RefreshToken[]
+  authHandoffCodes     AuthHandoffCode[]
   stockMovements       StockMovement[]
   stockCountsStarted   StockCountSession[]  @relation("StockCountStarted")
   stockCountsCommitted StockCountSession[]  @relation("StockCountCommitted")
@@ -443,6 +444,7 @@ model BuyerAccount {
 
   customerLinks            CustomerLink[]
   refreshTokens            BuyerRefreshToken[]
+  authHandoffCodes         AuthHandoffCode[]
   passwordResetTokens      BuyerPasswordResetToken[]
   emailVerificationTokens  BuyerEmailVerificationToken[]
   mergeRequestsAsPrimary   BuyerMergeRequest[]           @relation("MergeAsPrimary")
@@ -493,6 +495,32 @@ model BuyerRefreshToken {
 
   buyerAccount BuyerAccount @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
 
+  @@index([buyerAccountId])
+  @@index([expiresAt])
+}
+
+/// #2653: which realm minted a sign-in handoff code (decided by the minting endpoint, never by a JWT).
+enum HandoffRealm {
+  STAFF
+  BUYER
+}
+
+/// #2653 (SA-542a/b): a one-time in-app sign-in handoff code. Only sha256(code) is stored; a row
+/// lives 60 s and is deleted when consumed. Exactly one of userId (STAFF) / buyerAccountId (BUYER).
+model AuthHandoffCode {
+  tokenHash      String        @id
+  realm          HandoffRealm
+  userId         String?
+  user           User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  buyerAccountId String?
+  buyerAccount   BuyerAccount? @relation(fields: [buyerAccountId], references: [id], onDelete: Cascade)
+  /// The user's tenant for STAFF (enforced on exchange); NULL for BUYER (an account spans sellers).
+  tenantId       String?
+  deviceId       String
+  expiresAt      DateTime
+  createdAt      DateTime      @default(now())
+
+  @@index([userId])
   @@index([buyerAccountId])
   @@index([expiresAt])
 }

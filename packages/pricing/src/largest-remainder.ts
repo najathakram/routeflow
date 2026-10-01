@@ -1,5 +1,5 @@
 import { MoneyInvariantError } from "./money-invariants";
-import { isWholeCents, roundMoney } from "./pricing";
+import { creditedThrough, isWholeCents, roundMoney } from "./pricing";
 
 const toCents = (n: number): number => Math.round(roundMoney(n) * 100);
 
@@ -98,7 +98,7 @@ export function prorateComponentCredit(input: ComponentCreditInput): ComponentCr
       `credited pieces ${priorPieces + now} exceed the line's ${linePieces}`,
     );
   }
-  const through = (c: number) => roundMoney((storedSubtotal * c) / linePieces);
+  const through = (c: number) => creditedThrough(storedSubtotal, c, linePieces);
   const total = roundMoney(through(priorPieces + now) - through(priorPieces));
   return { total, parts: allocateCentsLargestRemainder(total, parts) };
 }

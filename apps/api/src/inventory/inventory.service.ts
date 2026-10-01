@@ -15,7 +15,7 @@ import {
   lockFamilyRow,
   readFamilyPriceMode,
 } from "../products/family-price";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
@@ -29,6 +29,7 @@ import {
   StartStockCountDto,
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
+import { buildMovementsWhere } from "./movements-where";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
@@ -188,20 +189,7 @@ export class InventoryService {
     const limit = Number(query.limit ?? 50);
     const skip = (page - 1) * limit;
 
-    const where: Prisma.StockMovementWhereInput = {};
-    if (query.productId) where.productId = query.productId;
-    if (query.type) where.type = query.type;
-    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
-    // movement carries); createdAt is write-once insertion time.
-    if (query.from || query.to) {
-      where.effectiveAt = {};
-      if (query.from) where.effectiveAt.gte = new Date(query.from);
-      if (query.to) {
-        const toDate = new Date(query.to);
-        toDate.setUTCHours(23, 59, 59, 999);
-        where.effectiveAt.lte = toDate;
-      }
-    }
+    const where = buildMovementsWhere(query);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().stockMovement.findMany({
@@ -1302,7 +1290,8 @@ export class InventoryService {
           ? normalizeBoxesPieces({
               boxes: recv.boxes,
               pieces: recv.pieces,
-              unitsPerBox: prod?.unitsPerBox,
+              // #2734: the line's stored pack wins; the live product pack is only the fallback.
+              unitsPerBox: linePack(item, Number(prod?.unitsPerBox ?? 0)),
             }).qty
           : (recv.receivedQty ?? recv.qtyReceived ?? 0);
 
@@ -1392,7 +1381,7 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
-  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+  async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const tenantId = this.prisma.getTenantId();
     for (const productId of [...new Set(productIds)].sort()) {
       await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;

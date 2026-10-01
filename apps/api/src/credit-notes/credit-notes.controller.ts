@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -8,7 +18,11 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CreditNotesService } from "./credit-notes.service";
+import { CreditNoteReissueService } from "./credit-note-reissue.service";
+import { ReissueCreditNoteDto } from "./dto/reissue-credit-note.dto";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { VoidCreditNoteDto } from "./dto/void-credit-note.dto";
+import { UpdateCreditNoteDto } from "./dto/update-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
 
@@ -20,7 +34,10 @@ import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-not
 @UseGuards(JwtAuthGuard, PlanFlagGuard)
 @RequirePlanFlag("flag.credit_notes")
 export class CreditNotesController {
-  constructor(private readonly creditNotesService: CreditNotesService) {}
+  constructor(
+    private readonly creditNotesService: CreditNotesService,
+    private readonly reissueService: CreditNoteReissueService,
+  ) {}
 
   @Post()
   @UseGuards(RolesGuard)
@@ -85,8 +102,26 @@ export class CreditNotesController {
   @Post(":id/void-with-reversal")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  voidWithReversal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null);
+  voidWithReversal(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: VoidCreditNoteDto,
+  ) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null, dto?.reason);
+  }
+
+  // #2648 / SA-535(b): an amount/line edit = void-with-reversal + an unapplied replacement, in ONE
+  // transaction. The Idempotency-Key is required; a replay returns the same new note.
+  @Post(":id/reissue")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
+  reissue(
+    @Param("id") id: string,
+    @Body() dto: ReissueCreditNoteDto,
+    @Headers("idempotency-key") idempotencyKey: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.reissueService.reissue(id, dto, idempotencyKey, user?.sub ?? null);
   }
 
   @Post(":id/unapply")
@@ -117,7 +152,11 @@ export class CreditNotesController {
   @Patch(":id")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() body: { reason?: string; expiresAt?: string | null }) {
-    return this.creditNotesService.updateCreditNote(id, body);
+  update(
+    @Param("id") id: string,
+    @Body() body: UpdateCreditNoteDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.creditNotesService.updateCreditNote(id, body, user?.sub ?? null);
   }
 }

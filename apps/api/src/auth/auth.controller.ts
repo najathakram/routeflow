@@ -38,6 +38,9 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
+import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
+import type { JwtPayload } from "./jwt-payload.interface";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -64,6 +67,7 @@ export class AuthController {
     private readonly configService: ConfigService,
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
+    private readonly staffHandoff: StaffHandoffService,
     private readonly appleOAuth: AppleOAuthService,
   ) {
     this.webUrl = AuthController.normalizeOrigin(
@@ -136,6 +140,41 @@ export class AuthController {
     // SEC-4 / F11-002: ALSO set the refresh token as an httpOnly cookie. Purely
     // additive — the body still carries the token, so mobile and the current web
     // client are unaffected; web can later stop persisting it in localStorage.
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
+  }
+
+  // ─── #2653 in-app sign-in handoff (SA-542a/b), staff realm ──────────────────────
+
+  @Post("handoff")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Mint a one-time code for the in-app web shell (OPERATOR/TENANT_ADMIN)",
+  })
+  mintHandoff(@CurrentUser() user: JwtPayload, @Body() dto: HandoffMintDto) {
+    return this.staffHandoff.mint(user, dto.deviceId);
+  }
+
+  @Post("handoff/exchange")
+  @HttpCode(HttpStatus.OK)
+  // Same throttle as login: an exchange signs someone in.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Trade a one-time handoff code for a fresh session" })
+  async exchangeHandoff(
+    @Body() dto: HandoffExchangeDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffHandoff.exchange(dto.code, extractDeviceInfo(req));
+    // The same httpOnly refresh cookie login() sets (SEC-4).
     this.setRefreshCookie(res, result.refreshToken);
     return result;
   }
@@ -598,7 +637,7 @@ export class AuthController {
     if (!this.appleOAuth.isNotificationConfigured()) {
       throw new ServiceUnavailableException("Sign in with Apple is not configured");
     }
-    await this.appleOAuth.handleNotification(dto.signedPayload);
+    await this.appleOAuth.handleNotification((dto.payload ?? dto.signedPayload) as string);
     return { received: true };
   }
 

@@ -7,6 +7,15 @@
  * (size ratchet).
  */
 
+/** The order read's credit-payment select; createdAt dates the legacy Automatic fallback (SA-551a). */
+export const ORDER_CREDIT_PAYMENT_SELECT = {
+  id: true,
+  amount: true,
+  creditNoteId: true,
+  autoApplied: true,
+  createdAt: true,
+} as const;
+
 interface CreditNoteReader {
   creditNote: {
     findMany(args: {
