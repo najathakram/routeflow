@@ -596,3 +596,94 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
     ).toMatch(/non-negative/);
   });
 });
+
+describe("SA-606g: ONE create-side blank-cost rule (blankToUndefined), HTTP == service", () => {
+  const BLANKS: unknown[] = [undefined, "", "  ", null];
+  const errorsOf = async (cls: new () => object, plain: Record<string, unknown>) =>
+    validate(plainToInstance(cls, plain) as object, { whitelist: true });
+  const kidOf = (h: { tx: { products: unknown[] } }) =>
+    h.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT") as Record<
+      string,
+      unknown
+    >;
+  const famOf = (h: { tx: { products: unknown[] } }) =>
+    h.tx.products.find((p) => (p as Record<string, unknown>).kind === "FAMILY") as Record<
+      string,
+      unknown
+    >;
+
+  it.each(BLANKS.map((b) => [b]))(
+    "variant cost %p on create: the DTO passes AND the service inherits the family cost (parity)",
+    async (blank) => {
+      const plain = {
+        family: { name: "F", standardCost: "3" },
+        variants: [{ name: "A", pricePerUnit: "1", standardCost: blank }],
+      };
+      expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]); // HTTP accepts it
+      const viaHttp = build();
+      await viaHttp.service.createFamily(plainToInstance(CreateFamilyDto, plain) as never, ACTOR);
+      expect(kidOf(viaHttp)).toMatchObject({ standardCost: "3.0000" });
+      const bypass = build(); // a caller that skips the DTO behaves identically
+      await bypass.service.createFamily(plain as never, ACTOR);
+      expect(kidOf(bypass)).toMatchObject({ standardCost: "3.0000" });
+    },
+  );
+
+  it.each(BLANKS.map((b) => [b]))(
+    "variant cost %p with NO family cost: stays NULL (never 0.0000)",
+    async (blank) => {
+      const plain = {
+        family: { name: "F" },
+        variants: [{ name: "A", pricePerUnit: "1", standardCost: blank }],
+      };
+      expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]);
+      const h = build();
+      await h.service.createFamily(plainToInstance(CreateFamilyDto, plain) as never, ACTOR);
+      expect(kidOf(h).standardCost ?? null).toBeNull();
+    },
+  );
+
+  it.each(BLANKS.map((b) => [b]))(
+    "family cost %p: the DTO passes and the family row's cost is NULL (never 0.0000)",
+    async (blank) => {
+      const plain = {
+        family: { name: "F", standardCost: blank },
+        variants: [{ name: "A", pricePerUnit: "1" }],
+      };
+      expect(await errorsOf(CreateFamilyDto, plain)).toEqual([]);
+      const h = build();
+      await h.service.createFamily(plainToInstance(CreateFamilyDto, plain) as never, ACTOR);
+      expect(famOf(h).standardCost ?? null).toBeNull();
+    },
+  );
+
+  it.each([[null], [""], ["  "]])(
+    "STRICT: update-row cost %p and price %p are 400 in BOTH the DTO and the service",
+    async (blank) => {
+      for (const field of ["standardCost", "pricePerUnit"]) {
+        const plain = { update: [{ id: "k1", [field]: blank }] };
+        expect((await errorsOf(UpdateFamilyVariantsDto, plain)).length).toBeGreaterThan(0);
+        const famRow = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+        const k1 = {
+          ...product({ id: "k1", name: "Kid k1" }),
+          kind: "VARIANT",
+          parentProductId: "fam",
+        } as never;
+        await expect(
+          build({ products: [famRow, k1] }).service.updateVariants("fam", plain as never, ACTOR),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      }
+    },
+  );
+
+  it.each([[null], [""], ["  "]])(
+    "STRICT: a create price %p is 400 in BOTH the DTO and the service",
+    async (blank) => {
+      const plain = { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: blank }] };
+      expect((await errorsOf(CreateFamilyDto, plain)).length).toBeGreaterThan(0);
+      await expect(build().service.createFamily(plain as never, ACTOR)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    },
+  );
+});
