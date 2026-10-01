@@ -169,6 +169,27 @@ async function mintAndSign(
   return { nonce, identityToken };
 }
 
+describe("AppleOAuthService — isConfigured() with every APPLE_* var unset or blank (boot safety)", () => {
+  const ALL = ["APPLE_BUNDLE_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"] as const;
+
+  it("is false when all four are unset", async () => {
+    const { service } = await buildService({
+      configOverrides: Object.fromEntries(ALL.map((k) => [k, undefined])),
+    });
+    expect(service.isConfigured()).toBe(false);
+    expect(service.isNotificationConfigured()).toBe(false);
+  });
+
+  it("is false when they are empty or whitespace-only (a blank .env line), for every key", async () => {
+    for (const k of ALL) {
+      for (const blank of ["", "   ", "\n"]) {
+        const { service } = await buildService({ configOverrides: { [k]: blank } });
+        expect(service.isConfigured()).toBe(false);
+      }
+    }
+  });
+});
+
 describe("AppleOAuthService — token verification (SA-418 §1)", () => {
   it("rejects a bad signature", async () => {
     const { service, privateKey } = await buildService();

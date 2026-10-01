@@ -71,6 +71,24 @@ describe("POST /auth/apple/notifications — real body shape (SA-418)", () => {
     expect(handleNotification).not.toHaveBeenCalled();
   });
 
+  it("both fields: payload wins; extra properties and a null signedPayload are 400/ignored per the pipe", async () => {
+    await request(app.getHttpServer())
+      .post("/auth/apple/notifications")
+      .send({ payload: "eyJ.p.sig", signedPayload: "eyJ.s.sig" })
+      .expect(200);
+    expect(handleNotification).toHaveBeenLastCalledWith("eyJ.p.sig");
+    await request(app.getHttpServer())
+      .post("/auth/apple/notifications")
+      .send({ payload: "eyJ.p.sig", extra: 1 })
+      .expect(400);
+    handleNotification.mockClear();
+    await request(app.getHttpServer())
+      .post("/auth/apple/notifications")
+      .send({ signedPayload: null })
+      .expect(400);
+    expect(handleNotification).not.toHaveBeenCalled();
+  });
+
   it("unconfigured: a readable 503, never a crash", async () => {
     apple.isNotificationConfigured.mockReturnValue(false);
     const res = await request(app.getHttpServer())

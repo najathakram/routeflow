@@ -121,12 +121,11 @@ export class AppleOAuthService {
    * before calling any other method here.
    */
   isConfigured(): boolean {
-    return !!(
-      this.configService.get<string>("APPLE_BUNDLE_ID") &&
-      this.configService.get<string>("APPLE_TEAM_ID") &&
-      this.configService.get<string>("APPLE_KEY_ID") &&
-      this.configService.get<string>("APPLE_PRIVATE_KEY")
-    );
+    // Trimmed like bundleId()/isNotificationConfigured(): a blank or whitespace-only .env line
+    // is "not configured" (a readable 503), never a half-configured flow that fails as a 401.
+    return (
+      ["APPLE_BUNDLE_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY"] as const
+    ).every((k) => !!this.configService.get<string>(k)?.trim());
   }
 
   // ─── Nonce (SA-418 §1, B349 form) ──────────────────────────────────────────
