@@ -17,21 +17,26 @@ const SCHEMA_DIR = path.resolve(API_DIR, "prisma/schema");
  * The script is an ES module and ts-jest compiles CommonJS, so its exports are exercised the way the other
  * report specs exercise their scripts: in a spawned node process (args in, JSON out; a throw is a non-zero exit).
  */
+// The arguments travel on STDIN, never argv: the schema text is ~hundreds of KB, and Linux caps ONE argv
+// string at 128 KiB (MAX_ARG_STRLEN), so a CI runner fails the spawn with E2BIG, status null and an EMPTY
+// stderr, while macOS (a far larger limit) passes.
 function callExport(fn: string, ...args: unknown[]): unknown {
-  const code = `import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then((m) => {
-    const out = m[${JSON.stringify(fn)}](...JSON.parse(process.argv[1]));
+  const code = `import { readFileSync } from "node:fs";
+  import(${JSON.stringify(pathToFileURL(SCRIPT).href)}).then((m) => {
+    const out = m[${JSON.stringify(fn)}](...JSON.parse(readFileSync(0, "utf8")));
     process.stdout.write(JSON.stringify(out === undefined ? null : out));
   }).catch((e) => { process.stderr.write(String(e.message)); process.exit(3); });`;
-  const res = spawnSync(
-    process.execPath,
-    ["--input-type=module", "-e", code, JSON.stringify(args)],
-    {
-      cwd: API_DIR,
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-    },
-  );
-  if (res.status !== 0) throw new Error(res.stderr || `export ${fn} failed`);
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: API_DIR,
+    input: JSON.stringify(args),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (res.status !== 0)
+    throw new Error(
+      `export ${fn} failed: status=${res.status} signal=${res.signal} error=${res.error?.message ?? "none"}\n` +
+        `stderr: ${res.stderr}\nstdout: ${String(res.stdout).slice(0, 500)}`,
+    );
   return JSON.parse(res.stdout);
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
