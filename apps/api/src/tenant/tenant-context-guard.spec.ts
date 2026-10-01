@@ -222,3 +222,107 @@ describe("superAdminCreateExtension (SA-619)", () => {
     expect(g.superAdminCreate).not.toHaveBeenCalled();
   });
 });
+
+describe("TenantContextGuard.stats (SA-619 PR-2a: the counters are readable)", () => {
+  const make = (enforce = false, t0 = 1_000_000) => {
+    let now = t0;
+    const guard = new TenantContextGuard({ enforce, log: { warn: jest.fn() }, now: () => now });
+    return { guard, tick: (ms: number) => (now += ms), t0 };
+  };
+
+  it("reports the flag, the boot time, totals by violation, by kind, and the reasons, with no data", () => {
+    const { guard, t0, tick } = make(false);
+    guard.missingContext("ANONYMOUS", "a.ts:1");
+    tick(2_000);
+    guard.missingContext("ANONYMOUS", "b.ts:2");
+    guard.missingContext("NONE", "c.ts:3");
+    guard.superAdminCreate("Customer", "create", "SUPER_ADMIN");
+    guard.system("billing-cron: cross-tenant trial expiry");
+    const st = guard.stats();
+    expect(st.enforce).toBe(false);
+    expect(st.since).toBe(new Date(t0).toISOString());
+    expect(st.counts).toEqual({
+      MISSING: 3,
+      SUPER_ADMIN_CREATE: 1,
+      NESTED_CROSS_TENANT: 0,
+      NESTED_DEPTH: 0,
+    });
+    expect(st.byKind).toEqual({ ANONYMOUS: 2, NONE: 1, SUPER_ADMIN: 1 });
+    expect(st.systemReasons).toEqual({ "billing-cron: cross-tenant trial expiry": 1 });
+  });
+
+  it("lists the noisiest sites first (site keys only: no stack, no data), bounded, with an overflow bucket", () => {
+    const { guard, tick } = make(false);
+    for (let i = 0; i < 5; i++) {
+      guard.missingContext("NONE", "hot.ts:9");
+      tick(2_000);
+    }
+    guard.missingContext("NONE", "cold.ts:1");
+    const st = guard.stats();
+    expect(st.sites[0]).toEqual({ site: "MISSING|NONE|hot.ts:9", count: 5 });
+    expect(JSON.stringify(st)).not.toMatch(/\n\s+at /); // never a stack
+    // bounded: > MAX_SITES distinct sites collapse into "other" while the totals stay exact
+    for (let i = 0; i < 250; i++) {
+      tick(2_000);
+      guard.missingContext("ANONYMOUS", `s${i}.ts:1`);
+    }
+    const big = guard.stats();
+    expect(big.sites.length).toBeLessThanOrEqual(101);
+    expect(big.counts.MISSING).toBe(5 + 1 + 250);
+    expect(big.sites.some((s) => s.site === "other")).toBe(true);
+  });
+
+  it("statsLine is one structured log line carrying the same numbers (zero is logged too: '72 h of zero warns' is readable)", () => {
+    const { guard } = make(false);
+    const zero = guard.statsLine();
+    expect(zero.startsWith("TENANT_CONTEXT_STATS ")).toBe(true);
+    expect(JSON.parse(zero.slice("TENANT_CONTEXT_STATS ".length)).counts).toEqual({
+      MISSING: 0,
+      SUPER_ADMIN_CREATE: 0,
+      NESTED_CROSS_TENANT: 0,
+      NESTED_DEPTH: 0,
+    });
+    guard.missingContext("NONE", "x.ts:1");
+    expect(JSON.parse(guard.statsLine().slice("TENANT_CONTEXT_STATS ".length)).counts.MISSING).toBe(
+      1,
+    );
+  });
+
+  it("counts the nested-write repairs too (SA-620c)", () => {
+    const { guard } = make(false);
+    guard.nestedViolation("CROSS_TENANT_CHILD", "VendorBillItem at data.items.create");
+    guard.nestedViolation(
+      "DEPTH",
+      "nested write exceeds the depth limit of 8 relations at data.a.b",
+    );
+    const st = guard.stats();
+    expect(st.counts.NESTED_CROSS_TENANT).toBe(1);
+    expect(st.counts.NESTED_DEPTH).toBe(1);
+  });
+
+  it("nested repairs are located too: they appear in stats().sites (index-free), not only in the totals", () => {
+    const { guard } = make(false);
+    guard.nestedViolation("CROSS_TENANT_CHILD", "VendorBillItem at data.items.createMany.data[]");
+    expect(guard.stats().sites).toContainEqual({
+      site: "NESTED_CROSS_TENANT|VendorBillItem at data.items.createMany.data[]",
+      count: 1,
+    });
+  });
+
+  it("forSystem reasons are bounded: a long reason is truncated and distinct reasons cap at 200 (+ other)", () => {
+    const { guard } = make(false);
+    guard.system("x".repeat(500));
+    expect(Object.keys(guard.systemReasons())[0].length).toBeLessThanOrEqual(120);
+    for (let i = 0; i < 300; i++) guard.system(`reason number ${i}`);
+    const r = guard.systemReasons();
+    expect(Object.keys(r).length).toBeLessThanOrEqual(201);
+    expect(r.other).toBeGreaterThan(0);
+  });
+
+  it("enforced mode counts too (the throw still happens)", () => {
+    const { guard } = make(true);
+    expect(() => guard.missingContext("NONE", "x.ts:1")).toThrow();
+    expect(guard.stats().counts.MISSING).toBe(1);
+    expect(guard.stats().enforce).toBe(true);
+  });
+});

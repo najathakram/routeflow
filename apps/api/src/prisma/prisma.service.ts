@@ -71,10 +71,40 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   async onModuleInit() {
     await this.$connect();
+    this.startStatsLog();
   }
 
   async onModuleDestroy() {
+    this.stopStatsLog();
     await this.$disconnect();
+  }
+
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** SA-619 PR-2a: the tenant-context counters (admin endpoint + the periodic log line read this). */
+  tenantContextStats() {
+    return this.tenantGuard.stats();
+  }
+
+  /**
+   * Log `TENANT_CONTEXT_STATS {...}` every TENANT_CONTEXT_STATS_LOG_MS (default 15 min; 0 disables;
+   * anything that is not a non-negative integer falls back to the default). Zeros are logged too, so
+   * "72 h of zero warns" is readable from the logs alone. The timer never keeps the process alive.
+   */
+  startStatsLog(env: NodeJS.ProcessEnv = process.env): void {
+    this.stopStatsLog();
+    const raw = env.TENANT_CONTEXT_STATS_LOG_MS;
+    const parsed = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+    const ms = Number.isInteger(parsed) && parsed >= 0 ? parsed : 15 * 60_000;
+    if (ms === 0) return;
+    const logger = new Logger("TenantContext");
+    this.statsTimer = setInterval(() => logger.log(this.tenantGuard.statsLine()), ms);
+    this.statsTimer.unref?.();
+  }
+
+  stopStatsLog(): void {
+    if (this.statsTimer) clearInterval(this.statsTimer);
+    this.statsTimer = null;
   }
 
   /** Returns the current request's tenantId (null for SUPER_ADMIN / unset context). */

@@ -121,6 +121,11 @@ export class PlatformAdminService {
 
   // ─── Tenant list ─────────────────────────────────────────────────────────────
 
+  /** SA-619 PR-2a: the tenant-context counters (counts only: no data, no stacks). */
+  tenantContextStats() {
+    return this.prisma.tenantContextStats();
+  }
+
   async listTenants(
     page = 1,
     limit = 20,

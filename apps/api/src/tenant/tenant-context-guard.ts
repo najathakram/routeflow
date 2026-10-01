@@ -29,8 +29,27 @@ const STACK_FRAMES = 5;
 /** Dark mode captures a context-less call site at most this often per kind (a stack per hit is a hot-path cost). */
 const CAPTURE_GAP_MS = 1_000;
 
+/** The most distinct sites kept in `stats()`; the rest collapse into "other" (totals stay exact). */
+const MAX_SITES = 100;
+const MAX_REASONS = 200;
+const MAX_REASON_LENGTH = 120;
+
+export interface TenantContextStats {
+  enforce: boolean;
+  /** When this process started counting (ISO). */
+  since: string;
+  counts: Record<Violation, number>;
+  byKind: Record<string, number>;
+  /** Noisiest first; a site key is `<violation>|<kind>|<caller file:line | model.op>`: never a stack or data. */
+  sites: Array<{ site: string; count: number }>;
+  systemReasons: Record<string, number>;
+}
+
 export class TenantContextGuard {
   private readonly counts = new Map<Violation, number>();
+  private readonly kindCounts = new Map<string, number>();
+  private readonly siteCounts = new Map<string, number>();
+  private readonly started: number;
   private readonly reasons = new Map<string, number>();
   private readonly lastWarn = new Map<string, number>();
   private readonly lastCapture = new Map<string, number>();
@@ -46,6 +65,41 @@ export class TenantContextGuard {
     this.enforce = opts.enforce;
     this.log = opts.log;
     this.now = opts.now ?? Date.now;
+    this.started = this.now();
+  }
+
+  /**
+   * The counters, readable (SA-619 PR-2a): "72 h of zero warns" is `counts` staying 0 since `since`.
+   * Counts are exact; `sites` are sampled (dark mode captures a site at most once per kind per second).
+   */
+  stats(): TenantContextStats {
+    const sites = [...this.siteCounts.entries()]
+      .map(([site, count]) => ({ site, count }))
+      .sort((a, b) => b.count - a.count || a.site.localeCompare(b.site));
+    return {
+      enforce: this.enforce,
+      since: new Date(this.started).toISOString(),
+      counts: {
+        MISSING: this.count("MISSING"),
+        SUPER_ADMIN_CREATE: this.count("SUPER_ADMIN_CREATE"),
+        NESTED_CROSS_TENANT: this.count("NESTED_CROSS_TENANT"),
+        NESTED_DEPTH: this.count("NESTED_DEPTH"),
+      },
+      byKind: Object.fromEntries(this.kindCounts),
+      sites,
+      systemReasons: this.systemReasons(),
+    };
+  }
+
+  /** One structured log line carrying `stats()` (zeros included). */
+  statsLine(): string {
+    return `TENANT_CONTEXT_STATS ${JSON.stringify(this.stats())}`;
+  }
+
+  private bumpSite(key: string): void {
+    if (this.siteCounts.has(key) || this.siteCounts.size < MAX_SITES)
+      this.siteCounts.set(key, (this.siteCounts.get(key) ?? 0) + 1);
+    else this.siteCounts.set("other", (this.siteCounts.get("other") ?? 0) + 1);
   }
 
   /** How many times a violation was seen (every hit, not just the logged ones). */
@@ -64,9 +118,11 @@ export class TenantContextGuard {
     // path (webhooks, anonymous buyers) must not happen per hit. Dark: at most one capture per kind per
     // CAPTURE_GAP_MS (the counter still counts every hit); enforced: the throw needs the site, so capture.
     this.bump("MISSING");
+    this.kindCounts.set(kind, (this.kindCounts.get(kind) ?? 0) + 1);
     const site = typeof where === "function" ? where : () => where;
     if (this.enforce) {
       const w = site();
+      this.bumpSite(`MISSING|${kind}|${w}`);
       throw new TenantContextMissingError(`No tenant context (${kind}) at ${w}`);
     }
     const t = this.now();
@@ -74,6 +130,7 @@ export class TenantContextGuard {
     if (last !== undefined && t - last < CAPTURE_GAP_MS) return;
     this.lastCapture.set(kind, t);
     const w = site();
+    this.bumpSite(`MISSING|${kind}|${w}`);
     this.warnOnce("MISSING", `${kind}|${w}`, `kind=${kind} at=${w}`);
   }
 
@@ -89,6 +146,7 @@ export class TenantContextGuard {
    */
   nestedViolation(kind: "CROSS_TENANT_CHILD" | "DEPTH", detail: string): void {
     const v: Violation = kind === "DEPTH" ? "NESTED_DEPTH" : "NESTED_CROSS_TENANT";
+    this.bumpSite(`${v}|${detail}`);
     this.report(v, detail, `nested=${kind} ${detail}`, () => {
       throw new TenantContextMissingError(`Nested ${kind}: ${detail}`);
     });
@@ -96,6 +154,8 @@ export class TenantContextGuard {
 
   /** A SUPER_ADMIN tenant-owned create with no explicit tenantId (the L-124 null-tenant class). */
   superAdminCreate(model: string, operation: string, kind: TenantKind = "SUPER_ADMIN"): void {
+    this.kindCounts.set(kind, (this.kindCounts.get(kind) ?? 0) + 1);
+    this.bumpSite(`SUPER_ADMIN_CREATE|${kind}|${model}.${operation}`);
     this.report(
       "SUPER_ADMIN_CREATE",
       `${kind}|${model}.${operation}`,
@@ -112,7 +172,11 @@ export class TenantContextGuard {
   system(reason: string): void {
     if (typeof reason !== "string" || reason.trim() === "")
       throw new Error("forSystem(reason): a non-empty literal reason is required");
-    this.reasons.set(reason, (this.reasons.get(reason) ?? 0) + 1);
+    // Bounded like the sites: a reason is a short literal; a runaway one cannot grow the map or the endpoint.
+    const key = reason.length > MAX_REASON_LENGTH ? reason.slice(0, MAX_REASON_LENGTH) : reason;
+    if (this.reasons.has(key) || this.reasons.size < MAX_REASONS)
+      this.reasons.set(key, (this.reasons.get(key) ?? 0) + 1);
+    else this.reasons.set("other", (this.reasons.get("other") ?? 0) + 1);
   }
 
   private bump(v: Violation): void {

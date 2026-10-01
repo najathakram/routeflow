@@ -76,6 +76,15 @@ export class PlatformAdminController {
     return this.svc.getStats();
   }
 
+  @Get("tenant-context/stats")
+  @ApiOperation({
+    summary:
+      "SA-619: tenant-context counters (missing-context / super-admin-create warns by kind and site). Counts only.",
+  })
+  tenantContextStats() {
+    return this.svc.tenantContextStats();
+  }
+
   @Get("tenants")
   @ApiOperation({ summary: "Paginated, filterable, sortable list of all tenants with stats" })
   @ApiQuery({ name: "page", required: false, type: Number })
