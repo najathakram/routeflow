@@ -252,13 +252,9 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // Triage for RecipeStatus (#2717 M2, SA-574, 2026-09-29): one brand-new Prisma enum (migration
 // 20260929120000_2717_m2_recipes) — mirrored immediately as `RECIPE_STATUS_VALUES` in
 // packages/types/api/enums.ts + its `ENUM_TABLE` row above (108 → 109).
-// Triage for EmailDeliveryStatus (SA-603): brand-new enum, mirrored as
-// `EMAIL_DELIVERY_STATUS_VALUES` + its `ENUM_TABLE` row (109 → 110).
-// Triage for PolicyScopeType (SA-138 phase 1, folded into the SA-603 bundle): brand-new enum,
-// mirrored as `POLICY_SCOPE_TYPE_VALUES` + its `ENUM_TABLE` row (110 → 111).
-// Triage for CompositionMode (#2717 M3, SA-572): brand-new enum, mirrored as `COMPOSITION_MODE_VALUES` + its
-// `ENUM_TABLE` row (109 → 110); the SA-603 bundle's two (EmailDeliveryStatus, PolicyScopeType) follow (110 → 112).
-// Master's HandoffRealm (#2653, SA-542b) lands on top of the bundle's two (112 → 113).
+// Triage for EmailDeliveryStatus + PolicyScopeType (SA-603 Sitting-B bundle): two brand-new enums, mirrored
+// as `EMAIL_DELIVERY_STATUS_VALUES` / `POLICY_SCOPE_TYPE_VALUES` + their `ENUM_TABLE` rows (master at 111,
+// incl. CompositionMode and HandoffRealm → 113).
 const PINNED_PRISMA_ENUM_COUNT = 113;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
