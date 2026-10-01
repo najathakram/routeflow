@@ -74,9 +74,10 @@ export function allocateProductQty(
     const closes = take >= remainingQty - EPS;
     const linear = hasMoney ? roundMoney((take * line.subtotal) / line.qty) : 0;
     if (mode === "refund") {
-      const over = closes
-        ? Math.abs(linear - remainingAmount) > CENT
-        : linear > remainingAmount + CENT;
+      // the closing take sits on the rounding drift of every earlier partial take (<= half a cent each), so its
+      // tolerance grows with the pieces already credited (capped); other takes get one cent
+      const drift = closes ? Math.min(0.05, 0.005 * Math.ceil(done.qty)) : 0;
+      const over = linear > remainingAmount + CENT + drift;
       if (hasMoney && over) {
         return {
           items: [],
@@ -90,8 +91,8 @@ export function allocateProductQty(
           },
         };
       }
-    } else if (hasMoney && remainingAmount <= EPS) {
-      continue; // count mode: a spent line has nothing left to count
+    } else if (!hasMoney || remainingAmount <= EPS) {
+      continue; // count mode: a free or spent line has no money to count (SA-628a)
     }
     const amount = !hasMoney ? 0 : closes ? remainingAmount : Math.min(remainingAmount, linear);
     items.push({ invoiceItemId: line.id, qty: round3(take), amount });

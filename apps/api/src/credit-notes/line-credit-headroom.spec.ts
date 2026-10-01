@@ -153,4 +153,20 @@ describe("loadLineCredits (item-bearing notes + the legacy itemless-refund term)
     });
     expect(db.creditNote.findMany.mock.calls[0][0].where).toMatchObject({ id: { not: "cn-x" } });
   });
+  it("rounding drift: six 1/6 refunds of a $1.00 line all pass (the closing take absorbs the drift)", () => {
+    const line: HeadroomLine = { id: "d", productId: "p", subtotal: 1, qty: 6 };
+    let credited = new Map<string, { amount: number; qty: number }>();
+    for (let k = 0; k < 6; k++) {
+      const r = allocateProductQty([line], credited, "p", 1);
+      expect(r.refusal).toBeUndefined();
+      credited = addCredits(credited, r.items);
+    }
+    expect(credited.get("d")?.qty).toBe(6);
+  });
+  it("COUNT mode skips a free line: legacy qty lands on the paid line, not on a $0 line ahead of it", () => {
+    const free: HeadroomLine = { id: "f", productId: "p", subtotal: 0, qty: 1 };
+    const paid: HeadroomLine = { id: "q", productId: "p", subtotal: 100, qty: 10 };
+    const r = allocateProductQty([free, paid], new Map(), "p", 1, "count");
+    expect(r.items).toEqual([{ invoiceItemId: "q", qty: 1, amount: 10 }]);
+  });
 });
