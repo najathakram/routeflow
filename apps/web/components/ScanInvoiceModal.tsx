@@ -59,6 +59,8 @@ import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
 import { RECORDS_FAILED_COPY, SCAN_FAILED_COPY } from "@/lib/reason-copy";
+import { ScanCreateModeSelector } from "@/components/ScanCreateModeSelector";
+import { scanCreateLabel } from "@/lib/scan-create-label";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fmt = (n: number | null | undefined) =>
@@ -1636,28 +1638,14 @@ export function ScanInvoiceModal({
   const creatablePos = creatable.filter(
     (inv) => inv.raisePo && !raisePoBlocker(inv.supplierId, buildBillItems(inv)),
   ).length;
-  const createLabel =
-    intent === "purchase-order"
-      ? invoices.length <= 1
-        ? "Create purchase order"
-        : creatablePos > 0
-          ? `Create ${creatablePos} purchase order${creatablePos === 1 ? "" : "s"}`
-          : "Create purchase orders"
-      : invoices.length <= 1
-        ? createMode === "bill"
-          ? "Create Vendor Bill"
-          : createMode === "expense"
-            ? "Record Expense"
-            : "Create Bill & Expense"
-        : "Create " +
-          ([
-            creatableBills > 0 ? `${creatableBills} bill${creatableBills === 1 ? "" : "s"}` : "",
-            creatableExpenses > 0
-              ? `${creatableExpenses} expense${creatableExpenses === 1 ? "" : "s"}`
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" + ") || "bills");
+  const createLabel = scanCreateLabel({
+    intent,
+    invoiceCount: invoices.length,
+    createMode,
+    creatableBills,
+    creatableExpenses,
+    creatablePos,
+  });
 
   const handleScanAgain = () => {
     const hasWork = invoices.some((inv) => inv.status === "scanned" || inv.status === "created");
@@ -1972,55 +1960,11 @@ export function ScanInvoiceModal({
                         </div>
                       )}
 
-                      {/* Create mode selector: a PO scan always records a bill + its PO */}
-                      {intent !== "purchase-order" && (
-                        <div>
-                          <p className="mb-2 text-sm font-semibold text-navy">
-                            What would you like to create?
-                          </p>
-                          <div className="grid grid-cols-3 gap-3">
-                            {(
-                              [
-                                {
-                                  value: "bill",
-                                  label: "Vendor Bill",
-                                  sub: "Adds to inventory and updates costs",
-                                  icon: ShoppingCart,
-                                },
-                                {
-                                  value: "expense",
-                                  label: "Expense",
-                                  sub: "Bookkeeping only — no stock change",
-                                  icon: Receipt,
-                                },
-                                {
-                                  value: "both",
-                                  label: "Both",
-                                  sub: "Inventory + bookkeeping in one go",
-                                  icon: Sparkles,
-                                },
-                              ] as const
-                            ).map(({ value, label, sub, icon: Icon }) => (
-                              <button
-                                key={value}
-                                onClick={() => setCreateMode(value)}
-                                className={cn(
-                                  "flex flex-col items-start gap-1.5 rounded-xl border-2 px-4 py-3 text-left transition-all",
-                                  createMode === value
-                                    ? "border-brand-500 bg-brand-50 text-brand-700 shadow-sm"
-                                    : "border-surface-border bg-white text-navy hover:border-brand-200 hover:bg-brand-50/30",
-                                )}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <Icon className="h-4 w-4" />
-                                  <span className="text-sm font-semibold">{label}</span>
-                                </div>
-                                <span className="text-xs leading-snug text-current/70">{sub}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                      <ScanCreateModeSelector
+                        intent={intent}
+                        createMode={createMode}
+                        onChange={setCreateMode}
+                      />
 
                       {/* Shared header: supplier + dates */}
                       <div className="grid grid-cols-2 gap-4 rounded-xl border border-surface-border bg-surface-raised p-4">

@@ -29,10 +29,12 @@ describe("ScanInvoiceModal intent (scan-to-PO wiring)", () => {
   it("a plan lock on the create step also reads as the lock copy (closed copy otherwise)", () => {
     expect(src).toMatch(/error: planLocked \? SCAN_LOCK_BODY : RECORDS_FAILED_COPY/);
   });
-  it("PO intent hides the create-mode selector and labels the footer for a purchase order", () => {
-    expect(src).toMatch(
-      /intent !== "purchase-order" && \(\s*<div>\s*<p className="mb-2 text-sm font-semibold text-navy">\s*What would you like to create\?/,
-    );
-    expect(src).toMatch(/"Create purchase order"/);
+  it("the modal uses the extracted selector and footer label (PO slice lives in its own modules)", () => {
+    expect(src).toMatch(/<ScanCreateModeSelector\s+intent=\{intent\}/);
+    expect(src).toMatch(/scanCreateLabel\(\{\s*intent,/);
+  });
+  it("a scan-step failure shows the closed SCAN_FAILED_COPY, never the server text", () => {
+    expect(src).toMatch(/: SCAN_FAILED_COPY,/);
+    expect(src).not.toMatch(/shownMsg/);
   });
 });
