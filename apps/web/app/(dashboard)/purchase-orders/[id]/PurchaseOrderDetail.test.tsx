@@ -201,6 +201,30 @@ describe("PurchaseOrderDetail", () => {
     expect(screen.queryByRole("link", { name: /Open bill/ })).toBeNull();
   });
 
+  it("receipt unit cost shows 4dp for a boxed product and 2dp otherwise", () => {
+    const receipt = (productId: string, unitCost: number) => ({
+      id: `m-${productId}`,
+      kind: "RECEIPT",
+      productId,
+      productName: "Widget",
+      quantity: 12,
+      unitCost,
+      at: "2026-10-03T10:00:00.000Z",
+    });
+    const base = po().items[0];
+    const first = show(
+      po({
+        status: "PARTIAL",
+        items: [{ ...base, packSize: 12 }],
+        receipts: [receipt("p1", 0.4167)],
+      }),
+    );
+    expect(screen.getByText("$0.4167")).toBeInTheDocument();
+    first.unmount();
+    show(po({ status: "PARTIAL", receipts: [receipt("p1", 4)] }));
+    expect(screen.getByText("$4.00")).toBeInTheDocument();
+  });
+
   it("a VOID bill is shown as voided, not as a live bill", () => {
     show(po({ vendorBill: { id: "b1", billNumber: "BILL-2026-0003", status: "VOID" } }));
     expect(screen.getByText("Bill voided")).toBeInTheDocument();

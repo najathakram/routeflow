@@ -1273,7 +1273,15 @@ export class InventoryService {
       );
     }
     const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
-    const ownSupplier = purchases.filter((m) => m.supplierId === po.supplierId);
+    // Receipts a re-apply has already compensated no longer count towards what is on hand.
+    const reversedIds = new Set(
+      movements
+        .filter((m) => m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix))
+        .map((m) => (m.notes as string).slice(prefix.length).trim()),
+    );
+    const ownSupplier = purchases.filter(
+      (m) => m.supplierId === po.supplierId && !reversedIds.has(m.id),
+    );
     const widened = new Set<string>();
     for (const [productId, want] of qtyReceivedByProduct) {
       const net = ownSupplier

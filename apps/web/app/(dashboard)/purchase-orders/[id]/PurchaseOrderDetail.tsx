@@ -21,7 +21,11 @@ import { PurchaseOrderReadOnlyLines } from "../../inventory/_components/Purchase
 import { PurchaseOrdersEditModal } from "../../inventory/_components/PurchaseOrdersEditModal";
 import { ReceivePOModal } from "../../inventory/_components/PurchaseOrdersReceiveModal";
 import { poStatusBadge } from "../../inventory/_components/PurchaseOrdersTab";
-import type { PurchaseOrder, Supplier } from "../../inventory/_components/purchase-orders-shared";
+import {
+  linePack,
+  type PurchaseOrder,
+  type Supplier,
+} from "../../inventory/_components/purchase-orders-shared";
 import { poActions } from "./po-detail-logic";
 
 const errorStatus = (e: unknown): number | undefined =>
@@ -99,6 +103,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const bill = po.vendorBill ?? null;
   const canOpenBill = !!bill && planFlagVisible(billsFlag);
   const receipts = po.receipts ?? [];
+  // A boxed product's cost is per PIECE: show it at 4dp like the lines table does.
+  const boxedProductIds = new Set(
+    (po.items ?? [])
+      .filter((i) => linePack(i, Number(catalogById.get(i.productId)?.unitsPerBox ?? 0)) > 1)
+      .map((i) => i.productId),
+  );
 
   return (
     <div className="space-y-5 p-6">
@@ -254,7 +264,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                     </td>
                     <td className="px-3 py-2 text-right text-navy/70">{r.quantity}</td>
                     <td className="px-3 py-2 text-right text-navy/70">
-                      {r.unitCost == null ? "—" : formatMoney(r.unitCost)}
+                      {r.unitCost == null
+                        ? "—"
+                        : `$${r.unitCost.toFixed(boxedProductIds.has(r.productId) ? 4 : 2)}`}
                     </td>
                   </tr>
                 ))}

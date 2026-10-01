@@ -311,7 +311,7 @@ describeDb("PO detail read — receipts + linked bill — real Postgres", () => 
     await inTenant(w, () =>
       service.updatePurchaseOrder(
         po0.id,
-        { supplierId: other.id, reapplyInventory: true } as never,
+        { supplierId: other.id, reapplyInventory: true },
         w.userId,
       ),
     );
@@ -322,20 +322,57 @@ describeDb("PO detail read — receipts + linked bill — real Postgres", () => 
   });
 
   // -- 8. a planted "reversal" that points at nothing of this PO is not shown ----------------
-  it("an ADJUSTMENT with the reversal prefix but no matching receipt is ignored", async () => {
+  it("an ADJUSTMENT with the REAL reversal prefix but no matching receipt is ignored", async () => {
     const w = await seedWorld("d8", 50, 2);
     const po0 = await receivedPo(w, 20, 4);
+    // the real constant (an em dash, not an ASCII hyphen), and an id that is not this PO's receipt
+    const prefix = (InventoryService as unknown as { PO_REVERSAL_NOTE: string }).PO_REVERSAL_NOTE;
+    expect(prefix).toContain("\u2014");
     await prisma.stockMovement.create({
       data: {
         productId: w.productId,
         type: "ADJUSTMENT",
         quantity: -5,
         reference: po0.poNumber,
-        notes: "PO edit reversal - reverses not-a-real-movement",
+        notes: `${prefix}not-a-real-movement`,
         tenantId: w.tenantId,
       },
     });
     const po: any = await inTenant(w, () => service.getPurchaseOrder(po0.id));
     expect(po.receipts.map((r: any) => r.kind)).toEqual(["RECEIPT"]);
+  });
+
+  // -- 9. after a re-apply an other-supplier same-reference movement still does not count ----
+  it("re-apply, then an other-supplier movement with this PO's number: still not a receipt", async () => {
+    const w = await seedWorld("d9", 20, 2);
+    const po0 = await receivedPo(w, 20, 4);
+    await inTenant(w, () =>
+      service.updatePurchaseOrder(
+        po0.id,
+        {
+          reapplyInventory: true,
+          items: [{ id: po0.items[0].id, productId: w.productId, qtyOrdered: 20, unitCost: 6 }],
+        },
+        w.userId,
+      ),
+    );
+    const other = await prisma.supplier.create({
+      data: { name: "Someone else", tenantId: w.tenantId },
+    });
+    await prisma.stockMovement.create({
+      data: {
+        productId: w.productId,
+        type: "PURCHASE",
+        quantity: 7,
+        unitCost: 9,
+        reference: po0.poNumber,
+        supplierId: other.id,
+        tenantId: w.tenantId,
+      },
+    });
+    const po: any = await inTenant(w, () => service.getPurchaseOrder(po0.id));
+    const kinds = po.receipts.map((r: any) => r.kind).sort();
+    expect(kinds).toEqual(["RECEIPT", "RECEIPT", "REVERSAL"]);
+    expect(po.receipts.some((r: any) => Number(r.quantity) === 7)).toBe(false);
   });
 });
