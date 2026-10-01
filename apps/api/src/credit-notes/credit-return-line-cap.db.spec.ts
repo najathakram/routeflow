@@ -479,7 +479,7 @@ describeDb(
     });
 
     /** An inline return of `qty` pieces of A, captured onto a fresh DELIVERED carrying order (an operator, no driver cap). */
-    async function inlineReturn(s: Seed, qty = 1) {
+    async function inlineReturn(s: Seed, qty = 1, alreadyReturnedReason?: string) {
       const carrying = await prisma.order.create({
         data: {
           tenantId: s.tenantId,
@@ -496,7 +496,13 @@ describeDb(
           {
             customerId: s.customerId,
             orderId: carrying.id,
-            items: [{ productId: s.pA.id, qty }],
+            items: [
+              {
+                productId: s.pA.id,
+                qty,
+                ...(alreadyReturnedReason ? { alreadyReturnedReason } : {}),
+              },
+            ],
             returnKey: `capret-${RUN}-${rtnSeq}`,
           },
           {
@@ -572,6 +578,101 @@ describeDb(
         }
       }
       expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
+    });
+
+    /** The F2 repro: A is billed on invoice X only; the order also has a LATER invoice Y, so a standard return's refund of A is a
+     *  lump sum on Y (2+ creditable invoices) and X's line A is never touched. */
+    async function refundedOnLaterInvoice(label: string) {
+      const s = await seed(label);
+      await prisma.invoice.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderId: s.orderId,
+          invoiceNumber: `INV-CAPRET-${RUN}-Y${++rtnSeq}`,
+          status: "SENT",
+          subtotal: 50,
+          taxAmount: 0,
+          total: 50,
+          items: {
+            create: [
+              {
+                tenantId: s.tenantId,
+                productId: s.pB.id,
+                description: "B later",
+                qty: 1,
+                unitPrice: 50,
+                subtotal: 50,
+              },
+            ],
+          },
+        } as any,
+      });
+      await refund(s, (await receivedReturn(s, s.pA.id)).id); // the standard refund of A (lump sum on Y)
+      return s;
+    }
+    const inlineCredits = (s: Seed) =>
+      prisma.creditNote.count({
+        where: { tenantId: s.tenantId, invoiceId: null, items: { none: {} } },
+      });
+
+    it("21. B961 (F2 repro): A was already refunded by a STANDARD return; an inline return of A is no longer auto-credited: staff need a reason", async () => {
+      const s = await refundedOnLaterInvoice("ar-staff");
+      const before = await inlineCredits(s);
+      const err = await inlineReturn(s).catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({
+        code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      });
+      expect(await inlineCredits(s)).toBe(before); // nothing credited (was: a second $100 on a $100 line)
+      const ok = await inlineReturn(s, 1, "customer kept the original credit slip");
+      expect(ok).toBeDefined();
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          tenantId: s.tenantId,
+          action: "inline_return.already_returned_credit",
+          userId: s.userId,
+        },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it("22. B961: a product NEVER invoiced (not on any invoice) is unchanged: an inline return needs no reason", async () => {
+      const s = await seed("ar-never");
+      const lone = await prisma.product.create({
+        data: { tenantId: s.tenantId, name: `lone ${RUN}`, unit: "each", pricePerUnit: 10 },
+      });
+      const carrying = await prisma.order.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderNumber: `ORD-CAPRET-${RUN}-L${++rtnSeq}`,
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          status: "DELIVERED",
+        } as any,
+      });
+      await expect(
+        tenantCtx.run(s.tenantId, () =>
+          inline.capture(
+            {
+              customerId: s.customerId,
+              orderId: carrying.id,
+              items: [{ productId: lone.id, qty: 1 }],
+              returnKey: `capret-${RUN}-${rtnSeq}`,
+            },
+            {
+              sub: s.userId,
+              username: "operator",
+              role: "OPERATOR" as any,
+              status: "ACTIVE" as any,
+              forcePasswordChange: false,
+              tenantId: s.tenantId,
+              tenantSlug: "x",
+            },
+          ),
+        ),
+      ).resolves.toBeDefined();
     });
   },
 );
