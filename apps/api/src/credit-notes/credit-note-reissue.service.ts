@@ -16,6 +16,7 @@ import { retryOnTxConflict } from "../common/tx-retry";
 import { CreditNotesService } from "./credit-notes.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { asReadableConflict, cnBad, cnConflict, codeOf, messageOf } from "./credit-note-errors";
+import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 
 export interface ReissueInput {
   amount: number;
@@ -53,7 +54,6 @@ const STATE_CODES = new Set<string>([
 /** SA-608c: a note with no source invoice (born standalone, or orphaned by deleteInvoice). */
 const NO_SOURCE_CAP =
   "A credit note without a source invoice can't be increased; issue a separate credit.";
-const SOURCE_DELETED = "This credit's source invoice was deleted; it can't be edited.";
 
 /** A carried reason from an earlier reissue loses its own "Replaces …" prefix (no chains). */
 const REPLACES_PREFIX = /^Replaces CN-\S+(?: — )?/;
@@ -155,12 +155,17 @@ export class CreditNoteReissueService {
     );
     if (consumed) throw cnConflict(consumed.code, consumed.message);
 
+    // #2848: a durable SOURCE_DELETED marker (written by every invoice-destroying door) refuses the
+    // note entirely: no reissue, at any amount.
+    if (await hasSourceDeletedMarker(db, id))
+      throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
     // SA-608c (b): no invoice but line rows = its source was deleted (the rows survive); a reissue
     // would silently drop the split, so it is refused. (a): every no-invoice note is capped at its
     // own amount, so an edit can never create value the note did not already hold.
     if (!old.invoiceId) {
       const lineRows = await db.creditNoteItem.count({ where: { creditNoteId: id } });
-      if (lineRows > 0) throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED);
+      if (lineRows > 0)
+        throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
       if (roundMoney(Number(dto.amount)) > roundMoney(Number(old.amount)) + 0.001)
         throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP, NO_SOURCE_CAP);
     }
@@ -229,6 +234,11 @@ export class CreditNoteReissueService {
               () => this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz),
               true,
             );
+
+            // #2848 / SA-608f: the marker again, under the lock. deleteInvoice may have committed it
+            // between the pre-check and here, and then a capped edit would be wrong: it must refuse.
+            if (await hasSourceDeletedMarker(tx, id))
+              throw cnConflict(API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE, SOURCE_DELETED_MESSAGE);
 
             // SA-608c (a), again under the lock: deleteInvoice may have unlinked the note since the
             // pre-read, which would turn a sourced edit into an uncapped standalone one.

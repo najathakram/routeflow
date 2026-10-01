@@ -13,7 +13,7 @@
   restyled to the Ledger (ink-900 rail, active `white/10` + inset teal-300 bar, ⌘K search pill;
   **Bills & Purchasing** added under Warehouse → `/vendor-bills`). Buyer portal + platform-admin
   layouts carry the `.surface-buyer`/`.surface-admin` class. Plan + tracker:
-  `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `/QUESTIONS.md`.
+  `docs/design-package/IMPLEMENTATION-PLAN.md`; open questions: `docs/history/archive-2026-09-30/QUESTIONS.md`.
 - **`globals.css` date/time-input rule (#2080, P0; v2 #2086).** Cause: WebKit's RenderThemeIOS
   `adjustInputElementButtonStyle` runs AFTER the cascade whenever a date/time input's computed
   `appearance` is not `none`: it forces `padding: 0 0.5em` and, unless the width is a fixed px
