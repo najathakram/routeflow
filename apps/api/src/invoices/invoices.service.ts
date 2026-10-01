@@ -73,6 +73,7 @@ import {
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { buildPaymentsCsv } from "./payments-csv";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -5740,31 +5741,7 @@ export class InvoicesService {
       },
     });
 
-    const escape = (v: any) => {
-      const s = v == null ? "" : String(v);
-      return s.includes(",") || s.includes('"') || s.includes("\n")
-        ? `"${s.replace(/"/g, '""')}"`
-        : s;
-    };
-
-    const header =
-      "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
-    const lines = rows.map((r: any) =>
-      [
-        escape(r.paymentNumber ?? ""),
-        escape(r.paidAt ? new Date(r.paidAt).toISOString().split("T")[0] : ""),
-        escape(r.settledAt ? new Date(r.settledAt).toISOString().split("T")[0] : ""),
-        escape(r.invoice?.customer?.businessName ?? ""),
-        escape(r.invoice?.invoiceNumber ?? ""),
-        escape(r.method ?? ""),
-        escape(r.reference ?? ""),
-        escape(r.bankCharges != null ? Number(r.bankCharges).toFixed(2) : ""),
-        escape(Number(r.amount).toFixed(2)),
-        escape(r.status ?? ""),
-      ].join(","),
-    );
-
-    return [header, ...lines].join("\n");
+    return buildPaymentsCsv(rows);
   }
 
   // ─── Cron ─────────────────────────────────────────────────────────────────
