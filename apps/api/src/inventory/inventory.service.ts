@@ -30,6 +30,7 @@ import {
   StartStockCountDto,
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
+import { buildMovementsWhere } from "./movements-where";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
@@ -189,20 +190,7 @@ export class InventoryService {
     const limit = Number(query.limit ?? 50);
     const skip = (page - 1) * limit;
 
-    const where: Prisma.StockMovementWhereInput = {};
-    if (query.productId) where.productId = query.productId;
-    if (query.type) where.type = query.type;
-    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
-    // movement carries); createdAt is write-once insertion time.
-    if (query.from || query.to) {
-      where.effectiveAt = {};
-      if (query.from) where.effectiveAt.gte = new Date(query.from);
-      if (query.to) {
-        const toDate = new Date(query.to);
-        toDate.setUTCHours(23, 59, 59, 999);
-        where.effectiveAt.lte = toDate;
-      }
-    }
+    const where = buildMovementsWhere(query);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().stockMovement.findMany({

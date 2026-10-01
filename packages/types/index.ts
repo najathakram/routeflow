@@ -126,6 +126,10 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 
 export * from "./trip-grouping";
 
+// ─── Sentinel emails (B910 — one impl for web/mobile; the api keeps a spec-pinned local copy) ──
+
+export * from "./internal-email";
+
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
 export * from "./post-delivery-invoice-prompt";
