@@ -107,6 +107,27 @@ export interface DefaultUnitDeps {
 }
 
 /**
+ * "Try again" on the blocked message: a STAFF caller whose units answer is still unknown (the subscription read failed or
+ * never settled) REFETCHES it instead of staying stuck on the stale failure (SA-626g N10). A known answer, a non-staff
+ * caller, or a refetch that fails again leave the deps as they were, so the line stays blocked, never the pack.
+ */
+export async function refreshUnitsAnswer(
+  deps: DefaultUnitDeps,
+  refetch: () => Promise<{ isSuccess: boolean; flags: readonly string[] }>,
+  unitsFlag: string,
+): Promise<DefaultUnitDeps> {
+  if (!deps.isStaff || deps.unitsKnown) return deps;
+  try {
+    const r = await refetch();
+    return r.isSuccess
+      ? { ...deps, unitsKnown: true, unitsEnabled: r.flags.includes(unitsFlag) }
+      : deps;
+  } catch {
+    return deps;
+  }
+}
+
+/**
  * Resolves every pending line, fetching the ladder when it is not cached. A line whose ladder cannot be loaded (or
  * whose product record is missing) is reported in `blocked` and left untouched: the caller refuses to submit rather
  * than send the pack/case by default.

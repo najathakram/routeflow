@@ -4,6 +4,7 @@ import type { LineState } from "../lib/cart-line-state";
 import {
   isPendingDefaultUnit,
   mergeResolvedDefaults,
+  refreshUnitsAnswer,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
 } from "../lib/default-unit-line";
@@ -28,6 +29,8 @@ export function useDefaultUnitResolver(
   const qc = useQueryClient();
   // GET /billing/subscription is operator-only: a DRIVER makes no read (and never starts on a default unit, SA-626f).
   const sub = useSubscription({ enabled: isStaff });
+  const subRef = useRef(sub);
+  subRef.current = sub;
   const unitsKnown = sub.isSuccess;
   const unitsEnabled = (sub.data?.flags ?? []).includes(UNITS_FLAG);
   const depsRef = useRef<DefaultUnitDeps | null>(null);
@@ -60,5 +63,16 @@ export function useDefaultUnitResolver(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
-  return useCallback((cur: Items) => resolvePendingDefaultUnits(cur, depsRef.current!), []);
+  // "Try again" after a blocked submit refetches the units answer first (N10).
+  return useCallback(async (cur: Items) => {
+    const fresh = await refreshUnitsAnswer(
+      depsRef.current!,
+      async () => {
+        const r = await subRef.current.refetch();
+        return { isSuccess: r.isSuccess, flags: r.data?.flags ?? [] };
+      },
+      UNITS_FLAG,
+    );
+    return resolvePendingDefaultUnits(cur, fresh);
+  }, []);
 }

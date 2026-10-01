@@ -54,7 +54,10 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       src.indexOf("createOrder.mutate("),
     );
     expect(doSubmit).not.toMatch(/lineItems/);
-    expect(src).toMatch(/useDefaultUnitResolver\(lineItems, setLineItems, tierForProduct\)/);
+    // N9: the units read is staff-only
+    expect(src).toMatch(
+      /useDefaultUnitResolver\(\s*lineItems,\s*setLineItems,\s*tierForProduct,\s*isStaffRole\(authUser\?\.role\),?\s*\)/,
+    );
   });
 
   it("Opus #2865 r2: every qty / price handler CONSUMES the flag (qty is total pieces on a boxed line, so the picker cannot guard on it)", () => {

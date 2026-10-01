@@ -43,6 +43,7 @@ import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import {
   applyUnitOption,
+  isStaffRole,
   keepsDefaultStart,
   mergeResolvedDefaults,
 } from "../lib/default-unit-line";
@@ -405,7 +406,7 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   // Backdating an order is a books-affecting edit — staff only, never drivers.
-  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole);
   const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.

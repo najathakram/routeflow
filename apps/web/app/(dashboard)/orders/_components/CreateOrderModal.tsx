@@ -50,6 +50,7 @@ import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-li
 import {
   applyUnitToLines,
   isPendingDefaultUnit,
+  isStaffRole,
   keepsDefaultStart,
   mergeResolvedLines,
 } from "@/lib/default-unit-line";
@@ -880,7 +881,13 @@ export function CreateOrderModal({
         : prev;
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
-  const resolveDefaultUnits = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct);
+  const { user: authUser } = useAuth();
+  const resolveDefaultUnits = useDefaultUnitResolver(
+    lineItems,
+    setLineItems,
+    tierForProduct,
+    isStaffRole(authUser?.role),
+  );
   const resolvingRef = React.useRef(false);
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
@@ -927,7 +934,7 @@ export function CreateOrderModal({
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
   const { user } = useAuth();
-  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 

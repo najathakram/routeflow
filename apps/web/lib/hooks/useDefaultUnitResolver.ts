@@ -6,6 +6,7 @@ import {
   isPendingDefaultUnit,
   mergeResolvedLines,
   pendingCount,
+  refreshUnitsAnswer,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
   type DefaultUnitLine,
@@ -21,13 +22,17 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   lines: T[],
   setLines: (fn: (prev: T[]) => T[]) => void,
   tierFor: DefaultUnitDeps["tierFor"],
+  isStaff: boolean,
 ) {
   const qc = useQueryClient();
-  const sub = useSubscription({ staleTime: 60_000 });
+  const sub = useSubscription({ staleTime: 60_000, enabled: isStaff });
+  const subRef = useRef(sub);
+  subRef.current = sub;
   const unitsKnown = sub.isSuccess;
   const unitsEnabled = (sub.data?.flags ?? []).includes(UNITS_FLAG);
   const depsRef = useRef<DefaultUnitDeps | null>(null);
   depsRef.current = {
+    isStaff,
     unitsEnabled,
     unitsKnown,
     tierFor,
@@ -54,5 +59,16 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
-  return useCallback((cur: T[]) => resolvePendingDefaultUnits(cur, depsRef.current!), []);
+  // "Try again" after a blocked submit refetches the units answer first (N10).
+  return useCallback(async (cur: T[]) => {
+    const fresh = await refreshUnitsAnswer(
+      depsRef.current!,
+      async () => {
+        const r = await subRef.current.refetch();
+        return { isSuccess: r.isSuccess, flags: r.data?.flags ?? [] };
+      },
+      UNITS_FLAG,
+    );
+    return resolvePendingDefaultUnits(cur, fresh);
+  }, []);
 }

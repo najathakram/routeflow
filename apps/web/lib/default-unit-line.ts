@@ -110,13 +110,41 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
   return (only as T | undefined) ?? { ...line, startOnDefaultUnit: false };
 }
 
+/** Only STAFF may sell by a unit (the server's assertMayUseUnits): mirrors the mobile copy (SA-626f). */
+export function isStaffRole(role?: string | null): boolean {
+  return role === "OPERATOR" || role === "TENANT_ADMIN";
+}
+
 export interface DefaultUnitDeps {
+  /** Non-staff never start on a default unit and make NO read (N9). */
+  isStaff: boolean;
   /** `flag.units_v1`: with it off there is no ladder, so the pack is the only unit. */
   unitsEnabled: boolean;
   /** False while the subscription answer is still loading: "off" is not yet known, so nothing may be resolved. */
   unitsKnown: boolean;
   getUnits: (productId: string) => Promise<ProductUnitLevel[]>;
   tierFor: (productId: string) => Tier;
+}
+
+/**
+ * "Try again" on the blocked message: a STAFF caller whose units answer is still unknown (the subscription read failed or
+ * never settled) REFETCHES it instead of staying stuck on the stale failure (SA-626g N10). A known answer, a non-staff
+ * caller, or a refetch that fails again leave the deps as they were, so the line stays blocked, never the pack.
+ */
+export async function refreshUnitsAnswer(
+  deps: DefaultUnitDeps,
+  refetch: () => Promise<{ isSuccess: boolean; flags: readonly string[] }>,
+  unitsFlag: string,
+): Promise<DefaultUnitDeps> {
+  if (!deps.isStaff || deps.unitsKnown) return deps;
+  try {
+    const r = await refetch();
+    return r.isSuccess
+      ? { ...deps, unitsKnown: true, unitsEnabled: r.flags.includes(unitsFlag) }
+      : deps;
+  } catch {
+    return deps;
+  }
 }
 
 /**
@@ -131,7 +159,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
   const blocked: string[] = [];
   for (const line of lines) {
     if (!isPendingDefaultUnit(line)) continue;
-    if (line.isUnlisted || (deps.unitsKnown && !deps.unitsEnabled)) {
+    if (line.isUnlisted || !deps.isStaff || (deps.unitsKnown && !deps.unitsEnabled)) {
       out = out.map((li) =>
         li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
       );
