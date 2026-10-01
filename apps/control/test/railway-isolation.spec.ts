@@ -17,12 +17,12 @@ function read(file: string): string {
 }
 
 describe("control railway isolation (T56)", () => {
-  it("railway.toml watches only apps/control/**", () => {
+  it("railway.toml watches only apps/control/** plus the one denylist file", () => {
     const toml = read(path.join(CONTROL, "railway.toml"));
     const m = toml.match(/watchPatterns\s*=\s*\[([^\]]*)\]/);
     expect(m).not.toBeNull();
     const patterns = [...(m as RegExpMatchArray)[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]);
-    expect(patterns).toEqual(["apps/control/**"]);
+    expect(patterns).toEqual(["apps/control/**", "scripts/campaign/plane-denylist.json"]);
   });
 
   it("railway.toml health check is the public unauthenticated probe", () => {
@@ -59,7 +59,9 @@ describe("control railway isolation (T56)", () => {
       const operands = args.filter((a) => !a.startsWith("--"));
       const sources = operands.slice(0, -1);
       for (const src of sources) {
-        expect(src).toMatch(/^(apps\/control\/|package\.json$|package-lock\.json$)/);
+        expect(src).toMatch(
+          /^(apps\/control\/|package\.json$|package-lock\.json$|scripts\/campaign\/plane-denylist\.json$)/,
+        );
       }
     }
   });

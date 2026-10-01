@@ -17,7 +17,7 @@ const text = (h: string) => h.replace(/<[^>]+>/g, " ");
 describe("H1 superseded button carries only the first PR number", () => {
   it('"PR #12 + #34" gives data-pr="12"', () => {
     const s = base();
-    s.waste = [{ key: "W2:12", rule: "W2", subject: "PR #12 + #34", why: "x", action: "Ack" }];
+    s.waste = [{ key: "W5:12", rule: "W5", subject: "PR #12 + #34", why: "x", action: "Ack" }];
     const h = render(s);
     expect(h).toContain('data-act="superseded" data-pr="12"');
     expect(h).not.toContain('data-pr="1234"');
