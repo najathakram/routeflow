@@ -1093,13 +1093,85 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     expect(over).not.toHaveProperty("alreadyReturned");
   });
 
-  it("B961: with a PRIOR return of the product on the candidate order (4 of 10 back already), asking for 8 = 6 matched + 2 over: the over-return IS flagged", async () => {
+  it("B961 (SA-071f): a PARTIAL prior return (4 of 10 back) is not exhaustion: 6 matched + 2 over, the over-return is NOT flagged", async () => {
     (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 4 }]);
     const result = await quote({ pieces: 8 });
     const [matched, over] = result.chunks;
     expect(matched).toMatchObject({ pieces: 6 });
-    expect(matched).not.toHaveProperty("alreadyReturned");
-    expect(over).toMatchObject({ pieces: 2, sourceInvoiceItemId: null, alreadyReturned: true });
+    expect(over).toMatchObject({ pieces: 2, sourceInvoiceItemId: null });
+    expect(over).not.toHaveProperty("alreadyReturned");
+  });
+
+  describe("SA-071f: the flag uses LIFETIME exhaustion (the 90-day window is for PRICING only)", () => {
+    const oldLine = {
+      orderId: "order-old",
+      subtotal: 50,
+      discount: 0,
+      taxAmount: 0,
+      items: [
+        {
+          id: "invitem-old",
+          orderItemId: "oi-old",
+          productId: "prod-1",
+          qty: 10,
+          unitPrice: 5,
+          subtotal: 50,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          promoFreeUnits: null,
+          taxRate: 0,
+          categoryTaxAmount: null,
+        },
+      ],
+    };
+    // inside the 90-day window: nothing; the lifetime read (a window far wider) sees the 120-day-old sale
+    const soldLongAgo = () =>
+      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        const since: Date | undefined = args?.where?.issueDate?.gte;
+        const days = since ? (Date.now() - since.getTime()) / 86_400_000 : 0;
+        return days > 200 ? [oldLine] : [];
+      });
+
+    it("a sale 120 days ago FULLY returned, then an inline return today: the unreferenced chunk is flagged", async () => {
+      soldLongAgo();
+      (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 10 }]);
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks).toEqual([
+        expect.objectContaining({ sourceInvoiceItemId: null, pieces: 2, alreadyReturned: true }),
+      ]);
+    });
+
+    it("a sale 120 days ago NOT returned: a legitimate old-purchase return, unflagged", async () => {
+      soldLongAgo();
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks).toHaveLength(1);
+      expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+    });
+
+    it("returned + CREDIT-NOTE-credited together reaching the sold qty flags it (4 returned + 6 credited of 10)", async () => {
+      soldLongAgo();
+      (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 4 }]);
+      (db.creditNoteItem.findMany as jest.Mock).mockResolvedValue([
+        { invoiceItemId: "invitem-old", qty: 6, creditNoteId: "cn-manual" },
+      ]);
+      (db.return.findMany as jest.Mock).mockResolvedValue([]); // cn-manual backs no return
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks[0]).toMatchObject({ alreadyReturned: true });
+    });
+
+    it("a credit note that IS a return's refund is not counted twice (6 returned + a 6-pc refund note of those same returns: 6 of 10 is not exhausted)", async () => {
+      soldLongAgo();
+      (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 6 }]);
+      (db.creditNoteItem.findMany as jest.Mock).mockResolvedValue([
+        { invoiceItemId: "invitem-old", qty: 6, creditNoteId: "cn-refund" },
+      ]);
+      (db.return.findMany as jest.Mock).mockImplementation(async (args: any) =>
+        args?.where?.creditNoteId ? [{ creditNoteId: "cn-refund" }] : [],
+      );
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+    });
   });
 
   it("B961: a product that was FULLY returned before (nothing left on its candidate line) flags the whole quantity", async () => {

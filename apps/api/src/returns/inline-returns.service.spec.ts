@@ -1144,7 +1144,7 @@ describe("InlineReturnsService", () => {
       const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
       expect(prisma.return.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ holdReason: "DRIVER_CAP", heldAmount: 30 }),
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED", heldAmount: 30 }),
         }),
       );
       expect(prisma.stockMovement.create).not.toHaveBeenCalled();
@@ -1160,6 +1160,23 @@ describe("InlineReturnsService", () => {
       );
       expect(result.alreadyReturnedHold).toBe(true);
       expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
+    it("when BOTH the driver cap and the flag apply, ALREADY_RETURNED wins (it needs a reason)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 5, // tiny gross: the $30 return is also over the driver cap
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED" }),
+        }),
+      );
     });
 
     it("a chunk that is NOT flagged is untouched: a staff capture needs no reason, a driver capture is not held", async () => {
@@ -1203,7 +1220,7 @@ describe("InlineReturnsService", () => {
         id: "ret-held-replay",
         kind: "INLINE",
         status: "RECEIVED",
-        holdReason: "DRIVER_CAP",
+        holdReason: "ALREADY_RETURNED",
         heldAmount: 30,
         creditNoteId: null,
         customerId: "cust-1",
@@ -1212,8 +1229,7 @@ describe("InlineReturnsService", () => {
         capturePayload: null,
         items: [{ productId: "prod-1", qty: 6 }],
       };
-      prisma.return.findFirst.mockResolvedValue(heldRow);
-      prisma.auditLog.findFirst.mockResolvedValue({ id: "aud-1" });
+      prisma.return.findFirst.mockResolvedValue(heldRow); // no audit rows are read: the COLUMN carries the hold
       const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
       expect(result.alreadyReturnedHold).toBe(true);
       expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
@@ -1224,7 +1240,7 @@ describe("InlineReturnsService", () => {
         id: "ret-held",
         kind: "INLINE",
         status: "RECEIVED",
-        holdReason: "DRIVER_CAP",
+        holdReason: "ALREADY_RETURNED",
         heldAmount: 30,
         creditNoteId: null,
         customerId: "cust-1",
@@ -1238,8 +1254,8 @@ describe("InlineReturnsService", () => {
       beforeEach(() => {
         prisma.return.findFirst.mockResolvedValue(HELD_AR);
         prisma.return.updateMany.mockResolvedValue({ count: 1 });
-        // the capture left its hold audit row: that is how approve() knows this hold needs a reason
-        prisma.auditLog.findFirst.mockResolvedValue({ id: "aud-1" });
+        // SA-071f N3: approve() reads the holdReason COLUMN; the audit rows are evidence only. None exist here (as if pruned).
+        prisma.auditLog.findFirst.mockResolvedValue(null);
       });
 
       it("without a reason is the same coded 400 and nothing is minted", async () => {
@@ -1265,8 +1281,8 @@ describe("InlineReturnsService", () => {
         );
       });
 
-      it("a driver-cap hold with NO already-returned audit row approves exactly as before (no reason needed)", async () => {
-        prisma.auditLog.findFirst.mockResolvedValue(null);
+      it("a DRIVER_CAP-only hold approves exactly as before (no reason needed)", async () => {
+        prisma.return.findFirst.mockResolvedValue({ ...HELD_AR, holdReason: "DRIVER_CAP" });
         await service.approve("ret-held", OPERATOR);
         expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
       });
@@ -1491,7 +1507,10 @@ describe("InlineReturnsService", () => {
       const result = await service.reject("ret-held", OPERATOR);
       expect(prisma.return.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ holdReason: "DRIVER_CAP" }),
+          // B961: an ALREADY_RETURNED hold is rejectable too (the same hold family)
+          where: expect.objectContaining({
+            holdReason: { in: ["DRIVER_CAP", "ALREADY_RETURNED"] },
+          }),
           data: expect.objectContaining({ status: "REJECTED" }),
         }),
       );

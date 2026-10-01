@@ -747,7 +747,7 @@ describeDb(
         ),
       );
       expect(held.status).toBe("RECEIVED");
-      expect(held.holdReason).toBe("DRIVER_CAP");
+      expect(held.holdReason).toBe("ALREADY_RETURNED"); // SA-071f: the hold lives in the column
       expect(held.creditNoteId ?? null).toBeNull();
       expect(String(held.holdMessage)).toMatch(/already returned or credited/i);
       expect(await totalCredited(s)).toBe(100); // never auto-credited
@@ -814,6 +814,65 @@ describeDb(
       expect(quote.chunks[0]).not.toHaveProperty("alreadyReturned");
       const err = await inlineReturn(s, 1, "should not matter").catch((e) => e);
       expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+    });
+
+    /** The sale is 120 days old: outside the 90-day PRICING window, so the inline chunk is unreferenced either way; the FLAG
+     *  (SA-071f) reads the customer's whole history. */
+    const quoteInlineA = (s: Seed) =>
+      tenantCtx.run(s.tenantId, () =>
+        inline.quoteService.quote(
+          { customerId: s.customerId, items: [{ productId: s.pA.id, boxes: 0, pieces: 1 }] },
+          staffUser(s),
+        ),
+      );
+    const ageInvoice = (s: Seed, days: number) =>
+      prisma.invoice.update({
+        where: { id: s.invoiceId },
+        data: { issueDate: new Date(Date.now() - days * 86_400_000) },
+      });
+
+    it("24. B961 / SA-071f: a sale 120 days ago FULLY refunded, then an inline return today: unreferenced AND flagged (the old window would have missed it)", async () => {
+      const s = await seed("ar-120d-refunded");
+      await refund(s, (await receivedReturn(s, s.pA.id)).id);
+      await ageInvoice(s, 120);
+      const quote = await quoteInlineA(s);
+      expect(quote.chunks).toHaveLength(1);
+      expect(quote.chunks[0]).toMatchObject({ sourceInvoiceItemId: null, alreadyReturned: true });
+    });
+
+    it("25. B961 / SA-071f: a sale 120 days ago NOT returned: a legitimate old-purchase return, unreferenced and NOT flagged", async () => {
+      const s = await seed("ar-120d-untouched");
+      await ageInvoice(s, 120);
+      const quote = await quoteInlineA(s);
+      expect(quote.chunks[0]).toMatchObject({ sourceInvoiceItemId: null });
+      expect(quote.chunks[0]).not.toHaveProperty("alreadyReturned");
+    });
+
+    it("26. B961 / SA-071f N3: a held flagged capture still demands the reason after its audit rows are DELETED (the hold is the holdReason column)", async () => {
+      const s = await refundedOnLaterInvoice("ar-audit-pruned");
+      const driverHold = await prisma.return.create({
+        data: {
+          tenantId: s.tenantId,
+          orderId: s.orderId,
+          customerId: s.customerId,
+          reason: "DAMAGED",
+          status: "RECEIVED",
+          kind: "INLINE",
+          holdReason: "ALREADY_RETURNED",
+          heldAmount: 100,
+          returnNumber: `RTN-CAPRET-${RUN}-P${++rtnSeq}`,
+          items: { create: [{ tenantId: s.tenantId, productId: s.pA.id, qty: 1, subtotal: 100 }] },
+        } as any,
+      });
+      await prisma.auditLog.deleteMany({
+        where: { tenantId: s.tenantId, entityId: driverHold.id },
+      });
+      const err: any = await tenantCtx
+        .run(s.tenantId, () => inline.approve(driverHold.id, staffUser(s)))
+        .catch((e: unknown) => e);
+      expect(err?.getResponse?.()).toMatchObject({
+        code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      });
     });
   },
 );

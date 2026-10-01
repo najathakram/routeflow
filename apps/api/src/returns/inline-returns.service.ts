@@ -85,6 +85,12 @@ export const INLINE_RETURN_ERROR_CODES = {
   ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
 } as const;
 
+/** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
+export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
+const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
+const isInlineHold = (reason: string | null | undefined): boolean =>
+  reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
+
 /** B961: the readable sentences (driver hold; staff reason refusal). One place, so web/mobile never hand-roll them. */
 export const ALREADY_RETURNED_HOLD_MESSAGE =
   "This product was already returned or credited for this customer, so the credit is held for the office to confirm. The goods are recorded; no credit is issued until staff approve it with a reason.";
@@ -335,8 +341,8 @@ export class InlineReturnsService {
         this.assertReplaySameItems(raced, dto); // #2424
         return {
           replayed: true as const,
-          ret: await this.withHoldMessage(tx, raced),
-          overCap: raced.holdReason === "DRIVER_CAP",
+          ret: this.withHoldMessage(raced),
+          overCap: isInlineHold(raced.holdReason),
         };
       }
     }
@@ -422,7 +428,13 @@ export class InlineReturnsService {
         creditSubtotal: priced.subtotal,
         creditTax: priced.taxAmount,
         creditCategoryTax: priced.categoryTax,
-        ...(overCap ? { holdReason: "DRIVER_CAP", heldAmount: priced.total } : {}),
+        ...(overCap
+          ? {
+              // ALREADY_RETURNED wins over DRIVER_CAP: it is the stricter hold (approve() needs a reason)
+              holdReason: arHeld ? ALREADY_RETURNED_HOLD_REASON : "DRIVER_CAP",
+              heldAmount: priced.total,
+            }
+          : {}),
         items: { create: itemsData },
       },
       include: { items: true },
@@ -522,22 +534,10 @@ export class InlineReturnsService {
     };
   }
 
-  /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (re-derived from the
-   * hold's audit row: nothing is persisted on the Return). */
-  private async withHoldMessage<T extends { id: string; holdReason?: string | null }>(
-    db: any,
-    ret: T,
-  ): Promise<T> {
-    if (ret.holdReason !== "DRIVER_CAP") return ret;
-    const marker = await db.auditLog.findFirst({
-      where: {
-        entityType: "Return",
-        entityId: ret.id,
-        action: "inline_return.already_returned_hold",
-      },
-      select: { id: true },
-    });
-    return marker
+  /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (derived from the
+   * `holdReason` COLUMN, never an audit row). */
+  private withHoldMessage<T extends { holdReason?: string | null }>(ret: T): T {
+    return ret.holdReason === ALREADY_RETURNED_HOLD_REASON
       ? { ...ret, alreadyReturnedHold: true, holdMessage: ALREADY_RETURNED_HOLD_MESSAGE }
       : ret;
   }
@@ -843,8 +843,8 @@ export class InlineReturnsService {
       this.assertReplaySameItems(preExisting, dto); // #2424
       result = {
         replayed: true,
-        ret: await this.withHoldMessage(this.prisma.forTenant(), preExisting),
-        overCap: preExisting.holdReason === "DRIVER_CAP",
+        ret: this.withHoldMessage(preExisting),
+        overCap: isInlineHold(preExisting.holdReason),
       };
     } else {
       try {
@@ -866,8 +866,8 @@ export class InlineReturnsService {
             this.assertReplaySameItems(raced, dto); // #2424
             result = {
               replayed: true,
-              ret: await this.withHoldMessage(this.prisma.forTenant(), raced),
-              overCap: raced.holdReason === "DRIVER_CAP",
+              ret: this.withHoldMessage(raced),
+              overCap: isInlineHold(raced.holdReason),
             };
           } else {
             throw new ConflictException({
@@ -1067,7 +1067,7 @@ export class InlineReturnsService {
       if (!current) throw new NotFoundException("Return not found");
       return this.withParkedReversals(current);
     }
-    if (pre.status !== "RECEIVED" || pre.holdReason !== "DRIVER_CAP" || pre.creditNoteId) {
+    if (pre.status !== "RECEIVED" || !isInlineHold(pre.holdReason) || pre.creditNoteId) {
       throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
     }
     const heldAmountPre = roundMoney(Number(pre.heldAmount ?? 0));
@@ -1084,11 +1084,9 @@ export class InlineReturnsService {
       );
     }
 
-    // B961: a hold the capture marked "already returned or credited" is approved only with a reason (audited below).
-    const arHold = await this.prisma.forTenant().auditLog.findFirst({
-      where: { entityType: "Return", entityId: id, action: "inline_return.already_returned_hold" },
-      select: { id: true },
-    });
+    // B961 (SA-071f N3): a hold the capture marked "already returned or credited" is approved only with a reason; read from the
+    // `holdReason` COLUMN (the audit row is evidence, never state). Re-checked under the row lock below.
+    const arHold = pre.holdReason === ALREADY_RETURNED_HOLD_REASON;
     const approvalReason = typeof dto?.reason === "string" ? dto.reason.trim() : "";
     if (arHold && approvalReason.length === 0) {
       throw new BadRequestException({
@@ -1107,7 +1105,7 @@ export class InlineReturnsService {
       if (
         !fresh ||
         fresh.status !== "RECEIVED" ||
-        fresh.holdReason !== "DRIVER_CAP" ||
+        !isInlineHold(fresh.holdReason) ||
         fresh.creditNoteId
       ) {
         return { skipped: true as const };
@@ -1131,7 +1129,7 @@ export class InlineReturnsService {
       await this.reverseLedgerForReturn(tx, fresh);
 
       minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
-      if (arHold) {
+      if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
         await tx.auditLog.create({
           data: {
             userId: user.sub,
@@ -1170,7 +1168,7 @@ export class InlineReturnsService {
         id,
         kind: "INLINE",
         status: "RECEIVED",
-        holdReason: "DRIVER_CAP",
+        holdReason: { in: [...INLINE_HOLD_REASONS] },
         creditNoteId: null,
       },
       data: { status: "REJECTED", approvedById: user.sub, approvedAt: new Date() },

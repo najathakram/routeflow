@@ -47,6 +47,8 @@ import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
 const DEFAULT_SOLD_WINDOW_DAYS = 90;
+/** B961 (SA-071f): the flag's exhaustion check reads the customer's WHOLE history (about 100 years); pricing keeps the 90 days. */
+const LIFETIME_FLAG_WINDOW_DAYS = 36_500;
 
 const DELIVERED_ORDER_STATUSES = [OrderStatus.DELIVERED, OrderStatus.PARTIALLY_DELIVERED];
 
@@ -300,6 +302,43 @@ export class InlineReturnsQuoteService {
     // quote — it does not vary per item — never inside the per-item loop below.
     const tenantTaxRate = await currentTaxRate(this.systemConfig);
 
+    // B961 (SA-071f): Σ returned + Σ credit-noted pieces >= Σ sold pieces across ALL this customer's live invoices of the product.
+    // Cached per product; an unclassifiable prior return counts as exhausted (fail toward staff review).
+    const lifetimeCache = new Map<string, boolean>();
+    const lifetimeExhausted = async (productId: string): Promise<boolean> => {
+      const cached = lifetimeCache.get(productId);
+      if (cached !== undefined) return cached;
+      const lifeSet = await this.fetchMatchingSet(
+        db,
+        dto.customerId,
+        [productId],
+        productUpbMap,
+        LIFETIME_FLAG_WINDOW_DAYS,
+        opts.excludeInvoiceIds,
+      );
+      const lines = lifeSet.filter((l) => l.productId === productId);
+      const sold = lines.reduce((n, l) => n + l.piecesQty, 0);
+      let exhausted = false;
+      if (sold > 0) {
+        let returned = 0;
+        let unknown = false;
+        for (const orderId of new Set(lines.map((l) => l.sourceOrderId))) {
+          let byProduct = priorReturnedMap.get(orderId);
+          if (!byProduct) {
+            byProduct = await returnedPiecesByProduct(db as any, orderId);
+            priorReturnedMap.set(orderId, byProduct);
+          }
+          const prior = byProduct[productId];
+          if (prior && "unknown" in prior) unknown = true;
+          else returned += prior?.pieces ?? 0;
+        }
+        const credited = unknown ? 0 : await this.creditNotedPiecesOutsideReturns(db, lines);
+        exhausted = unknown || returned + credited >= sold - 0.001;
+      }
+      lifetimeCache.set(productId, exhausted);
+      return exhausted;
+    };
+
     for (const item of dto.items) {
       const product = productMap.get(item.productId);
 
@@ -391,17 +430,11 @@ export class InlineReturnsQuoteService {
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
       const override = overrides.get(item);
-      // B961 (Opus B1): "already returned or credited" needs EVIDENCE of a prior return of THIS product against the candidate
-      // orders. A product merely in the sales window whose customer returns MORE than they bought (buy 10, return 12, nothing
-      // returned before) is the ordinary SA-071(2) over-return, not a double credit: no flag.
-      const hasPriorReturns = [
-        ...new Set(
-          matchingSet.filter((l) => l.productId === item.productId).map((l) => l.sourceOrderId),
-        ),
-      ].some((orderId) => {
-        const prior = priorReturnedMap.get(orderId)?.[item.productId];
-        return !!prior && "pieces" in prior && prior.pieces > 0;
-      });
+      // B961 (SA-071f): the flag is LIFETIME exhaustion of this customer's purchases of the product (any age: the 90-day window
+      // scopes PRICING only), and only matters when the allocation left an unreferenced chunk.
+      const hasPriorReturns = allocated.some((c) => !c.line)
+        ? await lifetimeExhausted(item.productId)
+        : false;
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
@@ -460,6 +493,40 @@ export class InlineReturnsQuoteService {
     }
 
     return { ...totalChunks(allChunks), productBreakdown };
+  }
+
+  /**
+   * B961 (SA-071f): pieces of these invoice lines credited by CREDIT NOTES that are NOT a return's own refund (a return's refund
+   * note is already counted as a returned piece by the prior-returned reader, so counting its items too would double it).
+   * Non-VOID notes only; qty is on the line's own axis, converted to pieces by the line's piecesQty / qty.
+   */
+  private async creditNotedPiecesOutsideReturns(
+    db: any,
+    lines: ReadonlyArray<{ sourceInvoiceItemId: string; piecesQty: number; qty: number }>,
+  ): Promise<number> {
+    const ids = lines.map((l) => l.sourceInvoiceItemId);
+    const items: Array<{ invoiceItemId: string | null; qty: unknown; creditNoteId: string }> =
+      (await db.creditNoteItem?.findMany?.({
+        where: { invoiceItemId: { in: ids }, creditNote: { status: { not: "VOID" } } },
+        select: { invoiceItemId: true, qty: true, creditNoteId: true },
+      })) ?? [];
+    if (items.length === 0) return 0;
+    const noteIds = [...new Set(items.map((i) => i.creditNoteId))];
+    const linked: Array<{ creditNoteId: string | null }> =
+      (await db.return?.findMany?.({
+        where: { creditNoteId: { in: noteIds } },
+        select: { creditNoteId: true },
+      })) ?? [];
+    const returnNotes = new Set(linked.map((r) => r.creditNoteId));
+    const byId = new Map(lines.map((l) => [l.sourceInvoiceItemId, l]));
+    let pieces = 0;
+    for (const it of items) {
+      if (returnNotes.has(it.creditNoteId)) continue;
+      const line = it.invoiceItemId ? byId.get(it.invoiceItemId) : undefined;
+      if (!line || !(line.qty > 0)) continue;
+      pieces += Number(it.qty ?? 0) * (line.piecesQty / line.qty);
+    }
+    return pieces;
   }
 
   /** §3.1's matching set: REAL_INVOICE_STATUSES ∪ non-VOID DRAFT of a DELIVERED/
