@@ -381,6 +381,32 @@ describe("SA-620c: the dark/enforced policy for a cross-tenant child and the dep
     );
   });
 
+  it("the HARD cap boundary: a chain of exactly 64 relation hops stamps (dark reports, enforced throws at the soft cap), 65 throws in EVERY mode", () => {
+    const rel = dm.find((m) => m.name === "Order")!.fields.find((f) => f.type === "OrderItem")!;
+    const back = dm.find((m) => m.name === "OrderItem")!.fields.find((f) => f.type === "Order")!;
+    // n relation hops below the root: Order -> OrderItem -> Order -> ...
+    const chain = (n: number) => {
+      let data: any = { note: "leaf" };
+      for (let i = n; i >= 1; i--) {
+        const key = i % 2 === 1 ? rel.name : back.name;
+        data = { [key]: { create: data } };
+      }
+      return data;
+    };
+    const d = dark();
+    const out: any = stampNestedTenant("Order", chain(64), T, d.policy);
+    expect(out[rel.name].create.tenantId).toBe(T);
+    expect(d.report).toHaveBeenCalledWith("DEPTH", expect.any(String));
+    expect(d.report).toHaveBeenCalledTimes(1);
+    expect(() => stampNestedTenant("Order", chain(64), T, enforced().policy)).toThrow(
+      /depth limit of 8/,
+    );
+    expect(() => stampNestedTenant("Order", chain(65), T, dark().policy)).toThrow(/hard limit/);
+    expect(() => stampNestedTenant("Order", chain(65), T, enforced().policy)).toThrow(
+      NestedTenantWalkError,
+    );
+  });
+
   it("reports once per walk per kind, not once per row (a 1000-row createMany with foreign tenants is one report)", () => {
     const { policy, report } = dark();
     const rows = Array.from({ length: 1000 }, () => ({ q: 1, tenantId: "other" }));
