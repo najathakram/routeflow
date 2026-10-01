@@ -90,4 +90,20 @@ describe("a refund credit note books NO second regulated reversal (ledgerReverse
     });
     expect(ledger.reverseCreditNoteEntries).not.toHaveBeenCalled();
   });
+
+  it("SA-628b: a refund row may carry its qty at amount 0 (a paid line whose share of the pooled price is 0); a manual note may not", async () => {
+    const zero = {
+      ...dto,
+      amount: 40,
+      items: [
+        { invoiceItemId: "ii-1", amount: 40, qty: 4 },
+        { invoiceItemId: "ii-1", amount: 0, qty: 0 },
+      ],
+    };
+    await expect(service.create(zero, { ledgerReversedByReturn: true })).resolves.toBeDefined();
+    const bare = { ...dto, items: [{ invoiceItemId: "ii-1", amount: 0, qty: 1 }], amount: 1 };
+    await expect(service.create(bare)).rejects.toMatchObject({
+      response: { code: "CREDIT_NOTE_LINE_INVALID" },
+    });
+  });
 });

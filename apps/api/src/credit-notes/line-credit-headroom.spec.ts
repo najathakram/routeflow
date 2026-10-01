@@ -123,6 +123,14 @@ describe("planProductRefund (SA-628b: ONE price + itemisation for mint, preview 
     );
     expect(r.refusal).toMatchObject({ requestedAmount: 90.91, remainingAmount: 5 });
   });
+  it("a later PAID line can take pieces at amount 0 (the pooled price fits the first line): $20/2pc + $4/2pc, 3 pcs = $18", () => {
+    const r = planProductRefund([L("a", 20, 2), L("b", 4, 2)], new Map(), "p", 3);
+    expect(r.price).toBe(18);
+    expect(r.items).toEqual([
+      { invoiceItemId: "a", qty: 2, amount: 18 },
+      { invoiceItemId: "b", qty: 1, amount: 0 },
+    ]);
+  });
   it("preview == mint: the price with nothing credited equals the minted sum", () => {
     const lines = [L("l1", 50, 5), L("l2", 40, 5), L("f", 0, 1)];
     for (const q of [1, 3, 5, 7, 11]) {

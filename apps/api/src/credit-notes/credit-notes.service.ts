@@ -212,8 +212,8 @@ export class CreditNotesService {
           `Credit line ${li.invoiceItemId} is not on invoice ${dto.invoiceId}`,
         );
       const amt = li.amount;
-      // a refund row for a FREE line (subtotal 0) carries its qty at amount 0 (SA-628a); nothing else may be $0
-      const freeRefundRow = opts.ledgerReversedByReturn && Number(line.subtotal) <= 0 && amt === 0;
+      // a return-refund row may carry its qty at amount 0 (a free line, or a paid line whose share of the pooled price is 0, SA-628b); nothing else may be $0
+      const freeRefundRow = opts.ledgerReversedByReturn && amt === 0 && li.qty != null;
       if (!(amt > 0) && !freeRefundRow)
         throw cnBad(
           API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
