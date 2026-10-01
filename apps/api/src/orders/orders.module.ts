@@ -29,6 +29,9 @@ import { SellingRestrictionsModule } from "../selling-restrictions/selling-restr
 // #2094: OrdersService takes a return inside an order create/edit via InlineReturnsService. The
 // returns module imports nothing from orders, so there is no cycle.
 import { ReturnsModule } from "../returns/returns.module";
+// WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
+import { PolicyModule } from "../policy/policy.module";
+import { PolicyOversellReader } from "./policy-oversell-reader";
 
 @Module({
   imports: [
@@ -48,9 +51,10 @@ import { ReturnsModule } from "../returns/returns.module";
     RegulatedModule,
     SellingRestrictionsModule,
     ReturnsModule,
+    PolicyModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, ChangeRequestsService],
+  providers: [OrdersService, ChangeRequestsService, PolicyOversellReader],
   exports: [OrdersService, ChangeRequestsService],
 })
 export class OrdersModule {}
