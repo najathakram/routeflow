@@ -23,22 +23,24 @@ const ALLOWED_SITES: Record<string, Record<string, { count: number; why: string 
 
 export type ForSystemSite = { reason: string | null };
 
-/** Every `.forSystem(` call in `src` (comments ignored): its literal reason, or null when not a plain literal. */
-export function scanForSystem(src: string): ForSystemSite[] {
+/** Every `.<door>(` call in `src` (comments ignored): its literal reason, or null when not a plain literal. */
+export function scanDoor(src: string, door: string): ForSystemSite[] {
   const code = stripComments(src);
   const out: ForSystemSite[] = [];
-  for (const m of code.matchAll(/\.\s*forSystem\s*\(\s*/g)) {
+  for (const m of code.matchAll(new RegExp(`\\.\\s*${door}\\s*\\(\\s*`, "g"))) {
     const rest = code.slice(m.index! + m[0].length);
     const lit = /^(["'])((?:(?!\1)[^\\\n]|\\.)*)\1\s*[,)]/.exec(rest);
     out.push({ reason: lit ? lit[2] : null });
   }
   // Every other way to reach it (bracket call, destructuring, a bound/aliased reference) hides the
   // reason from review: flagged as a non-literal use. A plain `.forSystem(` call was counted above.
-  const plain = (code.match(/\.\s*forSystem\s*\(/g) ?? []).length;
-  const anyUse = (code.match(/forSystem/g) ?? []).length;
+  const plain = (code.match(new RegExp(`\\.\\s*${door}\\s*\\(`, "g")) ?? []).length;
+  const anyUse = (code.match(new RegExp(door, "g")) ?? []).length;
   for (let i = 0; i < anyUse - plain; i++) out.push({ reason: null });
   return out;
 }
+
+export const scanForSystem = (src: string) => scanDoor(src, "forSystem");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -133,5 +135,75 @@ describe("scanForSystem mutants (SA-619)", () => {
 
   it("ignores commented-out calls", () => {
     expect(scanForSystem('// this.prisma.forSystem("x")\n/* .forSystem("y") */')).toEqual([]);
+  });
+});
+
+/**
+ * PR-2b/auth: `systemTransaction(reason, fn)` is the transaction twin of forSystem: the same rules
+ * (literal reason, allow-listed with a count), its own list; empty until a caller converts.
+ */
+const ALLOWED_TX_SITES: Record<string, Record<string, { count: number; why: string }>> = {}; // 0 callers today
+
+describe("systemTransaction allow-list (SA-619 PR-2b)", () => {
+  const files = walk(SRC_ROOT);
+  const found: Record<string, Record<string, number>> = {};
+  const nonLiteral: string[] = [];
+  for (const f of files) {
+    const rel = path.relative(SRC_ROOT, f).split(path.sep).join("/");
+    if (DEFINITIONS.has(rel) || rel === "testing/prisma-mock.ts") continue; // the definitions and the test double
+    for (const site of scanDoor(fs.readFileSync(f, "utf8"), "systemTransaction")) {
+      if (site.reason === null) nonLiteral.push(rel);
+      else {
+        found[rel] ??= {};
+        found[rel][site.reason] = (found[rel][site.reason] ?? 0) + 1;
+      }
+    }
+  }
+
+  it("every systemTransaction reason is a string literal", () => {
+    expect(nonLiteral).toEqual([]);
+  });
+
+  it("every call site is allow-listed with its reason and count, and nothing else", () => {
+    const expected = Object.fromEntries(
+      Object.entries(ALLOWED_TX_SITES).map(([f, rs]) => [
+        f,
+        Object.fromEntries(Object.entries(rs).map(([r, v]) => [r, v.count])),
+      ]),
+    );
+    expect(found).toEqual(expected);
+  });
+
+  it("every entry states why, and its file exists", () => {
+    for (const [file, rs] of Object.entries(ALLOWED_TX_SITES))
+      for (const [reason, v] of Object.entries(rs)) {
+        expect(reason.length).toBeGreaterThan(10);
+        expect(v.why.length).toBeGreaterThan(10);
+        expect(fs.existsSync(path.join(SRC_ROOT, file))).toBe(true);
+      }
+  });
+
+  it.each([
+    [
+      "a plain call",
+      'this.prisma.systemTransaction("cron: expire trials", async (tx) => 1)',
+      "cron: expire trials",
+    ],
+    [
+      "split across lines",
+      'this.prisma\n  .systemTransaction(\n    "webhook: apply payment",\n    fn)',
+      "webhook: apply payment",
+    ],
+  ])("sees %s", (_n, src, reason) => {
+    expect(scanDoor(src, "systemTransaction")).toEqual([{ reason }]);
+  });
+
+  it.each([
+    ["a variable", "this.prisma.systemTransaction(reason, fn)"],
+    ["a template", "this.prisma.systemTransaction(`x ${y}`, fn)"],
+    ["a bound alias", "const f = this.prisma.systemTransaction.bind(this.prisma);"],
+  ])("flags a non-literal use: %s", (_n, src) => {
+    expect(scanDoor(src, "systemTransaction").every((x) => x.reason === null)).toBe(true);
+    expect(scanDoor(src, "systemTransaction").length).toBeGreaterThan(0);
   });
 });
