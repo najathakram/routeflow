@@ -1,5 +1,5 @@
 import * as React from "react";
-import { StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
+import { AppState, StyleSheet, View, Text, TouchableOpacity, Dimensions } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import type { ScanOutcome, ScanFeedback } from "../lib/scan-loop";
 import { shouldDecode } from "@routeflow/scanning";
@@ -62,6 +62,13 @@ export function BarcodeScanner({
   const [scanMode, setScanMode] = useScanMode(aimAssist);
   const holdMode = aimAssist && scanMode === "hold";
   const [holding, setHolding] = React.useState(false);
+  // The hold ends when the app is backgrounded: the press-out would never arrive.
+  React.useEffect(() => {
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") setHolding(false);
+    });
+    return () => sub.remove();
+  }, []);
   // Swallow codes while paused rather than unmounting the camera.
   const guardedScan = React.useCallback(
     (code: string) => (paused ? undefined : onScanned(code)),

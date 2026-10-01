@@ -615,6 +615,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
               <button
                 type="button"
                 aria-label="Hold to scan"
+                aria-describedby="scan-hold-hint"
                 aria-pressed={holding}
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -638,7 +639,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
                 className={cn(
                   // straddles the strip's bottom edge (half inside the free 20% under the aim box, half in the margin below),
                   // so the thumb never covers the barcode
-                  "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg",
+                  "absolute -bottom-7 left-1/2 z-10 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg [-webkit-touch-callout:none]",
                   holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
                 )}
               />
@@ -672,6 +673,11 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
               {m === "hold" ? "Hold to scan" : "Continuous"}
             </button>
           ))}
+          {scanMode === "hold" && (
+            <span id="scan-hold-hint" className="text-xs text-navy/70">
+              Hold the button while the barcode is in the box
+            </span>
+          )}
         </div>
         <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2 text-sm">
           {feedback ? (
