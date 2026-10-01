@@ -53,7 +53,7 @@ import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { fmt, isInternalEmail } from "@/lib/formatting";
+import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
 import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
 import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 
@@ -475,10 +475,9 @@ export default function CustomersPage() {
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-navy/70 text-xs">
-            {row.original.email ??
-              (row.original.user?.email && !isInternalEmail(row.original.user.email)
-                ? row.original.user.email
-                : "—")}
+            {displayEmail(row.original.email) ??
+              displayEmail(row.original.user?.email) ??
+              NO_EMAIL_COPY}
           </span>
         ),
       },
@@ -779,7 +778,9 @@ export default function CustomersPage() {
                       <p className="text-xs text-navy/70 truncate">
                         Buyer account:{" "}
                         <span className="font-medium text-navy/80">
-                          {item.buyerAccount?.email ?? item.customer.email ?? "—"}
+                          {displayEmail(item.buyerAccount?.email) ??
+                            displayEmail(item.customer.email) ??
+                            NO_EMAIL_COPY}
                         </span>
                         {item.buyerAccount?.name && (
                           <span className="ml-1 text-navy/70">({item.buyerAccount.name})</span>

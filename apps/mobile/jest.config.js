@@ -46,6 +46,11 @@ module.exports = {
     "^@routeflow/scanning$": "<rootDir>/../../packages/scanning/src/index.ts",
     // Same reason for the shared return-state helpers: resolve to SOURCE, no build step to depend on.
     "^@routeflow/returns$": "<rootDir>/../../packages/returns/src/index.ts",
+    // B910: the sentinel-email helpers live in the shared types package, but the
+    // PACKAGE ROOT is stubbed below (its index pulls the whole DTO surface), so
+    // lib/internal-email.ts re-exports the SUBPATH module — resolve that one to
+    // SOURCE, same as pricing/scanning/returns.
+    "^@routeflow/types/internal-email$": "<rootDir>/../../packages/types/internal-email.ts",
     "^expo-secure-store$": "<rootDir>/__tests__/__mocks__/expo-secure-store.js",
     // #2653: the shell bridge is pure TS (zod only) — resolve it to SOURCE, ahead of the ui stub.
     "^@routeflow/ui/shell-bridge$": "<rootDir>/../../packages/ui/src/shell-bridge.ts",

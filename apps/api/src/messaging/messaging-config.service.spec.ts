@@ -231,7 +231,9 @@ describe("MessagingConfigService (P6-6)", () => {
       const by = (k: NotificationEvent) => result.events.find((e) => e.eventKey === k)!;
       expect(by(NotificationEvent.ORDER_CONFIRMED).audience).toBe("CUSTOMER");
       expect(by(NotificationEvent.LOW_STOCK).audience).toBe("STAFF");
-      expect(result.events.every((e) => e.audience === "CUSTOMER" || e.audience === "STAFF")).toBe(true);
+      expect(result.events.every((e) => e.audience === "CUSTOMER" || e.audience === "STAFF")).toBe(
+        true,
+      );
     });
 
     it("REG-1965 T1: hasTrigger mirrors NOTIFICATION_TRIGGERS — PAYMENT_REMINDER and the internal five are false, ORDER_CONFIRMED true", async () => {
@@ -255,7 +257,9 @@ describe("MessagingConfigService (P6-6)", () => {
         channel: MessageChannel.EMAIL,
         enabled: false,
       });
-      await expect(service.setRuleEnabled(emailCell.ruleId!, true)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.setRuleEnabled(emailCell.ruleId!, true)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
 
     it("REG-1965 T3: channelStatus is top level — EMAIL LIVE, WHATSAPP/SMS/PORTAL NOT_BUILT (provider transports email only)", async () => {

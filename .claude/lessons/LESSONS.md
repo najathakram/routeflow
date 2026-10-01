@@ -616,6 +616,8 @@
 - **Root cause:** the copy carried the price without its pack, or the pack without its price; a live price converted to an old pack is a second pricing formula.
 - **Lesson:** **When a line is copied, snapshot BOTH unitPrice and unitsPerBox or neither. Carrying the pack with a live price under-bills after a repack; converting a live price to an old pack is refused.**
 - **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
+- **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
+  screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
 
 ### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
 
@@ -674,6 +676,21 @@
 - **Guard:** `round4` (half away from zero via the decimal-string path) with `roundUnitCost` delegating
   to it; pinned by `golden.spec.ts` (ROUND4_FIXTURES) and `component-price.spec.ts`.
 
+### L-249 · 2026-09-30 · domain · a blank money cell may default; a present-but-unparseable one must reject the row (#2190)
+
+- **Symptom:** an invoice import with a cell like `12abc` wrote a $0.00 invoice (or line) and reported
+  success; `1e5` imported as 100000.
+- **Root cause:** the invoice importer read money as `parseImportMoney(cell || "0") || 0`, so "absent"
+  and "present but invalid" shared one path and the trailing `|| 0` turned NaN into $0. The
+  products/customers importer already had the strict check; the invoice path kept a second, lenient
+  parser (the L-167 second-copy shape).
+- **Lesson:** **On a bulk/CSV money or quantity write, a blank cell may take its documented default, but
+  a present-but-unparseable cell must skip the row or group with a reason BEFORE any write, never
+  coerce with `|| 0` / `?? 0`; every importer reads money through the one strict parser
+  (`parseStrictMoneyCell`).**
+- **Guard:** `import-invoice-money-2190.spec.ts` (each money column, a later-line skip, overflow, blank
+  defaults) and its `.db.spec.ts`; cf. [[L-167]].
+
 ## security
 
 ### L-188 · 2026-09-17 · security · demo-booking OAuth/booking tokens in URL query strings
@@ -687,13 +704,6 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
-
-### L-219 · 2026-09-26 · security · judge a DB-target guard by how the DRIVER parses the URL (D-03)
-
-- **Symptom:** a local-only DB guard checked `new URL(url).hostname`, so `…@localhost/x?host=prod` passed the guard while the pg driver dialled prod.
-- **Root cause:** the guard and the driver parsed the same string differently (`?host=`, `hostaddr`, `service`, multi-host lists, sockets, an encoded `?` in the database name).
-- **Lesson:** **A safety guard on a connection string must parse it the way the DRIVER does (pg-connection-string), then dial the vetted explicit fields, never the raw string it just approved.**
-- **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
 
 ### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
 
