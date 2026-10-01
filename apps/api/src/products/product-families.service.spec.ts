@@ -741,6 +741,29 @@ describe("#2881 delta: a non-string money value is a 400 everywhere, never an in
       kind: "VARIANT",
       parentProductId: "fam",
     } as never;
+    for (const add of [
+      { name: "B", pricePerUnit: "1", standardCost: 2.5 },
+      { name: "B", pricePerUnit: 5 },
+      { name: "B", pricePerUnit: "1", standardCost: true },
+      { name: "B", pricePerUnit: "abc" },
+    ]) {
+      await expect(
+        build({ products: [famRow, k1] }).service.updateVariants(
+          "fam",
+          { add: [add] } as never,
+          ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    await expect(
+      build().service.createFamily(
+        {
+          family: { name: "F" },
+          variants: [{ name: "A", pricePerUnit: "1", standardCost: true }],
+        } as never,
+        ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
     for (const bad of [{ pricePerUnit: 5 }, { standardCost: 2.5 }]) {
       await expect(
         build({ products: [famRow, k1] }).service.updateVariants(

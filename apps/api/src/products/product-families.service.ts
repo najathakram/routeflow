@@ -89,6 +89,9 @@ const outOfRange = (what: string) =>
 const money = (v: unknown, fallback = 0): string => {
   if (v != null && typeof v !== "string")
     throw new BadRequestException("A price must be a string amount.");
+  if (v != null && v.trim() !== "" && !Number.isFinite(Number(v))) {
+    throw new BadRequestException("A price must be a non-negative amount.");
+  }
   const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
@@ -96,6 +99,8 @@ const money = (v: unknown, fallback = 0): string => {
 /** Decimal(10,4) cost, the same rounding-overflow guard (999999.99999 -> 1000000.0000). */
 const cost4 = (v: unknown): string => {
   if (typeof v !== "string") throw new BadRequestException("A cost must be a string amount.");
+  if (!Number.isFinite(Number(v)))
+    throw new BadRequestException("A cost must be a non-negative amount.");
   const r = roundUnitCost(Number(v));
   if (!(r >= 0 && r < 1e6)) throw outOfRange("A cost");
   return r.toFixed(4);
@@ -158,7 +163,7 @@ export class ProductFamiliesService {
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
-    given(dto.family.pricePerUnit, "pricePerUnit", "required");
+    given(dto.family.pricePerUnit, "family pricePerUnit", "required");
     const familyCost = costOf(dto.family.standardCost);
     if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {

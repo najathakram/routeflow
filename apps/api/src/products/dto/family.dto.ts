@@ -33,7 +33,7 @@ const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
 
 /**
  * SA-606g: the ONE create-side blank rule. null / "" / whitespace-only means OMITTED (a variant then inherits the family
- * cost, a family has none); anything else is trimmed. Used as the DTO @Transform AND by the service, so HTTP and a caller
+ * cost, a family has none); a string is trimmed; a non-string passes through unchanged (and is rejected). Used as the DTO @Transform AND by the service, so HTTP and a caller
  * that bypasses the DTO behave identically. Update rows and every price stay STRICT (null / "" is a 400).
  */
 export const blankToUndefined = (v: unknown): unknown => {
