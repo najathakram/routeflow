@@ -23,17 +23,42 @@ describe("common/csv", () => {
     expect(csvCell(undefined)).toBe("");
   });
 
-  describe("number exemption (SA-629): only a plain decimal number stays unprefixed", () => {
-    it.each(["-12.50", "-5", "0.00", "12", "-0.5"])("leaves the numeric text %s untouched", (n) => {
+  describe("numeric-text exemption (SA-629c): only numeric-only text stays unprefixed", () => {
+    it.each([
+      "-12.50",
+      "-5",
+      "0.00",
+      "12",
+      "-0.5",
+      "+1 555 123 4567",
+      "(555) 123-4567",
+      "555-123-4567",
+    ])("leaves the numeric text %s untouched", (n) => {
       expect(csvCell(n)).toBe(n);
     });
 
-    it.each(["--5", "-5x", "- 5", "-1e5", "-.5", "-5.", "+5", "-12.50.1", "-12,50", "=1", "-1-1"])(
-      "still guards %s (not a plain decimal number)",
-      (v) => {
-        expect(csvCell(v).replace(/^"/, "").startsWith("'")).toBe(true);
-      },
-    );
+    it.each([
+      "=1+1",
+      "+SUM(A1)",
+      "-2+cmd|' /C calc'!A0",
+      "@x",
+      "+1e5",
+      "-1e5",
+      "-A1",
+      "+1;2",
+      "-5x",
+      "-12,50",
+      "=1",
+      "+",
+      "-",
+      "+ ",
+      "\tSUM(1)",
+      "\r1",
+      "\n1",
+      "＋1 555",
+    ])("still guards %j (not numeric-only text)", (v) => {
+      expect(csvCell(v).replace(/^"/, "").startsWith("'")).toBe(true);
+    });
   });
 
   describe("verbatim mode ({ guard: false }) — regulator/audit artifacts are never edited", () => {

@@ -35,9 +35,9 @@ describe("buildCustomersCsv (B953 — formula-injection guard on user-typed text
     expect(row).toContain(`"'=HYPERLINK(""http://evil.example"",""x"")"`);
     expect(row).toContain("'@SUM(1+1)");
     expect(row).toContain("'-cmd@example.com");
-    // Data effect, pinned on purpose (SA-629): a "+"-led phone is formula-led text, so it exports
-    // with a visible apostrophe; only a plain decimal number is exempt.
-    expect(row).toContain("'+1 555 0100");
+    // SA-629c: a numeric-only "+"-led phone cannot run as a formula, so it exports clean.
+    expect(row).toContain("+1 555 0100");
+    expect(row).not.toContain("'+1 555 0100");
   });
 
   it("leaves ordinary text and the money columns untouched (a negative credit is never prefixed)", () => {

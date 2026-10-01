@@ -7,8 +7,12 @@ export const CSV_BOM = "﻿";
  */
 const FORMULA_LEAD = /^[=+\-@\t\r\n＝＋－＠]/;
 
-/** A plain decimal number as text (`-12.50`): a spreadsheet reads it as a number, never a formula. */
-const PLAIN_DECIMAL = /^-?\d+(\.\d+)?$/;
+/**
+ * Numeric-only text a spreadsheet reads as a number or a phone, never a formula (SA-629c): one
+ * optional leading sign, then only digits, spaces, `(` `)` `.` `-`, with at least one digit. No
+ * letters (so not `1e5`) and none of `= @ | ! : ; % ,`, quotes, TAB or CR.
+ */
+const PLAIN_DECIMAL = /^[+-]?(?=[^0-9]*[0-9])[0-9 ().-]+$/;
 
 export interface CsvCellOptions {
   /**
@@ -22,8 +26,8 @@ export interface CsvCellOptions {
 /**
  * One CSV cell. Text that a spreadsheet would run as a formula (`FORMULA_LEAD`) is prefixed
  * with `'` (OWASP CSV injection) — customer and product names are user-typed. The ONE
- * exemption is a plain decimal number written as text (`/^-?\d+(\.\d+)?$/`, e.g. the
- * `-12.50` of a formatted refund amount): it cannot run as a formula, so it stays numeric.
+ * exemption is numeric-only text (`PLAIN_DECIMAL`: `-12.50`, `+1 555 123 4567`, `(555) 123-4567`):
+ * it cannot run as a formula, so it stays clean.
  * Numbers (not text) are written as-is, so a negative amount stays numeric.
  */
 export function csvCell(
