@@ -350,7 +350,7 @@ describeDb(
       const cn = await creditNoteItem(s, s.lineA, 100);
       const ret = await receivedReturn(s, s.pA.id);
       await expect(refund(s, ret.id)).rejects.toBeDefined();
-      await inTenant(s, () => creditNotes.voidCreditNote(cn.id));
+      await inTenant(s, () => creditNotes.voidWithReversal(cn.id, null));
       await expect(refund(s, ret.id)).resolves.toBeDefined();
       expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(100);
     });
