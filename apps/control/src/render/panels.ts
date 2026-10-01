@@ -178,6 +178,9 @@ const chip = (text: unknown, cls = ""): Raw => h`<span class="chip ${cls}">${tex
 const mono = (text: unknown): Raw => h`<code class="mono">${text}</code>`;
 const empty = (copy: Raw): Raw => h`<p class="empty">${copy}</p>`;
 
+/** Own-property lookup: "constructor" and friends fall back instead of leaking Object members. */
+const pick = <T>(m: Record<string, T>, k: unknown): T | undefined =>
+  typeof k === "string" && Object.hasOwn(m, k) ? m[k] : undefined;
 const STATUS_KIND: Record<string, string> = {
   planned: "planned",
   proposed: "planned",
@@ -189,13 +192,15 @@ const STATUS_KIND: Record<string, string> = {
   dropped: "low",
 };
 const statusPill = (s: string | undefined): Raw =>
-  s ? h`<span class="pill ${STATUS_KIND[s] ?? "planned"}">${s.replace(/-/g, " ")}</span>` : EMPTY;
+  s
+    ? h`<span class="pill ${pick(STATUS_KIND, s) ?? "planned"}">${s.replace(/-/g, " ")}</span>`
+    : EMPTY;
 const PRIO_KIND: Record<string, string> = { P0: "critical", P1: "high", P2: "medium", P3: "low" };
 const prioPill = (p: string | undefined): Raw =>
-  h`<span class="pill ${PRIO_KIND[p ?? ""] ?? "low"}">${p ?? "—"}</span>`;
+  h`<span class="pill ${pick(PRIO_KIND, p) ?? "low"}">${p ?? "—"}</span>`;
 const SEV_GLYPH: Record<string, string> = { critical: "!!", high: "!", medium: "·", low: "·" };
 const sevPill = (s: string): Raw =>
-  h`<span class="pill ${SEV_GLYPH[s] ? s : "low"}"><span aria-hidden="true">${SEV_GLYPH[s] ?? "·"}</span> ${s}</span>`;
+  h`<span class="pill ${pick(SEV_GLYPH, s) ? s : "low"}"><span aria-hidden="true">${pick(SEV_GLYPH, s) ?? "·"}</span> ${s}</span>`;
 
 const regOf = (t: TaskState, key: string): unknown => {
   const r = t.ref?.["register"];
@@ -310,7 +315,7 @@ function bugStats(c: Ctx): BugStats {
     (t) => !["released", "dropped", "code-complete"].includes(t.status?.value),
   );
   const bySev: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-  for (const t of open) bySev[SEV_GLYPH[sev(t)] ? sev(t) : "low"]++;
+  for (const t of open) bySev[pick(SEV_GLYPH, sev(t)) ? sev(t) : "low"]++;
   return {
     open: open.length,
     critical: bySev.critical,
@@ -346,7 +351,7 @@ const READY_KIND: Record<string, string> = {
 function queue(c: Ctx): { t: TaskState; reason: string }[] {
   const taken = new Set(Object.values(c.v.lanes).map((l) => val(l.current)));
   const PR: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 };
-  const rank = (p: string | undefined) => PR[p ?? ""] ?? 9;
+  const rank = (p: string | undefined) => pick(PR, p) ?? 9;
   const ship = (t: TaskState) => {
     const r = val(t.release);
     const d = r ? val(c.v.releases[r]?.shipDate) : undefined;
@@ -398,7 +403,7 @@ function frame(c: Ctx, key: PanelKey, o: FrameOpts, body: Raw): string {
     ? h`<div class="skeleton row"></div><div class="skeleton row"></div><div class="skeleton row short"></div>`
     : body;
   if (o.fold)
-    return h`<h2 id="h-${key}">${o.title}${n}</h2><details class="fold" data-fold="${key}" open><summary>Details</summary>${inner}</details>`
+    return h`<h2 id="h-${key}">${o.title}${n}</h2><details class="fold" data-fold="${key}" open><summary>Show/hide ${o.title}</summary>${inner}</details>`
       .s;
   return h`<h2 id="h-${key}">${o.title}${n}</h2>${inner}`.s;
 }
@@ -411,7 +416,7 @@ const CI_GLYPH: Record<string, string> = {
   stale: "⟳",
   none: "–",
 };
-const ciText = (ci: string): string => `CI ${CI_GLYPH[ci] ?? "?"} ${ci}`;
+const ciText = (ci: string): string => `CI ${pick(CI_GLYPH, ci) ?? "?"} ${ci}`;
 const HB_GLYPH: Record<string, string> = { live: "●", stale: "◐", silent: "○" };
 
 function prFor(c: Ctx, taskId: string | null | undefined): PrView | undefined {
@@ -446,7 +451,7 @@ function laneCard(c: Ctx, l: LaneState): Raw {
     ? h`<p class="nxt"><span class="lbl">Next</span> <span aria-hidden="true">${nx.explicit ? "★" : "→"}</span> ${taskBtn(nx.t, nx.t.id)} <span class="ttl mut">${nx.t.title}</span> ${prioPill(val(nx.t.priority))} ${releaseChip(nx.t, c)}</p>`
     : h`<p class="nxt"><span class="lbl">Next</span> <span class="mut">No next eligible — queue empty for this lane</span></p>`;
   return h`<article class="lane" data-lane="${l.id}" data-hb="${hb}">
-<div class="lane-h"><strong class="mono">${l.name || l.id}</strong> ${chip(l.machine)} <span class="hb"><span aria-hidden="true">${HB_GLYPH[hb] ?? "○"}</span> ${hb}${val(l.heartbeat) ? h` · ${ago(val(l.heartbeat), c)}` : EMPTY}</span>${hot.length ? h` ${chip(h`overlap ▲${hot.length} ${hot[0].level}`, "warn")}` : EMPTY}</div>
+<div class="lane-h"><strong class="mono">${l.name || l.id}</strong> ${chip(l.machine)} <span class="hb"><span aria-hidden="true">${pick(HB_GLYPH, hb) ?? "○"}</span> ${hb}${val(l.heartbeat) ? h` · ${ago(val(l.heartbeat), c)}` : EMPTY}</span>${hot.length ? h` ${chip(h`overlap ▲${hot.length} ${hot[0].level}`, "warn")}` : EMPTY}</div>
 ${current}${pr ? h`<p class="prl">${prChip(pr)}</p>` : EMPTY}${next}${join(
     blockers.map((b) => h`<p class="blk">⛔ ${linkTask(b.task, c)} <span>${b.reason}</span></p>`),
   )}</article>`;
@@ -458,7 +463,7 @@ function lanesPanel(c: Ctx): string {
     .map((k) => c.v.lanes[k])
     .sort(
       (a, b) =>
-        (rank[val(a.stale) ?? "silent"] ?? 3) - (rank[val(b.stale) ?? "silent"] ?? 3) ||
+        (pick(rank, val(a.stale)) ?? 3) - (pick(rank, val(b.stale)) ?? 3) ||
         naturalCompare(a.id, b.id),
     );
   const body = ls.length
@@ -554,7 +559,7 @@ function releaseCard(c: Ctx, r: ReleaseState): Raw {
   const date = val(r.shipDate);
   const metrics = prMetrics(c, r.id);
   return h`<article class="rel" data-release="${r.id}">
-<p class="rel-h"><strong class="mono">${r.id}</strong> <span>${r.name}</span> · ${date ? h`ships <time datetime="${date}">${date}</time> ${badge(r.shipDate, c)}` : raw("no ship date")} <span class="pill ${READY_KIND[rd.state] ?? "wip"}">${rd.state}</span> ${rd.moved ? chip(`MOVED ${rd.moved.from ?? "?"} → ${rd.moved.to ?? "?"}`, "warn") : EMPTY} <span class="mut">${rd.done}/${rd.total} done</span></p>
+<p class="rel-h"><strong class="mono">${r.id}</strong> <span>${r.name}</span> · ${date ? h`ships <time datetime="${date}">${date}</time> ${badge(r.shipDate, c)}` : raw("no ship date")} <span class="pill ${pick(READY_KIND, rd.state) ?? "wip"}">${rd.state}</span> ${rd.moved ? chip(`MOVED ${rd.moved.from ?? "?"} → ${rd.moved.to ?? "?"}`, "warn") : EMPTY} <span class="mut">${rd.done}/${rd.total} done</span></p>
 ${releaseBar(tasks)}${metrics ? h`<p class="mut small">${metrics}</p>` : EMPTY}</article>`;
 }
 function releasePanel(c: Ctx): string {

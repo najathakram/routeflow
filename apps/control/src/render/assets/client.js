@@ -14,8 +14,13 @@
   var version = meta("control-version");
   var csrf = meta("csrf-token");
   var live = true;
-  var [etag, pollTimer, pulling, lastFocus, drawerTask] = []; // all start unset
-  var [again, lastAnnounce] = [false, 0];
+  var etag = null; // of the last /api/state.json, for If-None-Match
+  var pollTimer = null;
+  var pulling = null; // the in-flight refresh promise
+  var again = false; // a refresh was requested while one was in flight
+  var lastAnnounce = 0;
+  var lastFocus = null; // what to refocus when the drawer closes
+  var drawerTask = null;
   var backoff = 1000;
   var dismissed = {};
   var PRIO = ["P0", "P1", "P2", "P3"];
@@ -27,7 +32,9 @@
   var store = (k, v) => {
     try {
       var ls = window.localStorage; // may throw when storage is blocked
-      return v === undefined ? ls.getItem(k) : v === null ? ls.removeItem(k) : ls.setItem(k, v);
+      if (v === undefined) return ls.getItem(k);
+      if (v === null) ls.removeItem(k);
+      else ls.setItem(k, v);
     } catch (e) {
       return null;
     }
@@ -45,7 +52,12 @@
       clearTimeout(timer);
       if (!o.sticky) timer = setTimeout(close, 20000); // long enough to read and reach Undo
     };
-    var undo = o.undo && btn("Undo", () => (close(), o.undo()));
+    var undo = o.undo
+      ? btn("Undo", () => {
+          close();
+          o.undo();
+        })
+      : null;
     $("#toasts").setAttribute("aria-live", "polite");
     t.append(el("span", "", msg));
     if (undo) t.append(undo);
@@ -63,7 +75,9 @@
       var html = frags[attr(sec, "panel")];
       if (typeof html !== "string") return;
       var open = {};
-      $$("details[data-fold]", sec).forEach((d) => (open[attr(d, "fold")] = d.open));
+      $$("details[data-fold]", sec).forEach((d) => {
+        open[attr(d, "fold")] = d.open;
+      });
       var a = doc.activeElement;
       var had = a && sec.contains(a) && (a.hasAttribute("data-act") || attr(a, "task")) && sig(a);
       sec.innerHTML = html; // server-rendered, escaped fragment
@@ -83,11 +97,14 @@
     [".lines", "#banners"].forEach((s) => {
       if ($(s, next) && $(s)) $(s).innerHTML = $(s, next).innerHTML;
     });
-    $$("#banners [data-banner]").forEach((b) => dismissed[b.textContent] && b.remove());
+    $$("#banners [data-banner]").forEach((b) => {
+      if (dismissed[b.textContent]) b.remove();
+    });
   }
   function setLive(on) {
-    var chip = $("#live") || el("i");
+    var chip = $("#live");
     live = on;
+    if (!chip) return;
     chip.setAttribute("data-live", on ? "on" : "off");
     chip.textContent = on ? "live ●" : "live ◌ reconnecting";
   }
@@ -100,9 +117,9 @@
       $$("#drawer-body [id^=f-]").some((c) => c.value !== c.dataset.init)
     )
       return;
-    var id = ($("#drawer").contains(doc.activeElement) && doc.activeElement.id) || "-";
+    var focused = $("#drawer").contains(doc.activeElement) ? doc.activeElement.id : "";
     renderDrawer(src);
-    if ($("#" + id)) $("#" + id).focus();
+    if (focused && $("#" + focused)) $("#" + focused).focus();
   }
   async function pull() {
     var r = await fetch("/api/state.json", {
@@ -119,8 +136,10 @@
       $('meta[name="control-version"]').setAttribute("content", version);
     setLive(live);
     await swapChrome();
-    if ($("#sr") && Date.now() - lastAnnounce > 30000) $("#sr").textContent = "State updated";
-    lastAnnounce = Date.now();
+    if ($("#sr") && Date.now() - lastAnnounce > 30000) {
+      $("#sr").textContent = "State updated"; // at most one announcement per 30 s
+      lastAnnounce = Date.now();
+    }
     syncDrawer();
   }
   /* one pull at a time; a request made mid-pull runs one more pull before everyone resumes, so a
@@ -133,9 +152,15 @@
     pulling = (async () => {
       do {
         again = false;
-        await pull().catch(() => 0);
+        try {
+          await pull();
+        } catch (e) {
+          /* network blip: the next event or poll retries */
+        }
       } while (again);
-    })().finally(() => (pulling = null));
+    })().finally(() => {
+      pulling = null;
+    });
     return pulling;
   }
   function connect() {
@@ -194,7 +219,7 @@
       toast("State changed elsewhere — reloaded", { error: true });
       etag = null;
       await refresh();
-      return false;
+      return "conflict";
     }
     if (!r.ok) {
       var why = r.status
@@ -208,10 +233,16 @@
     busy(ctl, false);
     return true;
   }
-  /* write, then confirm with a toast carrying Undo = the compensating event */
+  /* write, then confirm with a toast carrying Undo = the compensating event.
+   * Resolves true (saved), "conflict" (409, state reloaded) or false (not saved). */
   async function write(payload, ctl, msg, inverse) {
-    if (!(await post(payload, ctl))) return false;
-    var undo = inverse && (async () => (await post(inverse, null)) && toast("Undone: " + msg));
+    var res = await post(payload, ctl);
+    if (res !== true) return res;
+    var undo = null;
+    if (inverse)
+      undo = async () => {
+        if (await post(inverse, null)) toast("Undone: " + msg);
+      };
     toast(msg, { undo: undo });
     return true;
   }
@@ -263,16 +294,19 @@
           var msg = f.ref + " " + f.l.toLowerCase() + ": " + from + (n || "none");
           var inv = f.inv ? f.inv(n) : f.req ? null : build(f, f.old || "", n);
           if (f.key === "priority" && !f.old) inv = null; // nothing valid to restore
-          if (!(await write(build(f, n, f.old), b, msg, inv))) {
-            c.value = f.old || ""; // failed or conflicted: show the stored value again
-            syncDrawer();
-          }
+          var res = await write(build(f, n, f.old), b, msg, inv);
+          if (res === true) return;
+          c.value = f.old || ""; // not saved: show the stored value again
+          if (res === "conflict")
+            syncDrawer(); // fresh state: rebuild the form
+          else b.focus(); // plain failure: keep the form and its inline error, focus stays here
         }),
       );
       body.append(box);
     });
     setInert(true);
-    $("#scrim").hidden = $("#drawer").hidden = false;
+    $("#scrim").hidden = false;
+    $("#drawer").hidden = false;
   }
   var fld = (l, type, key, ref, more) => Object.assign({ l, type, key, ref }, more);
   function renderDrawer(b) {
@@ -281,7 +315,8 @@
     var nexts = {};
     list("nexts").forEach((p) => (nexts[p.split(":")[0]] = p.split(":")[1] || null));
     var f = (l, type, key, more) => fld(l, type, key, d.task, more);
-    var [lanes, rels] = [list("lanes"), list("releases")];
+    var lanes = list("lanes");
+    var rels = list("releases");
     var info = "Status " + d.status + " · " + d.title + (d.pr ? " · PR #" + d.pr : "");
     var inv = (n) => ({ type: "task.next", task: nexts[n] || null, targetLane: n });
     showDrawer(d.task, info + (d.alt ? " · " + d.alt : ""), [
@@ -300,7 +335,8 @@
     focusables($("#drawer"))[1].focus();
   }
   function closeDrawer() {
-    $("#drawer").hidden = $("#scrim").hidden = true;
+    $("#drawer").hidden = true;
+    $("#scrim").hidden = true;
     setInert(false);
     var back =
       lastFocus && doc.contains(lastFocus) ? lastFocus : $('.tid[data-task="' + drawerTask + '"]');
@@ -321,9 +357,15 @@
     if (t === "light" || t === "dark") doc.documentElement.setAttribute("data-theme", t);
     else doc.documentElement.removeAttribute("data-theme");
   }
-  var legend = () => ($("#legend").open ? $("#legend").close() : $("#legend").showModal());
+  function legend() {
+    if ($("#legend").open) $("#legend").close();
+    else $("#legend").showModal();
+  }
   function act(t) {
-    var [a, task, lane, key] = ["act", "task", "lane", "key"].map((k) => attr(t, k));
+    var a = attr(t, "act");
+    var task = attr(t, "task");
+    var lane = attr(t, "lane");
+    var key = attr(t, "key");
     var ev = (type, more) => ({ type, task, ...more });
     if (a === "ack") {
       var until = new Date().toISOString().slice(0, 19) + "Z"; // schema dates carry no millis
@@ -393,6 +435,8 @@
 
   applyTheme(store("control-theme"));
   if (window.matchMedia && window.matchMedia("(max-width: 480px)").matches)
-    $$("details.fold[data-fold]:not(.sub)").forEach((d) => (d.open = false)); // tier 3 on phones
+    $$("details.fold[data-fold]:not(.sub)").forEach((d) => {
+      d.open = false; // tier 3 collapses on phones
+    });
   connect();
 })();

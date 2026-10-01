@@ -127,3 +127,26 @@ describe("fragments still embedded", () => {
     expect(Object.keys(P().renderFragments(base(), { now: NOW })).length).toBe(12);
   });
 });
+
+describe("round 2: lookup maps and fold names", () => {
+  it('inherited keys like "constructor" fall back instead of leaking Object members', () => {
+    const s = base();
+    s.tasks["F-1"].status.value = "constructor";
+    s.tasks["F-1"].priority.value = "constructor";
+    s.tasks["B906"].ref.severity = "constructor";
+    s.prs[0].ci = "constructor";
+    s.lanes["lane-u"].stale.value = "constructor";
+    s.piggyback["lane-u"][0].severity = "constructor";
+    const h = render(s);
+    expect(h).not.toMatch(/function|native code|\[object/);
+    expect(h).toContain("CI ? constructor");
+    expect(h).toMatch(/pill low"><span aria-hidden="true">·<\/span> constructor/);
+  });
+  it("each folded panel summary has a unique Show/hide <title> name", () => {
+    const h = render(base());
+    const names = [...h.matchAll(/<summary>(Show\/hide [^<]+)<\/summary>/g)].map((m) => m[1]);
+    expect(names).toContain("Show/hide Open PRs");
+    expect(new Set(names).size).toBe(names.length);
+    expect(names.length).toBeGreaterThanOrEqual(5);
+  });
+});

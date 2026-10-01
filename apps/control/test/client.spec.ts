@@ -166,6 +166,11 @@ describe("confirmed writes (R18)", () => {
     await flush();
     expect(control.value).toBe("P1");
     expect(field.querySelector(".err")?.textContent).toMatch(/Not saved/);
+    // re-query the LIVE drawer: a rebuild after the failure must not wipe the error or the focus
+    const live = h.d.getElementById("drawer") as HTMLElement;
+    expect(live.querySelector(".err")?.textContent).toMatch(/Not saved/);
+    expect(live.contains(h.d.activeElement) && h.d.activeElement !== h.d.body).toBe(true);
+    expect(saveFor(h, "Priority").control.value).toBe("P1");
   });
   it("clearing release to (none) posts release:null with the old value as prev", async () => {
     const h = boot();

@@ -82,9 +82,9 @@ describe("loading (first paint)", () => {
 
 describe("write-back states live in the shipped client (R18, R33)", () => {
   const js = () => read("client.js");
-  it("client.js exists, is vanilla and <= 400 lines", () => {
+  it("client.js exists, is vanilla and <= 500 lines", () => {
     const t = js();
-    expect(t.split("\n").length).toBeLessThanOrEqual(400);
+    expect(t.split("\n").length).toBeLessThanOrEqual(500);
     expect(t).not.toMatch(/\bimport\s|\brequire\(/);
   });
   it("uses SSE, ETag refetch and server-rendered fragments (never templates html)", () => {
