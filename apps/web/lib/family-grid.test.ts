@@ -2,6 +2,8 @@ import {
   MAX_FAMILY_ROWS,
   blankRow,
   diffVariantUpdates,
+  patchRowToGridIndex,
+  validateRows,
   toCreateRequest,
   validateFamilyForm,
   type FamilyForm,
@@ -213,5 +215,40 @@ describe("diffVariantUpdates — ONE all-or-nothing PATCH body from the edited g
     expect(diffVariantUpdates(orig, edited)).toEqual({
       update: [{ id: "id1", standardCost: "0.9" }],
     });
+  });
+});
+
+describe("patchRowToGridIndex — a PATCH conflict's `row` is add rows first, then update rows (offset by add.length)", () => {
+  const saved = (i: number): GridRow => ({ ...row({ key: `s${i}`, name: `S${i}` }), id: `id${i}` });
+  const edited: GridRow[] = [
+    { ...saved(1), pricePerUnit: "9" }, // update[0] -> request row add.length + 0
+    row({ key: "n1", name: "New1" }), //   add[0]    -> request row 0
+    saved(2), //                          unchanged: not in the request
+    { ...saved(3), sku: "Z" }, //         update[1] -> request row add.length + 1
+    row({ key: "n2", name: "New2" }), //   add[1]    -> request row 1
+  ];
+  const original = [saved(1), saved(2), saved(3)];
+  const req = diffVariantUpdates(original, edited);
+
+  it("maps every request row back to the grid row that produced it", () => {
+    expect(req.add).toHaveLength(2);
+    expect(req.update).toHaveLength(2);
+    expect(patchRowToGridIndex(0, req, edited)).toBe(1); // New1
+    expect(patchRowToGridIndex(1, req, edited)).toBe(4); // New2
+    expect(patchRowToGridIndex(2, req, edited)).toBe(0); // first update = saved 1
+    expect(patchRowToGridIndex(3, req, edited)).toBe(3); // second update = saved 3
+  });
+
+  it("an out-of-range row maps to null (never a wrong cell)", () => {
+    expect(patchRowToGridIndex(9, req, edited)).toBeNull();
+    expect(patchRowToGridIndex(-1, req, edited)).toBeNull();
+  });
+});
+
+describe("validateRows — the row rules alone (family detail edit has no family fields)", () => {
+  it("returns the same per-cell messages as validateFamilyForm's rows", () => {
+    const rows = [row({ name: "", pricePerUnit: "x" })];
+    expect(validateRows(rows).rows).toEqual(validateFamilyForm(form({ rows })).rows);
+    expect(validateRows([row()]).valid).toBe(true);
   });
 });

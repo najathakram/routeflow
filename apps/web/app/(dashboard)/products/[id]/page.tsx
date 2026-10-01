@@ -66,6 +66,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { FamilyVariantsEditor } from "@/components/family/FamilyVariantsEditor";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductLabelsCard } from "./ProductLabelsCard";
@@ -2409,8 +2410,15 @@ export default function ProductDetailPage() {
             {/* Purchase cost history — real data from PURCHASE / COST_BASIS movements */}
             <CostHistoryCard productId={product.id} />
 
+            {/* WS8: a family's variants are edited as one all-or-nothing grid */}
+            {product.kind === "FAMILY" && (
+              <div className="rounded-lg border border-surface-border bg-white p-5 shadow-card">
+                <FamilyVariantsEditor familyId={product.id} variants={product.variants ?? []} />
+              </div>
+            )}
+
             {/* Variants section — only for non-variant (parent) products */}
-            {!product.parentProductId && (
+            {!product.parentProductId && product.kind !== "FAMILY" && (
               <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-surface-border px-5 py-3.5">
                   <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-navy/70">

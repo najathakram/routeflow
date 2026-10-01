@@ -67,25 +67,21 @@ const PRICE_MSG = "Enter a price like 1.50.";
 const DUP_MSG = "Appears more than once.";
 const norm = (s: string) => s.trim().toLowerCase();
 
-export function validateFamilyForm(f: FamilyForm): FamilyValidation {
-  const family: FamilyValidation["family"] = {};
+/** The row rules alone: used by the create dialog (with the family fields) and the detail edit. */
+export function validateRows(
+  rowsIn: GridRow[],
+): Pick<FamilyValidation, "valid" | "rows" | "formError"> {
   const rows: FamilyValidation["rows"] = {};
   let formError: string | null = null;
-
-  if (!f.name.trim()) family.name = "Enter a family name.";
-  if (f.pricePerUnit.trim() && !MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
-  if (f.standardCost.trim() && !COST.test(f.standardCost.trim()))
-    family.standardCost = "Enter a cost like 0.80.";
-
-  if (f.rows.length < 1) formError = "Add at least one variant.";
-  else if (f.rows.length > MAX_FAMILY_ROWS)
+  if (rowsIn.length < 1) formError = "Add at least one variant.";
+  else if (rowsIn.length > MAX_FAMILY_ROWS)
     formError = `A family takes up to ${MAX_FAMILY_ROWS} variants at a time.`;
 
   const set = (i: number, field: RowField, msg: string) => {
     rows[i] = { ...(rows[i] ?? {}), [field]: msg };
   };
 
-  f.rows.forEach((r, i) => {
+  rowsIn.forEach((r, i) => {
     if (!r.name.trim()) set(i, "name", "Enter a name.");
     const price = r.pricePerUnit.trim();
     if (!price) set(i, "pricePerUnit", "Enter a price.");
@@ -102,17 +98,29 @@ export function validateFamilyForm(f: FamilyForm): FamilyValidation {
   // Duplicates inside the grid, flagged on EVERY row that repeats (blank values never count).
   for (const field of ["name", "sku", "barcode", "unitSku"] as const) {
     const seen = new Map<string, number[]>();
-    f.rows.forEach((r, i) => {
+    rowsIn.forEach((r, i) => {
       const v = norm(r[field]);
       if (v) seen.set(v, [...(seen.get(v) ?? []), i]);
     });
     for (const idxs of seen.values())
       if (idxs.length > 1) idxs.forEach((i) => set(i, field, DUP_MSG));
   }
+  return { valid: formError === null && Object.keys(rows).length === 0, rows, formError };
+}
 
-  const valid =
-    formError === null && Object.keys(family).length === 0 && Object.keys(rows).length === 0;
-  return { valid, family, rows, formError };
+export function validateFamilyForm(f: FamilyForm): FamilyValidation {
+  const family: FamilyValidation["family"] = {};
+  if (!f.name.trim()) family.name = "Enter a family name.";
+  if (f.pricePerUnit.trim() && !MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
+  if (f.standardCost.trim() && !COST.test(f.standardCost.trim()))
+    family.standardCost = "Enter a cost like 0.80.";
+  const r = validateRows(f.rows);
+  return {
+    valid: r.valid && Object.keys(family).length === 0,
+    family,
+    rows: r.rows,
+    formError: r.formError,
+  };
 }
 
 const trim = (s: string) => s.trim();
@@ -194,4 +202,25 @@ export function diffVariantUpdates(
     ...(deactivate.length ? { deactivate } : {}),
     ...(add.length ? { add } : {}),
   };
+}
+
+/**
+ * A PATCH conflict's `row` counts the request's `add` rows first, then its `update` rows (offset by
+ * add.length). Maps it back to the grid index of the row that produced it, or null when out of range.
+ */
+export function patchRowToGridIndex(
+  row: number,
+  request: UpdateFamilyVariantsRequest,
+  edited: GridRow[],
+): number | null {
+  const addCount = request.add?.length ?? 0;
+  if (!Number.isInteger(row) || row < 0) return null;
+  if (row < addCount) {
+    const idx = edited.map((r, i) => (r.id ? -1 : i)).filter((i) => i >= 0)[row];
+    return idx ?? null;
+  }
+  const upd = request.update?.[row - addCount];
+  if (!upd) return null;
+  const idx = edited.findIndex((r) => r.id === upd.id);
+  return idx >= 0 ? idx : null;
 }
