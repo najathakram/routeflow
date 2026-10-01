@@ -296,6 +296,7 @@ describe("control.yml `paths:` cover every repo path control's specs read (cover
       ".github/workflows/ci.yml",
       "package.json",
       "package-lock.json",
+      ".gitattributes", // governs the golden fixture bytes (`* text=auto eol=lf`)
     ]) {
       expect(covered(must, globs)).toBe(true);
     }

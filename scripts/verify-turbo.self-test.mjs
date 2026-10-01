@@ -802,25 +802,50 @@ if (process.platform !== "win32") {
   const stubDir = mkdtempSync(join(tmpdir(), "verify-turbo-stub-"));
   try {
     const log = join(stubDir, "calls.log");
-    writeFileSync(join(stubDir, "npx"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 0\n`, {
-      mode: 0o755,
-    });
-    const runMain = (extraEnv) => {
+    const counter = join(stubDir, "count");
+    // The stub records its argv, then exits with the Nth status of STUB_EXIT_SEQ ("0,3,5": call 1
+    // exits 0, call 2 exits 3, call 3 exits 5; calls past the list, or no list, exit 0).
+    writeFileSync(
+      join(stubDir, "npx"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> "${log}"`,
+        `n=$(cat "${counter}" 2>/dev/null || echo 0)`,
+        "n=$((n + 1))",
+        `echo "$n" > "${counter}"`,
+        "IFS=,",
+        "set -- $STUB_EXIT_SEQ",
+        'eval "code=\\${$n:-0}"',
+        'exit "$code"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // `opts.script` / `opts.cwd` aim the real main() at a fixture repo (the AFFECTED cases below);
+    // `opts.ci === false` leaves CI unset so decideScope reads the fixture's git diff.
+    const runMain = (extraEnv, opts = {}) => {
       writeFileSync(log, "");
+      writeFileSync(counter, "0");
       const env = {
-        ...cleanGitEnv(),
+        ...scrubbedGitEnv(),
         PATH: `${stubDir}:${process.env.PATH}`,
         CI: "1",
         ...extraEnv,
       };
       delete env.FULL_VERIFY;
+      if (opts.ci === false) delete env.CI;
       if (!("JEST_MAX_WORKERS" in extraEnv)) delete env.JEST_MAX_WORKERS;
       if (!("VERIFY_EXCLUDE" in extraEnv)) delete env.VERIFY_EXCLUDE;
-      const r = spawnSync(process.execPath, [join(ROOT, "scripts", "verify-turbo.mjs")], {
-        cwd: ROOT,
-        encoding: "utf8",
-        env,
-      });
+      if (!("STUB_EXIT_SEQ" in extraEnv)) delete env.STUB_EXIT_SEQ;
+      const r = spawnSync(
+        process.execPath,
+        [opts.script ?? join(ROOT, "scripts", "verify-turbo.mjs")],
+        {
+          cwd: opts.cwd ?? ROOT,
+          encoding: "utf8",
+          env,
+        },
+      );
       return {
         status: r.status,
         out: r.stdout,
@@ -878,6 +903,82 @@ if (process.platform !== "win32") {
         false,
       ],
     );
+
+    // VX23-26: the exit status is the FIRST non-zero one AND every planned call still runs. The stub
+    // above used to exit 0 always, so "exit with the last non-zero status" and "stop after the
+    // first failure" both survived this file.
+    const fullUnsplit = runMain({ STUB_EXIT_SEQ: "7" });
+    check(
+      "VX23 main() FULL unsplit: the single call's non-zero status is the exit status",
+      [fullUnsplit.status, fullUnsplit.calls.length],
+      [7, 1],
+    );
+    const fullSplit = runMain({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "2" });
+    check(
+      "VX24 main() FULL split: first non-zero (3, not the last 5) wins and both calls ran",
+      [fullSplit.status, fullSplit.calls.length],
+      [3, 2],
+    );
+
+    // AFFECTED needs a real scoped decision, so main() runs from a scratch repo that holds a copy of
+    // the script and its lib, a feature branch one apps/api file ahead of origin/master, and no
+    // campaign-check (staleWorkspaces fails open to []). Same B420 discipline as runMoveFixture:
+    // GIT_*-free env, identity as -c flags, and nothing is written before the toplevel is proven.
+    const fixDir = realpathSync(mkdtempSync(join(tmpdir(), "verify-affected-")));
+    try {
+      const fgit = (...args) =>
+        spawnSync("git", [...IDENT, ...args], { cwd: fixDir, encoding: "utf8", env: fixtureEnv() });
+      const init = fgit("init", "-q", "-b", "master");
+      const top = fgit("rev-parse", "--show-toplevel").stdout.trim();
+      if (init.status !== 0 || realpathSync(top) !== fixDir) {
+        check("VX25 fixture repo resolves to the scratch dir (refusing to write)", top, fixDir);
+      } else {
+        const put = (rel, text) => {
+          mkdirSync(dirname(join(fixDir, rel)), { recursive: true });
+          writeFileSync(join(fixDir, rel), text);
+        };
+        for (const f of ["verify-turbo.mjs"]) {
+          put(`scripts/${f}`, readFileSync(join(ROOT, "scripts", f), "utf8"));
+        }
+        for (const f of ["verify-scope.mjs", "check-git-hooks.mjs", "scrubbed-git-env.cjs"]) {
+          put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
+        }
+        for (const [dir, name] of [
+          ["apps/api", "@routeflow/api"],
+          ["apps/control", "@routeflow/control"],
+          ["packages/pricing", "@routeflow/pricing"],
+        ]) {
+          put(`${dir}/package.json`, JSON.stringify({ name }));
+        }
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "base");
+        fgit("update-ref", "refs/remotes/origin/master", "HEAD");
+        fgit("checkout", "-q", "-b", "feat/x");
+        put("apps/api/src/x.ts", "export const x = 1;\n");
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "change");
+        const aff = (extraEnv) =>
+          runMain(extraEnv, {
+            ci: false,
+            cwd: fixDir,
+            script: join(fixDir, "scripts", "verify-turbo.mjs"),
+          });
+        const affUnsplit = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
+        check(
+          "VX25 main() AFFECTED unsplit: the scope is really AFFECTED, 2 calls ran, first non-zero (3) wins",
+          [/AFFECTED SCOPE/.test(affUnsplit.out), affUnsplit.calls.length, affUnsplit.status],
+          [true, 2, 3],
+        );
+        const affSplit = aff({ STUB_EXIT_SEQ: "0,3,5", JEST_MAX_WORKERS: "2" });
+        check(
+          "VX26 main() AFFECTED split: all 3 calls ran, first non-zero (3, not the last 5) wins",
+          [/AFFECTED SCOPE/.test(affSplit.out), affSplit.calls.length, affSplit.status],
+          [true, 3, 3],
+        );
+      }
+    } finally {
+      rmSync(fixDir, { recursive: true, force: true });
+    }
   } finally {
     rmSync(stubDir, { recursive: true, force: true });
   }
