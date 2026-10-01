@@ -24,12 +24,12 @@ import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit
 import {
   loadLineCredits,
   loadOrderPool,
+  lockOrderPoolRows,
   pooledRefundRefusal,
   pooledTakeRefusal,
   toHeadroomLine,
   type OrderPool,
 } from "./line-credit-headroom";
-import { isTxClient } from "../prisma/prisma.service";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -166,7 +166,6 @@ export class CreditNotesService {
     if (invoice.orderId && ((opts.pooledRefund?.length ?? 0) > 0 || lineItems)) {
       const p = await loadOrderPool(db, invoice.orderId, {
         excludeCreditNoteId: opts.excludeCreditNoteId,
-        lock: isTxClient(db),
       });
       if (p.invoiceCount >= 2) pool = p;
     }
@@ -305,19 +304,22 @@ export class CreditNotesService {
       };
     });
     if (pool) {
-      const byProduct = new Map<string, { amount: number; qty: number; explicit: boolean }>();
+      // qty binds only when the operator GAVE one (an amount-only credit's qty is derived from the amount)
+      const explicitQty = new Set(
+        [...mergedByLine.values()].filter((m) => m.qty != null).map((m) => m.invoiceItemId),
+      );
+      const byProduct = new Map<string, { amount: number; qty: number | null }>();
       for (const row of cnItemsData) {
         const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
         if (!productId) continue;
-        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0, explicit: false };
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: null };
         byProduct.set(productId, {
           amount: prev.amount + row.amount,
-          qty: prev.qty + row.qty,
-          explicit: prev.explicit,
+          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + row.qty : prev.qty,
         });
       }
       for (const [productId, take] of byProduct) {
-        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount });
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
         if (refusal)
           throw cnBad(
             API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
@@ -510,6 +512,8 @@ export class CreditNotesService {
     internal: {
       ledgerReversedByReturn?: boolean;
       pooledRefund?: Array<{ productId: string; qty: number }>;
+      /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
+      returnId?: string;
     } = {},
   ) {
     if (!dto.amount || dto.amount <= 0)
@@ -595,6 +599,9 @@ export class CreditNotesService {
             // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
             // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
+            // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
+            // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
             }
@@ -609,7 +616,7 @@ export class CreditNotesService {
             // read"), so five parallel creates lost two even with the number already
             // reserved outside this tx. Customer is never written on this path, so
             // the value read before the tx is still the right one. Same shape out.
-            return this.insertCreditNoteInTx(
+            const created = await this.insertCreditNoteInTx(
               tx,
               {
                 creditNoteNumber,
@@ -623,6 +630,15 @@ export class CreditNotesService {
               tenantId,
               customer,
             );
+            // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
+            // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
+            // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
+            if (internal.returnId)
+              await tx.return.updateMany({
+                where: { id: internal.returnId, creditNoteId: null },
+                data: { creditNoteId: created.id },
+              });
+            return created;
           },
           { isolationLevel: "Serializable" },
         );

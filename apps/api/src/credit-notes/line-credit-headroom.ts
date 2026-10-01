@@ -305,8 +305,10 @@ export async function loadLineCredits(
  * `priceReturn` uses too): the credit note items and inline-return items on P's lines, plus every non-VOID ITEMLESS refund
  * note of the order (on any creditable invoice, or linked to the order) attributed to P through its Return's items, pooled
  * across the combined P lines exactly like the refund's own price. A manual itemless note carries no Return: never counted.
- * `lock` takes the Order, then every creditable invoice (id-sorted, SA-214), FOR UPDATE before anything is read, so a
- * refund on invoice Y and a credit note on invoice X serialize against each other (call it only on a tx client).
+ * It takes NO lock: the writers call `lockOrderPoolRows` FIRST (Order, then every creditable invoice id-sorted, SA-214) so a
+ * refund on invoice Y and a credit note on invoice X serialize against each other, and so the lock order never inverts.
+ * An INLINE return's note is counted once, by the inline term (its items carry the source line); the itemless term skips
+ * INLINE returns.
  */
 export interface OrderPool {
   invoiceCount: number;
@@ -316,7 +318,7 @@ export interface OrderPool {
 export async function loadOrderPool(
   db: any,
   orderId: string,
-  opts: { excludeCreditNoteId?: string; lock?: boolean } = {},
+  opts: { excludeCreditNoteId?: string } = {},
 ): Promise<OrderPool> {
   const invoices: Array<{ id: string; items: any[] }> = await db.invoice.findMany({
     where: { orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
@@ -338,11 +340,6 @@ export async function loadOrderPool(
     },
     orderBy: [{ id: "asc" }],
   });
-  if (opts.lock && invoices.length >= 2) {
-    await db.$executeRaw`SELECT id FROM "Order" WHERE id = ${orderId} FOR UPDATE`;
-    for (const inv of invoices)
-      await db.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${inv.id} FOR UPDATE`;
-  }
   const ids = invoices.map((i) => i.id);
   const lines: HeadroomLine[] = [];
   let credited = new Map<string, LineCredit>();
@@ -371,7 +368,8 @@ export async function loadOrderPool(
   if (itemless.length > 0) {
     const returns: Array<{ items: Array<{ productId: string; qty: unknown }> }> =
       await db.return.findMany({
-        where: { creditNoteId: { in: itemless.map((c) => c.id) } }, // the CN link, not the status (legacy PROCESSED rows)
+        // the CN link, not the status (legacy PROCESSED rows); never an INLINE return (counted by the inline term above)
+        where: { creditNoteId: { in: itemless.map((c) => c.id) }, kind: { not: "INLINE" } },
         select: { items: { select: { productId: true, qty: true } } },
       });
     const qtyByProduct = new Map<string, number>();
@@ -428,4 +426,26 @@ export function pooledTakeRefusal(
     requestedQty: round3(take.qty ?? 0),
     remainingQty,
   };
+}
+
+/**
+ * B947 (SA-214: Order -> Invoice, each set id-sorted): the order's creditable invoices and the Order row, locked FOR UPDATE
+ * BEFORE any credit is read, only when the invoice's order has 2+ creditable invoices (a lone invoice keeps today's single
+ * invoice lock). Call it on a tx client, FIRST in the transaction, so no writer ever takes an Invoice and then the Order.
+ */
+export async function lockOrderPoolRows(tx: any, invoiceId: string): Promise<void> {
+  const inv: { orderId: string | null } | null = await tx.invoice.findFirst({
+    where: { id: invoiceId },
+    select: { orderId: true },
+  });
+  if (!inv?.orderId) return;
+  const siblings: Array<{ id: string }> = await tx.invoice.findMany({
+    where: { orderId: inv.orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
+    select: { id: true },
+    orderBy: [{ id: "asc" }],
+  });
+  if (siblings.length < 2) return;
+  await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${inv.orderId} FOR UPDATE`;
+  for (const s of siblings)
+    await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${s.id} FOR UPDATE`;
 }

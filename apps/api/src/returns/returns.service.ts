@@ -680,7 +680,7 @@ export class ReturnsService {
     // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
     // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
     // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
-    // note's items must belong to its one invoice; the older invoices' lines are NOT counted: a known residual).
+    // note's items must belong to its one invoice). B947: the refund is still CHECKED against the older invoices' lines too (pooled).
     // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
@@ -1028,7 +1028,10 @@ export class ReturnsService {
             : {}),
         },
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
-        { ledgerReversedByReturn: true, ...(pooledRefund ? { pooledRefund } : {}) },
+        {
+          ledgerReversedByReturn: true,
+          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+        },
       );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint

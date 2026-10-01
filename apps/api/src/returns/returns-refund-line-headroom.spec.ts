@@ -169,6 +169,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     expect(opts).toEqual({
       ledgerReversedByReturn: true,
       pooledRefund: [{ productId: "pa", qty: 1 }],
+      returnId: "ret-1", // linked to the note INSIDE the mint tx, so the pool attributes the lump the moment it commits
     });
   });
 

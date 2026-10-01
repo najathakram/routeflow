@@ -1,4 +1,9 @@
-import { loadOrderPool, pooledRefundRefusal, pooledTakeRefusal } from "./line-credit-headroom";
+import {
+  loadOrderPool,
+  lockOrderPoolRows,
+  pooledRefundRefusal,
+  pooledTakeRefusal,
+} from "./line-credit-headroom";
 
 /**
  * B947: the ORDER POOL. One pool per product across ALL the order's creditable invoices: credit note items and inline items on
@@ -117,27 +122,56 @@ describe("B947 order pool", () => {
     expect(pooledRefundRefusal(pool, "pa", 1)).toBeNull();
   });
 
-  it("locks the Order, then EVERY creditable invoice id-sorted, FOR UPDATE, before any credit is read (only when asked and 2+)", async () => {
+  it("lockOrderPoolRows: Order, then EVERY creditable invoice id-sorted, FOR UPDATE, before any credit is read; none with one creditable invoice or no order", async () => {
     const f = fakeDb({ invoices: [Y, X] });
     const order: string[] = [];
+    f.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: "ord-1" });
     f.exec.mockImplementation((s: TemplateStringsArray, v: unknown) => {
       order.push(`${s.join("?").match(/FROM "(\w+)"/)![1]}:${v}`);
       return Promise.resolve(0);
     });
-    f.db.creditNoteItem.findMany.mockImplementation(() => {
-      order.push("read");
-      return Promise.resolve([]);
-    });
-    await loadOrderPool(f.db, "ord-1", { lock: true });
-    expect(order.slice(0, 4)).toEqual(["Order:ord-1", "Invoice:inv-y", "Invoice:inv-x", "read"]);
-    // the sort is the DB's (`orderBy id asc`): the fake returns them in the order given, the query asks for ascending ids
+    await lockOrderPoolRows(f.db, "inv-x");
+    expect(order).toEqual(["Order:ord-1", "Invoice:inv-y", "Invoice:inv-x"]);
+    // the sort is the DB's (`orderBy id asc`): the fake returns them as given, the query asks for ascending ids
     expect(f.db.invoice.findMany.mock.calls[0][0].orderBy).toEqual([{ id: "asc" }]);
     const single = fakeDb({ invoices: [X] });
-    await loadOrderPool(single.db, "ord-1", { lock: true });
-    expect(single.exec).not.toHaveBeenCalled(); // one creditable invoice: the existing single-invoice lock stays enough
-    const unlocked = fakeDb({ invoices: [X, Y] });
-    await loadOrderPool(unlocked.db, "ord-1");
-    expect(unlocked.exec).not.toHaveBeenCalled();
+    single.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: "ord-1" });
+    await lockOrderPoolRows(single.db, "inv-x");
+    expect(single.exec).not.toHaveBeenCalled(); // one creditable invoice: the single-invoice lock stays enough
+    const noOrder = fakeDb({ invoices: [X, Y] });
+    noOrder.db.invoice.findFirst = jest.fn().mockResolvedValue({ orderId: null });
+    await lockOrderPoolRows(noOrder.db, "inv-x");
+    expect(noOrder.exec).not.toHaveBeenCalled();
+  });
+
+  it("loadOrderPool itself takes NO lock (the writers lock first, so the lock order never inverts)", async () => {
+    const f = fakeDb({ invoices: [X, Y] });
+    await loadOrderPool(f.db, "ord-1");
+    expect(f.exec).not.toHaveBeenCalled();
+  });
+
+  it("an INLINE return is counted ONCE (its items carry the source line): the itemless term skips INLINE returns", async () => {
+    const { db } = fakeDb({
+      invoices: [X, Y],
+      inline: [{ sourceInvoiceItemId: "x-a", qty: 1, subtotal: 100 }],
+      itemless: [{ id: "cn-inline", returnItems: [{ productId: "pa", qty: 1 }] }],
+    });
+    await loadOrderPool(db, "ord-1");
+    expect(db.return.findMany.mock.calls[0][0].where.kind).toEqual({ not: "INLINE" });
+  });
+
+  it("qty binds a credit note take only when one is GIVEN: 10 pieces of a fully-credited product at $0.01 is refused", async () => {
+    const XP = { id: "inv-x", items: [line("x-p", "pp", 100, 10)] };
+    const YP = { id: "inv-y", items: [line("y-p", "pp", 100, 10)] };
+    const pool = await loadOrderPool(
+      fakeDb({
+        invoices: [XP, YP],
+        itemless: [{ id: "cn-lump", returnItems: [{ productId: "pp", qty: 10 }] }],
+      }).db,
+      "ord-1",
+    );
+    expect(pooledTakeRefusal(pool, "pp", { amount: 0.01, qty: 11 })).not.toBeNull();
+    expect(pooledTakeRefusal(pool, "pp", { amount: 0.01, qty: null })).toBeNull(); // amount-only: money rules
   });
 
   it("the creditable set is the one predicate priceReturn uses (VOID / WRITTEN_OFF are excluded in the query)", async () => {
