@@ -4,7 +4,7 @@
  * The server must call them through their module exports (not a destructured copy captured
  * before the spy), which is how every other house spec observes a seam.
  */
-import * as cp from "child_process";
+import cp = require("child_process");
 import { startServer } from "./helpers/start-server";
 import type { Harness, Session } from "./helpers/start-server";
 
@@ -59,7 +59,7 @@ describe("carry-over 1: write-back validates with ctx.tasks (status + release), 
         expect(typeof t.status).toBe("string");
         expect("release" in t).toBe(true);
       }
-      expect(ctx.tasks.map((t: any) => t.id)).toContain("F-1"); // a register task from the fixture
+      expect(ctx.tasks.map((t: any) => t.id)).toContain("F-01"); // a register task from the fixture
       expect(Array.isArray(ctx.releaseIds)).toBe(true);
     }
   });

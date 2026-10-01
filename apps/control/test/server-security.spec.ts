@@ -2,7 +2,7 @@
  * T33 (R17) + security section: exact-match routing, no path from input, no git argument from
  * input, health leak check, noindex/CSP, XSS-relevant page rules.
  */
-import * as cp from "child_process";
+import cp = require("child_process");
 import { startServer } from "./helpers/start-server";
 import type { Harness, Session } from "./helpers/start-server";
 
