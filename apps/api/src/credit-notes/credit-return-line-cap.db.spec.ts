@@ -26,6 +26,11 @@ import { EntitlementsService } from "../billing/entitlements.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
 import { NumberingService } from "../import/numbering.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { IdempotencyService } from "../common/idempotency.service";
+import { EncryptionService } from "../common/encryption.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { InlineReturnsQuoteService } from "../returns/inline-returns-quote.service";
+import { InlineReturnsService } from "../returns/inline-returns.service";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -39,6 +44,7 @@ describeDb(
     let tenantCtx: TenantContextService;
     let creditNotes: CreditNotesService;
     let returns: ReturnsService;
+    let inline: any;
     const tenantIds: string[] = [];
     let seq = 0;
     let cnSeq = 0;
@@ -79,6 +85,23 @@ describeDb(
       }).compile();
       creditNotes = mod.get(CreditNotesService);
       returns = mod.get(ReturnsService);
+      // B948: a REAL InlineReturnsService (same Object.create wiring as inline-returns-capture-concurrency.db.spec.ts)
+      const systemConfig = new SystemConfigService(
+        prisma,
+        new EncryptionService({ get: () => undefined } as any),
+      );
+      inline = Object.assign(Object.create(InlineReturnsService.prototype), {
+        prisma,
+        gateway: anyMethod,
+        ledger: mod.get(RegulatedLedgerService),
+        creditNotes,
+        numbering: {
+          reserveNext: jest.fn().mockImplementation(async () => `RTN-CAPRET-${RUN}-I${++rtnSeq}`),
+        },
+        addonService: { hasAddon: async () => true },
+        quoteService: new InlineReturnsQuoteService(prisma, systemConfig),
+        idempotency: new IdempotencyService(),
+      });
     });
 
     afterAll(async () => {
@@ -181,6 +204,7 @@ describeDb(
       };
       const [lineA, lineB] = [await item(pA.id, "A"), await item(pB.id, "B")];
       return {
+        userId: user.id,
         tenantId,
         customerId: customer.id,
         orderId: order.id,
@@ -452,6 +476,102 @@ describeDb(
       const cn = await prisma.creditNote.findFirstOrThrow({ where: { id: stored!.creditNoteId! } });
       expect(Number(cn.amount)).toBe(70);
       expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(100);
+    });
+
+    /** An inline return of `qty` pieces of A, captured onto a fresh DELIVERED carrying order (an operator, no driver cap). */
+    async function inlineReturn(s: Seed, qty = 1) {
+      const carrying = await prisma.order.create({
+        data: {
+          tenantId: s.tenantId,
+          customerId: s.customerId,
+          orderNumber: `ORD-CAPRET-${RUN}-C${++rtnSeq}`,
+          subtotal: 0,
+          tax: 0,
+          total: 0,
+          status: "DELIVERED",
+        } as any,
+      });
+      return tenantCtx.run(s.tenantId, () =>
+        inline.capture(
+          {
+            customerId: s.customerId,
+            orderId: carrying.id,
+            items: [{ productId: s.pA.id, qty }],
+            returnKey: `capret-${RUN}-${rtnSeq}`,
+          },
+          {
+            sub: s.userId,
+            username: "operator",
+            role: "OPERATOR" as any,
+            status: "ACTIVE" as any,
+            forcePasswordChange: false,
+            tenantId: s.tenantId,
+            tenantSlug: "x",
+          },
+        ),
+      );
+    }
+    /** CN items on the line + the net subtotal of live inline returns sourced from it. */
+    async function creditedWithInline(s: Seed, line: { id: string }): Promise<number> {
+      const items = await prisma.creditNoteItem.findMany({
+        where: {
+          tenantId: s.tenantId,
+          invoiceItemId: line.id,
+          creditNote: { status: { not: "VOID" } },
+        },
+        select: { amount: true },
+      });
+      const ret = await prisma.returnItem.findMany({
+        where: {
+          tenantId: s.tenantId,
+          sourceInvoiceItemId: line.id,
+          return: { kind: "INLINE", status: { notIn: ["CANCELLED", "REJECTED"] } },
+        },
+        select: { subtotal: true },
+      });
+      return (
+        Math.round(
+          (items.reduce((n, i) => n + Number(i.amount), 0) +
+            ret.reduce((n, r) => n + Number(r.subtotal ?? 0), 0)) *
+            100,
+        ) / 100
+      );
+    }
+
+    it("15. B948: a $60 credit note item on A, then an inline return of the whole $100 line is REFUSED 409 (was $160 on a $100 line)", async () => {
+      const s = await seed("cn-then-inline");
+      await creditNoteItem(s, s.lineA, 60);
+      const err = await inlineReturn(s).catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+      expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
+    });
+
+    it("16. B948 reverse order: an inline return of the whole line first, then a $60 credit note item on A is refused; B stays creditable", async () => {
+      const s = await seed("inline-then-cn");
+      await inlineReturn(s);
+      await expect(creditNoteItem(s, s.lineA, 60)).rejects.toBeDefined();
+      expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
+      await expect(creditNoteItem(s, s.lineB, 100)).resolves.toBeDefined();
+    });
+
+    it("17. B948: a $60 credit note then an inline return of the remaining 0.4 of a 10-piece line fits; one piece more is refused", async () => {
+      const s = await seed("inline-partial", 0, 10);
+      await creditNoteItem(s, s.lineA, 60); // 6 pieces' worth
+      await expect(inlineReturn(s, 4)).resolves.toBeDefined();
+      const err = await inlineReturn(s, 1).catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+      expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
+    });
+
+    it("18. B948 race: a $60 credit note item and an inline return of the whole line racing on A never total more than $100, and neither 500s", async () => {
+      const s = await seed("race-inline");
+      const results = await Promise.allSettled([creditNoteItem(s, s.lineA, 60), inlineReturn(s)]);
+      for (const r of results) {
+        if (r.status === "rejected") {
+          expect((r.reason as { getStatus?: () => number }).getStatus?.()).toBeLessThan(500);
+        }
+      }
+      expect(await creditedWithInline(s, s.lineA)).toBeLessThanOrEqual(100);
     });
   },
 );

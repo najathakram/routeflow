@@ -33,6 +33,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import {
   addCredits,
   planProductRefund,
+  toHeadroomLine,
   loadLineCredits,
   type HeadroomLine,
   type RefundItem,
@@ -449,7 +450,16 @@ export class ReturnsService {
                   total: true,
                   createdAt: true,
                   items: {
-                    select: { id: true, productId: true, qty: true, subtotal: true },
+                    select: {
+                      id: true,
+                      productId: true,
+                      qty: true,
+                      subtotal: true,
+                      boxes: true,
+                      unitsPerBox: true,
+                      pieces: true,
+                      product: { select: { unitsPerBox: true } },
+                    },
                     orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                   },
                 },
@@ -700,12 +710,7 @@ export class ReturnsService {
    * An invoice whose items carry no id (never the real query) stays a lump sum.
    */
   private async itemiseRefund(returnItems: any[], invoice: any): Promise<RefundItem[]> {
-    const lines: HeadroomLine[] = (invoice?.items ?? []).map((it: any) => ({
-      id: it.id,
-      productId: it.productId ?? null,
-      subtotal: Number(it.subtotal),
-      qty: Number(it.qty),
-    }));
+    const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
     const returnedByProduct = new Map<string, number>();
     for (const it of returnItems) {
@@ -877,7 +882,16 @@ export class ReturnsService {
                 total: true,
                 createdAt: true,
                 items: {
-                  select: { id: true, productId: true, qty: true, subtotal: true },
+                  select: {
+                    id: true,
+                    productId: true,
+                    qty: true,
+                    subtotal: true,
+                    boxes: true,
+                    unitsPerBox: true,
+                    pieces: true,
+                    product: { select: { unitsPerBox: true } },
+                  },
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                 },
               },
@@ -1149,7 +1163,16 @@ export class ReturnsService {
                 total: true,
                 createdAt: true,
                 items: {
-                  select: { id: true, productId: true, qty: true, subtotal: true },
+                  select: {
+                    id: true,
+                    productId: true,
+                    qty: true,
+                    subtotal: true,
+                    boxes: true,
+                    unitsPerBox: true,
+                    pieces: true,
+                    product: { select: { unitsPerBox: true } },
+                  },
                   orderBy: [{ createdAt: "asc" }, { id: "asc" }], // deterministic fill order (SA-628)
                 },
               },
