@@ -60,27 +60,33 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     );
   });
 
-  it("Opus #2865 r2: every qty / price handler CONSUMES the flag (qty is total pieces on a boxed line, so the picker cannot guard on it)", () => {
+  it("SA-626h: qty handlers (stepper, typed qty, boxes) do NOT shape a line; only a loose-pieces / sell-by choice or a typed price consumes the flag", () => {
     const slice = (a: string, b: string) => src.slice(src.indexOf(a), src.indexOf(b));
     for (const [name, next] of [
       ["const setQty", "const updateQty"],
       ["const updateQty", "const setBoxes"],
       ["const setBoxes", "const setPieces"],
+      ["const stepLineUnit", "const addLineItem"],
+    ] as const) {
+      expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({
+        name,
+        consumed: false,
+      });
+    }
+    for (const [name, next] of [
       ["const setPieces", "const setUnitQty"],
       ["const setUnitQty", "const setSellBy"],
       ["const setSellBy", "/** The effective price tier"],
-      ["const stepLineUnit", "const addLineItem"],
-      ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
     ] as const) {
-      // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), via keepsDefaultStart
-      const rule = name.startsWith("const merge")
-        ? /startOnDefaultUnit: keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)/
-        : /startOnDefaultUnit: false/;
-      expect({ name, consumed: rule.test(slice(name, next)) }).toEqual({
+      expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({
         name,
         consumed: true,
       });
     }
+    // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), via keepsDefaultStart
+    expect(slice("const merge = (li: LineItem)", "// Built once, outside the updater")).toMatch(
+      /startOnDefaultUnit: keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)/,
+    );
   });
 });

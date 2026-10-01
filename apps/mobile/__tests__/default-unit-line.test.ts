@@ -406,3 +406,55 @@ describe("SA-626g N10: 'try again' on the blocked message REFETCHES the units an
     expect(known).not.toHaveBeenCalled();
   });
 });
+
+describe("SA-626h: a qty change via the stepper does NOT shape a line (only a unit pick or a typed price does)", () => {
+  const opts = buildUnitOptions(product, [BOTTLE, ...CASE_ONLY], 1);
+  const caseOpt = opts.find((o) => o.value === "Case")!;
+
+  it("stepper + before the units load: still pending, and it resolves to N x the default unit at the unit's price", async () => {
+    // a shared scan created the line at qty 12 (1 case, flag 12); the stepper then made it 2 cases = qty 24
+    const stepped = flagged({ qty: 24, boxes: 2, pieces: 0, startOnDefaultUnit: 12 });
+    expect(isPendingDefaultUnit(stepped)).toBe(true);
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: stepped },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", qty: 2, unitBasePrice: 2 });
+    // a non-boxed product (count semantics)
+    const d = deps([BOTTLE, ...CASE_ONLY], { productFor: () => ({ ...product, unitsPerBox: 1 }) });
+    const plain = (
+      await resolvePendingDefaultUnits({ p1: flagged({ qty: 2, startOnDefaultUnit: 1 }) }, d)
+    ).items.p1!;
+    expect(plain).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+  });
+
+  it("stepper + after the units loaded: unchanged (the resolved unit holds, the stepper just edits the count)", async () => {
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: flagged() },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    const afterStep = { ...items.p1!, qty: 3 };
+    expect(isPendingDefaultUnit(afterStep)).toBe(false);
+    const again = await resolvePendingDefaultUnits({ p1: afterStep }, deps([BOTTLE, ...CASE_ONLY]));
+    expect(again.items.p1).toBe(afterStep);
+  });
+
+  it("an explicit unit pick, THEN stepper +: the picked unit is kept, never re-started on the default", async () => {
+    const picked = applyUnitOption(flagged(), caseOpt, 12);
+    expect(picked.startOnDefaultUnit).toBeUndefined();
+    const stepped = { ...picked, qty: picked.qty + 1 };
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: stepped },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    expect(items.p1).toBe(stepped);
+    expect(items.p1!.unitLabel).toBe("Case");
+  });
+
+  it("loose pieces (an explicit sell-by choice) or a typed price still shape the line", () => {
+    expect(
+      isPendingDefaultUnit(flagged({ qty: 14, boxes: 1, pieces: 2, startOnDefaultUnit: 12 })),
+    ).toBe(false);
+    expect(isPendingDefaultUnit(flagged({ priceSource: "operator", unitPrice: 9 }))).toBe(false);
+  });
+});

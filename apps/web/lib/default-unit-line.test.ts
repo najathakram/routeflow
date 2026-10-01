@@ -326,3 +326,26 @@ describe("SA-626g N10 + N9 (web): try again refetches the units answer; the read
     expect(d.getUnits).not.toHaveBeenCalled();
   });
 });
+
+describe("SA-626h (web): a qty change via the stepper does NOT shape a line", () => {
+  it("a stepped boxed line (3 cases) is still pending and resolves to 3 of the default unit; loose pieces shape it", async () => {
+    const stepped = line({ qty: 36, boxes: 3, pieces: 0 });
+    expect(isPendingDefaultUnit(stepped)).toBe(true);
+    const { lines } = await resolvePendingDefaultUnits([stepped], deps([BOTTLE, CASE_LEVEL]));
+    expect(lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3, unitPrice: 2 });
+    expect(isPendingDefaultUnit(line({ qty: 14, boxes: 1, pieces: 2 }))).toBe(false);
+  });
+
+  it("an explicit unit pick, then a qty step: the picked unit is kept", async () => {
+    const [, bottle] = buildUnitOptions(
+      { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" },
+      [BOTTLE],
+      1,
+    );
+    const [picked] = applyUnitToLines([line()], "t1", bottle!, false, 1);
+    const stepped = { ...picked!, qty: picked!.qty + 1 };
+    expect(isPendingDefaultUnit(stepped)).toBe(false);
+    const { lines } = await resolvePendingDefaultUnits([stepped], deps([BOTTLE, CASE_LEVEL]));
+    expect(lines[0]).toBe(stepped);
+  });
+});
