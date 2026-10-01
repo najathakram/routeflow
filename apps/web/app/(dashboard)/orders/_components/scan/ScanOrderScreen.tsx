@@ -651,7 +651,7 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
       <div className="shrink-0 border-b border-surface-border px-3 py-2">
         {/* Scan mode: OPTIONAL per device (owner ruling 2026-09-24), default Continuous. */}
         <div
-          className="mb-1 flex items-center gap-2 text-xs text-navy/60"
+          className="mb-1 flex flex-wrap items-center gap-2 text-xs text-navy/60"
           role="group"
           aria-label="Scan mode"
         >
