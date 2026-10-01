@@ -33,6 +33,7 @@ import {
   syncClone,
 } from "../sources/state-branch";
 import type { Draft, Tree } from "../sources/state-branch";
+import { LINE_MAX, checkLaneFields, initCmd, originCmd } from "./init";
 import {
   changeLine,
   formatNext,
@@ -194,7 +195,6 @@ async function checkLane(ctx: Ctx, lane: string, fresh?: Snapshot): Promise<Snap
 
 /* ------------------------------------------------------------------ change verbs */
 
-const LINE_MAX = 240;
 /** Lines the library allows up to 1,024 B for (lead verb, long titles); everything else is 240. */
 const WIDE_TYPES = new Set(["task.created"]);
 
@@ -239,6 +239,19 @@ function adoptOfflinePending(ctx: Ctx, clone: string): void {
   }
 }
 
+/** The draft an event is appended with: caller fields plus `by`, the working repo's sha and `--note`. */
+function fullDraft(ctx: Ctx, draft: { type: string; [k: string]: unknown }): Draft {
+  const sha = headShort(ctx.cwd);
+  const note = flag(ctx, "note");
+  // a sha the caller set (sync: the merged commit) wins over the working repo's HEAD
+  return {
+    by: "agent",
+    ...(sha ? { sha } : {}),
+    ...draft,
+    ...(note !== undefined && draft.type !== "lane.note" ? { note: noteText(note) } : {}),
+  };
+}
+
 interface EmitOpts {
   mint?: (state: ControlState) => string;
   quiet?: boolean;
@@ -253,15 +266,7 @@ async function emit(
   opts: EmitOpts = {},
 ): Promise<ControlEvent> {
   const lane = assertLaneName(laneOf(ctx));
-  const sha = headShort(ctx.cwd);
-  const note = flag(ctx, "note");
-  // a sha the caller set (sync: the merged commit) wins over the working repo's HEAD
-  const full: Draft = {
-    by: "agent",
-    ...(sha ? { sha } : {}),
-    ...draft,
-    ...(note !== undefined && draft.type !== "lane.note" ? { note: noteText(note) } : {}),
-  };
+  const full = fullDraft(ctx, draft);
   assertLineBudget(ctx, lane, full, opts.mint !== undefined);
   let clone: string;
   try {
@@ -728,12 +733,52 @@ const compactCmd: Command = async (ctx) => {
   );
 };
 
+/**
+ * `ctl lane register <id> --name "<n>" --machine <m> --kind <k> [--inactive]`: one `lane.registered`
+ * event through the normal append path, emitted by the caller's lane (the lane rules require it to
+ * be lead-like). An existing id is updated (the fold merges), which prints `updated` instead.
+ */
+const laneRegister: Command = async (ctx) => {
+  if (ctx.args.pos.length > 2) throw new CtlError(2, "lane register: unexpected argument");
+  const f = checkLaneFields(
+    {
+      id: pos(ctx, 1, "lane id"),
+      name: need(ctx, "name"),
+      machine: need(ctx, "machine"),
+      kind: need(ctx, "kind"),
+      active: ctx.args.flags.inactive !== true,
+    },
+    (field) => `lane register ${field}`,
+  );
+  const draft = {
+    type: "lane.registered",
+    laneId: f.id,
+    name: f.name,
+    machine: f.machine,
+    kind: f.kind,
+    active: f.active,
+  };
+  // refuse an over-long or denylisted line before any fetch, like every other verb
+  assertLineBudget(ctx, assertLaneName(laneOf(ctx)), fullDraft(ctx, draft), false);
+  let fresh: Snapshot | undefined;
+  try {
+    fresh = await snapshot(ctx);
+  } catch (e) {
+    // no clone and no origin: emit parks the line itself
+    if (!(e instanceof CtlError) || e.code !== 5) throw e;
+  }
+  const existed = fresh !== undefined && knownLane(fresh.state, f.id);
+  await emit(ctx, draft, { quiet: true, fresh });
+  ctx.out(`${existed ? "updated" : "registered"} ${f.id}\n`);
+};
+
 const laneCmd: Command = async (ctx) => {
   const sub = ctx.args.pos[0];
   if (sub === undefined) {
     ctx.out(`${ctx.lane ?? "none"}\n`);
     return;
   }
+  if (sub === "register") return laneRegister(ctx);
   if (sub !== "use") throw new CtlError(2, `lane: unknown subcommand ${sub}`);
   const name = assertLaneName(pos(ctx, 1, "lane"));
   await checkLane(ctx, name);
@@ -774,6 +819,8 @@ export const COMMANDS: Record<string, Command> = {
   compact: compactCmd,
   validate,
   lane: laneCmd,
+  init: initCmd,
+  origin: originCmd,
   serve,
 };
 
@@ -785,6 +832,8 @@ export const LANELESS = new Set([
   "compact",
   "validate",
   "lane",
+  "init",
+  "origin",
   "serve",
   "next",
 ]);

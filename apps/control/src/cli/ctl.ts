@@ -2,7 +2,12 @@
  * `ctl` entry point: argument parsing, lane resolution, environment, exit codes (spec §7).
  *
  * Environment and defaults:
- *   CONTROL_STATE_ORIGIN  origin of the state branch; default: the working repo's `origin` remote.
+ *   --origin <url>        state remote for this call (beats everything below).
+ *   CONTROL_STATE_ORIGIN  state remote (beats the config file). Resolution: flag, env, then the first
+ *                         line of <config dir>/origin (`ctl origin set`), else NONE: no fallback to the
+ *                         working repo's `origin`. The product repo is refused as a state remote.
+ *   CONTROL_CONFIG_DIR    directory holding the `origin` file; default $XDG_CONFIG_HOME or ~/.config,
+ *                         plus /routeflow-control.
  *   CONTROL_STATE_DIR     clone directory; default: <os cache dir>/routeflow-control/state-<hash of
  *                         origin> (macOS ~/Library/Caches, Windows %LOCALAPPDATA%, else
  *                         $XDG_CACHE_HOME or ~/.cache), so each machine keeps one clone per origin.
@@ -19,6 +24,7 @@ import { loadRegisters } from "../sources/registers";
 import type { Registers } from "../sources/registers";
 import { CtlError, assertLaneName, gitTry } from "../sources/git";
 import type { Env } from "../sources/git";
+import { NO_STATE_REMOTE, resolveStateOrigin } from "../sources/origin";
 import { COMMANDS, LANELESS } from "./commands";
 import type { Args, Ctx } from "./commands";
 import { controlFailure, oneLine } from "./format";
@@ -41,15 +47,22 @@ const VALUE_FLAGS = new Set([
   "card",
   "since",
   "task",
+  "roster",
+  "emitter",
+  "name",
+  "machine",
+  "origin",
 ]);
-const BOOL_FLAGS = new Set(["json", "quiet", "hook"]);
+const BOOL_FLAGS = new Set(["json", "quiet", "hook", "dry-run", "inactive"]);
 
 const USAGE = `usage: ctl <verb> [args]
   next [--lane X] [--json] [--quiet]   start | done [--pr n] | block --reason "..." | unblock
   set-next <task|none>   progress <task> --phase p   note "..."   propose "<title>" --kind k --areas a,b
   bug "<title>" --location l --severity s   pr-body <task>   show <id>   overlap | piggyback | waste
   handoff --card <path>   sync --since <sha>   task new "<title>" --kind k   adopt <tmpId>
-  compact | validate | lane use <lane> | serve`;
+  compact | validate | lane use <lane> | serve
+  lane register <id> --name "<n>" --machine <m> --kind <k> [--inactive]
+  init --roster <file> [--emitter <lane>] [--dry-run]   origin [set <url> | unset]`;
 
 /** The single clock: seconds-resolution UTC, overridable for tests. */
 const clock = (): string =>
@@ -125,18 +138,15 @@ function loadRegs(cwd: string): Registers {
   return loadRegisters({});
 }
 
-function buildEnv(cwd: string, registers: Registers): Env {
-  let origin = process.env.CONTROL_STATE_ORIGIN;
-  if (origin === undefined || origin === "") {
-    const r = gitTry(cwd, ["remote", "get-url", "origin"]);
-    if (!r.ok || r.out.trim() === "") {
-      throw new CtlError(
-        2,
-        "no origin: set CONTROL_STATE_ORIGIN or run inside a repo with `origin`",
-      );
-    }
-    origin = r.out.trim();
-  }
+/** The state remote for this call (flag, env, file); NONE is exit 2 with the fix. */
+function stateOrigin(args: Args): string {
+  const flag = args.flags.origin;
+  const r = resolveStateOrigin({ flag: typeof flag === "string" ? flag : undefined });
+  if (r.origin === null) throw new CtlError(2, NO_STATE_REMOTE);
+  return r.origin;
+}
+
+function buildEnv(origin: string, registers: Registers): Env {
   const cloneDir =
     process.env.CONTROL_STATE_DIR ||
     path.join(
@@ -171,18 +181,29 @@ export async function main(argv: string[]): Promise<void> {
     if (lane === null && !LANELESS.has(args.verb)) {
       throw new CtlError(2, "no lane: pass --lane, set CTL_LANE, or run `ctl lane use <lane>`");
     }
-    if (args.verb === "serve" || (args.verb === "lane" && args.pos[0] !== "use")) {
+    const sub = args.pos[0];
+    if (
+      args.verb === "serve" ||
+      args.verb === "origin" ||
+      (args.verb === "lane" && sub !== "use" && sub !== "register")
+    ) {
       const ctx = { cwd, lane, args, out: (t: string) => void process.stdout.write(t) } as Ctx;
       await COMMANDS[args.verb](ctx);
       return;
     }
-    const registers = loadRegs(cwd);
+    // the origin is resolved (and the product repo refused) before any register or clone work
+    const origin = stateOrigin(args);
+    // init only needs the origin and the clock: no registers, no clone
+    const registers: Registers =
+      args.verb === "init"
+        ? { tasks: [], releases: [], registerTasks: [], warnings: [] }
+        : loadRegs(cwd);
     const ctx: Ctx = {
       cwd,
       lane,
       args,
       registers,
-      env: buildEnv(cwd, registers),
+      env: buildEnv(origin, registers),
       out: (t) => void process.stdout.write(t),
     };
     await COMMANDS[args.verb](ctx);
@@ -195,7 +216,11 @@ export async function main(argv: string[]): Promise<void> {
     if (argv[0] === "next" && argv.includes("--hook")) return; // hook: print nothing, exit 0
     if (argv[0] === "next") {
       // `next` always exits 0 and prints exactly one line, even with --quiet
-      process.stdout.write(controlFailure(code === 3 ? 3 : 5, msg));
+      process.stdout.write(
+        msg === NO_STATE_REMOTE
+          ? `control: ${NO_STATE_REMOTE}\n`
+          : controlFailure(code === 3 ? 3 : 5, msg),
+      );
       return;
     }
     // validate lists its errors (exit 3); everything else is one line
