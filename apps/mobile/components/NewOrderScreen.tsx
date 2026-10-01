@@ -38,10 +38,10 @@ import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
-import { resolveScanSellLevel } from "@routeflow/scanning";
+import { isSharedScanCode, resolveScanSellLevel } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
 import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
-import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import { makeScanHandler, runWedgeSubmit, type ScanAcceptOpts } from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
@@ -1017,8 +1017,9 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, level: SellLevel): ScanOutcome => {
-    addOne(product.id, product, level);
+  const finishAccept = (product: Product, level: SellLevel, opts?: ScanAcceptOpts): ScanOutcome => {
+    // SA-626: only a SHARED code starts the new line on the default selling unit.
+    addOne(product.id, product, level, opts?.startOnDefault);
     bumpScanned(product.id);
     clearSearch();
     const label =
@@ -1033,11 +1034,15 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
+  const acceptScannedProduct = (
+    product: Product,
+    level: SellLevel = "BOX",
+    opts?: ScanAcceptOpts,
+  ): ScanOutcome => {
     const label = items[product.id]?.unitLabel;
-    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, opts);
     const onYes = () => {
-      const o = finishAccept(product, level);
+      const o = finishAccept(product, level, opts);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1137,7 +1142,12 @@ function ProductPickView({
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
     if (!scanGuardRef.current.offer(code, match, level)) return;
-    const outcome = acceptScannedProduct(match, level);
+    const levels = levelsForScan(code, match);
+    const outcome = acceptScannedProduct(
+      match,
+      level,
+      isSharedScanCode(levels) ? { startOnDefault: true } : undefined,
+    );
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);

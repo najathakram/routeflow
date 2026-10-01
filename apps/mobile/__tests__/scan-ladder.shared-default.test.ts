@@ -56,7 +56,10 @@ describe("scan ladder: shared code starts on the default unit (SA-626)", () => {
   });
 
   it("the server-resolved hit follows the same rule", async () => {
-    const resolve = async (): Promise<BarcodeResolveResult<P>> => ({ product: boxed });
+    const resolve = async (): Promise<BarcodeResolveResult<P>> => ({
+      product: boxed,
+      source: "barcode",
+    });
     expect(await run(SHARED_CODE, { products: [], resolve })).toEqual([
       { level: "BOX", opts: { startOnDefault: true } },
     ]);

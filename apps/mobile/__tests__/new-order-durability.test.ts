@@ -264,7 +264,7 @@ describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () =>
 
   it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
     const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
-    expect(fn).toMatch(/return finishAccept\(product, level\);/);
+    expect(fn).toMatch(/return finishAccept\(product, level, opts\);/);
   });
 });
 

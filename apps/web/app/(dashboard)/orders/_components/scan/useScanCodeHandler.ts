@@ -4,6 +4,7 @@ import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
 import {
   levelsForScannedCode,
+  isSharedScanCode,
   resolveScanSellLevel,
   scanMatchIsForCode,
   type ScanBarcodeRow,
@@ -65,8 +66,7 @@ export function scanLevelsForHit(code: string, product: any): SellLevel[] {
 
 /** #2784: a code that resolves at BOTH levels is "shared"; only then may the new line start on the default unit. */
 export function scanCodeIsShared(code: string, product: any): boolean {
-  const levels = scanLevelsForHit(code, product);
-  return levels.includes("BOX") && levels.includes("UNIT");
+  return isSharedScanCode(scanLevelsForHit(code, product));
 }
 
 export function scanLevelForHit(code: string, product: any): SellLevel {
