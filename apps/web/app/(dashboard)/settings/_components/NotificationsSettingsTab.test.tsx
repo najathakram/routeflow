@@ -22,6 +22,13 @@ jest.mock("@/lib/api/messaging", () => ({
     isLoading: false,
     data: {
       events: [],
+      // The matrix API always returns channelStatus (#1965 PR-A); the tab reads it.
+      channelStatus: {
+        EMAIL: "LIVE",
+        WHATSAPP: "NOT_BUILT",
+        SMS: "NOT_BUILT",
+        PORTAL: "NOT_BUILT",
+      },
       msgsMeter: null,
       settings: { quietHoursEnabled: false, quietHoursStart: "21:00", quietHoursEnd: "07:00" },
     },

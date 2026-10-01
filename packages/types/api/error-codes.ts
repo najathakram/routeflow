@@ -56,6 +56,8 @@
 //                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
 //                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
+//   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
+//                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -94,6 +96,9 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
+  BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
+  BILL_VOID: "BILL_VOID",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

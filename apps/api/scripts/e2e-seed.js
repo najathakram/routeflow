@@ -284,6 +284,22 @@ async function ensureFixtureUser(tenantId, c) {
   return user;
 }
 
+// B917: the e2e customer LOGIN (harbor_cafe) must be linked to a Customer row, or GET /orders answers it
+// 403 CUSTOMER_NOT_LINKED and the customer dashboard cannot load. userId is @unique -> a safe upsert;
+// `update` un-deletes a soft-deleted row so a re-seed repairs it. Never overwrites the business name.
+async function ensureCustomerRecordFor(tenantId, userId) {
+  return prisma.customer.upsert({
+    where: { userId },
+    create: {
+      userId,
+      businessName: "E2E Harbor Cafe",
+      contactName: "E2E Customer",
+      tenantId,
+    },
+    update: { deletedAt: null },
+  });
+}
+
 async function ensureCommerceFixtures(tenantId) {
   const customers = [];
   for (const c of FIXTURE_CUSTOMERS) {
@@ -617,6 +633,13 @@ async function main() {
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
     }
+    // B917: link the customer login to a Customer record (idempotent).
+    {
+      const loginUser = await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: CUSTOMER_USERNAME },
+      });
+      if (loginUser) await ensureCustomerRecordFor(existing.id, loginUser.id);
+    }
 
     // ── TENANT_ADMIN (B138 e2e precondition) ────────────────────────────────────
     // platform-admin impersonate() requires an ACTIVE TENANT_ADMIN; without one the
@@ -789,7 +812,7 @@ async function main() {
   console.log(`  ✓ Operator created: ${OPERATOR_USERNAME} / ${OPERATOR_PASSWORD}`);
 
   // ── Customer user ────────────────────────────────────────────────────────────
-  await prisma.user.create({
+  const customerLogin = await prisma.user.create({
     data: {
       email: "harbor_cafe@e2e-routeflow.test",
       username: CUSTOMER_USERNAME,
@@ -800,6 +823,8 @@ async function main() {
       tenantId: tenant.id,
     },
   });
+  // B917: link the customer login to a Customer record (idempotent).
+  await ensureCustomerRecordFor(tenant.id, customerLogin.id);
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
 
   // ── Tenant admin user (B138 e2e precondition) ────────────────────────────────

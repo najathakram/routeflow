@@ -20,12 +20,12 @@
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path, { dirname, join } from "node:path";
 import {
   changedFilesSince,
-  cleanGitEnv,
   computeScope,
   decideScope,
   loadWorkspaces,
@@ -132,7 +132,7 @@ function isUnder(root, p, pathImpl = path) {
 }
 
 const fixtureEnv = () => ({
-  ...cleanGitEnv(),
+  ...scrubbedGitEnv(),
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
 });

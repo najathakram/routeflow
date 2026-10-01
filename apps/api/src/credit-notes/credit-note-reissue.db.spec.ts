@@ -77,6 +77,7 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
   const mockLedger = {
     reverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
     unreverseCreditNoteEntries: jest.fn().mockResolvedValue(undefined),
+    reverseInvoiceEntries: jest.fn().mockResolvedValue(undefined), // deleteInvoice (case 15)
   };
   const mockCommissionEngine = {
     syncInvoiceCommissionSafe: jest.fn().mockResolvedValue(undefined),
@@ -534,6 +535,47 @@ describeDb("#2648 credit-note reissue (SA-535b)", () => {
       );
       expect((await prisma.creditNote.findUnique({ where: { id: o.id } }))?.status).toBe("ISSUED");
       expect((await counter(o.tenantId))?.nextNumber).toBe(before?.nextNumber);
+    }, 60_000);
+
+    it("15: #2848 - deleting an invoice with 2 closed linked notes leaves 2 SOURCE_DELETED rows; reissue of either is a 409", async () => {
+      const { tenantId, customerId } = await seedTenant("srcdel");
+      const invSrc = await seedSentInvoice(tenantId, customerId, 50);
+      const a = await seedSourcedCredit(tenantId, customerId, invSrc, 20);
+      const b = await seedSourcedCredit(tenantId, customerId, invSrc, 20);
+      // Closed = expired (deleteInvoice refuses while a sourced note still has spendable balance).
+      await prisma.creditNote.updateMany({
+        where: { id: { in: [a.id, b.id] } },
+        data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+      });
+
+      await tenantCtx.run(tenantId, () => invoices.deleteInvoice(invSrc));
+
+      const marks = await prisma.auditLog.findMany({
+        where: { tenantId, entityType: "CreditNote", action: "SOURCE_DELETED" },
+      });
+      expect(marks.map((m) => m.entityId).sort()).toEqual([a.id, b.id].sort());
+      expect(marks[0].meta).toMatchObject({ invoiceId: invSrc });
+      expect((await prisma.creditNote.findUnique({ where: { id: a.id } }))?.invoiceId).toBeNull();
+
+      const before = await counter(tenantId);
+      for (const [n, key] of [
+        [a, "k-15a"],
+        [b, "k-15b"],
+      ] as const) {
+        // <= its own amount and a future expiry: SA-608c (a) alone would let this pass.
+        await expect(
+          run(tenantId, n.id, { amount: 10, expiresAt: "2999-01-01T00:00:00.000Z" }, key),
+        ).rejects.toThrow(/source invoice was deleted/);
+        expect((await prisma.creditNote.findUnique({ where: { id: n.id } }))?.status).toBe(
+          "ISSUED",
+        );
+        await expect(
+          tenantCtx.run(tenantId, () =>
+            creditNotes.updateCreditNote(n.id, { expiresAt: "2999-01-01T00:00:00.000Z" }, null),
+          ),
+        ).rejects.toThrow(/source invoice was deleted/);
+      }
+      expect((await counter(tenantId))?.nextNumber).toBe(before?.nextNumber); // no number burned
     }, 60_000);
 
     it("14: a born-standalone note: down passes, up is a 409", async () => {
