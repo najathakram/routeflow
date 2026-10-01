@@ -1136,13 +1136,13 @@ function ProductPickView({
     const { match } = findExactScanMatch(code, products);
     if (!match) return;
     if (!autoAddAttemptRef.current.shouldAutoAdd(code)) return;
-    const level = resolveScanSellLevel(match, levelsForScan(code, match));
+    const levels = levelsForScan(code, match);
+    const level = resolveScanSellLevel(match, levels);
     // Consume the nonce FIRST (above), then offer: a match parked on an open
     // ladder claim must not re-park on a later settle of the same attempt. A
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
     if (!scanGuardRef.current.offer(code, match, level)) return;
-    const levels = levelsForScan(code, match);
     const outcome = acceptScannedProduct(
       match,
       level,
@@ -2422,6 +2422,8 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
+          // SA-626: deliberately NO start-on-default here. The code only substring-matched several rows (it is
+          // not an exact code of the chosen product), so it carries no level: a manual pick adds like a tap-free BOX.
           acceptScannedProduct(p as unknown as Product);
         }}
       />
