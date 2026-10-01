@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
   useApproveReturn,
@@ -496,7 +497,7 @@ export default function ReturnDetailPage() {
             ?.message;
           toast({
             title: "Failed to resolve return",
-            description: message ?? "Please try again.",
+            description: refundErrorMessage(err, message) ?? "Please try again.",
             variant: "error",
           });
         },

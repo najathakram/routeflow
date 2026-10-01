@@ -28,6 +28,8 @@ module.exports = {
   PREF: {
     lowStockDigestEnabled: "lowStockDigestEnabled",
     pushEnabled: "pushEnabled",
+    staffOrderEmail: "staffOrderEmail",
+    staffBuyerChangeEmail: "staffBuyerChangeEmail",
     locale: "locale",
     billLastSupplierId: "bill.lastSupplierId",
     paymentLastMethod: "payment.lastMethod",
@@ -73,6 +75,7 @@ module.exports = {
     CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
     CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
     CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+    RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
     CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
     CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
     CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
@@ -85,6 +88,7 @@ module.exports = {
     CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
     BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
     BILL_VOID: "BILL_VOID",
+    INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],

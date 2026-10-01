@@ -116,6 +116,9 @@ const NON_WRITERS = new Set([
   // INSUFFICIENT_STOCK: reads the live pack as a DISPLAY GATE only (is `Product.unit` the piece unit
   // or the pack name?) to label a shortfall sentence — derives no line factor, quantity or price.
   "orders/stock-shortfall-unit.ts",
+  // B948: reads the live pack ONLY as the LAST fallback to express an inline return's PIECES on a legacy
+  // line's own qty axis (the same fallback order the inline pricing uses); writes no line, snapshots nothing.
+  "credit-notes/line-credit-headroom.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");

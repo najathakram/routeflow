@@ -160,3 +160,4 @@ strix_runs/
 
 # #2671: per-worktree Jest caches (each workspace's cacheDirectory) — never source.
 .jest-cache/
+.claude/control/.lane

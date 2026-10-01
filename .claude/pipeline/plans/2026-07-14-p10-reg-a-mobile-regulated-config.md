@@ -133,11 +133,7 @@ import { apiClient } from "../api-client";
 // ─── Types (mirror apps/web/lib/api/tracked-categories.ts) ──────────────────────
 
 export type TrackedCategoryTaxType =
-  | "EXCISE_PER_UNIT"
-  | "PERCENT_OF_SALE"
-  | "PER_VOLUME"
-  | "DEPOSIT_PER_CONTAINER"
-  | "NONE";
+  "EXCISE_PER_UNIT" | "PERCENT_OF_SALE" | "PER_VOLUME" | "DEPOSIT_PER_CONTAINER" | "NONE";
 export type InvoiceTreatment = "SEPARATE_INVOICE" | "SEPARATE_SECTION" | "LINE_TAX";
 export type ReportCadence = "MONTHLY" | "QUARTERLY" | "ANNUAL";
 

@@ -49,9 +49,7 @@ const RESTRICTIONS_ITEM: HubItem = {
   href: "/settings/restrictions",
 };
 
-/** What the search matches for the Route defaults card (kept in step with its hub item). */
-const ROUTE_DEFAULTS_TEXT =
-  "route defaults service time start time speed depot location orders & stock";
+const ROUTE_DEFAULTS_HREF = "#route-defaults";
 
 const GROUPS: HubGroup[] = [
   {
@@ -111,7 +109,7 @@ const GROUPS: HubGroup[] = [
       {
         label: "Route defaults",
         desc: "Service time, start time, speed & depot location",
-        href: "#route-defaults",
+        href: ROUTE_DEFAULTS_HREF,
       },
       {
         label: "Batch invoice import",
@@ -218,6 +216,14 @@ function HubLink({ item }: { item: HubItem }) {
       <ChevronRight className="mt-0.5 h-4 w-4 flex-none text-navy/30 group-hover:text-brand-500" />
     </Link>
   );
+}
+
+/** The card shows exactly when its hub item is listed: same label + description + group title. */
+function routeDefaultsMatches(q: string): boolean {
+  const group = GROUPS.find((g) => g.items.some((it) => it.href === ROUTE_DEFAULTS_HREF))!;
+  const item = group.items.find((it) => it.href === ROUTE_DEFAULTS_HREF)!;
+  // Per field, like the hub's own filter — a query spanning two fields matches neither.
+  return [item.label, item.desc, group.title].some((t) => t.toLowerCase().includes(q));
 }
 
 export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
@@ -339,7 +345,7 @@ export function SettingsHub({ isAdmin }: { isAdmin: boolean }) {
         </div>
       )}
 
-      {(!q || ROUTE_DEFAULTS_TEXT.includes(q)) && (
+      {(!q || routeDefaultsMatches(q)) && (
         <div id="route-defaults" className="max-w-3xl">
           <RouteDefaultsCard />
         </div>

@@ -37,6 +37,8 @@ in `useOpenPurchaseOrders` always return zero rows for that leg; `lib/api/buyer.
 | [mobile/landing-2026-09-29-early.md](mobile/landing-2026-09-29-early.md) | Landing 2026-09-29 early (mobile+web): price suffix, buyer bell seller switch, qty width, PO pack labels, applied credits |
 | [mobile/landing-2026-09-29-midday.md](mobile/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday (mobile): OTA runtime 1.2.0, ADD_ITEM retry drop (B795), shared PaymentMethod |
 | [mobile/landing-2026-09-29-late.md](mobile/landing-2026-09-29-late.md) | Landing 2026-09-29 late (mobile): iOS scan-tray price modal sequencing (B901) |
+| [mobile/landing-2026-10-01-w12-w27.md](mobile/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 (mobile): scan level by code, aim box + Hold to scan, credit-note edit UI, `defaultUnitValue` |
 | [mobile/landing-2026-09-30-w9-w11.md](mobile/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (mobile): PO receive stored pack (#2781), socket bulk invalidation pins, M3 sub-lines |
+| [mobile/landing-2026-09-30-drift-c38f2b0.md](mobile/landing-2026-09-30-drift-c38f2b0.md) | Landing 2026-09-30 (earlier drift, mobile): applied-credit wording, credit createdAt, Google mismatch message |
 | [mobile/landing-2026-09-28-late.md](mobile/landing-2026-09-28-late.md) | Landing 2026-09-28 late: buyer custom lines skipped (B889), useNewUi flag, one-unit-sold surfaces, return-only-bought guard |
 | [mobile/catchup-2026-09-21.md](mobile/catchup-2026-09-21.md) | Catch-up 2026-09-21: `BlockedLinesModal`, `po-list-logic`, `selling-restricted` |

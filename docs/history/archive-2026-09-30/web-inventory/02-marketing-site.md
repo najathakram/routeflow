@@ -42,11 +42,11 @@ The marketing site is a static, mostly server-rendered brochure: a neutral home 
   - **Side-switch** (absolutely centred, `role="tablist"`): three links — **"Overview"** (`/`, active when neutral), **"I'm a retailer"** (`/retailers`), **"I'm a wholesaler"** (`/wholesalers`). The active tab gets a white pill; on themed pages its text takes the side-accent-deep color.
   - **Right side:** rendered **only on themed pages** (`side !== "neutral"`) — a **"Sign in"** text link + a filled `.btn-side` CTA. Neutral pages deliberately render nothing here (the centre switch is the only entry point).
 - **Actions / CTA targets** (all via `getAuthHref(side, mode)` in `components/auth-links.ts`):
-  | Side | "Sign in" → | CTA label | CTA → |
-  |---|---|---|---|
-  | retailer | `/buyer/login` | **"Sign up"** | `/buyer/register` |
-  | wholesaler | `/login` | **"Start free trial"** | `/signup` |
-  | neutral | (hidden) | (hidden) | — |
+  | Side       | "Sign in" →    | CTA label              | CTA →             |
+  | ---------- | -------------- | ---------------------- | ----------------- |
+  | retailer   | `/buyer/login` | **"Sign up"**          | `/buyer/register` |
+  | wholesaler | `/login`       | **"Start free trial"** | `/signup`         |
+  | neutral    | (hidden)       | (hidden)               | —                 |
   - Note in source: retailer CTA says **"Sign up"** (free portal account), not "Get the app" — the standalone mobile app isn't shipped yet.
 - **States:** Side-specific links (Features/Pricing/Help/Company) were **intentionally removed** from the nav-right because they overlapped the centred switch; they live only in the footer. Side-switch hidden entirely on mobile (< 768px).
 
@@ -139,11 +139,11 @@ The marketing site is a static, mostly server-rendered brochure: a neutral home 
 - **Shows:**
   - Header — eyebrow "Pricing", H1 "One clear price. No _seat games._", subhead "Distributors pay a flat monthly fee. Retailers use the app for free."
   - **`PricingTiers`** — a **monthly/yearly toggle** ("Yearly · save 16%", `useState`). 3 tiers:
-    | Tier | Monthly | Yearly | CTA → | Notes |
-    |---|---|---|---|---|
-    | **Starter** | $49/mo | $41/mo | "Start free trial" → `/signup` | 200 customers, 1k orders/mo, 1 warehouse, 2 seats |
-    | **Growth** ⭐ _Most popular_ | $129/mo | $108/mo | "Start free trial" → `/signup` | 1k customers, 8k orders/mo, 3 warehouses, 10 seats, route opt. |
-    | **Scale** | "Let's talk" | — | "Talk to sales" → `/contact` | Unlimited, SSO, SLA, on-site training |
+    | Tier                         | Monthly      | Yearly  | CTA →                          | Notes                                                          |
+    | ---------------------------- | ------------ | ------- | ------------------------------ | -------------------------------------------------------------- |
+    | **Starter**                  | $49/mo       | $41/mo  | "Start free trial" → `/signup` | 200 customers, 1k orders/mo, 1 warehouse, 2 seats              |
+    | **Growth** ⭐ _Most popular_ | $129/mo      | $108/mo | "Start free trial" → `/signup` | 1k customers, 8k orders/mo, 3 warehouses, 10 seats, route opt. |
+    | **Scale**                    | "Let's talk" | —       | "Talk to sales" → `/contact`   | Unlimited, SSO, SLA, on-site training                          |
     - An **"Included on every plan"** band: mobile retailer app (free for customers), unlimited products, unlimited runs, bookkeeping/tax exports, bank-grade security, iOS & Android apps, API access.
   - **`PricingFaq`** — H2 "Common _questions._"; 6 native `<details>` accordions (no JS): retailers pay nothing, >8k orders → Scale, import from QuickBooks/Zoho/Excel, sales-tax filing, cancel anytime, price-lock-for-life.
 - **Actions:** Billing toggle (client state); tier CTAs → `/signup` / `/contact`.

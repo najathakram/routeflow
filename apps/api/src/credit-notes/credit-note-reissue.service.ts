@@ -218,6 +218,17 @@ export class CreditNoteReissueService {
     });
     const tz = await tenantTimeZone(this.prisma);
 
+    // SA-608g: the SOURCE invoice and its order go into the void's own sorted lock sets (SA-214), so
+    // the mint's KEY SHARE on the invoice never comes after holding the note. Read here, outside the
+    // tx: an invoice's order link never changes, and a row deleted meanwhile locks as a no-op.
+    const sourceInvoice = old.invoiceId
+      ? await db.invoice.findFirst({ where: { id: old.invoiceId }, select: { orderId: true } })
+      : null;
+    const lockExtra = {
+      orderIds: sourceInvoice?.orderId ? [sourceInvoice.orderId] : [],
+      invoiceIds: old.invoiceId ? [old.invoiceId] : [],
+    };
+
     let outcome: { replayed: boolean; stored: StoredReissue };
     try {
       outcome = await retryOnTxConflict(`credit reissue cn=${id}`, () =>
@@ -231,7 +242,8 @@ export class CreditNoteReissueService {
             // blocks, CAS, ledger counter-entries, the VOIDED audit row. A refusal that only a
             // race can reach here is a 409 (the return case keeps the reissue wording).
             const { reopened } = await this.asConflict(
-              () => this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz),
+              () =>
+                this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz, undefined, lockExtra),
               true,
             );
 

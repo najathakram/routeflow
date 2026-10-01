@@ -20,7 +20,13 @@ describe("needsUnitLabelConfirm", () => {
   });
 
   it("does NOT prompt for a shared code on upb 6 (resolves to BOX), a BOX hit, or a line with no label", () => {
-    expect(needsUnitLabelConfirm(resolveScanSellLevel({ unitsPerBox: 6 }, ["BOX", "UNIT"]), { unitsPerBox: 6 }, "Piece")).toBe(false);
+    expect(
+      needsUnitLabelConfirm(
+        resolveScanSellLevel({ unitsPerBox: 6 }, ["BOX", "UNIT"]),
+        { unitsPerBox: 6 },
+        "Piece",
+      ),
+    ).toBe(false);
     expect(needsUnitLabelConfirm("BOX", { unitsPerBox: 6 }, "Piece")).toBe(false);
     expect(needsUnitLabelConfirm("UNIT", { unitsPerBox: 6 }, undefined)).toBe(false);
   });

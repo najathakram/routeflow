@@ -8,6 +8,17 @@
  */
 export type ScanMode = "continuous" | "hold";
 
+/** The ONE per-device storage key (web localStorage, native AsyncStorage). */
+export const SCAN_MODE_STORAGE_KEY = "routeflow.scanMode";
+
+/**
+ * The stored value -> a mode. Default Continuous: ONLY the exact value "hold" opts in; null, a missing key, a corrupted
+ * value or a storage that threw (callers pass null/undefined then) all mean the unchanged behaviour.
+ */
+export function parseScanMode(raw: unknown): ScanMode {
+  return raw === "hold" ? "hold" : "continuous";
+}
+
 /**
  * Whether a decoded frame should be acted on at all — the FIRST gate a frame passes
  * through, ahead of the aim box and steady-read checks (which have no reason to run at

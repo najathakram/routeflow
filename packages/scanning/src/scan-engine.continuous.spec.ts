@@ -2,6 +2,7 @@ import {
   continuousFrameScanned,
   createContinuousScanState,
   manualScanned,
+  resetSteadyRead,
   scanSettled,
   type ContinuousScanState,
 } from "./scan-engine";
@@ -331,5 +332,27 @@ describe("manualScanned keeps the caller's own state shape (web ScanOrderScreen 
     const step = manualScanned(start, "999");
     // `.steady` must typecheck: manualScanned is generic over the caller's state, not widened to ScanEngineState.
     expect(step.next.steady).toEqual(start.steady);
+  });
+});
+
+describe("resetSteadyRead (Hold-to-scan release: a re-grab needs a FRESH steady read)", () => {
+  it("clears the steady streaks and keeps the gate and buffer untouched", () => {
+    let s = createContinuousScanState();
+    s = continuousFrameScanned(s, "111", 1000).next;
+    s = continuousFrameScanned(s, "111", 1100).next;
+    expect(s.steady.length).toBeGreaterThan(0);
+    const reset = resetSteadyRead(s);
+    expect(reset.steady).toEqual([]);
+    expect(reset.gate).toBe(s.gate);
+    expect(reset.buffer).toBe(s.buffer);
+  });
+  it("after a reset the same code needs the full streak again (2 frames are not enough)", () => {
+    let s = continuousFrameScanned(createContinuousScanState(), "111", 1000).next;
+    s = continuousFrameScanned(s, "111", 1100).next;
+    s = resetSteadyRead(s);
+    const step = continuousFrameScanned(s, "111", 1200);
+    expect(step.startResolving).toBeNull();
+    const step2 = continuousFrameScanned(step.next, "111", 1300);
+    expect(step2.startResolving).toBeNull(); // streak is only 2 again
   });
 });

@@ -179,6 +179,51 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       ]);
     });
 
+    it("SA-608g: an optional `extra` set (the reissue's SOURCE invoice and order) joins the SAME sorted Order and Invoice sets, de-duplicated, before the CreditNote", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      const tx = { ...prisma, $executeRaw: exec };
+
+      await service.voidWithReversalInTx(tx, "cn-a", "user-7", null, undefined, {
+        orderIds: ["o-9", "o-0", "o-1"], // o-1 is already in the set
+        invoiceIds: ["inv-5", "inv-1"], // inv-1 is already in the set
+      });
+
+      const locked = exec.mock.calls.map(
+        (c: any[]) => `${c[0].join("?").match(/FROM "(\w+)"/)[1]}:${c[1]}`,
+      );
+      expect(locked.slice(0, 8)).toEqual([
+        "Order:o-0",
+        "Order:o-1",
+        "Order:o-2",
+        "Order:o-9",
+        "Invoice:inv-1",
+        "Invoice:inv-2",
+        "Invoice:inv-5",
+        "CreditNote:cn-a",
+      ]);
+    });
+
+    it("SA-608g: with no `extra` (the endpoint) the lock set is exactly what it was", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      const locked = exec.mock.calls.map(
+        (c: any[]) => `${c[0].join("?").match(/FROM "(\w+)"/)[1]}:${c[1]}`,
+      );
+      expect(locked.slice(0, 5)).toEqual([
+        "Order:o-1",
+        "Order:o-2",
+        "Invoice:inv-1",
+        "Invoice:inv-2",
+        "CreditNote:cn-a",
+      ]);
+    });
+
     it("SA-498a: an order holding only an intent (no payment) joins the sorted Order lock set", async () => {
       armNote();
       armRestore();
