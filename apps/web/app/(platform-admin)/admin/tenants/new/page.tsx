@@ -136,8 +136,7 @@ export default function AdminCreateTenantPage() {
                     The welcome email was NOT delivered to {success.welcomeEmail.to}.
                   </p>
                   <p className="mt-1 text-xs text-amber-200">
-                    Open the tenant and use Reset admin password to give the owner access
-                    {success.welcomeEmail.error ? ` (${success.welcomeEmail.error})` : ""}.
+                    Open the tenant and use Reset admin password to give the owner access.
                   </p>
                 </div>
               ))}
