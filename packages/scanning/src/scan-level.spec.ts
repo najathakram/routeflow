@@ -333,3 +333,11 @@ describe("isSharedScanCode (SA-626): the ONE rule web and mobile share for 'star
     }
   });
 });
+
+describe("no second 'which unit label' rule lives in @routeflow/scanning (SA-626a)", () => {
+  it("resolveScanSellChoice / ScanSellChoice / ScanDefaultUnits are not exported (defaultSellingLabel in pricing is the one rule)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("./scan-level") as Record<string, unknown>;
+    expect(mod.resolveScanSellChoice).toBeUndefined();
+  });
+});

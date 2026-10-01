@@ -145,3 +145,24 @@ describe("scanLevelForHit — scanMatch only speaks for the code that produced i
     expect(scanLevelForHit("unit-u", snap("UNIT-U", ["UNIT"]))).toBe("UNIT");
   });
 });
+
+describe("useScanCodeHandler: the substring first-row auto-add is a picker-style pick (SA-626a)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("an ambiguous multi-match (first row wins) starts the new line on the default unit, like a tap", async () => {
+    const p = boxed();
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: p,
+      source: "search",
+      ambiguous: true,
+      matches: [p, boxed({ id: "p2" })],
+    });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    result.current.current("CHIPS");
+    await waitFor(() => expect(d.addLineItem).toHaveBeenCalled());
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX", { startOnDefaultUnit: true });
+  });
+});
