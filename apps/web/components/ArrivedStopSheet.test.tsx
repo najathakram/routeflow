@@ -6,8 +6,9 @@ import { ArrivedStopSheet } from "./ArrivedStopSheet";
  * B966: "New order at door" (→ /orders?action=new) and "Collect payment" (→ /finance/payments)
  * both land on routes a pure DRIVER is bounced off (RouteGuard DRIVER_ALLOWED = /dashboard,
  * /routes, /settings): dead ends. Drivers place and collect in the native app. Both tiles are
- * hidden for a DRIVER; staff keep all three. "Adjust order" (under /orders/:id, reached from a
- * route the driver can open) is untouched.
+ * hidden for a DRIVER, and so is "Adjust order" (it goes to /orders/:id, bounced the same way);
+ * staff keep all three. A DRIVER's sheet therefore has NO tiles: it shows a short pointer to the
+ * driver app instead of an empty action row, and the title and close still work.
  */
 const push = jest.fn();
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
@@ -34,12 +35,27 @@ describe("ArrivedStopSheet role gating (B966)", () => {
     mockRole = "OPERATOR";
   });
 
-  it("a DRIVER sees only 'Adjust order'", () => {
+  it("a DRIVER sees NO tiles, a pointer to the driver app, and no empty action row", () => {
     mockRole = "DRIVER";
-    open();
-    expect(screen.getByText("Adjust order")).toBeInTheDocument();
+    const onClose = jest.fn();
+    render(
+      <ArrivedStopSheet
+        open
+        onClose={onClose}
+        customerName="Acme Foods"
+        orders={[{ id: "o1", orderNumber: "1001" }]}
+      />,
+    );
+    expect(screen.queryByText("Adjust order")).not.toBeInTheDocument();
     expect(screen.queryByText("New order at door")).not.toBeInTheDocument();
     expect(screen.queryByText("Collect payment")).not.toBeInTheDocument();
+    expect(screen.queryByText("At-the-door actions")).not.toBeInTheDocument();
+    expect(screen.getByText(/Use the RouteFlow driver app/i)).toBeInTheDocument();
+    expect(document.querySelector(".space-y-2\\.5")).toBeNull(); // no empty action container
+    // The sheet itself still works: the title shows and Close dismisses it.
+    expect(screen.getByText("Acme Foods")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /close/i }));
+    expect(onClose).toHaveBeenCalled();
   });
 
   it.each(["OPERATOR", "TENANT_ADMIN"])("%s sees all three tiles", (role) => {
@@ -58,9 +74,10 @@ describe("ArrivedStopSheet role gating (B966)", () => {
     expect(push).toHaveBeenCalledWith("/finance/payments");
   });
 
-  it("no signed-in user (not yet loaded) shows neither staff-only tile", () => {
+  it("no signed-in user (not yet loaded) shows no tile at all", () => {
     mockRole = undefined;
     open();
+    expect(screen.queryByText("Adjust order")).not.toBeInTheDocument();
     expect(screen.queryByText("New order at door")).not.toBeInTheDocument();
     expect(screen.queryByText("Collect payment")).not.toBeInTheDocument();
   });
