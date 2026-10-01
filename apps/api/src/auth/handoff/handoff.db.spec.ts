@@ -58,6 +58,7 @@ describeDb("#2653 sign-in handoff — both realms (real Postgres)", () => {
       new JwtService({}),
       { get: () => jwtConfig } as any,
       {} as any, // email (unused)
+      {} as any, // appleOAuth (unused by the handoff exchange)
     );
     buyer = new BuyerHandoffService(codes, prisma as any, buyerAuth);
   });
