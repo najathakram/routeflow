@@ -229,11 +229,14 @@ export class CreditNotesService {
     // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
     // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
     // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    // B960: with the order pool active (2+ creditable invoices) the pool is the ONE source for itemless refund lumps (it attributes
+    // each across the COMBINED lines); the per-invoice legacy term would attribute the same lump to THIS invoice's lines and
+    // refuse what the pool allows. The line's own credit note items and inline returns still bind per line.
     const lineCredits = await loadLineCredits(
       db,
       dto.invoiceId,
       (invoice.items ?? []).map(toHeadroomLine),
-      opts,
+      { ...opts, skipLegacy: pool !== null },
     );
     const creditedByLine = new Map<string, number>();
     const creditedQtyByLine = new Map<string, number>();
@@ -310,22 +313,18 @@ export class CreditNotesService {
       };
     });
     if (pool) {
-      // qty binds only when the operator GAVE one (an amount-only credit's qty is derived from the amount)
-      const explicitQty = new Set(
-        [...mergedByLine.values()].filter((m) => m.qty != null).map((m) => m.invoiceItemId),
-      );
-      const byProduct = new Map<string, { amount: number; qty: number | null }>();
+      // Every row's qty binds, derived or typed (in PIECES). With the pool as the only source for refund lumps, an amount-only
+      // credit's derived qty is what keeps the PRODUCT's pieces (and the regulated reversal that follows them) from being credited
+      // past what was billed when lines of the product carry different prices (B960 review).
+      const byProduct = new Map<string, { amount: number; qty: number }>();
       for (const row of cnItemsData) {
         const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
         if (!productId) continue;
-        const prev = byProduct.get(productId) ?? { amount: 0, qty: null };
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0 };
         // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
         const pieces =
           row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
-        byProduct.set(productId, {
-          amount: prev.amount + row.amount,
-          qty: explicitQty.has(row.invoiceItemId) ? (prev.qty ?? 0) + pieces : prev.qty,
-        });
+        byProduct.set(productId, { amount: prev.amount + row.amount, qty: prev.qty + pieces });
       }
       for (const [productId, take] of byProduct) {
         const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
