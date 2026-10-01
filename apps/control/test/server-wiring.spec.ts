@@ -21,7 +21,7 @@ afterEach(async () => {
   await h?.close();
 });
 const boot = async (opts: Parameters<typeof startServer>[0] = {}) => {
-  h = await startServer(opts);
+  h = await startServer({ writeback: true, ...opts }); // these specs exercise the write path
   s = await h.session();
 };
 const doWrite = async (): Promise<any> => {

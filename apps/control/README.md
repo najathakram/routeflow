@@ -151,8 +151,19 @@ the reason in parentheses.
 | `CONTROL_STATE_REPO`                                      | yes        | `owner/name` of the state repo; never the product repo |
 | `CONTROL_PUBLIC_URL`                                      | yes        | the origin writes are checked against                  |
 | `CONTROL_WEBHOOK_SECRET`                                  | no         | enables the GitHub webhook                             |
+| `CONTROL_WRITEBACK`                                       | no         | web write path; default off, only exactly `on` enables |
 | `CONTROL_RAILWAY_TOKEN`, `_PROJECT_ID`, `_ENVIRONMENT_ID` | no         | deploy panel                                           |
 | `CONTROL_STATE_DIR`, `CONTROL_MASTER_DIR`                 | no         | clone locations (default under the OS temp dir)        |
 | `CONTROL_PORT` / `PORT`                                   | no         | default 3000 (4317 in local mode)                      |
 | `CONTROL_LOCAL=1`, `CONTROL_FIXTURE`                      | local only | refused on Railway; local needs no secrets             |
 | `CONTROL_DEPLOY_KEY_B64`                                  | retired    | ignored; boot prints a warning, remove it              |
+
+**`CONTROL_WRITEBACK`** switches the dashboard's web write path (`POST /api/event`) on or off. It is
+**off by default**, and only the exact, case-sensitive string `on` turns it on (`ON`, `true`, `1`,
+`yes` and anything else stay off, without an error). While off, the page shows a "View only" chip, every
+Save, Dismiss, Make next and Give to button is disabled, and a direct `POST /api/event` from a signed-in
+browser session answers `403 {"error":"writeback_off"}` before it reads the body or touches the state
+clone (an unauthenticated call still gets `401`). Why: a web save needs a write credential limited to
+the state repo, and this version carries only the read-only token above, so every web save would fail
+anyway. Boot prints a warning if you set `on` against a real deployment. The `ctl` CLI writes lane state
+directly and is unaffected.

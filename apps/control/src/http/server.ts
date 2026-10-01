@@ -510,7 +510,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
       ledger = [...ledger, ...out.ledgerAdds].slice(-LEDGER_CAP);
       pendingRows = [...pendingRows, ...out.ledgerAdds];
       stateError = null;
-      const opts = { now, local: cfg.local };
+      const opts = { now, local: cfg.local, writeback: cfg.writeback };
       const fragments = renderFragments(out.state, opts);
       const rc = renderCtx(out.state, opts);
       const header = headerLines(rc).map((l) => l.s);
@@ -786,8 +786,11 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     await waitReady();
     const csrf = csrfFor(secret, session.nonce);
     const html = snap
-      ? renderPage(snap.state, { now: snap.now, local: cfg.local, csrf })
-      : renderPage({}, { now: env.now(), local: cfg.local, csrf, loading: true });
+      ? renderPage(snap.state, { now: snap.now, local: cfg.local, csrf, writeback: cfg.writeback })
+      : renderPage(
+          {},
+          { now: env.now(), local: cfg.local, csrf, loading: true, writeback: cfg.writeback },
+        );
     send(res, 200, html, "text/html; charset=utf-8");
   });
 
@@ -880,6 +883,9 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     const bad = checkWrite(req, session, origin ?? "", secret);
     if (bad !== 0 || origin === null)
       return sendJson(res, bad === 0 ? 403 : bad, { error: "refused" });
+    // after the session/Origin/CSRF checks (an unauthenticated caller learns nothing), before the
+    // body is read or the state clone is touched: a closed write path writes and fetches nothing
+    if (!cfg.writeback) return sendJson(res, 403, { error: "writeback_off" });
     if (closing) return sendJson(res, 503, { error: "shutting_down" });
     const body = await readBody(req, BODY_LIMIT);
     if (!body.ok) return sendJson(res, 413, { error: "too_large" });

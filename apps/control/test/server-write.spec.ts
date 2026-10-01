@@ -11,7 +11,7 @@ jest.setTimeout(30_000);
 let h: Harness;
 let s: Session;
 beforeEach(async () => {
-  h = await startServer();
+  h = await startServer({ writeback: true });
   s = await h.session();
 });
 afterEach(() => h?.close());

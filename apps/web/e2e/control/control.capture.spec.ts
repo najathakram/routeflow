@@ -2,6 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 
+// Start the control server first with the write path switched on (it is off by default, and these
+// captures drive Save / Dismiss / Make next):
+//   CONTROL_LOCAL=1 CONTROL_WRITEBACK=on CONTROL_FIXTURE=apps/control/test/fixtures/acme CONTROL_PORT=4317 node apps/control/dist/main.js
 // Proofs go to the gitignored local-assets/ (never into git); override with CONTROL_PROOF_DIR.
 const OUT =
   process.env.CONTROL_PROOF_DIR ??

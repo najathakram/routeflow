@@ -373,6 +373,9 @@ code,
   color: var(--wip);
   background: var(--wip-bg);
 }
+.chip.view-only {
+  border: 1px solid var(--line); /* the base chip colours (ink on the planned tint), plus an outline */
+}
 .badge {
   color: var(--muted);
   border: 1px solid var(--line);
@@ -527,6 +530,9 @@ textarea {
 .btn:disabled {
   opacity: 0.6;
   cursor: progress;
+}
+.btn[aria-disabled="true"] {
+  cursor: not-allowed; /* switched off for everyone (CONTROL_WRITEBACK), not busy */
 }
 .tid {
   cursor: pointer;

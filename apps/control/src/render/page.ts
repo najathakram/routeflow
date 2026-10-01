@@ -14,6 +14,7 @@ import {
   join,
   raw,
   renderFragments,
+  VIEW_ONLY_CHIP_TITLE,
   type PanelKey,
   type Raw,
   type RenderOpts,
@@ -91,6 +92,10 @@ export function renderPage(state: unknown, opts: RenderOpts): string {
     opts.local
       ? h`<span class="chip local" title="Only reachable from this computer (127.0.0.1)">Running on this computer only</span>`
       : h`<form method="post" action="/logout" class="inline"><button type="submit" class="btn">Log out</button></form>`
+  }${
+    c.writeback
+      ? raw("")
+      : h`<span class="chip view-only" title="${VIEW_ONLY_CHIP_TITLE}">View only</span>`
   }<button type="button" class="btn" data-act="theme" aria-label="Light / dark: change the colour theme">Light / dark</button><button type="button" class="btn" data-act="legend" aria-label="Help: what the symbols mean">Help</button></div>`;
 
   const body = h`<a class="skip" href="#main">Skip to content</a>
@@ -119,6 +124,7 @@ export function renderPage(state: unknown, opts: RenderOpts): string {
 <meta name="robots" content="noindex, nofollow">
 <meta name="control-version" content="${esc(c.v.version)}">
 <meta name="csrf-token" content="${esc(opts.csrf ?? "")}">
+<meta name="control-writeback" content="${c.writeback ? "on" : "off"}">
 <title>RouteFlow Control</title>
 <link rel="stylesheet" href="/assets/styles.css">
 </head>

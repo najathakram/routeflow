@@ -101,6 +101,10 @@ export interface Harness {
 
 export interface StartOpts {
   local?: boolean;
+  /** Opt in to the web write path (CONTROL_WRITEBACK=on). Default off, like production. */
+  writeback?: boolean;
+  /** An exact CONTROL_WRITEBACK value to set instead (the spelling tests). */
+  writebackValue?: string;
   webhook?: boolean;
   rateLimitDelayMs?: number;
   pingMs?: number;
@@ -142,6 +146,11 @@ export async function startServer(opts: StartOpts = {}): Promise<Harness> {
           CONTROL_STATE_REPO: "acme/acme-control-state",
         }),
     ...(opts.webhook ? { CONTROL_WEBHOOK_SECRET: WEBHOOK_SECRET } : {}),
+    ...(opts.writebackValue !== undefined
+      ? { CONTROL_WRITEBACK: opts.writebackValue }
+      : opts.writeback
+        ? { CONTROL_WRITEBACK: "on" }
+        : {}),
   };
   const config = loadConfig(envVars);
   const h: Harness = {

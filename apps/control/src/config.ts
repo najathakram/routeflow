@@ -24,6 +24,12 @@ export interface Config {
   masterDir?: string;
   /** The origin the browser sees (e.g. https://control.example); else derived from the request. */
   publicOrigin?: string;
+  /**
+   * The web write path (POST /api/event). Off unless CONTROL_WRITEBACK is exactly `on`: the server's
+   * token is read-only, so a web save cannot reach the state repo until a state-repo-only write
+   * credential exists. The CLI writes lane state directly and is unaffected.
+   */
+  writeback: boolean;
   /** One line each, printed at boot; never carries a value. */
   warnings: string[];
 }
@@ -89,6 +95,10 @@ export function loadConfig(env: Env): Config {
   if (opt(env, "CONTROL_DEPLOY_KEY_B64") !== undefined) {
     warnings.push("control: CONTROL_DEPLOY_KEY_B64 is no longer used; remove it");
   }
+  const writeback = env.CONTROL_WRITEBACK === "on"; // exact, case-sensitive: anything else is off
+  if (writeback && !local && opt(env, "CONTROL_FIXTURE") === undefined) {
+    warnings.push("control: CONTROL_WRITEBACK=on but the token is read-only; saves will fail");
+  }
   const portRaw = opt(env, "CONTROL_PORT") ?? opt(env, "PORT");
   let port = local ? 4317 : 3000;
   if (portRaw !== undefined) {
@@ -125,6 +135,7 @@ export function loadConfig(env: Env): Config {
     stateDir: opt(env, "CONTROL_STATE_DIR"),
     masterDir: opt(env, "CONTROL_MASTER_DIR"),
     publicOrigin,
+    writeback,
     warnings,
   };
 }

@@ -24,7 +24,7 @@ afterEach(() => h?.close());
 
 describe("T54 SSE", () => {
   beforeEach(async () => {
-    h = await startServer({ pingMs: 100 });
+    h = await startServer({ pingMs: 100, writeback: true });
     s = await h.session();
   });
 

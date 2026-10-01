@@ -13,6 +13,9 @@
   };
   var version = meta("control-version");
   var csrf = meta("csrf-token");
+  var writeback = meta("control-writeback") !== "off"; // the server's switch (CONTROL_WRITEBACK)
+  var VIEW_ONLY = "View only: changes are switched off on this dashboard";
+  var viewOnly = () => toast(VIEW_ONLY + ".", { error: true }) || false; // a refusal, not a retry
   var live = true;
   var etag = null; // of the last /api/state.json, for If-None-Match
   var pollTimer = null;
@@ -217,6 +220,7 @@
   }
   /* No optimistic update: the page changes only when the server's new fragments arrive. */
   async function post(payload, ctl) {
+    if (!writeback) return viewOnly(); // off: never reaches the network
     busy(ctl, true);
     var r;
     try {
@@ -239,6 +243,8 @@
       await refresh();
       return "conflict";
     }
+    var off = r.status === 403 && (await r.json().catch(() => null));
+    if (off && off.error === "writeback_off") return viewOnly();
     if (!r.ok) return fail(ctl, "Not saved: " + (await why(r)));
     busy(ctl, true);
     etag = null;
@@ -309,6 +315,10 @@
     c.value = c.dataset.init = f.old || "";
     return c;
   }
+  var lockSaves = (body) =>
+    $$(".fld button", body).forEach((b) =>
+      Object.assign(b, { disabled: true, title: VIEW_ONLY }).setAttribute("aria-disabled", "true"),
+    );
   function showDrawer(title, info, fields, note) {
     var body = $("#drawer-body");
     body.textContent = "";
@@ -340,6 +350,7 @@
       );
       body.append(box);
     });
+    if (!writeback) lockSaves(body);
     setInert(true);
     $("#scrim").hidden = false;
     $("#drawer").hidden = false;

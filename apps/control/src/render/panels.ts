@@ -42,6 +42,8 @@ export interface RenderOpts {
   local?: boolean;
   loading?: boolean;
   csrf?: string;
+  /** The web write path is on (CONTROL_WRITEBACK=on). Default true; false renders "View only". */
+  writeback?: boolean;
 }
 
 /* ------------------------------------------------------------------ view model (defensive) */
@@ -143,6 +145,17 @@ export function h(strings: TemplateStringsArray, ...vals: unknown[]): Raw {
 export const join = (xs: Raw[], sep = ""): Raw => new Raw(xs.map((x) => x.s).join(sep));
 const EMPTY = raw("");
 
+/** What every switched-off write button says (hover text) and the header chip's hover text. */
+export const VIEW_ONLY_TITLE = "View only: changes are switched off on this dashboard";
+export const VIEW_ONLY_CHIP_TITLE = "Changes are switched off on this dashboard";
+/** The extra attributes of a write button: its own title, or disabled + the view-only title. */
+const lock = (c: Ctx, title = ""): Raw =>
+  c.writeback
+    ? title
+      ? h` title="${title}"`
+      : EMPTY
+    : h` disabled aria-disabled="true" title="${VIEW_ONLY_TITLE}"`;
+
 /* ------------------------------------------------------------------ small helpers */
 export type Tone = "risk" | "crit" | "warn" | "ok";
 interface Ctx {
@@ -151,6 +164,7 @@ interface Ctx {
   nowIso: string;
   stale: boolean;
   loading: boolean;
+  writeback: boolean;
 }
 const val = <T>(d: Derived<T> | null | undefined): T | undefined => d?.value;
 const sortedIds = (r: Record<string, unknown>): string[] => Object.keys(r).sort(naturalCompare);
@@ -456,7 +470,9 @@ function freshness(c: Ctx): Fresh[] {
   return [one("GitHub", s.github, rate), one("Railway", s.railway, "")];
 }
 const isStale = (v: View, nowMs: number): boolean =>
-  freshness({ v, nowMs, nowIso: "", stale: false, loading: false }).some((f) => f.level === "red");
+  freshness({ v, nowMs, nowIso: "", stale: false, loading: false, writeback: true }).some(
+    (f) => f.level === "red",
+  );
 
 /* ------------------------------------------------------------------ derived numbers */
 const SHIPPED = new Set(["shipped", "done", "released"]);
@@ -741,7 +757,7 @@ function wastePanel(c: Ctx): string {
   const rows = sorted.map((w) => {
     const todo = pick(RULE_DO, w.rule) ?? w.action;
     const pn = prNum(w.subject);
-    return h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> <strong class="w-head"${w.rule ? h` title="${w.rule}"` : EMPTY}>${w.subject} — ${pick(RULE_LABEL, w.rule) ?? "Needs attention"}</strong> <span class="why">${whyLine(w.why)}</span>${w.since && !/\d+ (?:d|h|min)\b/.test(w.why) ? h` <span class="mut">first seen ${ago(w.since, c)}</span>` : EMPTY}${todo ? h` <span class="todo">What to do: ${todo}</span>` : EMPTY} <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}" title="${dismissTitle(w.rule)}">Dismiss</button>${pn && (w.rule === "W5" || w.rule === "W9") ? h` <button type="button" class="btn" data-act="superseded" data-pr="${pn}" title="Say which pull request replaced this one">Mark as replaced</button>` : EMPTY}</span></li>`;
+    return h`<li class="waste" data-key="${w.key}"><span class="glyph" aria-hidden="true">⚠</span> <strong class="w-head"${w.rule ? h` title="${w.rule}"` : EMPTY}>${w.subject} — ${pick(RULE_LABEL, w.rule) ?? "Needs attention"}</strong> <span class="why">${whyLine(w.why)}</span>${w.since && !/\d+ (?:d|h|min)\b/.test(w.why) ? h` <span class="mut">first seen ${ago(w.since, c)}</span>` : EMPTY}${todo ? h` <span class="todo">What to do: ${todo}</span>` : EMPTY} <span class="acts"><button type="button" class="btn" data-act="ack" data-key="${w.key}"${lock(c, dismissTitle(w.rule))}>Dismiss</button>${pn && (w.rule === "W5" || w.rule === "W9") ? h` <button type="button" class="btn" data-act="superseded" data-pr="${pn}"${lock(c, "Say which pull request replaced this one")}>Mark as replaced</button>` : EMPTY}</span></li>`;
   });
   const body = rows.length
     ? capped(rows, "rows")
@@ -841,7 +857,7 @@ function queuePanel(c: Ctx): string {
     const lane = val(t.lane);
     const prev = lane ? (val(c.v.lanes[lane]?.next) ?? "") : "";
     const who = lane ? laneName(c, lane) : "any lane";
-    return h`<tr><td>${prioPill(val(t.priority))}</td><th scope="row">${titled(c, t, t.id)}</th><td class="c-opt">${releaseChip(t, c, true)}</td><td class="c-opt">${pick(EFFORT_WORD, t.effort) ?? t.effort}</td><td>${lane ? laneName(c, lane) : "Any lane"}</td><td class="mut c-opt">${reason}</td><td><button type="button" class="btn" data-act="next" data-task="${t.id}" data-lane="${lane ?? ""}" data-prev="${prev}" aria-label="${`Make ${t.id} the next task for ${who}`}">Make next</button></td></tr>`;
+    return h`<tr><td>${prioPill(val(t.priority))}</td><th scope="row">${titled(c, t, t.id)}</th><td class="c-opt">${releaseChip(t, c, true)}</td><td class="c-opt">${pick(EFFORT_WORD, t.effort) ?? t.effort}</td><td>${lane ? laneName(c, lane) : "Any lane"}</td><td class="mut c-opt">${reason}</td><td><button type="button" class="btn" data-act="next" data-task="${t.id}" data-lane="${lane ?? ""}" data-prev="${prev}" aria-label="${`Make ${t.id} the next task for ${who}`}"${lock(c)}>Make next</button></td></tr>`;
   });
   const body = rows.length
     ? h`<div class="tw"><table class="tbl queue"><thead><tr><th scope="col">Priority</th><th scope="col">Task</th><th scope="col" class="c-opt">Release</th><th scope="col" class="c-opt">Size</th><th scope="col">Lane</th><th scope="col" class="c-opt">Why it is here</th><th scope="col"><span class="sr">Action</span></th></tr></thead><tbody>${join(rows)}</tbody></table></div>${all.length > 10 ? h`<p class="mut small">+${all.length - 10} more waiting</p>` : EMPTY}`
@@ -977,7 +993,7 @@ function piggybackPanel(c: Ctx): string {
             c.v.piggyback[l].map((p) => {
               const t = pick(c.v.tasks, p.id);
               const title = p.title ?? t?.title ?? "";
-              return h`<li>${title ? h`<span class="ttl">${title}</span> ` : EMPTY}${idTag(c, t, p.id)} ${p.severity ? sevPill(p.severity) : EMPTY} <span class="mut">Value score ${p.score ?? "—"}</span> ${p.sensitive ? chip("Sensitive", "warn") : EMPTY} <button type="button" class="btn" data-act="assign" data-task="${p.id}" data-lane="${l}" data-prev-lane="${val(t?.lane) ?? ""}">Give to ${who}</button></li>`;
+              return h`<li>${title ? h`<span class="ttl">${title}</span> ` : EMPTY}${idTag(c, t, p.id)} ${p.severity ? sevPill(p.severity) : EMPTY} <span class="mut">Value score ${p.score ?? "—"}</span> ${p.sensitive ? chip("Sensitive", "warn") : EMPTY} <button type="button" class="btn" data-act="assign" data-task="${p.id}" data-lane="${l}" data-prev-lane="${val(t?.lane) ?? ""}"${lock(c)}>Give to ${who}</button></li>`;
             }),
           )}</ul></div>`;
         }),
@@ -1207,7 +1223,14 @@ export function banners(c: Ctx): Raw {
 export function ctx(state: unknown, opts: RenderOpts): Ctx {
   const v = view(state);
   const nowMs = Date.parse(opts.now);
-  return { v, nowMs, nowIso: opts.now, stale: isStale(v, nowMs), loading: !!opts.loading };
+  return {
+    v,
+    nowMs,
+    nowIso: opts.now,
+    stale: isStale(v, nowMs),
+    loading: !!opts.loading,
+    writeback: opts.writeback !== false,
+  };
 }
 
 const BUILD: Record<PanelKey, (c: Ctx) => string> = {
