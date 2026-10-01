@@ -8,9 +8,10 @@
  * holds such text must not block an unrelated edit, and nothing here reads or rewrites stored rows.
  */
 import { BadRequestException } from "@nestjs/common";
+import { API_ERROR_CODES } from "./api-error-codes";
 import { FORMULA_LEAD, PLAIN_DECIMAL } from "./csv";
 
-export const TEXT_CELL_FORMULA_LEAD_CODE = "text_cell_formula_lead";
+export const TEXT_CELL_FORMULA_LEAD_CODE = API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD;
 
 /** True when a spreadsheet could run `value` as a formula (formula-led and not numeric-only). */
 export function isFormulaLedText(value: string): boolean {

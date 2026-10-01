@@ -61,6 +61,34 @@ describe("GoHighLevelSettingsTab", () => {
     expect(screen.getByText("No email or phone on the contact")).toBeInTheDocument();
   });
 
+  // B956: a formula-led contact name is its own plain-words outcome, on a real run (NEEDS_REVIEW)
+  // and on the dry-run preview row.
+  it.each(["NEEDS_REVIEW", "DRY_RUN"])(
+    "B956: renders the name-refused copy for a %s row with reason name-refused",
+    (status) => {
+      render(
+        <GoHighLevelSettingsTab
+          status="CONNECTED"
+          locationName="Acme HQ"
+          activity={[
+            {
+              id: "h1",
+              status,
+              reason: "name-refused",
+              opportunityName: "Big Order",
+              contactName: "Acme Foods",
+            },
+          ]}
+        />,
+      );
+
+      expect(
+        screen.getByText("Contact name can't start with =, +, -, @ or a tab/line break"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText("name-refused")).not.toBeInTheDocument();
+    },
+  );
+
   // M14 / ux-spec Card 2 — the stage picker renders the selected pipeline's
   // stages and "Save" sends the trigger patch (triggerMode/pipelineId/stageId).
   it("M14: stage picker renders the pipeline's stages and saving sends the trigger patch", async () => {

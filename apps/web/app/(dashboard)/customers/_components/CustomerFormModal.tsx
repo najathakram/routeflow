@@ -12,6 +12,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
 import { AgentFormModal } from "../../sales-agents/_components/AgentFormModal";
 
@@ -377,7 +378,9 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           {/* API error banner */}
           {apiError && (
             <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {apiError.message ?? "Something went wrong. Please try again."}
+              {safeTextErrorCopy(apiError) ??
+                apiError.message ??
+                "Something went wrong. Please try again."}
             </div>
           )}
 

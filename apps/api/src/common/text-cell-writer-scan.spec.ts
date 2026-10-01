@@ -7,10 +7,16 @@
  * the "DTO decorator alone leaves doors open" gap stays closed. B964 extends GUARDED (a new model
  * and its fields) and reuses the same scan; nothing else needs to change.
  *
- * KNOWN BLIND SPOT (SA-629g): the scan reads field NAMES inside the call text, so a spread write
- * such as `customer.update({ data: { ...dto } })` or `data: someVariable` names no field and is
- * not seen. Today's writers all spell the fields out; a new writer that spreads a DTO must call
- * the guard anyway (and a reviewer should look for the spread).
+ * KNOWN BLIND SPOTS (SA-629g, B956 Opus review): the scan reads field NAMES inside the text of a
+ * literal `.<model>.<verb>(...)` call, so it does NOT see:
+ *   - a spread or variable `data`: `customer.update({ data: { ...dto } })`, `data: someVariable`
+ *     (tenants.service updateBranding builds `const data` first, so only its guard call, not the
+ *     scan, protects it);
+ *   - a split or aliased delegate: `const db = this.prisma.customer; db.update(...)`,
+ *     `const { customer } = tx`, or a helper that receives the delegate as an argument;
+ *   - a raw SQL write (`$executeRaw`, `$queryRaw`) of these columns.
+ * Today's writers spell the fields out. A new writer in any of those shapes must call the guard
+ * anyway, and a reviewer should look for them.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +26,8 @@ const GUARDED: Record<string, readonly string[]> = {
   customer: ["businessName", "contactName", "displayName"],
   // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
   tenant: ["name"],
+  // Printed on buyer documents and on the tobacco filing header.
+  tenantConfig: ["businessName"],
 };
 
 const GUARD_CALLS = ["assertSafeCustomerNames", "customerNameViolation", "assertSafeTextCell"];
@@ -27,7 +35,9 @@ const GUARD_CALLS = ["assertSafeCustomerNames", "customerNameViolation", "assert
 /** file (relative to src/) -> why an unguarded write of the fields there is safe. */
 const EXEMPT: Record<string, string> = {
   "platform-admin/tenant-mirror.service.ts":
-    "copies Tenant.name, which signup (tenants.service) and createTenant (platform-admin.service) guard",
+    "copies Tenant.name, which signup (tenants.service) and createTenant (platform-admin.service) guard; " +
+    "its contactName also falls back to the first tenant admin's USERNAME, which is NOT covered here " +
+    "(admin usernames have their own constraints; tracked for B964)",
 };
 
 const SRC = join(__dirname, "..");
@@ -77,6 +87,14 @@ describe("text-cell writer scan (B956)", () => {
     expect(files).toContain("import/import.service.ts");
     expect(files).toContain("platform-admin/tenant-mirror.service.ts");
     expect(hits).toContainEqual({ file: "tenants/tenants.service.ts", hit: "tenant.name" });
+    expect(hits).toContainEqual({
+      file: "tenants/tenants.service.ts",
+      hit: "tenantConfig.businessName",
+    });
+    expect(hits).toContainEqual({
+      file: "platform-admin/platform-admin.service.ts",
+      hit: "tenantConfig.businessName",
+    });
     expect(hits).toContainEqual({
       file: "platform-admin/platform-admin.service.ts",
       hit: "tenant.name",

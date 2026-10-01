@@ -116,6 +116,7 @@ export interface GoHighLevelSettingsTabProps {
 const HANDOFF_REASON_TEXT: Record<string, string> = {
   "no-identity": "No email or phone on the contact",
   "identity-conflict": "Email or username already used by a staff account",
+  "name-refused": "Contact name can't start with =, +, -, @ or a tab/line break",
   "customer-cap": "Customer limit reached",
   "contact-not-found": "Contact deleted in GoHighLevel",
   "create-failed": "Could not create the customer",

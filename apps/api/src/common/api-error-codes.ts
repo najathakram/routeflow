@@ -54,4 +54,5 @@ export const API_ERROR_CODES = {
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "text_cell_formula_lead",
 } as const satisfies Record<string, ApiErrorCode>;

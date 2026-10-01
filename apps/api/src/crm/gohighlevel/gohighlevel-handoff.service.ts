@@ -14,6 +14,8 @@
 // present in every Prisma `where` — a lead's email/phone/name must never match, or a username
 // collide with, another tenant's rows.
 import { randomBytes } from "crypto";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
+import { customerNameViolation } from "../../customers/customer-name-guard";
 import { normalizeEmail, normalizePhoneE164, slugUsername } from "../crm-identity";
 import type { GhlContact, GhlOpportunity } from "./gohighlevel.client";
 
@@ -85,6 +87,20 @@ const PHONE_SCAN_CAP = 5000;
 function contactDisplayName(contact: GhlContact): string {
   const full = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
   return contact.companyName || contact.name || full || "Unknown";
+}
+
+/** The names a CREATE would write, derived ONCE so the dry run and the real run check the same. */
+function createNames(contact: GhlContact): { businessName: string; contactName: string } {
+  const businessName = contactDisplayName(contact);
+  const contactName =
+    [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.name || businessName;
+  return { businessName, contactName };
+}
+
+/** The first create-name field the customer guard would refuse (B956), or null. */
+function refusedName(contact: GhlContact): string | null {
+  const violation = customerNameViolation(createNames(contact));
+  return violation ? violation.split(" ")[0] : null;
 }
 
 function buildNotes(opportunity: GhlOpportunity, contact: GhlContact): string {
@@ -382,11 +398,16 @@ export class GoHighLevelHandoffService {
     if (dryRun) {
       const email = contact.email ? normalizeEmail(contact.email) : null;
       const phone = contact.phone ? normalizePhoneE164(contact.phone, region) : null;
+      // B956: the real run refuses a formula-led name on create (a link never writes names), so
+      // the preview must say the same instead of "create".
+      const nameCheck = match ? null : refusedName(contact);
       await this.updateHandoff(connection, opportunity, opts, {
         status: "DRY_RUN",
         matchedBy: match?.how ?? null,
+        ...(nameCheck ? { reason: "name-refused" } : {}),
         payload: {
-          action: match ? "link" : "create",
+          action: match ? "link" : nameCheck ? "refused" : "create",
+          ...(nameCheck ? { reason: "name-refused", field: nameCheck } : {}),
           matchedBy: match?.how,
           // M8: keep the opportunity itself so "Retry" on a DRY_RUN row does not lose the
           // deal name/value/source (the client has no single-opportunity GET).
@@ -464,11 +485,7 @@ export class GoHighLevelHandoffService {
       return { status: "NEEDS_REVIEW", reason: "no-identity" };
     }
 
-    const businessName = contactDisplayName(contact);
-    const contactName =
-      [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
-      contact.name ||
-      businessName;
+    const { businessName, contactName } = createNames(contact);
     const username = await this.resolveUsername(tenantId, businessName);
     const notes = buildNotes(opportunity, contact);
     const addresses = contact.address1
@@ -503,7 +520,14 @@ export class GoHighLevelHandoffService {
       const name = (e as { name?: string })?.name;
       const message = (e as Error)?.message ?? "";
       let reason = "create-failed";
-      if (name === "BadRequestException") reason = "identity-conflict";
+      // B956: a refused formula-led name is its OWN outcome, read from the structured 400 body,
+      // not an email/username identity conflict.
+      const body = (e as { getResponse?: () => unknown })?.getResponse?.() as
+        { code?: string; field?: string } | undefined;
+      const refusedField =
+        body?.code === API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD ? (body.field ?? "") : null;
+      if (refusedField !== null) reason = "name-refused";
+      else if (name === "BadRequestException") reason = "identity-conflict";
       else if (name === "CustomerCapExceededException" || /customer.?cap/i.test(message)) {
         reason = "customer-cap";
       }
@@ -511,6 +535,7 @@ export class GoHighLevelHandoffService {
         status: "NEEDS_REVIEW",
         reason,
         ...(reason === "create-failed" ? { payload: { message } } : {}),
+        ...(reason === "name-refused" ? { payload: { field: refusedField } } : {}),
       });
       return { status: "NEEDS_REVIEW", reason };
     }
