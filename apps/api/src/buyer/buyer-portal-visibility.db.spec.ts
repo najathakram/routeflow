@@ -44,6 +44,9 @@ import { Pool } from "pg";
 import { ConflictException, Logger, NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
+import { normalizeScanCode } from "@routeflow/scanning";
+import { findScanMatches } from "../products/scan-match";
+import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
@@ -375,7 +378,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
           level: "UNIT",
           symbology: "CODE128",
           origin: "ENTERED",
-        } as any,
+        },
       });
       rowCodes[p.id] = code;
     }
@@ -516,6 +519,14 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         scanBarcode: await scan(p.barcode),
         // a ProductBarcode ROW code (!= barcode, != sku): the row tier honours the same buyer scope
         scanRow: await scan(f.rowCodes[p.id]),
+        // The row tier ALONE, with the buyer scope: scanProduct's getProductDetail 404s any product the buyer
+        // cannot see on its own, so the endpoint cannot tell a scoped row tier from an unscoped one. This can.
+        scanRowLookup:
+          (await findScanMatches(
+            prisma.forTenant(),
+            normalizeScanCode(f.rowCodes[p.id]),
+            buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+          )) !== null,
         ...(opts.write
           ? {
               subscribe: await asBool(() => stockAlerts.subscribe(f.customerId, p.id, f.tenantId)),
@@ -580,6 +591,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     expect(r.scanBarcode).toBe(visible);
     // hidden product / hidden-parent variant / FAMILY container => 404 by row code too; visible control => 200
     expect(r.scanRow).toBe(visible);
+    expect(r.scanRowLookup).toBe(visible);
     if (write) {
       expect((r as any).subscribe).toBe(visible);
       expect((r as any).addFavorite).toBe(visible);
