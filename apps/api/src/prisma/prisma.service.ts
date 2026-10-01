@@ -388,6 +388,6 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
   private assertTenantContext(): void {
     const kind = this.tenantCtx?.getKind() ?? "NONE";
-    if (kind !== "SUPER_ADMIN") this.tenantGuard.missingContext(kind, callSite());
+    if (kind !== "SUPER_ADMIN") this.tenantGuard.missingContext(kind, callSite); // a thunk: the stack is built only when it will be used
   }
 }

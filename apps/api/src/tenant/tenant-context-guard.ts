@@ -25,11 +25,14 @@ export function readEnforceFlag(env: NodeJS.ProcessEnv = process.env): boolean {
 type Violation = "MISSING" | "SUPER_ADMIN_CREATE";
 const WINDOW_MS = 60_000;
 const STACK_FRAMES = 5;
+/** Dark mode captures a context-less call site at most this often per kind (a stack per hit is a hot-path cost). */
+const CAPTURE_GAP_MS = 1_000;
 
 export class TenantContextGuard {
   private readonly counts = new Map<Violation, number>();
   private readonly reasons = new Map<string, number>();
   private readonly lastWarn = new Map<string, number>();
+  private readonly lastCapture = new Map<string, number>();
   private readonly enforce: boolean;
   private readonly log: { warn(message: string): void };
   private readonly now: () => number;
@@ -55,10 +58,22 @@ export class TenantContextGuard {
   }
 
   /** `forTenant()` / `tenantTransaction()` ran with no tenant scope (ANONYMOUS / NONE / SYSTEM). */
-  missingContext(kind: TenantKind, where: string): void {
-    this.report("MISSING", `${kind}|${where}`, `kind=${kind} at=${where}`, () => {
-      throw new TenantContextMissingError(`No tenant context (${kind}) at ${where}`);
-    });
+  missingContext(kind: TenantKind, where: string | (() => string)): void {
+    // `where` may be a thunk: capturing a call site means building a stack, which on a hot context-less
+    // path (webhooks, anonymous buyers) must not happen per hit. Dark: at most one capture per kind per
+    // CAPTURE_GAP_MS (the counter still counts every hit); enforced: the throw needs the site, so capture.
+    this.bump("MISSING");
+    const site = typeof where === "function" ? where : () => where;
+    if (this.enforce) {
+      const w = site();
+      throw new TenantContextMissingError(`No tenant context (${kind}) at ${w}`);
+    }
+    const t = this.now();
+    const last = this.lastCapture.get(kind);
+    if (last !== undefined && t - last < CAPTURE_GAP_MS) return;
+    this.lastCapture.set(kind, t);
+    const w = site();
+    this.warnOnce("MISSING", `${kind}|${w}`, `kind=${kind} at=${w}`);
   }
 
   /** A SUPER_ADMIN tenant-owned create with no explicit tenantId (the L-124 null-tenant class). */
@@ -82,9 +97,18 @@ export class TenantContextGuard {
     this.reasons.set(reason, (this.reasons.get(reason) ?? 0) + 1);
   }
 
-  private report(v: Violation, siteKey: string, detail: string, fail: () => never): void {
+  private bump(v: Violation): void {
     this.counts.set(v, this.count(v) + 1);
+  }
+
+  private report(v: Violation, siteKey: string, detail: string, fail: () => never): void {
+    this.bump(v);
     if (this.enforce) fail();
+    this.warnOnce(v, siteKey, detail);
+  }
+
+  /** One structured warn per site per WINDOW_MS (with a bounded stack); the counter is separate. */
+  private warnOnce(v: Violation, siteKey: string, detail: string): void {
     const key = `${v}|${siteKey}`;
     const t = this.now();
     const last = this.lastWarn.get(key);
@@ -100,11 +124,13 @@ export class TenantContextGuard {
 }
 
 /**
- * A row names its tenant when its data carries a `tenantId` KEY: a value, or an explicit `null` (a
- * deliberate platform row such as a global system-config setting; several models' tenantId is nullable
- * by design). Only an ABSENT key is the L-124 null-tenant-by-omission class.
+ * A row names its tenant when `data.tenantId` is a value or an explicit `null` (a deliberate platform
+ * row such as a global system-config setting; several models' tenantId is nullable by design). An
+ * ABSENT key and `tenantId: undefined` (which Prisma treats as "not set" and writes as NULL) are the
+ * L-124 null-tenant-by-omission class.
  */
-const hasTenant = (d: unknown) => !!d && typeof d === "object" && "tenantId" in (d as object);
+const hasTenant = (d: unknown) =>
+  !!d && typeof d === "object" && (d as { tenantId?: unknown }).tenantId !== undefined;
 
 /**
  * The ONE create check: a create / createMany / createManyAndReturn / upsert on a tenant-owned model

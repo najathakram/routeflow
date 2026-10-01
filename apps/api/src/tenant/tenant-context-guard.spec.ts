@@ -65,9 +65,30 @@ describe("TenantContextGuard (SA-619)", () => {
       expect(warn).toHaveBeenCalledTimes(2); // a new window logs again
     });
 
-    it("different routes are different sites", () => {
-      const { guard, warn } = make(false);
+    it("the call site is only captured when a warn can actually log (no stack per deduplicated hit)", () => {
+      const { guard, warn, tick } = make(false);
+      const where = jest.fn().mockReturnValue("GET /hot");
+      for (let i = 0; i < 200; i++) guard.missingContext("NONE", where);
+      expect(where).toHaveBeenCalledTimes(1); // one capture, 199 free hits
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(guard.count("MISSING")).toBe(200); // every hit still counted
+      tick(61_000);
+      guard.missingContext("NONE", where);
+      expect(where).toHaveBeenCalledTimes(2); // a new window captures again
+      expect(warn).toHaveBeenCalledTimes(2);
+    });
+
+    it("enforced: the site is captured (the thrown error names it)", () => {
+      const { guard } = make(true);
+      const where = jest.fn().mockReturnValue("GET /hot");
+      expect(() => guard.missingContext("NONE", where)).toThrow(/GET \/hot/);
+      expect(where).toHaveBeenCalledTimes(1);
+    });
+
+    it("different routes are different sites (once the per-kind capture gap has passed)", () => {
+      const { guard, warn, tick } = make(false);
       guard.missingContext("NONE", "GET /a");
+      tick(1_500);
       guard.missingContext("NONE", "GET /b");
       expect(warn).toHaveBeenCalledTimes(2);
     });
@@ -180,6 +201,18 @@ describe("superAdminCreateExtension (SA-619)", () => {
     expect(String(warn.mock.calls[0][0])).not.toContain(
       "SUPER_ADMIN_CREATE model=Customer op=create kind=SUPER_ADMIN",
     );
+  });
+  it("{ tenantId: undefined } is NOT a tenant: Prisma writes a NULL-tenant row for it (the L-124 class)", async () => {
+    const g = guardSpy();
+    await run("Customer", "create", { data: { name: "x", tenantId: undefined } }, g);
+    await run("Customer", "createMany", { data: [{ tenantId: "t" }, { tenantId: undefined }] }, g);
+    await run(
+      "Customer",
+      "upsert",
+      { where: { id: "1" }, create: { tenantId: undefined }, update: {} },
+      g,
+    );
+    expect(g.superAdminCreate).toHaveBeenCalledTimes(3);
   });
   it("a model that is not tenant-owned, and every read, never report", async () => {
     const g = guardSpy();
