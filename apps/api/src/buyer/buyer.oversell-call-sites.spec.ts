@@ -45,7 +45,7 @@ import { resolveOversellAllowed } from "../orders/oversell-policy";
  * WS9 call-site contract for the buyer portal (RED until the call-site PR): a buyer's standing-order
  * "Reorder" (`reorderFromTemplate`) resolves the oversell policy ONCE, before the template run, with
  * role CUSTOMER + the buyer customer's id and source "buyer" (never a staff role, never
- * "template_cron"), and hands the template service the resulting BOOLEAN instead of the hard-wired
+ * "template_cron"), and hands the template service the resulting BOOLEAN (3rd arg; the 2nd stays isStaffRole=false) instead of the hard-wired
  * `false`. The cart "Reorder" paths (`addAllLow` -> `createOrder`) are never labelled template_cron.
  *
  * L-247: this builds BuyerController with every provider the existing BuyerController specs list
@@ -138,7 +138,9 @@ describe("BuyerController oversell call sites", () => {
       );
       expect(templates.generateOrder).toHaveBeenCalledTimes(1);
       expect(templates.generateOrder.mock.calls[0][0]).toBe("tpl-1");
-      expect(templates.generateOrder.mock.calls[0][1]).toBe(want);
+      // (id, isStaffRole, allowOversell): the buyer channel stays BUYER (false) whatever the policy says
+      expect(templates.generateOrder.mock.calls[0][1]).toBe(false);
+      expect(templates.generateOrder.mock.calls[0][2]).toBe(want);
     },
   );
 
