@@ -109,7 +109,7 @@ describe("credit-note Serializable txs run under retryOnTxConflict (SA-392, #220
 
   it.each(SITES)("%s: a P2034 on attempt 1 re-runs the whole tx", async (_name, call) => {
     const p2034 = Object.assign(new Error("write conflict"), { code: "P2034" });
-    const done = { value: "ok" };
+    const done = { value: "ok", creditNote: { id: "cn-1", amount: 0 } }; // creditNote: voidWithReversal reads it for the socket event
     prisma.tenantTransaction
       .mockImplementationOnce(() => Promise.reject(p2034))
       .mockImplementationOnce(() => Promise.resolve(done));
