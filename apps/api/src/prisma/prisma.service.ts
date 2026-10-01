@@ -55,6 +55,11 @@ export function isTxClient(db: unknown): boolean {
 const MIN_STATS_LOG_MS = 60_000;
 const MAX_TIMER_MS = 2 ** 31 - 1; // Node clamps a longer delay to 1 ms
 
+type TxOptions = {
+  maxWait?: number;
+  timeout?: number;
+  isolationLevel?: Prisma.TransactionIsolationLevel;
+};
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   /** SA-619: warn (dark) / throw (enforced) on a missing tenant context. Injected in tests. */
@@ -489,9 +494,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     this.tenantGuard.system(reason);
     // PR-2b: reads stay unscoped, but a tenant-owned write with no tenantId (explicit null is a
     // deliberate platform row) is reported like a SUPER_ADMIN one, under kind SYSTEM.
-    return this.$extends(
-      superAdminCreateExtension(this.tenantGuard, isTenantOwnedModel, "SYSTEM"),
-    ) as unknown as this;
+    return this.$extends({
+      ...superAdminCreateExtension(this.tenantGuard, isTenantOwnedModel, "SYSTEM"),
+      // The reason IS the declaration: an array transaction through this client is deliberate, so it
+      // skips the context-less check that the PrismaService override applies to the bare client.
+      client: {
+        $transaction(arg: any, options?: any) {
+          return PrismaClient.prototype.$transaction.call(this, arg, options);
+        },
+      },
+    }) as unknown as this;
   }
 
   /**
@@ -505,7 +517,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     options?: Parameters<PrismaClient["$transaction"]>[1],
   ): Promise<T> {
     this.tenantGuard.system(reason);
-    return super.$transaction(async (rawTx: any) => {
+    return this.$transaction(async (rawTx: any) => {
       await rawTx.$executeRaw`SELECT set_config('app.current_tenant_id', ${""}, true)`;
       return fn(wrapTxWithCreateCheck(rawTx, this.tenantGuard, isTenantOwnedModel, "SYSTEM"));
     }, options as any);
@@ -517,10 +529,24 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * TENANT, SUPER_ADMIN and SYSTEM pass; the promises are handed on untouched (batch semantics kept).
    * The interactive form is never checked here: `tenantTransaction` / `systemTransaction` own it.
    */
+  $transaction<P extends Prisma.PrismaPromise<any>[]>(
+    arg: [...P],
+    options?: TxOptions,
+  ): Promise<{ [K in keyof P]: Awaited<P[K]> }>;
+  $transaction<R>(
+    fn: (prisma: Prisma.TransactionClient) => Promise<R>,
+    options?: TxOptions,
+  ): Promise<R>;
   $transaction(arg: any, options?: any): any {
     if (Array.isArray(arg)) {
       const kind = this.tenantCtx?.getKind() ?? "NONE";
-      if (kind === "NONE" || kind === "ANONYMOUS") this.tenantGuard?.missingContext(kind, callSite);
+      if (kind === "NONE" || kind === "ANONYMOUS") {
+        try {
+          this.tenantGuard?.missingContext(kind, callSite);
+        } catch (e) {
+          return Promise.reject(e); // a rejection, like every other $transaction failure, never a sync throw
+        }
+      }
     }
     return super.$transaction(arg, options);
   }

@@ -124,6 +124,23 @@ describe("SA-619 PR-2b: the system door", () => {
     });
   });
 
+  describe("review fold: the forSystem client's array $transaction is deliberate (never reported)", () => {
+    afterEach(() => jest.restoreAllMocks());
+    it("passes the array and options straight to Prisma's own $transaction, even with no context, enforced", async () => {
+      const { prisma, warn } = make(true);
+      const seen = captureExtend(prisma);
+      prisma.forSystem("auth.resetPassword");
+      const base = jest
+        .spyOn(PrismaClient.prototype, "$transaction")
+        .mockResolvedValue(["a"] as any);
+      const arr = [Promise.resolve(1)];
+      const out = await seen[0].client.$transaction(arr, { timeout: 5 });
+      expect(out).toEqual(["a"]);
+      expect(base).toHaveBeenCalledWith(arr, { timeout: 5 });
+      expect(warn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("case 2: systemTransaction(reason, fn)", () => {
     const rawTx = () => ({
       $executeRaw: jest.fn().mockResolvedValue(0),
@@ -251,7 +268,9 @@ describe("SA-619 PR-2b: the system door", () => {
       jest.restoreAllMocks();
       const hard = make(true);
       const base = stub();
-      expect(() => hard.prisma.$transaction(promises() as any)).toThrow(TenantContextMissingError);
+      await expect(hard.prisma.$transaction(promises() as any)).rejects.toBeInstanceOf(
+        TenantContextMissingError,
+      );
       expect(base).not.toHaveBeenCalled();
     });
 
