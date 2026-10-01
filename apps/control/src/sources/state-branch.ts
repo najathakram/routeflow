@@ -22,6 +22,7 @@ import {
   git,
   gitAnywhere,
   gitTry,
+  withMovedHint,
 } from "./git";
 import type { Env } from "./git";
 import { assertEnvOrigin } from "./origin";
@@ -334,7 +335,7 @@ export async function ensureClone(env: Env): Promise<string> {
       );
       if (!r.ok) {
         fs.rmSync(tmp, { recursive: true, force: true });
-        throw new CtlError(5, `clone failed: ${r.err.trim()}`);
+        throw new CtlError(5, withMovedHint(`clone failed: ${r.err.trim()}`));
       }
       markOurs(tmp, env.origin);
       fs.renameSync(tmp, dir);
@@ -725,7 +726,7 @@ export async function appendAndPush(
         }
         resetQuiet(env, clone);
         if (!/non-fast-forward|fetch first|rejected/.test(pushed.err)) {
-          throw new CtlError(5, pushed.err.trim());
+          throw new CtlError(5, withMovedHint(pushed.err.trim()));
         }
         if (attempt < MAX_ATTEMPTS) await sleep(appendRetrySleep(attempt));
       }

@@ -10,6 +10,7 @@ import type { ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { OFFLINE_GIT_ENV } from "./temp-repo";
 
 export interface SeenRequest {
   method: string;
@@ -37,6 +38,7 @@ export interface SmartHttpOpts {
 
 const GIT_ENV = {
   ...process.env,
+  ...OFFLINE_GIT_ENV, // the seed/bare setup is local; only the spec's own git talks http
   GIT_AUTHOR_NAME: "t",
   GIT_AUTHOR_EMAIL: "t@localhost",
   GIT_COMMITTER_NAME: "t",

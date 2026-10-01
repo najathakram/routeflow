@@ -12,8 +12,16 @@ export const STATE_BRANCH = "ctl/state";
 export const ARCHIVE_BRANCH = "ctl/archive";
 export const NOW = "2026-01-12T10:00:00Z";
 
+/**
+ * Every helper that runs git or the CLI starts from this: git speaks only `file` and cannot run
+ * ssh, so a spec (or a regressed guard under test) can never reach a real host. Callers that need
+ * http (the 127.0.0.1 redirect specs) override it explicitly.
+ */
+export const OFFLINE_GIT_ENV = { GIT_ALLOW_PROTOCOL: "file", GIT_SSH_COMMAND: "false" } as const;
+
 const GIT_ENV = {
   ...process.env,
+  ...OFFLINE_GIT_ENV,
   GIT_TERMINAL_PROMPT: "0",
   GIT_AUTHOR_NAME: "test",
   GIT_AUTHOR_EMAIL: ["test", "example.invalid"].join("@"),

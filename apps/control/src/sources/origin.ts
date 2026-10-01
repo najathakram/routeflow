@@ -139,17 +139,26 @@ function applyPushInsteadOf(url: string): string | null {
  * Every URL the git that `ctl` spawns would use for this origin string: itself, itself after
  * `url.<base>.insteadOf` (`git ls-remote --get-url`), and after `pushInsteadOf` (applied by hand,
  * longest prefix wins). A git that cannot run adds nothing: the caller still checks the string.
+ * `rewritten` is true when git's URL rewriting changed the string (an alias) or could not be asked,
+ * i.e. when the answer depended on git config that can change later.
  */
-function resolvedUrls(url: string): string[] {
-  const out = [url];
+function resolvedUrls(url: string): { urls: string[]; rewritten: boolean } {
+  const urls = [url];
+  let rewritten = false;
   const r = gitAnywhere(["ls-remote", "--get-url", "--", url]);
   if (r.ok) {
     const resolved = r.out.trim();
-    if (resolved !== "") out.push(resolved);
+    if (resolved !== "") urls.push(resolved);
+    if (resolved !== url) rewritten = true;
+  } else {
+    rewritten = true;
   }
   const pushed = applyPushInsteadOf(url);
-  if (pushed !== null) out.push(pushed);
-  return out;
+  if (pushed !== null) {
+    urls.push(pushed);
+    rewritten = true;
+  }
+  return { urls, rewritten };
 }
 
 /** Remote names of a repo: `git remote` plus the legacy `remotes/` and `branches/` files it omits. */
@@ -220,14 +229,28 @@ function localRepoPointsAtProduct(
   return false;
 }
 
-/** True when the origin, or anything git resolves it to, names the product repo. */
-function pointsAtProduct(url: string): boolean {
-  if (isRouteflowOrigin(url)) return true; // no git needed for the plain forms
-  return resolvedUrls(url).some(isRouteflowOrigin) || localRepoPointsAtProduct(url);
+/**
+ * Inspect an origin string. `product`: it, or anything git resolves it to, names the product repo.
+ * `memoisable`: the verdict came from the string alone, so it cannot change while the process
+ * lives: a REMOTE URL (not a local path or `file://`, whose repo can gain a remote) that git did not
+ * rewrite (no `insteadOf` alias in play, so no git config the verdict depended on).
+ */
+function inspectOrigin(url: string): { product: boolean; memoisable: boolean } {
+  if (isRouteflowOrigin(url)) return { product: true, memoisable: false }; // no git needed
+  const { urls, rewritten } = resolvedUrls(url);
+  const local = localDir(url) !== null;
+  return {
+    product: urls.some(isRouteflowOrigin) || localRepoPointsAtProduct(url),
+    memoisable: !local && !rewritten,
+  };
 }
 
 /** Trim, sanity-check and refuse the product repo; returns the origin to use. Exit 2 on refusal. */
 export function assertStateOrigin(url: string): string {
+  return checkStateOrigin(url).origin;
+}
+
+function checkStateOrigin(url: string): { origin: string; memoisable: boolean } {
   const t = typeof url === "string" ? url.trim() : "";
   assertOrigin(t);
   // `ext::` and `fd::` run arbitrary commands or descriptors as a transport, so no string check
@@ -238,13 +261,14 @@ export function assertStateOrigin(url: string): string {
       `refusing state remote ${redactUrl(t)}: the ext:: and fd:: transports are not allowed`,
     );
   }
-  if (pointsAtProduct(t)) {
+  const seen = inspectOrigin(t);
+  if (seen.product) {
     throw new CtlError(
       2,
       `refusing state remote ${redactUrl(t)}: the state must not live in ${FORBIDDEN} (the repo goes public during CI windows)`,
     );
   }
-  return t;
+  return { origin: t, memoisable: seen.memoisable };
 }
 
 const verifiedOrigins = new Set<string>();
@@ -253,16 +277,26 @@ const verifiedOrigins = new Set<string>();
  * The state-origin refusal for an origin that arrives inside an `Env` (the library's own entry
  * points call it through `checkEnv`), so no caller can skip the CLI/config validation by building
  * an `Env` by hand. It is exactly `assertStateOrigin`, plus: the string must already be the
- * trimmed one (git is handed `env.origin` verbatim). A SUCCESS is remembered per origin string for
- * the life of the process, because the check spawns offline git probes and the server calls the
- * entry points constantly; a refusal is never remembered, so every call with a refused origin
- * fails again. Exit 2 on refusal.
+ * trimmed one (git is handed `env.origin` verbatim). A refusal is never remembered, so every call
+ * with a refused origin fails again.
+ *
+ * A SUCCESS is remembered per origin string for the life of the process, because the check spawns
+ * offline git probes and the server calls the entry points constantly, but ONLY for a pure remote
+ * URL (`https://...`, `ssh://...`, scp-like) that git did not rewrite: that verdict comes from the
+ * string alone. A local path or `file://` origin (the repo behind it can gain a remote that points
+ * at the product repo) and any alias that needed git's `insteadOf` resolution (the config can be
+ * re-pointed) are re-inspected on every call.
+ *
+ * What stays unprotected: a remembered remote URL stays allowed even if an `insteadOf` rule that
+ * rewrites it to the product repo is added to git config later in the same process (the git `ctl`
+ * spawns would then use the rewritten URL). Such a rule needs a config edit on the host while a
+ * long-lived server runs; a restart re-checks. Exit 2 on refusal.
  */
 export function assertEnvOrigin(origin: string): string {
   if (verifiedOrigins.has(origin)) return origin;
-  const t = assertStateOrigin(origin);
-  if (t !== origin) throw new CtlError(2, "bad origin: surrounding whitespace");
-  verifiedOrigins.add(origin);
+  const checked = checkStateOrigin(origin);
+  if (checked.origin !== origin) throw new CtlError(2, "bad origin: surrounding whitespace");
+  if (checked.memoisable) verifiedOrigins.add(origin);
   return origin;
 }
 

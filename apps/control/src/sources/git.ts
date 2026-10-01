@@ -100,6 +100,9 @@ export function assertOrigin(origin: string): string {
   return origin;
 }
 
+/** The base every ctl git child talks to by default; its no-redirect entry is always emitted. */
+const GITHUB_BASE = "https://github.com/";
+
 /**
  * HTTPS auth for git children, through git's env config (git >= 2.31): one extra header scoped to
  * `base`, plus `http.<base>.followRedirects=false` (URL-scoped, so a scoped `true` set in any other
@@ -112,7 +115,7 @@ export function assertOrigin(origin: string): string {
  * but git then switches its base URL to the redirect target and sends the following POST to it
  * WITH the header (proven against two local servers in test/git-auth-redirect.spec.ts).
  */
-export function gitAuthEnv(token: string, base = "https://github.com/"): Record<string, string> {
+export function gitAuthEnv(token: string, base = GITHUB_BASE): Record<string, string> {
   const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
   return {
     GIT_CONFIG_COUNT: "2",
@@ -134,36 +137,50 @@ export function setGitAuth(token: string | null, base?: string): void {
 /**
  * The config entries appended after any GIT_CONFIG_COUNT entries the process env already has.
  *
- * ALWAYS the generic `http.followRedirects=false`, token or not: a GitHub rename alias or a repo
- * transfer answers 301/302, and git's default would follow it, so a CLI push could land in a
- * different repo without anyone noticing. With it, the redirect is a loud failure
- * (`returned error: 302`). When a token is set, the URL-scoped header + no-redirect pair from
- * `gitAuthEnv` goes first, then the generic entry. `opts.env` (applied after this) still wins.
+ * ALWAYS two no-redirect entries, token or not: the URL-scoped one for github.com
+ * (`http.https://github.com/.followRedirects=false`) and the generic `http.followRedirects=false`.
+ * A GitHub rename alias or a repo transfer answers 301/302, and git's default would follow it, so a
+ * CLI push could land in a different repo without anyone noticing; with them, the redirect is a
+ * loud failure (`returned error: 302`). The scoped entry is there because a generic value LOSES to a URL-scoped
+ * `[http "<url>"] followRedirects = true` in the user's global/system config (git prefers the
+ * more specific match, and the env config is applied last, so ours beats any same-scope entry).
+ * When a token is set, the URL-scoped header + no-redirect pair from `gitAuthEnv` goes first (a
+ * custom base gets its own scoped entry on top; the github.com one is not repeated when that is
+ * the base). `opts.env` (applied after this) still wins.
+ *
+ * Limits, said plainly: a user setting scoped to a MORE SPECIFIC path than the base (for example
+ * `[http "https://github.com/acme/"] followRedirects = true`) can still win, because git picks the
+ * longest matching scope and no fixed entry of ours can be longer than every possible path. And
+ * this only protects https origins: GitHub follows a renamed repo server-side over SSH, so an ssh
+ * origin is never redirected by git and `followRedirects` cannot see it (the state origin guard in
+ * origin.ts checks the string, not where GitHub resolves it).
  */
 function authEntries(): Record<string, string> {
   const raw = process.env.GIT_CONFIG_COUNT;
   const n = raw !== undefined && /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
   const out: Record<string, string> = {};
   let i = n;
+  const add = (key: string, value: string): void => {
+    out[`GIT_CONFIG_KEY_${i}`] = key;
+    out[`GIT_CONFIG_VALUE_${i}`] = value;
+    i++;
+  };
+  let scopedDone = false;
   if (authToken !== null) {
     const own = gitAuthEnv(authToken, authBase);
-    out[`GIT_CONFIG_KEY_${i}`] = own.GIT_CONFIG_KEY_0;
-    out[`GIT_CONFIG_VALUE_${i}`] = own.GIT_CONFIG_VALUE_0;
-    i++;
-    out[`GIT_CONFIG_KEY_${i}`] = own.GIT_CONFIG_KEY_1;
-    out[`GIT_CONFIG_VALUE_${i}`] = own.GIT_CONFIG_VALUE_1;
-    i++;
+    add(own.GIT_CONFIG_KEY_0, own.GIT_CONFIG_VALUE_0);
+    add(own.GIT_CONFIG_KEY_1, own.GIT_CONFIG_VALUE_1);
+    scopedDone = own.GIT_CONFIG_KEY_1 === `http.${GITHUB_BASE}.followRedirects`;
   }
-  out[`GIT_CONFIG_KEY_${i}`] = "http.followRedirects";
-  out[`GIT_CONFIG_VALUE_${i}`] = "false";
-  i++;
+  if (!scopedDone) add(`http.${GITHUB_BASE}.followRedirects`, "false");
+  add("http.followRedirects", "false");
   return { GIT_CONFIG_COUNT: String(i), ...out };
 }
 
 /**
  * The process environment minus every CONTROL_* variable (secrets never reach a git child), plus
- * the GIT_CONFIG_* entries of `authEntries` (always the no-redirect default; the HTTPS auth pair too
- * when `setGitAuth` was called), merged after the scrub.
+ * the GIT_CONFIG_* entries of `authEntries` (always the two no-redirect entries; the HTTPS auth
+ * pair too when `setGitAuth` was called), merged after the scrub.
  */
 export function childEnv(): Record<string, string | undefined> {
   const out: Record<string, string | undefined> = {};
@@ -194,11 +211,29 @@ function run(cwd: string | undefined, args: string[], opts: GitOpts = {}): GitRe
   return { ok: r.status === 0, out: r.stdout ?? "", err: r.stderr ?? "" };
 }
 
+/** What the operator does when git hit a redirect: never followed, so the remote must be re-pointed. */
+export const MOVED_HINT = "the state repo moved or was renamed; run `ctl origin set <new url>`";
+
+/**
+ * A clone/fetch/push failure whose git message says the server answered a 30x (a renamed or
+ * transferred repo; `followRedirects` is off, so it is a failure, never followed) gets the fix
+ * appended. The CLI prints only the first line of a message, cut to ~150 characters, and git's own
+ * line (`fatal: unable to access '<url>/': The requested URL returned error: 301`) would push the
+ * hint off the end, so the first line becomes `<label>returned error: <code> (hint: ...)` and git's
+ * full message follows on the next lines. Any other message is returned unchanged.
+ */
+export function withMovedHint(message: string): string {
+  const m = /returned error: (30\d)/.exec(message);
+  if (m === null) return message;
+  const label = /^(?:clone|git \w[\w-]*) failed: /.exec(message)?.[0] ?? "";
+  return `${label}returned error: ${m[1]} (hint: ${MOVED_HINT})\n${message}`;
+}
+
 /** Run git; throws CtlError(5) on failure or timeout (message = stderr). Returns stdout. */
 export function git(cwd: string, args: string[], opts?: GitOpts): string {
   const r = run(cwd, args, opts);
   if (!r.ok) {
-    throw new CtlError(5, `git ${args[0] ?? ""} failed: ${(r.err || r.out).trim()}`);
+    throw new CtlError(5, withMovedHint(`git ${args[0] ?? ""} failed: ${(r.err || r.out).trim()}`));
   }
   return r.out;
 }

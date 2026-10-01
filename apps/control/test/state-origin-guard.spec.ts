@@ -10,7 +10,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { baseState, makeWorld } from "./helpers/temp-repo";
+import { baseState, git, makeWorld } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
 import type { GitShim } from "./helpers/git-shim";
@@ -154,20 +154,67 @@ describe("a legitimate origin still works", () => {
 describe("the check is memoised per origin string, but only when it succeeded", () => {
   const probesOf = (origin: string): number =>
     shim.calls().filter((c) => c === `ls-remote --get-url -- ${origin}`).length;
+  const freshOrigin = (): typeof import("../src/sources/origin") => {
+    let out: any;
+    jest.isolateModules(() => {
+      out = require("../src/sources/origin");
+    });
+    return out;
+  };
+  const exit2 = (fn: () => unknown): number | null => {
+    try {
+      fn();
+      return null;
+    } catch (e) {
+      return (e as { code?: number }).code ?? -1;
+    }
+  };
+  /** A local bare repo (no remotes) under the world's root. */
+  const localRepo = (name: string): string => {
+    const dir = path.join(world.root, name);
+    fs.mkdirSync(dir);
+    git(dir, ["init", "-q", "--bare"]);
+    return dir;
+  };
 
-  it("a successful check runs its git probe once per process, however many calls follow", async () => {
-    const { SB } = fresh();
-    const env: any = world.env("a");
-    const clone = await SB.ensureClone(env);
-    expect(probesOf(env.origin)).toBe(1);
-    SB.syncClone(env, clone);
-    await SB.appendAndPush(env, "lane-u", draft);
-    SB.syncClone(env, clone);
-    expect(probesOf(env.origin)).toBe(1);
+  it("a plain remote URL (pure string check) is probed once per process, however many calls follow", () => {
+    const O = freshOrigin();
+    const url = "https://state.invalid/acme/state.git";
+    for (let i = 0; i < 4; i++) expect(O.assertEnvOrigin(url)).toBe(url);
+    expect(probesOf(url)).toBe(1);
     // a different origin string is its own entry
-    const other: any = world.env("b", { origin: `${world.originUrl}/` });
-    await SB.ensureClone(other);
-    expect(probesOf(other.origin)).toBe(1);
+    const other = "https://state.invalid/acme/other.git";
+    O.assertEnvOrigin(other);
+    O.assertEnvOrigin(other);
+    expect(probesOf(other)).toBe(1);
+  });
+
+  it("a local-path or file:// origin is NEVER memoised: every call re-inspects it", () => {
+    const O = freshOrigin();
+    for (const origin of [world.originUrl, world.originDir, `${world.originUrl}/`]) {
+      O.assertEnvOrigin(origin);
+      O.assertEnvOrigin(origin);
+      O.assertEnvOrigin(origin);
+      expect([origin, probesOf(origin)]).toEqual([origin, 3]);
+    }
+  });
+
+  it("a local dir origin re-pointed at the product repo AFTER a first success is refused now", () => {
+    const O = freshOrigin();
+    const dir = localRepo("state-local.git");
+    expect(O.assertEnvOrigin(dir)).toBe(dir); // first success
+    git(dir, ["remote", "add", "origin", `https://github.com/${SLUG}.git`]);
+    expect(exit2(() => O.assertEnvOrigin(dir))).toBe(2);
+    expect(exit2(() => O.assertEnvOrigin(`file://${dir}`))).toBe(2);
+  });
+
+  it("an insteadOf alias re-pointed at the product repo mid-process is refused now (aliases are not memoised)", () => {
+    const O = freshOrigin();
+    const gc = process.env.GIT_CONFIG_GLOBAL as string;
+    fs.writeFileSync(gc, '[url "https://state.invalid/acme/"]\n\tinsteadOf = acme-alias:\n');
+    expect(O.assertEnvOrigin("acme-alias:routeflow")).toBe("acme-alias:routeflow");
+    fs.writeFileSync(gc, `[url "${SSH_BASE}"]\n\tinsteadOf = acme-alias:\n`);
+    expect(exit2(() => O.assertEnvOrigin("acme-alias:routeflow"))).toBe(2);
   });
 
   it("a refusal is never remembered: the same string is re-checked, and allowed once it resolves elsewhere", async () => {

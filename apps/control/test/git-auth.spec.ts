@@ -98,13 +98,15 @@ describe("childEnv with setGitAuth", () => {
     expect(Object.keys(env).filter((k) => k.startsWith("CONTROL_"))).toEqual([]);
     expect(JSON.stringify(env)).not.toContain("leak-me-please");
   });
-  it("without auth set (or after setGitAuth(null)) there is no header, only the generic no-redirect entry", () => {
+  it("without auth set (or after setGitAuth(null)) there is no header, only the two no-redirect entries", () => {
     delete process.env.GIT_CONFIG_COUNT;
     const only = (env: Record<string, string>): void => {
-      expect(env.GIT_CONFIG_COUNT).toBe("1");
-      expect(env.GIT_CONFIG_KEY_0).toBe(GENERIC);
+      expect(env.GIT_CONFIG_COUNT).toBe("2");
+      expect(env.GIT_CONFIG_KEY_0).toBe(FOLLOW);
       expect(env.GIT_CONFIG_VALUE_0).toBe("false");
-      expect(env.GIT_CONFIG_KEY_1).toBeUndefined();
+      expect(env.GIT_CONFIG_KEY_1).toBe(GENERIC);
+      expect(env.GIT_CONFIG_VALUE_1).toBe("false");
+      expect(env.GIT_CONFIG_KEY_2).toBeUndefined();
       expect(JSON.stringify(env)).not.toContain("extraheader");
     };
     only(G().childEnv());
@@ -112,19 +114,32 @@ describe("childEnv with setGitAuth", () => {
     G().setGitAuth(null);
     only(G().childEnv());
   });
-  it("without auth, an inherited GIT_CONFIG_COUNT is kept and the generic entry goes after it", () => {
+  it("without auth, an inherited GIT_CONFIG_COUNT is kept and the two no-redirect entries go after it", () => {
     process.env.GIT_CONFIG_COUNT = "2";
     process.env.GIT_CONFIG_KEY_0 = "user.name";
     process.env.GIT_CONFIG_VALUE_0 = "zed";
     process.env.GIT_CONFIG_KEY_1 = "core.abbrev";
     process.env.GIT_CONFIG_VALUE_1 = "9";
     const env = G().childEnv();
-    expect(env.GIT_CONFIG_COUNT).toBe("3");
+    expect(env.GIT_CONFIG_COUNT).toBe("4");
     expect(env.GIT_CONFIG_KEY_0).toBe("user.name");
     expect(env.GIT_CONFIG_VALUE_1).toBe("9");
-    expect(env.GIT_CONFIG_KEY_2).toBe(GENERIC);
+    expect(env.GIT_CONFIG_KEY_2).toBe(FOLLOW);
     expect(env.GIT_CONFIG_VALUE_2).toBe("false");
-    expect(env.GIT_CONFIG_KEY_3).toBeUndefined();
+    expect(env.GIT_CONFIG_KEY_3).toBe(GENERIC);
+    expect(env.GIT_CONFIG_VALUE_3).toBe("false");
+    expect(env.GIT_CONFIG_KEY_4).toBeUndefined();
+  });
+  it("with a token on a custom base: the header pair, that base's no-redirect entry, then github.com's and the generic one", () => {
+    delete process.env.GIT_CONFIG_COUNT;
+    G().setGitAuth(TOKEN, "http://127.0.0.1:9/");
+    const env = G().childEnv();
+    expect(env.GIT_CONFIG_COUNT).toBe("4");
+    expect(env.GIT_CONFIG_KEY_0).toBe("http.http://127.0.0.1:9/.extraheader");
+    expect(env.GIT_CONFIG_KEY_1).toBe("http.http://127.0.0.1:9/.followRedirects");
+    expect(env.GIT_CONFIG_KEY_2).toBe(FOLLOW);
+    expect(env.GIT_CONFIG_KEY_3).toBe(GENERIC);
+    for (const i of [1, 2, 3]) expect(env[`GIT_CONFIG_VALUE_${i}`]).toBe("false");
   });
   it("without auth, a CONTROL_* variable still never reaches the child", () => {
     process.env.CONTROL_SECRET_PROBE = "leak-me-please";
@@ -210,6 +225,34 @@ describe("a real git child", () => {
     expect(G().gitTry(tmp(), ["config", "--get-urlmatch", GENERIC, url]).out.trim()).toBe("false");
     G().setGitAuth(TOKEN);
     expect(G().gitTry(tmp(), ["config", "--get-urlmatch", GENERIC, url]).out.trim()).toBe("false");
+  });
+  it("a user's URL-scoped followRedirects=true for github.com loses too (the generic entry alone does not beat it)", () => {
+    const cfg = path.join(tmp(), "gitconfig");
+    fs.writeFileSync(
+      cfg,
+      '[http "https://github.com/"]\n\tfollowRedirects = true\n[http "https://github.com"]\n\tfollowRedirects = true\n',
+    );
+    process.env.GIT_CONFIG_GLOBAL = cfg;
+    delete process.env.GIT_CONFIG_COUNT;
+    const url = "https://github.com/acme/app.git";
+    const ask = (): string =>
+      G().gitTry(tmp(), ["config", "--get-urlmatch", GENERIC, url]).out.trim();
+    expect(ask()).toBe("false"); // no token
+    G().setGitAuth(TOKEN);
+    expect(ask()).toBe("false"); // with a token
+  });
+  it("documented limit: a user setting scoped to a MORE SPECIFIC path (https://github.com/acme/) still wins", () => {
+    const cfg = path.join(tmp(), "gitconfig");
+    fs.writeFileSync(cfg, '[http "https://github.com/acme/"]\n\tfollowRedirects = true\n');
+    process.env.GIT_CONFIG_GLOBAL = cfg;
+    delete process.env.GIT_CONFIG_COUNT;
+    const r = G().gitTry(tmp(), [
+      "config",
+      "--get-urlmatch",
+      GENERIC,
+      "https://github.com/acme/app.git",
+    ]);
+    expect(r.out.trim()).toBe("true"); // the honest limit named in git.ts's doc comment
   });
   it("the token is in no argv, and not in .git/config after init + fetch from a file:// repo", () => {
     shim = installGitShim();

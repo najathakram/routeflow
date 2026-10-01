@@ -6,13 +6,14 @@
  * git, real `git http-backend`; nothing leaves 127.0.0.1. The token-authenticated twin is
  * test/git-auth-redirect.spec.ts.
  */
+import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { startSmartHttp } from "./helpers/smart-http";
 import type { SmartHttp, SmartHttpOpts } from "./helpers/smart-http";
 import { runCli } from "./helpers/spawn-cli";
-import { makeWorld } from "./helpers/temp-repo";
+import { baseState, makeWorld } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 
 jest.setTimeout(90_000);
@@ -122,5 +123,89 @@ describe("without a token a redirect still never leaves the configured host", ()
     expect(G().git(clone, ["rev-parse", "refs/remotes/origin/main"]).trim()).toMatch(
       /^[0-9a-f]{40}$/,
     );
+  });
+});
+
+const HINT = "the state repo moved or was renamed; run `ctl origin set <new url>`";
+
+describe("a redirect (renamed or transferred state repo) tells the operator what to do", () => {
+  it("clone: the real CLI exits 5 with the 301/302 and the `ctl origin set` hint", async () => {
+    const b = await serve();
+    const a = await serve({ redirectTo: b.base });
+    world = makeWorld();
+    const r = await runCli(world, ["note", "hello"], {
+      env: { CONTROL_STATE_ORIGIN: a.repoUrl, GIT_ALLOW_PROTOCOL: "file:http:https" },
+    });
+    expect(r.code).toBe(5);
+    expect(r.stderr).toMatch(/clone failed: .*error: 302/);
+    expect(r.stderr).toContain(HINT);
+    expect(b.seen).toEqual([]);
+  });
+
+  it("fetch: git() throws CtlError(5) naming the 302 and the hint", async () => {
+    const b = await serve();
+    const a = await serve({ redirectTo: b.base });
+    const clone = emptyClone();
+    G().git(clone, ["remote", "add", "--", "origin", a.repoUrl]);
+    let err: any;
+    try {
+      G().git(clone, ["fetch", "-q", "--end-of-options", "origin", "+refs/heads/main:refs/x"]);
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe(5);
+    expect(err.message).toMatch(/error: 302/);
+    expect(err.message).toContain(HINT);
+    expect(b.seen).toEqual([]);
+  });
+
+  it("push: a push failure that returned 301 carries the hint (git shimmed to fail the push that way)", async () => {
+    world = makeWorld();
+    world.seedBranch("ctl/state", baseState(0));
+    const dir = path.join(world.root, "push-shim");
+    fs.mkdirSync(dir);
+    const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    fs.writeFileSync(
+      path.join(dir, "git"),
+      [
+        "#!/bin/sh",
+        'for a in "$@"; do',
+        '  if [ "$a" = push ]; then',
+        "    echo 'fatal: unable to access the repo: The requested URL returned error: 301' >&2",
+        "    exit 1",
+        "  fi",
+        "done",
+        `exec '${real}' "$@"`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const r = await runCli(world, ["note", "hello"], {
+      env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}` },
+    });
+    expect(r.code).toBe(5);
+    expect(r.stderr).toMatch(/returned error: 301/);
+    expect(r.stderr).toContain(HINT);
+  });
+
+  it.each([
+    ["301", true],
+    ["302", true],
+    ["307", true],
+    ["308", true],
+    ["403", false],
+    ["404", false],
+    ["500", false],
+  ])("withMovedHint: `returned error: %s` -> hint %s", (code, hinted) => {
+    const msg = `git fetch failed: fatal: The requested URL returned error: ${code}`;
+    const out: string = G().withMovedHint(msg);
+    expect(out.includes(HINT)).toBe(hinted);
+    if (hinted) {
+      // first line: the label, the code and the hint; git's own message is kept below it
+      expect(out.split("\n")[0]).toBe(`git fetch failed: returned error: ${code} (hint: ${HINT})`);
+      expect(out.endsWith(`\n${msg}`)).toBe(true);
+    } else {
+      expect(out).toBe(msg);
+    }
   });
 });

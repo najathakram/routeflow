@@ -10,7 +10,7 @@ import { execFileSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { git } from "./temp-repo";
+import { OFFLINE_GIT_ENV, git } from "./temp-repo";
 import type { World } from "./temp-repo";
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
@@ -114,15 +114,19 @@ export interface SpawnOpts {
   timeoutMs?: number;
 }
 
-export async function runCli(
+/**
+ * The environment of a spawned `ctl`. Offline by default (`OFFLINE_GIT_ENV`: file-only transport,
+ * ssh disabled), even over an ambient value, so a regressed state-origin refusal can never reach a
+ * real host; a caller overrides either through `opts.env` (as the 127.0.0.1 redirect specs do).
+ */
+export function cliChildEnv(
   world: World,
-  args: string[],
   opts: SpawnOpts = {},
-): Promise<CliResult> {
+): Record<string, string | undefined> {
   const machine = opts.machine ?? "a";
-  const cwd = opts.cwd ?? makeWorkRepo(world, `w-${machine}`).dir;
   const env: Record<string, string | undefined> = {
     ...process.env,
+    ...OFFLINE_GIT_ENV,
     GIT_TERMINAL_PROMPT: "0",
     CONTROL_STATE_ORIGIN: world.originUrl,
     CONTROL_STATE_DIR: world.cloneDirOf(machine),
@@ -131,6 +135,17 @@ export async function runCli(
   delete env.CTL_LANE;
   if (opts.lane) env.CTL_LANE = opts.lane;
   if (opts.lane === undefined) env.CTL_LANE = "lane-u";
+  return env;
+}
+
+export async function runCli(
+  world: World,
+  args: string[],
+  opts: SpawnOpts = {},
+): Promise<CliResult> {
+  const machine = opts.machine ?? "a";
+  const cwd = opts.cwd ?? makeWorkRepo(world, `w-${machine}`).dir;
+  const env = cliChildEnv(world, opts);
   await ensureBuilt();
   return new Promise((resolve) => {
     // run dist directly: bin/ctl.mjs could trigger its own rebuild mid-run
