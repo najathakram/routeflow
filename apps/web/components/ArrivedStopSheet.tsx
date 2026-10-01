@@ -4,6 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { ClipboardEdit, PackagePlus, CreditCard, ChevronRight } from "lucide-react";
 import { Modal } from "@routeflow/ui/web";
+import { useAuth } from "@/lib/auth-context";
 
 // ─── ArrivedStopSheet ──────────────────────────────────────────────────────────
 // pos-cost-roles-spec.md §3 "At-the-door actions" — on an arrived stop, one sheet
@@ -60,6 +61,12 @@ export function ArrivedStopSheet({
   orders = [],
 }: ArrivedStopSheetProps) {
   const router = useRouter();
+  const { user } = useAuth();
+  // B966: the house staff condition (RouteGuard isStaffRole). "New order at door" and "Collect
+  // payment" go to /orders and /finance/payments, which a DRIVER is bounced off (dead ends);
+  // drivers place and collect in the native app.
+  const role = user?.role;
+  const isStaff = !!role && role !== "CUSTOMER" && role !== "DRIVER";
   const primaryOrder = orders[0];
 
   const go = (href: string) => {
@@ -83,18 +90,22 @@ export function ArrivedStopSheet({
             onClick={() => go(`/orders/${primaryOrder.id}`)}
           />
         )}
-        <ActionTile
-          icon={<PackagePlus className="h-5 w-5" />}
-          title="New order at door"
-          subtitle="Open the order builder for this delivery"
-          onClick={() => go("/orders?action=new")}
-        />
-        <ActionTile
-          icon={<CreditCard className="h-5 w-5" />}
-          title="Collect payment"
-          subtitle="Record a payment against this customer's balance"
-          onClick={() => go("/finance/payments")}
-        />
+        {isStaff && (
+          <>
+            <ActionTile
+              icon={<PackagePlus className="h-5 w-5" />}
+              title="New order at door"
+              subtitle="Open the order builder for this delivery"
+              onClick={() => go("/orders?action=new")}
+            />
+            <ActionTile
+              icon={<CreditCard className="h-5 w-5" />}
+              title="Collect payment"
+              subtitle="Record a payment against this customer's balance"
+              onClick={() => go("/finance/payments")}
+            />
+          </>
+        )}
       </div>
     </Modal>
   );
