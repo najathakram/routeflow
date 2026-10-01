@@ -91,16 +91,49 @@ export function backorderPiecesForLine(args: {
   return backorderPiecesForLines({ ...args, lines: [args.line] });
 }
 
-/** Per-product rule: sum every line's pieces FIRST, then subtract available (mirrors B920). */
+/**
+ * Per-product rule: sum every line's pieces FIRST, then subtract available (mirrors B920).
+ * SA ruling N5: every line's pieces must be >= 0. A negative sale line is a CALLER bug, so it
+ * throws a `RangeError` (never clamped, never netted against a positive line), even when
+ * `allowOversell` is false, so the bug cannot hide behind the policy.
+ */
 export function backorderPiecesForLines(args: {
   lines: BackorderLine[];
   productPack?: number | null;
   availablePieces: number;
   allowOversell: boolean;
 }): number {
+  const pieces = args.lines.map((l) => linePieces(l, args.productPack));
+  if (pieces.some((p) => p < 0)) {
+    throw new RangeError("backorderPiecesForLines: a sale line has negative pieces");
+  }
   if (!args.allowOversell) return 0;
-  const requested = round3(args.lines.reduce((sum, l) => sum + linePieces(l, args.productPack), 0));
+  const requested = round3(pieces.reduce((sum, p) => sum + p, 0));
   return round3(Math.max(0, requested - Math.max(0, args.availablePieces)));
+}
+
+/**
+ * EDIT path (SA ruling): backorder pieces per product from `settleStockForEdit`'s per-product
+ * DELTA map. For each product with delta > 0: `max(0, delta - max(0, available))`. A product
+ * with delta <= 0 (a lowered or unchanged line) is 0 and never affects another product.
+ * `allowOversell=false` yields 0 for every product. Every product in `deltaByProduct` is present
+ * in the result.
+ */
+export function backorderPiecesForEditDelta(args: {
+  deltaByProduct: ReadonlyMap<string, number>;
+  availableByProduct: ReadonlyMap<string, number>;
+  allowOversell: boolean;
+}): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [productId, delta] of args.deltaByProduct) {
+    if (!args.allowOversell || !(delta > 0)) {
+      out.set(productId, 0);
+      continue;
+    }
+    const available = Math.max(0, args.availableByProduct.get(productId) ?? 0);
+    out.set(productId, round3(Math.max(0, delta - available)));
+  }
+  return out;
 }
 
 export function orderableAndBackorder(args: { stock: number; allowOversell: boolean }): {
