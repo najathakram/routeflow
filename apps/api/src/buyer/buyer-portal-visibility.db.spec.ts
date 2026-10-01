@@ -9,7 +9,7 @@
  *
  * Surfaces driven through REAL services (no mocks of the predicate or of Prisma):
  *   BuyerCatalogService.getCatalog (list, search by exact name), getCatalogCounts, getCategories,
- *   getProductDetail, getFavorites, addFavorite; BuyerController.scanProduct (sku + barcode, via an
+ *   getProductDetail, getFavorites, addFavorite; BuyerController.scanProduct (sku + barcode + a ProductBarcode ROW code, via an
  *   Object.create'd controller holding the real catalog + stock-alert services);
  *   BuyerDashboardService.getDashboard (frequently-ordered / new / featured / suggested rails);
  *   ReplenishmentService.estimates + ShelfService.shelf; StockAlertService.subscribe;
@@ -91,6 +91,11 @@ interface Fx {
   V3: any;
   /** standalone */
   S: any;
+  /**
+   * One ProductBarcode ROW code per product (productId -> code), deliberately != Product.barcode / sku, so the
+   * buyer scan's row tier (SA-578) is exercised on every product the matrix hides or shows.
+   */
+  rowCodes: Record<string, string>;
   orderId: string;
   invoiceId: string;
 }
@@ -357,6 +362,24 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       data: { buyerAccountId: buyerAccount.id, customerId: customer.id, productId: S.id, tenantId },
     });
 
+    // A row code per product that is NOT its legacy barcode or sku: a scan of it can only resolve through the
+    // ProductBarcode tier, which must apply the buyer visibility scope exactly like the legacy columns do.
+    const rowCodes: Record<string, string> = {};
+    for (const [tag, p] of Object.entries({ P, V1, V2, V3, S })) {
+      const code = `ROW-${tag}-${run}-${seq}`;
+      await raw.productBarcode.create({
+        data: {
+          tenantId,
+          productId: p.id,
+          code,
+          level: "UNIT",
+          symbology: "CODE128",
+          origin: "ENTERED",
+        } as any,
+      });
+      rowCodes[p.id] = code;
+    }
+
     const lines = [V1, V2, S].map((p) => ({
       tenantId,
       productId: p.id,
@@ -412,6 +435,7 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
       V2,
       V3,
       S,
+      rowCodes,
       orderId: order.id,
       invoiceId: invoice.id,
     };
@@ -490,6 +514,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
         detail: await asBool(() => catalog.getProductDetail(p.id, f.customerId)),
         scanSku: await scan(p.sku),
         scanBarcode: await scan(p.barcode),
+        // a ProductBarcode ROW code (!= barcode, != sku): the row tier honours the same buyer scope
+        scanRow: await scan(f.rowCodes[p.id]),
         ...(opts.write
           ? {
               subscribe: await asBool(() => stockAlerts.subscribe(f.customerId, p.id, f.tenantId)),
@@ -552,6 +578,8 @@ describeDb("buyer portal visibility — the one rule, end to end, real Postgres"
     expect(r.detail).toBe(visible);
     expect(r.scanSku).toBe(visible);
     expect(r.scanBarcode).toBe(visible);
+    // hidden product / hidden-parent variant / FAMILY container => 404 by row code too; visible control => 200
+    expect(r.scanRow).toBe(visible);
     if (write) {
       expect((r as any).subscribe).toBe(visible);
       expect((r as any).addFavorite).toBe(visible);
