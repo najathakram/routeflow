@@ -800,5 +800,20 @@ describeDb(
         ),
       ).resolves.toBeDefined();
     });
+
+    it("23. B961 / SA-071e: a product exhausted ONLY by credit notes (no return) is not flagged: it MATCHES the line, and the B948 line cap refuses the inline return 409", async () => {
+      const s = await seed("cn-only-exhausted");
+      await creditNoteItem(s, s.lineA, 100); // the whole line, credited by a credit note
+      const quote = await tenantCtx.run(s.tenantId, () =>
+        inline.quoteService.quote(
+          { customerId: s.customerId, items: [{ productId: s.pA.id, boxes: 0, pieces: 1 }] },
+          staffUser(s),
+        ),
+      );
+      expect(quote.chunks[0]).toMatchObject({ sourceInvoiceItemId: s.lineA.id });
+      expect(quote.chunks[0]).not.toHaveProperty("alreadyReturned");
+      const err = await inlineReturn(s, 1, "should not matter").catch((e) => e);
+      expect(err?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+    });
   },
 );
