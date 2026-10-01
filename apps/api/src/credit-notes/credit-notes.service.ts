@@ -21,6 +21,7 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
+import { loadLineCredits } from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -101,6 +102,7 @@ export class CreditNotesService {
         items: {
           select: {
             id: true,
+            productId: true,
             subtotal: true,
             qty: true,
             trackedCategoryId: true,
@@ -179,22 +181,25 @@ export class CreditNotesService {
     // order-line-keyed cap (RegulatedLedgerService.reverseCreditNoteEntries) floors
     // the filing at 0 — so a reconcile-rotated double-credit is a within-invoice
     // line-attribution quirk, never a net over-refund or a negative filing.
-    const notThisNote = opts.excludeCreditNoteId ? { id: { not: opts.excludeCreditNoteId } } : {};
-    const priorLineItems = await db.creditNoteItem.findMany({
-      where: {
-        invoiceItemId: { in: [...mergedByLine.keys()] },
-        creditNote: { invoiceId: dto.invoiceId, status: { not: "VOID" }, ...notThisNote },
-      },
-      select: { invoiceItemId: true, amount: true, qty: true },
-    });
+    // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
+    // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
+    // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    const lineCredits = await loadLineCredits(
+      db,
+      dto.invoiceId,
+      (invoice.items ?? []).map((it: any) => ({
+        id: it.id,
+        productId: it.productId ?? null,
+        subtotal: Number(it.subtotal),
+        qty: Number(it.qty),
+      })),
+      opts,
+    );
     const creditedByLine = new Map<string, number>();
-    // SA-401a: credited QUANTITY per line too (base pieces, like InvoiceItem.qty), so a line
-    // cannot be credited for more units than it sold even when its amount cap has headroom.
     const creditedQtyByLine = new Map<string, number>();
-    for (const it of priorLineItems) {
-      const k = it.invoiceItemId ?? "";
-      creditedByLine.set(k, (creditedByLine.get(k) ?? 0) + Number(it.amount));
-      creditedQtyByLine.set(k, (creditedQtyByLine.get(k) ?? 0) + Number(it.qty ?? 0));
+    for (const [k, v] of lineCredits) {
+      creditedByLine.set(k, v.amount);
+      creditedQtyByLine.set(k, v.qty);
     }
 
     let sum = 0;
@@ -519,6 +524,11 @@ export class CreditNotesService {
         // `tx` read (the pre-check above ran on a separate, non-tx snapshot).
         cn = await this.prisma.tenantTransaction(
           async (tx: any) => {
+            // SA-628 / SA-214 lock order: the INVOICE row first, so a concurrent credit note and return refund on the same
+            // invoice serialise on it and the second sees the first's credit in the shared per-line headroom.
+            if (dto.invoiceId) {
+              await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} FOR UPDATE`;
+            }
             const cnItemsData = await this.validateAndBuildCnItems(tx, dto);
 
             // REG-B267-E: the customer summary the response carries comes from the
