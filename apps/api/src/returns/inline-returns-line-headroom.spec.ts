@@ -63,6 +63,20 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
     });
     await expect(p).resolves.toBeUndefined();
   });
+  it("a selling-unit line with a NULL pack snapshot resolves its pack like the pricing (product pack 12): 5 pieces of a 2-case line fit", async () => {
+    const legacy = {
+      id: "lg",
+      productId: "pl",
+      subtotal: 240,
+      qty: 2,
+      boxes: null,
+      pieces: null,
+      unitsPerBox: null,
+      product: { unitsPerBox: 12 },
+    };
+    const { p } = run([chunk("lg", 5, 50)], { items: [legacy] });
+    await expect(p).resolves.toBeUndefined();
+  });
   it("a boxed line counts on its own axis: 12 pieces of a 2-box x 12 line is 1 box, not 12", async () => {
     const boxed = {
       id: "bx",
@@ -80,7 +94,7 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
     await expect(p).resolves.toBeUndefined();
     expect(tx.$executeRaw).not.toHaveBeenCalled();
   });
-  it("locks the source Invoice row(s), tenant-scoped, BEFORE reading the credits", async () => {
+  it("WRITES (locks + new row version) the source Invoice row(s), tenant-scoped, BEFORE reading the credits", async () => {
     const { tx, p } = run([chunk("a", 0.4, 40)]);
     await p;
     expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
