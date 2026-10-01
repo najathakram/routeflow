@@ -17,7 +17,8 @@ The image builds from the root `package.json` and `package-lock.json`, which sit
 
 ## State repo setup
 
-The control state is one git branch, `ctl/state`, written only by `ctl`. It must live in a **separate,
+The control state is one git branch, `ctl/state`, written by `ctl` (and by the dashboard's web write path
+only when `CONTROL_WRITEBACK=on`). It must live in a **separate,
 private repo**. `ctl` refuses any state remote that resolves to the product repo itself
 (`najathakram/routeflow`): every URL form (https, ssh, scp-like with a host alias, `git://`, `ext::`,
 mixed case, percent-encoded, with or without `.git`, `/.git`, a trailing slash, or the `.wiki` suffix,
@@ -66,14 +67,9 @@ set there is no state remote: `ctl next` prints one line (`control: no state rem
 `ctl next --hook` prints nothing, and every other verb exits 2 with the same message. `ctl` no longer falls back
 to the working repo's `origin`. `CONTROL_STATE_DIR` still overrides the local clone directory.
 
-**Dashboard server (not in this change).** `ctl serve` / `src/main.ts` / `src/config.ts` still derive the
-state origin from `CONTROL_REPO` (over SSH with the one deploy key in `CONTROL_DEPLOY_KEY_B64`) and read the
-registers, PRs and CI from that same repo. So today the server can only read `ctl/state` from the repo named
-by `CONTROL_REPO`, which is exactly what this change forbids for the CLI. Reading the state from a separate
-state repo needs a second credential (a deploy key for the state repo) and its own config; that is a
-follow-up. Until it lands, do not point a deployed server at a state that lives only in the separate repo: it
-would not see it. The CLI side (`init`, `lane register`, `next` and every writing verb) works against the
-separate repo today.
+The dashboard server does not use any of this: it reads `ctl/state` from the state repo named by
+`CONTROL_STATE_REPO` over HTTPS with the one read-only token (see "Credentials" below), and never pushes
+unless `CONTROL_WRITEBACK=on`. `ctl` is the writer.
 
 ## Security notes
 
@@ -102,11 +98,20 @@ deploy key and no SSH (GitHub deploy keys belong to a single repo, so they canno
   `.git/config`, and is redacted from error text (the raw token and its Basic form, before any
   message is cut to length). Git also runs with `http.followRedirects=false`: a redirect is a
   failure, so the header can never reach another host. A renamed or moved repo (GitHub answers a
-  redirect) therefore fails; point `CONTROL_REPO` / `CONTROL_STATE_REPO` at the new name.
+  redirect) therefore fails, and the boot probe counts the redirect as unknown (fail closed): fix
+  `CONTROL_REPO` / `CONTROL_STATE_REPO` to the new name.
 - **Write-back is off.** State is read from the separate state repo; a write token would be a
   separate, later change. State never lives in the product repo, and `CONTROL_STATE_REPO` set to
   `najathakram/routeflow` (any spelling: case, `.git`, `.wiki`, trailing `/` or `.`) is refused, as
-  is a `CONTROL_STATE_REPO` equal to `CONTROL_REPO`.
+  is a `CONTROL_STATE_REPO` equal to `CONTROL_REPO`. The `ctl origin set` check applies the same
+  spellings (including a trailing `.` and percent-encoded `.` or NUL).
+- **With write-back off the server never pushes, of any kind.** It fetches only: no PR-ledger commit
+  (`derived/prs.jsonl`), no compaction and no archive push, so the read-only token never meets a failing
+  push and `/api/health` carries no ledger error. The PR ledger then lives in memory only: the dashboard
+  serves the rows it has seen since boot (only the newest 5,000 are kept), a restart starts from what is
+  already on `ctl/state`, and PR history older than what the GitHub poll returns is not persisted. Turn
+  `CONTROL_WRITEBACK` on (with a write credential limited to the state repo) to persist the ledger and
+  to let the server compact the branch.
 
 ### Boot probe
 
@@ -137,8 +142,6 @@ the reason in parentheses.
   read the two `control: probe <repo> -> ...` lines to confirm that is what GitHub does for this
   token. If GitHub answers something else (say 200 for everyone), the boot refuses and the log
   names the status; do not work around it by editing the probe.
-- A renamed repo answers a redirect, which counts as unknown, so the boot refuses (fail closed).
-  Fix the repo name in the env.
 
 ### Environment
 
@@ -165,5 +168,6 @@ Save, Dismiss, Make next and Give to button is disabled, and a direct `POST /api
 browser session answers `403 {"error":"writeback_off"}` before it reads the body or touches the state
 clone (an unauthenticated call still gets `401`). Why: a web save needs a write credential limited to
 the state repo, and this version carries only the read-only token above, so every web save would fail
-anyway. Boot prints a warning if you set `on` against a real deployment. The `ctl` CLI writes lane state
+anyway. Boot prints a warning if you set `on` against a real deployment. Off also means the server
+itself never pushes (no ledger commit, no compaction; see Credentials). The `ctl` CLI writes lane state
 directly and is unaffected.

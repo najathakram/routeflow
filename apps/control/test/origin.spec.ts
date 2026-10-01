@@ -78,6 +78,27 @@ const REFUSE: [string, string][] = [
   ["alias /.git", `alias:${SLUG}/.git`],
   ["/.git/.git", `https://github.com/${SLUG}/.git/.git`],
   ["space before owner", `weird transport ${SLUG}`],
+  // a trailing "." (config.ts refuses it for CONTROL_STATE_REPO) and control characters, in any
+  // mix with `/`, `.git` and `.wiki`; a percent-encoded `.` or NUL decodes to the same thing
+  ["trailing dot", `https://github.com/${SLUG}.`],
+  ["trailing dots", `https://github.com/${SLUG}...`],
+  ["trailing .git.", `https://github.com/${SLUG}.git.`],
+  ["trailing .git..", `https://github.com/${SLUG}.git..`],
+  ["trailing %00", `https://github.com/${SLUG}%00`],
+  ["trailing .git%00", `https://github.com/${SLUG}.git%00`],
+  ["trailing %2e", `https://github.com/${SLUG}%2e`],
+  ["trailing .git%2e", `https://github.com/${SLUG}.git%2E`],
+  ["trailing %252e (double encoded)", `https://github.com/${SLUG}%252e`],
+  ["trailing %00 then slash", `https://github.com/${SLUG}%00/`],
+  ["trailing control char (%01, %1f, %7f)", `https://github.com/${SLUG}%01%1f%7f`],
+  ["trailing %00 after a dot after .git", `https://github.com/${SLUG}.git.%00`],
+  [
+    "mixed chain of dots, NULs, slashes and suffixes",
+    `https://github.com/${SLUG}.git./.wiki.%00/.`,
+  ],
+  ["scp-like trailing dot", `git${AT}github.com:${SLUG}.`],
+  ["scp-like .git.", `git${AT}github.com:${SLUG}.git.`],
+  ["wiki trailing dot", `https://github.com/${SLUG}.wiki.`],
 ];
 
 const ALLOW: [string, string][] = [
@@ -105,6 +126,10 @@ const ALLOW: [string, string][] = [
   ["owner look-alike scp-like", `git${AT}github.com:my-najathakram/routeflow.git`],
   ["wiki of a sibling", `git${AT}github.com:najathakram/routeflow-control-state.wiki.git`],
   ["routeflow-wiki repo", "https://github.com/najathakram/routeflow-wiki"],
+  ["sibling with a trailing dot", "https://github.com/najathakram/routeflow-control-state."],
+  ["sibling .git. with a trailing %00", "https://github.com/najathakram/routeflow2.git.%00"],
+  ["pages repo with a trailing dot", "https://github.com/najathakram/routeflow.github.io."],
+  ["owner look-alike with a trailing dot", "https://github.com/my-najathakram/routeflow."],
 ];
 
 describe("isRouteflowOrigin: refuse matrix (string forms)", () => {
@@ -611,6 +636,16 @@ describe("ctl origin set | show | unset (CLI, never the network)", () => {
     const r = await runCli(world, ["origin", "set", `git${AT}github.com:${SLUG}.git`], {
       env: env(),
     });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toMatch(/refusing state remote/);
+    expect(fs.existsSync(path.join(cfg, "origin"))).toBe(false);
+  });
+  it.each([
+    ["a trailing dot", `https://github.com/${SLUG}.`],
+    ["a trailing .git.", `https://github.com/${SLUG}.git.`],
+    ["a trailing %00", `https://github.com/${SLUG}%00`],
+  ])("set refuses the product repo spelled with %s (exit 2), writes nothing", async (_l, url) => {
+    const r = await runCli(world, ["origin", "set", url], { env: env() });
     expect(r.code).toBe(2);
     expect(r.stderr).toMatch(/refusing state remote/);
     expect(fs.existsSync(path.join(cfg, "origin"))).toBe(false);

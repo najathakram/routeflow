@@ -56,8 +56,8 @@ function decodeAll(s: string): string {
 
 /**
  * True when the URL string names the product repo. Fails closed: case-insensitive, decoded,
- * query/fragment dropped, `.`/`..`/empty path segments resolved, trailing slashes and any mix of
- * `.git` / `.wiki` suffixes ignored (the wiki repo goes public with the product repo), any host, any
+ * query/fragment dropped, `.`/`..`/empty path segments resolved, trailing slashes, dots, control
+ * characters and any mix of `.git` / `.wiki` suffixes ignored (the wiki repo goes public with the product repo), any host, any
  * scheme (including scp-like `host-alias:owner/repo`).
  */
 export function isRouteflowOrigin(url: string): boolean {
@@ -70,13 +70,23 @@ export function isRouteflowOrigin(url: string): boolean {
     else segs.push(p);
   }
   s = segs.join("/");
-  // one loop: `/.git`, `.wiki.git`, `.git/` ... in any order or repetition
+  // one loop: `/.git`, `.wiki.git`, `.git/`, a trailing `.` or control character (what a
+  // percent-encoded `%2e` / `%00` decodes to) ... in any order or repetition, until stable
   for (;;) {
-    const next = s.replace(/(\/|\.git|\.wiki)$/, "");
+    const next = stripTail(s);
     if (next === s) break;
     s = next;
   }
   return BOUNDARY_RE.test(s);
+}
+
+/** Remove ONE trailing `/`, `.git`, `.wiki`, `.` or control character / space (else return `s` as is). */
+function stripTail(s: string): string {
+  const last = s.length === 0 ? -1 : s.charCodeAt(s.length - 1);
+  if (last === 0x2f || last === 0x2e || last <= 0x20 || last === 0x7f) {
+    return s.slice(0, -1); // `/`, `.`, a control character or a space
+  }
+  return s.replace(/(\.git|\.wiki)$/, "");
 }
 
 /** A local directory this origin names (path or file:// URL), else null (remote forms). */

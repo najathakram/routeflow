@@ -18,9 +18,11 @@ const rows = (): any[] =>
     .filter(Boolean)
     .map((l) => JSON.parse(l));
 
+// the ledger commit is a git push: it exists only with write-back on (readonly-server.spec.ts
+// pins that it never happens with write-back off)
 describe("PR ledger persistence", () => {
   it("a tick with new PRs appends the rows in exactly one commit", async () => {
-    h = await startServer();
+    h = await startServer({ writeback: true });
     const c0 = commits();
     await h.app.tick();
     expect(rows().length).toBeGreaterThan(0);
@@ -28,7 +30,7 @@ describe("PR ledger persistence", () => {
     expect(rows().some((r) => r.pr === 301)).toBe(true);
   });
   it("a tick with no change writes nothing", async () => {
-    h = await startServer();
+    h = await startServer({ writeback: true });
     await h.app.tick();
     const tip = h.world.remoteHead();
     const n = rows().length;
@@ -37,7 +39,7 @@ describe("PR ledger persistence", () => {
     expect(rows().length).toBe(n);
   });
   it("a restarted server loads the ledger and writes no duplicate rows", async () => {
-    h = await startServer();
+    h = await startServer({ writeback: true });
     await h.app.tick();
     const tip = h.world.remoteHead();
     const n = rows().length;

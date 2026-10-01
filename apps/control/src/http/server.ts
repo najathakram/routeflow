@@ -93,6 +93,8 @@ export interface ControlApp {
   tick(): Promise<void>;
   state(): ControlState;
   sseCount(): number;
+  /** Ledger rows queued for the next persisted push (capped at the ledger cap). Introspection for tests. */
+  pendingLedgerRows(): number;
   startPolling(): void;
 }
 
@@ -508,7 +510,9 @@ export function createControlServer(deps: ControlDeps): ControlApp {
         },
       });
       ledger = [...ledger, ...out.ledgerAdds].slice(-LEDGER_CAP);
-      pendingRows = [...pendingRows, ...out.ledgerAdds];
+      // capped like the ledger (oldest dropped) so a push that keeps failing, or never runs
+      // (write-back off), cannot grow memory without bound
+      pendingRows = [...pendingRows, ...out.ledgerAdds].slice(-LEDGER_CAP);
       stateError = null;
       const opts = { now, local: cfg.local, writeback: cfg.writeback };
       const fragments = renderFragments(out.state, opts);
@@ -543,7 +547,8 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     if (clone === null || closing) return;
     let due = false;
     try {
-      due = C.compactDue(clone);
+      // compaction pushes the state branch and the archive ref: never with write-back off
+      due = cfg.writeback && C.compactDue(clone);
     } catch {
       due = false;
     }
@@ -608,7 +613,9 @@ export function createControlServer(deps: ControlDeps): ControlApp {
         }
       }
       commit();
-      if (pendingRows.length > 0) {
+      // the ledger commit is a git push: only with write-back on (the read-only token would
+      // fail every tick, and the dashboard keeps serving the in-memory rows either way)
+      if (cfg.writeback && pendingRows.length > 0) {
         const batch = pendingRows;
         try {
           await appendLedger(env, batch);
@@ -1046,6 +1053,7 @@ export function createControlServer(deps: ControlDeps): ControlApp {
       return snap.state as unknown as ControlState;
     },
     sseCount: () => sse.count(),
+    pendingLedgerRows: () => pendingRows.length,
     startPolling,
   };
   return app;

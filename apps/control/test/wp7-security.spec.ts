@@ -170,6 +170,7 @@ describe("4 ledger rows pass the denylist (fields redacted, the row kept)", () =
     process.env.CONTROL_DENYLIST = dl;
     try {
       h = await startServer({
+        writeback: true, // the ledger is persisted (pushed) only with write-back on
         depsOver: {
           github: {
             poll: async () => ({
@@ -473,19 +474,24 @@ describe("final: refused boot leaves nothing behind, ts is canonical UTC ISO", (
   });
   const CANON = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
   it("server write-back and the ledger emit canonical ts", async () => {
-    h = await startServer();
+    h = await startServer({ writeback: true });
     await h.app.tick();
     const s = await h.session();
     const st = (await h.stateJson(s)).state;
     const prev = st.tasks["RF-1"].priority.value;
-    await h.postEvent(s, {
+    const before = h.ownerLines().length;
+    const r = await h.postEvent(s, {
       type: "task.priority",
       task: "RF-1",
       priority: prev === "P1" ? "P2" : "P1",
       prev,
       expectedVersion: st.version,
     });
-    const last = h.ownerLines().pop();
+    expect(r.status).toBe(200); // the write really happened (not a 403 nobody looked at)
+    const lines = h.ownerLines();
+    expect(lines.length).toBe(before + 1); // exactly one MORE owner line, not the fixture's seed
+    const last = lines[lines.length - 1];
+    expect(last.type).toBe("task.priority");
     expect(last.ts).toMatch(CANON);
     const rows = h.world
       .remoteFile("derived/prs.jsonl")
@@ -493,7 +499,7 @@ describe("final: refused boot leaves nothing behind, ts is canonical UTC ISO", (
       .filter(Boolean)
       .map((l) => JSON.parse(l));
     expect(rows.length).toBeGreaterThan(0);
-    for (const r of rows) expect(r.at).toMatch(CANON);
+    for (const r2 of rows) expect(r2.at).toMatch(CANON);
   });
   it("the ctl CLI (real clock) and main's clock emit canonical ts", async () => {
     const { makeWorld, baseState } = require("./helpers/temp-repo");
