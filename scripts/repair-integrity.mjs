@@ -397,6 +397,9 @@ export const ROWS = [
           const marked = await sourceDeletedNote(db, p.creditNoteId);
           // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
           base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
+          // lock the NOTE too: the execute-time tx locks lockRows BEFORE its re-plan, so an in-flight invoice delete (which writes the
+          // marker and unlinks the note in one tx) commits first and the marker read below sees it
+          base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
           if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
           actions.push({
             label: `Restore ${Number(p.amount).toFixed(2)} to CreditNote ${p.creditNoteId} (amountUsed down, status per wallet rules)`,
@@ -605,6 +608,9 @@ export const ROWS = [
         const marked = await sourceDeletedNote(db, p.creditNoteId);
         // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
         base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
+        // lock the NOTE too: the execute-time tx locks lockRows BEFORE its re-plan, so an in-flight invoice delete (which writes the
+        // marker and unlinks the note in one tx) commits first and the marker read below sees it
+        base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
         if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
         actions.push({
           label: `Restore ${p.amount.toFixed(2)} to CreditNote ${p.creditNoteId} (restoreCreditFromPaymentInTx semantics incl. REVIVE of a past expiry)`,
@@ -1423,7 +1429,16 @@ async function main() {
 }
 
 // Run only as a script (a spec imports this module for ROWS / sourceDeletedNote without connecting).
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+// `realpath`: Node resolves the main module's URL through symlinks but argv[1] is as typed (/tmp -> /private/tmp), so a plain
+// compare silently never ran main() (exit 0, no output).
+const isMain = (() => {
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1] ?? "")).href;
+  } catch {
+    return false;
+  }
+})();
+if (isMain) {
   main()
     .catch((err) => {
       console.error("Repair run failed:", err.message);

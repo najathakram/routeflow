@@ -19,6 +19,8 @@ interface Out {
   before: any;
   proposal?: string;
   queries: string[];
+  params: unknown[][];
+  lockRows: Array<{ table: string; id: string }>;
 }
 
 function plan(fx: {
@@ -32,6 +34,7 @@ function plan(fx: {
     const fx = JSON.parse(fs.readFileSync(0, "utf8"));
     const { ROWS } = await import(${JSON.stringify("file://" + SCRIPT)});
     const queries = [];
+    const paramsSeen = [];
     const pay = (id, amount, method, creditNoteId, advancePaymentId) => ({
       id, amount, method, status: "PAID", paidAt: null, createdAt: new Date(0),
       creditNoteId, advancePaymentId, invoiceId: "inv-1", invoice_status: "VOID",
@@ -40,6 +43,7 @@ function plan(fx: {
     const db = {
       query: async (sql, params) => {
         queries.push(sql.replace(/\\s+/g, " ").trim());
+        paramsSeen.push(params);
         if (/FROM "CreditNote" cn/.test(sql)) return { rows: fx.marked ? [{ number: "CN-0001" }] : [] };
         if (/FROM "InvoicePayment" p JOIN "Invoice" i/.test(sql))
           return { rows: [pay("pay-1", 40, fx.method, cn ? "cn-1" : null, cn ? null : "adv-1")] };
@@ -55,7 +59,7 @@ function plan(fx: {
     const res = await row.plan(db, { inTx: false, confirmed: false, ...(fx.ctx ?? {}) });
     process.stdout.write(JSON.stringify({
       blocked: res.blocked, proposal: res.proposal, before: res.before,
-      actionSql: (res.actions ?? []).map((a) => a.sql), queries,
+      actionSql: (res.actions ?? []).map((a) => a.sql), queries, params: paramsSeen, lockRows: res.lockRows ?? [],
     }));
   `;
   const r = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -115,6 +119,14 @@ describe.each([
     expect(o.queries.some((s) => /"AuditLog"/.test(s) && /SOURCE_DELETED/.test(s))).toBe(true);
   });
 
+  it("6. the marker is read for the PAYMENT'S NOTE id (not the payment id), and the NOTE row joins lockRows so an in-flight invoice delete commits before the execute-time re-plan", () => {
+    const o = plan({ ...row, method: "CREDIT_NOTE", marked: false });
+    const i = o.queries.findIndex((s) => /FROM "CreditNote" cn/.test(s));
+    expect(i).toBeGreaterThan(-1);
+    expect(o.params[i]).toEqual(["cn-1"]);
+    expect(o.lockRows).toContainEqual({ table: "CreditNote", id: "cn-1" });
+  });
+
   it("5. an ADVANCE payment is unaffected (no marker read, the AdvancePayment restore is proposed)", () => {
     const o = plan({ ...row, method: "ADVANCE", marked: true });
     expect(o.queries.some((s) => /"AuditLog"/.test(s))).toBe(false);
@@ -137,7 +149,27 @@ describe("B963 repair-integrity: source pin", () => {
     expect(n).toBe(2);
   });
 
+  it("run as a CLI through a SYMLINKED path the script still runs (--list prints the registry; it used to exit 0 silently)", () => {
+    const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "b963-"));
+    const link = path.join(dir, "scripts-link");
+    fs.symlinkSync(path.dirname(SCRIPT), link);
+    try {
+      const r = spawnSync(process.execPath, [path.join(link, "repair-integrity.mjs"), "--list"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 60_000,
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/Row registry/);
+      expect(r.stdout).toMatch(/deadpay-/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("the module only connects when run as a script (importing it for a spec never opens a connection)", () => {
-    expect(src).toMatch(/import\.meta\.url === pathToFileURL\(process\.argv\[1\] \?\? ""\)\.href/);
+    expect(src).toMatch(
+      /import\.meta\.url === pathToFileURL\(fs\.realpathSync\(process\.argv\[1\] \?\? ""\)\)\.href/,
+    );
   });
 });
