@@ -15,6 +15,7 @@
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
 import {
   levelsForScannedCode,
+  isSharedScanCode,
   resolveScanSellChoice,
   resolveScanSellLevel,
   scanMatchIsForCode,
@@ -308,5 +309,27 @@ describe("resolveScanSellChoice (#2784): a SHARED code honours the default selli
     expect(resolveScanSellChoice(p, ["BOX"], opts)).toEqual({ level: "BOX" });
     expect(resolveScanSellChoice(p, ["UNIT"], opts)).toEqual({ level: "UNIT" });
     expect(resolveScanSellChoice(p, [], opts)).toEqual({ level: "BOX" }); // no levels: today's fallback, no label
+  });
+});
+
+describe("isSharedScanCode (SA-626): the ONE rule web and mobile share for 'start on the default unit'", () => {
+  it("is true only when the code resolves at BOTH levels", () => {
+    expect(isSharedScanCode(["BOX", "UNIT"])).toBe(true);
+    expect(isSharedScanCode(["UNIT", "BOX"])).toBe(true);
+  });
+
+  it("is false for a box-only, a unit-only and an unmatched code (the code decides the level)", () => {
+    expect(isSharedScanCode(["BOX"])).toBe(false);
+    expect(isSharedScanCode(["UNIT"])).toBe(false);
+    expect(isSharedScanCode([])).toBe(false);
+  });
+
+  it("agrees with resolveScanSellChoice: a unit label is offered exactly when the code is shared", () => {
+    const product = { unitsPerBox: 6 };
+    const defaults = { defaultUnitLabel: "Case" };
+    for (const levels of [["BOX", "UNIT"], ["BOX"], ["UNIT"], []] as const) {
+      const choice = resolveScanSellChoice(product, levels, defaults);
+      expect(choice.unitLabel !== undefined).toBe(isSharedScanCode(levels));
+    }
   });
 });
