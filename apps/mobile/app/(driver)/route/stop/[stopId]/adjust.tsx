@@ -503,7 +503,7 @@ export default function AdjustOrderScreen() {
       {/* B795 review round 2: hide the scanner while saving too, not just
           during the license block -- a scan landing mid-batch grows a draft
           past what a just-sent ADD_ITEM already covers. */}
-      <BarcodeFab onScanned={handleScanned} hidden={saving || !!licenseBlock} />
+      <BarcodeFab onScanned={handleScanned} aimAssist hidden={saving || !!licenseBlock} />
 
       {/* Regulated-license guard — drivers can't capture/override (403 server-side),
           so this is read-only; the only real exit besides Cancel is dropping the

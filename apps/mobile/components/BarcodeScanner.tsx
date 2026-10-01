@@ -6,6 +6,15 @@ import { ScanCamera, useScanCameraPermission } from "./ScanCamera";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const WINDOW_SIZE = SCREEN_WIDTH * 0.7;
+// The EXACT rect the "Clear scan window" box below renders at. It is ScanCamera's enforced aimBox when `aimAssist` is on, so
+// the drawing and the enforcement are ONE source: this window sits 40dp above centre (room for the feedback pill / hint),
+// and an enforced box that merely "looked" the same would reject a scan the operator can see is correctly aligned.
+const AIM_BOX = {
+  x: (SCREEN_WIDTH - WINDOW_SIZE) / 2,
+  y: (SCREEN_HEIGHT - WINDOW_SIZE) / 2 - 40,
+  width: WINDOW_SIZE,
+  height: WINDOW_SIZE,
+};
 
 interface Props {
   /**
@@ -29,6 +38,11 @@ interface Props {
    * of tearing the camera down. Defaults `true`.
    */
   active?: boolean;
+  /**
+   * OPT-IN (default false): enforce the drawn scan window as an aim box and require a steady read before a code counts.
+   * Only the driver screen passes it; every other caller of this shared scanner is unchanged.
+   */
+  aimAssist?: boolean;
 }
 
 /** Full-screen scanning overlay: permission UI, viewfinder chrome and feedback
@@ -39,6 +53,7 @@ export function BarcodeScanner({
   continuous = false,
   paused = false,
   active = true,
+  aimAssist = false,
 }: Props) {
   // Swallow codes while paused rather than unmounting the camera.
   const guardedScan = React.useCallback(
@@ -95,6 +110,8 @@ export function BarcodeScanner({
         onOutcome={handleOutcome}
         continuous={continuous}
         active={active && !paused}
+        aimAssist={aimAssist}
+        aimBox={aimAssist ? AIM_BOX : undefined}
       />
 
       {/* Dark surround */}
