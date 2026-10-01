@@ -526,6 +526,7 @@ export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
 /** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
 export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
 export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
 /** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
 export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
 export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];
