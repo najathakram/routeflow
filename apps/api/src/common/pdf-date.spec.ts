@@ -6,7 +6,14 @@
  * (apps/api/package.json moduleNameMapper), so the rule lives in this pure helper shared by the
  * bookkeeping-invoice and buyer-statement PDF templates.
  */
+const ORIGINAL_TZ = process.env.TZ;
 process.env.TZ = "America/Los_Angeles";
+
+// Restore the worker's zone so no later spec in this Jest worker inherits Los Angeles.
+afterAll(() => {
+  if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+  else process.env.TZ = ORIGINAL_TZ;
+});
 
 import { fmtPdfDate } from "./pdf-date";
 
