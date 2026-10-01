@@ -194,6 +194,7 @@ export function BarcodeScanner({
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityLabel="Hold to scan"
+              accessibilityHint="Press and hold while the barcode is in the box. Hold mode needs a sustained press; use Continuous mode with a screen reader."
               accessibilityState={{ selected: holding }}
               activeOpacity={1}
               onPressIn={() => setHolding(true)}
@@ -236,7 +237,7 @@ const styles = StyleSheet.create({
   },
   modeRow: { flexDirection: "row", gap: 8, marginTop: 8 },
   modeChip: {
-    minHeight: 32,
+    minHeight: 44,
     paddingHorizontal: 12,
     justifyContent: "center",
     borderRadius: 16,
