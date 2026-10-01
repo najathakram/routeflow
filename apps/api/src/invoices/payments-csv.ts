@@ -10,7 +10,7 @@ export const PAYMENTS_CSV_HEADER =
  * no BOM, exactly as before.
  */
 export function buildPaymentsCsv(rows: any[]): string {
-  const cell = (v: unknown) => csvCell(v == null ? "" : String(v));
+  const cell = (v: string | number | null | undefined) => csvCell(v == null ? "" : String(v));
   const lines = rows.map((r) =>
     [
       cell(r.paymentNumber ?? ""),
