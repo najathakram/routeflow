@@ -1266,7 +1266,9 @@ export function EditableLineItems({
     const unitScan = scan.isUnitScanOnBoxed(p, level ?? "BOX");
     if (existing) {
       onChange(
-        items.map((it) => (it.id === existing.id ? scan.bumpLineForScan(it, unitScan, explicit) : it)),
+        items.map((it) =>
+          it.id === existing.id ? scan.bumpLineForScan(it, unitScan, explicit) : it,
+        ),
       );
       setScrollToId(existing.id);
     } else {
