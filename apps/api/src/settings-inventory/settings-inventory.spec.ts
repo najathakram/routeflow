@@ -34,7 +34,7 @@ function fakePolicies(initial?: string, active: Array<{ key: string; scopeType: 
     store,
     listActive: jest.fn(async () => active),
     resolve: jest.fn(async (tenantId: string) => store.get(tenantId) ?? "off"),
-    set: jest.fn(async (p: { tenantId: string; value: unknown }) => {
+    set: jest.fn(async (p: { tenantId: string; value: unknown; [k: string]: any }) => {
       store.set(p.tenantId, p.value);
       return { id: "r1" };
     }),
