@@ -170,6 +170,8 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
   });
 
   it("single-unit BOXED product is unchanged: 1 of 2 boxes refunds half the line", async () => {
+    // the legacy selling-unit shape: a box-unaware order line billed by ONE box-unaware invoice item (qty 2 boxes), no pack proof
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
     withReturn([invoice("inv-1", [invItem("i1", {})])], [BOX_LINE], [{ productId: "pp", qty: 1 }]);
     await service.processRefund("ret-1");
     expect(creditNotesCreate).toHaveBeenCalledWith(

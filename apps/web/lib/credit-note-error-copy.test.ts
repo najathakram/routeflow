@@ -1,6 +1,7 @@
 import { CREDIT_NOTE_ERROR_CODES } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
+  RETURN_NOTHING_BILLED_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   RETURN_MIXED_UNIT_PRODUCT_COPY,
   UNCONFIRMED_COPY,
@@ -97,5 +98,18 @@ describe("refundErrorMessage (SA-628, B946)", () => {
       refundErrorMessage({ response: { data: { code: "OTHER" } } }, "named invoice text"),
     ).toBe("named invoice text");
     expect(refundErrorMessage(new Error("x"), undefined)).toBeUndefined();
+  });
+});
+
+describe("B959 RETURN_NOTHING_BILLED copy", () => {
+  it("the refund toast shows fixed copy for the code (never the server text) and falls back otherwise", () => {
+    const err = {
+      response: { data: { code: "RETURN_NOTHING_BILLED", message: "RAW SERVER TEXT" } },
+    };
+    expect(refundErrorMessage(err, "other")).toBe(RETURN_NOTHING_BILLED_COPY);
+    expect(refundErrorMessage(err, "other")).not.toContain("RAW SERVER");
+    expect(refundErrorMessage({ response: { data: { code: "SOMETHING_ELSE" } } }, "other")).toBe(
+      "other",
+    );
   });
 });

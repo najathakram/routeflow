@@ -84,7 +84,21 @@ export const INLINE_RETURN_ERROR_CODES = {
   // #2424: the same key, the same customer/order, but DIFFERENT items: not a replay. The client
   // treats it as a definite refusal (settles its nonce), so its next capture mints a new key.
   RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+  // B961 / SA-071c: staff confirming goods the customer already returned or was credited for must give a reason.
+  ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
 } as const;
+
+/** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
+export const ALREADY_RETURNED_HOLD_REASON = "ALREADY_RETURNED";
+const INLINE_HOLD_REASONS = ["DRIVER_CAP", ALREADY_RETURNED_HOLD_REASON] as const;
+const isInlineHold = (reason: string | null | undefined): boolean =>
+  reason != null && (INLINE_HOLD_REASONS as readonly string[]).includes(reason);
+
+/** B961: the readable sentences (driver hold; staff reason refusal). One place, so web/mobile never hand-roll them. */
+export const ALREADY_RETURNED_HOLD_MESSAGE =
+  "This product was already returned or credited for this customer, so the credit is held for the office to confirm. The goods are recorded; no credit is issued until staff approve it with a reason.";
+export const ALREADY_RETURNED_REASON_MESSAGE =
+  "Some of these goods were already returned or credited for this customer. Enter a reason to credit them again.";
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
 export const INLINE_RETURN_KEY_TAKEN = "INLINE_RETURN_KEY_TAKEN";
@@ -252,6 +266,8 @@ export class InlineReturnsService {
       user,
       db,
     );
+    // B961: a staff order create without the already-returned reason refuses HERE, before the number is reserved.
+    this.alreadyReturnedPolicy(lines.items, priced.chunks, user);
     return priced.total;
   }
 
@@ -328,8 +344,8 @@ export class InlineReturnsService {
         this.assertReplaySameItems(raced, dto); // #2424
         return {
           replayed: true as const,
-          ret: raced,
-          overCap: raced.holdReason === "DRIVER_CAP",
+          ret: this.withHoldMessage(raced),
+          overCap: isInlineHold(raced.holdReason),
         };
       }
     }
@@ -356,7 +372,12 @@ export class InlineReturnsService {
     // Re-review LOW-MED: a zero-total return has nothing to hold — a $0.00 "credit
     // awaiting approval" is never a real DRIVER_CAP case, so it's excluded even when
     // Σ is already at/over the order's gross.
-    const overCap = isDriver && priced.total > 0.001 && wouldBe > cap + 0.001;
+    const driverCap = isDriver && priced.total > 0.001 && wouldBe > cap + 0.001;
+    // B961: a chunk of goods already returned/credited is staff-with-a-reason only; a DRIVER's capture is HELD (the same hold as
+    // the driver cap: nothing restocked, reversed or credited until the office approves it).
+    const alreadyReturned = this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
+    const arHeld = alreadyReturned.held && priced.total > 0.001;
+    const overCap = driverCap || arHeld;
 
     const year = new Date().getFullYear();
     const returnNumber = await this.numbering.reserveNext("RETURN", {
@@ -410,11 +431,34 @@ export class InlineReturnsService {
         creditSubtotal: priced.subtotal,
         creditTax: priced.taxAmount,
         creditCategoryTax: priced.categoryTax,
-        ...(overCap ? { holdReason: "DRIVER_CAP", heldAmount: priced.total } : {}),
+        ...(overCap
+          ? {
+              // ALREADY_RETURNED wins over DRIVER_CAP: it is the stricter hold (approve() needs a reason)
+              holdReason: arHeld ? ALREADY_RETURNED_HOLD_REASON : "DRIVER_CAP",
+              heldAmount: priced.total,
+            }
+          : {}),
         items: { create: itemsData },
       },
       include: { items: true },
     });
+
+    // B961: ONE audit row per capture naming the actor, the goods and the REASON of every confirmed already-returned chunk.
+    if (alreadyReturned.confirmed.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: "inline_return.already_returned_credit",
+          entityType: "Return",
+          entityId: created.id,
+          meta: {
+            orderId: dto.orderId,
+            customerId: dto.customerId,
+            items: alreadyReturned.confirmed,
+          },
+        },
+      });
+    }
 
     // #2695 (SA-557): ONE in-tx audit row naming every lowered credit — the default it replaced,
     // the price typed, and why. A held (DRIVER_CAP) return cannot carry one: overrides are staff-only.
@@ -442,6 +486,25 @@ export class InlineReturnsService {
       await restockReturnItems(tx, created, user.sub);
       await this.reverseLedgerForReturn(tx, created);
     } else {
+      if (arHeld) {
+        // B961: EVIDENCE of why it is held (staff-facing). The hold itself is the `holdReason` COLUMN (SA-071f N3): approve() reads that.
+        await tx.auditLog.create({
+          data: {
+            userId: user.sub,
+            action: "inline_return.already_returned_hold",
+            entityType: "Return",
+            entityId: created.id,
+            meta: {
+              orderId: dto.orderId,
+              customerId: dto.customerId,
+              heldAmount: priced.total,
+              items: priced.chunks
+                .filter((c) => c.alreadyReturned)
+                .map((c) => ({ productId: c.productId, qty: c.pieces, subtotal: c.subtotal })),
+            },
+          },
+        });
+      }
       // §4: in-tx audit row — the socket/push alert + tenant-grouped alert sweep
       // (`RETURN_QTY_MISMATCH`) are PR-1d; this row is what 1d's sweep will read.
       await tx.auditLog.create({
@@ -458,13 +521,74 @@ export class InlineReturnsService {
             heldAmount: priced.total,
             priorCredit,
             orderGross: cap,
-            reason: "DRIVER_CAP",
+            reason: arHeld ? ALREADY_RETURNED_HOLD_REASON : "DRIVER_CAP",
           },
         },
       });
     }
 
-    return { replayed: false as const, ret: created, overCap };
+    return {
+      replayed: false as const,
+      // B961: tell the driver WHY it is held (readable; not persisted: derived from the `holdReason` COLUMN, here and on a replay)
+      ret: arHeld
+        ? { ...created, alreadyReturnedHold: true, holdMessage: ALREADY_RETURNED_HOLD_MESSAGE }
+        : created,
+      overCap,
+    };
+  }
+
+  /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (derived from the
+   * `holdReason` COLUMN, never an audit row). */
+  private withHoldMessage<T extends { holdReason?: string | null }>(ret: T): T {
+    return ret.holdReason === ALREADY_RETURNED_HOLD_REASON
+      ? { ...ret, alreadyReturnedHold: true, holdMessage: ALREADY_RETURNED_HOLD_MESSAGE }
+      : ret;
+  }
+
+  /**
+   * B961 / SA-071c: the policy for an `alreadyReturned` chunk (goods the customer already returned or was credited for).
+   * STAFF (OPERATOR/TENANT_ADMIN) may credit it only with a REASON on the line (400 coded, readable, nothing written);
+   * a DRIVER's capture is held for the office; a buyer never reaches here (the pricing refuses CUSTOMER first). Pure.
+   */
+  private alreadyReturnedPolicy(
+    items: ReadonlyArray<{ productId: string; alreadyReturnedReason?: string }>,
+    chunks: ReadonlyArray<{
+      productId: string;
+      pieces: number;
+      subtotal: number;
+      alreadyReturned?: boolean;
+    }>,
+    user: JwtPayload,
+  ): {
+    held: boolean;
+    confirmed: Array<{ productId: string; qty: number; subtotal: number; reason: string }>;
+  } {
+    const flagged = chunks.filter((c) => c.alreadyReturned);
+    if (flagged.length === 0) return { held: false, confirmed: [] };
+    if (user.role === UserRole.DRIVER) return { held: true, confirmed: [] };
+    const confirmed: Array<{
+      productId: string;
+      qty: number;
+      subtotal: number;
+      reason: string;
+    }> = [];
+    for (const c of flagged) {
+      const reason = items
+        .filter((i) => i.productId === c.productId)
+        .map((i) =>
+          typeof i.alreadyReturnedReason === "string" ? i.alreadyReturnedReason.trim() : "",
+        )
+        .find((r) => r.length > 0);
+      if (!reason) {
+        throw new BadRequestException({
+          code: INLINE_RETURN_ERROR_CODES.ALREADY_RETURNED_REASON_REQUIRED,
+          message: ALREADY_RETURNED_REASON_MESSAGE,
+          productId: c.productId,
+        });
+      }
+      confirmed.push({ productId: c.productId, qty: c.pieces, subtotal: c.subtotal, reason });
+    }
+    return { held: false, confirmed };
   }
 
   /**
@@ -526,6 +650,8 @@ export class InlineReturnsService {
       db,
       { excludeInvoiceIds },
     );
+    // B961: staff without the reason refuse HERE too (before the caller's revert commits); a driver is held at capture.
+    this.alreadyReturnedPolicy(dto.items, priced.chunks, user);
     // B948 (Opus r1, B215 class): the SAME line-headroom refusal, read-only (no Invoice write, no lock), BEFORE the caller's
     // un-tx'd revert commits SENT->DRAFT; the in-tx check stays as the race backstop.
     await this.assertWithinLineHeadroom(db, priced.chunks, { readOnly: true });
@@ -783,8 +909,8 @@ export class InlineReturnsService {
       this.assertReplaySameItems(preExisting, dto); // #2424
       result = {
         replayed: true,
-        ret: preExisting,
-        overCap: preExisting.holdReason === "DRIVER_CAP",
+        ret: this.withHoldMessage(preExisting),
+        overCap: isInlineHold(preExisting.holdReason),
       };
     } else {
       try {
@@ -804,7 +930,11 @@ export class InlineReturnsService {
           });
           if (raced && raced.customerId === dto.customerId && raced.orderId === dto.orderId) {
             this.assertReplaySameItems(raced, dto); // #2424
-            result = { replayed: true, ret: raced, overCap: raced.holdReason === "DRIVER_CAP" };
+            result = {
+              replayed: true,
+              ret: this.withHoldMessage(raced),
+              overCap: isInlineHold(raced.holdReason),
+            };
           } else {
             throw new ConflictException({
               code: INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT,
@@ -1003,7 +1133,7 @@ export class InlineReturnsService {
       if (!current) throw new NotFoundException("Return not found");
       return this.withParkedReversals(current);
     }
-    if (pre.status !== "RECEIVED" || pre.holdReason !== "DRIVER_CAP" || pre.creditNoteId) {
+    if (pre.status !== "RECEIVED" || !isInlineHold(pre.holdReason) || pre.creditNoteId) {
       throw new BadRequestException("Only a driver-cap hold awaiting approval can be approved");
     }
     const heldAmountPre = roundMoney(Number(pre.heldAmount ?? 0));
@@ -1020,6 +1150,17 @@ export class InlineReturnsService {
       );
     }
 
+    // B961 (SA-071f N3): a hold the capture marked "already returned or credited" is approved only with a reason; read from the
+    // `holdReason` COLUMN (the audit row is evidence, never state). Re-checked under the row lock below.
+    const arHold = pre.holdReason === ALREADY_RETURNED_HOLD_REASON;
+    const approvalReason = typeof dto?.reason === "string" ? dto.reason.trim() : "";
+    if (arHold && approvalReason.length === 0) {
+      throw new BadRequestException({
+        code: INLINE_RETURN_ERROR_CODES.ALREADY_RETURNED_REASON_REQUIRED,
+        message: ALREADY_RETURNED_REASON_MESSAGE,
+      });
+    }
+
     let minted: any;
     const result = await this.prisma.tenantTransaction(async (tx: any) => {
       await tx.$executeRaw`SELECT id FROM "Return" WHERE id = ${id} FOR UPDATE`;
@@ -1030,7 +1171,7 @@ export class InlineReturnsService {
       if (
         !fresh ||
         fresh.status !== "RECEIVED" ||
-        fresh.holdReason !== "DRIVER_CAP" ||
+        !isInlineHold(fresh.holdReason) ||
         fresh.creditNoteId
       ) {
         return { skipped: true as const };
@@ -1054,6 +1195,17 @@ export class InlineReturnsService {
       await this.reverseLedgerForReturn(tx, fresh);
 
       minted = await this.issueCreditInTx(tx, fresh, amount, tenantId, { approvedById: user.sub });
+      if (fresh.holdReason === ALREADY_RETURNED_HOLD_REASON) {
+        await tx.auditLog.create({
+          data: {
+            userId: user.sub,
+            action: "inline_return.already_returned_credit",
+            entityType: "Return",
+            entityId: id,
+            meta: { reason: approvalReason, approvedAmount: amount, viaApproval: true },
+          },
+        });
+      }
       return { skipped: false as const };
     });
 
@@ -1082,7 +1234,7 @@ export class InlineReturnsService {
         id,
         kind: "INLINE",
         status: "RECEIVED",
-        holdReason: "DRIVER_CAP",
+        holdReason: { in: [...INLINE_HOLD_REASONS] },
         creditNoteId: null,
       },
       data: { status: "REJECTED", approvedById: user.sub, approvedAt: new Date() },
