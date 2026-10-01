@@ -63,6 +63,7 @@ import {
   type InvoicePayment,
   type CheckStatus,
 } from "@/lib/api/invoices";
+import { isPendingMirrorInvoice } from "@/lib/invoice-pending-mirror";
 import { useParams, useRouter } from "next/navigation";
 import { useTrackedCategories } from "@/lib/api/tracked-categories";
 import { useUnapplyCreditNote } from "@/lib/api/credit-notes";
@@ -72,6 +73,8 @@ import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import { remainingCapacity, resolveConfirmedAmounts } from "@routeflow/pricing";
 import { useDuplicateInvoiceAction } from "@/lib/use-duplicate-invoice-action";
 import { invoiceLineQtyText } from "@/lib/invoice-line-unit";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
+import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
 import { RemoveCreditButton } from "./RemoveCreditButton";
@@ -1682,13 +1685,7 @@ export default function InvoiceDetailPage() {
   // The order-linked DRAFT that mirrors an un-delivered order: it auto-syncs to
   // the order and can't be edited or sent until the order is delivered. Edit the
   // order, not the invoice.
-  const isPendingMirror =
-    !!invoice.orderId &&
-    status === "DRAFT" &&
-    !invoice.deliveryBatchId &&
-    !!invoice.order &&
-    invoice.order.status !== "DELIVERED" &&
-    invoice.order.status !== "PARTIALLY_DELIVERED";
+  const isPendingMirror = isPendingMirrorInvoice({ ...invoice, status });
 
   const canRecordPayment =
     status === "SENT" || status === "VIEWED" || status === "PARTIAL" || status === "OVERDUE";
@@ -2519,6 +2516,9 @@ export default function InvoiceDetailPage() {
                               {item.notes}
                             </p>
                           )}
+                          <ComponentSubLines
+                            components={(item as { components?: LineComponentView[] }).components}
+                          />
                         </td>
                         <td className="px-4 py-3 text-right">
                           <span

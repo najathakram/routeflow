@@ -113,12 +113,11 @@ export function calendarDaysUntil(d?: string | null): number | null {
 }
 
 /**
- * True for the internal, non-routable email sentinels we mint when a customer has no address:
- * `no-email+<uuid>@placeholder.local` (User.email is required + unique per tenant) and
- * `<username>@imported.local` (CSV import). Never render one of these to a user.
+ * B910: sentinel-email helpers (`isInternalEmail`, `displayEmail`,
+ * `NO_EMAIL_COPY`) now have ONE implementation in `@routeflow/types`
+ * (`internal-email.ts` there) — re-exported here so every existing
+ * `@/lib/formatting` import keeps working. Mobile re-exports the same module. The api
+ * CANNOT value-import it from runtime source, so it keeps a LOCAL copy
+ * (`apps/api/src/common/internal-email.ts`) pinned functionally equal by its spec.
  */
-export function isInternalEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const e = email.toLowerCase();
-  return e.endsWith("@placeholder.local") || e.endsWith("@imported.local");
-}
+export { displayEmail, isInternalEmail, NO_EMAIL_COPY } from "@routeflow/types";

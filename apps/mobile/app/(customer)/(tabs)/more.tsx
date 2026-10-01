@@ -6,6 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { NavBar } from "@routeflow/ui/mobile/ios";
 import { useBuyerSessionStore } from "../../../lib/buyer-session-store";
 import { useBuyerProfile, useBuyerDashboard } from "../../../lib/api/buyer";
+import { displayEmail } from "../../../lib/internal-email";
 import { confirm } from "../../../lib/confirm";
 
 export default function CustomerMoreScreen() {
@@ -153,7 +154,7 @@ export default function CustomerMoreScreen() {
               icon={<Ionicons name="person-outline" size={16} color={ios.system.greenInk} />}
               iconBg={ios.system.greenWash}
               title="Profile"
-              subtitle={profile?.email ?? buyer?.email}
+              subtitle={displayEmail(profile?.email) ?? displayEmail(buyer?.email) ?? undefined}
               onPress={() => router.push("/(customer)/profile")}
             />
             <MenuRow

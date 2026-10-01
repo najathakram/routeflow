@@ -14,18 +14,27 @@ import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { ProductsService } from "../products/products.service";
+import { AuditService } from "../audit/audit.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("ImportService — CUSTOMERS soft cap", () => {
   let service: ImportService;
   let prisma: ReturnType<typeof createMockPrisma>;
-  let customers: { assertCustomerCapNotExceeded: jest.Mock; maybeStartCustomerGrace: jest.Mock };
+  let customers: {
+    assertCustomerCapNotExceeded: jest.Mock;
+    maybeStartCustomerGrace: jest.Mock;
+    update: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrisma();
     customers = {
       assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
       maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
+      // B858/B859 harness note: not yet called by ImportService (RC1) — added so this mock is
+      // ready for FIX2's commercial-column update path.
+      update: jest.fn().mockResolvedValue({ id: "cust-1" }),
     };
     const mod = await Test.createTestingModule({
       providers: [
@@ -50,6 +59,19 @@ describe("ImportService — CUSTOMERS soft cap", () => {
             record: jest.fn().mockResolvedValue(undefined),
           },
         },
+        // B858/B859 harness note: not yet consumed by ImportService's constructor (RC1) — added
+        // here so this module keeps compiling once FIX2 wires them in.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         {
           provide: SellingRestrictionsService,
           useValue: {

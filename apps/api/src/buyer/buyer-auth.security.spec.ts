@@ -16,6 +16,7 @@ import * as bcrypt from "bcrypt";
 import { BuyerAuthService } from "./buyer-auth.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
 jest.mock("bcrypt", () => ({ compare: jest.fn(), hash: jest.fn() }));
@@ -63,6 +64,10 @@ describe("BuyerAuthService — F3-005 enumeration-safe login", () => {
         },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(JWT_CONFIG) } },
         { provide: EmailService, useValue: { send: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: AppleOAuthService,
+          useValue: { revokeForBuyer: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
     service = module.get(BuyerAuthService);

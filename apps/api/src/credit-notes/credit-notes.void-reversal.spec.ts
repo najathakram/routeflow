@@ -3,6 +3,8 @@ import { BadRequestException } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { CreditNotesService } from "./credit-notes.service";
+import { codeOf } from "./credit-note-errors";
+import { API_ERROR_CODES as CODES } from "../common/api-error-codes";
 import { CreditNotesController } from "./credit-notes.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -261,6 +263,61 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(gateway.emitCreditNoteVoided).toHaveBeenCalled();
     });
 
+    it("#2540: the optional void reason is recorded in the VOIDED audit row, trimmed", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "  duplicate of CN-0042  ");
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "VOIDED",
+          meta: expect.objectContaining({ reason: "duplicate of CN-0042" }),
+        }),
+      });
+    });
+
+    it("#2540: no reason (or a blank one) leaves the audit meta without a reason key", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "   ");
+
+      const meta = prisma.auditLog.create.mock.calls[0][0].data.meta;
+      expect(meta).not.toHaveProperty("reason");
+      expect(meta).toHaveProperty("reversed");
+    });
+
+    it("#2540: the reopened invoice's overdue is judged in the TENANT zone, not UTC", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-09-10T03:00:00Z"));
+      try {
+        armNote();
+        armRestore();
+        // Due 2026-09-09: over in UTC (03:00Z on the 10th) but still running in Honolulu (UTC-10).
+        prisma.invoice.findUnique.mockImplementation((args: any) =>
+          Promise.resolve({
+            id: args.where.id,
+            total: args.where.id === "inv-2" ? 40 : 50,
+            dueDate: new Date("2026-09-09T00:00:00Z"),
+            status: "PAID",
+            payments: [],
+          }),
+        );
+        prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "Pacific/Honolulu" });
+
+        await service.voidWithReversal("cn-a", "user-7");
+
+        const statuses = prisma.invoice.update.mock.calls.map((c: any) => c[0].data.status);
+        expect(statuses.length).toBeGreaterThan(0);
+        expect(statuses.every((st: string) => st === "SENT")).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("an unused note voids with no restores and no blocks", async () => {
       armNote({ status: "ISSUED", amountUsed: 0 });
       armRestore();
@@ -298,6 +355,60 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect((err as Error).message).toMatch(msg);
       noWrites();
       expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["already void", () => armNote({ status: "VOID" }), CODES.CREDIT_NOTE_VOID_NOT_EDITABLE],
+      [
+        "backs a live return",
+        () => {
+          armNote();
+          prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
+        },
+        CODES.CREDIT_NOTE_RETURN_BACKED,
+      ],
+      [
+        "consumed beyond its applications",
+        () => armNote({ amountUsed: 75 }),
+        CODES.CREDIT_NOTE_CREDIT_CONSUMED,
+      ],
+    ])("PR-C: the refusal when %s carries its CREDIT_NOTE_* code", async (_n, arm, code) => {
+      arm();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const err = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+      expect(codeOf(err)).toBe(code);
+    });
+
+    it("SA-608h: exhausted Serializable retries (P2034) are a 409 CHANGED_CONCURRENTLY, never a raw 500", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const conflict = Object.assign(new Error("write conflict"), { code: "P2034" });
+      prisma.tenantTransaction.mockRejectedValue(conflict);
+
+      const err: any = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+
+      expect(err?.getStatus?.()).toBe(409);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY);
+      expect(prisma.tenantTransaction).toHaveBeenCalledTimes(3); // the bounded retry ran first
+      expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+    });
+
+    it("SA-608h: any other error still propagates untouched", async () => {
+      armNote();
+      armRestore();
+      const boom = new Error("boom");
+      prisma.tenantTransaction.mockRejectedValue(boom);
+      await expect(service.voidWithReversal("cn-a", "user-7")).rejects.toBe(boom);
+    });
+
+    it("PR-C: a lost compare-and-set is CHANGED_CONCURRENTLY", async () => {
+      armNote();
+      armRestore();
+      prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const err = await service.voidWithReversal("cn-a", "user-7").catch((e: unknown) => e);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY);
     });
 
     it("a lost compare-and-set (the note changed) refuses rather than half-voiding", async () => {
