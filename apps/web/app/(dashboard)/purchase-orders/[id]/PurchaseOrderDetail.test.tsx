@@ -219,10 +219,11 @@ describe("PurchaseOrderDetail", () => {
         receipts: [receipt("p1", 0.4167)],
       }),
     );
-    expect(screen.getByText("$0.4167")).toBeInTheDocument();
+    const inReceipts = () => within(screen.getByRole("region", { name: "Receipts" }));
+    expect(inReceipts().getByText("$0.4167")).toBeInTheDocument();
     first.unmount();
     show(po({ status: "PARTIAL", receipts: [receipt("p1", 4)] }));
-    expect(screen.getByText("$4.00")).toBeInTheDocument();
+    expect(inReceipts().getByText("$4.00")).toBeInTheDocument();
   });
 
   it("a VOID bill is shown as voided, not as a live bill", () => {
