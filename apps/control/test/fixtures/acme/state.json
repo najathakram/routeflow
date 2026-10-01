@@ -758,16 +758,16 @@
       "key": "W2:2810",
       "rule": "W2",
       "subject": "PR #2810",
-      "why": "conflicting for 5 d",
-      "action": "Ack",
+      "why": "draft for 5 d, never marked ready",
+      "action": "mark ready or close",
       "since": "2026-01-07T10:00:00Z"
     },
     {
-      "key": "W8:fix/B905-orphan",
-      "rule": "W8",
-      "subject": "branch fix/B905-orphan",
-      "why": "orphan branch 3 d",
-      "action": "Ack",
+      "key": "W6:fix/B905-orphan",
+      "rule": "W6",
+      "subject": "fix/B905-orphan",
+      "why": "ahead of master with no open or merged PR, last push 3 d ago",
+      "action": "open a PR or delete the branch",
       "since": "2026-01-09T10:00:00Z"
     }
   ],

@@ -1,7 +1,7 @@
 /**
  * WP6 T26: the acme state at the pinned clock renders byte-for-byte to fixtures/acme/golden/index.html.
- * The golden is generated once by the implementer with UPDATE_GOLDEN=1 and reviewed against ux-spec §3/§4.
- * Until then this spec is RED (file missing, renderer absent).
+ * The golden is regenerated with UPDATE_GOLDEN=1 and the diff READ against the brief (ux-spec §3/§4,
+ * plain-language-brief.md) before it is committed; client.spec.ts boots jsdom on this same file.
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -27,5 +27,15 @@ describe("T26 golden home page", () => {
     const g = fs.readFileSync(GOLDEN, "utf8");
     expect((g.match(/data-panel="/g) ?? []).length).toBe(12);
     expect(g).toContain("acme".charAt(0) === "a" ? "Acme invoice date fixes" : "");
+  });
+  it("golden carries the plain-language chrome: tagline, attention headline, Hide / Show folds", () => {
+    const g = fs.readFileSync(GOLDEN, "utf8");
+    expect(g).toContain('<p class="tagline">A live view of what every lane is doing');
+    expect(g).toMatch(
+      /<p class="attn" data-level="risk">Needs your attention: 1 blocked lane · 1 critical bug/,
+    );
+    expect(g).toContain('<span class="when-open">Hide</span><span class="when-closed">Show</span>');
+    expect(g).toContain('<p class="panel-sub">Each lane shows what it is working on now');
+    expect(g).not.toMatch(/Show\/hide|Jump to section|register lag|LOCAL ·/);
   });
 });

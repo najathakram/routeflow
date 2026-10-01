@@ -3,7 +3,10 @@
  * Renderer modules are `require`d as `any` so a missing module fails each test on its own.
  * Assumed contract: renderPage(state, { now, local?, loading? }) -> string; every panel is
  * `<section data-panel="<key>"><h2>..</h2>..</section>` with keys in PANELS order; header lines are
- * `data-line="now|release|broken|waste"`; a colored word carries `data-tone="risk|crit|warn|ok"`.
+ * `data-line="now|release|broken|waste"` (keys fixed, labels in plain words, an attention headline
+ * `<p class="attn">` first); a colored word carries `data-tone="risk|crit|warn|ok"`.
+ * Plain-language pass (2026-09-30): the wording below is the owner-facing copy; plain-language.spec.ts
+ * pins the cross-cutting rules (no codes, no shorthand).
  */
 import * as fs from "fs";
 import * as path from "path";
@@ -33,18 +36,18 @@ export const PANELS = [
   "sources",
 ];
 const HEADINGS = [
-  /lane board/i,
-  /blockers/i,
-  /risk of waste/i,
-  /release/i,
-  /queue/i,
-  /bugs/i,
-  /pull requests|pr ledger|open prs/i,
-  /overlap/i,
-  /piggyback/i,
-  /phases/i,
-  /timeline/i,
-  /sources|freshness/i,
+  "Who is doing what",
+  "Stuck work",
+  "Work at risk of being wasted",
+  "Releases",
+  "Up next",
+  "Bugs",
+  "Open pull requests",
+  "Lanes touching the same files",
+  "Quick wins nearby",
+  "Feature progress",
+  "Recent activity",
+  "Where this data comes from",
 ];
 const XSS = "<script>alert(1)</script>";
 const ATTR = 't"onmouseover="alert(1)';
@@ -98,6 +101,10 @@ describe("T25 every dynamic string is escaped", () => {
     s.waste[0].why = XSS + ATTR;
     s.warnings = [{ lane: "lane-b", seq: 14, reason: XSS + ATTR }];
     s.timeline[0].by = XSS + ATTR;
+    s.timeline[0].lane = XSS + ATTR; // the timeline actor is a lane name
+    s.lanes["lane-b"].name = XSS + ATTR; // lane names land in text AND aria-labels / titles
+    s.lanes["lane-b"].machine = XSS + ATTR;
+    s.overlap[0].source = XSS + ATTR;
     return s;
   };
   it("emits no raw <script> apart from the one external client include", () => {
@@ -143,7 +150,7 @@ describe("R13 panels and hierarchy", () => {
       m[1].replace(/<[^>]+>/g, ""),
     );
     expect(h2).toHaveLength(12);
-    HEADINGS.forEach((re, i) => expect(h2[i]).toMatch(re));
+    HEADINGS.forEach((t, i) => expect(h2[i].trim().slice(0, t.length)).toBe(t));
   });
   it("has landmarks and exactly one h1", () => {
     const h = render(base());
@@ -152,12 +159,20 @@ describe("R13 panels and hierarchy", () => {
     expect(h).toContain('aria-live="polite"');
     expect(h).toMatch(/<html[^>]*\slang="en"/);
   });
-  it("header is four labelled lines NOW / RELEASE / BROKEN / WASTE in order", () => {
+  it("header is an attention headline then four labelled lines in order", () => {
     const h = render(base());
     const head = h.slice(h.indexOf("<header"), h.indexOf("</header>"));
-    const at = ["NOW", "RELEASE", "BROKEN", "WASTE"].map((w) => head.indexOf(w));
-    expect(at.every((i) => i >= 0)).toBe(true);
-    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    const rows = [...head.matchAll(/data-line="([a-z]+)"[^>]*><span class="lbl">([^<]+)<\/span>/g)];
+    expect(rows.map((m) => [m[1], m[2]])).toEqual([
+      ["now", "Lanes"],
+      ["release", "Next release"],
+      ["broken", "Bugs"],
+      ["waste", "Work at risk"],
+    ]);
+    const attn = head.indexOf('<p class="attn" data-level="');
+    expect(attn).toBeGreaterThan(-1);
+    expect(attn).toBeLessThan(head.indexOf('data-line="now"'));
+    expect(head).not.toMatch(/<p class="attn"[^>]*data-line=/); // a headline, not a fifth status row
   });
   it("colors at most one word per header line", () => {
     const h = render(base());
@@ -172,7 +187,9 @@ describe("R13 panels and hierarchy", () => {
     const cur = lanes.indexOf("F-1");
     expect(cur).toBeGreaterThan(-1);
     expect(lanes.indexOf("F-2")).toBeGreaterThan(cur);
-    expect(lanes).toContain("#2801");
+    expect(lanes.indexOf("Doing now")).toBeLessThan(cur);
+    expect(lanes.indexOf("Next up")).toBeGreaterThan(cur);
+    expect(lanes).toContain("PR #2801 · Checks passed · Ready to merge");
     expect(lanes).toContain("lane-u");
   });
   it("tables use th scope", () => {
@@ -198,51 +215,54 @@ describe("empty states (panels never removed)", () => {
     const h = render(s);
     expect([...h.matchAll(/data-panel="([a-z-]+)"/g)].map((m) => m[1])).toEqual(PANELS);
     for (const copy of [
-      "No lanes registered",
-      "No blockers",
-      "Nothing at risk",
-      "No releases",
-      "Queue empty",
-      "No open bugs",
-      "No open PRs",
-      "No overlapping work",
-      "No cheap wins",
-      "No features in progress",
-      "No activity yet",
+      "No lanes yet. A lane appears when a Claude session registers it with the ctl tool.",
+      "Nothing is stuck.",
+      "Nothing at risk — every open pull request is moving.",
+      "No releases yet — add one in",
+      "Nothing waiting — every planned task is already taken.",
+      "No open bugs.",
+      "No open pull requests.",
+      "No lanes are changing the same files.",
+      "No quick wins near current work.",
+      "No features are being built right now.",
+      "No activity yet. Changes appear here as lanes report them.",
     ])
       expect(h).toContain(copy);
   });
 });
 
 describe("T27 badges (R14)", () => {
-  it("shows an overridden release with the register value in title", () => {
+  it("shows an overridden release as 'Changed by you' with the register value in title", () => {
     const h = render(base());
-    expect(h).toMatch(/overridden · owner#3/);
-    expect(h).toContain('title="register: R1"');
-    expect(h).toMatch(/R2[\s\S]{0,400}overridden · owner#3|overridden · owner#3[\s\S]{0,400}R2/);
+    expect(h).toContain('<span aria-hidden="true">✎</span> Changed by you');
+    expect(h).toContain('title="register: R1 · owner#3"');
+    expect(h).toMatch(/R2[\s\S]{0,400}Changed by you|Changed by you[\s\S]{0,400}R2/);
   });
-  it("shows the register lag chip when inferred status differs from the register", () => {
+  it("shows the out-of-date records chip when inferred status differs from the register", () => {
     const h = render(base());
-    expect(h).toContain("register lag");
-    expect(h).toMatch(/inferred from #2801/);
+    expect(h).toContain("Out of date records: 1");
+    expect(h).toContain("The register file and GitHub disagree about these:");
+    expect(h).toContain("now code finished (register file says planned)");
+    expect(h).toMatch(/<span class="badge inf" title="#2801">/); // the ref moved into the hover title
   });
-  it("carries provenance glyph badges for each source", () => {
+  it("carries provenance glyph badges for each source, in words", () => {
     const h = render(base());
-    expect(h).toContain("⟳ inferred");
-    expect(h).toContain("◆ reported");
-    expect(h).toMatch(/▤ register|✎ overridden/);
+    expect(h).toContain('<span aria-hidden="true">⟳</span> Detected from GitHub or Railway');
+    expect(h).toContain('<span aria-hidden="true">◆</span> Reported by lane-u');
+    expect(h).toContain('<span aria-hidden="true">◆</span> Set by you');
+    expect(h).toMatch(/✎<\/span> Changed by you/);
   });
 });
 
 describe("local mode and logout", () => {
-  it("normal mode has a logout control and no LOCAL chip", () => {
+  it("normal mode has a logout control and no local-only chip", () => {
     const h = render(base());
     expect(h).toMatch(/logout/i);
-    expect(h).not.toContain("LOCAL · 127.0.0.1");
+    expect(h).not.toContain("Running on this computer only");
   });
   it("local mode shows the chip and hides logout", () => {
     const h = render(base(), { local: true });
-    expect(h).toContain("LOCAL · 127.0.0.1");
+    expect(h).toContain("Running on this computer only");
     expect(h).not.toMatch(/action="\/logout"/);
   });
 });
