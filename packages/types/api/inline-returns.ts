@@ -67,6 +67,9 @@ export interface CaptureInlineReturnItem {
    *  override its quote priced, or the two price different chunks. */
   creditUnitPrice?: number;
   overrideReason?: string;
+  /** B961 / SA-071c: OPERATOR/TENANT_ADMIN only — why goods the customer already returned or was credited for are credited
+   *  again; REQUIRED when the quote flagged the line's over-return chunk `alreadyReturned` (400 coded otherwise). */
+  alreadyReturnedReason?: string;
 }
 
 export interface CaptureInlineReturnRequest {

@@ -41,6 +41,9 @@ export interface InlineReturnLineDraft {
   creditUnitPrice?: string;
   /** #2695: why — required with `creditUnitPrice`. */
   overrideReason?: string;
+  /** B961 / SA-071c: staff-only reason for crediting goods the quote flagged "already returned or credited". Sent on the CAPTURE
+   *  only (the quote ignores it). */
+  alreadyReturnedReason?: string;
 }
 
 // ─── #2695: staff credit price override ─────────────────────────────────────────
@@ -248,6 +251,32 @@ export function buildQuoteRequest(
   return routeRunStopId ? { customerId, items, routeRunStopId } : { customerId, items };
 }
 
+// ─── B961 / SA-071c: goods already returned or credited ────────────────────────
+
+/** The label of an over-return chunk of a product the customer DID buy and already returned/was credited for (NOT "Not on any invoice"). */
+export const ALREADY_RETURNED_LABEL = "Already returned or credited";
+export const ALREADY_RETURNED_NOTE =
+  "The records show every unit of this product on this customer's invoices was already returned or credited. Crediting it again needs a reason.";
+/** Shown to a DRIVER: their capture is held (nothing credited) until the office approves it with a reason. */
+export const ALREADY_RETURNED_DRIVER_NOTE =
+  "These goods were already returned or credited for this customer. Your return is recorded and held for the office to confirm; no credit is issued until staff approve it.";
+
+/** The products whose over-return chunk the quote flagged `alreadyReturned`. */
+export function alreadyReturnedProductIds(quote: InlineReturnQuoteResponse): Set<string> {
+  return new Set(quote.chunks.filter((c) => c.alreadyReturned).map((c) => c.productId));
+}
+
+/** Staff must type a reason for EVERY flagged product before confirming: the product ids still missing one. */
+export function missingAlreadyReturnedReasons(
+  lines: Pick<InlineReturnLineDraft, "productId" | "alreadyReturnedReason">[],
+  quote: InlineReturnQuoteResponse,
+): string[] {
+  return [...alreadyReturnedProductIds(quote)].filter(
+    (id) =>
+      !lines.some((l) => l.productId === id && (l.alreadyReturnedReason ?? "").trim().length > 0),
+  );
+}
+
 // ─── Step 2: quote chunk grouping (display only — no money math) ───────────────
 
 export interface GroupedQuoteChunks {
@@ -426,6 +455,7 @@ export function buildCaptureRequest(params: {
         pieces: parseNonNegativeInt(l.pieces),
         reason: l.reason || undefined,
         condition: l.note.trim() || undefined,
+        alreadyReturnedReason: l.alreadyReturnedReason?.trim() || undefined,
         ...overrideFields(l),
       }))
       .filter((i) => i.boxes > 0 || i.pieces > 0),
@@ -436,6 +466,7 @@ export function buildCaptureRequest(params: {
     pieces: i.pieces,
     ...(i.reason ? { reason: i.reason } : {}),
     ...(i.condition ? { condition: i.condition } : {}),
+    ...(i.alreadyReturnedReason ? { alreadyReturnedReason: i.alreadyReturnedReason } : {}),
     ...(i.creditUnitPrice !== undefined
       ? { creditUnitPrice: i.creditUnitPrice, overrideReason: i.overrideReason }
       : {}),
