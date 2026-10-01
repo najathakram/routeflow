@@ -344,34 +344,752 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     expect(grown).toBeLessThan(50 * 1024 * 1024);
   });
 
-  it("200 concurrent fake-signature 1 MB uploads all get 401, and a signed delivery still works", async () => {
+  /**
+   * B950. The old test mapped any client socket error to 0 and demanded a 401 from every socket, and
+   * failed deterministically on macOS while passing on Linux. The exact macOS mechanism was not
+   * reproduced (a flood with a well-formed signature streams the whole 1 MiB and is answered 401
+   * on a live connection here), but the assertion was on the CLIENT's view of an event whose delivery
+   * the OS controls: when a server answers and closes while the client is still writing, whether
+   * the client reads the 401 or only an EPIPE/ECONNRESET is platform- and timing-dependent. So the
+   * proof is made on the SERVER side: a spy on ServerResponse (scoped by the server's own address)
+   * records every status sent, and the harness counts how often the webhook handler's work ran. A
+   * client either reads a 401 or sees a reset: both are "rejected". The cap is proven by its own
+   * over-cap test, "never buffered" by the live-memory test.
+   */
+  // every code a client sees when the SERVER closed first (the last two are Node's own, raised when
+  // the peer's FIN already ended or destroyed our socket); ENOBUFS, EADDRNOTAVAIL, timeouts etc. stay
+  // `other` so an environmental failure is red, not silently "rejected"
+  const RESET_CODES = new Set([
+    "EPIPE",
+    "ECONNRESET",
+    "ECONNABORTED",
+    "ERR_STREAM_WRITE_AFTER_END",
+    "ERR_STREAM_DESTROYED",
+  ]);
+  type Outcome =
+    | { status: number; head?: string; port?: number; written?: number }
+    | { reset: string }
+    | { other: string };
+  const classifyError = (code: string): Outcome =>
+    RESET_CODES.has(code) ? { reset: code } : { other: code };
+  /** Rejected = the client read a 401, or its socket was reset (the server closed first). */
+  const isRejected = (o: Outcome): boolean => ("status" in o && o.status === 401) || "reset" in o;
+  const headWith = (sig: string, len: number): string =>
+    `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: ${sig}\r\nContent-Length: ${len}\r\n\r\n`;
+  /** Raw-socket upload: header, then `chunks` (optionally paced); never throws, always an Outcome. */
+  const upload = (
+    port: number,
+    head: string,
+    chunks: Buffer[],
+    o: { pauseReads?: boolean; chunkDelayMs?: number; maxMs?: number } = {},
+  ): Promise<Outcome> =>
+    new Promise((resolve) => {
+      const s = net.connect(port, "127.0.0.1");
+      let buf = "";
+      let done = false;
+      const end = (r: Outcome): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(t);
+        s.destroy();
+        resolve(r);
+      };
+      const t = setTimeout(() => end({ other: "TIMEOUT" }), o.maxMs ?? 20_000);
+      if (o.pauseReads) s.pause();
+      s.on("data", (d) => {
+        buf += d.toString();
+        const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
+        // keep the whole header block so a status that is NOT a 401 can be diagnosed (B950: a 400 on macOS)
+        if (m) {
+          end({
+            status: Number(m[1]),
+            head: buf.split("\r\n\r\n")[0].slice(0, 2000),
+            port: s.localPort, // pairs this client with its server-side socket (that socket's remotePort)
+            written: s.bytesWritten, // what this client really wrote (the MacBook: exactly head + Content-Length)
+          });
+        }
+      });
+      s.on("error", (e: NodeJS.ErrnoException) => {
+        const code = e.code ?? "UNKNOWN";
+        end(classifyError(code));
+      });
+      s.on("connect", () => {
+        s.write(head);
+        const send = (i: number): void => {
+          if (done || i >= chunks.length) return;
+          s.write(chunks[i]);
+          if (o.chunkDelayMs) setTimeout(() => send(i + 1), o.chunkDelayMs);
+          else send(i + 1);
+        };
+        send(0);
+      });
+    });
+  /** Every status the server sends, with the bytes its connection had read by then. */
+  type Seen = { status: number; bytesRead: number; destroyed: boolean; sock?: number };
+  type ClientErr = {
+    code?: string;
+    message: string;
+    /** the bytes AT the parse error (Node's `bytesParsed` offset into its `rawPacket`) */
+    raw?: string;
+    at?: number;
+    chunk?: number;
+    bytesRead?: number;
+    /** which server-side connection (ids are assigned as connections arrive) */
+    sock?: number;
+  };
+  const spyResponses = (port: number) => {
+    const http = require("http");
+    const orig = http.ServerResponse.prototype.end;
+    const origEmit = http.Server.prototype.emit;
+    const seen: Seen[] = [];
+    const clientErrors: ClientErr[] = [];
+    const sockIds = new WeakMap<object, number>();
+    const remotePorts = new Map<number, number>();
+    let nextSock = 0;
+    http.ServerResponse.prototype.end = function (this: any, ...a: unknown[]) {
+      // scoped by the SERVER's own address: `socket.localPort` is cleared once a socket is destroyed,
+      // which would hide exactly the responses sent on reset connections (the macOS shape), and an
+      // earlier test's server may still be draining in the same process
+      const sock = this.socket;
+      if (sock?.server?.address?.()?.port === port) {
+        seen.push({
+          status: this.statusCode,
+          bytesRead: sock.bytesRead ?? -1,
+          destroyed: Boolean(sock.destroyed),
+          sock: sockIds.get(sock),
+        });
+      }
+      return orig.apply(this, a);
+    };
+    // Node answers a request its parser rejects with a bare `400 Bad Request` written straight to the
+    // socket (the default `clientError` handling), which never passes through ServerResponse: only
+    // this event shows that the SERVER sent such a 400
+    http.Server.prototype.emit = function (this: any, ev: string, ...a: any[]) {
+      if (ev === "connection" && this.address?.()?.port === port && a[0]) {
+        sockIds.set(a[0], ++nextSock);
+        if (typeof a[0].remotePort === "number") remotePorts.set(nextSock, a[0].remotePort);
+      }
+      if (ev === "clientError" && this.address?.()?.port === port) {
+        // diagnostics must never break the server's own event chain: swallow anything odd
+        try {
+          // the bytes the parser rejected: Node attaches the whole chunk as `rawPacket` and the offset
+          // of the error as `bytesParsed` (HPE errors only), so this shows WHAT the parser choked on
+          // (body bytes? a second request line?) and how much of the connection it had read
+          const rawPacket: Buffer | undefined = a[0]?.rawPacket;
+          const at: number | undefined = rawPacket ? (a[0]?.bytesParsed ?? 0) : undefined;
+          clientErrors.push({
+            code: a[0]?.code,
+            message: String(a[0]?.message ?? a[0]),
+            raw:
+              rawPacket && at !== undefined
+                ? Buffer.from(rawPacket)
+                    .subarray(at, at + 48)
+                    .toString("latin1")
+                : undefined,
+            at,
+            chunk: rawPacket?.length,
+            bytesRead: a[1]?.bytesRead,
+            sock: a[1] ? sockIds.get(a[1]) : undefined,
+          });
+        } catch {
+          clientErrors.push({ message: "clientError capture failed" });
+        }
+      }
+      return origEmit.call(this, ev, ...a);
+    };
+    return {
+      seen,
+      clientErrors,
+      remotePorts,
+      stop: (): void => {
+        http.ServerResponse.prototype.end = orig;
+        http.Server.prototype.emit = origEmit;
+      },
+    };
+  };
+  /** Parser rejections only: Node also emits `clientError` for ECONNRESET and timeouts, which are not. */
+  const parserErrors = (errs: ClientErr[]): ClientErr[] =>
+    errs.filter((e) => e.code?.startsWith("HPE_"));
+  /**
+   * Lead ruling B950: a 400 read by a client is accepted ONLY when the SERVER explains it on that
+   * socket. The MacBook showed Node's bare parser 400 (HPE_INVALID_METHOD) when the server-side
+   * connection had read MORE than head + Content-Length, while the server's own answer to every
+   * request was a 401 and the handler never ran. The client had written EXACTLY head + Content-Length
+   * on every such socket (1048749 bytes, measured by `written`), so the surplus bytes appear on the
+   * SERVER side of the connection: the parser was fed buffered bytes after the message it had already
+   * completed. Why (a macOS/Node read-path quirk is the working hypothesis) is unproven. A 400 is explained
+   * when: the server recorded a 401 for that socket (it cannot mean "before": on the MacBook the
+   * parser error came first and the handler's 401 followed), the parser error is HPE_INVALID_METHOD,
+   * the socket had read more than head + Content-Length, and the handler's work never ran.
+   * Anything else is a problem. Returns the problems (empty = fine).
+   */
+  const BARE_400 = "HTTP/1.1 400 Bad Request\r\nConnection: close";
+  /** The server sockets whose parser error is explained: HPE_INVALID_METHOD, a 401 recorded for the
+   * socket, and more bytes read than head + Content-Length. */
+  const explainedSockets = (seen: Seen[], errs: ClientErr[], limit: number): Set<number> => {
+    const answered401 = new Set(
+      seen.filter((x) => x.status === 401 && x.sock !== undefined).map((x) => x.sock),
+    );
+    const out = new Set<number>();
+    for (const e of parserErrors(errs)) {
+      if (
+        e.code === "HPE_INVALID_METHOD" &&
+        e.sock !== undefined &&
+        answered401.has(e.sock) &&
+        (e.bytesRead ?? 0) > limit
+      ) {
+        out.add(e.sock);
+      }
+    }
+    return out;
+  };
+  /** The most bytes any server socket had read when it answered, EXCLUDING the explained sockets
+   * (which legitimately read past head + Content-Length before the handler's 401 was recorded). */
+  const maxBytesReadOutside = (seen: Seen[], explained: Set<number>): number =>
+    Math.max(
+      0,
+      ...seen.filter((x) => x.sock === undefined || !explained.has(x.sock)).map((x) => x.bytesRead),
+    );
+  const assessFlood = (a: {
+    outcomes: Outcome[];
+    seen: Seen[];
+    clientErrors: ClientErr[];
+    remotePorts: Map<number, number>;
+    declared: number;
+    headLen: number;
+    refreshCalls: number;
+  }): string[] => {
+    const problems: string[] = [];
+    const explained = explainedSockets(a.seen, a.clientErrors, a.declared + a.headLen);
+    for (const e of parserErrors(a.clientErrors)) {
+      if (e.sock === undefined || !explained.has(e.sock)) {
+        problems.push(
+          `parser error ${e.code} on socket ${e.sock} is not explained (bytesRead ${e.bytesRead}, limit ${a.declared + a.headLen})`,
+        );
+      }
+    }
+    // a client-read 400 must be Node's bare parser reply AND be paired with ITS OWN explained socket
+    // (the client's local port is that server socket's remote port)
+    let unpaired = 0;
+    for (const o of a.outcomes) {
+      if (!("status" in o) || o.status !== 400) continue;
+      // the client's local port is its server socket's remote port; a port held by MORE than one
+      // server socket (ephemeral port reuse) is ambiguous and never pairs
+      const holders =
+        o.port === undefined ? [] : [...a.remotePorts].filter(([, rp]) => rp === o.port);
+      const id = holders.length === 1 ? holders[0][0] : undefined;
+      if (o.head !== BARE_400 || id === undefined || !explained.has(id)) unpaired++;
+    }
+    if (unpaired > 0) {
+      problems.push(`${unpaired} uploads read a 400 that no explained socket accounts for`);
+    }
+    const bad = a.outcomes.filter((o) => !isRejected(o) && !("status" in o && o.status === 400));
+    if (bad.length > 0) {
+      problems.push(`${bad.length} uploads were neither a 401, a reset nor an explained 400`);
+    }
+    if (a.refreshCalls !== 0) problems.push("the webhook handler's work ran");
+    return problems;
+  };
+  /** What the sockets did, for a failure message and for CONTROL_TEST_VERBOSE. */
+  const floodReport = (outcomes: Outcome[], seen: Seen[], clientErrors: ClientErr[]) => {
+    const tally: Record<string, number> = {};
+    for (const o of outcomes) {
+      const k =
+        "status" in o
+          ? `status ${o.status}`
+          : "reset" in o
+            ? `reset ${o.reset}`
+            : `other ${o.other}`;
+      tally[k] = (tally[k] ?? 0) + 1;
+    }
+    const statuses: Record<string, number> = {};
+    for (const x of seen) statuses[String(x.status)] = (statuses[String(x.status)] ?? 0) + 1;
+    const bad = outcomes.filter((o) => !isRejected(o));
+    return {
+      node: process.version,
+      tally,
+      notRejectedCount: bad.length,
+      notRejected: bad.slice(0, 5),
+      answered: seen.length,
+      destroyed: seen.filter((x) => x.destroyed).length,
+      statuses,
+      clientErrors: clientErrors.slice(0, 5),
+    };
+  };
+
+  it("isRejected: a read 401 or a reset is a rejection; any other status or error is not", () => {
+    expect(isRejected({ status: 401 })).toBe(true);
+    for (const reset of ["EPIPE", "ECONNRESET", "ECONNABORTED"]) {
+      expect(isRejected({ reset })).toBe(true);
+    }
+    for (const status of [200, 202, 400, 403, 413, 500]) expect(isRejected({ status })).toBe(false);
+    for (const other of ["ECONNREFUSED", "ETIMEDOUT", "TIMEOUT", "UNKNOWN"]) {
+      expect(isRejected({ other })).toBe(false);
+    }
+  });
+
+  it("floodReport says what the sockets did: tally, the first non-rejected outcomes with their response head, the server's statuses and parser-level client errors", () => {
+    const rep = floodReport(
+      [
+        { status: 401 },
+        { reset: "EPIPE" },
+        { status: 400, head: "HTTP/1.1 400 Bad Request" },
+        { other: "TIMEOUT" },
+      ],
+      [{ status: 401, bytesRead: 1, destroyed: false }],
+      [
+        {
+          code: "HPE_INVALID_METHOD",
+          message: "Parse Error",
+          raw: "aaaaaaaa",
+          at: 0,
+          chunk: 65536,
+          bytesRead: 1048749,
+        },
+      ],
+    );
+    expect(rep.tally).toEqual({
+      "status 401": 1,
+      "reset EPIPE": 1,
+      "status 400": 1,
+      "other TIMEOUT": 1,
+    });
+    expect(rep.notRejectedCount).toBe(2);
+    expect(rep.notRejected).toEqual([
+      { status: 400, head: "HTTP/1.1 400 Bad Request" },
+      { other: "TIMEOUT" },
+    ]);
+    expect(rep.answered).toBe(1);
+    expect(rep.statuses).toEqual({ "401": 1 });
+    expect(rep.clientErrors).toEqual([
+      {
+        code: "HPE_INVALID_METHOD",
+        message: "Parse Error",
+        raw: "aaaaaaaa",
+        at: 0,
+        chunk: 65536,
+        bytesRead: 1048749,
+      },
+    ]);
+  });
+
+  it("a rejected delivery closes its connection: bytes sent after the 401 are never parsed as a new request (no HPE clientError)", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let head = "";
+    let timedOut = false;
+    try {
+      await new Promise<void>((resolve) => {
+        const s = net.connect(h!.port, "127.0.0.1");
+        let buf = "";
+        let junk = false;
+        const t = setTimeout(() => {
+          timedOut = true; // the server never closed the connection
+          s.destroy();
+          resolve();
+        }, 3000);
+        s.on("data", (d) => {
+          buf += d.toString();
+          if (!junk && /^HTTP\/1\.1 401/.test(buf)) {
+            junk = true;
+            head = buf;
+            // the delivery was rejected; whatever the client sends NOW must not be parsed as a new
+            // request (the MacBook's HPE_INVALID_METHOD: leftover bytes read as a request line)
+            s.write("XXXXXXXX\r\n\r\n");
+          }
+        });
+        s.on("error", () => {}); // the junk write may EPIPE once the server has closed
+        s.on("close", () => {
+          clearTimeout(t);
+          resolve();
+        });
+        s.on("connect", () => {
+          s.write(headWith(`sha256=${"0".repeat(64)}`, 5));
+          s.write("hello");
+        });
+      });
+      await sleep(200);
+    } finally {
+      spy.stop();
+    }
+    expect(head).toMatch(/^HTTP\/1\.1 401/);
+    expect(head.toLowerCase()).toContain("connection: close"); // the server announces the close
+    expect(timedOut).toBe(false); // ...and really closes the connection after the response
+    expect(parserErrors(spy.clientErrors)).toEqual([]); // so nothing is ever parsed as a new request
+    expect(h.refreshCalls).toBe(0);
+  });
+
+  it("the EARLY 401 (a malformed signature, refused before the body is read) also announces Connection: close and closes", async () => {
+    h = await startServer({ webhook: true });
+    let head = "";
+    let timedOut = false;
+    await new Promise<void>((resolve) => {
+      const s = net.connect(h!.port, "127.0.0.1");
+      const t = setTimeout(() => {
+        timedOut = true;
+        s.destroy();
+        resolve();
+      }, 3000);
+      s.on("data", (d) => (head += d.toString()));
+      s.on("error", () => {});
+      s.on("close", () => {
+        clearTimeout(t);
+        resolve();
+      });
+      s.on("connect", () => {
+        s.write(headWith("sha256=zz", 5));
+        s.write("hello");
+      });
+    });
+    expect(head).toMatch(/^HTTP\/1\.1 401/);
+    expect(head.toLowerCase()).toContain("connection: close");
+    expect(timedOut).toBe(false);
+  });
+
+  /** Everything a forged-delivery flood must satisfy: shared by the 200-upload test and the test that
+   * makes some sockets' connections read bytes beyond Content-Length (the MacBook shape). Throws with
+   * the whole report. */
+  const checkFlood = (a: {
+    spy: ReturnType<typeof spyResponses>;
+    outcomes: Outcome[];
+    uploads: number;
+    declared: number;
+    refreshCalls: number;
+  }): void => {
+    const { spy, outcomes, declared } = a;
+    const headLen = headWith(`sha256=${"0".repeat(64)}`, declared).length;
+    // what the sockets did, built BEFORE any assertion so a failing run still reports it
+    const report = floodReport(outcomes, spy.seen, spy.clientErrors);
+    if (process.env.CONTROL_TEST_VERBOSE) console.info("B950 flood", JSON.stringify(report));
+    // client side + parser: every upload is a 401, a reset, or a 400 the SERVER explains on that
+    // socket (assessFlood); anything else is red and the failure carries the whole report
+    const problems = assessFlood({
+      outcomes,
+      seen: spy.seen,
+      clientErrors: spy.clientErrors,
+      remotePorts: spy.remotePorts,
+      declared,
+      headLen,
+      refreshCalls: a.refreshCalls,
+    });
+    if (problems.length > 0) {
+      throw new Error(`B950 flood: ${problems.join("; ")}: ${JSON.stringify(report)}`);
+    }
+    // server side (the platform-independent proof): it sent no 2xx, answered every live connection
+    // 401, and the handler's work (a refresh) never ran for a forged delivery. The cap itself is
+    // proven by the over-cap test, "never buffered" by the live-memory test.
+    const seen = spy.seen;
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.length).toBeLessThanOrEqual(a.uploads);
+    // never a 2xx; a live connection is answered 401; a connection that was reset first may carry
+    // the 401, or a 413 for the body its client abandoned
+    expect(seen.filter((x) => x.status >= 200 && x.status < 300)).toEqual([]);
+    expect(seen.filter((x) => !x.destroyed && x.status !== 401)).toEqual([]);
+    expect(seen.filter((x) => x.destroyed && ![401, 413].includes(x.status))).toEqual([]);
+    // sanity: a connection with no parser error never read more than the declared body (the explained
+    // sockets legitimately read past it before their 401 was recorded: assessFlood covers those)
+    const explainedSocks = explainedSockets(seen, spy.clientErrors, declared + headLen);
+    expect(maxBytesReadOutside(seen, explainedSocks)).toBeLessThanOrEqual(declared + 4096);
+    expect(outcomes.filter((o) => "status" in o).length).toBeLessThanOrEqual(seen.length);
+    expect(a.refreshCalls).toBe(0);
+  };
+
+  it("a flood where some connections read bytes beyond Content-Length (the MacBook shape, simulated by over-sending clients) passes the SAME checks", async () => {
     h = await startServer({ webhook: true });
     const MB = Buffer.alloc(1024 * 1024, 97);
-    const port = h.port;
-    const codes = await Promise.all(
-      Array.from(
-        { length: 200 },
-        () =>
-          new Promise<number>((resolve) => {
-            const s = net.connect(port, "127.0.0.1");
-            let buf = "";
-            s.on("data", (d) => {
-              buf += d.toString();
-              const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
-              if (m) {
-                s.destroy();
-                resolve(Number(m[1]));
-              }
-            });
-            s.on("error", () => resolve(0));
-            s.on("connect", () => {
-              s.write(post());
-              s.write(MB);
-            });
-          }),
-      ),
-    );
-    expect(codes.every((c) => c === 401)).toBe(true);
+    const extra = Buffer.alloc(65363, 97);
+    const spy = spyResponses(h.port);
+    let outcomes: Outcome[];
+    try {
+      outcomes = await Promise.all(
+        Array.from({ length: 40 }, (_, i) =>
+          upload(
+            h!.port,
+            headWith(`sha256=${"0".repeat(64)}`, MB.length),
+            i % 5 === 0 ? [MB, extra] : [MB],
+          ),
+        ),
+      );
+      await sleep(300);
+    } finally {
+      spy.stop();
+    }
+    // the mini cannot make the server re-read bytes, so these clients really over-send: the server
+    // side sees the same thing as on the MacBook, a connection that read past the message it completed
+    expect(parserErrors(spy.clientErrors).length).toBeGreaterThan(0);
+    checkFlood({ spy, outcomes, uploads: 40, declared: MB.length, refreshCalls: h.refreshCalls });
+  });
+
+  it("bytes read beyond the declared Content-Length reproduce the MacBook shape: a bare 400 first, a clientError with the offending bytes, the server's 401 recorded on a destroyed socket", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      // declares 5 body bytes, sends them plus junk in the same write: the parser reads the junk as
+      // the start of a NEW request (HPE_INVALID_METHOD) while the first request's handler is still
+      // awaiting its body, so Node's default clientError reply (a bare 400) can beat the 401
+      out = await upload(
+        h.port,
+        headWith(`sha256=${"0".repeat(64)}`, 5),
+        [Buffer.from("helloXXXXXXXXXXXX\r\n\r\n")],
+        { maxMs: 8000 },
+      );
+      await sleep(300);
+    } finally {
+      spy.stop();
+    }
+    expect(spy.clientErrors.length).toBeGreaterThan(0);
+    expect(spy.clientErrors[0].code).toBe("HPE_INVALID_METHOD");
+    expect(spy.clientErrors[0].raw).toContain("XXXX"); // the exact bytes the parser choked on
+    expect(spy.clientErrors[0].bytesRead).toBeGreaterThan(0);
+    // the server's own answer was exactly one 401, recorded on a socket Node had already destroyed
+    expect(spy.seen.map((x) => x.status)).toEqual([401]);
+    expect(spy.seen[0].destroyed).toBe(true);
+    expect(h.refreshCalls).toBe(0);
+    // the SAME rule the flood applies explains this real shape end to end: a 401 on that socket, an
+    // HPE_INVALID_METHOD, more bytes read than head + Content-Length, the handler never ran
+    expect(
+      assessFlood({
+        outcomes: [out],
+        seen: spy.seen,
+        clientErrors: spy.clientErrors,
+        remotePorts: spy.remotePorts,
+        declared: 5,
+        headLen: headWith(`sha256=${"0".repeat(64)}`, 5).length,
+        refreshCalls: h.refreshCalls,
+      }),
+    ).toEqual([]);
+    // the client read Node's bare parser 400 (no app security headers, `Connection: close` only) or,
+    // depending on the OS, only a reset: whichever the OS delivers (the lesson of B950), never the 401
+    expect(
+      "reset" in out ||
+        (out as { status: number; head?: string }).head ===
+          "HTTP/1.1 400 Bad Request\r\nConnection: close",
+    ).toBe(true);
+  });
+
+  describe("assessFlood: a client-read 400 is accepted ONLY when the server explains it ON THAT SOCKET (lead ruling B950)", () => {
+    const DECLARED = 1048576;
+    const HEAD = 173;
+    const LIMIT = DECLARED + HEAD; // a request that is complete is exactly this many bytes
+    const BARE = "HTTP/1.1 400 Bad Request\r\nConnection: close";
+    const ok401 = (sock: number): Seen => ({
+      status: 401,
+      bytesRead: LIMIT,
+      destroyed: true,
+      sock,
+    });
+    const hpe = (sock: number, extra: Partial<ClientErr> = {}): ClientErr => ({
+      code: "HPE_INVALID_METHOD",
+      message: "Parse Error: Invalid method encountered",
+      sock,
+      bytesRead: LIMIT + 65363,
+      ...extra,
+    });
+    // client port 1001 <-> server socket 1 (read a 401), client port 1002 <-> server socket 2 (read a
+    // bare 400 and the parser rejected extra bytes on it)
+    const base = {
+      outcomes: [
+        { status: 401, port: 1001 },
+        { status: 400, head: BARE, port: 1002 },
+      ] as Outcome[],
+      seen: [ok401(1), ok401(2)],
+      clientErrors: [hpe(2)],
+      remotePorts: new Map<number, number>([
+        [1, 1001],
+        [2, 1002],
+      ]),
+      declared: DECLARED,
+      headLen: HEAD,
+      refreshCalls: 0,
+    };
+    it("accepts a 400 when THAT socket got a 401, the parser error is HPE_INVALID_METHOD, it read more than head + Content-Length, and the handler never ran", () => {
+      expect(assessFlood(base)).toEqual([]);
+    });
+    it("rejects a 400 on a socket the server never answered with a 401", () => {
+      expect(assessFlood({ ...base, seen: [ok401(1)] }).length).toBeGreaterThan(0);
+    });
+    it("rejects a different HPE code", () => {
+      for (const code of [
+        "HPE_INVALID_CONSTANT",
+        "HPE_INVALID_HEADER_TOKEN",
+        "HPE_UNEXPECTED_CONTENT_LENGTH",
+      ]) {
+        expect(assessFlood({ ...base, clientErrors: [hpe(2, { code })] }).length).toBeGreaterThan(
+          0,
+        );
+      }
+    });
+    it("rejects bytesRead at or below head + Content-Length (no extra bytes), accepts one byte more", () => {
+      expect(
+        assessFlood({ ...base, clientErrors: [hpe(2, { bytesRead: LIMIT })] }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        assessFlood({ ...base, clientErrors: [hpe(2, { bytesRead: LIMIT - 1 })] }).length,
+      ).toBeGreaterThan(0);
+      expect(assessFlood({ ...base, clientErrors: [hpe(2, { bytesRead: LIMIT + 1 })] })).toEqual(
+        [],
+      );
+    });
+    it("rejects a 400 with no parser error behind it, and a parser error on a socket nobody answered", () => {
+      expect(assessFlood({ ...base, clientErrors: [] }).length).toBeGreaterThan(0);
+      expect(assessFlood({ ...base, clientErrors: [hpe(9)] }).length).toBeGreaterThan(0);
+    });
+    it("rejects a 400 read on socket X when only socket Y has the explained parser error", () => {
+      // client port 1002 read the 400, but the parser error sits on server socket 1 (client port 1001)
+      expect(assessFlood({ ...base, clientErrors: [hpe(1)] }).length).toBeGreaterThan(0);
+    });
+    it("rejects a 400 whose head is not Node's bare parser reply (an app 400 carries security headers)", () => {
+      const app400 = "HTTP/1.1 400 Bad Request\r\nX-Robots-Tag: noindex, nofollow, noarchive";
+      const outcomes = [
+        { status: 401, port: 1001 },
+        { status: 400, head: app400, port: 1002 },
+      ] as Outcome[];
+      expect(assessFlood({ ...base, outcomes }).length).toBeGreaterThan(0);
+    });
+    it("rejects a 400 that carries no client port (it cannot be paired with a server socket)", () => {
+      const outcomes = [{ status: 401 }, { status: 400, head: BARE }] as Outcome[];
+      expect(assessFlood({ ...base, outcomes }).length).toBeGreaterThan(0);
+    });
+    it("rejects a 400 whose client port is held by more than one server socket (ephemeral port reuse is ambiguous)", () => {
+      const remotePorts = new Map<number, number>([
+        [1, 1001],
+        [2, 1002],
+        [3, 1002], // a second server socket with the same remote port
+      ]);
+      expect(assessFlood({ ...base, remotePorts }).length).toBeGreaterThan(0);
+    });
+    it("rejects when the webhook handler's work ran", () => {
+      expect(assessFlood({ ...base, refreshCalls: 1 }).length).toBeGreaterThan(0);
+    });
+    it("rejects any outcome that is neither a 401, a reset nor an explained 400", () => {
+      expect(
+        assessFlood({ ...base, outcomes: [{ other: "ETIMEDOUT" }, { status: 401, port: 1001 }] })
+          .length,
+      ).toBeGreaterThan(0);
+      expect(
+        assessFlood({
+          ...base,
+          outcomes: [
+            { status: 202, port: 1001 },
+            { status: 401, port: 1002 },
+          ],
+        }).length,
+      ).toBeGreaterThan(0);
+    });
+    it("ignores a clientError that is not a parser error (ECONNRESET)", () => {
+      const reset: ClientErr = { code: "ECONNRESET", message: "read ECONNRESET", sock: 5 };
+      expect(
+        assessFlood({
+          ...base,
+          outcomes: [{ status: 401, port: 1001 }, { reset: "EPIPE" }],
+          clientErrors: [reset],
+        }),
+      ).toEqual([]);
+    });
+    it("explainedSockets names the sockets with an explained parser error; the over-read bound applies only to the others", () => {
+      const explained = explainedSockets(base.seen, base.clientErrors, LIMIT);
+      expect([...explained]).toEqual([2]);
+      // socket 2 legitimately read past head + Content-Length before its 401 was recorded
+      const seen = [ok401(1), { ...ok401(2), bytesRead: LIMIT + 65363 }];
+      expect(maxBytesReadOutside(seen, explained)).toBe(LIMIT);
+      expect(maxBytesReadOutside(seen, new Set())).toBe(LIMIT + 65363);
+    });
+  });
+
+  it("classifyError pins the reset codes: the server-closed-first codes are resets, environmental ones are not", () => {
+    for (const code of [
+      "EPIPE",
+      "ECONNRESET",
+      "ECONNABORTED",
+      "ERR_STREAM_WRITE_AFTER_END",
+      "ERR_STREAM_DESTROYED",
+    ]) {
+      expect(classifyError(code)).toEqual({ reset: code });
+    }
+    for (const code of [
+      "ENOBUFS",
+      "EADDRNOTAVAIL",
+      "ETIMEDOUT",
+      "ECONNREFUSED",
+      "EMFILE",
+      "UNKNOWN",
+    ]) {
+      expect(classifyError(code)).toEqual({ other: code });
+    }
+  });
+
+  it("a client that keeps writing after the server's EARLY 401 and is reset still counts as rejected", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      // a malformed signature is refused before a byte of the body is read ("Connection: close");
+      // the client reads nothing and keeps writing after the server closed: EPIPE/ECONNRESET on
+      // any OS, the exact shape macOS produced for the flood test
+      out = await upload(
+        h.port,
+        headWith("sha256=zz", 1024 * 1024),
+        Array.from({ length: 80 }, () => Buffer.alloc(256 * 1024, 97)),
+        { pauseReads: true, chunkDelayMs: 25, maxMs: 8000 },
+      );
+    } finally {
+      spy.stop();
+    }
+    // paused reads plus a paced write normally surface a reset, but whether the client reads the
+    // buffered 401 or only a reset is exactly what the OS decides: either is a rejection
+    expect(isRejected(out)).toBe(true);
+    expect(spy.seen.map((x) => x.status)).toEqual([401]); // the server did answer, once, 401
+    expect(h.refreshCalls).toBe(0); // the webhook handler's work never ran
+  });
+
+  it("a body over the 1 MiB cap is refused 413 EVEN WITH a valid signature, and the handler never runs", async () => {
+    h = await startServer({ webhook: true });
+    const CAP = 1024 * 1024;
+    const body = Buffer.alloc(2 * CAP, 97);
+    // a signature that is valid for the WHOLE body: a server that hashed past the cap, or whose cap
+    // was lifted, would accept this delivery; the real one drops everything past the cap unhashed
+    const sig = "sha256=" + createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      out = await upload(
+        h.port,
+        headWith(sig, body.length),
+        Array.from({ length: 32 }, (_, i) => body.subarray(i * 65536, (i + 1) * 65536)),
+        { maxMs: 10_000 },
+      );
+    } finally {
+      spy.stop();
+    }
+    expect("status" in out ? out.status === 413 : "reset" in out).toBe(true);
+    if ("status" in out) expect((out.head ?? "").toLowerCase()).toContain("connection: close");
+    expect(spy.seen.map((x) => x.status)).toEqual([413]);
+    expect(parserErrors(spy.clientErrors)).toEqual([]);
+    expect(h.refreshCalls).toBe(0);
+  });
+
+  it("200 concurrent fake-signature 1 MB uploads are all rejected (401 or a reset), a signed delivery still works", async () => {
+    h = await startServer({ webhook: true });
+    const MB = Buffer.alloc(1024 * 1024, 97);
+    const spy = spyResponses(h.port);
+    let outcomes: Outcome[];
+    try {
+      outcomes = await Promise.all(
+        Array.from({ length: 200 }, () =>
+          upload(h!.port, headWith(`sha256=${"0".repeat(64)}`, MB.length), [MB]),
+        ),
+      );
+    } finally {
+      spy.stop();
+    }
+    checkFlood({
+      spy,
+      outcomes,
+      uploads: 200,
+      declared: MB.length,
+      refreshCalls: h.refreshCalls,
+    });
     const body = JSON.stringify({ a: 1 });
     const ok = await h.req("POST", "/api/github-webhook", {
       headers: {
@@ -383,6 +1101,8 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       body,
     });
     expect(ok.status).toBe(202);
+    await sleep(100);
+    expect(h.refreshCalls).toBeGreaterThan(0); // control: a SIGNED delivery does run the handler's work
   });
 });
 
