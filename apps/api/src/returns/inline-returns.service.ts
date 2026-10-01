@@ -543,7 +543,7 @@ export class InlineReturnsService {
     if (user.role === UserRole.DRIVER) return { held: true, confirmed: [] };
     const confirmed: Array<{
       productId: string;
-      pieces: number;
+      qty: number;
       subtotal: number;
       reason: string;
     }> = [];
