@@ -135,8 +135,9 @@ const hasTenant = (d: unknown) =>
 
 /**
  * The ONE create check: a create / createMany / createManyAndReturn / upsert on a tenant-owned model
- * whose data carries no tenantId is reported (warn dark, throw enforced). Every other operation, and
- * every platform model, passes. Shared by the SUPER_ADMIN client extension and the raw-tx proxy.
+ * whose data carries no tenantId is reported (warn dark, throw enforced), and (SA-620) so is every NESTED
+ * tenant-owned create inside a create / upsert / update / updateMany (the same walker that stamps them).
+ * Every other operation, and every platform model, passes. Shared by the SUPER_ADMIN client extension and the raw-tx proxy.
  */
 export function checkCreateHasTenant(
   guard: Pick<TenantContextGuard, "superAdminCreate">,

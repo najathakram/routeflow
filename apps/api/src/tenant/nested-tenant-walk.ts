@@ -73,6 +73,9 @@ type Visit = (
   path: string,
 ) => Record<string, unknown>;
 
+/** `throw`: stamping must never silently stop (fail loud). `stop`: the dark check reports and never breaks a write. */
+type DepthMode = "throw" | "stop";
+
 /** Walk one model's data object: every relation key's write operations, recursively. */
 function walkData(
   model: string,
@@ -80,19 +83,25 @@ function walkData(
   visit: Visit,
   path: string,
   depth: number,
+  mode: DepthMode,
 ): unknown {
   if (!isObj(data)) return data;
-  if (depth > MAX_DEPTH)
+  if (depth > MAX_DEPTH) {
+    if (mode === "stop") return data;
     throw new NestedTenantWalkError(
       `nested write exceeds the depth limit of ${MAX_DEPTH} relations at ${path}: refusing to leave rows unstamped`,
     );
+  }
+  // A child created through a Tenant relation gets its tenant from the relation itself (the Prisma
+  // `*WithoutTenant` create inputs have no tenantId scalar): nothing to stamp or check below a Tenant.
+  if (model === "Tenant") return data;
   const table = buildTables().get(model);
   if (!table) return data;
   let out: Record<string, unknown> | null = null;
   for (const [key, value] of Object.entries(data)) {
     const target = table.relations.get(key);
     if (!target || !isObj(value)) continue;
-    const next = walkOps(target, value, visit, `${path}.${key}`, depth + 1);
+    const next = walkOps(target, value, visit, `${path}.${key}`, depth + 1, mode);
     if (next !== value) (out ??= { ...data })[key] = next;
   }
   return out ?? data;
@@ -105,6 +114,7 @@ function walkOps(
   visit: Visit,
   path: string,
   depth: number,
+  mode: DepthMode,
 ): Record<string, unknown> {
   let out: Record<string, unknown> | null = null;
   const set = (k: string, v: unknown) => {
@@ -117,7 +127,7 @@ function walkOps(
   const child = (payload: unknown, p: string): unknown => {
     if (!isObj(payload)) return payload;
     const stamped = visit(target, payload, p);
-    return walkData(target, stamped, visit, p, depth);
+    return walkData(target, stamped, visit, p, depth, mode);
   };
 
   for (const op of Object.keys(ops)) {
@@ -146,7 +156,7 @@ function walkOps(
         (e, ep) => {
           if (!isObj(e)) return e;
           const c = child(e.create, `${ep}.create`);
-          const u = walkData(target, e.update, visit, `${ep}.update`, depth);
+          const u = walkData(target, e.update, visit, `${ep}.update`, depth, mode);
           return c === e.create && u === e.update ? e : { ...e, create: c, update: u };
         },
         p,
@@ -158,11 +168,11 @@ function walkOps(
         (e, ep) => {
           if (!isObj(e)) return e;
           if (isObj(e.data)) {
-            const d = walkData(target, e.data, visit, `${ep}.data`, depth);
+            const d = walkData(target, e.data, visit, `${ep}.data`, depth, mode);
             return d === e.data ? e : { ...e, data: d };
           }
           // to-one `update: { ...data }` shorthand
-          return op === "update" ? walkData(target, e, visit, ep, depth) : e;
+          return op === "update" ? walkData(target, e, visit, ep, depth, mode) : e;
         },
         p,
       );
@@ -186,12 +196,13 @@ export function stampNestedTenant(model: string, data: unknown, tenantId: string
       const given = payload.tenantId;
       if (given !== undefined && given !== null && given !== tenantId)
         throw new NestedTenantWalkError(
-          `cross-tenant nested write: ${childModel} at ${path} carries a different tenantId ("${typeof given === "string" ? given : "non-string"}") than the context ("${tenantId}")`,
+          `cross-tenant nested write: ${childModel} at ${path} carries a tenantId that differs from the tenant context`,
         );
       return given === tenantId ? payload : { ...payload, tenantId };
     },
     "data",
     0,
+    "throw",
   );
 }
 
@@ -214,6 +225,7 @@ export function findNestedWithoutTenant(
     },
     "data",
     0,
+    "stop",
   );
   return found;
 }

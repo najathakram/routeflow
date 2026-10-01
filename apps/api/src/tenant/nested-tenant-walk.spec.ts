@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import {
   NestedTenantWalkError,
+  findNestedWithoutTenant,
   isTenantOwnedModel,
   stampNestedTenant,
   walkTablesBuiltCount,
@@ -35,11 +36,13 @@ const dm = (Prisma as any).dmmf.datamodel.models as Array<{
 }>;
 /** Every (parent, relation field, child) in the data model whose child carries a tenantId. */
 const relationsTo = (child: string) =>
-  dm.flatMap((m) =>
-    m.fields
-      .filter((f) => f.kind === "object" && f.type === child)
-      .map((f) => ({ parent: m.name, field: f.name })),
-  );
+  dm
+    .filter((m) => m.name !== "Tenant") // a Tenant parent assigns the tenant through the relation itself
+    .flatMap((m) =>
+      m.fields
+        .filter((f) => f.kind === "object" && f.type === child)
+        .map((f) => ({ parent: m.name, field: f.name })),
+    );
 
 describe("stampNestedTenant: DMMF coverage (SA-620 case 1)", () => {
   it.each(CHILD_MODELS)(
@@ -67,7 +70,7 @@ describe("stampNestedTenant: DMMF coverage (SA-620 case 1)", () => {
 
   it("every relation field whose target is tenant-owned is reached (the data model is the only list)", () => {
     let checked = 0;
-    for (const m of dm)
+    for (const m of dm.filter((x) => x.name !== "Tenant"))
       for (const f of m.fields) {
         if (f.kind !== "object" || !isTenantOwnedModel(f.type)) continue;
         const out: any = stamp(m.name, { [f.name]: { create: {} } });
@@ -125,12 +128,49 @@ describe("stampNestedTenant: shapes (SA-620 case 2)", () => {
     expect((Array.isArray(g) ? g[0] : g).tenantId).toBe(T);
   });
 
-  it("update.data with a nested create is walked (an edit that adds lines): update, updateMany, to-many wrappers", () => {
+  it("a sibling create next to an update is stamped; update.data itself is never stamped", () => {
     const out: any = stamp("VendorBill", {
       items: { update: { where: { id: "1" }, data: { q: 2 } }, create: [{ q: 3 }] },
     });
     expect(out.items.create[0].tenantId).toBe(T);
     expect(out.items.update.data).toEqual({ q: 2 });
+  });
+
+  it("a nested create INSIDE update.data (the edit that adds a grandchild), the to-one update shorthand, and upsert.update are walked", () => {
+    const grand = dm
+      .find((m) => m.name === "OrderItem")!
+      .fields.find((f) => f.kind === "object" && isTenantOwnedModel(f.type) && f.type !== "Order")!;
+    const orderItems = dm
+      .find((m) => m.name === "Order")!
+      .fields.find((f) => f.kind === "object" && f.type === "OrderItem")!.name;
+    const inUpdateData: any = stamp("Order", {
+      [orderItems]: {
+        update: { where: { id: "1" }, data: { [grand.name]: { create: [{ z: 1 }] } } },
+      },
+    });
+    const g1 = inUpdateData[orderItems].update.data[grand.name].create[0];
+    expect(g1.tenantId).toBe(T);
+    const inUpsertUpdate: any = stamp("Order", {
+      [orderItems]: {
+        upsert: {
+          where: { id: "1" },
+          create: { q: 1 },
+          update: { [grand.name]: { create: [{ z: 2 }] } },
+        },
+      },
+    });
+    expect(inUpsertUpdate[orderItems].upsert.update[grand.name].create[0].tenantId).toBe(T);
+    // to-one shorthand: Customer-style `rel: { update: { ...data } }` carrying a nested create
+    const toOne: any = stamp("OrderItem", {
+      order: { update: { [orderItems]: { create: { q: 1 } } } },
+    });
+    expect(toOne.order.update[orderItems].create.tenantId).toBe(T);
+  });
+
+  it("a parent that IS the Tenant gets no stamping (the relation itself assigns the tenant; TenantConfigCreateWithoutTenantInput has no tenantId)", () => {
+    const input = { config: { upsert: { create: { businessName: "x" }, update: {} } } };
+    expect(stamp("Tenant", input)).toEqual(input);
+    expect(findNestedWithoutTenant("Tenant", input)).toEqual([]);
   });
 
   it("connect / disconnect / set / delete / deleteMany / updateMany.where are untouched", () => {
@@ -215,6 +255,24 @@ describe("stampNestedTenant: no-ops, throws, purity (SA-620 case 3)", () => {
     expect(err).toBeInstanceOf(NestedTenantWalkError);
     expect(err.message).toMatch(/depth/i);
     expect(err.message).toMatch(/data\./);
+  });
+});
+
+describe("findNestedWithoutTenant (the dark non-TENANT check)", () => {
+  it("never throws on depth: it stops and reports what it has seen (the dark check must not break a write)", () => {
+    const rel = dm.find((m) => m.name === "Order")!.fields.find((f) => f.type === "OrderItem")!;
+    const back = dm.find((m) => m.name === "OrderItem")!.fields.find((f) => f.type === "Order")!;
+    let data: any = { note: "leaf" };
+    for (let i = 0; i < 20; i++)
+      data = { [rel.name]: { create: { [back.name]: { create: data } } } };
+    expect(() => findNestedWithoutTenant("Order", data)).not.toThrow();
+    expect(findNestedWithoutTenant("Order", data).length).toBeGreaterThan(0);
+  });
+  it("lists nested tenant-owned creates with no tenantId; explicit null and a value are fine", () => {
+    const out = findNestedWithoutTenant("VendorBill", {
+      items: { create: [{ q: 1 }, { q: 2, tenantId: null }, { q: 3, tenantId: "t" }] },
+    });
+    expect(out).toEqual([{ model: "VendorBillItem", path: "data.items.create[0]" }]);
   });
 });
 
