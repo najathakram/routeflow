@@ -89,6 +89,12 @@ describe("POST /auth/apple/notifications — real body shape (SA-418)", () => {
     expect(handleNotification).not.toHaveBeenCalled();
   });
 
+  it("the unauthenticated notifications route carries its own throttle (not just the global default)", () => {
+    const handler = AuthController.prototype.appleNotifications;
+    expect(Reflect.getMetadata("THROTTLER:LIMITdefault", handler)).toBeLessThanOrEqual(30);
+    expect(Reflect.getMetadata("THROTTLER:TTLdefault", handler)).toBeGreaterThanOrEqual(60_000);
+  });
+
   it("unconfigured: a readable 503, never a crash", async () => {
     apple.isNotificationConfigured.mockReturnValue(false);
     const res = await request(app.getHttpServer())

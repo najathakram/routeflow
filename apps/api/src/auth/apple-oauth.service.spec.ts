@@ -4,6 +4,7 @@ import {
   ConflictException,
   ForbiddenException,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from "@nestjs/common";
 import * as crypto from "crypto";
@@ -41,9 +42,13 @@ function sha256hex(input: string): string {
 function makeMockRedis() {
   const store = new Map<string, string>();
   return {
-    set: jest.fn(async (key: string, val: string) => {
+    set: jest.fn(async (key: string, val: string, ...args: unknown[]) => {
+      if (args.includes("NX") && store.has(key)) return null;
       store.set(key, val);
       return "OK";
+    }),
+    del: jest.fn(async (key: string) => {
+      return store.delete(key) ? 1 : 0;
     }),
     getdel: jest.fn(async (key: string) => {
       const v = store.has(key) ? store.get(key)! : null;
@@ -124,7 +129,7 @@ async function signIdentityToken(
   privateKey: jose.KeyLike,
   overrides: Partial<{
     sub: string;
-    email: string;
+    email: string | null;
     email_verified: boolean | string;
     nonce: string;
     aud: string;
@@ -133,11 +138,15 @@ async function signIdentityToken(
     kid: string;
   }> = {},
 ) {
-  const claims: Record<string, unknown> = {
-    email: overrides.email ?? "buyer@example.com",
-    email_verified: overrides.email_verified ?? true,
-    nonce: overrides.nonce,
-  };
+  // `email: null` models Apple's later sign-ins, whose identity token OMITS email and email_verified.
+  const claims: Record<string, unknown> =
+    overrides.email === null
+      ? { nonce: overrides.nonce }
+      : {
+          email: overrides.email ?? "buyer@example.com",
+          email_verified: overrides.email_verified ?? true,
+          nonce: overrides.nonce,
+        };
   const expiresAt =
     overrides.expiresIn === "-1h"
       ? Math.floor(Date.now() / 1000) - 3600
@@ -759,6 +768,30 @@ describe("AppleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 fo
       expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
     });
 
+    it("a token WITHOUT an email claim signs in when the appleId is already bound (Apple omits email after the first sign-in)", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValueOnce({ ...STAFF, appleId: "apple-sub-1" });
+
+      await expect(staffSignIn(env, { email: null })).resolves.toMatchObject({ kind: "staff" });
+
+      expect(env.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("no email claim AND no bound appleId: refused 403 before any email lookup or write", async () => {
+      const env = await buildService();
+      env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
+      env.prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(staffSignIn(env, { email: null })).rejects.toThrow(
+        new ForbiddenException("unauthorized"),
+      );
+      // sub lookup only; a null email must never widen the where into an unscoped match
+      expect(env.prisma.user.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
     it("the email fallback is ordered createdAt,id and stays tenant-scoped", async () => {
       const env = await buildService();
       env.prisma.tenant.findFirst.mockResolvedValue(TENANT);
@@ -850,6 +883,37 @@ describe("AppleOAuthService — SA-598 P1 sub-first resolve + CAS link (#2495 fo
   });
 
   describe("buyer", () => {
+    it("a token WITHOUT an email claim signs in a buyer whose appleId is already bound", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst.mockResolvedValueOnce({ ...BUYER, appleId: "apple-sub-1" });
+      env.prisma.customerLink.count.mockResolvedValue(0);
+
+      await expect(buyerSignIn(env, { email: null })).resolves.toMatchObject({ kind: "buyer" });
+
+      expect(env.prisma.buyerAccount.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+      // No email attested, so no emailVerified upgrade and no "linked" mail is sent.
+      expect(env.prisma.buyerAccount.update).not.toHaveBeenCalled();
+      expect(env.emailService.send).not.toHaveBeenCalled();
+    });
+
+    it("no email claim AND no bound appleId: never auto-creates an account, 403", async () => {
+      const env = await buildService();
+      env.prisma.buyerAccount.findFirst.mockResolvedValue(null);
+
+      await expect(buyerSignIn(env, { email: null })).rejects.toThrow(
+        new ForbiddenException("unauthorized"),
+      );
+      expect(env.prisma.buyerAccount.create).not.toHaveBeenCalled();
+    });
+
+    it("an email claim that is present but not verified is still refused (unchanged)", async () => {
+      const env = await buildService();
+      await expect(buyerSignIn(env, { email_verified: false })).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+
     it("resolves by appleId FIRST: the email is never queried when the sub matches", async () => {
       const env = await buildService();
       env.prisma.buyerAccount.findFirst.mockResolvedValueOnce({ ...BUYER, appleId: "apple-sub-1" });
@@ -1047,6 +1111,7 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience("wrong.bundle.id")
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
@@ -1065,6 +1130,7 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience(BUNDLE_ID)
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
@@ -1094,12 +1160,103 @@ describe("AppleOAuthService — notifications (SA-418 §5)", () => {
       .setIssuer(APPLE_ISSUER)
       .setAudience("com.someone.else")
       .setIssuedAt()
+      .setJti(crypto.randomUUID())
       .setExpirationTime("5m")
       .sign(privateKey);
 
     await expect(service.handleNotification(signedPayload)).rejects.toThrow(UnauthorizedException);
     expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
     expect(prisma.buyerRefreshToken.deleteMany).not.toHaveBeenCalled();
+  });
+
+  // ─── Replay protection (lead follow-up on #2486) ────────────────────────────────
+  async function signNotification(
+    privateKey: jose.KeyLike,
+    opts: { jti?: string | null; iatSecondsAgo?: number; type?: string; sub?: string } = {},
+  ) {
+    const jwt = new jose.SignJWT({
+      events: JSON.stringify({
+        type: opts.type ?? "consent-revoked",
+        sub: opts.sub ?? "apple-sub-1",
+      }),
+    })
+      .setProtectedHeader({ alg: "RS256", kid: KID })
+      .setIssuer(APPLE_ISSUER)
+      .setAudience(BUNDLE_ID)
+      .setIssuedAt(Math.floor(Date.now() / 1000) - (opts.iatSecondsAgo ?? 0))
+      .setExpirationTime("30d");
+    if (opts.jti !== null) jwt.setJti(opts.jti ?? crypto.randomUUID());
+    return jwt.sign(privateKey);
+  }
+
+  it("a replayed notification (same jti) is ignored: no second write, no error", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    const token = await signNotification(privateKey, { jti: "jti-1" });
+
+    await service.handleNotification(token);
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(1);
+
+    // The user re-links, then an attacker replays the captured token: it must not undo the link.
+    prisma.buyerAccount.update.mockClear();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    await expect(service.handleNotification(token)).resolves.toBeUndefined();
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+    expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("a transient write failure frees the jti, so Apple's retry of the same token is processed (not swallowed as a replay)", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    prisma.buyerAccount.update
+      .mockRejectedValueOnce(new Error("transient db error"))
+      .mockResolvedValue(undefined);
+    const token = await signNotification(privateKey, { jti: "jti-retry" });
+
+    await expect(service.handleNotification(token)).rejects.toThrow("transient db error");
+    // Apple retries the SAME jwt after our 500: it must run again and clear the link.
+    await expect(service.handleNotification(token)).resolves.toBeUndefined();
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(2);
+    expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledTimes(1);
+
+    // And once it succeeded, a third delivery IS a replay.
+    prisma.buyerAccount.update.mockClear();
+    await service.handleNotification(token);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+  });
+
+  it("two DIFFERENT notifications (different jti) are both processed", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue({ id: "buyer-1", appleId: "apple-sub-1" });
+    prisma.user.findMany.mockResolvedValue([]);
+    await service.handleNotification(await signNotification(privateKey, { jti: "jti-a" }));
+    await service.handleNotification(await signNotification(privateKey, { jti: "jti-b" }));
+    expect(prisma.buyerAccount.update).toHaveBeenCalledTimes(2);
+  });
+
+  it("a token older than the max age (48h) is refused even though its exp is still in the future", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    const old = await signNotification(privateKey, { iatSecondsAgo: 3 * 24 * 3600 });
+    await expect(service.handleNotification(old)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+  });
+
+  it("a token with no jti is refused (it cannot be replay-checked) and writes nothing", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    const noJti = await signNotification(privateKey, { jti: null });
+    await expect(service.handleNotification(noJti)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+  });
+
+  it("when Redis is down the replay check fails closed with a 503 (Apple retries), writing nothing", async () => {
+    const { service, prisma, privateKey } = await buildService();
+    (service as any).redis.set = jest.fn().mockRejectedValue(new Error("redis down"));
+    const token = await signNotification(privateKey);
+    await expect(service.handleNotification(token)).rejects.toThrow(ServiceUnavailableException);
+    expect(prisma.buyerAccount.update).not.toHaveBeenCalled();
+    expect(prisma.buyerAccount.findFirst).not.toHaveBeenCalled();
   });
 });
 

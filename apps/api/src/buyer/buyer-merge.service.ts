@@ -415,6 +415,25 @@ export class BuyerMergeService {
         });
       }
 
+      // 3b. Apple identity (BuyerAccount_appleId_key is UNIQUE): free the secondary's appleId FIRST
+      // so the soft-deleted row can never shadow a later Apple sign-in, then let the primary inherit
+      // it (and the encrypted refresh token used for /auth/revoke) only when it has none.
+      if (secondaryAccount.appleId) {
+        await tx.buyerAccount.update({
+          where: { id: secondaryAccount.id },
+          data: { appleId: null, appleRefreshTokenEnc: null },
+        });
+        if (!primaryAccount.appleId) {
+          await tx.buyerAccount.update({
+            where: { id: primaryAccount.id },
+            data: {
+              appleId: secondaryAccount.appleId,
+              appleRefreshTokenEnc: secondaryAccount.appleRefreshTokenEnc,
+            },
+          });
+        }
+      }
+
       // 4. Invalidate all secondary's sessions
       await tx.buyerRefreshToken.deleteMany({
         where: { buyerAccountId: secondaryAccount.id },
