@@ -44,7 +44,8 @@ export const RF_ID_RE = /^RF-\d+$/;
 export const TMP_ID_RE = /^[a-z0-9][a-z0-9-]{1,23}\.\d+$/;
 export const BUG_ID_RE = /^B\d+$/;
 export const RELEASE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]{0,23}$/;
-export const TS_RE = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+/** Canonical UTC ISO: seconds or milliseconds, always `Z` (the string-ordered ts compare relies on it). */
+export const TS_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
 export const DATE_RE = /^\d{4}-\d\d-\d\d(T\d\d:\d\d(:\d\d)?Z?)?$/;
 export const SHA_RE = /^[0-9a-f]{7,40}$/;
 export const GLOB_RE = /^[A-Za-z0-9_./()[\]*?-]+$/;

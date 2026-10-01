@@ -387,6 +387,88 @@ describe("production guards live in createControlServer", () => {
   });
 });
 
+describe("final: refused boot leaves no key, ts is canonical UTC ISO", () => {
+  const find = (dir: string, name: string): string[] =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      const p = path.join(dir, e.name);
+      return e.isDirectory() ? find(p, name) : e.name === name ? [p] : [];
+    });
+  it("a refused boot removes the deploy key and known_hosts", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "boot-"));
+    try {
+      const { CONTROL_PUBLIC_URL: _u, CONTROL_FIXTURE: _f, ...rest } = FULL;
+      void _u;
+      void _f;
+      const r = boot({ ...rest, TMPDIR: tmp });
+      expect(r.status).toBe(1);
+      expect(find(tmp, "deploy_key")).toEqual([]);
+      expect(find(tmp, "known_hosts")).toEqual([]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  const V: any = require("../src/domain/validate");
+  const line = (seq: number, ts: string) =>
+    JSON.stringify({ seq, ts, lane: "lane-u", type: "lane.note", by: "agent", note: "n" });
+  const check = (...ts: string[]) =>
+    V.validateEvents(
+      [{ file: "lane-u.jsonl", text: ts.map((t, i) => line(i + 1, t)).join("\n") + "\n" }],
+      { tasks: [], releaseIds: [] },
+    ).filter((e: { reason: string }) => /^ts\b/.test(e.reason)) as Array<{ reason: string }>;
+  it("rejects an offset, a short fraction, a missing Z; accepts seconds or milliseconds", () => {
+    expect(check("2026-01-12T10:00:00+02:00")).not.toEqual([]);
+    expect(check("2026-01-12T10:00:00.5Z")).not.toEqual([]);
+    expect(check("2026-01-12T10:00:00")).not.toEqual([]);
+    expect(check("2026-01-12T10:00:00Z")).toEqual([]);
+    expect(check("2026-01-12T10:00:00.123Z")).toEqual([]);
+  });
+  it("rejects mixed precision (it would break the string-ordered ts compare)", () => {
+    expect(check("2026-01-12T10:00:00Z", "2026-01-12T10:00:01.500Z")).not.toEqual([]);
+    expect(check("2026-01-12T10:00:00.100Z", "2026-01-12T10:00:01Z")).not.toEqual([]);
+  });
+  const CANON = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+  it("server write-back and the ledger emit canonical ts", async () => {
+    h = await startServer();
+    await h.app.tick();
+    const s = await h.session();
+    const st = (await h.stateJson(s)).state;
+    const prev = st.tasks["RF-1"].priority.value;
+    await h.postEvent(s, {
+      type: "task.priority",
+      task: "RF-1",
+      priority: prev === "P1" ? "P2" : "P1",
+      prev,
+      expectedVersion: st.version,
+    });
+    const last = h.ownerLines().pop();
+    expect(last.ts).toMatch(CANON);
+    const rows = h.world
+      .remoteFile("derived/prs.jsonl")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.at).toMatch(CANON);
+  });
+  it("the ctl CLI (real clock) and main's clock emit canonical ts", async () => {
+    const { makeWorld, baseState } = require("./helpers/temp-repo");
+    const { runCli } = require("./helpers/spawn-cli");
+    const world = makeWorld();
+    try {
+      world.seedBranch("ctl/state", baseState(2));
+      const r = await runCli(world, ["note", "hello"]);
+      expect(r.code).toBe(0);
+      const lines = world.remoteLines("lane-u");
+      expect(lines[lines.length - 1].ts).toMatch(CANON);
+    } finally {
+      world.cleanup();
+    }
+    const main = read(path.join(CONTROL, "src", "main.ts"));
+    expect(main).toMatch(/new Date\(\)\.toISOString\(\)\.replace\(\/\\\.\\d\{3\}Z\$\/, "Z"\)/);
+  });
+});
+
 describe("minors", () => {
   it("git children never see CONTROL_* variables", () => {
     const { gitTry } = require("../src/sources/git");

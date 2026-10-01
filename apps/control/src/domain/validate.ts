@@ -166,7 +166,11 @@ export function validateEvents(
           problems.push("ts must be ISO UTC");
           ok = false;
         } else {
-          if (minTs !== "" && ts < minTs) {
+          const ref = prevTs !== "" ? prevTs : minTs;
+          if (ref !== "" && ts.length !== ref.length) {
+            problems.push("ts precision differs from the previous ts (seconds vs milliseconds)");
+            ok = false;
+          } else if (minTs !== "" && ts < minTs) {
             problems.push(`ts older than the snapshot's newest event (${ts} < ${minTs})`);
           } else if (ts < prevTs) problems.push(`ts decreases (${ts} < ${prevTs})`);
           else prevTs = ts;

@@ -13,8 +13,10 @@ import type { ControlDeps } from "./http/server";
 import { setupDeployKey } from "./http/deploykey";
 import { createGithub } from "./sources/github";
 
+const cleanups: Array<() => void> = [];
 const die = (msg: string): never => {
   process.stderr.write(`control: ${msg}\n`);
+  for (const c of cleanups) c(); // a refused boot leaves no deploy key behind
   return process.exit(1);
 };
 
@@ -28,7 +30,6 @@ if (config.local && !config.fixtureDir && !config.repo) {
   die("CONTROL_LOCAL=1 needs CONTROL_FIXTURE or CONTROL_REPO");
 }
 
-const cleanups: Array<() => void> = [];
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "routeflow-control-"));
 cleanups.push(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
