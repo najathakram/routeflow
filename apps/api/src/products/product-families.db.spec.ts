@@ -367,10 +367,13 @@ describeDb("WS8 families API — real Postgres", () => {
     // nothing was written for the FAMILY
     expect(await prisma.stockMovement.count({ where: { tenantId, productId: famId } })).toBe(0);
     expect(await prisma.stockCountLine.count({ where: { tenantId, productId: famId } })).toBe(0);
-    // and a real VARIANT is still countable through the same entry (the guard refuses kind, not the path)
+    // and a real VARIANT still goes through the same entry
     await inTenant(tenantId, () =>
       inventory.setCostBasis(created.variants[0].id, { unitCost: 2 } as any, user.id),
     );
+    expect(
+      await prisma.stockMovement.count({ where: { tenantId, productId: created.variants[0].id } }),
+    ).toBe(1); // the guard refuses kind FAMILY, not the path: a VARIANT's cost basis is audited normally
   });
 
   it("Tier 1 money: an explicit null price / cost on an update row is a 400 and the row is untouched", async () => {

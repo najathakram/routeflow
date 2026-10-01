@@ -65,6 +65,14 @@ const blank = (v: string | undefined | null): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean =>
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
+/** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
+const given = (v: unknown, field: string): void => {
+  if (v === null || v === "") {
+    throw new BadRequestException(
+      `${field} cannot be ${v === null ? "null" : "empty"}; omit the field to leave it unchanged.`,
+    );
+  }
+};
 const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
@@ -137,11 +145,15 @@ export class ProductFamiliesService {
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
-    if (dto.family.standardCost != null && dto.family.standardCost !== "")
-      cost4(dto.family.standardCost);
+    given(dto.family.pricePerUnit, "family pricePerUnit");
+    given(dto.family.standardCost, "family standardCost");
+    if (dto.family.standardCost != null) cost4(dto.family.standardCost);
     for (const v of dto.variants) {
+      if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
+      given(v.pricePerUnit, "pricePerUnit");
+      given(v.standardCost, "standardCost");
       money(v.pricePerUnit);
-      if (v.standardCost != null && v.standardCost !== "") cost4(v.standardCost);
+      if (v.standardCost != null) cost4(v.standardCost);
     }
     const run = () =>
       this.prisma.tenantTransaction(async (tx: CatalogTx) => {
@@ -323,18 +335,17 @@ export class ProductFamiliesService {
     }
     // Range-check every price / cost BEFORE the transaction (a rounding overflow is a 400, never after locks + writes).
     for (const u of update) {
-      // An explicit null is not "omitted": it would write $0.00 tiers / a 0.0000 cost (Tier 1, #2881 r3).
-      if (u.pricePerUnit === null || u.standardCost === null) {
-        throw new BadRequestException(
-          "pricePerUnit and standardCost cannot be null; omit the field to leave it unchanged.",
-        );
-      }
+      given(u.pricePerUnit, "pricePerUnit");
+      given(u.standardCost, "standardCost");
       if (u.pricePerUnit !== undefined) money(u.pricePerUnit);
       if (u.standardCost !== undefined) cost4(u.standardCost);
     }
     for (const v of add) {
+      if (v.pricePerUnit == null) throw new BadRequestException("pricePerUnit is required.");
+      given(v.pricePerUnit, "pricePerUnit");
+      given(v.standardCost, "standardCost");
       money(v.pricePerUnit);
-      if (v.standardCost != null && v.standardCost !== "") cost4(v.standardCost);
+      if (v.standardCost != null) cost4(v.standardCost);
     }
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));

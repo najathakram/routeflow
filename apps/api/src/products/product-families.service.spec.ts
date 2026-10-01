@@ -516,7 +516,36 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
       await expect(
         h.service.updateVariants("fam", { update: [{ id: "k1", ...bad }] } as never, ACTOR),
       ).rejects.toBeInstanceOf(BadRequestException);
-      expect(h.tx.calls).not.toContain("product.update");
+      expect(h.tx.calls.some((c) => c.startsWith("product.update"))).toBe(false);
     }
+  });
+  it("service level: create / add rows with a null or empty price, and an empty update price or cost, are 400s too", async () => {
+    for (const bad of [{ pricePerUnit: null }, { pricePerUnit: "" }, { standardCost: "" }]) {
+      await expect(
+        build().service.createFamily(dto([variant("A", bad)]), ACTOR),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    const famRow = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const k1 = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+    } as never;
+    for (const bad of [{ pricePerUnit: "" }, { standardCost: "" }]) {
+      await expect(
+        build({ products: [famRow, k1] }).service.updateVariants(
+          "fam",
+          { update: [{ id: "k1", ...bad }] } as never,
+          ACTOR,
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    }
+    await expect(
+      build({ products: [famRow, k1] }).service.updateVariants(
+        "fam",
+        { add: [{ name: "New", pricePerUnit: null }] } as never,
+        ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
