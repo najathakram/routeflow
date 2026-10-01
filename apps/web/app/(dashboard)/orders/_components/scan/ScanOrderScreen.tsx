@@ -9,12 +9,16 @@ import {
   continuousFrameScanned,
   createContinuousScanState,
   manualScanned,
+  resetSteadyRead,
   scanSettled,
+  shouldDecode,
   type ContinuousScanState,
+  type ScanMode,
   type ScanEngineStep,
   type ScanOutcome,
 } from "@routeflow/scanning";
 import { playScanCue, unlockScanCue } from "@/lib/scan-cue";
+import { readScanMode, writeScanMode } from "@/lib/scan-mode-store";
 import {
   dueScans,
   enqueue,
@@ -98,6 +102,41 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   const live = open && !paused;
 
   const engineRef = React.useRef<ContinuousScanState>(createContinuousScanState());
+  // Hold to scan (owner ruling 2026-09-24): OPTIONAL per-device mode, default Continuous. In Hold mode the camera stays live
+  // but a decoded frame is ignored unless the round button is held (a ref too, so a frame never races a state update).
+  const [scanMode, setScanModeState] = React.useState<ScanMode>(() => readScanMode());
+  const [holding, setHolding] = React.useState(false);
+  const holdingRef = React.useRef(false);
+  const releaseHold = React.useCallback(() => {
+    holdingRef.current = false;
+    setHolding(false);
+    // a re-grab must earn a FRESH steady read, not inherit a stale streak from before the release
+    engineRef.current = resetSteadyRead(engineRef.current);
+  }, []);
+  const startHold = React.useCallback(() => {
+    holdingRef.current = true;
+    setHolding(true);
+  }, []);
+  const setScanMode = (mode: ScanMode) => {
+    releaseHold();
+    setScanModeState(mode);
+    writeScanMode(mode);
+  };
+  const scanModeRef = React.useRef<ScanMode>(scanMode);
+  scanModeRef.current = scanMode;
+  // The hold ends whenever the operator can no longer be pressing it: window blur or the tab going to the background.
+  React.useEffect(() => {
+    const onBlur = () => releaseHold();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") releaseHold();
+    };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [releaseHold]);
   const [resolving, setResolving] = React.useState(false);
   const [history, setHistory] = React.useState<ScanHistoryEntry[]>([]);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
@@ -272,13 +311,15 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
   // Aim box (only a code centred in the DRAWN box counts) and steady-read (the same value held over several frames) run
   // ahead of the gate, DEFAULT ON (owner ruling 2026-09-24): they cut accidental off-centre / passing-glance reads.
   const handleFrame = React.useCallback(
-    (code: string, frame?: ScanFrame) =>
+    (code: string, frame?: ScanFrame) => {
+      if (!shouldDecode(scanModeRef.current, holdingRef.current)) return;
       applyStep(
         continuousFrameScanned(engineRef.current, code, Date.now(), {
           bounds: frame?.bounds,
           aimBox: frame?.aimBox,
         }),
-      ),
+      );
+    },
     [applyStep],
   );
 
@@ -562,11 +603,64 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div className="h-3/5 w-5/6 rounded border-2 border-brand-400 opacity-80" />
             </div>
+            {scanMode === "hold" && (
+              <button
+                type="button"
+                aria-label="Hold to scan"
+                aria-pressed={holding}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                  startHold();
+                }}
+                onPointerUp={releaseHold}
+                onPointerCancel={releaseHold}
+                onPointerLeave={releaseHold}
+                onKeyDown={(e) => {
+                  if ((e.key === " " || e.key === "Enter") && !e.repeat) {
+                    e.preventDefault();
+                    startHold();
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === " " || e.key === "Enter") releaseHold();
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={cn(
+                  "absolute bottom-2 left-1/2 h-14 w-14 -translate-x-1/2 touch-none select-none rounded-full border-4 border-white/90 shadow-lg",
+                  holding ? "scale-95 bg-brand-500" : "bg-brand-500/70",
+                )}
+              />
+            )}
           </>
         )}
       </div>
 
       <div className="shrink-0 border-b border-surface-border px-3 py-2">
+        {/* Scan mode: OPTIONAL per device (owner ruling 2026-09-24), default Continuous. */}
+        <div
+          className="mb-1 flex items-center gap-2 text-xs text-navy/60"
+          role="group"
+          aria-label="Scan mode"
+        >
+          <span>Scan mode</span>
+          {(["continuous", "hold"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              aria-label={m === "hold" ? "Hold to scan mode" : "Continuous mode"}
+              aria-pressed={scanMode === m}
+              onClick={() => setScanMode(m)}
+              className={cn(
+                "rounded-full border px-2.5 py-0.5 font-medium",
+                scanMode === m
+                  ? "border-brand-500 bg-brand-50 text-brand-600"
+                  : "border-surface-border text-navy/60 hover:text-navy",
+              )}
+            >
+              {m === "hold" ? "Hold to scan" : "Continuous"}
+            </button>
+          ))}
+        </div>
         <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-2 text-sm">
           {feedback ? (
             <p
