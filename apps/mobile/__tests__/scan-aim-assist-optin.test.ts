@@ -54,7 +54,10 @@ describe("ScanCamera: the default path is the pre-existing one, the assisted pat
     expect(at).toBeLessThan(camera.indexOf("isWithinAimBox("));
   });
   it("single-shot + aimAssist filters (aim box, then steady-read) BEFORE the one-shot latch", () => {
-    const single = camera.slice(camera.indexOf("if (!continuous)"), camera.indexOf("firedRef.current = true"));
+    const single = camera.slice(
+      camera.indexOf("if (!continuous)"),
+      camera.indexOf("firedRef.current = true"),
+    );
     expect(single).toMatch(/isWithinAimBox\(/);
     expect(single).toMatch(/trackSteadyRead\(/);
   });
