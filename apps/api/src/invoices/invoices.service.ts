@@ -139,6 +139,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -5192,7 +5193,10 @@ export class InvoicesService {
       // The order was locked from the PEEK. If the link moved since (no writer re-points it today:
       // only A -> null), adjustInvoicedQtyForInvoice below would write an order we never locked.
       if (inv.orderId !== peek.orderId)
-        throw new ConflictException("The invoice changed while it was being deleted. Try again.");
+        throw new ConflictException({
+          code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+          message: "The invoice changed while it was being deleted. Try again.",
+        });
 
       if (inv.payments.length > 0) {
         throw new BadRequestException(

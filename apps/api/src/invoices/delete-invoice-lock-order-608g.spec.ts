@@ -96,7 +96,12 @@ describe("InvoicesService.deleteInvoice: SA-608g lock order", () => {
     prisma.invoice.findUnique
       .mockImplementationOnce(() => Promise.resolve(inv()))
       .mockImplementationOnce(() => Promise.resolve(inv([], "ord-OTHER")));
-    await expect(run()).rejects.toThrow(/changed while/i);
+    await expect(run()).rejects.toMatchObject({
+      response: {
+        code: "INVOICE_CHANGED_CONCURRENTLY",
+        message: expect.stringMatching(/changed while/i),
+      },
+    });
     expect(prisma.invoice.delete).not.toHaveBeenCalled();
   });
 
