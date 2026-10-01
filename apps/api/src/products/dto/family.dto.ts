@@ -21,6 +21,14 @@ const MONEY = /^\d{1,8}(\.\d+)?$/;
 const COST = /^\d{1,6}(\.\d+)?$/;
 
 // An explicit null is NOT "omitted": it must fail the money rule, never silently write $0 (Tier 1, #2881 r3).
+/** Readable messages for a null (Tier 1, #2881 r3): a price is required; an optional amount is omitted, never null. */
+const moneyMessage = (field: string, required: boolean) => (a: { value?: unknown }) =>
+  a.value === null
+    ? required
+      ? `${field} is required`
+      : `${field} cannot be null; omit the field to leave it unchanged`
+    : `${field} must be a non-negative amount`;
+
 const notUndefined = (_o: unknown, v: unknown): boolean => v !== undefined;
 
 const trimmed = ({ value }: { value: unknown }) =>
@@ -33,9 +41,9 @@ export class FamilyVariantDto {
   @IsOptional() @Transform(trimmed) @IsString() barcode?: string;
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" }) pricePerUnit: string;
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", true) }) pricePerUnit: string;
   @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 
@@ -44,11 +52,11 @@ export class FamilyInfoDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @ValidateIf(notUndefined)
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
   pricePerUnit?: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
   @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 
@@ -73,10 +81,10 @@ export class FamilyVariantUpdateDto {
   @IsOptional() @Transform(trimmed) @IsString() unitSku?: string;
   @IsOptional() @IsInt() @Min(1) unitsPerBox?: number;
   @ValidateIf(notUndefined)
-  @Matches(MONEY, { message: "pricePerUnit must be non-negative" })
+  @Matches(MONEY, { message: moneyMessage("pricePerUnit", false) })
   pricePerUnit?: string;
   @ValidateIf(notUndefined)
-  @Matches(COST, { message: "standardCost must be non-negative" })
+  @Matches(COST, { message: moneyMessage("standardCost", false) })
   standardCost?: string;
 }
 

@@ -67,7 +67,7 @@ const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean 
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
 /** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
 const given = (v: unknown, field: string): void => {
-  if (v === null || v === "") {
+  if (v === null || (typeof v === "string" && v.trim() === "")) {
     throw new BadRequestException(
       `${field} cannot be ${v === null ? "null" : "empty"}; omit the field to leave it unchanged.`,
     );
@@ -77,7 +77,7 @@ const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
 const money = (v: string | undefined | null, fallback = 0): string => {
-  const r = roundMoney(v != null && v !== "" ? Number(v) : fallback);
+  const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
 };
