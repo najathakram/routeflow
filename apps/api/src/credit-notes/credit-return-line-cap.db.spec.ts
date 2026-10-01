@@ -100,7 +100,7 @@ describeDb(
      * A SENT 2-line invoice: A = $100 and B = $100 (subtotals). `taxPct` > 0 adds that % of tax per line at the INVOICE level
      * (so a line's value including tax is 100 * (1 + taxPct/100)).
      */
-    async function seed(label: string, taxPct = 0) {
+    async function seed(label: string, taxPct = 0, qtyA = 1) {
       seq += 1;
       const slug = assertTestTenant(
         `qa-capret-${RUN}-${seq}-${label}`,
@@ -132,14 +132,15 @@ describeDb(
         } as any,
       });
       for (const p of [pA, pB]) {
+        const qty = p === pA ? qtyA : 1;
         await prisma.orderItem.create({
           data: {
             tenantId,
             orderId: order.id,
             productId: p.id,
             name: p.name,
-            qty: 1,
-            unitPrice: 100,
+            qty,
+            unitPrice: 100 / qty,
             subtotal: 100,
           } as any,
         });
@@ -157,18 +158,20 @@ describeDb(
           total: 200 + tax,
         },
       });
-      const item = (productId: string, description: string) =>
-        prisma.invoiceItem.create({
+      const item = (productId: string, description: string) => {
+        const qty = productId === pA.id ? qtyA : 1;
+        return prisma.invoiceItem.create({
           data: {
             tenantId,
             invoiceId: invoice.id,
             productId,
             description,
-            qty: 1,
-            unitPrice: 100,
+            qty,
+            unitPrice: 100 / qty,
             subtotal: 100,
           },
         });
+      };
       const [lineA, lineB] = [await item(pA.id, "A"), await item(pB.id, "B")];
       return {
         tenantId,
@@ -185,7 +188,7 @@ describeDb(
     type Seed = Awaited<ReturnType<typeof seed>>;
 
     /** A RECEIVED, whole-line return of `productId` (qty 1 = the full line). */
-    async function receivedReturn(s: Seed, productId: string) {
+    async function receivedReturn(s: Seed, productId: string, qty = 1) {
       rtnSeq += 1;
       return prisma.return.create({
         data: {
@@ -195,7 +198,7 @@ describeDb(
           reason: "DAMAGED",
           status: "RECEIVED",
           returnNumber: `RTN-CAPRET-${RUN}-${rtnSeq}`,
-          items: { create: [{ tenantId: s.tenantId, productId, qty: 1 }] },
+          items: { create: [{ tenantId: s.tenantId, productId, qty }] },
         } as any,
       });
     }
@@ -286,6 +289,46 @@ describeDb(
         }
       }
       expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBeLessThanOrEqual(lineValue(s));
+    });
+
+    it("3. partial boundary: 4 of 10 pieces returned (= $40), then a credit note of exactly the remaining $60.00 is allowed and $60.01 is refused", async () => {
+      const s = await seed("partial", 0, 10);
+      await refund(s, (await receivedReturn(s, s.pA.id, 4)).id);
+      await expect(creditNoteItem(s, s.lineA, 60.01)).rejects.toBeDefined();
+      await expect(creditNoteItem(s, s.lineA, 60)).resolves.toBeDefined();
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(100);
+    });
+
+    it("3b. credit note first ($60), then a return of 4 pieces is allowed and a return of 5 is REFUSED 409 RETURN_REFUND_OVER_LINE_HEADROOM", async () => {
+      const s = await seed("partial2", 0, 10);
+      await creditNoteItem(s, s.lineA, 60);
+      const over = await refund(s, (await receivedReturn(s, s.pA.id, 5)).id).catch((e) => e);
+      expect(over?.getResponse?.()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+      await expect(refund(s, (await receivedReturn(s, s.pA.id, 4)).id)).resolves.toBeDefined();
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(100);
+    });
+
+    it("6. VOID frees the headroom: a refused refund succeeds after the blocking credit note is voided", async () => {
+      const s = await seed("void");
+      const cn = await creditNoteItem(s, s.lineA, 100);
+      const ret = await receivedReturn(s, s.pA.id);
+      await expect(refund(s, ret.id)).rejects.toBeDefined();
+      await inTenant(s, () => creditNotes.voidCreditNote(cn.id));
+      await expect(refund(s, ret.id)).resolves.toBeDefined();
+      expect(await creditedOnLine(s, s.lineA, s.pA.id)).toBe(100);
+    });
+
+    it("7. a manual ITEMLESS credit note stays invoice-level only (no pro-rata onto lines): it does not block a return of A while the invoice total has room", async () => {
+      const s = await seed("itemless");
+      await inTenant(s, () =>
+        creditNotes.create({
+          customerId: s.customerId,
+          invoiceId: s.invoiceId,
+          amount: 100,
+        } as any),
+      );
+      await expect(refund(s, (await receivedReturn(s, s.pA.id)).id)).resolves.toBeDefined(); // 100 + 100 <= 200
+      await expect(creditNoteItem(s, s.lineB, 100)).rejects.toBeDefined(); // the INVOICE total still caps the sum
     });
   },
 );
