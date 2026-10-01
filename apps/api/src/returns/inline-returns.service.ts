@@ -335,7 +335,7 @@ export class InlineReturnsService {
         this.assertReplaySameItems(raced, dto); // #2424
         return {
           replayed: true as const,
-          ret: raced,
+          ret: await this.withHoldMessage(tx, raced),
           overCap: raced.holdReason === "DRIVER_CAP",
         };
       }
@@ -520,6 +520,26 @@ export class InlineReturnsService {
         : created,
       overCap,
     };
+  }
+
+  /** B961 (Opus N4): a REPLAY of a hold-because-already-returned capture keeps the readable message (re-derived from the
+   * hold's audit row: nothing is persisted on the Return). */
+  private async withHoldMessage<T extends { id: string; holdReason?: string | null }>(
+    db: any,
+    ret: T,
+  ): Promise<T> {
+    if (ret.holdReason !== "DRIVER_CAP") return ret;
+    const marker = await db.auditLog.findFirst({
+      where: {
+        entityType: "Return",
+        entityId: ret.id,
+        action: "inline_return.already_returned_hold",
+      },
+      select: { id: true },
+    });
+    return marker
+      ? { ...ret, alreadyReturnedHold: true, holdMessage: ALREADY_RETURNED_HOLD_MESSAGE }
+      : ret;
   }
 
   /**
@@ -823,7 +843,7 @@ export class InlineReturnsService {
       this.assertReplaySameItems(preExisting, dto); // #2424
       result = {
         replayed: true,
-        ret: preExisting,
+        ret: await this.withHoldMessage(this.prisma.forTenant(), preExisting),
         overCap: preExisting.holdReason === "DRIVER_CAP",
       };
     } else {
@@ -844,7 +864,11 @@ export class InlineReturnsService {
           });
           if (raced && raced.customerId === dto.customerId && raced.orderId === dto.orderId) {
             this.assertReplaySameItems(raced, dto); // #2424
-            result = { replayed: true, ret: raced, overCap: raced.holdReason === "DRIVER_CAP" };
+            result = {
+              replayed: true,
+              ret: await this.withHoldMessage(this.prisma.forTenant(), raced),
+              overCap: raced.holdReason === "DRIVER_CAP",
+            };
           } else {
             throw new ConflictException({
               code: INLINE_RETURN_ERROR_CODES.RETURN_KEY_CONFLICT,

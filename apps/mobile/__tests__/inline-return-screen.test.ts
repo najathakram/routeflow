@@ -314,35 +314,3 @@ describe("linesFromOrder — cancelled lines are excluded", () => {
     ).toEqual(["p2"]);
   });
 });
-
-describe("B961: the staff reason for an already-returned chunk lives in the quoted SNAPSHOT", () => {
-  const line = (productId: string) =>
-    ({ productId, productName: productId, boxes: "0", pieces: "2", reason: "", note: "" }) as any;
-  const quoted = reduce(initialInlineReturnScreen, {
-    type: "quoted",
-    quote: { chunks: [] } as any,
-    lines: [line("p1"), line("p2")],
-  });
-
-  it("sets the reason on the matching quoted line only, and buildInlineReturnCapture sends it", () => {
-    const next = reduce(quoted, {
-      type: "alreadyReturnedReason",
-      productId: "p1",
-      reason: "customer kept the slip",
-    });
-    expect(next.step === "quote" && next.quotedLines.map((l) => l.alreadyReturnedReason)).toEqual([
-      "customer kept the slip",
-      undefined,
-    ]);
-  });
-  it("is ignored once a capture is in flight (the snapshot is frozen)", () => {
-    const capturing = reduce(quoted, { type: "captureStarted" });
-    expect(
-      reduce(capturing, {
-        type: "alreadyReturnedReason",
-        productId: "p1",
-        reason: "x",
-      }),
-    ).toBe(capturing);
-  });
-});

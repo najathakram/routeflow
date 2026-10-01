@@ -1085,11 +1085,21 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
 
   // B961 / SA-071c: an over-return chunk of a product the customer DID buy (a candidate invoice line exists, all of it already
   // returned) is flagged "already returned or credited"; a never-invoiced product's chunk stays "not on any invoice".
-  it("B961: the over-return chunk of a product WITH prior sales is flagged alreadyReturned; the matched chunk carries no flag", async () => {
-    const result = await quote({ pieces: 12 }); // 10 sold on a candidate line, 2 over
+  it("B961 (Opus B1): buy 10, return 12 with NOTHING returned before: the 2 extra are the ordinary over-return, NOT flagged", async () => {
+    const result = await quote({ pieces: 12 }); // 10 sold on a candidate line, 2 over, no prior return
     const [matched, over] = result.chunks;
     expect(matched).not.toHaveProperty("alreadyReturned");
-    expect(over).toMatchObject({ priceSource: "BASE", pieces: 2, alreadyReturned: true });
+    expect(over).toMatchObject({ priceSource: "BASE", pieces: 2 });
+    expect(over).not.toHaveProperty("alreadyReturned");
+  });
+
+  it("B961: with a PRIOR return of the product on the candidate order (4 of 10 back already), asking for 8 = 6 matched + 2 over: the over-return IS flagged", async () => {
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 4 }]);
+    const result = await quote({ pieces: 8 });
+    const [matched, over] = result.chunks;
+    expect(matched).toMatchObject({ pieces: 6 });
+    expect(matched).not.toHaveProperty("alreadyReturned");
+    expect(over).toMatchObject({ pieces: 2, sourceInvoiceItemId: null, alreadyReturned: true });
   });
 
   it("B961: a product that was FULLY returned before (nothing left on its candidate line) flags the whole quantity", async () => {

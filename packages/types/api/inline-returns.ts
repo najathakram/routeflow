@@ -110,6 +110,9 @@ export type InlineReturnLinesRequest = Omit<CaptureInlineReturnRequest, "custome
 export interface ApproveInlineReturnRequest {
   /** >= 0.01 when present; omitted approves the full held amount. */
   amount?: number;
+  /** B961: REQUIRED to approve a hold the capture marked "already returned or credited" (400
+   *  `INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED` otherwise); trimmed, <= 200 characters. */
+  reason?: string;
 }
 
 // ─── Response: what POST /returns/inline/quote actually returns ────────────────────
@@ -222,6 +225,10 @@ export interface InlineReturnRecord {
    *  an OFFICE capture never sets this (PR 1 asserts it stays null/absent). */
   holdReason?: string | null;
   heldAmount?: number | null;
+  /** B961: true on a capture/replay response whose return is HELD because its chunk is "already returned or credited"
+   *  (not persisted: re-derived from the hold's audit row), with the readable sentence for the driver. */
+  alreadyReturnedHold?: boolean;
+  holdMessage?: string;
   /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park
    *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
    *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */

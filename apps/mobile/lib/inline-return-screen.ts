@@ -66,7 +66,6 @@ export type InlineReturnScreenEvent =
       /** Omit on a fresh quote so the option resets to the default. */
       excessOption?: ExcessOption;
     }
-  | { type: "alreadyReturnedReason"; productId: string; reason: string }
   | { type: "captureStarted" }
   | { type: "captured"; result: InlineReturnRecord }
   | { type: "queued" }
@@ -96,17 +95,6 @@ export function inlineReturnScreenReducer(
         quotedLines: event.lines.map((l) => ({ ...l })),
         excessOption: event.excessOption ?? DEFAULT_EXCESS_OPTION,
       };
-    case "alreadyReturnedReason":
-      // B961: staff's reason for crediting goods already returned/credited, typed on the quote screen: it goes into the
-      // SNAPSHOT capture reads (never the live lines), exactly like the quoted quantities.
-      return state.step === "quote"
-        ? {
-            ...state,
-            quotedLines: state.quotedLines.map((l) =>
-              l.productId === event.productId ? { ...l, alreadyReturnedReason: event.reason } : l,
-            ),
-          }
-        : state;
     case "captureStarted":
       return state.step === "quote" ? { ...state, step: "capturing" } : state;
     case "captured":

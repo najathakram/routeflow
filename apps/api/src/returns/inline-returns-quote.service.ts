@@ -391,7 +391,17 @@ export class InlineReturnsQuoteService {
         matchingSet.find((l) => l.productId === item.productId)?.taxRate ?? tenantTaxRate;
 
       const override = overrides.get(item);
-      const hasPriorSales = matchingSet.some((l) => l.productId === item.productId);
+      // B961 (Opus B1): "already returned or credited" needs EVIDENCE of a prior return of THIS product against the candidate
+      // orders. A product merely in the sales window whose customer returns MORE than they bought (buy 10, return 12, nothing
+      // returned before) is the ordinary SA-071(2) over-return, not a double credit: no flag.
+      const hasPriorReturns = [
+        ...new Set(
+          matchingSet.filter((l) => l.productId === item.productId).map((l) => l.sourceOrderId),
+        ),
+      ].some((orderId) => {
+        const prior = priorReturnedMap.get(orderId)?.[item.productId];
+        return !!prior && "pieces" in prior && prior.pieces > 0;
+      });
       // The pack an unreferenced chunk is priced (and so overridden) against.
       const unreferencedUpb = product?.unitsPerBox ?? null;
       const chunks: PricedChunk[] = allocated.map((chunk) => {
@@ -408,10 +418,10 @@ export class InlineReturnsQuoteService {
               fallbackTaxRate,
               customer.isTaxExempt,
             );
-        // B961: the unreferenced chunk of a product the customer DID buy (a candidate line exists, all of it used up) is
-        // "already returned or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
+        // B961: the unreferenced chunk of a product the customer DID buy AND already has prior returns of is "already returned
+        // or credited", not "not on any invoice"; flagged AFTER pricing so an override keeps it.
         const flag = (c: PricedChunk): PricedChunk =>
-          !chunk.line && hasPriorSales ? { ...c, alreadyReturned: true } : c;
+          !chunk.line && hasPriorReturns ? { ...c, alreadyReturned: true } : c;
         if (!override) return flag(priced);
         // #2695 (SA-557): lower-only, against THIS chunk's default, at the basis that priced it —
         // a matched chunk's pack and InvoiceItem.taxRate snapshot (m-7: exempt when the invoice

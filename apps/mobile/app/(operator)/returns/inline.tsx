@@ -38,11 +38,6 @@ import {
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
-  ALREADY_RETURNED_DRIVER_NOTE,
-  ALREADY_RETURNED_LABEL,
-  ALREADY_RETURNED_NOTE,
-  alreadyReturnedProductIds,
-  missingAlreadyReturnedReasons,
 } from "@routeflow/returns";
 import type { InlineReturnQuoteResponse, ReturnReason } from "@routeflow/types";
 import { useAdminOrder, useAdminProducts } from "../../../lib/api/admin";
@@ -412,10 +407,6 @@ export default function InlineReturnScreen() {
           <QuoteView
             quote={screen.quote}
             lines={screen.quotedLines}
-            canOverride={canOverrideCredit}
-            onAlreadyReturnedReason={(productId, reason) =>
-              dispatch({ type: "alreadyReturnedReason", productId, reason })
-            }
             boxedIds={boxedProductIds(screen.quotedLines)}
             excessOption={screen.excessOption}
             onExcessOption={changeExcess}
@@ -512,12 +503,7 @@ function quotedEvent(
 function QuoteView(props: {
   quote: import("@routeflow/types").InlineReturnQuoteResponse;
   /** The quoted lines, for naming products option 3 would drop (#2693). */
-  lines: ReadonlyArray<
-    Pick<InlineReturnLineDraft, "productId" | "productName" | "alreadyReturnedReason">
-  >;
-  /** B961: staff may credit goods already returned or credited, with a reason; a driver's capture is held. */
-  canOverride: boolean;
-  onAlreadyReturnedReason: (productId: string, reason: string) => void;
+  lines: ReadonlyArray<Pick<InlineReturnLineDraft, "productId" | "productName">>;
   /** #2695: products whose override note reads "per box". */
   boxedIds: Set<string>;
   excessOption: ExcessOption;
@@ -532,7 +518,6 @@ function QuoteView(props: {
   const { quote } = props;
   const { covered, excess } = groupQuoteChunks(quote);
   const excessTotals = sumChunkTotals(excess);
-  const flaggedIds = alreadyReturnedProductIds(quote);
   const onlyBoughtPossible = canReturnOnlyPurchased(quote);
   const notBoughtBefore = onlyBoughtPossible ? notBoughtBeforeNames(quote, props.lines) : [];
   const optionDisabled = (value: ExcessOption) =>
@@ -556,38 +541,7 @@ function QuoteView(props: {
       ))}
       {excess.length > 0 && (
         <View style={styles.card}>
-          <Text style={styles.name}>
-            {excess.every((c) => c.alreadyReturned)
-              ? ALREADY_RETURNED_LABEL
-              : flaggedIds.size > 0
-                ? `Not on any invoice, or ${ALREADY_RETURNED_LABEL.toLowerCase()}`
-                : "Not on any invoice"}
-          </Text>
-          {flaggedIds.size > 0 ? (
-            <Text style={styles.hint}>
-              {props.canOverride ? ALREADY_RETURNED_NOTE : ALREADY_RETURNED_DRIVER_NOTE}
-            </Text>
-          ) : null}
-          {props.canOverride
-            ? [...flaggedIds].map((productId) => {
-                const line = props.lines.find((l) => l.productId === productId);
-                if (!line) return null;
-                return (
-                  <View key={`already-returned-${productId}`}>
-                    <Text style={styles.hint}>Why credit {line.productName} again (required)</Text>
-                    <TextInput
-                      style={styles.reasonInput}
-                      value={line.alreadyReturnedReason ?? ""}
-                      accessibilityLabel={`Why credit ${line.productName} again`}
-                      onChangeText={(v) => props.onAlreadyReturnedReason(productId, v)}
-                      maxLength={CREDIT_OVERRIDE_REASON_MAX}
-                      editable={!props.locked}
-                      placeholderTextColor={ios.label3}
-                    />
-                  </View>
-                );
-              })
-            : null}
+          <Text style={styles.name}>Not on any invoice</Text>
           <Text style={styles.hint}>
             {excess.reduce((s, c) => s + c.pieces, 0)} pc at current price · Net{" "}
             {money(excessTotals.subtotal)} · Tax {money(excessTotals.taxAmount)}
@@ -662,10 +616,7 @@ function QuoteView(props: {
       <PrimaryButton
         label="Issue credit note and receive goods"
         busy={props.busy}
-        disabled={
-          !canConfirmInlineReturn(props.reason) ||
-          (props.canOverride && missingAlreadyReturnedReasons(props.lines, quote).length > 0)
-        }
+        disabled={!canConfirmInlineReturn(props.reason)}
         onPress={props.onConfirm}
       />
     </>

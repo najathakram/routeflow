@@ -1198,6 +1198,27 @@ describe("InlineReturnsService", () => {
       expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
     });
 
+    it("N4: a REPLAY of the held capture keeps the readable holdMessage", async () => {
+      const heldRow = {
+        id: "ret-held-replay",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: "DRIVER_CAP",
+        heldAmount: 30,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        returnKey: "nonce-driver",
+        capturePayload: null,
+        items: [{ productId: "prod-1", qty: 6 }],
+      };
+      prisma.return.findFirst.mockResolvedValue(heldRow);
+      prisma.auditLog.findFirst.mockResolvedValue({ id: "aud-1" });
+      const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(result.alreadyReturnedHold).toBe(true);
+      expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
     describe("approving an already-returned hold", () => {
       const HELD_AR: any = {
         id: "ret-held",
