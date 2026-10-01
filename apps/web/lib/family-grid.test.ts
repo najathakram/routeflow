@@ -3,6 +3,7 @@ import {
   blankRow,
   diffVariantUpdates,
   patchRowToGridIndex,
+  requestRowCount,
   validateRows,
   toCreateRequest,
   validateFamilyForm,
@@ -250,5 +251,29 @@ describe("validateRows — the row rules alone (family detail edit has no family
     const rows = [row({ name: "", pricePerUnit: "x" })];
     expect(validateRows(rows).rows).toEqual(validateFamilyForm(form({ rows })).rows);
     expect(validateRows([row()]).valid).toBe(true);
+  });
+});
+
+describe("requestRowCount — the server caps add + update + deactivate, not the grid", () => {
+  it("counts every row the PATCH carries", () => {
+    expect(requestRowCount({})).toBe(0);
+    expect(
+      requestRowCount({
+        add: [{} as any, {} as any],
+        update: [{ id: "a" }],
+        deactivate: ["x", "y", "z"],
+      }),
+    ).toBe(6);
+  });
+  it("200 saved variants, 150 repriced and 50 replaced = 250 request rows (over the cap with a grid of 200)", () => {
+    const saved = Array.from({ length: 200 }, (_, i) => ({
+      ...row({ key: `s${i}`, name: `S${i}` }),
+      id: `id${i}`,
+    }));
+    const edited = saved.map((r, i) =>
+      i < 150 ? { ...r, pricePerUnit: "9" } : { ...row({ key: `n${i}`, name: `N${i}` }) },
+    );
+    expect(edited).toHaveLength(MAX_FAMILY_ROWS);
+    expect(requestRowCount(diffVariantUpdates(saved, edited))).toBe(250);
   });
 });

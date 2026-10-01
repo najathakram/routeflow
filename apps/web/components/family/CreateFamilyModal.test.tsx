@@ -183,6 +183,36 @@ describe("CreateFamilyModal", () => {
     await waitFor(() => expect(post).toHaveBeenCalled());
   });
 
+  it("a slow availability answer never lands on another row: removing the row (or editing the value) in flight drops it", async () => {
+    let resolve!: (v: unknown) => void;
+    get.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    mount();
+    fillValid();
+    fireEvent.click(screen.getByRole("button", { name: "Add variant" }));
+    type("Variant 2 name", "Lime");
+    type("Variant 1 SKU", "CH-1");
+    fireEvent.blur(screen.getByLabelText("Variant 1 SKU")); // check starts for row 1's value
+    fireEvent.click(screen.getByRole("button", { name: "Remove variant 1" })); // row 1 goes; Lime is now row 1
+    resolve({ data: { available: false, takenBy: { productId: "h9", field: "sku" } } });
+    await waitFor(() => expect(get).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(/is already used by another product/)).toBeNull();
+    expect(screen.getByLabelText("Variant 1 SKU")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("the close button is inert while a create is in flight (the result would be lost)", async () => {
+    let resolve!: (v: unknown) => void;
+    post.mockReturnValueOnce(new Promise((r) => (resolve = r)));
+    mount();
+    fillValid();
+    submit();
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    resolve({ data: { family: { id: "f", name: "Cola" }, variants: [] } });
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/products/f"));
+  });
+
   it("a failed availability check is silent (advisory only)", async () => {
     get.mockRejectedValueOnce(new Error("Network Error"));
     mount();

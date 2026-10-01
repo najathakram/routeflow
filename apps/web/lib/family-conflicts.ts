@@ -25,7 +25,8 @@ export type FamilyConflicts =
       count: number;
       summary: string;
     }
-  | { kind: "NOT_FOUND" };
+  | { kind: "NOT_FOUND" }
+  | { kind: "PRICE_AUTHORITY" };
 
 export const familyCellKey = (row: number, field: FamilyField): string => `${row}:${field}`;
 
@@ -51,6 +52,7 @@ export function getFamilyConflicts(err: unknown): FamilyConflicts | null {
   const data = res?.data as Partial<FamilyRowsConflictError> | { code?: unknown } | undefined;
   if (!data || typeof data !== "object") return null;
   if (data.code === API_ERROR_CODES.FAMILY_NOT_FOUND) return { kind: "NOT_FOUND" };
+  if (data.code === API_ERROR_CODES.FAMILY_PRICE_AUTHORITY) return { kind: "PRICE_AUTHORITY" };
   if (data.code !== API_ERROR_CODES.FAMILY_ROWS_CONFLICT) return null;
   const rows = (data as Partial<FamilyRowsConflictError>).rows;
   if (!Array.isArray(rows) || rows.length === 0) return null;

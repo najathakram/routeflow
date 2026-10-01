@@ -94,6 +94,14 @@ describe("getFamilyConflicts — FAMILY_ROWS_CONFLICT -> one fixed message per o
     });
   });
 
+  it("FAMILY_PRICE_AUTHORITY (mixed packs: the family owns the variants' price) -> its own kind", () => {
+    expect(
+      getFamilyConflicts(err(409, { code: "FAMILY_PRICE_AUTHORITY", message: "RAW" })),
+    ).toEqual({
+      kind: "PRICE_AUTHORITY",
+    });
+  });
+
   it.each([
     ["a 500", err(500, { message: "boom" })],
     ["another 409", err(409, { code: "CODE_TAKEN" })],

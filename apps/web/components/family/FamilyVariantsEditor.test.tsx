@@ -172,6 +172,92 @@ describe("FamilyVariantsEditor", () => {
     expect(document.body.textContent).not.toMatch(/RAW SERVER TEXT/);
     // edit mode stays open with the operator's work intact
     expect(screen.getByLabelText("Variant 3 name")).toHaveValue("Peach");
+    // the marks sit on the RIGHT cells (identity mapping), not just the right words somewhere
+    expect(screen.getByLabelText("Variant 3 name")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Variant 1 SKU")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Variant 2 SKU")).not.toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("Cancel clears the error banner (it must not linger over the read-only grid)", async () => {
+    reject(409, {
+      code: "FAMILY_ROWS_CONFLICT",
+      rows: [{ row: 0, field: "sku", value: "NEW", reason: "CODE_TAKEN" }],
+    });
+    mount();
+    edit();
+    type("Variant 1 SKU", "NEW");
+    save();
+    expect(await screen.findByText(/Nothing was saved/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByText(/Nothing was saved/)).toBeNull();
+    edit();
+    expect(screen.queryByText(/Nothing was saved/)).toBeNull();
+  });
+
+  it("the banner goes once every marked cell has been fixed", async () => {
+    reject(409, {
+      code: "FAMILY_ROWS_CONFLICT",
+      rows: [{ row: 0, field: "sku", value: "NEW", reason: "CODE_TAKEN" }],
+    });
+    mount();
+    edit();
+    type("Variant 1 SKU", "NEW");
+    save();
+    expect(await screen.findByText(/Nothing was saved/)).toBeInTheDocument();
+    type("Variant 1 SKU", "OTHER");
+    expect(screen.queryByText(/Nothing was saved/)).toBeNull();
+  });
+
+  it("price authority (mixed packs): a fixed explanation, not 'try again'; one toast", async () => {
+    reject(409, { code: "FAMILY_PRICE_AUTHORITY", message: "RAW SERVER TEXT" });
+    mount();
+    edit();
+    type("Variant 1 price", "3");
+    save();
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(toast).toHaveBeenCalledWith({
+      title: "Prices are set on the family",
+      description: "Change the family price to change its variants' prices.",
+      variant: "error",
+    });
+    expect(JSON.stringify(toast.mock.calls)).not.toMatch(/RAW SERVER TEXT/);
+  });
+
+  it("more than 200 changes in one save: blocked client-side with a clear line, no request", () => {
+    const many = Array.from({ length: 200 }, (_, i) => ({
+      id: `m${i}`,
+      name: `M${i}`,
+      variantName: `M${i}`,
+      pricePerUnit: "1.00",
+      isActive: true,
+    }));
+    render(
+      <Providers>
+        <FamilyVariantsEditor familyId="fam1" variants={many as any} />
+      </Providers>,
+    );
+    edit();
+    // reprice 150 and replace 50 -> 250 request rows
+    for (let i = 1; i <= 150; i++) type(`Variant ${i} price`, "2.00");
+    for (let i = 151; i <= 200; i++)
+      fireEvent.click(screen.getByRole("button", { name: "Remove variant 151" }));
+    for (let i = 0; i < 50; i++) {
+      fireEvent.click(screen.getByRole("button", { name: "Add variant" }));
+      type(`Variant ${151 + i} name`, `New${i}`);
+      type(`Variant ${151 + i} price`, "1");
+    }
+    save();
+    expect(
+      screen.getByText("A single save takes up to 200 changes. Save in smaller batches."),
+    ).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+  });
+
+  it("the cost hint is not shown while editing (a cleared cost is not sent, so it must not promise otherwise)", () => {
+    mount();
+    expect(screen.queryByText(/Leave cost blank/)).toBeNull();
+    edit();
+    expect(screen.queryByText(/Leave cost blank/)).toBeNull();
   });
 
   it("FAMILY_NOT_FOUND: one fixed toast, no server text", async () => {

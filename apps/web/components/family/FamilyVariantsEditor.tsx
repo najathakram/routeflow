@@ -6,8 +6,10 @@ import { useAuth } from "@/lib/auth-context";
 import { useUpdateFamilyVariants } from "@/lib/api/product-families";
 import { getFamilyConflicts, familyCellKey } from "@/lib/family-conflicts";
 import {
+  MAX_FAMILY_ROWS,
   diffVariantUpdates,
   patchRowToGridIndex,
+  requestRowCount,
   validateRows,
   type GridRow,
 } from "@/lib/family-grid";
@@ -57,12 +59,15 @@ export function FamilyVariantsEditor({
   const { user } = useAuth();
   const { toast } = useToast();
   const update = useUpdateFamilyVariants(familyId);
-  const original = React.useMemo(
+  const live = React.useMemo(
     () => variants.filter((v) => v.isActive !== false).map(variantToRow),
     [variants],
   );
   const [editing, setEditing] = React.useState(false);
-  const [rows, setRows] = React.useState<GridRow[]>(original);
+  // Taken when Edit is clicked: a refetch mid-edit must not make a variant added elsewhere look removed.
+  const [baseline, setBaseline] = React.useState<GridRow[]>(live);
+  const original = editing ? baseline : live;
+  const [rows, setRows] = React.useState<GridRow[]>(live);
   const [showErrors, setShowErrors] = React.useState(false);
   const [serverCells, setServerCells] = React.useState<Record<string, CellMessage>>({});
   const [summary, setSummary] = React.useState<string | null>(null);
@@ -73,7 +78,8 @@ export function FamilyVariantsEditor({
   const validation = React.useMemo(() => validateRows(rows), [rows]);
 
   const begin = () => {
-    setRows(original);
+    setBaseline(live);
+    setRows(live);
     setShowErrors(false);
     setServerCells({});
     setSummary(null);
@@ -104,10 +110,23 @@ export function FamilyVariantsEditor({
     setRows(next);
   };
 
+  const cancel = () => {
+    setEditing(false);
+    setShowErrors(false);
+    setServerCells({});
+    setSummary(null);
+  };
+
+  const [tooMany, setTooMany] = React.useState(false);
   const save = () => {
     setShowErrors(true);
     setSummary(null);
+    setTooMany(false);
     if (!changed || !validation.valid) return;
+    if (requestRowCount(request) > MAX_FAMILY_ROWS) {
+      setTooMany(true);
+      return;
+    }
     const sent = request;
     const sentRows = rows;
     update.mutate(sent, {
@@ -127,6 +146,14 @@ export function FamilyVariantsEditor({
           }
           setServerCells(mapped);
           setSummary(conflicts.summary);
+          return;
+        }
+        if (conflicts?.kind === "PRICE_AUTHORITY") {
+          toast({
+            title: "Prices are set on the family",
+            description: "Change the family price to change its variants' prices.",
+            variant: "error",
+          });
           return;
         }
         if (conflicts?.kind === "NOT_FOUND") {
@@ -163,18 +190,24 @@ export function FamilyVariantsEditor({
           </div>
         )}
       </div>
-      {summary && (
+      {editing && tooMany && (
+        <p role="alert" className="text-sm text-danger">
+          A single save takes up to {MAX_FAMILY_ROWS} changes. Save in smaller batches.
+        </p>
+      )}
+      {editing && summary && Object.keys(serverCells).length > 0 && (
         <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-sm text-danger">
           {summary}
         </p>
       )}
-      {showErrors && validation.formError && (
+      {editing && showErrors && validation.formError && (
         <p role="alert" className="text-sm text-danger">
           {validation.formError}
         </p>
       )}
       <FamilyVariantsGrid
-        rows={editing ? rows : original}
+        rows={editing ? rows : live}
+        showCostHint={false}
         onChange={onRowsChange}
         cellMessages={editing ? cellMessages : {}}
         readOnly={!editing}

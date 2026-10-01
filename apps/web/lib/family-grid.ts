@@ -224,3 +224,8 @@ export function patchRowToGridIndex(
   const idx = edited.findIndex((r) => r.id === upd.id);
   return idx >= 0 ? idx : null;
 }
+
+/** Rows a PATCH carries: the server caps add + update + deactivate together (not the grid's row count). */
+export function requestRowCount(r: UpdateFamilyVariantsRequest): number {
+  return (r.add?.length ?? 0) + (r.update?.length ?? 0) + (r.deactivate?.length ?? 0);
+}

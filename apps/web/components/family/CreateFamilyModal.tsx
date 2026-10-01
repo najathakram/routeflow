@@ -42,6 +42,9 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
   const [summary, setSummary] = React.useState<string | null>(null);
 
   const validation = React.useMemo(() => validateFamilyForm(form), [form]);
+  // Latest rows, for async results that arrive after the grid changed under them.
+  const rowsRef = React.useRef(form.rows);
+  rowsRef.current = form.rows;
 
   const cellMessages: Record<string, CellMessage> = { ...serverCells };
   if (showErrors) {
@@ -69,11 +72,16 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
   };
 
   const onCodeBlur = async (i: number, field: "sku" | "barcode" | "unitSku", value: string) => {
+    const key = form.rows[i]?.key;
     const res = await checkCodeAvailable(value);
-    if (!res || res.available) return;
+    if (!res || res.available || !key) return;
+    // The answer is for THIS row and THIS value: if the row was removed (indexes shift) or the value
+    // edited while the check was in flight, it no longer applies.
+    const at = rowsRef.current.findIndex((r) => r.key === key);
+    if (at < 0 || rowsRef.current[at][field].trim() !== value) return;
     setServerCells((prev) => ({
       ...prev,
-      [`${i}:${field}`]: {
+      [`${at}:${field}`]: {
         message: `The ${FIELD_NOUN[field]} "${value}" is already used by another product.`,
         productId: res.takenBy?.productId,
       },
@@ -136,7 +144,9 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => {
+        if (!create.isPending) onClose();
+      }}
       title="New family"
       description="A family groups variants (flavors, sizes). It is a container: you sell and stock its variants."
       className="max-w-5xl"
@@ -180,7 +190,7 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
           />
           Copy the family price onto the variants
         </label>
-        {summary && (
+        {summary && (Object.keys(serverCells).length > 0 || familyServerMessages.length > 0) && (
           <p role="alert" className="rounded bg-danger-bg px-3 py-2 text-sm text-danger">
             {summary}
           </p>

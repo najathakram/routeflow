@@ -64,6 +64,7 @@ export function FamilyVariantsGrid({
   onCodeBlur,
   readOnly = false,
   disabled = false,
+  showCostHint = true,
 }: {
   rows: GridRow[];
   onChange: (rows: GridRow[]) => void;
@@ -72,6 +73,8 @@ export function FamilyVariantsGrid({
   onCodeBlur?: (rowIndex: number, field: "sku" | "barcode" | "unitSku", value: string) => void;
   readOnly?: boolean;
   disabled?: boolean;
+  /** Create-time only: a blank cost means the family cost. An update cannot clear a cost, so no hint there. */
+  showCostHint?: boolean;
 }) {
   const atCap = rows.length >= MAX_FAMILY_ROWS;
   const setCell = (i: number, field: RowField, value: string) =>
@@ -106,8 +109,9 @@ export function FamilyVariantsGrid({
                         <input
                           aria-label={`Variant ${i + 1} ${c.ariaLabel}`}
                           aria-invalid={msg ? "true" : undefined}
+                          aria-describedby={msg ? `family-cell-${i}-${c.field}` : undefined}
                           value={r[c.field]}
-                          placeholder={c.placeholder}
+                          placeholder={showCostHint ? c.placeholder : undefined}
                           inputMode={c.inputMode}
                           disabled={disabled}
                           onChange={(e) => setCell(i, c.field, e.target.value)}
@@ -127,7 +131,7 @@ export function FamilyVariantsGrid({
                         />
                       )}
                       {msg && (
-                        <p className="mt-1 text-xs text-danger">
+                        <p id={`family-cell-${i}-${c.field}`} className="mt-1 text-xs text-danger">
                           {msg.message}
                           {msg.productId && (
                             <>
@@ -152,7 +156,7 @@ export function FamilyVariantsGrid({
                       aria-label={`Remove variant ${i + 1}`}
                       disabled={disabled}
                       onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-danger"
+                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -165,7 +169,11 @@ export function FamilyVariantsGrid({
       </div>
       {!readOnly && (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs text-navy/60">Leave cost blank to use the family cost.</p>
+          {showCostHint ? (
+            <p className="text-xs text-navy/60">Leave cost blank to use the family cost.</p>
+          ) : (
+            <span />
+          )}
           <div className="flex items-center gap-2">
             {atCap && (
               <span className="text-xs text-navy/70">
