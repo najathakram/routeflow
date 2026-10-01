@@ -73,15 +73,22 @@ describeDb("system door on a real database (SA-619 PR-2b)", () => {
   it("systemTransaction: a tenant-owned write naming its tenant commits; one that does not is refused and writes nothing", async () => {
     const s = slug("sys");
     const tenant = await prisma.tenant.create({ data: { slug: s, name: s } });
-    const user = await prisma.systemTransaction("test: seed a user through the system door", (tx) =>
-      tx.user.create({
-        data: { email: `${s}@example.invalid`, username: s, role: "CUSTOMER", tenantId: tenant.id },
-      }),
+    const user: { tenantId: string | null } = await prisma.systemTransaction(
+      "test: seed a user through the system door",
+      (tx: any) =>
+        tx.user.create({
+          data: {
+            email: `${s}@example.invalid`,
+            username: s,
+            role: "CUSTOMER",
+            tenantId: tenant.id,
+          },
+        }),
     );
     expect(user.tenantId).toBe(tenant.id);
     const u2 = `${s}-2`;
     await expect(
-      prisma.systemTransaction("test: a create with no tenant", (tx) =>
+      prisma.systemTransaction("test: a create with no tenant", (tx: any) =>
         tx.user.create({
           data: { email: `${u2}@example.invalid`, username: u2, role: "CUSTOMER" },
         }),
