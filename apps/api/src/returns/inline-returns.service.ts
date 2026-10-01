@@ -576,11 +576,11 @@ export class InlineReturnsService {
       takes.set(c.sourceInvoiceItemId, t);
     }
     if (takes.size === 0) return;
-    const sourceLines: Array<{ id: string; invoiceId: string }> = await tx.invoiceItem.findMany({
+    const srcRows: Array<{ id: string; invoiceId: string }> = await tx.invoiceItem.findMany({
       where: { id: { in: [...takes.keys()] } },
       select: { id: true, invoiceId: true },
     });
-    const invoiceIds = [...new Set(sourceLines.map((l) => l.invoiceId))].sort();
+    const invoiceIds = [...new Set(srcRows.map((l) => l.invoiceId))].sort();
     if (invoiceIds.length === 0) return; // the source line was deleted: provenance only, nothing to cap
     const tenantId = this.prisma.getTenantId();
     for (const invoiceId of invoiceIds) {

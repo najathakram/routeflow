@@ -525,11 +525,20 @@ export function keyReusedReturnOf(
   };
 }
 
+/** B948: an inline return that would credit a source invoice line past its value (a credit note or an earlier return took part of it). */
+export const INLINE_RETURN_OVER_LINE_HEADROOM_CODE = "RETURN_REFUND_OVER_LINE_HEADROOM";
+export const INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE =
+  "This return would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier return). Lower the quantity, or issue the credit note manually.";
+
 export function extractRefusalMessage(error: unknown, fallback = "Something went wrong"): string {
   const body = (error as ApiErrorLike | undefined)?.response?.data;
   const status = (error as ApiErrorLike | undefined)?.response?.status;
   if (status === 403 && (body?.code == null || ENTITLEMENT_GATE_CODES.has(body.code))) {
     return RETURNS_NOT_ENABLED_MESSAGE;
+  }
+  // fixed copy by code, never the server message (house rule: no raw server strings in the UI)
+  if (body?.code === INLINE_RETURN_OVER_LINE_HEADROOM_CODE) {
+    return INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE;
   }
   if (!body?.message) return fallback;
   return Array.isArray(body.message) ? body.message.join(" ") : body.message;
