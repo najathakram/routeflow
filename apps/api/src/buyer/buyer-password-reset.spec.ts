@@ -153,9 +153,6 @@ describe("BuyerAuthService — password reset", () => {
     });
 
     beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
       (bcrypt.hash as jest.Mock).mockResolvedValue("$2b$10$newhash");
     });
 
@@ -165,7 +162,11 @@ describe("BuyerAuthService — password reset", () => {
       const result = await service.resetPassword(rawToken, "NewPass1!");
 
       expect(result.message).toContain("Password reset successfully");
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.systemTransaction).toHaveBeenCalledTimes(1);
+      expect((prisma.systemTransaction as jest.Mock).mock.calls[0][0]).toBe(
+        "buyer-auth.resetPassword",
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // never the array form (it bypasses the tenant guard)
       // The transaction's operations were built from these calls:
       expect(prisma.buyerPasswordResetToken.update).toHaveBeenCalledWith({
         where: { tokenHash: fakeHash },

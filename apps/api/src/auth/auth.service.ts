@@ -575,17 +575,19 @@ export class AuthService {
     const newHash = await bcrypt.hash(newPassword, 10);
 
     // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.passwordResetToken.update({
+    // Anonymous caller (the reset link is the credential): the explicit system door, never the array
+    // form, which bypasses the tenant guard. Same three writes, same order, same atomicity.
+    await this.prisma.systemTransaction("auth.resetPassword", async (tx) => {
+      await tx.passwordResetToken.update({
         where: { tokenHash },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.user.update({
+      });
+      await tx.user.update({
         where: { id: record.userId },
         data: { password: newHash, forcePasswordChange: false },
-      }),
-      this.prisma.refreshToken.deleteMany({ where: { userId: record.userId } }),
-    ]);
+      });
+      await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
+    });
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }

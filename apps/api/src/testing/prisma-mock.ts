@@ -301,6 +301,14 @@ export function createMockPrisma(): MockPrisma {
         $queryRaw: jest.fn().mockResolvedValue([]),
       }),
     ),
+    // SA-619 PR-2b: the explicit unscoped transaction (a reason is required; the callback gets the models).
+    systemTransaction: jest.fn((_reason: string, fn: any) =>
+      fn({
+        ...models,
+        $executeRaw: jest.fn().mockResolvedValue(0),
+        $queryRaw: jest.fn().mockResolvedValue([]),
+      }),
+    ),
     $transaction: jest.fn((fn: any) =>
       fn({
         ...models,

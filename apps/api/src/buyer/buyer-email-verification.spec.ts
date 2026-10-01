@@ -156,19 +156,17 @@ describe("BuyerAuthService — registration email verification", () => {
       baseRecord = makeBaseRecord();
     });
 
-    beforeEach(() => {
-      (prisma.$transaction as jest.Mock).mockImplementation((ops: any[]) =>
-        Promise.all(ops.map(() => ({}))),
-      );
-    });
-
     it("marks the token used and flips emailVerified in one transaction", async () => {
       prisma.buyerEmailVerificationToken.findUnique.mockResolvedValue(baseRecord as any);
 
       const result = await service.verifyEmail(rawToken);
 
       expect(result.message).toContain("Email verified");
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.systemTransaction).toHaveBeenCalledTimes(1);
+      expect((prisma.systemTransaction as jest.Mock).mock.calls[0][0]).toBe(
+        "buyer-auth.verifyEmail",
+      );
+      expect(prisma.$transaction).not.toHaveBeenCalled(); // never the array form (it bypasses the tenant guard)
       expect(prisma.buyerEmailVerificationToken.update).toHaveBeenCalledWith({
         where: { tokenHash: fakeHash },
         data: { usedAt: expect.any(Date) },

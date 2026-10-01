@@ -142,16 +142,17 @@ export class BuyerAuthService {
       );
     }
 
-    await this.prisma.$transaction([
-      this.prisma.buyerEmailVerificationToken.update({
+    // Anonymous caller (the link is the credential): the explicit system door, not the array form.
+    await this.prisma.systemTransaction("buyer-auth.verifyEmail", async (tx) => {
+      await tx.buyerEmailVerificationToken.update({
         where: { tokenHash },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
+      });
+      await tx.buyerAccount.update({
         where: { id: record.buyerAccountId },
         data: { emailVerified: true },
-      }),
-    ]);
+      });
+    });
 
     this.logger.log(`BuyerAccount ${record.buyerAccountId} verified their email`);
     return {
@@ -564,19 +565,19 @@ export class BuyerAuthService {
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     // Mark token used and update password in a transaction
-    await this.prisma.$transaction([
-      this.prisma.buyerPasswordResetToken.update({
+    await this.prisma.systemTransaction("buyer-auth.resetPassword", async (tx) => {
+      await tx.buyerPasswordResetToken.update({
         where: { tokenHash },
         data: { usedAt: new Date() },
-      }),
-      this.prisma.buyerAccount.update({
+      });
+      await tx.buyerAccount.update({
         where: { id: record.buyerAccountId },
         data: { passwordHash, passwordSet: true },
-      }),
-      this.prisma.buyerRefreshToken.deleteMany({
+      });
+      await tx.buyerRefreshToken.deleteMany({
         where: { buyerAccountId: record.buyerAccountId },
-      }),
-    ]);
+      });
+    });
 
     return { message: "Password reset successfully. Please log in with your new password." };
   }
