@@ -152,7 +152,8 @@ describe("B963 repair-integrity: source pin", () => {
   it("run as a CLI through a SYMLINKED path the script still runs (--list prints the registry; it used to exit 0 silently)", () => {
     const dir = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "b963-"));
     const link = path.join(dir, "scripts-link");
-    fs.symlinkSync(path.dirname(SCRIPT), link);
+    // "junction" on Windows: a directory symlink there needs elevated rights (EPERM); a junction does not
+    fs.symlinkSync(path.dirname(SCRIPT), link, process.platform === "win32" ? "junction" : "dir");
     try {
       const r = spawnSync(process.execPath, [path.join(link, "repair-integrity.mjs"), "--list"], {
         cwd: ROOT,

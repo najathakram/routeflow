@@ -397,8 +397,9 @@ export const ROWS = [
           const marked = await sourceDeletedNote(db, p.creditNoteId);
           // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
           base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
-          // lock the NOTE too: the execute-time tx locks lockRows BEFORE its re-plan, so an in-flight invoice delete (which writes the
-          // marker and unlinks the note in one tx) commits first and the marker read below sees it
+          // lock the NOTE too, so the execute-time tx holds it before its re-plan reads the marker. NOT a complete close: an invoice
+          // delete writes the marker BEFORE it locks the note (unlinkSourcedCredits), so a narrow race remains; the marker read
+          // below sees only a committed marker. The execute-time re-plan plus the byte-compared before-state narrow it, no more.
           base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
           if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
           actions.push({
@@ -608,8 +609,9 @@ export const ROWS = [
         const marked = await sourceDeletedNote(db, p.creditNoteId);
         // in `before` too: the execute-time re-read byte-compares it, so a marker that appears after the dry run aborts the row
         base.before = { ...base.before, creditNoteSourceDeleted: marked !== null };
-        // lock the NOTE too: the execute-time tx locks lockRows BEFORE its re-plan, so an in-flight invoice delete (which writes the
-        // marker and unlinks the note in one tx) commits first and the marker read below sees it
+        // lock the NOTE too, so the execute-time tx holds it before its re-plan reads the marker. NOT a complete close: an invoice
+        // delete writes the marker BEFORE it locks the note (unlinkSourcedCredits), so a narrow race remains; the marker read
+        // below sees only a committed marker. The execute-time re-plan plus the byte-compared before-state narrow it, no more.
         base.lockRows = [...(base.lockRows ?? []), { table: "CreditNote", id: p.creditNoteId }];
         if (marked !== null) return { ...base, blocked: sourceDeletedBlock(marked, p.amount) };
         actions.push({
