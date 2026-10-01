@@ -344,34 +344,233 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
     expect(grown).toBeLessThan(50 * 1024 * 1024);
   });
 
-  it("200 concurrent fake-signature 1 MB uploads all get 401, and a signed delivery still works", async () => {
+  /**
+   * B950. The old test mapped any client socket error to 0 and demanded a 401 from every socket, and
+   * failed deterministically on macOS while passing on Linux. The exact macOS mechanism was not
+   * reproduced (a flood with a well-formed signature streams the whole 1 MiB and is answered 401
+   * on a live connection here), but the assertion was on the CLIENT's view of an event whose delivery
+   * the OS controls: when a server answers and closes while the client is still writing, whether
+   * the client reads the 401 or only an EPIPE/ECONNRESET is platform- and timing-dependent. So the
+   * proof is made on the SERVER side: a spy on ServerResponse (scoped by the server's own address)
+   * records every status sent, and the harness counts how often the webhook handler's work ran. A
+   * client either reads a 401 or sees a reset: both are "rejected". The cap is proven by its own
+   * over-cap test, "never buffered" by the live-memory test.
+   */
+  // every code a client sees when the SERVER closed first (the last two are Node's own, raised when
+  // the peer's FIN already ended or destroyed our socket); ENOBUFS, EADDRNOTAVAIL, timeouts etc. stay
+  // `other` so an environmental failure is red, not silently "rejected"
+  const RESET_CODES = new Set([
+    "EPIPE",
+    "ECONNRESET",
+    "ECONNABORTED",
+    "ERR_STREAM_WRITE_AFTER_END",
+    "ERR_STREAM_DESTROYED",
+  ]);
+  type Outcome = { status: number } | { reset: string } | { other: string };
+  const classifyError = (code: string): Outcome =>
+    RESET_CODES.has(code) ? { reset: code } : { other: code };
+  /** Rejected = the client read a 401, or its socket was reset (the server closed first). */
+  const isRejected = (o: Outcome): boolean => ("status" in o && o.status === 401) || "reset" in o;
+  const headWith = (sig: string, len: number): string =>
+    `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: ${sig}\r\nContent-Length: ${len}\r\n\r\n`;
+  /** Raw-socket upload: header, then `chunks` (optionally paced); never throws, always an Outcome. */
+  const upload = (
+    port: number,
+    head: string,
+    chunks: Buffer[],
+    o: { pauseReads?: boolean; chunkDelayMs?: number; maxMs?: number } = {},
+  ): Promise<Outcome> =>
+    new Promise((resolve) => {
+      const s = net.connect(port, "127.0.0.1");
+      let buf = "";
+      let done = false;
+      const end = (r: Outcome): void => {
+        if (done) return;
+        done = true;
+        clearTimeout(t);
+        s.destroy();
+        resolve(r);
+      };
+      const t = setTimeout(() => end({ other: "TIMEOUT" }), o.maxMs ?? 20_000);
+      if (o.pauseReads) s.pause();
+      s.on("data", (d) => {
+        buf += d.toString();
+        const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
+        if (m) end({ status: Number(m[1]) });
+      });
+      s.on("error", (e: NodeJS.ErrnoException) => {
+        const code = e.code ?? "UNKNOWN";
+        end(classifyError(code));
+      });
+      s.on("connect", () => {
+        s.write(head);
+        const send = (i: number): void => {
+          if (done || i >= chunks.length) return;
+          s.write(chunks[i]);
+          if (o.chunkDelayMs) setTimeout(() => send(i + 1), o.chunkDelayMs);
+          else send(i + 1);
+        };
+        send(0);
+      });
+    });
+  /** Every status the server sends, with the bytes its connection had read by then. */
+  const spyResponses = (port: number) => {
+    const http = require("http");
+    const orig = http.ServerResponse.prototype.end;
+    const seen: Array<{ status: number; bytesRead: number; destroyed: boolean }> = [];
+    http.ServerResponse.prototype.end = function (this: any, ...a: unknown[]) {
+      // scoped by the SERVER's own address: `socket.localPort` is cleared once a socket is destroyed,
+      // which would hide exactly the responses sent on reset connections (the macOS shape), and an
+      // earlier test's server may still be draining in the same process
+      const sock = this.socket;
+      if (sock?.server?.address?.()?.port === port) {
+        seen.push({
+          status: this.statusCode,
+          bytesRead: sock.bytesRead ?? -1,
+          destroyed: Boolean(sock.destroyed),
+        });
+      }
+      return orig.apply(this, a);
+    };
+    return {
+      seen,
+      stop: (): void => {
+        http.ServerResponse.prototype.end = orig;
+      },
+    };
+  };
+
+  it("isRejected: a read 401 or a reset is a rejection; any other status or error is not", () => {
+    expect(isRejected({ status: 401 })).toBe(true);
+    for (const reset of ["EPIPE", "ECONNRESET", "ECONNABORTED"]) {
+      expect(isRejected({ reset })).toBe(true);
+    }
+    for (const status of [200, 202, 400, 403, 413, 500]) expect(isRejected({ status })).toBe(false);
+    for (const other of ["ECONNREFUSED", "ETIMEDOUT", "TIMEOUT", "UNKNOWN"]) {
+      expect(isRejected({ other })).toBe(false);
+    }
+  });
+
+  it("classifyError pins the reset codes: the server-closed-first codes are resets, environmental ones are not", () => {
+    for (const code of [
+      "EPIPE",
+      "ECONNRESET",
+      "ECONNABORTED",
+      "ERR_STREAM_WRITE_AFTER_END",
+      "ERR_STREAM_DESTROYED",
+    ]) {
+      expect(classifyError(code)).toEqual({ reset: code });
+    }
+    for (const code of [
+      "ENOBUFS",
+      "EADDRNOTAVAIL",
+      "ETIMEDOUT",
+      "ECONNREFUSED",
+      "EMFILE",
+      "UNKNOWN",
+    ]) {
+      expect(classifyError(code)).toEqual({ other: code });
+    }
+  });
+
+  it("a client that keeps writing after the server's EARLY 401 and is reset still counts as rejected", async () => {
+    h = await startServer({ webhook: true });
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      // a malformed signature is refused before a byte of the body is read ("Connection: close");
+      // the client reads nothing and keeps writing after the server closed: EPIPE/ECONNRESET on
+      // any OS, the exact shape macOS produced for the flood test
+      out = await upload(
+        h.port,
+        headWith("sha256=zz", 1024 * 1024),
+        Array.from({ length: 80 }, () => Buffer.alloc(256 * 1024, 97)),
+        { pauseReads: true, chunkDelayMs: 25, maxMs: 8000 },
+      );
+    } finally {
+      spy.stop();
+    }
+    expect("reset" in out).toBe(true); // the scenario really produced a reset, not a 401
+    expect(isRejected(out)).toBe(true); // ...and a reset is a rejection
+    expect(spy.seen.map((x) => x.status)).toEqual([401]); // the server did answer, once, 401
+    expect(h.refreshCalls).toBe(0); // the webhook handler's work never ran
+  });
+
+  it("a body over the 1 MiB cap is refused 413 EVEN WITH a valid signature, and the handler never runs", async () => {
+    h = await startServer({ webhook: true });
+    const CAP = 1024 * 1024;
+    const body = Buffer.alloc(2 * CAP, 97);
+    // a signature that is valid for the WHOLE body: a server that hashed past the cap, or whose cap
+    // was lifted, would accept this delivery; the real one drops everything past the cap unhashed
+    const sig = "sha256=" + createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
+    const spy = spyResponses(h.port);
+    let out: Outcome;
+    try {
+      out = await upload(
+        h.port,
+        headWith(sig, body.length),
+        Array.from({ length: 32 }, (_, i) => body.subarray(i * 65536, (i + 1) * 65536)),
+        { maxMs: 10_000 },
+      );
+    } finally {
+      spy.stop();
+    }
+    expect("status" in out ? out.status === 413 : "reset" in out).toBe(true);
+    expect(spy.seen.map((x) => x.status)).toEqual([413]);
+    expect(h.refreshCalls).toBe(0);
+  });
+
+  it("200 concurrent fake-signature 1 MB uploads are all rejected (401 or a reset), a signed delivery still works", async () => {
     h = await startServer({ webhook: true });
     const MB = Buffer.alloc(1024 * 1024, 97);
-    const port = h.port;
-    const codes = await Promise.all(
-      Array.from(
-        { length: 200 },
-        () =>
-          new Promise<number>((resolve) => {
-            const s = net.connect(port, "127.0.0.1");
-            let buf = "";
-            s.on("data", (d) => {
-              buf += d.toString();
-              const m = /^HTTP\/1\.1 (\d{3})/.exec(buf);
-              if (m) {
-                s.destroy();
-                resolve(Number(m[1]));
-              }
-            });
-            s.on("error", () => resolve(0));
-            s.on("connect", () => {
-              s.write(post());
-              s.write(MB);
-            });
-          }),
-      ),
-    );
-    expect(codes.every((c) => c === 401)).toBe(true);
+    const spy = spyResponses(h.port);
+    let outcomes: Outcome[];
+    try {
+      outcomes = await Promise.all(
+        Array.from({ length: 200 }, () =>
+          upload(h!.port, headWith(`sha256=${"0".repeat(64)}`, MB.length), [MB]),
+        ),
+      );
+    } finally {
+      spy.stop();
+    }
+    // client side: every upload ended as a 401 or a reset, never another status or another error
+    expect(outcomes.filter((o) => !isRejected(o))).toEqual([]);
+    // server side (the platform-independent proof): it sent no 2xx, answered every live connection
+    // 401, and the handler's work (a refresh) never ran for a forged delivery. The cap itself is
+    // proven by the over-cap test above, "never buffered" by the live-memory test.
+    const seen = spy.seen;
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.length).toBeLessThanOrEqual(200);
+    // never a 2xx; a live connection is answered 401; a connection that was reset first may carry
+    // the 401, or a 413 for the body its client abandoned
+    expect(seen.filter((x) => x.status >= 200 && x.status < 300)).toEqual([]);
+    expect(seen.filter((x) => !x.destroyed && x.status !== 401)).toEqual([]);
+    expect(seen.filter((x) => x.destroyed && ![401, 413].includes(x.status))).toEqual([]);
+    // sanity only (the client sends exactly the declared body): never more than the declared body
+    expect(Math.max(...seen.map((x) => x.bytesRead))).toBeLessThanOrEqual(MB.length + 4096);
+    if (process.env.CONTROL_TEST_VERBOSE) {
+      const tally: Record<string, number> = {};
+      for (const o of outcomes) {
+        const k =
+          "status" in o
+            ? `status ${o.status}`
+            : "reset" in o
+              ? `reset ${o.reset}`
+              : `other ${o.other}`;
+        tally[k] = (tally[k] ?? 0) + 1;
+      }
+      console.info(
+        "B950 flood",
+        JSON.stringify({
+          tally,
+          answered: seen.length,
+          destroyed: seen.filter((x) => x.destroyed).length,
+        }),
+      );
+    }
+    expect(outcomes.filter((o) => "status" in o).length).toBeLessThanOrEqual(seen.length);
+    expect(h.refreshCalls).toBe(0);
     const body = JSON.stringify({ a: 1 });
     const ok = await h.req("POST", "/api/github-webhook", {
       headers: {
@@ -383,6 +582,8 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
       body,
     });
     expect(ok.status).toBe(202);
+    await sleep(100);
+    expect(h.refreshCalls).toBeGreaterThan(0); // control: a SIGNED delivery does run the handler's work
   });
 });
 
