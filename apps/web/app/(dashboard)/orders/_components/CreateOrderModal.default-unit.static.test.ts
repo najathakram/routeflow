@@ -27,8 +27,37 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
   });
 
   it("Opus #2865 B1: setLineUnit CONSUMES the flag, so a remount after any unit choice (even the pack) cannot re-apply the default", () => {
+    // setLineUnit is the shared writer now (lib/default-unit-line.ts applyUnitToLines): that one function consumes the flag.
     const fn = src.slice(src.indexOf("const setLineUnit"), src.indexOf("const setDiscountedPrice"));
-    expect(fn).toMatch(/startOnDefaultUnit: false/);
+    expect(fn).toMatch(/applyUnitToLines\(prev, tempId, option, refresh,/);
+    const lib = readFileSync(
+      join(__dirname, "..", "..", "..", "..", "lib", "default-unit-line.ts"),
+      "utf8",
+    );
+    expect(lib).toMatch(/startOnDefaultUnit: false/);
+  });
+
+  it("SA-626c: submit resolves every pending line first, blocks when the ladder is unavailable, and submits the resolved lines", () => {
+    const submit = src.slice(
+      src.indexOf("const submitOrder = ("),
+      src.indexOf("const doSubmitOrder = ("),
+    );
+    expect(submit).toMatch(/lineItems\.some\(isPendingDefaultUnit\)/);
+    expect(submit).toMatch(/resolveDefaultUnits\(lineItems\)/);
+    expect(submit).toMatch(/blocked\.length/);
+    expect(submit).toMatch(/doSubmitOrder\(data, options, lines\)/);
+    // a double click while the units load is ignored, and edits made while it waited are kept (merge, not overwrite)
+    expect(submit).toMatch(/resolvingRef\.current/);
+    expect(submit).toMatch(/mergeResolvedLines\(cur, lineItems, lines\)/);
+    const doSubmit = src.slice(
+      src.indexOf("const doSubmitOrder = ("),
+      src.indexOf("createOrder.mutate("),
+    );
+    expect(doSubmit).not.toMatch(/lineItems/);
+    // N9: the units read is staff-only
+    expect(src).toMatch(
+      /useDefaultUnitResolver\(\s*lineItems,\s*setLineItems,\s*tierForProduct,\s*isStaffRole\(authUser\?\.role\),?\s*\)/,
+    );
   });
 
   it("Opus #2865 r2: every qty / price handler CONSUMES the flag (qty is total pieces on a boxed line, so the picker cannot guard on it)", () => {
@@ -44,7 +73,11 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
     ] as const) {
-      expect({ name, consumed: /startOnDefaultUnit: false/.test(slice(name, next)) }).toEqual({
+      // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), via keepsDefaultStart
+      const rule = name.startsWith("const merge")
+        ? /startOnDefaultUnit: keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)/
+        : /startOnDefaultUnit: false/;
+      expect({ name, consumed: rule.test(slice(name, next)) }).toEqual({
         name,
         consumed: true,
       });

@@ -10,6 +10,7 @@ const read = (...p: string[]) => readFileSync(join(__dirname, "..", ...p), "utf8
 const screen = read("components", "NewOrderScreen.tsx");
 const cartRow = read("components", "CartRow.tsx");
 const row = read("components", "UnitPickerRow.tsx");
+const defaultUnitLine = read("lib", "default-unit-line.ts");
 const state = read("lib", "cart-line-state.ts");
 
 describe("mobile default selling unit wiring (#2784)", () => {
@@ -19,7 +20,9 @@ describe("mobile default selling unit wiring (#2784)", () => {
 
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
     expect(screen).toMatch(/dflt\?: boolean/);
-    expect(screen).toMatch(/if \(isNew && dflt\) line\.startOnDefaultUnit = line\.qty;/);
+    expect(screen).toMatch(
+      /if \(keepsDefaultStart\(m\[id\], dflt, userRole\)\) line\.startOnDefaultUnit = line\.qty;/,
+    );
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true\)/);
     // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
     // box-only / unit-only code: finishAccept forwards `opts?.startOnDefault`, which the ladder sets for shared codes.
@@ -35,25 +38,48 @@ describe("mobile default selling unit wiring (#2784)", () => {
   });
 
   it("Opus #2865 B2: setUnitLabel CONSUMES the flag (any unit choice, incl. the pack), so a cart re-open never re-applies it", () => {
-    const fn = screen.slice(
-      screen.indexOf("const setUnitLabel"),
-      screen.indexOf("const setUnitLabel") + 900,
+    const fn = defaultUnitLine.slice(
+      defaultUnitLine.indexOf("export function applyUnitOption"),
+      defaultUnitLine.indexOf("export function isPendingDefaultUnit"),
     );
     expect(fn).toMatch(/startOnDefaultUnit: undefined/);
+    expect(screen).toMatch(/applyUnitOption\(m\[id\], option, upbOf\(id\)\)/); // setUnitLabel is that one writer
   });
 
   it("Opus #2865 B2/r2: CartRow hands the flag on only while the price is the operator's own AND untouched; it never guards on qty (a boxed qty is total pieces)", () => {
-    expect(cartRow).toMatch(
-      /startOnDefaultUnit=\{[\s\S]{0,260}line\.startOnDefaultUnit[\s\S]{0,260}\}/,
-    );
-    expect(cartRow).toMatch(/priceSource !== "operator"/);
-    expect(cartRow).toMatch(/line\.unitPrice == null/);
-    expect(cartRow).not.toMatch(/line\.qty \?\? 0\) <= 1/);
+    expect(cartRow).toMatch(/startOnDefaultUnit=\{isPendingDefaultUnit\(line\)\}/);
+    expect(defaultUnitLine).toMatch(/line\.priceSource !== "operator"/);
+    expect(defaultUnitLine).toMatch(/line\.unitPrice == null/);
+    expect(defaultUnitLine).not.toMatch(/line\.qty \?\? 0\) <= 1/);
   });
 
   it("Opus #2865 r2: the flag is the line's creation qty, and CartRow applies the default only while qty still equals it (no handler edits, no qty<=1 guard)", () => {
     expect(state).toMatch(/startOnDefaultUnit\?: number/);
     expect(screen).toMatch(/line\.startOnDefaultUnit = line\.qty/);
-    expect(cartRow).toMatch(/line\.startOnDefaultUnit === line\.qty/);
+    expect(defaultUnitLine).toMatch(/line\.startOnDefaultUnit === line\.qty/);
+  });
+});
+
+describe("SA-626c: the default unit is resolved on the LINE, before Confirm (not only when a sheet mounts)", () => {
+  const submit = screen.slice(
+    screen.indexOf("const submitOrder"),
+    screen.indexOf("createOrder.mutate("),
+  );
+
+  it("submitOrder resolves every pending line first, blocks when the ladder is unavailable, and prices from the resolved lines", () => {
+    expect(submit).toMatch(/await resolveDefaultUnits\(items\)/);
+    expect(submit).toMatch(/blocked\.length/);
+    expect(submit).toMatch(/Object\.entries\(lines\)/);
+    expect(submit).toMatch(/mergeResolvedDefaults\(cur, items, lines\)/); // later tray edits are kept
+    expect(submit).not.toMatch(/Object\.entries\(items\)/);
+    expect(submit.indexOf("blocked.length")).toBeLessThan(submit.indexOf("Object.entries(lines)"));
+  });
+
+  it("the screen and the cart row share ONE writer and ONE pending rule (no second copy)", () => {
+    expect(screen).toMatch(/applyUnitOption\(m\[id\], option, upbOf\(id\)\)/);
+    // SA-626f: the role gate: a DRIVER makes no subscription read and never starts on a default unit
+    expect(screen).toMatch(/useDefaultUnitResolver\(\s*items,\s*setItems,\s*isStaff,/);
+    expect(cartRow).toMatch(/startOnDefaultUnit=\{isPendingDefaultUnit\(line\)\}/);
+    expect(defaultUnitLine).toMatch(/export function applyUnitOption/);
   });
 });

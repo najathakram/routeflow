@@ -46,13 +46,15 @@ import { InlineCreateProductModal } from "@/components/InlineCreateProductModal"
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
+import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-line-unit";
 import {
-  applyLineUnit,
-  mergeSameLine,
-  sameProductUnit,
-  unitLabelPayload,
-  type PackBase,
-} from "@/lib/order-line-unit";
+  applyUnitToLines,
+  isPendingDefaultUnit,
+  isStaffRole,
+  keepsDefaultStart,
+  mergeResolvedLines,
+} from "@/lib/default-unit-line";
+import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
 import { ScanOrderScreen } from "./scan/ScanOrderScreen";
@@ -577,8 +579,8 @@ export function CreateOrderModal({
     //    gains N cases and its qty is re-derived from boxes/pieces (pricing reads the split).
     //  - scan_v2 alone: one whole case for a case-packed line (a new line starts as one case).
     //  - neither: the classic picker keeps its historical +1 qty so nothing changes with the gates off.
-    // A merge is a qty edit: it CONSUMES startOnDefaultUnit (a second scan before the ladder loads must not let the
-    // picker re-apply the default over a line that already grew).
+    // A merge is a qty edit that CONSUMES startOnDefaultUnit, EXCEPT a default-start add to a still-pending line:
+    // two fast adds before the ladder loads stay "2 of the default unit" (SA-626d), never a pack.
     const merge = (li: LineItem): LineItem => ({
       ...(unitScan
         ? mergePieceIntoLine(li, n)
@@ -587,7 +589,7 @@ export function CreateOrderModal({
           : scanV2
             ? stepLineUnit(li, 1)
             : { ...li, qty: li.qty + 1 }),
-      startOnDefaultUnit: false,
+      startOnDefaultUnit: keepsDefaultStart(li, opts?.startOnDefaultUnit),
     });
     // Built once, outside the updater — none of it depends on `prev`, only on `product`/the
     // customer/pricing context, so there is nothing here a race could make stale.
@@ -874,22 +876,19 @@ export function CreateOrderModal({
   const setLineUnit = (tempId: string, option: UnitOption, refresh: boolean) =>
     setLineItems((prev) => {
       const target = prev.find((li) => li.tempId === tempId);
-      if (!target) return prev;
-      // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount (list <-> scan screen) can never
-      // re-apply the default over the operator's choice (Opus #2865 B1).
-      const next = {
-        ...applyLineUnit(target, option, {
-          tier: tierForProduct(target.productId),
-          keepQty: refresh,
-        }),
-        startOnDefaultUnit: false,
-      };
-      const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-      if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-      return prev
-        .filter((li) => li.tempId !== tempId)
-        .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+      return target
+        ? applyUnitToLines(prev, tempId, option, refresh, tierForProduct(target.productId))
+        : prev;
     });
+  // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
+  const { user: authUser } = useAuth();
+  const resolveDefaultUnits = useDefaultUnitResolver(
+    lineItems,
+    setLineItems,
+    tierForProduct,
+    isStaffRole(authUser?.role),
+  );
+  const resolvingRef = React.useRef(false);
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -935,7 +934,7 @@ export function CreateOrderModal({
   // Staff-only per-order commission override (0 = exempt; null = agent/customer
   // default). Gated on role + the sales_agents addon — server re-checks both.
   const { user } = useAuth();
-  const isStaff = user?.role === "OPERATOR" || user?.role === "TENANT_ADMIN";
+  const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
@@ -1154,6 +1153,34 @@ export function CreateOrderModal({
     data: FormValues,
     options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean } = {},
   ) => {
+    // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
+    // nothing pending = the synchronous path, unchanged.
+    if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
+    if (resolvingRef.current) return; // a double click while the units load must not submit twice
+    resolvingRef.current = true;
+    void resolveDefaultUnits(lineItems)
+      .then(({ lines, blocked }) => {
+        if (blocked.length) {
+          setMergePrompt(null);
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines)); // keeps edits made while this waited
+        doSubmitOrder(data, options, lines);
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
+  };
+
+  const doSubmitOrder = (
+    data: FormValues,
+    options: { mergeChoice?: "merge" | "separate"; asDraft?: boolean },
+    lines: LineItem[],
+  ) => {
     const { mergeChoice, asDraft } = options;
     // #2406: fold in whatever the operator has typed into the Returns section.
     const inlineReturn = returnSave.build(selectedCustomer!.id, "");
@@ -1165,7 +1192,7 @@ export function CreateOrderModal({
       return;
     }
     // #2696(c): never send what the server refuses — an off-special price needs its reason first.
-    const needsReason = lineItems.find(lineNeedsReason);
+    const needsReason = lines.find(lineNeedsReason);
     if (needsReason) {
       setMergePrompt(null);
       toast({ title: reasonRequiredMessage(needsReason.productName), variant: "error" });
@@ -1174,10 +1201,8 @@ export function CreateOrderModal({
     }
     const itemsForSubmit = (
       asDraft
-        ? lineItems.filter(
-            (li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0,
-          )
-        : lineItems
+        ? lines.filter((li) => (li.isUnlisted ? li.productName.trim() : li.productId) && li.qty > 0)
+        : lines
     ).map((li) => {
       // Optional per-line note (trimmed) — carried onto the invoice line.
       const note = li.note?.trim() ? { notes: li.note.trim() } : {};

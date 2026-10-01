@@ -41,6 +41,13 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import {
+  applyUnitOption,
+  isStaffRole,
+  keepsDefaultStart,
+  mergeResolvedDefaults,
+} from "../lib/default-unit-line";
+import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { resolveScanSellLevel } from "@routeflow/scanning";
@@ -399,7 +406,7 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   // Backdating an order is a books-affecting edit — staff only, never drivers.
-  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole);
   const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.
@@ -790,7 +797,7 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (isNew && dflt) line.startOnDefaultUnit = line.qty;
+      if (keepsDefaultStart(m[id], dflt, userRole)) line.startOnDefaultUnit = line.qty;
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
@@ -890,27 +897,17 @@ function ProductPickView({
    * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
    * pack behaviour byte for byte.
    */
+  const upbOf = (id: string) => productById.get(id)?.unitsPerBox;
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const isPack = option.value === "";
-      return {
-        ...m,
-        [id]: {
-          ...prev,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          unitFactor: isPack ? undefined : option.factorToBase,
-          // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
-          startOnDefaultUnit: undefined,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          unitPrice: undefined,
-        },
-      };
-    });
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const resolveDefaultUnits = useDefaultUnitResolver(
+    items,
+    setItems,
+    isStaff,
+    (id) => productById.get(id),
+    effectiveTierFor,
+  );
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
@@ -1788,7 +1785,13 @@ function ProductPickView({
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
-    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+    const { items: lines, blocked } = await resolveDefaultUnits(items);
+    if (blocked.length) {
+      showToast("Couldn't load the selling units. Check your connection and try again.");
+      return endSubmit();
+    }
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
