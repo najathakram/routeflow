@@ -139,7 +139,7 @@ export async function startServer(opts: StartOpts = {}): Promise<Harness> {
           CONTROL_PASSWORD: PASSWORD,
           CONTROL_SESSION_SECRET: SESSION_SECRET,
           CONTROL_GITHUB_TOKEN: "ghp_test_token",
-          CONTROL_DEPLOY_KEY_B64: "dGVzdA==",
+          CONTROL_STATE_REPO: "acme/acme-control-state",
         }),
     ...(opts.webhook ? { CONTROL_WEBHOOK_SECRET: WEBHOOK_SECRET } : {}),
   };

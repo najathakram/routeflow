@@ -45,7 +45,8 @@ describe("control railway isolation (T56)", () => {
     const df = read(path.join(CONTROL, "Dockerfile"));
     expect(df).not.toMatch(/COPY[^\n]*packages\//);
     expect(df).toContain('CMD ["node","dist/main.js"]');
-    expect(df).toMatch(/apk add --no-cache git openssh-client/);
+    expect(df).toMatch(/apk add --no-cache git\s*$/m);
+    expect(df).not.toMatch(/openssh/);
   });
 
   it("Dockerfile COPY sources are confined to apps/control, the root manifests, or --from=", () => {

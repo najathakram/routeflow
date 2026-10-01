@@ -62,7 +62,7 @@ const FULL = {
   CONTROL_PASSWORD: "a-long-enough-password",
   CONTROL_SESSION_SECRET: "s".repeat(40),
   CONTROL_GITHUB_TOKEN: "ghp_x",
-  CONTROL_DEPLOY_KEY_B64: "dGVzdA==",
+  CONTROL_STATE_REPO: "acme/acme-control-state",
   CONTROL_REPO: "acme/acme",
   CONTROL_PUBLIC_URL: "https://control.example.test",
 };
@@ -387,13 +387,8 @@ describe("production guards live in createControlServer", () => {
   });
 });
 
-describe("final: refused boot leaves no key, ts is canonical UTC ISO", () => {
-  const find = (dir: string, name: string): string[] =>
-    fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const p = path.join(dir, e.name);
-      return e.isDirectory() ? find(p, name) : e.name === name ? [p] : [];
-    });
-  it("a refused boot removes the deploy key and known_hosts", () => {
+describe("final: refused boot leaves nothing behind, ts is canonical UTC ISO", () => {
+  it("a refused boot removes everything it created under TMPDIR", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "boot-"));
     try {
       const { CONTROL_PUBLIC_URL: _u, CONTROL_FIXTURE: _f, ...rest } = FULL;
@@ -401,8 +396,8 @@ describe("final: refused boot leaves no key, ts is canonical UTC ISO", () => {
       void _f;
       const r = boot({ ...rest, TMPDIR: tmp });
       expect(r.status).toBe(1);
-      expect(find(tmp, "deploy_key")).toEqual([]);
-      expect(find(tmp, "known_hosts")).toEqual([]);
+      expect(r.stderr).toMatch(/CONTROL_PUBLIC_URL/);
+      expect(fs.readdirSync(tmp)).toEqual([]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -478,22 +473,6 @@ describe("minors", () => {
       expect(r.out + r.err).not.toContain("leak-me-please");
     } finally {
       delete process.env.CONTROL_SECRET_PROBE;
-    }
-  });
-  it("the deploy key setup pins GitHub host keys (no accept-new) and writes the key 0600", () => {
-    const { setupDeployKey } = require("../src/http/deploykey");
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dk-"));
-    try {
-      const cmd: string = setupDeployKey(Buffer.from("KEYDATA").toString("base64"), dir);
-      expect(cmd).toContain("StrictHostKeyChecking=yes");
-      expect(cmd).not.toContain("accept-new");
-      expect(cmd).toContain("IdentitiesOnly=yes");
-      const files = fs.readdirSync(dir);
-      const key = files.find((f) => f.includes("key"));
-      expect(fs.statSync(path.join(dir, key as string)).mode & 0o777).toBe(0o600);
-      expect(read(path.join(dir, "known_hosts"))).toMatch(/^github\.com ssh-ed25519 AAAA/m);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
   it("README documents stateless logout and the global-limit lockout", () => {
