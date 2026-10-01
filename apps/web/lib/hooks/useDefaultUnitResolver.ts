@@ -5,6 +5,7 @@ import { fetchProductUnits, productUnitsKey, UNITS_FLAG } from "@/lib/api/produc
 import {
   isPendingDefaultUnit,
   mergeResolvedLines,
+  pendingCount,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
   type DefaultUnitLine,
@@ -38,7 +39,7 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
 
   const pendingKey = lines
     .filter(isPendingDefaultUnit)
-    .map((l) => l.tempId)
+    .map((l) => `${l.tempId}:${pendingCount(l)}`)
     .join("|");
   useEffect(() => {
     if (!pendingKey) return;

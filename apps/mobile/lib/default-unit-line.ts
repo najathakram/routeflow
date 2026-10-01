@@ -11,7 +11,11 @@ import { defaultStartOption, type UnitOption } from "./unit-options";
  */
 
 /** The ONE writer of a chosen unit (the sheet's onChange and the default start). The pack is `option.value === ""`. */
-export function applyUnitOption(prev: LineState, option: UnitOption): LineState {
+export function applyUnitOption(
+  prev: LineState,
+  option: UnitOption,
+  unitsPerBox?: number | string | null,
+): LineState {
   const isPack = option.value === "";
   // A REMEMBERED pack price (history pre-fill) is stashed while the line sells by a unit and re-applied when the buyer
   // explicitly picks the pack again; an operator-typed price is cleared by a unit choice, as always (SA-626d).
@@ -24,13 +28,20 @@ export function applyUnitOption(prev: LineState, option: UnitOption): LineState 
     unitFactor: isPack ? undefined : option.factorToBase,
     // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
     startOnDefaultUnit: undefined,
-    qty: 1,
+    // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
+    qty: !isPack && isPendingDefaultUnit(prev) ? pendingCount(prev, unitsPerBox) : 1,
     boxes: undefined,
     pieces: undefined,
     unitPrice: restore ? prev.packUnitPrice : undefined,
     priceSource: restore ? "history" : undefined,
-    packUnitPrice: !isPack && remembered ? prev.unitPrice : undefined,
+    packUnitPrice: isPack ? undefined : remembered ? prev.unitPrice : prev.packUnitPrice,
   };
+}
+
+/** Fast adds before the ladder loaded: N adds = N of the default unit. A boxed product's qty is total pieces. */
+function pendingCount(line: LineState, unitsPerBox?: number | string | null): number {
+  const upb = Number(unitsPerBox ?? 0);
+  return Math.max(1, upb > 1 ? Math.round(line.qty / upb) : line.qty);
 }
 
 /**
@@ -62,10 +73,7 @@ export function startLineOnDefault(
   if (!isPendingDefaultUnit(line)) return line;
   const start = defaultStartOption(product, units, tier, { hasUnit: !!line.unitLabel });
   if (!start) return { ...line, startOnDefaultUnit: undefined };
-  // Fast adds before the ladder loaded: N adds = N of the default unit. A boxed product's qty is total pieces.
-  const upb = Number(product.unitsPerBox ?? 0);
-  const count = Math.max(1, upb > 1 ? Math.round(line.qty / upb) : line.qty);
-  return { ...applyUnitOption(line, start), qty: count };
+  return applyUnitOption(line, start, product.unitsPerBox);
 }
 
 export interface DefaultUnitDeps {

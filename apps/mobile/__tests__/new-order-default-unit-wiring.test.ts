@@ -43,7 +43,7 @@ describe("mobile default selling unit wiring (#2784)", () => {
       defaultUnitLine.indexOf("export function isPendingDefaultUnit"),
     );
     expect(fn).toMatch(/startOnDefaultUnit: undefined/);
-    expect(screen).toMatch(/applyUnitOption\(m\[id\], option\)/); // setUnitLabel is that one writer
+    expect(screen).toMatch(/applyUnitOption\(m\[id\], option, upbOf\(id\)\)/); // setUnitLabel is that one writer
   });
 
   it("Opus #2865 B2/r2: CartRow hands the flag on only while the price is the operator's own AND untouched; it never guards on qty (a boxed qty is total pieces)", () => {
@@ -76,7 +76,7 @@ describe("SA-626c: the default unit is resolved on the LINE, before Confirm (not
   });
 
   it("the screen and the cart row share ONE writer and ONE pending rule (no second copy)", () => {
-    expect(screen).toMatch(/applyUnitOption\(m\[id\], option\)/);
+    expect(screen).toMatch(/applyUnitOption\(m\[id\], option, upbOf\(id\)\)/);
     expect(screen).toMatch(/useDefaultUnitResolver\(/);
     expect(cartRow).toMatch(/startOnDefaultUnit=\{isPendingDefaultUnit\(line\)\}/);
     expect(defaultUnitLine).toMatch(/export function applyUnitOption/);

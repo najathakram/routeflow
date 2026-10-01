@@ -41,7 +41,7 @@ export function keepsDefaultStart(prev: DefaultUnitLine, dflt?: boolean): boolea
 }
 
 /** Fast adds before the ladder loaded: N adds = N of the default unit (a boxed line's qty is total pieces). */
-function pendingCount(line: UnitLine): number {
+export function pendingCount(line: UnitLine): number {
   return Math.max(
     1,
     line.unitsPerBox ? (line.boxes ?? Math.round(line.qty / line.unitsPerBox)) : line.qty,
@@ -63,7 +63,6 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   option: UnitOption,
   refresh: boolean,
   tier: Tier,
-  count?: number,
 ): T[] {
   const target = prev.find((li) => li.tempId === tempId);
   if (!target) return prev;
@@ -72,7 +71,10 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   const next = {
     ...applyLineUnit(target, option, { tier, keepQty: refresh }),
     startOnDefaultUnit: false,
-    ...(count != null && option.kind !== "pack" ? { qty: count } : {}),
+    // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
+    ...(option.kind !== "pack" && isPendingDefaultUnit(target)
+      ? { qty: pendingCount(target) }
+      : {}),
   };
   const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
   if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
@@ -102,9 +104,7 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
 ): T {
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
-  const [only] = option
-    ? applyUnitToLines([line], line.tempId, option, false, tier, pendingCount(line))
-    : [];
+  const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
   return (only as T | undefined) ?? { ...line, startOnDefaultUnit: false };
 }
 
@@ -144,7 +144,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
       out = option
-        ? applyUnitToLines(out, line.tempId, option, false, tier, pendingCount(line))
+        ? applyUnitToLines(out, line.tempId, option, false, tier)
         : out.map((li) => (li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li));
     } catch {
       blocked.push(line.tempId);
@@ -163,7 +163,9 @@ export function mergeResolvedLines<T extends DefaultUnitLine>(
   for (const d of done) {
     const b = before.find((li) => li.tempId === d.tempId);
     const c = out.find((li) => li.tempId === d.tempId);
-    if (!b || d === b || !c || !isPendingDefaultUnit(c)) continue;
+    // still pending AND the same count: a 2nd fast add that landed while this resolved must not be overwritten
+    if (!b || d === b || !c || !isPendingDefaultUnit(c) || pendingCount(c) !== pendingCount(b))
+      continue;
     out = out.map((li) => (li.tempId === d.tempId ? d : li));
   }
   return out;

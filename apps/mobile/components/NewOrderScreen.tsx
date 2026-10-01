@@ -896,8 +896,9 @@ function ProductPickView({
    * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
    * pack behaviour byte for byte.
    */
+  const upbOf = (id: string) => productById.get(id)?.unitsPerBox;
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option) } : m));
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
   // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
   const resolveDefaultUnits = useDefaultUnitResolver(
     items,
