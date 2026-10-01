@@ -229,11 +229,14 @@ export class CreditNotesService {
     // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
     // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
     // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    // B960: with the order pool active (2+ creditable invoices) the pool is the ONE source for itemless refund lumps (it attributes
+    // each across the COMBINED lines); the per-invoice legacy term would attribute the same lump to THIS invoice's lines and
+    // refuse what the pool allows. The line's own credit note items and inline returns still bind per line.
     const lineCredits = await loadLineCredits(
       db,
       dto.invoiceId,
       (invoice.items ?? []).map(toHeadroomLine),
-      opts,
+      { ...opts, skipLegacy: pool !== null },
     );
     const creditedByLine = new Map<string, number>();
     const creditedQtyByLine = new Map<string, number>();

@@ -433,6 +433,40 @@ describeDb(
       expect(err.getResponse().message).toMatch(/order's invoice lines/);
     }, 60_000);
 
+    it("12. B960 one headroom: A billed on BOTH invoices, a $100 refund lump of A on Y, then a $100 credit note item on Y's own A line is ALLOWED ($200 of $200 across the pool); a further $100 anywhere is REFUSED", async () => {
+      const s = await seed("own-line-vs-pool");
+      const yA = await prisma.invoiceItem.create({
+        data: {
+          tenantId: s.tenantId,
+          invoiceId: s.Y.id,
+          productId: s.pA.id,
+          description: "A",
+          qty: 1,
+          unitPrice: 100,
+          subtotal: 100,
+        },
+      });
+      await prisma.invoice.update({ where: { id: s.Y.id }, data: { subtotal: 200, total: 200 } });
+      const ret = await receivedReturn(s, s.pA.id);
+      await refund(s, ret.id); // a lump on the latest invoice Y
+      expect(await status(ret.id)).toBe("REFUNDED");
+      const onY = (amount: number) =>
+        inTenant(s, () =>
+          creditNotes.create({
+            customerId: s.customerId,
+            invoiceId: s.Y.id,
+            amount,
+            items: [{ invoiceItemId: yA.id, amount }],
+          } as any),
+        );
+      // Y's own per-invoice legacy term used to attribute the lump to Y's line and refuse this; the pool has the room
+      await expect(onY(100)).resolves.toBeDefined();
+      // the pool is now exhausted ($100 lump + $100 item of $200 billed... plus a third $100 would be $300)
+      await expect(creditItemOnX(s, s.lineA, 100)).rejects.toMatchObject({
+        response: { code: "CREDIT_NOTE_OVER_HEADROOM" },
+      });
+    }, 60_000);
+
     it("6. race: a credit note item on A and a return refund of A racing never total more than $100 on A, and neither 500s", async () => {
       const s = await seed("race");
       const ret = await receivedReturn(s, s.pA.id);
