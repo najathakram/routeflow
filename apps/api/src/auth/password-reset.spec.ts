@@ -192,6 +192,15 @@ describe("AuthService — password reset (RF-018)", () => {
       expect(prisma.systemTransaction).toHaveBeenCalledTimes(1);
       expect((prisma.systemTransaction as jest.Mock).mock.calls[0][0]).toBe("auth.resetPassword");
       expect(prisma.$transaction).not.toHaveBeenCalled(); // never the array form (it bypasses the tenant guard)
+      expect(prisma.passwordResetToken.update).toHaveBeenCalledWith({
+        where: { tokenHash: fakeHash },
+        data: { usedAt: expect.any(Date) },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: "user-1" },
+        data: { password: "$2b$10$newhash", forcePasswordChange: false },
+      });
+      expect(prisma.refreshToken.deleteMany).toHaveBeenCalledWith({ where: { userId: "user-1" } });
     });
 
     it("throws 400 when token is not found", async () => {
