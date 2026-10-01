@@ -357,6 +357,16 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     // per-operation scoping identical to the map it replaces AND gives this layer the
     // same explicit `default` fall-through the tx proxy has.
     return {
+      // PR-2b: an interactive transaction opened on this client would hand the callback an UNSCOPED
+      // tx (the driver adapter cannot extend a tx client). Always a throw, in both modes: use
+      // `tenantTransaction`, which scopes the tx itself.
+      client: {
+        $transaction() {
+          throw new Error(
+            "forTenant().$transaction is unscoped: use prisma.tenantTransaction(fn) instead",
+          );
+        },
+      },
       query: {
         $allModels: {
           async $allOperations({ args, query, model, operation }: any) {
@@ -477,7 +487,42 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    */
   forSystem(reason: string): this {
     this.tenantGuard.system(reason);
-    return this;
+    // PR-2b: reads stay unscoped, but a tenant-owned write with no tenantId (explicit null is a
+    // deliberate platform row) is reported like a SUPER_ADMIN one, under kind SYSTEM.
+    return this.$extends(
+      superAdminCreateExtension(this.tenantGuard, isTenantOwnedModel, "SYSTEM"),
+    ) as unknown as this;
+  }
+
+  /**
+   * PR-2b: the transaction twin of `forSystem(reason)`. Runs unscoped (`app.current_tenant_id` cleared)
+   * with the same write check as a SUPER_ADMIN transaction, reported under kind SYSTEM. Never reports a
+   * missing tenant context: the reason is the declaration. A blank reason throws before a tx opens.
+   */
+  async systemTransaction<T>(
+    reason: string,
+    fn: (tx: any) => Promise<T>,
+    options?: Parameters<PrismaClient["$transaction"]>[1],
+  ): Promise<T> {
+    this.tenantGuard.system(reason);
+    return super.$transaction(async (rawTx: any) => {
+      await rawTx.$executeRaw`SELECT set_config('app.current_tenant_id', ${""}, true)`;
+      return fn(wrapTxWithCreateCheck(rawTx, this.tenantGuard, isTenantOwnedModel, "SYSTEM"));
+    }, options as any);
+  }
+
+  /**
+   * PR-2b: the array form `$transaction([p1, p2])` bypasses `tenantTransaction` entirely, so a
+   * context-less caller (ANONYMOUS / no context) is reported here (dark: warn, enforced: throw).
+   * TENANT, SUPER_ADMIN and SYSTEM pass; the promises are handed on untouched (batch semantics kept).
+   * The interactive form is never checked here: `tenantTransaction` / `systemTransaction` own it.
+   */
+  $transaction(arg: any, options?: any): any {
+    if (Array.isArray(arg)) {
+      const kind = this.tenantCtx?.getKind() ?? "NONE";
+      if (kind === "NONE" || kind === "ANONYMOUS") this.tenantGuard?.missingContext(kind, callSite);
+    }
+    return super.$transaction(arg, options);
   }
 
   private assertTenantContext(): void {

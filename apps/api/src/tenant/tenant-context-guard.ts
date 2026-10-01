@@ -261,12 +261,13 @@ export function checkCreateHasTenant(
 export function superAdminCreateExtension(
   guard: Pick<TenantContextGuard, "superAdminCreate">,
   isTenantOwned: (model: string) => boolean,
+  kind: TenantKind = "SUPER_ADMIN",
 ) {
   return {
     query: {
       $allModels: {
         async $allOperations({ args, query, model, operation }: any) {
-          checkCreateHasTenant(guard, isTenantOwned, model, operation, args);
+          checkCreateHasTenant(guard, isTenantOwned, model, operation, args, kind);
           return query(args);
         },
       },

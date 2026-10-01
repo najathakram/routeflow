@@ -209,17 +209,14 @@ describe("PrismaService tenant context kinds (SA-619)", () => {
   });
 
   describe("forSystem(reason)", () => {
-    it("returns the unscoped client under every kind, in both modes, without warning", () => {
+    it("hands out a client (unscoped reads, PR-2b write check) under every kind, in both modes, without warning", () => {
       for (const enforce of [false, true]) {
         const { prisma, ctx, warn } = make(enforce);
-        expect(prisma.forSystem("test: cross-tenant read")).toBe(prisma);
+        const ok = (c: unknown) => expect(c !== prisma && c != null).toBe(true);
+        ok(prisma.forSystem("test: cross-tenant read"));
         for (const kind of ["SUPER_ADMIN", "ANONYMOUS", "SYSTEM"] as const)
-          ctx.run(
-            null,
-            () => expect(prisma.forSystem("test: cross-tenant read")).toBe(prisma),
-            kind,
-          );
-        ctx.run("t-1", () => expect(prisma.forSystem("test: cross-tenant read")).toBe(prisma));
+          ctx.run(null, () => ok(prisma.forSystem("test: cross-tenant read")), kind);
+        ctx.run("t-1", () => ok(prisma.forSystem("test: cross-tenant read")));
         expect(warn).not.toHaveBeenCalled();
       }
     });
