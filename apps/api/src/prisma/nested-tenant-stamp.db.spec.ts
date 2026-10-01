@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { PrismaService } from "./prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { NestedTenantWalkError } from "../tenant/nested-tenant-walk";
+import { TenantContextGuard } from "../tenant/tenant-context-guard";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -156,21 +157,55 @@ describeDb("nested tenant stamping on a real database (SA-620)", () => {
     expect(rows.map((r) => r.tenantId)).toEqual([tenantId]);
   }, 60_000);
 
-  it("an explicit DIFFERENT tenantId on a nested child throws and writes nothing", async () => {
+  /** A PrismaService with its OWN guard, so the mode never depends on TENANT_CONTEXT_ENFORCE in the env. */
+  async function withGuard<T>(
+    enforce: boolean,
+    fn: (p: PrismaService, warn: jest.Mock) => Promise<T>,
+  ) {
+    const warn = jest.fn();
+    const p = new PrismaService(ctx, new TenantContextGuard({ enforce, log: { warn } }));
+    await p.$connect();
+    try {
+      return await fn(p, warn);
+    } finally {
+      await p.$disconnect();
+    }
+  }
+
+  const crossTenantOrder = (p: PrismaService, a: { customerId: string }, bTenantId: string) =>
+    p.forTenant().order.create({
+      data: {
+        customerId: a.customerId,
+        status: "PENDING",
+        total: 5,
+        lineItems: { create: [{ ...line("x"), tenantId: bTenantId }] },
+      },
+    });
+
+  it("case 6 (dark, the default): a DIFFERENT tenantId on a nested child is overridden with the context tenant: nothing under B, nothing NULL, exactly one report", async () => {
     const a = await seedTenant("xa");
     const b = await seedTenant("xb");
-    await expect(
-      ctx.run(a.tenantId, () =>
-        prisma.forTenant().order.create({
-          data: {
-            customerId: a.customerId,
-            status: "PENDING",
-            total: 5,
-            lineItems: { create: [{ ...line("x"), tenantId: b.tenantId }] },
-          },
-        }),
-      ),
-    ).rejects.toBeInstanceOf(NestedTenantWalkError);
+    await withGuard(false, async (p, warn) => {
+      const order = await ctx.run(a.tenantId, () => crossTenantOrder(p, a, b.tenantId));
+      const rows = await prisma.orderItem.findMany({ where: { orderId: order.id } });
+      expect(rows.map((r) => r.tenantId)).toEqual([a.tenantId]);
+      expect(await prisma.orderItem.count({ where: { tenantId: b.tenantId } })).toBe(0);
+      expect(
+        await prisma.orderItem.count({ where: { orderId: order.id, tenantId: null as any } }),
+      ).toBe(0);
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+  }, 60_000);
+
+  it("case 6b (TENANT_CONTEXT_ENFORCE=true): the same write throws and writes nothing", async () => {
+    const a = await seedTenant("ya");
+    const b = await seedTenant("yb");
+    await withGuard(true, async (p) => {
+      await expect(
+        ctx.run(a.tenantId, () => crossTenantOrder(p, a, b.tenantId)),
+      ).rejects.toBeInstanceOf(NestedTenantWalkError);
+    });
     expect(await prisma.order.count({ where: { tenantId: a.tenantId } })).toBe(0);
+    expect(await prisma.orderItem.count({ where: { tenantId: b.tenantId } })).toBe(0);
   }, 60_000);
 });
