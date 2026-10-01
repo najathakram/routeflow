@@ -3,6 +3,7 @@ import type { LineState } from "../lib/cart-line-state";
 import {
   applyUnitOption,
   isPendingDefaultUnit,
+  keepsDefaultStart,
   mergeResolvedDefaults,
   resolvePendingDefaultUnits,
   startLineOnDefault,
@@ -173,5 +174,67 @@ describe("mergeResolvedDefaults: an async resolve never overwrites what the buye
     const merged = mergeResolvedDefaults(cur, before, done);
     expect(merged.a!.unitLabel).toBe("Bottle");
     expect(merged.b).toBe(cur.b);
+  });
+});
+
+describe("SA-626c rulings A + B (owner ruling): a remembered price never decides the unit; fast adds keep their count", () => {
+  const history = (over: Partial<LineState> = {}): LineState => ({
+    qty: 1,
+    startOnDefaultUnit: 1,
+    unitPrice: 20, // a remembered PACK price (history is keyed by product only, it carries no unit)
+    priceSource: "history",
+    ...over,
+  });
+
+  it("A: a remembered pack price does not hold the line on the pack: it starts on the default unit at that unit's normal price", async () => {
+    expect(isPendingDefaultUnit(history())).toBe(true);
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: history() },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", unitBasePrice: 2 });
+    expect(items.p1!.unitPrice).toBeUndefined();
+    expect(items.p1!.priceSource).toBeUndefined();
+  });
+
+  it("A: a price the operator TYPED still shapes the line (stays as-is, not pending)", () => {
+    expect(isPendingDefaultUnit(history({ priceSource: "operator" }))).toBe(false);
+  });
+
+  it("A: a buyer who actively picks the pack keeps the pack (the choice consumes the flag)", async () => {
+    const [pack] = buildUnitOptions(product, [BOTTLE], 1);
+    const chosen = applyUnitOption(flagged(), pack!);
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: chosen },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    expect(items.p1).toBe(chosen);
+    expect(items.p1!.unitLabel).toBeUndefined();
+  });
+
+  it("B (boxed, qty = total pieces): two fast adds = 2 cases = 2 of the default unit, never a pack", async () => {
+    const twoCases = flagged({ qty: 24, boxes: 2, pieces: 0, startOnDefaultUnit: 24 });
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: twoCases },
+      deps([BOTTLE, ...CASE_ONLY]),
+    );
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+  });
+
+  it("B (not boxed, qty = count): three fast adds = 3 of the default unit", async () => {
+    const d = deps([BOTTLE, ...CASE_ONLY], { productFor: () => ({ ...product, unitsPerBox: 1 }) });
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: flagged({ qty: 3, startOnDefaultUnit: 3 }) },
+      d,
+    );
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("B: the flag FOLLOWS a pending line on a default-start add, and is consumed by anything else", () => {
+    expect(keepsDefaultStart(undefined, true)).toBe(true); // a new line
+    expect(keepsDefaultStart(flagged({ qty: 12, startOnDefaultUnit: 12 }), true)).toBe(true); // a 2nd fast add
+    expect(keepsDefaultStart(flagged({ qty: 5, startOnDefaultUnit: 1 }), true)).toBe(false); // edited meanwhile
+    expect(keepsDefaultStart(flagged(), false)).toBe(false); // a box-only code never follows
+    expect(keepsDefaultStart({ qty: 1 }, true)).toBe(false); // an existing un-flagged line stays as it was
   });
 });
