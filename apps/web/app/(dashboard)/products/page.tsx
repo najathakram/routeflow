@@ -1209,6 +1209,7 @@ export default function ProductsPage() {
                 search: debouncedSearch,
                 category: categoryFilter,
                 ...stockFilterParams(stockFilter),
+                ...portalVisibleFilterParam(hiddenOnly),
                 section: sectionFilter,
               }}
             />

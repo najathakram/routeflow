@@ -13,6 +13,8 @@ export interface ProductsExportFilters {
   category?: string;
   stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
   isActive?: boolean;
+  /** The list's "Hidden from portal" filter (`false` = hidden only). */
+  portalVisible?: boolean;
   section?: string;
 }
 
@@ -62,6 +64,7 @@ export function ProductsExportButton({
           category: filters.category || undefined,
           stockStatus: filters.stockStatus || undefined,
           isActive: filters.isActive,
+          portalVisible: filters.portalVisible,
           section: filters.section || undefined,
           from,
           to,

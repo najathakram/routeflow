@@ -3,7 +3,7 @@ import { StockStatusFilter, type ListProductsDto } from "./dto/list-products.dto
 
 /**
  * The `Product` where-clause of a list query (search / scanCode / category / isActive / isTobacco /
- * section / stockStatus, plus the internal buyer-catalog exclusions). Extracted verbatim from
+ * portalVisible / section / stockStatus, plus the internal buyer-catalog exclusions). Extracted verbatim from
  * `ProductsService.findAll` so the CSV export filters EXACTLY as the list does.
  */
 export function buildProductListWhere(

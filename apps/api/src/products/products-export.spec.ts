@@ -271,6 +271,21 @@ describe("products export.csv", () => {
     expect(src).not.toMatch(/(const|function)\s+round4\b/);
   });
 
+  it("the export honours the list's portalVisible filter through the shared where builder (N1, #2856)", async () => {
+    const { svc, productCalls } = build({
+      products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
+    });
+    await run(svc, { ...WINDOW, portalVisible: false });
+    const hidden = { OR: [{ portalVisible: false }, { parent: { portalVisible: false } }] };
+    expect(productCalls[0].where.AND).toContainEqual(hidden);
+    productCalls.length = 0;
+    await run(svc, { ...WINDOW, portalVisible: true });
+    expect(productCalls[0].where.AND).toContainEqual({ NOT: hidden });
+    productCalls.length = 0;
+    await run(svc, WINDOW);
+    expect(JSON.stringify(productCalls[0].where)).not.toContain("portalVisible");
+  });
+
   it("stats come from accrual invoices only: DRAFT/VOID, other tenants and out-of-window lines never count, a PAID invoice does, and no order is read", async () => {
     const { svc, itemCalls, scoped } = build({
       products: [product({ id: "p1", tenantId: TENANT_A, name: "Cola" })],
