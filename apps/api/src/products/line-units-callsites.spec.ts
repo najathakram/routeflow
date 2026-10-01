@@ -113,6 +113,9 @@ const NON_WRITERS = new Set([
   // "at the current pack" display and as salePackOf's GATE (is a no-snapshot line on a product
   // boxed today?) — never a multiplier; selling units come from each line's own snapshot.
   "sales-facts/product-insights.service.ts",
+  // B948: reads the live pack ONLY as the LAST fallback to express an inline return's PIECES on a legacy
+  // line's own qty axis (the same fallback order the inline pricing uses); writes no line, snapshots nothing.
+  "credit-notes/line-credit-headroom.ts",
 ]);
 
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
