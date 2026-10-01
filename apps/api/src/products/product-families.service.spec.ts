@@ -494,13 +494,20 @@ describe("Tier 1 money: an explicit null is never a silent $0 (#2881 r3)", () =>
       }),
     ).toEqual([]);
   });
-  it("create: a null family price / family cost / variant cost is refused too", async () => {
+  it("create: a null family PRICE is refused; a null create-side COST means omitted (SA-606g)", async () => {
+    expect(
+      (
+        await messages(CreateFamilyDto, {
+          family: { name: "F", pricePerUnit: null },
+          variants: [{ name: "A", pricePerUnit: "1" }],
+        })
+      ).length,
+    ).toBeGreaterThan(0);
     for (const plain of [
-      { family: { name: "F", pricePerUnit: null }, variants: [{ name: "A", pricePerUnit: "1" }] },
       { family: { name: "F", standardCost: null }, variants: [{ name: "A", pricePerUnit: "1" }] },
       { family: { name: "F" }, variants: [{ name: "A", pricePerUnit: "1", standardCost: null }] },
     ]) {
-      expect((await messages(CreateFamilyDto, plain)).length).toBeGreaterThan(0);
+      expect(await messages(CreateFamilyDto, plain)).toEqual([]);
     }
   });
   it("service level (a caller that bypasses the DTO): null price / cost on an update row is a 400 and nothing is written", async () => {
