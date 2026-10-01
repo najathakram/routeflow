@@ -406,6 +406,9 @@ describe("CustomersService", () => {
       expect(row).toContain(`"'=HYPERLINK(""http://evil.example"",""x"")"`);
       expect(row).toContain("'@SUM(1+1)");
       expect(row).toContain("'-cmd@example.com");
+      // Data effect, pinned on purpose (SA-629): a phone that starts with "+" is formula-led text, so
+      // it exports with a visible apostrophe; only a plain decimal number is exempt.
+      expect(row).toContain("'+1 555 0100");
       expect(csv.split("\n")[0]).toBe(
         "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits",
       );
