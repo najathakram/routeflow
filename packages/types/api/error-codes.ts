@@ -20,10 +20,14 @@
 //                    tax rate (#2656: the NSF line is never taxed; clients lock the field at 0).
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
 //                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
-//                    carries `barcode` and the holder's `productId`.
+//                    carries `barcode` and the holder's `productId`. It ALSO appears as a plain 400 from the
+//                    assertIdentityAvailable PRE-CHECK (import dry-run / update preflight) WITHOUT holder
+//                    details (no `heldBy` / `productId`), besides the 409 claim path that carries holders.
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
-//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`. Like
+//                    BARCODE_TAKEN it ALSO appears as a plain 400 (only `field` + message, NO holder details)
+//                    from the assertIdentityAvailable PRE-CHECK (import dry-run / update preflight).
 //   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
 //                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the

@@ -123,6 +123,37 @@ describe("ProductsService — importer seam (B858)", () => {
     });
   });
 
+  it.each([
+    ["sku", { sku: "W-1" }, { code: "CODE_TAKEN", field: "sku", message: "SKU already exists" }],
+    [
+      "barcode",
+      { barcode: "BC-1" },
+      { code: "BARCODE_TAKEN", barcode: "BC-1", message: "Barcode already exists" },
+    ],
+    [
+      "unitSku",
+      { unitSku: "U-1" },
+      {
+        code: "CODE_TAKEN",
+        field: "unitSku",
+        message: "Unit code already used by another product's SKU, barcode, or unit code",
+      },
+    ],
+  ])(
+    "WS7 N1: a %s collision throws the CODED 400 body (same message text)",
+    async (_f, input, body) => {
+      prisma.product.findFirst.mockResolvedValueOnce({ id: "prod-other" });
+      let thrown: unknown;
+      try {
+        await service.assertIdentityAvailable(input);
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(BadRequestException);
+      expect((thrown as BadRequestException).getResponse()).toMatchObject(body);
+    },
+  );
+
   it("W3: nothing to check asks nothing and writes nothing", async () => {
     await service.assertIdentityAvailable({});
 
