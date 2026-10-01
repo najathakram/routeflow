@@ -46,6 +46,9 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
     expect(submit).toMatch(/resolveDefaultUnits\(lineItems\)/);
     expect(submit).toMatch(/blocked\.length/);
     expect(submit).toMatch(/doSubmitOrder\(data, options, lines\)/);
+    // a double click while the units load is ignored, and edits made while it waited are kept (merge, not overwrite)
+    expect(submit).toMatch(/resolvingRef\.current/);
+    expect(submit).toMatch(/mergeResolvedLines\(cur, lineItems, lines\)/);
     const doSubmit = src.slice(
       src.indexOf("const doSubmitOrder = ("),
       src.indexOf("createOrder.mutate("),

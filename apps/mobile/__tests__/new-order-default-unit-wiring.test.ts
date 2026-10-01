@@ -68,6 +68,7 @@ describe("SA-626c: the default unit is resolved on the LINE, before Confirm (not
     expect(submit).toMatch(/await resolveDefaultUnits\(items\)/);
     expect(submit).toMatch(/blocked\.length/);
     expect(submit).toMatch(/Object\.entries\(lines\)/);
+    expect(submit).toMatch(/mergeResolvedDefaults\(cur, items, lines\)/); // later tray edits are kept
     expect(submit).not.toMatch(/Object\.entries\(items\)/);
     expect(submit.indexOf("blocked.length")).toBeLessThan(submit.indexOf("Object.entries(lines)"));
   });

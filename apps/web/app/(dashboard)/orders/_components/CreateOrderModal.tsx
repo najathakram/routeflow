@@ -47,7 +47,11 @@ import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-line-unit";
-import { applyUnitToLines, isPendingDefaultUnit } from "@/lib/default-unit-line";
+import {
+  applyUnitToLines,
+  isPendingDefaultUnit,
+  mergeResolvedLines,
+} from "@/lib/default-unit-line";
 import { useDefaultUnitResolver } from "@/lib/hooks/useDefaultUnitResolver";
 import type { UnitOption } from "@/lib/unit-options";
 import { useScanCodeHandler } from "./scan/useScanCodeHandler";
@@ -876,6 +880,7 @@ export function CreateOrderModal({
     });
   // SA-626c: a flagged line holds its default unit from the moment it is added, not only once its row mounts.
   const resolveDefaultUnits = useDefaultUnitResolver(lineItems, setLineItems, tierForProduct);
+  const resolvingRef = React.useRef(false);
 
   const setDiscountedPrice = (tempId: string, value: number | null) => {
     setLineItems((prev) =>
@@ -1143,18 +1148,24 @@ export function CreateOrderModal({
     // SA-626c: any line still waiting for its default unit is resolved FIRST (never sent as the pack/case by default);
     // nothing pending = the synchronous path, unchanged.
     if (!lineItems.some(isPendingDefaultUnit)) return doSubmitOrder(data, options, lineItems);
-    void resolveDefaultUnits(lineItems).then(({ lines, blocked }) => {
-      if (blocked.length) {
-        setMergePrompt(null);
-        toast({
-          title: "Couldn't load the selling units. Check your connection and try again.",
-          variant: "error",
-        });
-        return;
-      }
-      setLineItems(() => lines);
-      doSubmitOrder(data, options, lines);
-    });
+    if (resolvingRef.current) return; // a double click while the units load must not submit twice
+    resolvingRef.current = true;
+    void resolveDefaultUnits(lineItems)
+      .then(({ lines, blocked }) => {
+        if (blocked.length) {
+          setMergePrompt(null);
+          toast({
+            title: "Couldn't load the selling units. Check your connection and try again.",
+            variant: "error",
+          });
+          return;
+        }
+        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines)); // keeps edits made while this waited
+        doSubmitOrder(data, options, lines);
+      })
+      .finally(() => {
+        resolvingRef.current = false;
+      });
   };
 
   const doSubmitOrder = (

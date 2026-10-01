@@ -41,7 +41,7 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
-import { applyUnitOption } from "../lib/default-unit-line";
+import { applyUnitOption, mergeResolvedDefaults } from "../lib/default-unit-line";
 import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
@@ -1783,7 +1783,7 @@ function ProductPickView({
       showToast("Couldn't load the selling units. Check your connection and try again.");
       return endSubmit();
     }
-    setItems(() => lines);
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
     const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
