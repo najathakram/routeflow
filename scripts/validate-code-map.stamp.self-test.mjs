@@ -44,6 +44,7 @@ import { realpathSync as realpathForTmp } from "node:fs";
 // process.cwd() report the resolved path — fixture paths compared against either were never equal.
 const tmpdir = () => realpathForTmp(osTmpdir());
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -69,22 +70,7 @@ const git = (args, cwd) => {
   // default — a scratch repo's own `git add`/`git init` then resolves against the OUTER
   // repo's gitdir instead of `cwd`, failing with "fatal: this operation must be run in a
   // work tree". Scrub them the same way runScript() below already scrubs CI/GITHUB_REF*.
-  const env = { ...process.env };
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_COMMON_DIR;
-  delete env.GIT_PREFIX;
-  // The remaining five from the 2026-09-04 bugs.mjs incident's prescribed list
-  // (reference_git_worktreeconfig_bare_trap): not observed to cause THIS
-  // incident, but git honors all ten from a hook's environment, so scrubbing
-  // only the two that happened to bite is how a sibling script (this one)
-  // repeated the exact same class of bug ten days later.
-  delete env.GIT_OBJECT_DIRECTORY;
-  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
-  delete env.GIT_QUARANTINE_PATH;
-  delete env.GIT_NAMESPACE;
-  delete env.GIT_CEILING_DIRECTORIES;
+  const env = scrubbedGitEnv();
   const res = spawnSync("git", ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=", ...args], {
     cwd,
     encoding: "utf8",
@@ -106,20 +92,9 @@ const git = (args, cwd) => {
 // off-master scratch branch as master. The scratch repo's own branch name
 // (set explicitly per case below) is the only thing that should decide it.
 const runScript = (scriptPath, args, cwd) => {
-  const env = { ...process.env, CI: "", GITHUB_REF_NAME: "", GITHUB_REF: "" };
+  const env = { ...scrubbedGitEnv(), CI: "", GITHUB_REF_NAME: "", GITHUB_REF: "" };
   // Same GIT_DIR/GIT_WORK_TREE leak as the git() helper above: validate-code-map.mjs
-  // shells out to git itself, so without this it silently resolves HEAD/ancestry
-  // against the outer repo instead of the scratch repo passed as `cwd`.
-  delete env.GIT_DIR;
-  delete env.GIT_WORK_TREE;
-  delete env.GIT_INDEX_FILE;
-  delete env.GIT_COMMON_DIR;
-  delete env.GIT_PREFIX;
-  delete env.GIT_OBJECT_DIRECTORY;
-  delete env.GIT_ALTERNATE_OBJECT_DIRECTORIES;
-  delete env.GIT_QUARANTINE_PATH;
-  delete env.GIT_NAMESPACE;
-  delete env.GIT_CEILING_DIRECTORIES;
+  // shells out to git itself, so it must not resolve against the outer repo.
   return spawnSync(process.execPath, [scriptPath, ...args], {
     cwd,
     encoding: "utf8",

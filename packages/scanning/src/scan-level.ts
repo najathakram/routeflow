@@ -29,6 +29,14 @@ export interface ScanLevelProduct {
   barcodes?: readonly ScanBarcodeRow[] | null;
 }
 
+/**
+ * SA-626: a code that resolves at BOTH levels is "shared". The ONE rule web and mobile both call to decide
+ * whether a new scan line may start on the product's default selling unit (a box-only / unit-only code never does).
+ */
+export function isSharedScanCode(levels: readonly SellLevel[]): boolean {
+  return levels.includes("BOX") && levels.includes("UNIT");
+}
+
 /** Level for a staff scan, given the set of levels the hit code has on the product. Total. */
 export function resolveScanSellLevel(
   product: { unitsPerBox?: number | null },
@@ -40,41 +48,6 @@ export function resolveScanSellLevel(
   if (box) return "BOX";
   if (unit) return "UNIT";
   return defaultSellLevel({ unitsPerBox: product.unitsPerBox });
-}
-
-/**
- * #2784: the defaults a SHARED code honours, most specific first. Rung 1 is the CUSTOMER's default unit (no per-customer
- * store exists yet, R3, so callers pass nothing today); rung 2 is the product's tenant-flagged `isDefaultSelling` level
- * (`defaultSellingLabel` in @routeflow/pricing, the one resolver). A blank/absent label is no rung.
- */
-export interface ScanDefaultUnits {
-  customerDefaultUnitLabel?: string | null;
-  defaultUnitLabel?: string | null;
-}
-
-/** The level plus, ONLY for a shared code with a default unit, the unit label the line should start on. */
-export interface ScanSellChoice {
-  level: SellLevel;
-  unitLabel?: string;
-}
-
-/**
- * Additive sibling of `resolveScanSellLevel`: the LEVEL is still the same total BOX|UNIT answer (the code decides); a
- * code that resolves at BOTH levels additionally returns the default unit label (customer default, else the tenant's
- * flagged default). With no default args the output is exactly `{ level: resolveScanSellLevel(...) }`: a box-only code
- * stays BOX and a unit-only code stays UNIT whatever the defaults say.
- */
-export function resolveScanSellChoice(
-  product: { unitsPerBox?: number | null },
-  levels: readonly SellLevel[],
-  defaults?: ScanDefaultUnits | null,
-): ScanSellChoice {
-  const level = resolveScanSellLevel(product, levels);
-  const shared = levels.includes("BOX") && levels.includes("UNIT");
-  if (!shared) return { level };
-  const pick = (v: string | null | undefined) => (typeof v === "string" && v.trim() ? v : null);
-  const unitLabel = pick(defaults?.customerDefaultUnitLabel) ?? pick(defaults?.defaultUnitLabel);
-  return unitLabel ? { level, unitLabel } : { level };
 }
 
 // SA-580a: buyer surfaces (mobile (customer)/scan.tsx) add the default selling unit only, whatever

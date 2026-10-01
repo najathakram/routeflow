@@ -111,3 +111,18 @@ export function toNumber(v: number | string | null | undefined): number {
 export function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
   return line?.unitPrice != null ? line.unitPrice : basePrice;
 }
+
+/**
+ * Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only a genuine one-time DISCOUNT (below the
+ * tier price) or UPSELL (above list) pre-fills, never over a SPECIAL tier price (already the customer's permanent
+ * price). An equal-to-tier remembered price does not pre-fill (strict < >).
+ */
+export function rememberedPricePrefill(
+  hist: { lastPrice: number } | null | undefined,
+  listPrice: number,
+  tierPrice: number,
+  isSpecial: boolean,
+): number | undefined {
+  if (isSpecial || hist == null) return undefined;
+  return hist.lastPrice < tierPrice || hist.lastPrice > listPrice ? hist.lastPrice : undefined;
+}

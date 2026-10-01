@@ -131,6 +131,17 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     expect(mockReplace).toHaveBeenCalledWith("/dashboard");
   });
 
+  it.each(["DRIVER", "CUSTOMER"])("bounces a %s off a PO detail page to /dashboard", (role) => {
+    mockUser = { role };
+    mockPathname = "/purchase-orders/po-1";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
   it("lets an OPERATOR stay on /purchase-orders", () => {
     mockPathname = "/purchase-orders";
     render(

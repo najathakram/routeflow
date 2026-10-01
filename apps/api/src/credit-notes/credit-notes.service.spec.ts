@@ -1884,6 +1884,31 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
     });
 
+    it("#2848: an expiry change on a note whose source invoice was deleted is a 409; a reason edit still works", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({
+        id: "cn-1",
+        status: "ISSUED",
+        reason: "r",
+        expiresAt: null,
+      });
+      prisma.auditLog.findFirst.mockResolvedValue({ id: "al-1" });
+
+      await expect(
+        service.updateCreditNote("cn-1", { expiresAt: "2999-01-01T00:00:00.000Z" }, "u"),
+      ).rejects.toThrow(/source invoice was deleted/);
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      // PR-C: the refusal carries the typed code (the UI maps it to fixed copy), not just the text.
+      const err: any = await service
+        .updateCreditNote("cn-1", { expiresAt: "2999-01-01T00:00:00.000Z" }, "u")
+        .catch((e: unknown) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+
+      prisma.creditNote.update.mockResolvedValue({ id: "cn-1", reason: "new" });
+      await service.updateCreditNote("cn-1", { reason: "new" }, "u");
+      expect(prisma.creditNote.update).toHaveBeenCalledTimes(1);
+    });
+
     it("insertCreditNoteInTx rounds the amount to cents on the write", async () => {
       prisma.creditNote.create.mockResolvedValue({ id: "cn-new" });
       await service.insertCreditNoteInTx(

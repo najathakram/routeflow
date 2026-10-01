@@ -4,6 +4,7 @@ import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
 import {
   levelsForScannedCode,
+  isSharedScanCode,
   resolveScanSellLevel,
   scanMatchIsForCode,
   type ScanBarcodeRow,
@@ -65,8 +66,7 @@ export function scanLevelsForHit(code: string, product: any): SellLevel[] {
 
 /** #2784: a code that resolves at BOTH levels is "shared"; only then may the new line start on the default unit. */
 export function scanCodeIsShared(code: string, product: any): boolean {
-  const levels = scanLevelsForHit(code, product);
-  return levels.includes("BOX") && levels.includes("UNIT");
+  return isSharedScanCode(scanLevelsForHit(code, product));
 }
 
 export function scanLevelForHit(code: string, product: any): SellLevel {
@@ -156,9 +156,11 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
       // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
-      const added = scanCodeIsShared(code, result.product)
-        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
-        : deps.addLineItem(result.product, level);
+      // SA-626a: a multi-match (first row wins) is a picker-style pick, so it starts on the default unit too.
+      const added =
+        result.ambiguous || scanCodeIsShared(code, result.product)
+          ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+          : deps.addLineItem(result.product, level);
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a

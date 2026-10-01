@@ -536,6 +536,8 @@ export class VendorBillsService {
                 ? {
                     createMany: {
                       data: dto.items.map((item: any) => ({
+                        // Stamped explicitly: a nested write does not get the tenant extension's stamp.
+                        tenantId: this.prisma.getTenantId(),
                         productId: item.productId || null,
                         description: item.description || item.name || "",
                         qty: new Prisma.Decimal(item.qty || 1),
@@ -997,7 +999,10 @@ export class VendorBillsService {
 
       // Delete existing items and recreate if items provided
       if (dto.items !== undefined) {
-        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+        // Parent-scoped, not `tx.vendorBillItem.deleteMany`: lines created nested by create() carry
+        // a NULL tenantId, so the tenant-scoped child delete cannot see them and the old line
+        // stayed beside the new one. The bill's own tenant scope makes this nested delete safe.
+        await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       }
 
       // A DRAFT bill can already be carrying auto-applied supplier credit —
@@ -1035,6 +1040,7 @@ export class VendorBillsService {
                     // an edit used to silently drop sku/packSize/lineTotal,
                     // losing the case-size the receive conversion depends on.
                     data: dto.items.map((item: any) => ({
+                      tenantId: this.prisma.getTenantId(),
                       productId: item.productId || null,
                       description: item.description || item.name || "",
                       qty: new Prisma.Decimal(item.qty || 1),
@@ -2335,7 +2341,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     // F10-004: reject non-positive amounts. A negative/zero payment would reduce
     // totalPaid and could flip the bill's status, corrupting AP balances. The
     // controller DTO (@IsPositive) covers HTTP; this guards direct callers too.
-    if (!(Number(dto.amount) > 0)) {
+    if (!(roundMoney(Number(dto.amount)) > 0)) {
       throw new BadRequestException("Payment amount must be greater than zero.");
     }
     return this.prisma.tenantTransaction(async (tx) => {
@@ -2657,7 +2663,9 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       // that money back before its payment rows are destroyed with the bill.
       await this.refundDrawnSupplierCredits(tx, id);
       await tx.billPayment.deleteMany({ where: { vendorBillId: id } });
-      await tx.vendorBillItem.deleteMany({ where: { vendorBillId: id } });
+      // Parent-scoped like update() (consistency, and defensive: the FK already cascades, but a
+      // child-scoped delete would miss NULL-tenant legacy lines).
+      await tx.vendorBill.update({ where: { id }, data: { items: { deleteMany: {} } } });
       await tx.vendorBill.delete({ where: { id } });
     });
     return { success: true };
@@ -2684,7 +2692,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
           await this.refundDrawnSupplierCredits(tx, billId);
         }
         await tx.billPayment.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
-        await tx.vendorBillItem.deleteMany({ where: { vendorBillId: { in: deletableIds } } });
+        for (const billId of deletableIds) {
+          await tx.vendorBill.update({
+            where: { id: billId },
+            data: { items: { deleteMany: {} } },
+          });
+        }
         await tx.vendorBill.deleteMany({ where: { id: { in: deletableIds } } });
       }
       return {

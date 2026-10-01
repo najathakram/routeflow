@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   BadRequestException,
   ConflictException,
@@ -357,7 +358,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer) throw new ForbiddenException("Customer record not found");
+      if (!customer)
+        throw new ForbiddenException({
+          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
+          message: "Customer record not found",
+        });
       where.customerId = customer.id;
     } else if (customerId) {
       where.customerId = customerId;
@@ -1495,7 +1500,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer) throw new ForbiddenException("Customer record not found");
+      if (!customer)
+        throw new ForbiddenException({
+          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
+          message: "Customer record not found",
+        });
       customerId = customer.id;
     }
 

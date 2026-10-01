@@ -50,16 +50,16 @@ The invoice scanner is the architectural template. Mirror it closely.
   `SECRET_KEYS`) with an `ANTHROPIC_API_KEY` env fallback. Missing key ⇒ plain
   `BadRequestException` with **no** `code`.
 - **Typed error contract** (`vendor-bills.service.ts` ~1387-1440) — reproduce exactly:
-  | condition | exception | `code` |
-  |---|---|---|
-  | 401/403 from Anthropic | `BadRequestException` | `AI_KEY_INVALID` |
-  | non-retryable 4xx except 429 | `BadRequestException` | `AI_SCAN_REJECTED` |
-  | 429 / 5xx / network | `ServiceUnavailableException` (503) | `AI_UNAVAILABLE` |
-  | non-text block, or `JSON.parse` throws | `UnprocessableEntityException` (422) | `AI_PARSE_FAILED` |
-  ⚠️ **The web client only special-cases `AI_KEY_INVALID` today**
-  (`ScanInvoiceModal.tsx` ~703-728) — the other three fall through to a raw message.
-  The new review screen must branch on all four (notably: offer **Retry** only for
-  `AI_UNAVAILABLE`).
+  | condition                                                                          | exception                            | `code`             |
+  | ---------------------------------------------------------------------------------- | ------------------------------------ | ------------------ |
+  | 401/403 from Anthropic                                                             | `BadRequestException`                | `AI_KEY_INVALID`   |
+  | non-retryable 4xx except 429                                                       | `BadRequestException`                | `AI_SCAN_REJECTED` |
+  | 429 / 5xx / network                                                                | `ServiceUnavailableException` (503)  | `AI_UNAVAILABLE`   |
+  | non-text block, or `JSON.parse` throws                                             | `UnprocessableEntityException` (422) | `AI_PARSE_FAILED`  |
+  | ⚠️ **The web client only special-cases `AI_KEY_INVALID` today**                    |
+  | (`ScanInvoiceModal.tsx` ~703-728) — the other three fall through to a raw message. |
+  | The new review screen must branch on all four (notably: offer **Retry** only for   |
+  | `AI_UNAVAILABLE`).                                                                 |
 - **File attachment** (~1282-1323): PDFs as
   `{type:"document", source:{type:"base64", media_type:"application/pdf", data}}`;
   HEIC/HEIF converted server-side via `sharp(buf).rotate().jpeg({quality:85})` **before**

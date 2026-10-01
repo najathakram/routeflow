@@ -18,10 +18,13 @@ describe("mobile default selling unit wiring (#2784)", () => {
   });
 
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
-    expect(screen).toMatch(/startOnDefault\?: boolean/);
-    expect(screen).toMatch(/if \(isNew && startOnDefault\) line\.startOnDefaultUnit = line\.qty;/);
+    expect(screen).toMatch(/dflt\?: boolean/);
+    expect(screen).toMatch(/if \(isNew && dflt\) line\.startOnDefaultUnit = line\.qty;/);
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true\)/);
-    expect(screen).not.toMatch(/finishAccept[\s\S]{0,120}startOnDefault/);
+    // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
+    // box-only / unit-only code: finishAccept forwards `opts?.startOnDefault`, which the ladder sets for shared codes.
+    expect(screen).toMatch(/addOne\(product\.id, product, level, opts\?\.startOnDefault\)/);
+    expect(screen).toMatch(/scanAcceptOpts\(code, match\)/); // the settled-search auto-add uses the ladder's helper
   });
 
   it("CartRow passes the line's flag to the picker, which applies defaultStartOption once", () => {
