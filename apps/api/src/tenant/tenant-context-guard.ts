@@ -23,7 +23,7 @@ export function readEnforceFlag(env: NodeJS.ProcessEnv = process.env): boolean {
   return v === "true" || v === "1";
 }
 
-type Violation = "MISSING" | "SUPER_ADMIN_CREATE";
+type Violation = "MISSING" | "SUPER_ADMIN_CREATE" | "NESTED_CROSS_TENANT" | "NESTED_DEPTH";
 const WINDOW_MS = 60_000;
 const STACK_FRAMES = 5;
 /** Dark mode captures a context-less call site at most this often per kind (a stack per hit is a hot-path cost). */
@@ -75,6 +75,23 @@ export class TenantContextGuard {
     this.lastCapture.set(kind, t);
     const w = site();
     this.warnOnce("MISSING", `${kind}|${w}`, `kind=${kind} at=${w}`);
+  }
+
+  /** Whether this guard throws (TENANT_CONTEXT_ENFORCE) instead of warning. */
+  get enforcing(): boolean {
+    return this.enforce;
+  }
+
+  /**
+   * SA-620c: a nested write the tenant walker had to repair (DARK): a cross-tenant child overridden with the
+   * context tenant, or the depth cap hit. A warn + counter; the walker itself throws when enforced, so this is
+   * only reached in dark mode. `detail` is model + path: never a tenant id or row data.
+   */
+  nestedViolation(kind: "CROSS_TENANT_CHILD" | "DEPTH", detail: string): void {
+    const v: Violation = kind === "DEPTH" ? "NESTED_DEPTH" : "NESTED_CROSS_TENANT";
+    this.report(v, detail, `nested=${kind} ${detail}`, () => {
+      throw new TenantContextMissingError(`Nested ${kind}: ${detail}`);
+    });
   }
 
   /** A SUPER_ADMIN tenant-owned create with no explicit tenantId (the L-124 null-tenant class). */

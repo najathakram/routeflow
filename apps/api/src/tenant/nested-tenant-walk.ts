@@ -20,7 +20,10 @@ export class NestedTenantWalkError extends Error {
   }
 }
 
+/** Soft cap: nesting deeper than this is reported (dark) / refused (enforced). */
 const MAX_DEPTH = 8;
+/** Hard cap: protection against cyclic or pathological input; refused in EVERY mode (the dark check stops silently). */
+const HARD_DEPTH = 64;
 
 interface ModelTable {
   tenantOwned: boolean;
@@ -73,8 +76,19 @@ type Visit = (
   path: string,
 ) => Record<string, unknown>;
 
-/** `throw`: stamping must never silently stop (fail loud). `stop`: the dark check reports and never breaks a write. */
-type DepthMode = "throw" | "stop";
+/**
+ * What the TENANT path does about the two nested anomalies (SA-620c). A MISSING tenantId is always filled in
+ * silently (never refused). A cross-tenant child and the depth cap are DARK by default: the child is
+ * overridden with the context tenant (mirroring the top level) / the walk stops, and `report` is called (a
+ * warn + counter); with `enforce` both THROW NestedTenantWalkError instead. Both flip on TENANT_CONTEXT_ENFORCE.
+ */
+export interface NestedPolicy {
+  enforce: boolean;
+  report(kind: "CROSS_TENANT_CHILD" | "DEPTH", detail: string): void;
+}
+
+/** Called past the soft cap (and again with hard=true past the hard cap). Returns whether the walk may go on. */
+type OnTooDeep = (path: string, hard: boolean) => boolean;
 
 /** Walk one model's data object: every relation key's write operations, recursively. */
 function walkData(
@@ -83,15 +97,10 @@ function walkData(
   visit: Visit,
   path: string,
   depth: number,
-  mode: DepthMode,
+  onTooDeep: OnTooDeep,
 ): unknown {
   if (!isObj(data)) return data;
-  if (depth > MAX_DEPTH) {
-    if (mode === "stop") return data;
-    throw new NestedTenantWalkError(
-      `nested write exceeds the depth limit of ${MAX_DEPTH} relations at ${path}: refusing to leave rows unstamped`,
-    );
-  }
+  if (depth > MAX_DEPTH && !onTooDeep(path, depth > HARD_DEPTH)) return data;
   // A child created through a Tenant relation gets its tenant from the relation itself (the Prisma
   // `*WithoutTenant` create inputs have no tenantId scalar): nothing to stamp or check below a Tenant.
   if (model === "Tenant") return data;
@@ -101,7 +110,7 @@ function walkData(
   for (const [key, value] of Object.entries(data)) {
     const target = table.relations.get(key);
     if (!target || !isObj(value)) continue;
-    const next = walkOps(target, value, visit, `${path}.${key}`, depth + 1, mode);
+    const next = walkOps(target, value, visit, `${path}.${key}`, depth + 1, onTooDeep);
     if (next !== value) (out ??= { ...data })[key] = next;
   }
   return out ?? data;
@@ -114,7 +123,7 @@ function walkOps(
   visit: Visit,
   path: string,
   depth: number,
-  mode: DepthMode,
+  onTooDeep: OnTooDeep,
 ): Record<string, unknown> {
   let out: Record<string, unknown> | null = null;
   const set = (k: string, v: unknown) => {
@@ -127,7 +136,7 @@ function walkOps(
   const child = (payload: unknown, p: string): unknown => {
     if (!isObj(payload)) return payload;
     const stamped = visit(target, payload, p);
-    return walkData(target, stamped, visit, p, depth, mode);
+    return walkData(target, stamped, visit, p, depth, onTooDeep);
   };
 
   for (const op of Object.keys(ops)) {
@@ -156,7 +165,7 @@ function walkOps(
         (e, ep) => {
           if (!isObj(e)) return e;
           const c = child(e.create, `${ep}.create`);
-          const u = walkData(target, e.update, visit, `${ep}.update`, depth, mode);
+          const u = walkData(target, e.update, visit, `${ep}.update`, depth, onTooDeep);
           return c === e.create && u === e.update ? e : { ...e, create: c, update: u };
         },
         p,
@@ -168,11 +177,11 @@ function walkOps(
         (e, ep) => {
           if (!isObj(e)) return e;
           if (isObj(e.data)) {
-            const d = walkData(target, e.data, visit, `${ep}.data`, depth, mode);
+            const d = walkData(target, e.data, visit, `${ep}.data`, depth, onTooDeep);
             return d === e.data ? e : { ...e, data: d };
           }
           // to-one `update: { ...data }` shorthand
-          return op === "update" ? walkData(target, e, visit, ep, depth, mode) : e;
+          return op === "update" ? walkData(target, e, visit, ep, depth, onTooDeep) : e;
         },
         p,
       );
@@ -184,25 +193,55 @@ function walkOps(
 }
 
 /**
- * The TENANT path: returns `data` with every nested tenant-owned create stamped with `tenantId`.
- * An explicit tenantId on a child that differs from `tenantId` throws (a cross-tenant write).
+ * The TENANT path: returns `data` with every nested tenant-owned create stamped with `tenantId`. A missing
+ * tenantId is filled in. For a cross-tenant child / the depth cap `policy` decides (see NestedPolicy); with no
+ * policy it is STRICT (enforced: throws, naming the path).
  */
-export function stampNestedTenant(model: string, data: unknown, tenantId: string): any {
+export function stampNestedTenant(
+  model: string,
+  data: unknown,
+  tenantId: string,
+  policy: NestedPolicy = { enforce: true, report: () => undefined },
+): any {
+  // One report per kind per walk (a 1,000-row createMany with a foreign tenantId is ONE warn, not 1,000);
+  // the site names the model and path with array indices stripped.
+  let crossReported = false;
+  let deepReported = false;
   return walkData(
     model,
     data,
     (childModel, payload, path) => {
       if (!isTenantOwnedModel(childModel)) return payload;
       const given = payload.tenantId;
-      if (given !== undefined && given !== null && given !== tenantId)
-        throw new NestedTenantWalkError(
-          `cross-tenant nested write: ${childModel} at ${path} carries a tenantId that differs from the tenant context`,
-        );
+      if (given !== undefined && given !== null && given !== tenantId) {
+        if (policy.enforce)
+          throw new NestedTenantWalkError(
+            `cross-tenant nested write: ${childModel} at ${path} carries a tenantId that differs from the tenant context`,
+          );
+        if (!crossReported) {
+          crossReported = true;
+          policy.report("CROSS_TENANT_CHILD", `${childModel} at ${path.replace(/\[\d+\]/g, "[]")}`);
+        }
+        return { ...payload, tenantId }; // dark: override (as the top level does)
+      }
       return given === tenantId ? payload : { ...payload, tenantId };
     },
     "data",
     0,
-    "throw",
+    (path, hard) => {
+      if (hard)
+        throw new NestedTenantWalkError(
+          `nested write exceeds the hard limit of ${HARD_DEPTH} relations at ${path}`,
+        );
+      const detail = `nested write exceeds the depth limit of ${MAX_DEPTH} relations at ${path.replace(/\[\d+\]/g, "[]")}`;
+      if (policy.enforce)
+        throw new NestedTenantWalkError(`${detail}: refusing to leave rows unstamped`);
+      if (!deepReported) {
+        deepReported = true;
+        policy.report("DEPTH", detail); // dark: report once and KEEP stamping (stopping would leave NULL-tenant rows)
+      }
+      return true;
+    },
   );
 }
 
@@ -225,7 +264,7 @@ export function findNestedWithoutTenant(
     },
     "data",
     0,
-    "stop",
+    (_path, hard) => !hard, // the dark check never breaks a write: it goes on past the soft cap and stops at the hard one
   );
   return found;
 }

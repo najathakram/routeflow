@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import {
+  type NestedPolicy,
   NestedTenantWalkError,
   findNestedWithoutTenant,
   isTenantOwnedModel,
@@ -283,5 +284,114 @@ describe("the walker is memoized (SA-620 case 6)", () => {
     for (let i = 0; i < 200; i++) stamp("Invoice", { items: { create: { q: i } } });
     expect(walkTablesBuiltCount()).toBe(before);
     expect(before).toBe(1);
+  });
+});
+
+describe("SA-620c: the dark/enforced policy for a cross-tenant child and the depth cap", () => {
+  const dark = () => {
+    const report = jest.fn();
+    const policy: NestedPolicy = { enforce: false, report };
+    return { policy, report };
+  };
+  const enforced = () => {
+    const report = jest.fn();
+    return { policy: { enforce: true, report } as NestedPolicy, report };
+  };
+  const deepData = () => {
+    const rel = dm.find((m) => m.name === "Order")!.fields.find((f) => f.type === "OrderItem")!;
+    const back = dm.find((m) => m.name === "OrderItem")!.fields.find((f) => f.type === "Order")!;
+    let data: any = { note: "leaf" };
+    for (let i = 0; i < 20; i++)
+      data = { [rel.name]: { create: { [back.name]: { create: data } } } };
+    return data;
+  };
+
+  it("a MISSING tenantId is filled in silently in both modes (never refused, never reported)", () => {
+    for (const { policy, report } of [dark(), enforced()]) {
+      const out: any = stampNestedTenant(
+        "VendorBill",
+        { items: { create: [{ q: 1 }] } },
+        T,
+        policy,
+      );
+      expect(out.items.create[0].tenantId).toBe(T);
+      expect(report).not.toHaveBeenCalled();
+    }
+  });
+
+  it("DARK: a cross-tenant child is OVERRIDDEN with the context tenant and reported, not thrown (mirrors the top level)", () => {
+    const { policy, report } = dark();
+    const out: any = stampNestedTenant(
+      "VendorBill",
+      { items: { create: { tenantId: "other" } } },
+      T,
+      policy,
+    );
+    expect(out.items.create.tenantId).toBe(T);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0][0]).toBe("CROSS_TENANT_CHILD");
+    expect(report.mock.calls[0][1]).toMatch(/VendorBillItem at data\.items\.create/);
+    expect(JSON.stringify(report.mock.calls[0])).not.toContain("other"); // never the foreign tenant id
+  });
+
+  it("ENFORCED: a cross-tenant child throws, naming the path", () => {
+    const { policy } = enforced();
+    expect(() =>
+      stampNestedTenant("VendorBill", { items: { create: { tenantId: "other" } } }, T, policy),
+    ).toThrow(/data\.items\.create/);
+  });
+
+  it("DARK: nesting beyond the soft cap (8) is REPORTED but still STAMPED (stopping would leave NULL-tenant rows); ENFORCED it throws", () => {
+    const d = dark();
+    const out: any = stampNestedTenant("Order", deepData(), T, d.policy);
+    expect(d.report).toHaveBeenCalledWith("DEPTH", expect.stringMatching(/data\./));
+    // every created row below the soft cap carries the tenant too
+    const rel = dm
+      .find((m) => m.name === "Order")!
+      .fields.find((f) => f.type === "OrderItem")!.name;
+    const back = dm
+      .find((m) => m.name === "OrderItem")!
+      .fields.find((f) => f.type === "Order")!.name;
+    let node: any = out;
+    let stamped = 0;
+    for (let i = 0; i < 20; i++) {
+      const item = node[rel].create;
+      expect(item.tenantId).toBe(T);
+      stamped++;
+      node = item[back].create;
+      expect(node.tenantId).toBe(T);
+      stamped++;
+    }
+    expect(stamped).toBe(40);
+    const e = enforced();
+    expect(() => stampNestedTenant("Order", deepData(), T, e.policy)).toThrow(
+      NestedTenantWalkError,
+    );
+  });
+
+  it("a pathological nesting beyond the HARD cap (64) throws in EVERY mode, naming the path", () => {
+    const rel = dm.find((m) => m.name === "Order")!.fields.find((f) => f.type === "OrderItem")!;
+    const back = dm.find((m) => m.name === "OrderItem")!.fields.find((f) => f.type === "Order")!;
+    let data: any = { note: "leaf" };
+    for (let i = 0; i < 40; i++)
+      data = { [rel.name]: { create: { [back.name]: { create: data } } } };
+    expect(() => stampNestedTenant("Order", data, T, dark().policy)).toThrow(/hard limit/);
+    expect(() => stampNestedTenant("Order", data, T, enforced().policy)).toThrow(
+      NestedTenantWalkError,
+    );
+  });
+
+  it("reports once per walk per kind, not once per row (a 1000-row createMany with foreign tenants is one report)", () => {
+    const { policy, report } = dark();
+    const rows = Array.from({ length: 1000 }, () => ({ q: 1, tenantId: "other" }));
+    const out: any = stampNestedTenant(
+      "VendorBill",
+      { items: { createMany: { data: rows } } },
+      T,
+      policy,
+    );
+    expect(out.items.createMany.data.every((r: any) => r.tenantId === T)).toBe(true);
+    expect(report).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0][1]).not.toMatch(/\[\d+\]/); // no per-row index in the site
   });
 });

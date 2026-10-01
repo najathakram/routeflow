@@ -13,9 +13,9 @@ import { NestedTenantWalkError, isTenantOwnedModel } from "../tenant/nested-tena
  * are driven directly with a spy standing in for the query.
  */
 describe("nested tenant stamping is applied everywhere (SA-620 case 4/5)", () => {
-  const make = () => {
+  const make = (enforce = false) => {
     const ctx = new TenantContextService();
-    const guard = new TenantContextGuard({ enforce: false, log: { warn: jest.fn() } });
+    const guard = new TenantContextGuard({ enforce, log: { warn: jest.fn() } });
     return { prisma: new PrismaService(ctx, guard), guard };
   };
   const handler = (prisma: PrismaService) =>
@@ -58,10 +58,28 @@ describe("nested tenant stamping is applied everywhere (SA-620 case 4/5)", () =>
     }
   });
 
-  it("extension: an explicit DIFFERENT tenantId on a nested child throws before the query", async () => {
+  it("extension, DARK: an explicit DIFFERENT tenantId on a nested child is overridden with the context tenant and reported (not thrown)", async () => {
+    const m = make();
+    const spy = jest.spyOn(m.guard, "nestedViolation");
+    const query = jest.fn().mockResolvedValue("ok");
+    await handler(m.prisma)({
+      model: "VendorBill",
+      operation: "create",
+      args: { data: { items: { create: { tenantId: "other" } } } },
+      query,
+    });
+    expect(query.mock.calls[0][0].data.items.create.tenantId).toBe("t-1");
+    expect(spy).toHaveBeenCalledWith(
+      "CROSS_TENANT_CHILD",
+      expect.stringContaining("VendorBillItem"),
+    );
+  });
+
+  it("extension, ENFORCED: the same child throws before the query", async () => {
+    const m = make(true);
     const query = jest.fn();
     await expect(
-      handler(make().prisma)({
+      handler(m.prisma)({
         model: "VendorBill",
         operation: "create",
         args: { data: { items: { create: { tenantId: "other" } } } },
@@ -69,6 +87,23 @@ describe("nested tenant stamping is applied everywhere (SA-620 case 4/5)", () =>
       }),
     ).rejects.toBeInstanceOf(NestedTenantWalkError);
     expect(query).not.toHaveBeenCalled();
+  });
+
+  it("tx proxy follows the same policy (dark overrides + reports; enforced throws)", async () => {
+    const dark = make();
+    const rawTx = { vendorBill: { create: jest.fn().mockResolvedValue(1) } };
+    const spy = jest.spyOn(dark.guard, "nestedViolation");
+    await (dark.prisma as any)
+      ._wrapTxWithTenant(rawTx, "t-1")
+      .vendorBill.create({ data: { items: { create: { tenantId: "other" } } } });
+    expect(rawTx.vendorBill.create.mock.calls[0][0].data.items.create.tenantId).toBe("t-1");
+    expect(spy).toHaveBeenCalled();
+    const strict = make(true);
+    expect(() =>
+      (strict.prisma as any)
+        ._wrapTxWithTenant({ vendorBill: { create: jest.fn() } }, "t-1")
+        .vendorBill.create({ data: { items: { create: { tenantId: "other" } } } }),
+    ).toThrow(NestedTenantWalkError);
   });
 
   it("extension: reads and deletes are untouched", async () => {

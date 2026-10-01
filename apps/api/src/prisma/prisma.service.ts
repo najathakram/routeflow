@@ -3,7 +3,11 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
 import { TenantContextService } from "../tenant/tenant-context.service";
-import { isTenantOwnedModel, stampNestedTenant } from "../tenant/nested-tenant-walk";
+import {
+  type NestedPolicy,
+  isTenantOwnedModel,
+  stampNestedTenant,
+} from "../tenant/nested-tenant-walk";
 import {
   TenantContextGuard,
   readEnforceFlag,
@@ -122,7 +126,17 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
    * auto-injects tenantId into all write/read operations. Used because
    * the PrismaPg driver adapter does not support $extends on transaction clients.
    */
+  /** SA-620c: what the nested walker does about a cross-tenant child / the depth cap (dark: report; enforced: throw). */
+  private get nestedPolicy(): NestedPolicy {
+    // `?.`: the isolation specs drive these methods off the bare prototype (no guard on `this`).
+    return {
+      enforce: this.tenantGuard?.enforcing ?? false,
+      report: (kind, detail) => this.tenantGuard?.nestedViolation(kind, detail),
+    };
+  }
+
   private _wrapTxWithTenant(rawTx: any, tenantId: string): any {
+    const nestedPolicy = this.nestedPolicy;
     // Every method a Prisma 7 model delegate exposes must land in exactly one of the
     // sets below or in the explicit throw at the bottom of the model proxy — nothing
     // may fall through unscoped. Enumerated from the generated client
@@ -193,7 +207,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                 if (method === "create") {
                   args = {
                     ...args,
-                    data: stampNestedTenant(modelClass, { ...args.data, tenantId }, tenantId),
+                    data: stampNestedTenant(
+                      modelClass,
+                      { ...args.data, tenantId },
+                      tenantId,
+                      nestedPolicy,
+                    ),
                   };
                 } else if (method === "createMany" || method === "createManyAndReturn") {
                   const data = Array.isArray(args.data)
@@ -212,9 +231,21 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                   // tenant id or a compound unique, so the gap is unexploited.
                   args = {
                     ...args,
-                    create: stampNestedTenant(modelClass, { ...args.create, tenantId }, tenantId),
+                    create: stampNestedTenant(
+                      modelClass,
+                      { ...args.create, tenantId },
+                      tenantId,
+                      nestedPolicy,
+                    ),
                     ...(args.update
-                      ? { update: stampNestedTenant(modelClass, args.update, tenantId) }
+                      ? {
+                          update: stampNestedTenant(
+                            modelClass,
+                            args.update,
+                            tenantId,
+                            nestedPolicy,
+                          ),
+                        }
                       : {}),
                   };
                 }
@@ -232,7 +263,10 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
                     method === "updateManyAndReturn") &&
                   args.data
                 )
-                  args = { ...args, data: stampNestedTenant(modelClass, args.data, tenantId) };
+                  args = {
+                    ...args,
+                    data: stampNestedTenant(modelClass, args.data, tenantId, nestedPolicy),
+                  };
                 return fn.call(modelTarget, args);
               };
             }
@@ -276,6 +310,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
   }
 
   private _tenantExtension(tenantId: string) {
+    const nestedPolicy = this.nestedPolicy;
     // ONE dispatch point, on purpose. Prisma COMPOSES a `$allModels.$allOperations`
     // handler with per-operation handlers rather than choosing between them — a named
     // handler's own `query(args)` call runs the catch-all next — so a fail-closed
@@ -311,7 +346,12 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
               case "create":
                 // SA-620: nested relation creates get the tenant too (one DMMF walker, everywhere).
-                args.data = stampNestedTenant(model, { ...args.data, tenantId }, tenantId);
+                args.data = stampNestedTenant(
+                  model,
+                  { ...args.data, tenantId },
+                  tenantId,
+                  nestedPolicy,
+                );
                 return query(args);
 
               case "createMany":
@@ -323,8 +363,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
 
               case "upsert":
                 args.where = { ...args.where, tenantId };
-                args.create = stampNestedTenant(model, { ...args.create, tenantId }, tenantId);
-                if (args.update) args.update = stampNestedTenant(model, args.update, tenantId);
+                args.create = stampNestedTenant(
+                  model,
+                  { ...args.create, tenantId },
+                  tenantId,
+                  nestedPolicy,
+                );
+                if (args.update)
+                  args.update = stampNestedTenant(model, args.update, tenantId, nestedPolicy);
                 return query(args);
 
               // An edit that adds lines (`update.data.items.create`) stamps the nested children too.
@@ -332,7 +378,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
               case "updateMany":
               case "updateManyAndReturn":
                 args.where = { ...args.where, tenantId };
-                if (args.data) args.data = stampNestedTenant(model, args.data, tenantId);
+                if (args.data)
+                  args.data = stampNestedTenant(model, args.data, tenantId, nestedPolicy);
                 return query(args);
 
               case "findMany":
