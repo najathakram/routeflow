@@ -16,8 +16,10 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "Part of this credit has been used somewhere it can't be taken back from here. Nothing was changed.",
   [API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM]:
     "That amount is more than the source invoice still allows to be credited.",
+  // On the CREDIT-NOTE screens this code means editing a note whose invoice was deleted (B949 / #2848); the invoice and order
+  // screens, where a restore is refused, show the server's staff message ("Void that credit note first, then try again").
   [API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE]:
-    "The invoice this credit came from is gone or can no longer be credited.",
+    "This credit note came from a deleted invoice, so it can't be changed. Void it instead.",
   [API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP]:
     "A credit without a source invoice can't be increased. Issue a separate credit instead.",
   [API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY]:
