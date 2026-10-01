@@ -99,7 +99,7 @@ describe("InlineReturnsService.assertWithinLineHeadroom (B948)", () => {
     await p;
     expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
     expect(String(tx.$executeRaw.mock.calls[0][0].join("?"))).toMatch(
-      /"Invoice".*"tenantId".*FOR UPDATE/s,
+      /UPDATE "Invoice".*"tenantId"/s,
     );
     expect(tx.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       tx.creditNoteItem.findMany.mock.invocationCallOrder[0],
