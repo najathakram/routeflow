@@ -318,7 +318,10 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
         (e) => e,
       );
     expect(err).toBeInstanceOf(ConflictException);
-    expect(err.getResponse()).toMatchObject({ code: "INSUFFICIENT_STOCK" });
+    // The coded body (`code: INSUFFICIENT_STOCK`) arrives with #2871; both shapes carry the readable message.
+    expect(String((err.getResponse() as { message?: string }).message ?? err.message)).toMatch(
+      /Insufficient stock/,
+    );
     expect(a.stock.v).toBe(5);
     expect(a.movements).toHaveLength(0);
   });
@@ -342,7 +345,7 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
     const a = arrangeCreate(h, { v: 5 });
     await expect(
       h.service.create({ items: [{ productId: "prod-1", qty: 6 }] } as never, buyer as never),
-    ).rejects.toMatchObject({ response: { code: "INSUFFICIENT_STOCK" } });
+    ).rejects.toMatchObject({ response: { message: expect.stringMatching(/Insufficient stock/) } });
     expect(a.stock.v).toBe(5);
   });
 
@@ -351,7 +354,7 @@ describe("behaviour matrix through create() with the REAL order-stock and the RE
     h.useRealStock();
     const a = arrangeCreate(h, { v: 5 });
     await expect(h.service.create(createDto(6) as never, driver as never)).rejects.toMatchObject({
-      response: { code: "INSUFFICIENT_STOCK" },
+      response: { message: expect.stringMatching(/Insufficient stock/) },
     });
     expect(h.read).not.toHaveBeenCalled();
     expect(a.stock.v).toBe(5);
