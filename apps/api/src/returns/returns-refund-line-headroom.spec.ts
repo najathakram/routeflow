@@ -77,6 +77,8 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
         amount: 100,
         items: [{ invoiceItemId: "line-a", amount: 100, qty: 1 }],
       }),
+      // receive() already reversed the returned regulated goods: the itemised refund must not reverse them again
+      { ledgerReversedByReturn: true },
     );
   });
 
