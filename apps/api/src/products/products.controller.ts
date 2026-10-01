@@ -26,8 +26,6 @@ import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
 import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
-import { CurrentUser } from "../auth/decorators/current-user.decorator";
-import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { ProductsService } from "./products.service";
 import { ProductsExportService } from "./products-export.service";
 import { streamCsv } from "./products-export.stream";
