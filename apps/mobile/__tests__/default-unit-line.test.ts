@@ -238,3 +238,37 @@ describe("SA-626c rulings A + B (owner ruling): a remembered price never decides
     expect(keepsDefaultStart({ qty: 1 }, true)).toBe(false); // an existing un-flagged line stays as it was
   });
 });
+
+describe("SA-626d: the history pre-fill is not an operator shape; the unit price scales from the TIER pack price", () => {
+  const PIECE = lvl({ label: "Bottle", factorToBase: 1, price: null, isDefaultSelling: true }); // derives from the pack
+  const prefilled = (): LineState => ({
+    qty: 1,
+    startOnDefaultUnit: 1,
+    unitPrice: 20, // remembered PACK price (below the $24 tier price)
+    priceSource: "history",
+  });
+
+  it("(3) the default unit's price derives from the TIER pack price ($24 / 12 = $2.00), never from the remembered $20", async () => {
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: prefilled() },
+      deps([PIECE, ...CASE_ONLY]),
+    );
+    expect(items.p1!.unitLabel).toBe("Bottle");
+    expect(items.p1!.unitBasePrice).toBe(2);
+  });
+
+  it("(4) an explicit pack pick re-applies the remembered pack price, and any other unit choice drops it", async () => {
+    const { items } = await resolvePendingDefaultUnits(
+      { p1: prefilled() },
+      deps([PIECE, ...CASE_ONLY]),
+    );
+    const [pack] = buildUnitOptions(product, [PIECE], 1);
+    const back = applyUnitOption(items.p1!, pack!);
+    expect(back.unitLabel).toBeUndefined();
+    expect(back).toMatchObject({ unitPrice: 20, priceSource: "history" });
+    expect(back.startOnDefaultUnit).toBeUndefined();
+    // an operator-typed price is NOT stashed: it is cleared by a unit choice exactly as before
+    const typed = applyUnitOption({ qty: 1, unitPrice: 9, priceSource: "operator" }, pack!);
+    expect(typed.unitPrice).toBeUndefined();
+  });
+});

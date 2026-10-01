@@ -3,6 +3,7 @@ import {
   applyUnitToLines,
   type DefaultUnitLine,
   isPendingDefaultUnit,
+  keepsDefaultStart,
   mergeResolvedLines,
   resolvePendingDefaultUnits,
   startLineOnDefault,
@@ -178,5 +179,62 @@ describe("mergeResolvedLines: an async resolve never overwrites what the operato
     const merged = mergeResolvedLines(cur, before, done);
     expect(merged[0]!.unitLabel).toBe("Bottle");
     expect(merged[1]).toBe(cur[1]);
+  });
+});
+
+describe("SA-626c rulings A + B and SA-626d (owner rulings): a remembered price never decides the unit", () => {
+  const PIECE = lvl({ label: "Bottle", factorToBase: 1, price: null, isDefaultSelling: true }); // derives from the pack
+  const remembered = (over: Record<string, unknown> = {}): TestLine =>
+    line({
+      priceType: "DISCOUNTED" as never,
+      discountedPrice: 20, // a remembered PACK price below the $24 tier price
+      unitPrice: 20,
+      ...over,
+    });
+
+  it("A: a history-prefilled (DISCOUNTED) line is still pending: the pre-fill is not an operator shape", () => {
+    expect(isPendingDefaultUnit(remembered())).toBe(true);
+    expect(isPendingDefaultUnit(remembered({ priceEdited: true }))).toBe(false); // a price the operator TYPED shapes it
+  });
+
+  it("A + 3: it starts on the default unit at the TIER-derived price ($24 / 12 = $2.00), the remembered $20 dropped", async () => {
+    const { lines } = await resolvePendingDefaultUnits([remembered()], deps([PIECE, CASE_LEVEL]));
+    expect(lines[0]).toMatchObject({
+      unitLabel: "Bottle",
+      unitPrice: 2,
+      startOnDefaultUnit: false,
+    });
+    expect(lines[0]!.discountedPrice).toBeUndefined();
+  });
+
+  it("4: an explicit pack pick afterwards re-applies the remembered pack price", async () => {
+    const { lines } = await resolvePendingDefaultUnits([remembered()], deps([PIECE, CASE_LEVEL]));
+    const [pack] = buildUnitOptions(
+      { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" },
+      [PIECE],
+      1,
+    );
+    const back = applyUnitToLines(lines, "t1", pack!, false, 1);
+    expect(back[0]!.unitLabel).toBeUndefined();
+    expect(back[0]).toMatchObject({ unitPrice: 20, discountedPrice: 20, priceType: "DISCOUNTED" });
+  });
+
+  it("B (boxed, qty = total pieces): two fast adds = 2 cases = 2 of the default unit", async () => {
+    const two = line({ qty: 24, boxes: 2, pieces: 0 });
+    const { lines } = await resolvePendingDefaultUnits([two], deps([BOTTLE, CASE_LEVEL]));
+    expect(lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+  });
+
+  it("B (not boxed): three fast adds = 3 of the default unit", async () => {
+    const three = line({ unitsPerBox: undefined, boxes: undefined, pieces: undefined, qty: 3 });
+    const { lines } = await resolvePendingDefaultUnits([three], deps([BOTTLE, CASE_LEVEL]));
+    expect(lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("B: a second default-start add to a pending line keeps the flag; an edited, un-flagged or box-only add consumes it", () => {
+    expect(keepsDefaultStart(line(), true)).toBe(true);
+    expect(keepsDefaultStart(line({ priceEdited: true }), true)).toBe(false);
+    expect(keepsDefaultStart(line({ startOnDefaultUnit: false }), true)).toBe(false);
+    expect(keepsDefaultStart(line(), false)).toBe(false);
   });
 });
