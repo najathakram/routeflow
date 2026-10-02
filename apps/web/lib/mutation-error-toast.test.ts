@@ -88,4 +88,23 @@ describe("handleMutationError (#1965)", () => {
       expect(toast).not.toHaveBeenCalled();
     });
   });
+
+  it("B964-2: a refused formula-led product name toasts the fixed 'Product name' copy, never the server text", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      axiosErr({
+        statusCode: 400,
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "productName",
+        message: "productName must not start with = + - @ or a tab/line break",
+      }),
+      { meta: undefined },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledWith({
+      title: "Product name can't start with =, +, -, @ or a tab/line break.",
+      variant: "error",
+    });
+  });
 });

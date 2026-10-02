@@ -110,7 +110,15 @@ describe("API error codes: local copy = shared list (#2163, L-072)", () => {
  * the constant. Posix-style paths.
  */
 const CONSUMER_ALLOWLIST: Record<string, string[]> = {
-  "apps/mobile/app/(customer)/orders/[id].tsx": ["CONCURRENT_UPDATE"],
+  "apps/mobile/app/(customer)/orders/[id].tsx": [
+    "CONCURRENT_UPDATE",
+    "CHANGE_WINDOW_CLOSED",
+    "EDIT_WINDOW_OPEN",
+  ],
+  "apps/mobile/app/(driver)/route/settlement.tsx": ["RUN_ALREADY_SETTLED"],
+  "apps/mobile/components/NewOrderScreen.tsx": ["MERGE_CHOICE_REQUIRED"],
+  "apps/mobile/lib/at-stop-cr-outcome.ts": ["CHANGE_REQUEST_ALREADY_RESOLVED"],
+  "apps/mobile/lib/credit-limit-error.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/mobile/lib/inline-return-submit-key.ts": [
     "INLINE_RETURN_ORDER_NOT_FOUND",
     "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
@@ -120,17 +128,43 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
   ],
   "apps/mobile/lib/queue-drain.ts": ["MERGE_IN_PROGRESS", "LOCK_UNAVAILABLE"],
+  "apps/mobile/lib/selling-restricted.ts": ["SELLING_RESTRICTED"],
   "apps/web/app/(dashboard)/_components/gates/PlanGateBoundary.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/finance/commissions/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/(dashboard)/orders/[id]/page.tsx": [
+    "CHANGE_REQUEST_ALREADY_RESOLVED",
+    "CHANGE_WINDOW_CLOSED",
+    "LINE_ALREADY_DELIVERED",
+    "STOP_ALREADY_COMPLETED",
+  ],
+  "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": ["MERGE_CHOICE_REQUIRED"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/buyer/portal/[seller]/orders/[id]/page.tsx": [
+    "CHANGE_WINDOW_CLOSED",
+    "EDIT_WINDOW_OPEN",
+  ],
+  "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
+  "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
+  "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
+  "apps/web/lib/mutation-error-toast.ts": [
+    "CHANGE_REQUEST_ALREADY_RESOLVED",
+    "CHANGE_WINDOW_CLOSED",
+    "EDIT_WINDOW_OPEN",
+    "LINE_ALREADY_DELIVERED",
+    "CREDIT_LIMIT_EXCEEDED",
+    "MERGE_CHOICE_REQUIRED",
+    "STOP_ALREADY_COMPLETED",
+    "SELLING_RESTRICTED",
+    "SELLING_RESTRICTIONS_NOT_READY",
+  ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 19;
+const CONSUMER_ALLOWLIST_TOTAL = 45;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -148,6 +182,16 @@ const READ_ONLY_STATUS_FILES = [
   "apps/web/components/ReadOnlyBanner.tsx",
 ];
 
+/**
+ * `SELLING_RESTRICTED` is ALSO a suspension REASON value (`reason: "SELLING_RESTRICTED"`, `suspendedReason: ...`) in recurring
+ * invoices and order templates: data, not an error code. A bare literal in these two files is that reason; the 409 body (in
+ * selling-restrictions.service.ts) goes through the constant, and neither file may spell it as a `code`.
+ */
+const SELLING_RESTRICTED_REASON_FILES = [
+  "apps/api/src/recurring-invoices/recurring-invoices.service.ts",
+  "apps/api/src/order-templates/order-templates.service.ts",
+];
+
 /** A READ_ONLY literal used as an error CODE: a property (`code: "READ_ONLY"`) or a comparison (`code === "READ_ONLY"`, `!==`, `==`). */
 const READ_ONLY_CODE_LITERAL = /\bcode\b\s*(?::|[!=]==?)\s*["'`]READ_ONLY/;
 
@@ -162,7 +206,10 @@ describe("API error codes: no bare string literal in production source (#2163)",
         .filter((s) => s.rel !== CONSTANTS_FILE && literal.test(s.text))
         .map((s) => posix(s.rel))
         .filter((rel) => !(CONSUMER_ALLOWLIST[rel] ?? []).includes(code))
-        .filter((rel) => !(key === "READ_ONLY" && READ_ONLY_STATUS_FILES.includes(rel)));
+        .filter((rel) => !(key === "READ_ONLY" && READ_ONLY_STATUS_FILES.includes(rel)))
+        .filter(
+          (rel) => !(key === "SELLING_RESTRICTED" && SELLING_RESTRICTED_REASON_FILES.includes(rel)),
+        );
       expect(offenders).toEqual([]);
     },
   );
@@ -195,6 +242,22 @@ describe("API error codes: no bare string literal in production source (#2163)",
       'where: { status: "READ_ONLY" }',
     ])
       expect(status).not.toMatch(READ_ONLY_CODE_LITERAL);
+  });
+
+  it("SELLING_RESTRICTED: the reason files really spell it as a reason, never as an error `code`, and the 409 body goes through the constant", () => {
+    const codeLiteral = /\bcode\b\s*(?::|[!=]==?)\s*["'`]SELLING_RESTRICTED/;
+    for (const rel of SELLING_RESTRICTED_REASON_FILES) {
+      const src = sources.find((s) => posix(s.rel) === rel);
+      expect(src?.text).toMatch(/["'`]SELLING_RESTRICTED["'`]/);
+      expect(src?.text).not.toMatch(codeLiteral);
+    }
+    expect(codeLiteral.test('code: "SELLING_RESTRICTED"')).toBe(true);
+    expect(codeLiteral.test("body.code === 'SELLING_RESTRICTED'")).toBe(true);
+    expect(codeLiteral.test('reason: "SELLING_RESTRICTED"')).toBe(false);
+    const svc = sources.find(
+      (s) => posix(s.rel) === "apps/api/src/selling-restrictions/selling-restrictions.service.ts",
+    );
+    expect(svc?.text).toContain("code: API_ERROR_CODES.SELLING_RESTRICTED");
   });
 
   it("READ_ONLY: the status files really spell the status, and the guard's 403 body goes through the constant", () => {
