@@ -1,6 +1,7 @@
 import { ConflictException } from "@nestjs/common";
 import { regulatedUnitBasis } from "@routeflow/pricing";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 type EditRow = {
   id?: string | null;
@@ -141,7 +142,7 @@ export async function assertEditStillJudged(
   const seen = new Set(checkableProductIds(judged));
   if (now.some((id) => !seen.has(id)))
     throw new ConflictException({
-      code: "INVOICE_CHANGED_DURING_EDIT",
+      code: API_ERROR_CODES.INVOICE_CHANGED_DURING_EDIT,
       message: "The invoice changed while your edit was being applied — review it and try again.",
     });
 }

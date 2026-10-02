@@ -94,6 +94,19 @@ export interface LineItemRowProps {
   onSetQty?: (value: number) => void;
   /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
   unitSlot?: React.ReactNode;
+  /**
+   * #2865 case c (SA-632): set while this line's default selling unit is not yet resolved (a PENDING line). Every
+   * quantity control is disabled (aria-busy) and the row shows the tap count with "loading units", or, when the
+   * ladder failed to load, a readable error and a real Retry button. `taps` is the PENDING TAP COUNT (N taps = N
+   * of the default unit once it resolves), never a quantity in a guessed unit.
+   */
+  pendingUnit?: {
+    status: "loading" | "failed";
+    taps: number;
+    onRetry: () => void;
+    /** A Retry is in flight: the button is disabled and says so; a failed retry returns to the failed state. */
+    retrying?: boolean;
+  };
 
   /** Registers/unregisters this row's root `<li>` with the caller (e.g.
    *  `CreateOrderModal`'s `rowRefs` map, used to scroll a just-scanned/just-added
@@ -166,11 +179,13 @@ export function LineItemRow({
   onUpdateUnlistedPrice,
   onRemove,
   unitSlot,
+  pendingUnit,
   onTapPrice,
   onSetQty,
   rowRef,
 }: LineItemRowProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
+  const qtyLocked = !!pendingUnit;
   return (
     <li
       ref={rowRef}
@@ -231,7 +246,8 @@ export function LineItemRow({
               "mt-0.5 flex flex-wrap items-center gap-1.5",
               onTapPrice ? "cursor-pointer" : "",
             )}
-            onClick={onTapPrice}
+            onClick={qtyLocked ? undefined : onTapPrice}
+            aria-disabled={onTapPrice && qtyLocked ? true : undefined}
             role={onTapPrice ? "button" : undefined}
             tabIndex={onTapPrice ? 0 : undefined}
           >
@@ -289,6 +305,9 @@ export function LineItemRow({
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
+          {/* #2865 F2: the pending-unit status lives IN the info column (full width at every breakpoint). As a row child it
+              became a fourth flex item at sm+ and was crushed between the qty controls and the total. */}
+          {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
           {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
           {category && (
             <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
@@ -307,6 +326,7 @@ export function LineItemRow({
                 placeholder={li.listPrice.toFixed(2)}
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
+                disabled={qtyLocked}
                 className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
               {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
@@ -351,15 +371,23 @@ export function LineItemRow({
         // past it. `min-w-0` below `sm` lets the column shrink; its CONTENT fits the shrunk
         // track because the cases/units row below wraps (spec 56 measures the content, not
         // this box). `sm:min-w-[190px]` keeps desktop unchanged.
-        <div
+        <fieldset
           data-testid="line-qty-controls"
-          className="col-start-1 row-start-2 flex min-w-0 flex-col gap-0.5 sm:min-w-[190px]"
+          disabled={qtyLocked}
+          aria-busy={qtyLocked}
+          aria-label={
+            qtyLocked
+              ? "Line quantity controls, locked while the selling unit loads"
+              : "Line quantity controls"
+          }
+          className="col-start-1 row-start-2 m-0 flex min-w-0 flex-col gap-0.5 border-0 p-0 sm:min-w-[190px]"
         >
           {/* Case | Unit sell-by toggle — UI-only; the payload always
               carries {qty, boxes, pieces} regardless of the mode. */}
           <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
             <button
               type="button"
+              disabled={qtyLocked}
               onClick={() => onSetSellBy("case")}
               className={cn(
                 "px-1.5 py-0.5 transition-colors",
@@ -372,6 +400,7 @@ export function LineItemRow({
             </button>
             <button
               type="button"
+              disabled={qtyLocked}
               onClick={() => onSetSellBy("unit")}
               className={cn(
                 "border-l border-surface-border px-1.5 py-0.5 transition-colors",
@@ -386,6 +415,7 @@ export function LineItemRow({
           {li.sellBy === "unit" ? (
             <div className="flex items-center gap-1.5">
               <input
+                disabled={qtyLocked}
                 type="number"
                 min={0}
                 value={li.qty}
@@ -408,6 +438,7 @@ export function LineItemRow({
             >
               <span className="flex items-center gap-1.5 whitespace-nowrap">
                 <input
+                  disabled={qtyLocked}
                   type="number"
                   min={0}
                   value={li.boxes ?? 0}
@@ -422,6 +453,7 @@ export function LineItemRow({
                 <span className="flex items-center gap-1.5 whitespace-nowrap">
                   <span className="text-xs text-navy/30">+</span>
                   <input
+                    disabled={qtyLocked}
                     type="number"
                     min={0}
                     max={li.unitsPerBox - 1}
@@ -436,6 +468,7 @@ export function LineItemRow({
                   {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
                   {(li.boxes ?? 0) >= 1 && (
                     <button
+                      disabled={qtyLocked}
                       type="button"
                       onClick={() => {
                         onSetPieces(0);
@@ -451,6 +484,7 @@ export function LineItemRow({
               ) : (
                 <button
                   type="button"
+                  disabled={qtyLocked}
                   onClick={openLooseUnits}
                   // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
                   className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
@@ -469,9 +503,18 @@ export function LineItemRow({
               </>
             )}
           </span>
-        </div>
+        </fieldset>
       ) : (
-        <div className="col-start-1 row-start-2 flex items-center gap-1">
+        <fieldset
+          disabled={qtyLocked}
+          aria-busy={qtyLocked}
+          aria-label={
+            qtyLocked
+              ? "Line quantity controls, locked while the selling unit loads"
+              : "Line quantity controls"
+          }
+          className="col-start-1 row-start-2 m-0 flex min-w-0 items-center gap-1 border-0 p-0"
+        >
           <button
             type="button"
             onClick={() => onQtyDelta(-1)}
@@ -482,6 +525,7 @@ export function LineItemRow({
           </button>
           {onSetQty ? (
             <input
+              disabled={qtyLocked}
               type="number"
               inputMode="numeric"
               min={1}
@@ -496,12 +540,13 @@ export function LineItemRow({
           )}
           <button
             type="button"
+            disabled={qtyLocked}
             onClick={() => onQtyDelta(1)}
             className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
           >
             +
           </button>
-        </div>
+        </fieldset>
       )}
       {/* Line total */}
       <span
@@ -542,5 +587,45 @@ export function LineItemRow({
         </button>
       </div>
     </li>
+  );
+}
+
+/** The pending-unit status under a locked quantity: the tap count + "loading units", or the failure + a real Retry button. */
+export function PendingUnitStatus({
+  pending,
+}: {
+  pending: NonNullable<LineItemRowProps["pendingUnit"]>;
+}) {
+  return pending.status === "failed" ? (
+    <div
+      role="alert"
+      data-testid="pending-unit-status"
+      className="mt-1 flex w-full flex-wrap items-center gap-2 text-xs text-danger"
+    >
+      <span>{pending.taps} added · Couldn&apos;t load the selling units.</span>
+      <button
+        type="button"
+        onClick={pending.onRetry}
+        // #2865 F2: the order form's keydown rule preventDefaults Enter (no implicit submit), which also cancels a
+        // button's native Enter activation. Stop only THIS button's Enter from reaching it; every other control keeps it.
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.stopPropagation();
+        }}
+        disabled={pending.retrying}
+        aria-busy={pending.retrying || undefined}
+        className="rounded border border-danger/40 px-2 py-0.5 font-medium hover:bg-danger/10 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
+      >
+        {pending.retrying ? "Retrying…" : "Retry"}
+      </button>
+    </div>
+  ) : (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="pending-unit-status"
+      className="mt-1 w-full text-xs text-navy/60"
+    >
+      {pending.taps} · loading units
+    </div>
   );
 }

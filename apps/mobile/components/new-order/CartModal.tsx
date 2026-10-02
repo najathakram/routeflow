@@ -16,7 +16,7 @@ import { styles } from "./styles";
 import type { UnlistedLine, OrderOptions, CreditPicker } from "./types";
 
 /** Collapsed-by-default disclosure inside the cart sheet. */
-export function CartSection({
+function CartSection({
   icon,
   title,
   summary,
@@ -48,7 +48,7 @@ export function CartSection({
   );
 }
 
-export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
+function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
   const summary = [
     o.urgent ? "Urgent" : null,
     // ROUTE is the default majority — only call it out when it isn't.
@@ -187,7 +187,7 @@ export function OrderOptionsSection({ options: o }: { options: OrderOptions }) {
  * Open credit notes for this customer. Toggle only (no amount input on mobile);
  * a null amount means "up to the credit's remaining balance", resolved server-side.
  */
-export function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
+function ApplyCreditSection({ credits: c }: { credits: CreditPicker }) {
   const summary = c.selectedIds.length
     ? `${c.selectedIds.length} selected`
     : c.rows.length
@@ -487,7 +487,7 @@ export function CartModal({
 }
 
 /** Cart row for an ad-hoc (unlisted) line: editable price + qty, "Custom" tag, no image. */
-export function UnlistedCartRow({
+function UnlistedCartRow({
   line,
   onChangeQty,
   onChangePrice,

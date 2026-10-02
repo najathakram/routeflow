@@ -135,7 +135,13 @@ describe("makeScanHandler — local fast path", () => {
   });
 
   it("REG-MSCAN-M5: an active row still adds locally when an inactive sibling shares its code — the archived exclusion never hides a legitimate match", async () => {
-    const active: P = { id: "pActive", name: "In stock", barcode: CASE_CODE, unitsPerBox: 6, isActive: true };
+    const active: P = {
+      id: "pActive",
+      name: "In stock",
+      barcode: CASE_CODE,
+      unitsPerBox: 6,
+      isActive: true,
+    };
     const inactiveSibling: P = {
       id: "pGone",
       name: "Discontinued",

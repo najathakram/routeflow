@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -6,6 +8,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -491,6 +494,23 @@ export class InventoryService {
   }
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {
+    // B964-2: a NEW variant's name becomes Product.name / variantName: refuse a formula-led one with a coded 400 that names the
+    // row, before any lock, transaction or write.
+    dto.assignments.forEach((a, index) => {
+      const violation = a.newVariant
+        ? productNameViolation({ variantName: a.newVariant.name })
+        : null;
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const restockedProductIds: string[] = [];
     const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 
@@ -554,7 +574,7 @@ export class InventoryService {
           // assignments of the same generic safe. Never hoist this check out.
           if (totalQty > Number(parent.currentStock)) {
             throw new BadRequestException({
-              code: "INSUFFICIENT_UNASSIGNED",
+              code: API_ERROR_CODES.INSUFFICIENT_UNASSIGNED,
               message: `Only ${parent.currentStock} unassigned in stock; tried to assign ${totalQty}`,
             });
           }
@@ -1238,10 +1258,90 @@ export class InventoryService {
         items: {
           include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
         },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
     });
     if (!po) throw new NotFoundException("Purchase order not found");
-    return po;
+
+    // The PO's receipts history. There is no movement -> PO foreign key, only `reference = poNumber`
+    // (operator-editable on manual purchases), so the join is narrowed to what can only be this PO's:
+    // tenant-scoped (forTenant), the PO's own products, nothing written before the PO existed, and
+    // for receipts the PO's own supplier. A reversal is a re-apply's compensating ADJUSTMENT
+    // ("PO edit reversal — reverses <movementId>"), flagged and pointed at the receipt it undoes.
+    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    const names = new Map(po.items.map((i) => [i.productId, i.product?.name ?? null]));
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
+      where: {
+        reference: po.poNumber,
+        type: { in: [MovementType.PURCHASE, MovementType.ADJUSTMENT] },
+        productId: { in: [...names.keys()] },
+        createdAt: { gte: po.createdAt },
+      },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+    });
+    // A receipt is this PO's when it carries the PO's supplier. A supplier-only edit of a received
+    // PO changes the header but leaves the receipts on the OLD supplier, so for a product whose net
+    // posted quantity (own-supplier receipts + corrections) does not match what the line says was
+    // received, widen to any supplier for that product rather than show "nothing received" while
+    // stock was posted.
+    const qtyReceivedByProduct = new Map<string, number>();
+    for (const i of po.items) {
+      qtyReceivedByProduct.set(
+        i.productId,
+        (qtyReceivedByProduct.get(i.productId) ?? 0) + Number(i.qtyReceived),
+      );
+    }
+    const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
+    // Receipts a re-apply has already compensated no longer count towards what is on hand.
+    const reversedIds = new Set(
+      movements
+        .filter((m) => m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix))
+        .map((m) => (m.notes as string).slice(prefix.length).trim()),
+    );
+    const ownSupplier = purchases.filter(
+      (m) => m.supplierId === po.supplierId && !reversedIds.has(m.id),
+    );
+    const widened = new Set<string>();
+    for (const [productId, want] of qtyReceivedByProduct) {
+      const net = ownSupplier
+        .filter((m) => m.productId === productId)
+        .reduce((t, m) => t + Number(m.quantity), 0);
+      if (want > 0 && Math.abs(net - want) > 0.0005) widened.add(productId);
+    }
+    const receiptRows = purchases.filter(
+      (m) => m.supplierId === po.supplierId || widened.has(m.productId),
+    );
+    const receiptIds = new Set(receiptRows.map((m) => m.id));
+    const receipts: PurchaseOrderReceipt[] = [];
+    for (const m of movements) {
+      if (m.type === MovementType.PURCHASE && receiptIds.has(m.id)) {
+        receipts.push({
+          id: m.id,
+          kind: "RECEIPT",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+        });
+      } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        // Free text is not trusted on its own (B608): a correction shows only when it points at one
+        // of this PO's own receipts.
+        const reversesId = m.notes.slice(prefix.length).trim();
+        if (!receiptIds.has(reversesId)) continue;
+        receipts.push({
+          id: m.id,
+          kind: "REVERSAL",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+          reversesId,
+        });
+      }
+    }
+    return { ...po, receipts };
   }
 
   async sendPurchaseOrder(id: string) {
@@ -1550,7 +1650,7 @@ export class InventoryService {
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
       throw new ConflictException({
-        code: "PO_LOT_PARTIALLY_CONSUMED",
+        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
         message:
           `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
           "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
@@ -1738,7 +1838,7 @@ export class InventoryService {
         });
         if (liveBill) {
           throw new ConflictException({
-            code: "PO_HAS_LINKED_BILL",
+            code: API_ERROR_CODES.PO_HAS_LINKED_BILL,
             message:
               `${po.poNumber} has already been billed (${liveBill.billNumber}), so its lines and supplier ` +
               "are locked — the bill was checked against them. Void the bill to change them, or edit " +
@@ -2798,7 +2898,7 @@ export class InventoryService {
         // UNLINKED_ITEMS/DUPLICATE_VENDOR_BILL structured-conflict shape used
         // elsewhere in this codebase.
         throw new ConflictException({
-          code: "INVENTORY_LEDGER_GAP",
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
           message:
             `"${product.name}" can't be updated right now — its stock records don't fully ` +
             "explain the quantity currently on hand (this usually happens after past sales). " +

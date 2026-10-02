@@ -14,9 +14,9 @@
 ## Context and problem statement
 
 RouteFlow has been running a bug-fixing campaign against an in-repo registry with three stores:
-`.claude/campaign/bugs/B###.md` (what a bug *is*), `.claude/campaign/status/F##.jsonl` (what a bug
-*is doing*, guarded by `scripts/campaign-check.mjs`'s proof gate), and a GitHub Issues board
-derived by `scripts/team/team.mjs` (what is *in flight*). The status ledger (31 shards), an earlier
+`.claude/campaign/bugs/B###.md` (what a bug _is_), `.claude/campaign/status/F##.jsonl` (what a bug
+_is doing_, guarded by `scripts/campaign-check.mjs`'s proof gate), and a GitHub Issues board
+derived by `scripts/team/team.mjs` (what is _in flight_). The status ledger (31 shards), an earlier
 revision of the proof gate (487 lines), `team.mjs`, and the `bug-registry` skill (describing an
 earlier two-store version of this model) all live on `master`; the bug-record store —
 `scripts/campaign/bugs.mjs`, the 7,300-line catalogue CLI that adds the bug-record store, the
@@ -53,15 +53,15 @@ that assumption breaking as the campaign moves toward several developers' machin
    overrides it — an override nothing sets in practice — stable across `/resume` and context
    compaction (which pids and session names are not), and a deliberate choice given every Claude
    Code session on one box authenticates as the same GitHub account, so `@me` carries no signal.
-   But nothing in that string names *which machine* or *which developer* — two people who both
+   But nothing in that string names _which machine_ or _which developer_ — two people who both
    name their worktree the repository's own convention (e.g. `rf-registry`) produce byte-identical
    claim ids. The comment-CAS itself still resolves the race correctly (GitHub's server-ordered
    comment ids are the real compare-and-swap, independent of what the identity string says); what
    breaks is a human's or `reap`'s ability to tell the two apart when it matters — "who actually
    holds this, let me go ask them" has no answer.
 
-Both defects share a root cause: the registry's *law* (the carve-out, the proof gate, the wave
-scheduler) is well-designed and worth keeping, but its *record* is a plain git-tracked file, and a
+Both defects share a root cause: the registry's _law_ (the carve-out, the proof gate, the wave
+scheduler) is well-designed and worth keeping, but its _record_ is a plain git-tracked file, and a
 plain git-tracked file has no concept of a concurrent writer arbitrated by anything other than git
 merge semantics. Meanwhile the growth path this campaign is already on — from one interactive
 session, to several developers' desktop scheduled tasks, to cloud Routines, to dedicated fleet
@@ -113,8 +113,8 @@ bespoke ledger with three layers:
 Claim resolution keeps the one mechanism from the legacy design that was already correct across
 machines — `team.mjs`'s comment-CAS, lowest live server-assigned comment id wins, lease-time-based
 expiry — and fixes only the identity string, from a bare worktree name to `login/host/worktree`.
-Everything else about *how a claim is arbitrated* is unchanged; what changes is *where the record
-that arbitration operates on lives*: GitHub's own comment/label/assignee API, not a file two
+Everything else about _how a claim is arbitrated_ is unchanged; what changes is _where the record
+that arbitration operates on lives_: GitHub's own comment/label/assignee API, not a file two
 machines might both believe they alone are writing.
 
 Full design: [`tools/bugflow/README.md`](../../tools/bugflow/README.md) and the documents it
@@ -125,9 +125,9 @@ indexes.
 1. **Keep the bespoke registry and fix the two multi-machine defects.** Concretely: replace the
    lockdir mechanism with something arbitrated by a real server (GitHub comments/labels, or a
    hosted database) instead of a local directory, and change claim identity to
-   `login/host/worktree`. *Pros:* smallest possible diff from what already exists; keeps 7,300
+   `login/host/worktree`. _Pros:_ smallest possible diff from what already exists; keeps 7,300
    lines of hand-tuned domain logic (`classify()`, wave colouring, the proof gate, a self-test
-   suite) that already works for the single-machine case. *Cons:* the fix for defect 1 is not
+   suite) that already works for the single-machine case. _Cons:_ the fix for defect 1 is not
    a patch, it is a rewrite — the moment the lock's authority moves off the local filesystem, the
    ledger is no longer "a plain git-tracked JSONL file guarded by a local lock," it is a
    distributed system, and building a distributed system's correctness properties by hand on top
@@ -140,10 +140,10 @@ indexes.
    later.
 2. **beads / `bd`** — a Dolt-backed, git-native issue tracker: hash-based ids, `bd ready` for the
    takeable set, an atomic `--claim`, and `bd dolt push/pull` replicating a full relational database
-   over `refs/dolt/data`. *Pros:* purpose-built for exactly this problem (a git-native queue an
+   over `refs/dolt/data`. _Pros:_ purpose-built for exactly this problem (a git-native queue an
    agent fleet claims against) and gets atomic claims for free in its embedded mode — but only
-   **per machine**. *Cons:* embedded mode is single-writer per machine, which is the same class of
-   problem this ADR exists to fix; atomic claims *across* machines require standing up a shared
+   **per machine**. _Cons:_ embedded mode is single-writer per machine, which is the same class of
+   problem this ADR exists to fix; atomic claims _across_ machines require standing up a shared
    `dolt sql-server` — a new, persistent, self-hosted service to provision, back up, and secure, in
    a monorepo whose CLAUDE.md already forbids introducing a second stack lightly (Supabase, Vercel,
    a second HTTP client are all named "DO NOT introduce" for the same reason: operating a service
@@ -152,19 +152,19 @@ indexes.
    "atomic cross-machine claims" are not simultaneously available from beads — a project has to
    choose one, which is the exact trade-off GitHub's API resolves without a second service.
 3. **A hosted tracker with agent assignment** (Linear's agent-assignment surface, or Jira).
-   *Pros:* mature, purpose-built UX for exactly this — assign an issue to an agent, watch it work,
-   review the result. *Cons:* rejected on cost (a per-seat license on top of the Claude
+   _Pros:_ mature, purpose-built UX for exactly this — assign an issue to an agent, watch it work,
+   review the result. _Cons:_ rejected on cost (a per-seat license on top of the Claude
    subscription seats already paid for) and on "record on the repo" — the record would live in a
    third party's database, unreadable by `git log`, ungoverned by this repo's own rulesets and
    CODEOWNERS, and gone the day the subscription lapses. That directly contradicts the
    extractability goal: a package whose record lives in an external SaaS is not "move the repo,
    move the history" the way a GitHub-Issues-backed one is.
-4. **GitHub Issues as the database (chosen).** *Pros:* already the repo's board — `team.mjs`
+4. **GitHub Issues as the database (chosen).** _Pros:_ already the repo's board — `team.mjs`
    proved the comment-CAS claim mechanism is cross-machine-correct today, on the free tier, with no
    new service to run. Native sub-issues, issue types, and blocked-by/blocking dependencies are
    already GA. Projects v2 is a dashboard the team already has open. The assign-issue→PR pattern is
    the same one GitHub's own Copilot coding agent ships. Zero new infrastructure — `gh` is already
-   a dependency of every script in this repo's CI. *Cons:* GitHub Issues was not built as a
+   a dependency of every script in this repo's CI. _Cons:_ GitHub Issues was not built as a
    programmatic bug-catalogue backend — a `## Files` list embedded in issue-body markdown is a
    weaker schema than a real table, mitigated here by the config-driven label/field convention
    documented in [DATA-MODEL](../../tools/bugflow/docs/DATA-MODEL.md); and a merge queue with

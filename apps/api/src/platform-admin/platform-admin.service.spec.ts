@@ -2164,6 +2164,13 @@ describe("PlatformAdminService — audit provenance", () => {
       } as any);
     });
 
+    it("B956: refuses a formula-led businessName before any write (it is mirrored into a Customer)", async () => {
+      await expect(
+        service.createTenant({ ...validCreateDto, businessName: "+SUM(A1)" }),
+      ).rejects.toThrow(/businessName must not start with/);
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
     it("defaults trial length to TRIAL_LENGTH_DAYS when no override is given", async () => {
       const result = await service.createTenant(validCreateDto);
 

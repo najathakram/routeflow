@@ -1,3 +1,4 @@
+import { csvCell } from "../common/csv";
 import { RegulatedReport } from "./report-types";
 
 /**
@@ -6,8 +7,8 @@ import { RegulatedReport } from "./report-types";
  * Comptroller report (tx-report.ts) alike.
  */
 export function esc(v: string | null | undefined): string {
-  const s = v ?? "";
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  // SA-629: regulator artifacts stay VERBATIM: the shared cell in verbatim mode (no formula guard).
+  return csvCell(v ?? "", { guard: false });
 }
 
 /**

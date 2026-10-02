@@ -73,6 +73,7 @@ import {
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { buildPaymentsCsv } from "./payments-csv";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -119,7 +120,10 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import {
+  assertNoUnspentSourcedCredits,
+  unlinkSourcedCredits,
+} from "../credit-notes/sourced-credit-guard";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -136,6 +140,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -3616,7 +3621,7 @@ export class InvoicesService {
     // caught after the attempt below.
     if (!(await this.emailService.isEmailConfigured())) {
       throw new BadRequestException({
-        code: "EMAIL_NOT_CONFIGURED",
+        code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED,
         message:
           "Email isn't set up yet, so the invoice wasn't emailed. Configure your email/SMTP settings under Settings → Email, then try again.",
       });
@@ -3712,7 +3717,7 @@ export class InvoicesService {
     // it in Settings → Email rather than believing the customer received the invoice.
     if (!sendResult.delivered) {
       throw new BadRequestException({
-        code: "EMAIL_SEND_FAILED",
+        code: API_ERROR_CODES.EMAIL_SEND_FAILED,
         message: `The invoice couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
       });
     }
@@ -3791,7 +3796,7 @@ export class InvoicesService {
     // R5: don't claim a reminder was sent when email isn't set up.
     if (!(await this.emailService.isEmailConfigured())) {
       throw new BadRequestException({
-        code: "EMAIL_NOT_CONFIGURED",
+        code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED,
         message:
           "Email isn't set up yet, so the reminder wasn't sent. Configure your email/SMTP settings under Settings → Email, then try again.",
       });
@@ -3866,7 +3871,7 @@ export class InvoicesService {
 
     if (!sendResult.delivered) {
       throw new BadRequestException({
-        code: "EMAIL_SEND_FAILED",
+        code: API_ERROR_CODES.EMAIL_SEND_FAILED,
         message: `The reminder couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
       });
     }
@@ -5171,11 +5176,28 @@ export class InvoicesService {
 
   async deleteInvoice(id: string) {
     return withAfterCommit(this.prisma, async (tx, after) => {
+      // SA-608g (SA-214: Order -> Invoice -> CreditNote): read the invoice UNLOCKED only for its order,
+      // lock the order, then the invoice (never the invoice first: adjustInvoicedQtyForInvoice writes the
+      // order's items below, so Invoice -> Order would invert SA-214 against an order-edit sync), and
+      // RE-READ under the lock. Once the invoice is locked, a reissue's mint (KEY SHARE on it) waits, so
+      // the sourced-note reads below cannot miss a note that commits in between and be SET NULL orphaned.
+      const peek = await tx.invoice.findUnique({ where: { id }, select: { orderId: true } });
+      if (!peek) throw new NotFoundException("Invoice not found");
+      if (peek.orderId)
+        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // The order was locked from the PEEK. If the link moved since (no writer re-points it today:
+      // only A -> null), adjustInvoicedQtyForInvoice below would write an order we never locked.
+      if (inv.orderId !== peek.orderId)
+        throw new ConflictException({
+          code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+          message: "The invoice changed while it was being deleted. Try again.",
+        });
 
       if (inv.payments.length > 0) {
         throw new BadRequestException(
@@ -5198,12 +5220,12 @@ export class InvoicesService {
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
-      // Unlink the remaining (closed: spent, VOID or expired) credit notes this invoice sourced;
-      // open ones were refused above.
-      await tx.creditNote.updateMany({
-        where: { invoiceId: id },
-        data: { invoiceId: null },
-      });
+      // Unlink the remaining (closed) credit notes this invoice sourced, marking each (#2848).
+      await unlinkSourcedCredits(
+        tx,
+        [{ id, invoiceNumber: inv.invoiceNumber }],
+        this.prisma.getTenantId(),
+      );
 
       // Delete line items
       await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
@@ -5719,31 +5741,7 @@ export class InvoicesService {
       },
     });
 
-    const escape = (v: any) => {
-      const s = v == null ? "" : String(v);
-      return s.includes(",") || s.includes('"') || s.includes("\n")
-        ? `"${s.replace(/"/g, '""')}"`
-        : s;
-    };
-
-    const header =
-      "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
-    const lines = rows.map((r: any) =>
-      [
-        escape(r.paymentNumber ?? ""),
-        escape(r.paidAt ? new Date(r.paidAt).toISOString().split("T")[0] : ""),
-        escape(r.settledAt ? new Date(r.settledAt).toISOString().split("T")[0] : ""),
-        escape(r.invoice?.customer?.businessName ?? ""),
-        escape(r.invoice?.invoiceNumber ?? ""),
-        escape(r.method ?? ""),
-        escape(r.reference ?? ""),
-        escape(r.bankCharges != null ? Number(r.bankCharges).toFixed(2) : ""),
-        escape(Number(r.amount).toFixed(2)),
-        escape(r.status ?? ""),
-      ].join(","),
-    );
-
-    return [header, ...lines].join("\n");
+    return buildPaymentsCsv(rows);
   }
 
   // ─── Cron ─────────────────────────────────────────────────────────────────

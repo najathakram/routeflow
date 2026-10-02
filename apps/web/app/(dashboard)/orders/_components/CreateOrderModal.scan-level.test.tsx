@@ -36,7 +36,13 @@ const BOXED = {
 };
 
 const UPB_ONE = { ...PLAIN, id: "p-upb1", name: "Sample Soda", sku: "700800900", unitsPerBox: 1 };
-const UPB_NULL = { ...PLAIN, id: "p-upbnull", name: "Sample Juice", sku: "111222333", unitsPerBox: null };
+const UPB_NULL = {
+  ...PLAIN,
+  id: "p-upbnull",
+  name: "Sample Juice",
+  sku: "111222333",
+  unitsPerBox: null,
+};
 
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
@@ -262,15 +268,18 @@ describe("R2 (SA-580b): a shared code on upb <= 1 adds the default unit -> today
 });
 
 describe("R4: upb <= 1 — no box/unit distinction, today's line shape whatever the level", () => {
-  it.each([["UNIT"], ["BOX"]] as const)("a %s hit on a plain product adds +1 qty and merges (no loose split)", async (level) => {
-    renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
-    await scan(PLAIN, "100200300", [level]);
-    await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
-    expect(plainQty()).toBe("1");
-    await scan(PLAIN, "100200300", [level]);
-    await waitFor(() => expect(plainQty()).toBe("2"));
-    expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
-  });
+  it.each([["UNIT"], ["BOX"]] as const)(
+    "a %s hit on a plain product adds +1 qty and merges (no loose split)",
+    async (level) => {
+      renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
+      await scan(PLAIN, "100200300", [level]);
+      await waitFor(() => expect(lineFor("Sample Cola")).toBeTruthy());
+      expect(plainQty()).toBe("1");
+      await scan(PLAIN, "100200300", [level]);
+      await waitFor(() => expect(plainQty()).toBe("2"));
+      expect(screen.queryByTitle("Number of whole cases")).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("SA-595a R4: a sku (BOX-level) hit at upb <= 1 adds today's line shape (unchanged by M4a)", () => {

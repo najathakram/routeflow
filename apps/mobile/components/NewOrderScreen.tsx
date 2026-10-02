@@ -15,7 +15,12 @@ import { useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { FilterChipRow, NavBackButton, NavBar, SearchBar } from "@routeflow/ui/mobile/ios";
 import { unitPriceBase, type UnitOption } from "../lib/unit-options";
-import { toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import {
+  rememberedPricePrefill,
+  toNumber,
+  type LineState,
+  type Product,
+} from "../lib/cart-line-state";
 import {
   computeOrderTotal,
   lineUnitFor,
@@ -36,12 +41,32 @@ import {
 import { useCreditNotes, type CreditNote } from "../lib/api/credit-notes";
 import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
+import {
+  applyUnitOption,
+  isStaffRole,
+  mergeResolvedDefaults,
+  refusesLineEdit,
+} from "../lib/default-unit-line";
+import {
+  anyLineLoading,
+  applyAddToItems,
+  editItemLine,
+  refusedScanOutcome,
+  settleBeforeConfirm,
+  UNITS_BLOCKED_MESSAGE,
+} from "../lib/pending-unit-adapter";
+import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
 import { classifyMutationError } from "../lib/offline-errors";
 import { resolveProductByCode } from "../lib/barcode-resolve";
 import { resolveScanSellLevel } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
 import { findExactScanMatch, levelsForScan, looksLikeScanCode } from "../lib/wedge-scan";
-import { makeScanHandler, runWedgeSubmit } from "../lib/scan-ladder";
+import {
+  makeScanHandler,
+  runWedgeSubmit,
+  scanAcceptOpts,
+  type ScanLadderDeps,
+} from "../lib/scan-ladder";
 import { createScanAttempt, createWedgeSubmitHandler } from "../lib/wedge-submit";
 import { createScanAcceptGuard } from "../lib/scan-accept-guard";
 import { needsUnitLabelConfirm } from "../lib/scan-unit-confirm";
@@ -69,7 +94,6 @@ import { InlineToast, useInlineToast } from "./InlineToast";
 import { ProductRow } from "./ProductRow";
 import { ScanOrderSheet } from "./ScanOrderSheet";
 import {
-  addScannedLevelToLine,
   isUnitLine,
   setLineBoxes,
   setLinePieces,
@@ -82,7 +106,6 @@ import { BlockedLinesModal } from "./BlockedLinesModal";
 import { parseSellingRestricted } from "../lib/selling-restricted";
 import type { BlockedLine } from "@routeflow/types";
 import { parseRegulatedAuthError, type BlockedCategory } from "../lib/api/authorizations";
-import { ScanOutcome } from "../lib/scan-loop";
 import { bumpScanOrder, nextFlash, trayRowsFrom, type ScanFlash } from "../lib/scan-tray";
 import {
   NO_PENDING_SCROLL,
@@ -389,7 +412,7 @@ function ProductPickView({
   const router = useRouter();
   const userRole = useAuthStore((s) => s.user?.role);
   // Backdating an order is a books-affecting edit — staff only, never drivers.
-  const isStaff = userRole === "OPERATOR" || userRole === "TENANT_ADMIN";
+  const isStaff = isStaffRole(userRole);
   const canCreateProducts = isStaff;
   // Cost eye: every SELLER role (drivers negotiate at the stop; the operator
   // endpoints already return cost to them). Buyers never reach this screen.
@@ -430,6 +453,8 @@ function ProductPickView({
   // parked productId against the LIVE catalog, so a stale/removed product or
   // price can never render, let alone autosave back to the server.
   const [items, setItems] = useState<Record<string, LineState>>({});
+  const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
+  itemsRef.current = items;
   // Ad-hoc (non-catalog) lines need no live-product check — DraftUnlistedLine
   // is field-for-field the same shape as this screen's UnlistedLine, so the
   // seed drops in directly.
@@ -760,43 +785,26 @@ function ProductPickView({
    * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
    * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, productSnapshot?: Product, level: SellLevel = "BOX") => {
-    const p = productSnapshot ?? productById.get(id);
+  const addOne = (
+    id: string,
+    snap?: Product,
+    level: SellLevel = "BOX",
+    dflt?: boolean,
+    viaRow?: boolean,
+    code?: string,
+  ): boolean => {
+    const p = snap ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    // Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only
-    // a genuine one-time DISCOUNT (below the tier price) or UPSELL (above list)
-    // pre-fills — never over a SPECIAL tier price, which is already the customer's
-    // permanent price. Equal-to-tier remembered prices don't pre-fill (strict <>).
-    const histEntry = priceHistory?.[id];
-    const listPrice = p ? toNumber(p.pricePerUnit) : 0;
-    const tierPrice = p ? tierPriceFor(p) : 0;
-    const isSpecial = isSpecialTier(effectiveTierFor(id));
-    const prefill =
-      !isSpecial &&
-      histEntry != null &&
-      (histEntry.lastPrice < tierPrice || histEntry.lastPrice > listPrice)
-        ? histEntry.lastPrice
-        : undefined;
-    setItems((m) => {
-      const isNew = !m[id];
-      const prev: LineState = m[id] ?? { qty: 0 };
-      // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
-      // unitPrice override + note (previously wiped on every increment).
-      // The scanned level decides (addScannedLevelToLine). A unit-sold line (re-scanned or
-      // "+1"-ed) always steps its COUNT, regardless of level — a level only means something for
-      // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
-      // box/unit distinction (R4): today's plain +1.
-      const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (isNew && prefill != null) {
-        line.unitPrice = prefill;
-        // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
-        // parked line under a DIFFERENT customer must re-price to that customer instead of
-        // silently keeping this one's remembered price.
-        line.priceSource = "history";
-      }
-      return { ...m, [id]: line };
-    });
+    const prefill = rememberedPricePrefill(
+      priceHistory?.[id],
+      p ? toNumber(p.pricePerUnit) : 0,
+      p ? tierPriceFor(p) : 0,
+      isSpecialTier(effectiveTierFor(id)),
+    );
+    // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
+    const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
+    if (applyAddToItems(itemsRef.current, input) === itemsRef.current) return false;
+    setItems((m) => applyAddToItems(m, input));
     // Retain a snapshot for EVERY added line, not just scanned ones.
     //
     // This used to be gated on `productSnapshot`, which is only passed by the
@@ -811,72 +819,35 @@ function ProductPickView({
     if (p) {
       setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
+    return true;
   };
 
-  const removeOne = (id: string) => {
-    const p = productById.get(id);
-    const upb = Number(p?.unitsPerBox ?? 0);
-    const isBoxed = upb > 1;
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const line = stepLineQty(prev, -1, isBoxed, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
-  };
+  const upbNum = (id: string) => Number(productById.get(id)?.unitsPerBox ?? 0);
+  const removeOne = (id: string) =>
+    setItems((m) =>
+      m[id]
+        ? editItemLine(m, id, "increment", (prev) =>
+            stepLineQty(prev, -1, upbNum(id) > 1, upbNum(id)),
+          )
+        : m,
+    );
 
   const setBoxes = (id: string, boxes: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineBoxes(prev, boxes, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineBoxes(prev, boxes, upbNum(id))));
 
   const setPieces = (id: string, pieces: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLinePieces(prev, pieces, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLinePieces(prev, pieces, upbNum(id))));
 
   /** Unit mode: the operator types a TOTAL unit count; normalize it back into
    *  cases + loose (7 units of a 6-pack -> 1 case + 1 loose). Price is unchanged
    *  either way because computeLineSubtotal's proration is linear. */
   const setUnits = (id: string, units: number) =>
-    setItems((m) => {
-      const p = productById.get(id);
-      const upb = Number(p?.unitsPerBox ?? 0);
-      const prev = m[id] ?? { qty: 0 };
-      const line = setLineUnits(prev, units, upb);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "unit", (prev) => setLineUnits(prev, units, upbNum(id))));
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+    setItems((m) =>
+      m[id] && !refusesLineEdit(m[id], "unit") ? { ...m, [id]: { ...m[id], sellBy } } : m,
+    );
 
   /**
    * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
@@ -887,38 +858,16 @@ function ProductPickView({
    * one. "" (the pack option) clears both `unitLabel` and `unitBasePrice`, restoring the plain
    * pack behaviour byte for byte.
    */
+  const upbOf = (id: string) => productById.get(id)?.unitsPerBox;
   const setUnitLabel = (id: string, option: UnitOption) =>
-    setItems((m) => {
-      const prev = m[id];
-      if (!prev) return m;
-      const isPack = option.value === "";
-      return {
-        ...m,
-        [id]: {
-          ...prev,
-          unitLabel: isPack ? undefined : option.value,
-          unitBasePrice: isPack ? undefined : option.price,
-          unitFactor: isPack ? undefined : option.factorToBase,
-          qty: 1,
-          boxes: undefined,
-          pieces: undefined,
-          unitPrice: undefined,
-        },
-      };
-    });
+    setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
+  // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
+  const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
+    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+  const anyUnitLoading = anyLineLoading(items, unitStatusFor); // Confirm is disabled only while a line is LOADING (#2865)
 
   const setQty = (id: string, qty: number) =>
-    setItems((m) => {
-      const prev = m[id] ?? { qty: 0 };
-      // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
-      const line = setLineQty(prev, qty);
-      if (!line) {
-        const next = { ...m };
-        delete next[id];
-        return next;
-      }
-      return { ...m, [id]: line };
-    });
+    setItems((m) => editItemLine(m, id, "qty", (prev) => setLineQty(prev, qty))); // clears boxes/pieces (plain qty path)
 
   const removeLine = (id: string) =>
     setItems((m) => {
@@ -938,6 +887,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
+      if (refusesLineEdit(prev, "price")) return m; // #2865 (SA-632 H1): a typed price would settle a pending line as cases
       if (value == null || value < 0) {
         const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
         delete rest.overrideReason;
@@ -1009,8 +959,9 @@ function ProductPickView({
   };
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
-  const finishAccept = (product: Product, level: SellLevel): ScanOutcome => {
-    addOne(product.id, product, level);
+  const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
+    if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code))
+      return refusedScanOutcome(scanOpen); // a refused scan: not counted, not "Added", ONE message
     bumpScanned(product.id);
     clearSearch();
     const label =
@@ -1025,11 +976,11 @@ function ProductPickView({
 
   // units_v1 (SA-085h LOW): a PIECE-barcode hit on an already unit-sold line would add a
   // whole unit, not one loose piece — confirm rather than silently adding a large jump.
-  const acceptScannedProduct = (product: Product, level: SellLevel = "BOX"): ScanOutcome => {
+  const acceptScannedProduct: ScanLadderDeps<Product>["accept"] = (product, level, ao) => {
     const label = items[product.id]?.unitLabel;
-    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level);
+    if (!needsUnitLabelConfirm(level, product, label)) return finishAccept(product, level, ao);
     const onYes = () => {
-      const o = finishAccept(product, level);
+      const o = finishAccept(product, level, ao);
       if (o?.feedback?.kind === "added") showInline(o.feedback.text);
     };
     confirm(`Add 1 ${label}?`, `${displayName(product)} is sold by ${label}.`, onYes, {
@@ -1129,7 +1080,7 @@ function ProductPickView({
     // false answer means the ladder owns this label and will redeem the match
     // itself if its own lookup comes back empty.
     if (!scanGuardRef.current.offer(code, match, level)) return;
-    const outcome = acceptScannedProduct(match, level);
+    const outcome = acceptScannedProduct(match, level, scanAcceptOpts(code, match));
     if (outcome?.feedback?.kind === "added") showInline(outcome.feedback.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchTerm, products, isSearching]);
@@ -1261,7 +1212,7 @@ function ProductPickView({
    * always holds the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: addOne,
+    add: (id: string) => addOne(id, undefined, "BOX", true, true),
     remove: removeOne,
     setQty,
     setBoxes,
@@ -1783,7 +1734,15 @@ function ProductPickView({
     // discarded from web) would otherwise abort submitOrder before `mutate`,
     // leaving Confirm a dead button with no error shown.
     await flushDraftQuietly();
-    const catalogPayload: CreateOrderItemInput[] = Object.entries(items)
+    const settled = await settleBeforeConfirm(items, resolveDefaultUnits);
+    if (settled.kind === "blocked") {
+      showToast(UNITS_BLOCKED_MESSAGE);
+      return endSubmit();
+    }
+    const lines = settled.lines;
+    setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    if (settled.kind === "stop") return endSubmit(); // #2865 case d: the retry press only settles; a second press submits
+    const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
         const qty = effectiveQty(line, p?.unitsPerBox);
@@ -2328,11 +2287,11 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              (!canSave || createOrder.isPending || anyUnitLoading) && styles.confirmBtnDisabled,
             ]}
-            disabled={!canSave}
+            disabled={!canSave || anyUnitLoading}
             onPress={() => onSave()}
-            accessibilityState={{ disabled: !canSave }}
+            accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
               {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
@@ -2404,7 +2363,7 @@ function ProductPickView({
         onClose={() => setPickCode(null)}
         onSelect={(p: { id: string }) => {
           setPickCode(null);
-          acceptScannedProduct(p as unknown as Product);
+          acceptScannedProduct(p as unknown as Product, "BOX", { startOnDefault: true });
         }}
       />
 

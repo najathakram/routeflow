@@ -104,7 +104,7 @@ written as the `harness:` label. See [HARNESS](./HARNESS.md).
 
 ## Heartbeat
 
-Extending a live claim's lease by editing the *same* claim comment in place — never by posting a
+Extending a live claim's lease by editing the _same_ claim comment in place — never by posting a
 new one, which would create a second, ambiguous claim record. Keeps a long-running full-tier fix
 from being [reaped](#reap) mid-work. `bugflow heartbeat #N`.
 

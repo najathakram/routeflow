@@ -11,11 +11,11 @@ the protocol. Read this after [LIFECYCLE.md](LIFECYCLE.md), which shows where `c
 
 ## The mechanism, unchanged
 
-Every session that will ever run bugflow authenticates to GitHub as *some* login, and multiple
+Every session that will ever run bugflow authenticates to GitHub as _some_ login, and multiple
 sessions can share one — so `--assignee @me` and GitHub's own optimistic-locking primitives carry
-no information about *which* session holds a claim. `team.mjs` solved this in 2026-08 with an
+no information about _which_ session holds a claim. `team.mjs` solved this in 2026-08 with an
 append-only comment protocol instead of a database row; bugflow inherits its compare-and-swap
-*mechanism* exactly, but the grammar below is bugflow's own canonical one, not `team.mjs`'s literal
+_mechanism_ exactly, but the grammar below is bugflow's own canonical one, not `team.mjs`'s literal
 one (see "Legacy grammar retires at cutover" below):
 
 1. **The marker.** A claim or release is one single-line HTML comment and nothing else —
@@ -34,11 +34,11 @@ one (see "Legacy grammar retires at cutover" below):
    comment id ascending; **the first one is the holder**, full stop — this is the only reason the
    protocol is a real compare-and-swap and not a race dressed up as one.
 4. **Fetch structured comments, never a flattened line stream.** `gh api …/comments --paginate
-   --slurp` and keep each comment's `id`/`body` as one unit. Rule 2 depends on a comment
-   *boundary* — flattening every comment's body into one stream of lines (`--jq '.[].body'`)
+--slurp` and keep each comment's `id`/`body` as one unit. Rule 2 depends on a comment
+   _boundary_ — flattening every comment's body into one stream of lines (`--jq '.[].body'`)
    destroys that boundary and lets a release inside one person's comment cancel a claim inside
    someone else's.
-5. **`--paginate`, always.** A claim is, by construction, the *newest* comment on a busy issue.
+5. **`--paginate`, always.** A claim is, by construction, the _newest_ comment on a busy issue.
    Reading only page 1 (the oldest 100) makes every lease on comment 101+ invisible — the exact bug
    fixed on both sides of the old system (`team.mjs`'s `comments()` and `bugs.mjs`'s `readClaims`)
    in one commit, because both files parsed the same GitHub state and had to agree.
@@ -69,11 +69,11 @@ structurally, not by discipline.
 
 The old identity was just the worktree directory's basename — chosen because it survives
 `/resume` and context compaction, which a session name or a pid does not. That reasoning still
-holds; what breaks is the *uniqueness* assumption once more than one developer is running
+holds; what breaks is the _uniqueness_ assumption once more than one developer is running
 bugflow. Two developers who both name their working copy of a repo the same conventional thing
 (`wt-bugflow`, or whatever a scaffolding script defaults to) produce **the same identity string**
 from two different machines. The compare-and-swap still elects one winner correctly — comment ids
-are still totally ordered — but every *report* of who holds a claim is now ambiguous: "`held by
+are still totally ordered — but every _report_ of who holds a claim is now ambiguous: "`held by
 wt-bugflow`" answers no useful question when two people could be that string.
 
 Identity becomes `<github-login>/<hostname>/<worktree-name>`:
@@ -88,7 +88,7 @@ Identity becomes `<github-login>/<hostname>/<worktree-name>`:
 **Worked collision, old vs. new:** Alice and Bob each run a scheduled task in a worktree both
 happen to call `wt-bugflow`. Old identity: both are literally the string `wt-bugflow` — a report
 naming the holder is uninformative, and a naive equality check (`existing[0].id !== id`) could let
-Bob's session believe it is *extending its own* claim when it is actually reading Alice's. New
+Bob's session believe it is _extending its own_ claim when it is actually reading Alice's. New
 identity: `alice/DESKTOP-A1B2/wt-bugflow` vs. `bob/LAPTOP-X9Z/wt-bugflow` — distinct strings, the
 CAS and every report of it behave correctly.
 
@@ -115,7 +115,7 @@ immediately, because it runs on one machine with real pids. A GitHub comment car
 liveness signal — reap can
 only tell "the lease expired," never "the holder is actually still working." This is a genuine,
 permanent property of a lease over a comment, not a bug to fix: the mitigation is that a worker
-expected to run long must heartbeat *before* 90 minutes elapse, and a worker resuming after any
+expected to run long must heartbeat _before_ 90 minutes elapse, and a worker resuming after any
 gap (see the "machine sleeps" row below) must re-check it still holds the claim before acting.
 
 ## Batch-level vs. bug-level claims
@@ -152,9 +152,9 @@ class.
 
 ## Race-condition table
 
-| Scenario | What happens | Why it's safe (or isn't) |
-| --- | --- | --- |
-| Two seats claim the same issue within the same minute | Both post `<!--bugflow:claim …-->` comments, both jitter+re-read, both see the same lowest-comment-id winner. The loser posts its own `<!--bugflow:release … reason=lost-race-->` and exits 3. | Real CAS — comment ids are server-assigned and totally ordered; there is no window where both readers can disagree. |
-| A lease expires mid-run (the worker is still actually running, past 90 min, never heartbeated) | `reap` releases it; a second seat can now win a claim on the same issue while the first is still silently working. Two workers may end up inside the same file(s). | **Not fully safe** — this is the honest limit of a time-based lease with no liveness signal (see above). Mitigation is process, not mechanism: a run expected to exceed the lease must heartbeat; `full`-tier's 45-minute cap and Ralph's 8-iteration cap are both comfortably under 90 minutes precisely so this should be rare in practice. |
-| The claiming machine sleeps (desktop scheduled tasks only run while the app is open and the machine awake) | The lease keeps expiring in real time on GitHub while the machine is asleep. If the sleep outlasts the lease, `reap` frees it and someone else may claim it. On waking, the original worker's next action (heartbeat, `start`, `prove`, …) must **re-check it is still the live claim holder** before proceeding, and treat "no longer the holder" exactly like losing a race — release its own state and stop. | Safe *if* every resuming action re-verifies ownership first — a direct extension of the same "lost the race" check already required at claim time, just run again before any later write. CLI.md's `heartbeat`, `start`, `prove` and `release` entries each specify exactly this re-check. |
-| A PR is opened with `Closes #N` after the claim was released (or reaped) | `sync`'s PR-driven transition (`in_progress`→`in_review`) triggers purely on "an open PR's body contains `Closes #N`" — it does not check who currently holds the claim, mirroring `team.mjs`'s own board-lane derivation, which is likewise claim-agnostic. A stray or late PR from a released session can resurrect an issue's status unexpectedly. | **Not caught by the base design.** Recommended guard, not yet in the brief: `sync` should compare the PR's author/head-branch against the issue's most recent claim identity and label `needs:human` on a mismatch rather than silently accepting it. **VERIFY** with the owner before relying on this. |
+| Scenario                                                                                                   | What happens                                                                                                                                                                                                                                                                                                                                                                                                    | Why it's safe (or isn't)                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Two seats claim the same issue within the same minute                                                      | Both post `<!--bugflow:claim …-->` comments, both jitter+re-read, both see the same lowest-comment-id winner. The loser posts its own `<!--bugflow:release … reason=lost-race-->` and exits 3.                                                                                                                                                                                                                  | Real CAS — comment ids are server-assigned and totally ordered; there is no window where both readers can disagree.                                                                                                                                                                                                                           |
+| A lease expires mid-run (the worker is still actually running, past 90 min, never heartbeated)             | `reap` releases it; a second seat can now win a claim on the same issue while the first is still silently working. Two workers may end up inside the same file(s).                                                                                                                                                                                                                                              | **Not fully safe** — this is the honest limit of a time-based lease with no liveness signal (see above). Mitigation is process, not mechanism: a run expected to exceed the lease must heartbeat; `full`-tier's 45-minute cap and Ralph's 8-iteration cap are both comfortably under 90 minutes precisely so this should be rare in practice. |
+| The claiming machine sleeps (desktop scheduled tasks only run while the app is open and the machine awake) | The lease keeps expiring in real time on GitHub while the machine is asleep. If the sleep outlasts the lease, `reap` frees it and someone else may claim it. On waking, the original worker's next action (heartbeat, `start`, `prove`, …) must **re-check it is still the live claim holder** before proceeding, and treat "no longer the holder" exactly like losing a race — release its own state and stop. | Safe _if_ every resuming action re-verifies ownership first — a direct extension of the same "lost the race" check already required at claim time, just run again before any later write. CLI.md's `heartbeat`, `start`, `prove` and `release` entries each specify exactly this re-check.                                                    |
+| A PR is opened with `Closes #N` after the claim was released (or reaped)                                   | `sync`'s PR-driven transition (`in_progress`→`in_review`) triggers purely on "an open PR's body contains `Closes #N`" — it does not check who currently holds the claim, mirroring `team.mjs`'s own board-lane derivation, which is likewise claim-agnostic. A stray or late PR from a released session can resurrect an issue's status unexpectedly.                                                           | **Not caught by the base design.** Recommended guard, not yet in the brief: `sync` should compare the PR's author/head-branch against the issue's most recent claim identity and label `needs:human` on a mismatch rather than silently accepting it. **VERIFY** with the owner before relying on this.                                       |

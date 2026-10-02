@@ -560,18 +560,19 @@ describe("RoutesService", () => {
     });
 
     it("reorderStops clears it in the same transaction", async () => {
+      prisma.route.findFirst.mockResolvedValue({ id: "route-1" });
       prisma.routeStop.findMany.mockResolvedValue([
         { id: "stop-1", stopNumber: 1 },
         { id: "stop-2", stopNumber: 2 },
       ]);
-      prisma.$transaction = jest.fn().mockResolvedValue([]);
+      prisma.routeStop.updateMany.mockResolvedValue({ count: 1 });
 
       await service.reorderStops("route-1", [
         { id: "stop-2", stopNumber: 1 },
         { id: "stop-1", stopNumber: 2 },
       ]);
 
-      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.tenantTransaction).toHaveBeenCalled();
       expect(polylineCleared()).toBe(true);
     });
 

@@ -254,6 +254,7 @@ describe("isDefiniteInlineReturnRefusal — SA-204: a 4xx settles ONLY with the 
     "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
     "INLINE_RETURN_ORDER_CANCELLED",
     "INLINE_RETURN_KEY_CONFLICT",
+    "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
   ])("a 4xx carrying %s is a definite refusal", (code) => {
     expect(isDefiniteInlineReturnRefusal(400, code)).toBe(true);
     expect(isDefiniteInlineReturnRefusal(409, code)).toBe(true);

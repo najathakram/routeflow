@@ -208,6 +208,15 @@ describe("PurchaseOrdersTab", () => {
     expect(screen.getByText("No purchase orders yet")).toBeInTheDocument();
   });
 
+  it("each PO number links to its detail page", () => {
+    listData = { data: [po({ id: "a", poNumber: "PO-A", status: "DRAFT" })] };
+    render(<PurchaseOrdersTab suppliers={[supplier]} products={products} />);
+    expect(screen.getByRole("link", { name: "PO-A" })).toHaveAttribute(
+      "href",
+      "/purchase-orders/a",
+    );
+  });
+
   it("offers Send on DRAFT, Receive on SENT/PARTIAL, and neither on CLOSED", () => {
     listData = {
       data: [

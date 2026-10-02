@@ -6,7 +6,7 @@
 // `process.exit(failures ? 1 : 0)`.
 //
 // T11-T17, T36 (test-plan.md). Fixture repo G is a throwaway `git init` tree, env scrubbed via
-// plane-client.mjs's gitEnv() (the worktree-hook trap).
+// plane-client.mjs's scrubbedGitEnv() (the worktree-hook trap).
 import {
   existsSync,
   mkdirSync,
@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
-import { gitEnv } from "../campaign/plane-client.mjs";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 
 const t0 = performance.now();
 const SCRIPT_PATH = fileURLToPath(new URL("./from-git.mjs", import.meta.url));
@@ -104,7 +104,7 @@ function t11() {
 
 // ── fixture repo G ──────────────────────────────────────────────────────────
 function gitRun(dir, args) {
-  const r = spawnSync("git", ["-C", dir, ...args], { env: gitEnv(), encoding: "utf8" });
+  const r = spawnSync("git", ["-C", dir, ...args], { env: scrubbedGitEnv(), encoding: "utf8" });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
   return r.stdout;
 }

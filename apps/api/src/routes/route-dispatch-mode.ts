@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { RouteKind } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Feature grants v2 brief C (PR-5). The `routes_dispatch` feature's effective config mode
@@ -38,7 +39,7 @@ export function assertRouteKindDispatchAllowed(effectiveMode: string, kind: Rout
   const allowed = allowedRouteKindsForMode(effectiveMode);
   if (!allowed.includes(kind)) {
     throw new ConflictException({
-      code: "FEATURE_MODE",
+      code: API_ERROR_CODES.FEATURE_MODE,
       key: ROUTES_DISPATCH_KEY,
       mode: effectiveMode,
       allowed,

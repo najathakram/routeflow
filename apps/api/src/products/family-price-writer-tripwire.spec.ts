@@ -202,6 +202,12 @@ export const OPAQUE_DATA_ALLOW: Record<string, { count: number; reason: string }
       "row lock (familyPricesForNewVariant) with the mode on, the parent's as before with it off; the " +
       "cost-basis write with a ternary `data` names only cost columns.",
   },
+  "products/product-code-release.ts": {
+    count: 2,
+    reason:
+      "releaseLive / restoreProductCodes build `data` from the three code columns and their retired* " +
+      "twins only (sku, barcode, unitSku); no price, tier or family column is ever named.",
+  },
   "products/family-price.ts": {
     count: 2,
     reason:

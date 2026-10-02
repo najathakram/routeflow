@@ -28,7 +28,7 @@ percentDone, prs[]), citing the merged sha.
 
 Reference the row a change is about in the commit or PR body, e.g. `Feature: F-07`,
 `Bug: B661`, `Defers: D-09`. Use as many as apply; omit the rest. `Feature:`/`Bug:` name what
-the change is *for*; `Defers:` records a new deferral (rare -- most are written at cut time).
+the change is _for_; `Defers:` records a new deferral (rare -- most are written at cut time).
 
 ## How to render
 

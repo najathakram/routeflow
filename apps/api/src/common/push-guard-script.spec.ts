@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 // B897 — scripts/push-guard.mjs, the pre-push guard against pushing build/cache output or a heavy
 // push. Origin: #2742 pushed a commit that added 2,401 `.jest-cache/` files (~38 MB, source maps
@@ -16,27 +15,15 @@ const MIB = 1024 * 1024;
 // B420: git EXPORTS repo-scoped variables (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...) into a hook,
 // and verify runs this spec from inside pre-push, so a plain spawn here would operate on THAT repo
 // (a hijacked GIT_DIR once wrote config into another repository). Every git call and the script's
-// own env go through the ONE `cleanGitEnv()` (scripts/lib/verify-scope.mjs, which strips every GIT_*
-// variable). It is an ES module and this spec is CommonJS, so it is read through a one-off node call.
-const CLEAN_GIT_ENV: NodeJS.ProcessEnv = JSON.parse(
-  spawnSync(
-    process.execPath,
-    [
-      "--input-type=module",
-      "-e",
-      // A file: URL, never a raw path: on Windows a bare `C:\\...` path is an unsupported ESM
-      // scheme (ERR_UNSUPPORTED_ESM_URL_SCHEME), the suite would load 0 tests and every PC lane's
-      // pre-push would go red (Linux CI hides it). Specs that import by path use pathToFileURL.
-      `import { cleanGitEnv } from ${JSON.stringify(
-        pathToFileURL(path.resolve(__dirname, "../../../../scripts/lib/verify-scope.mjs")).href,
-      )}; process.stdout.write(JSON.stringify(cleanGitEnv()));`,
-    ],
-    { encoding: "utf8" },
-  ).stdout,
-);
+// own env go through the ONE `scrubbedGitEnv()` (scripts/lib/scrubbed-git-env.cjs, which strips every
+// GIT_* variable); fixture-git-env-scrub.spec.ts pins that each git spawn passes it.
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: () => NodeJS.ProcessEnv;
+};
+const CLEAN_GIT_ENV: NodeJS.ProcessEnv = scrubbedGitEnv();
 
 function git(cwd: string, ...args: string[]): string {
-  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: CLEAN_GIT_ENV });
+  const r = spawnSync("git", args, { cwd, encoding: "utf8", env: scrubbedGitEnv() });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 }
@@ -278,11 +265,7 @@ describe("push-guard.mjs contract (B897)", () => {
     });
   });
 
-  it("the spec imports the ESM helper through a file: URL (pathToFileURL), never a raw path (Windows)", () => {
-    const src = fs.readFileSync(__filename, "utf8");
-    expect(src).toContain("pathToFileURL(path.resolve(__dirname");
-    expect(src).not.toMatch(/import \{ cleanGitEnv \} from \$\{JSON\.stringify\(\s*path\.resolve/);
-    // and the URL is what node actually accepts: the same one-off import loads and yields a clean env
+  it("the fixture env comes from the shared scrub and carries no GIT_* variable", () => {
     expect(Object.keys(CLEAN_GIT_ENV).some((k) => k.startsWith("GIT_"))).toBe(false);
     expect(Object.keys(CLEAN_GIT_ENV).length).toBeGreaterThan(0);
   });

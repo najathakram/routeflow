@@ -6,18 +6,21 @@ Plan: `local-assets/handoff/2026-09-23/PLAN-small-prs.md`. Lead log:
 Opus 5.5 replaces Opus 5 for verdicts and review; skills swept, uncommitted in both skill trees).
 
 ## Production: FIXED
+
 Master `2ed80789` (#1268, B745 Dockerfile), deploy SUCCESS 04:12:56Z, `/health` serves it. #1267
 (B742 test fix) merged before it; its own deploy failed as expected (predated B745) — ruled and
 recorded on #938. Window closed 04:14Z, repo PRIVATE (read back). post-deploy-check needs the
 owner's smoke login (agents hold no credentials).
 
 ## Units gate (owner-approved definition)
+
 Unit-path bugs, not all of F-07: B649, B651 (web unit-line lane), B650 (Lane IR), B648 (B707),
 B652 (Lane F), B653 display (R-ui, owner: fix before release), #1264-v2 + B747 (mobile), and
 B297 PR 1 + PR 2 (SA-088: two sale writers are units paths). Then the owner pilots units_v1 on
 their own tenant.
 
 ## Release money fixes (owner chose all four plus the assigned ones)
+
 B305 driver pre-tax at door (critical; B707: PR A server `4170129e`, PR B mobile `29a59115`),
 B310 (coordinator), B663 (S-scan, needs a throwaway-DB proof), B667 re-cut (Lane F, REQUIRED
 CHANGES from Opus review: product-match double-billing + rounding tolerance), B673 at-door 12x
@@ -26,12 +29,14 @@ PR 3 waits for the owner's sizing numbers), #1190 parked-return resolution (Lane
 PR A extracts booker + remaining-map builder).
 
 ## Push order on the mini (two verifies at once while headroom holds)
+
 B305 A, B305 B, #1264-v2, B743-A, B648, B735, B736, F-06 PR 1, then B649, B651, B650, B297 1+2,
 Lane IR mirror. PC: coordinator B310 → B659; Lane F B667 after fixes; S-scan #1120 (tier 1,
 flush documented as reasoned); Order UI overflow (one locator left, then Playwright + captures).
 MacBook: B673, report, B744 — owner approves pushes.
 
 ## ~04:40Z state
+
 PC: Order UI dev servers stopped (holding for Playwright until the B310 + #1120 verifies finish and
 memory is back above 6 GB; watch log `scratchpad/pc-load-watch.log`). Mini: Lane IR opened #1269 (B660a
 extract, tier 1, Opus review running at 2334686f; SA review still to request) and pushed -r2 at
@@ -43,37 +48,42 @@ on `test` through the guarded `--project=setup` mint. Follow-up to file: mobile
 orders/[id].tsx:685 legacy flag-off path, the same shape as B653.
 
 ## Open PRs for the next window (~04:55Z; all private, CI owed)
-| PR | What | Head | Reviews |
-|---|---|---|---|
-| #1269 | B660a reversal booker extract (Lane IR) | f3f9315b (blob d75ab141). MERGE-READY on a real green. SA-090a PASS + Opus PASS W/ NOTES at f3f9315b (the Opus trailer note is a false positive: the trailer is in the HEAD body and the stop hook uses a multiline regex) | Opus PASS W/ NOTES; SA PASS (SA-090, pinned to service blob d75ab141; SA to glance at the .github hunk) |
-| #1270 | inline-returns mobile mirror, draft (Lane IR) | 052138f4 (nonce settle fix + docs removed; 12 files) | SA-091a HOLD on one precision (keep the nonce on a 5xx; settle only on 2xx/4xx; 2 pins); Opus full review running; push at baton step 11 |
-| #1271 | S-scan poor-signal v3 (supersedes #1120) | d653cefdc (queued-discard fix + trailer; SA + Opus delta reads running). Earlier 50a68df47: SA-090b PASS; Opus REQUIRED CHANGES: a queued item discarded during another lookup is still retried and added (runDueRetries uses a stale list), and the trailer is on the parent, not HEAD. S-scan is doing one more small round). Was fdf13b50: | SA HOLD + Opus REQUIRED CHANGES (live-scan vs retry race gives 2 rows and +2 per scan; discard vs in-flight retry; invalid test harnesses; queued-scan cue; narrow try; HEAD trailer). One fix push, before B663 |
-| #1272 | B305 A server driver pre-tax (B707) | 4170129e (NO push; body edit only; test and comment kept on local followup/b305a-exempt-pin for B756) | SA PASS (SA-092) + Opus PASS W/ NOTES: the body must say the deploy changes live driver quotes (a correction); add the isTaxExempt fallback-select assertion; drop the stale line refs. DEPLOY RULE: #1272 SUCCESS on Railway before any EAS/OTA build with #1273. Follow-up to file: the legacy unlinked-orders fallback (routes.service.ts:1279) includes DELIVERED history. SA not yet asked |
-| #1273 | B305 B mobile amount-due (B707) | 9e72ee87 MERGE-READY after #1272 is deployed: SA-092c PASS + Opus PASS W/ NOTES (fold into the B762 PR: roundMoney on the discount at both sites to avoid 1-cent drift, a realistic $0 fixture, reconciledAmountDue using the ||1 shape). Previously 9575aa81: SA-092a PASS + Opus PASS W/ NOTES. One small round after B648: guard repro test, guard only when null, comment precision; SA-092b YES (E30): r = active/(orderSubtotal||1), bail only when null; discount × r in orderAmountDue; reconciledAmountDue uses the SEEDING share r_seed for the discount (never the delivered share); an existing draft discount is used as-is; five pins | SA PASS (SA-092) + Opus PASS W/ NOTES; re-confirm both at the new sha. MERGE GATE: #1272 merged AND its own Railway deploy SUCCESS before #1273 merges. Earlier notes: harden against an incomplete projection; exempt/category-tax/r=0.5 tests; discount parity at r≠1 vs the server. B707 holds its fixes for the SA |
-| #1274 | B667 v2, Lane F (supersedes #1185, closed) | f20b6f8d7 | SA-097 PASS (full re-read, hold lifted: (A) DELIVERED coverage basis, (B) order-keyed advisory lock). Opus full re-read still running |
-B660 PR B plan approved with changes: reuse the shared booker and assert parked===false; extract the
-preload; match the B681 correction shape from its script writer; tests #11–#13 (cancelled-return
-refusal, LOCKED books today, re-park gives 409 + rollback); roles mirror parked-restocks. F2 B735 is on
-ruling (a), stopping at the first wall (TENANT_ADMIN/addon/SUPER_ADMIN), else (c).
+
+| PR                                                                                                      | What                                          | Head                                                                                                                                                                                                                                                                                                                                          | Reviews                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #1269                                                                                                   | B660a reversal booker extract (Lane IR)       | f3f9315b (blob d75ab141). MERGE-READY on a real green. SA-090a PASS + Opus PASS W/ NOTES at f3f9315b (the Opus trailer note is a false positive: the trailer is in the HEAD body and the stop hook uses a multiline regex)                                                                                                                    | Opus PASS W/ NOTES; SA PASS (SA-090, pinned to service blob d75ab141; SA to glance at the .github hunk)                                                                                                                                                                                                                                                                                         |
+| #1270                                                                                                   | inline-returns mobile mirror, draft (Lane IR) | 052138f4 (nonce settle fix + docs removed; 12 files)                                                                                                                                                                                                                                                                                          | SA-091a HOLD on one precision (keep the nonce on a 5xx; settle only on 2xx/4xx; 2 pins); Opus full review running; push at baton step 11                                                                                                                                                                                                                                                        |
+| #1271                                                                                                   | S-scan poor-signal v3 (supersedes #1120)      | d653cefdc (queued-discard fix + trailer; SA + Opus delta reads running). Earlier 50a68df47: SA-090b PASS; Opus REQUIRED CHANGES: a queued item discarded during another lookup is still retried and added (runDueRetries uses a stale list), and the trailer is on the parent, not HEAD. S-scan is doing one more small round). Was fdf13b50: | SA HOLD + Opus REQUIRED CHANGES (live-scan vs retry race gives 2 rows and +2 per scan; discard vs in-flight retry; invalid test harnesses; queued-scan cue; narrow try; HEAD trailer). One fix push, before B663                                                                                                                                                                                |
+| #1272                                                                                                   | B305 A server driver pre-tax (B707)           | 4170129e (NO push; body edit only; test and comment kept on local followup/b305a-exempt-pin for B756)                                                                                                                                                                                                                                         | SA PASS (SA-092) + Opus PASS W/ NOTES: the body must say the deploy changes live driver quotes (a correction); add the isTaxExempt fallback-select assertion; drop the stale line refs. DEPLOY RULE: #1272 SUCCESS on Railway before any EAS/OTA build with #1273. Follow-up to file: the legacy unlinked-orders fallback (routes.service.ts:1279) includes DELIVERED history. SA not yet asked |
+| #1273                                                                                                   | B305 B mobile amount-due (B707)               | 9e72ee87 MERGE-READY after #1272 is deployed: SA-092c PASS + Opus PASS W/ NOTES (fold into the B762 PR: roundMoney on the discount at both sites to avoid 1-cent drift, a realistic $0 fixture, reconciledAmountDue using the                                                                                                                 |                                                                                                                                                                                                                                                                                                                                                                                                 | 1 shape). Previously 9575aa81: SA-092a PASS + Opus PASS W/ NOTES. One small round after B648: guard repro test, guard only when null, comment precision; SA-092b YES (E30): r = active/(orderSubtotal |     | 1), bail only when null; discount × r in orderAmountDue; reconciledAmountDue uses the SEEDING share r_seed for the discount (never the delivered share); an existing draft discount is used as-is; five pins | SA PASS (SA-092) + Opus PASS W/ NOTES; re-confirm both at the new sha. MERGE GATE: #1272 merged AND its own Railway deploy SUCCESS before #1273 merges. Earlier notes: harden against an incomplete projection; exempt/category-tax/r=0.5 tests; discount parity at r≠1 vs the server. B707 holds its fixes for the SA |
+| #1274                                                                                                   | B667 v2, Lane F (supersedes #1185, closed)    | f20b6f8d7                                                                                                                                                                                                                                                                                                                                     | SA-097 PASS (full re-read, hold lifted: (A) DELIVERED coverage basis, (B) order-keyed advisory lock). Opus full re-read still running                                                                                                                                                                                                                                                           |
+| B660 PR B plan approved with changes: reuse the shared booker and assert parked===false; extract the    |
+| preload; match the B681 correction shape from its script writer; tests #11–#13 (cancelled-return        |
+| refusal, LOCKED books today, re-park gives 409 + rollback); roles mirror parked-restocks. F2 B735 is on |
+| ruling (a), stopping at the first wall (TENANT_ADMIN/addon/SUPER_ADMIN), else (c).                      |
 
 ## Owner, waiting
+
 1. DONE ~07:30Z by the owner: B297 sizing is ZERO mismatches (orders 0/58, invoices 0/52, ledger 0/69; one tenant with regulated activity). PR 3 is unblocked; relayed via the Mac Lead to Lane B.
 2. Approve the MacBook pushes; then run the B673 overcharge report (possible live 12x charges).
 3. post-deploy-check with smoke login. 4. F-06 PR 2 captures in the owner's platform-admin session.
-5. Prod migration for B297 PR 1 after two reviews, then drift 0, then merge.
+4. Prod migration for B297 PR 1 after two reviews, then drift 0, then merge.
 
 ## Registry
+
 Docs batch (Mac Lead, local): B742–B754 plus the 25-close / 14-re-scope reconcile, B737–B739
 corrections, B716 lowered. Next free id **B766** (B755–B761 filed tonight; docs batch 6d92b0e4, local on the Mac Lead). Roadmap registers: `docs/roadmap-2026-09-23` in
 rf-roadmap-update (D-06 closed). Registry artifact republishes after the docs batch lands.
 
 ## Guards learned tonight (lead log)
+
 Content not timestamp; merge is not landed until its own sha deploys; read master via
 `git show origin/master:`, never the lead checkout; every relayed claim carries provenance; a test
 that can pass without reaching its target is not a test; disk is a load gauge; a campaign-check
 report older than a merged test change forces a real re-run before push.
 
 ## Mini push baton (~05:00Z; the Mac Lead can't message lanes)
+
 R-ui B653 mobile (f6181f3e) → B707 #1264-v2 → R-ui B653 PDF+email as ONE api PR (shared qtyCellText, no
 duplicate) → B707 B743-A → B707 B648. Each lane checks `memory_pressure` (at least 50% free) and passes
 the baton itself. Lane IR's #1269 fix push slots in after its DB proof. Main-checkout node_modules is the
@@ -137,6 +147,7 @@ MacBook identified: session 'Extract and fix vendor-bills poTotal drift' (title 
 #1284 (B744, MacBook) Opus review running. #1248 (B716, MacBook) needs AFTER-only captures from F2.
 
 ## ~08:50Z SA-097
+
 #1282 (B673 fix, MacBook) PASS at 9ae2768c: reconcileFiledAddSplit is pure and fail-closed —
 refuses on a changed/removed pack (INVALID_LINE_SPLIT) rather than re-splitting or falling back to
 bare qty (the 12x itself); B655's separate live-pack read for a split-carrying ADD_ITEM holds.
@@ -147,6 +158,7 @@ Opus independent reviews of #1274 r5, #1282, #1283 still running. #1284 (B744) O
 #1248 (B716) needs AFTER-only captures from F2.
 
 ## 14:10Z (date -u) — resync after the usage pause
+
 Time labels between ~07:30Z and ~08:50Z above were estimates and run ahead of real time; trust this one.
 Master still 2ed80789f; nothing merged. Per-lane start prompts and the full PR table:
 local-assets/handoff/2026-09-23/RESUME-PROMPTS.md. The Opus reviews of #1274 r5, #1282 and #1283 were
@@ -159,14 +171,15 @@ B767 filed HIGH (recompute backward-sync creates a regulated OrderItem with no t
 RATCHET PLAN for invoices.service.ts (master 6405, baseline 6389): B297 steps 1+2 +9 (6414), #1274 −4 with the baseline lowered to 6385 (ceiling 6410), #1280 made NET ZERO by R-ui before its push, so all three fit in any order at exactly 6410. B760+B763 must be net ≤ 0; B761/B767 extract first. The coordinator re-runs size-ratchet.spec after every master merge in the window.
 
 ## ~15:00Z Opus results
+
 #1282 Opus PASS W/ NOTES (two passes with SA-097): the refusal text loops the operator ("approve at stop"), so change it to "decline and re-add"; add a real create() test; replace the it.failing B753 tests with pinned wrong values. MacBook small round.
 #1283 Opus REQUIRED CHANGES: BLOCKER, it reads DATABASE_URL raw (the internal Railway host, ENOTFOUND from the PC), so it needs resolveDatabaseUrl requireProxy; MAJOR false positives, so AFFECTED requires the bare-qty signature + not DISCOUNTED/MANUAL + live pack == filed; label pre-tax; roundMoney; a write guard; BEGIN READ ONLY. OWNER MUST NOT RUN IT YET.
 B768 filed (medium tooling): 11 owner-run read-only reports read DATABASE_URL raw; MacBook fixes them after #1283. The next free id is B769 (B766 held). Registry head 74ea6cbc = #1285 + B767 + B768 (local; the Mac Lead pushes when the slot frees).
 #1274 r5 Opus REQUIRED CHANGES, 3 HIGHs (SA-097 superseded):
- (1) deliveredQty defaults to 0 and only completeWithPayment stamps it, so office-marked/van/completeStop DELIVERED orders get every line cancelled (VERIFIED by the lead on master);
- (2) the ambiguous skip leaves invoicedQty stale, billing 12 vs 10;
- (3) free-text lines double-bill.
- SA rulings requested (the lead proposes a root-cause server-side orderItemId carry-over in update()). Lane F does (4) the concurrency pin that can't fail, (5) lock timeouts 10s/15s, and (6) docs now. B760's DELIVERED basis is HELD (same flaw); B763 can ship alone.
+(1) deliveredQty defaults to 0 and only completeWithPayment stamps it, so office-marked/van/completeStop DELIVERED orders get every line cancelled (VERIFIED by the lead on master);
+(2) the ambiguous skip leaves invoicedQty stale, billing 12 vs 10;
+(3) free-text lines double-bill.
+SA rulings requested (the lead proposes a root-cause server-side orderItemId carry-over in update()). Lane F does (4) the concurrency pin that can't fail, (5) lock timeouts 10s/15s, and (6) docs now. B760's DELIVERED basis is HELD (same flaw); B763 can ship alone.
 #1280: R-ui made it net 0 in invoices.service.ts (6405 = master) in commit cb441a5c; it waits for the baton.
 SA-093a (E34): #1274 round 6 spec. (A) EVIDENCE-keyed delivered basis from DeliveryMutation rows via one helper, deliveredBasisByLine (no mutation = qty; no mutations at all = undelivered; deliveredQty never read); pins seeded through real mutation rows, plus (4) changeStatus-DELIVERED stays $100 and (5) completeStop uses the mutation basis. (2+3) ROOT fix server-side: an optional orderItemId in the invoice items DTO, validated against inv.orderId, carried through update(); product matching is fallback only, with a warn; positional/identity correlation and per-product allocation are refused. Web/mobile editors send orderItemId in follow-up PRs (to assign). B760 waits for round 6 and then uses deliveredBasisByLine. Ratchet: round 6 must be net ≤ 0 in invoices.service.ts.
 #1276 master-merged at 95868384b (contains master; diff vs master = customers.service.ts +1/-1 and spec +19; trailer on the HEAD merge commit; verify green). SA delta confirm requested. Coordinator is now on #1279's master merge + push.
@@ -233,6 +246,7 @@ SA-095e: #1279 PASS at f780eb808 (spec-only delta). Opus delta pending.
 #1281 round 3 (SA-085h) pushed at 7f6e0ebc; SA + Opus delta reads requested.
 SA-085i: #1281 HOLD on one reader (the catalog row shows the pack price per unit); a one-line fix + pin, held until the Opus delta. B747 scope += draftCatalogLines serialises the pack price; write unitBasePrice and base the override on unitPriceBase.
 #1281 Opus PASS W/ NOTES at 7f6e0ebc: tray tests use a hand-written price fn (the real wiring is unpinned); a POSSIBLE NON-UNIT REGRESSION (setBoxes via setLineBoxes treats legacy box-unaware qty as loose pieces, so phantom pieces for every tenant) is treated as must-fix; the edit-screen piece scan has no confirm; the catalog row (SA-085i). All folded into the lane's held push.
+
 - ~16:05Z: #1289 is MERGE-READY at eeb0c068 (SA-087b PASS 1, tree 756c0369 verified; Opus PASS W/ NOTES at eeb0c068). Only the PR body is to be fixed (no push); the same-value test folds into #1291 (F-06 PR 2, draft, 34feb06d). #1290 B772 is REQUIRED CHANGES (CI's ubuntu-latest is below 24 GB, so it would be throttled; relayed to R-ui). #1281's held push now has 4 items (catalog row, SA-085i(b) lifting priceEditorPrefill/SaveOverride with value tests, SA-085i(c) non-unit edit setters byte-identical to master with the legacy qty-3 → 4 boxes pin, the edit-screen piece-scan confirm). B773 filed (splitFromPrev reads a no-split qty as pieces; medium). The Lane IR bug hunt returned 10 verified items and has gone to the Mac Lead for filing from B774: B3 inline-return newest-line pack (HIGH), B4 mobile draft keyed by productId deletes a line (HIGH, possibly CRITICAL), B5 merge re-split at the live pack (CRITICAL candidate), A3 PATCH /invoices Partial DTO unvalidated (MED), and LOWs A5+B2, A2, A4, A1, B1. SA rulings requested on B5 and B3.
 - ~16:12Z S-scan pushed B663 → PR #1292 at 639c6be591d94dd45fe55bb587960479b2e284a0 (delivered-reconcile.ts + complete-payment-reconcile.ts extracted; invoices.service.ts 6380 = −25 vs master; routes 3212/3214). Tier 1: the SA + Opus review is launched. S-scan → B756 next.
 - ~16:30Z Hunt ids: B774 (B3, HIGH, Lane IR), B775 (B4, CRITICAL because non-unit orders can carry two same-product lines; B707 pushes FIRST and #1281 rebases onto it), B776 (B5, CRITICAL, Lane B after #1286; sizing script first), B777 A3 MED, B778 deliveredAt LOW, B779 Zoho LOW, B780 PO receivedQty LOW, B781 mileage LOW, B782 startedAt LOW. B783 requested: the bare completeStop skips the stamp and reconcile (MED, S-scan after B756).
