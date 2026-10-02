@@ -395,11 +395,10 @@ export class ProductFamiliesService {
       const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
-    // B964-2: the same guard on every added / renamed variant, before any read or write
+    // B964-2: an ADDED variant's name is new text, so it is guarded here, before any read or write. A RENAME is guarded
+    // CHANGE-ONLY inside the transaction (against the stored name), before any write.
     for (const v of add)
       assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
-    for (const u of update)
-      if (u.name) assertSafeProductNames({ name: u.name.trim(), variantName: u.name.trim() });
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));
     const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
@@ -438,16 +437,27 @@ export class ProductFamiliesService {
         if (family.kind !== "FAMILY") {
           throw new BadRequestException("This product is not a family.");
         }
-        const mine: Array<{ id: string }> = touchedIds.length
-          ? await tx.product.findMany({
-              where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
-              select: { id: true },
-            })
-          : [];
+        const mine: Array<{ id: string; name: string; variantName: string | null }> =
+          touchedIds.length
+            ? await tx.product.findMany({
+                where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
+                select: { id: true, name: true, variantName: true },
+              })
+            : [];
         const foreign = touchedIds.filter((id) => !mine.some((m) => m.id === id));
         if (foreign.length > 0) {
           throw new BadRequestException(
             "Every updated or deactivated id must be a variant of this family.",
+          );
+        }
+        // B964-2 (CHANGE-ONLY, as master's rule): a legacy formula-led name that is sent back UNCHANGED (e.g. with a sku
+        // edit) is not refused; only a name that CHANGES to formula-led text is, before any write.
+        for (const u of update) {
+          if (!u.name) continue;
+          const stored = mine.find((m) => m.id === u.id);
+          assertSafeProductNames(
+            { name: u.name.trim(), variantName: u.name.trim() },
+            stored && { name: stored.name, variantName: stored.variantName },
           );
         }
 
