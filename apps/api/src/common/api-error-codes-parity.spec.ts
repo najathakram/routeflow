@@ -143,6 +143,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   ],
   "apps/mobile/lib/queue-drain.ts": ["MERGE_IN_PROGRESS", "LOCK_UNAVAILABLE"],
   "apps/mobile/lib/selling-restricted.ts": ["SELLING_RESTRICTED"],
+  "apps/mobile/lib/vendor-bill-scan.ts": ["MONEY_INVARIANT"],
   "apps/web/app/(dashboard)/_components/gates/PlanGateBoundary.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx": ["PLAN_GATE"],
@@ -167,6 +168,8 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": ["MERGE_CHOICE_REQUIRED"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/(dashboard)/vendor-bills/[id]/page.tsx": ["MONEY_INVARIANT"],
+  "apps/web/app/(dashboard)/vendor-bills/page.tsx": ["MONEY_INVARIANT"],
   "apps/web/app/buyer/portal/[seller]/cart/page.tsx": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/app/buyer/portal/[seller]/orders/[id]/page.tsx": [
     "CHANGE_WINDOW_CLOSED",
@@ -200,7 +203,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 72;
+const CONSUMER_ALLOWLIST_TOTAL = 75;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
