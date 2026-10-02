@@ -224,9 +224,11 @@ describe("the check is memoised per origin string, but only when it succeeded", 
     expect(await exitOf(() => SB.ensureClone(env))).toBe(2); // still refused, and re-probed
     expect(probesOf("gh-short:routeflow")).toBe(2);
     // the alias now resolves to the (local) state origin instead of the product repo
+    // a gitconfig value treats a backslash as an escape, so a Windows path (file://C:\...) is doubled
+    const configValue = world.originUrl.split("\\").join("\\\\");
     fs.writeFileSync(
       process.env.GIT_CONFIG_GLOBAL as string,
-      `[url "${world.originUrl}"]\n\tinsteadOf = gh-short:\n`,
+      `[url "${configValue}"]\n\tinsteadOf = gh-short:\n`,
     );
     const clone = await SB.ensureClone({ ...env, origin: "gh-short:" });
     expect(fs.existsSync(path.join(clone, ".git"))).toBe(true);
