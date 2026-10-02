@@ -13,6 +13,7 @@ import { customerNameViolation } from "../customers/customer-name-guard";
 import {
   addressViolation,
   licenseViolation,
+  personNameViolation,
   productNameViolation,
 } from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
@@ -785,7 +786,14 @@ export class ImportService {
               state: shippingState,
               zip: shippingZip,
             })) ??
-        this.commercialTextViolation(parsedCommercial.values, existing);
+        this.commercialTextViolation(parsedCommercial.values, existing) ??
+        // B984: the row's person name (salutation / first / last name) is written into the Customer row AND, when a contact is
+        // created, into a new ContactPerson. A contact is created for a new customer or an existing one with none: that write is
+        // unconditional, so it is checked WITHOUT a stored row; otherwise only a changed value against the customer's own copy.
+        personNameViolation(
+          { salutation, firstName, lastName },
+          existing && (existing.contactPersons?.length ?? 0) > 0 ? (existing as never) : null,
+        );
       if (textViolation) {
         skipContact(textViolation);
         continue;
