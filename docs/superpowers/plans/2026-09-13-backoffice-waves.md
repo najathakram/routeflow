@@ -1,6 +1,6 @@
 # Back-office delivery plan — waves W1–W6
 
-**Status:** proposed 2026-09-13 by the fleet lead. Supersedes nothing; it *sequences* work that
+**Status:** proposed 2026-09-13 by the fleet lead. Supersedes nothing; it _sequences_ work that
 already exists as specs, plans and registry rows but has never been ordered.
 
 **Companion documents (all still authoritative for their own content):**
@@ -50,19 +50,20 @@ truth). Everything else follows from that.
 ## 3. The waves
 
 ### Wave W1 — Money that is wrong today
+
 **Rule:** money moves incorrectly, or entitlements do not match what was paid for. Nothing here is
 cosmetic; every row is a real over- or under-charge.
 
-| Item | Sev | Batch | What is wrong |
-|---|---|---|---|
-| **B58** | critical | F18 | Admin "Change plan" always calls `subscribe` — full non-prorated charge **and** a reset billing period. Every admin-initiated plan change overcharges. |
-| **B107** | high | F18 | `disableAddon` nulls `stripeItemId` even when the Stripe delete failed — the tenant keeps paying for a disabled add-on, and the pointer to stop it is gone. |
-| **B342** | medium | F45 | Enabling a priced add-on twice creates two Stripe subscription items and keeps one pointer — double billing, one handle. |
-| **B327** | high | F42 | The 3-day payment-grace suspension can never fire — non-payers are never suspended. |
-| **B329** | low | F42 | `rollCycles` drifts the billing anchor day and drops period time-of-day. |
-| **B216** | high | *none* | Reinstating a lapsed tenant does not clear a downgrade armed before the lapse — it fires later against a paying tenant. |
-| **B218** | low | *none* | `subscribe()` on an off-catalog published plan key writes `currentPlan` as the STARTER enum shadow — wrong entitlements, silently. |
-| *in flight* | — | — | **TRIAL-1** (trial tenant cannot cancel), **RO-1** (READ_ONLY invisible in UI), **STRIPE-CANCEL-1** (in-app cancel never propagates to Stripe), `/billing/quote` READ_ONLY allowlist — all built and held in `rf-billing-trial` (routeflow-03). |
+| Item        | Sev      | Batch  | What is wrong                                                                                                                                                                                                                                   |
+| ----------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **B58**     | critical | F18    | Admin "Change plan" always calls `subscribe` — full non-prorated charge **and** a reset billing period. Every admin-initiated plan change overcharges.                                                                                          |
+| **B107**    | high     | F18    | `disableAddon` nulls `stripeItemId` even when the Stripe delete failed — the tenant keeps paying for a disabled add-on, and the pointer to stop it is gone.                                                                                     |
+| **B342**    | medium   | F45    | Enabling a priced add-on twice creates two Stripe subscription items and keeps one pointer — double billing, one handle.                                                                                                                        |
+| **B327**    | high     | F42    | The 3-day payment-grace suspension can never fire — non-payers are never suspended.                                                                                                                                                             |
+| **B329**    | low      | F42    | `rollCycles` drifts the billing anchor day and drops period time-of-day.                                                                                                                                                                        |
+| **B216**    | high     | _none_ | Reinstating a lapsed tenant does not clear a downgrade armed before the lapse — it fires later against a paying tenant.                                                                                                                         |
+| **B218**    | low      | _none_ | `subscribe()` on an off-catalog published plan key writes `currentPlan` as the STARTER enum shadow — wrong entitlements, silently.                                                                                                              |
+| _in flight_ | —        | —      | **TRIAL-1** (trial tenant cannot cancel), **RO-1** (READ_ONLY invisible in UI), **STRIPE-CANCEL-1** (in-app cancel never propagates to Stripe), `/billing/quote` READ_ONLY allowlist — all built and held in `rf-billing-trial` (routeflow-03). |
 
 **Money carve-out applies to every row: Opus refute-first review is mandatory, and no data repair
 inside a fix.** Two separate money-direction errors were caught by that gate on 2026-09-13 alone.
@@ -73,6 +74,7 @@ semantics). Fold it into that lane if it lands before W1 starts; otherwise it he
 ---
 
 ### Wave W2 — Truth (= Phase 0, already fully planned)
+
 **Rule:** every number the admin surface shows must be derived, not estimated, and every tenant
 must be classifiable. This wave is **already written** as a 15-task plan — do not re-plan it.
 
@@ -92,26 +94,28 @@ reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 ---
 
 ### Wave W3 — The admin seat: impersonation and isolation
+
 **Rule:** an admin acting on a tenant must not leak across tenants, and must be auditable.
 **This wave is independent of W1/W2 files and should run in parallel from day one.**
 
-| Item | Sev | Batch | What is wrong |
-|---|---|---|---|
-| **B124** | high | F33 | Impersonation keeps the previous tenant's logo, business name and username. |
-| **B138** | high | F14 | Signing out during impersonation deletes every refresh token of the *real* tenant admin. |
-| **B165** | medium | F14 | The impersonation guard can never fire — impersonated writes are audited as the tenant's own admin. Audit is blind precisely when it matters most. |
-| **B173** | low | F29 | An impersonation timeout bounces the admin silently and leaves the tenant cookie set. |
-| **B140** | high | F19 | Mobile sign-out never clears the query cache — the next tenant sees the previous tenant's figures. |
-| **B123** | high | F33 | Developer Mode silently overrode per-tenant delivery toggles and the dispatch API. |
-| Phase 2 | — | — | Platform-admin MFA + recovery; **B349** signed OAuth state (already built in another lane — land it, do not rebuild). |
+| Item     | Sev    | Batch | What is wrong                                                                                                                                      |
+| -------- | ------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **B124** | high   | F33   | Impersonation keeps the previous tenant's logo, business name and username.                                                                        |
+| **B138** | high   | F14   | Signing out during impersonation deletes every refresh token of the _real_ tenant admin.                                                           |
+| **B165** | medium | F14   | The impersonation guard can never fire — impersonated writes are audited as the tenant's own admin. Audit is blind precisely when it matters most. |
+| **B173** | low    | F29   | An impersonation timeout bounces the admin silently and leaves the tenant cookie set.                                                              |
+| **B140** | high   | F19   | Mobile sign-out never clears the query cache — the next tenant sees the previous tenant's figures.                                                 |
+| **B123** | high   | F33   | Developer Mode silently overrode per-tenant delivery toggles and the dispatch API.                                                                 |
+| Phase 2  | —      | —     | Platform-admin MFA + recovery; **B349** signed OAuth state (already built in another lane — land it, do not rebuild).                              |
 
 ---
 
 ### Wave W4 — Tenant lifecycle completeness
+
 **Rule:** every state a tenant can reach has a way out, and somebody is told when it is reached.
 **Depends on W2** (needs `Tenant.class` and trustworthy states).
 
-- **CANCELLED is a dead end** — 403 on every method *including GET*, no banner, no CTA; only a
+- **CANCELLED is a dead end** — 403 on every method _including GET_, no banner, no CTA; only a
   platform-admin `updateStatus` restores. **This is a gating precondition: do not enable Stripe
   checkout for any real tenant until CANCELLED has a path back** (self-serve resubscribe, or at
   minimum read-only data access + support CTA). The STRIPE-CANCEL-1 fix makes this state reachable
@@ -127,12 +131,14 @@ reassigned** to the in-flight billing lane — consume it, do not rebuild it.
 ---
 
 ### Wave W5 — What we sell (= Phase 3)
+
 Draft/publish plan editor · pricing consistency across catalog and checkout · the GoHighLevel
 $9.99 SKU. **Depends on W2** (a plan editor over untrustworthy plan data is a liability).
 
 ---
 
 ### Wave W6 — What we show (= Phases 5–6)
+
 Tenant 360: merged timeline, contacts, tasks, health score, attention queue. Tenant portal:
 self-serve card/invoice, credits, **export/erasure** — which also discharges the contractual
 data-export guarantee in ROAD-79 and answers the CANCELLED data-access problem from W4.
@@ -154,7 +160,8 @@ Lane B (parallel):       W3 ─────────────────�
 - **W4/W5 both depend on W2 only**, so they can split into two lanes once W2 lands.
 
 **Per-wave gates (non-negotiable):**
-1. Red-first regression proving the *wrong value*, per registry row.
+
+1. Red-first regression proving the _wrong value_, per registry row.
 2. Money carve-out on W1, W2's reconciliation, and W5: **Opus refute-first review, mandatory.**
 3. No data repair inside a bug fix. Reconciliation is a separate, owner-signed, dry-run-first step.
 4. Compose boot gate before push on anything touching module wiring.
@@ -168,7 +175,7 @@ wave takes only part of a batch, note the split in the PR body so the remainder 
 
 ## 5. What this plan deliberately does not do
 
-- **Does not re-plan Phase 0.** W2 *is* the existing 15-task plan.
+- **Does not re-plan Phase 0.** W2 _is_ the existing 15-task plan.
 - **Does not re-file any registry row.** Waves reference; they do not duplicate.
 - **Does not duplicate ROAD items.** ROAD-76…ROAD-95 remain the feature backlog; the wave items
   added alongside them are an index over that backlog plus the registry, not a second copy.

@@ -43,6 +43,11 @@ const APPLE_REVOKE_URL = `${APPLE_ISSUER}/auth/revoke`;
 const CLOCK_TOLERANCE_SECS = 60;
 const NONCE_TTL_SECS = 600; // 10 minutes (SA-418 §1)
 const NONCE_KEY_PREFIX = "oauth:apple-nonce:";
+/** Max age of an Apple server notification (its `iat`); retries land within hours. */
+const NOTIFICATION_MAX_AGE = "48h";
+const NOTIFICATION_JTI_KEY_PREFIX = "apple:notif:jti:";
+/** Longer than the max age so a jti outlives every token that could still carry it. */
+const NOTIFICATION_JTI_TTL_SECS = 7 * 24 * 3600;
 /** Apple signs identity tokens and server notifications with RS256 only. */
 const APPLE_ALGORITHMS = ["RS256"];
 const APPLE_HTTP_TIMEOUT_MS = 10_000;
@@ -167,7 +172,7 @@ export class AppleOAuthService {
     nonce: string,
     tenantSlug: string | undefined,
     context: "staff" | "buyer-standalone",
-  ): Promise<{ appleId: string; email: string }> {
+  ): Promise<{ appleId: string; email: string | null }> {
     const nonceKey = `${NONCE_KEY_PREFIX}${nonce}`;
     let stored: string | null = null;
     try {
@@ -212,12 +217,22 @@ export class AppleOAuthService {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
-    // Apple sends email_verified as either a boolean or the string "true"/"false".
-    if (payload.email_verified !== true && payload.email_verified !== "true") {
+    if (typeof payload.sub !== "string") {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
-    if (typeof payload.sub !== "string" || typeof payload.email !== "string") {
+    // Apple sends the email claim only on the FIRST sign-in; later tokens omit it (and
+    // email_verified). An ABSENT email is allowed (the caller then matches by sub only and refuses
+    // anything that would need an email). A PRESENT email must be a string and verified.
+    if (payload.email === undefined) {
+      return { appleId: payload.sub, email: null };
+    }
+    // A present-but-empty email is malformed (Apple omits the claim instead): refuse it.
+    if (typeof payload.email !== "string" || !payload.email) {
+      throw new UnauthorizedException("apple_token_invalid");
+    }
+    // Apple sends email_verified as either a boolean or the string "true"/"false".
+    if (payload.email_verified !== true && payload.email_verified !== "true") {
       throw new UnauthorizedException("apple_token_invalid");
     }
 
@@ -243,7 +258,7 @@ export class AppleOAuthService {
       dto.tenantSlug,
       dto.context,
     );
-    const name = dto.fullName ?? email;
+    const name = dto.fullName ?? email ?? "Apple user";
 
     if (dto.context === "staff") {
       return this.handleStaffAuth(dto.tenantSlug, appleId, email, deviceInfo);
@@ -256,12 +271,13 @@ export class AppleOAuthService {
   private async handleStaffAuth(
     tenantSlug: string | undefined,
     appleId: string,
-    email: string,
+    email: string | null,
     deviceInfo?: DeviceInfo,
   ): Promise<AppleAuthResult> {
     if (!tenantSlug) throw new BadRequestException("tenantSlug required");
-    // SA-598 P1: a falsy sub/email refuses before ANY query (an undefined filter would widen).
-    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+    // SA-598 P1: a falsy sub refuses before ANY query (an undefined filter would widen). A missing
+    // email is allowed only for an already-bound sub (resolveBySubThenEmail allowSubOnly).
+    if (!appleId) throw new ForbiddenException("unauthorized");
 
     const tenant = await this.prisma.tenant.findFirst({ where: { slug: tenantSlug } });
     if (!tenant) throw new ForbiddenException("tenant_suspended");
@@ -281,6 +297,7 @@ export class AppleOAuthService {
       column: "appleId",
       sub: appleId,
       email,
+      allowSubOnly: true,
     });
 
     // SA-418 §3: no auto-create on the staff flow — a relay or otherwise-unmatched
@@ -321,7 +338,7 @@ export class AppleOAuthService {
 
   private async handleBuyerAuth(
     appleId: string,
-    email: string,
+    email: string | null,
     name: string,
     authorizationCode: string,
   ): Promise<AppleAuthResult> {
@@ -329,8 +346,9 @@ export class AppleOAuthService {
     // exactly (google-oauth.service.ts). apple_email_is_staff belongs only to a future
     // tenant-scoped portal context; the staff match itself stays tenant-scoped (handleStaffAuth).
 
-    // SA-598 P1: a falsy sub/email refuses before ANY query.
-    if (!appleId || !email) throw new ForbiddenException("unauthorized");
+    // SA-598 P1: a falsy sub refuses before ANY query; a missing email is allowed only for an
+    // already-bound sub (it never auto-creates an account: see the create branch below).
+    if (!appleId) throw new ForbiddenException("unauthorized");
 
     let buyer = await resolveBySubThenEmail({
       findFirst: (args) => this.prisma.buyerAccount.findFirst(args as any),
@@ -338,6 +356,7 @@ export class AppleOAuthService {
       column: "appleId",
       sub: appleId,
       email,
+      allowSubOnly: true,
     });
 
     if (buyer) {
@@ -347,7 +366,7 @@ export class AppleOAuthService {
       // Mirrors google-oauth.service.ts:636 exactly — Apple attests the mailbox it
       // authenticated only when it matches the account's OWN email, not one found via
       // a previously-linked appleId with a different email on file.
-      const appleAttestsMailbox = buyer.email.toLowerCase() === email;
+      const appleAttestsMailbox = email !== null && buyer.email.toLowerCase() === email;
 
       // SA-418 §4 / google-oauth.service.ts:640-715, byte-for-byte: neutralize a
       // password that was never mailbox-verified once Apple proves the mailbox.
@@ -385,7 +404,7 @@ export class AppleOAuthService {
             .send({
               to: buyer.email,
               subject: "Apple Sign-In linked to your RouteFlow account",
-              html: `<p>Sign in with Apple (<strong>${escapeHtml(email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
+              html: `<p>Sign in with Apple (<strong>${escapeHtml(email ?? buyer.email)}</strong>) has been linked to your RouteFlow portal account.</p><p>If you did not authorise this, please contact support immediately.</p>`,
               senderClass: "platform",
             })
             .catch((e: Error) => this.logger.warn(`Apple link notification failed: ${e.message}`));
@@ -412,6 +431,9 @@ export class AppleOAuthService {
         }
       }
     } else {
+      // Defensive: with no bound sub the resolver already refused a missing email, so this is
+      // unreachable; never create an account without an email.
+      if (!email) throw new ForbiddenException("unauthorized");
       const randomBytes = crypto.randomBytes(32).toString("hex");
       const passwordHash = await bcrypt.hash(randomBytes, 10);
       buyer = await this.prisma.buyerAccount.create({
@@ -565,19 +587,35 @@ export class AppleOAuthService {
    * proceed regardless.
    */
   async revokeForBuyer(buyerAccountId: string): Promise<void> {
+    let enc: string | null | undefined;
     try {
       const buyer = await this.prisma.buyerAccount.findUnique({
         where: { id: buyerAccountId },
         select: { appleRefreshTokenEnc: true },
       });
-      if (!buyer?.appleRefreshTokenEnc) return;
+      enc = buyer?.appleRefreshTokenEnc;
+    } catch (e) {
+      this.logger.warn(`Apple revoke failed for buyer ${buyerAccountId}: ${(e as Error).message}`);
+      return;
+    }
+    await this.revokeRefreshToken(enc, buyerAccountId);
+  }
 
-      const refreshToken = this.encryption.decrypt(buyer.appleRefreshTokenEnc);
+  /**
+   * Revoke an already-loaded ENCRYPTED Apple refresh token (no DB read), for callers that must
+   * revoke AFTER their own transaction cleared the stored value (buyer merge, B944). Same
+   * guarantees as revokeForBuyer: a failure is logged (buyer id only, never the token) and never
+   * thrown.
+   */
+  async revokeRefreshToken(enc: string | null | undefined, buyerAccountId: string): Promise<void> {
+    if (!enc) return;
+    try {
+      const refreshToken = this.encryption.decrypt(enc);
       const clientSecret = await this.buildClientSecret();
       const res = await fetch(APPLE_REVOKE_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        // a slow Apple endpoint must never hang sign-in or account deletion
+        // a slow Apple endpoint must never hang sign-in, account deletion or a merge
         signal: AbortSignal.timeout(APPLE_HTTP_TIMEOUT_MS),
         body: new URLSearchParams({
           client_id: this.bundleId(),
@@ -607,12 +645,51 @@ export class AppleOAuthService {
         audience: this.bundleId(),
         algorithms: APPLE_ALGORITHMS,
         clockTolerance: CLOCK_TOLERANCE_SECS,
+        // Replay window: a notification older than this is refused even if its exp is still
+        // ahead. Apple retries failed deliveries for hours, so the cap is generous (48h).
+        maxTokenAge: NOTIFICATION_MAX_AGE,
       });
       payload = result.payload as unknown as Record<string, unknown>;
     } catch {
       throw new UnauthorizedException("apple_notification_invalid");
     }
 
+    // Replay guard: remember each notification's jti. A captured consent-revoked token replayed
+    // after the user re-linked must not undo the link. A token without a jti cannot be checked,
+    // so it is refused; if the store is down we fail closed (503) so Apple retries later.
+    const jti = payload.jti;
+    if (typeof jti !== "string" || !jti)
+      throw new UnauthorizedException("apple_notification_invalid");
+    const jtiKey = `${NOTIFICATION_JTI_KEY_PREFIX}${jti}`;
+    let firstSeen: unknown;
+    try {
+      firstSeen = await this.redis.set(jtiKey, "1", "EX", NOTIFICATION_JTI_TTL_SECS, "NX");
+    } catch {
+      throw new ServiceUnavailableException("apple_notification_unavailable");
+    }
+    if (firstSeen !== "OK") {
+      this.logger.warn("Apple notification replay ignored (jti already processed)");
+      return;
+    }
+
+    // The jti is marked BEFORE the writes (so a concurrent duplicate cannot double-process). If the
+    // writes then fail (Apple gets a 500 and retries the SAME jwt), free the jti so the retry runs
+    // instead of being swallowed as a replay and losing the revoke/delete event.
+    try {
+      await this.applyNotificationEvent(payload);
+    } catch (e) {
+      await this.redis.del(jtiKey).catch(() => {
+        // Never lose this silently: if the delete fails, Apple's retry of this jwt will be
+        // treated as a replay and ignored until the jti expires (the jti value is not logged).
+        this.logger.warn(
+          "Apple notification jti could not be released after a failed write: the retry may be ignored as a replay",
+        );
+      });
+      throw e;
+    }
+  }
+
+  private async applyNotificationEvent(payload: Record<string, unknown>): Promise<void> {
     let event: { type?: string; sub?: string };
     try {
       event = typeof payload.events === "string" ? JSON.parse(payload.events) : {};

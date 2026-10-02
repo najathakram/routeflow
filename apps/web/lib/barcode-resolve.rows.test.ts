@@ -21,7 +21,13 @@ describe("resolveProductByCode — row codes on the search rung", () => {
         : Promise.resolve({
             data: {
               data: [
-                { id: "p1", name: "Alpha 6-pack", sku: "A-6", isActive: true, barcodes: [{ code: "ROW-X", level: "UNIT" }] },
+                {
+                  id: "p1",
+                  name: "Alpha 6-pack",
+                  sku: "A-6",
+                  isActive: true,
+                  barcodes: [{ code: "ROW-X", level: "UNIT" }],
+                },
                 { id: "p2", name: "Alpha ROW-X special", sku: "B-6", isActive: true, barcodes: [] },
               ],
             },

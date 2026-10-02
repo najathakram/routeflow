@@ -628,6 +628,8 @@ export class AuthController {
   }
 
   @Post("apple/notifications")
+  // Unauthenticated and does a JWKS lookup + a Redis write per call: its own tight limit.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: "Apple server-to-server notifications (consent-revoked, account-delete)",

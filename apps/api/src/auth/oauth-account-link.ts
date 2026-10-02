@@ -31,12 +31,20 @@ export async function resolveBySubThenEmail<
   column: OAuthProviderColumn;
   sub: string | null | undefined;
   email: string | null | undefined;
+  /**
+   * Apple only sends the email claim on the FIRST sign-in; later identity tokens omit it. With this
+   * set, a missing email is allowed for a sub that is already bound (resolved in one query); with no
+   * bound sub and no email there is nothing to match on, so it is refused — an absent email never
+   * widens the lookup. Default false keeps Google's "sub and email both required" contract.
+   */
+  allowSubOnly?: boolean;
 }): Promise<T | null> {
-  const { findFirst, baseWhere, column, sub, email } = args;
-  if (!sub || !email) throw new ForbiddenException("unauthorized");
+  const { findFirst, baseWhere, column, sub, email, allowSubOnly = false } = args;
+  if (!sub || (!email && !allowSubOnly)) throw new ForbiddenException("unauthorized");
 
   const bySub = await findFirst({ where: { ...baseWhere, [column]: sub } });
   if (bySub) return bySub;
+  if (!email) throw new ForbiddenException("unauthorized");
 
   const byEmail = await findFirst({
     where: { ...baseWhere, email },
@@ -83,5 +91,8 @@ export async function casLinkProviderId<
   if (!fresh) throw new ForbiddenException("unauthorized");
   const bound = fresh[column];
   if (bound && bound !== sub) throw new ConflictException(MISMATCH_CODE[column]);
+  // Lost the CAS but the row still has NO sub: this was not a race (e.g. the row left the scoped
+  // `extraWhere`), so nothing was linked. Never report success for a link that did not happen.
+  if (!bound) throw new ForbiddenException("unauthorized");
   return { row: fresh, linked: false };
 }

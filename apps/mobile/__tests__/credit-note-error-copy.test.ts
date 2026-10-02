@@ -1,8 +1,11 @@
 import { API_ERROR_CODES } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
+  RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  RETURN_MIXED_UNIT_PRODUCT_COPY,
   UNCONFIRMED_COPY,
   creditNoteErrorCopy,
+  refundErrorMessage,
   refusalCopy,
 } from "../lib/credit-note-error-copy";
 import { voidConfirmMessage } from "../lib/credit-notes-logic";
@@ -77,5 +80,29 @@ describe("voidConfirmMessage (#2418 U1)", () => {
   });
   it("is just the warning when nothing is applied", () => {
     expect(voidConfirmMessage("CN-7", [])).toBe("CN-7 will be voided and can't be undone.");
+  });
+});
+
+describe("refundErrorMessage (SA-628, B946)", () => {
+  it("RETURN_MIXED_UNIT_PRODUCT shows the FIXED copy, never the server message (B965)", () => {
+    const err = {
+      response: { data: { code: "RETURN_MIXED_UNIT_PRODUCT", message: "raw server text" } },
+    };
+    expect(refundErrorMessage(err, "raw server text")).toBe(RETURN_MIXED_UNIT_PRODUCT_COPY);
+    expect(RETURN_MIXED_UNIT_PRODUCT_COPY).not.toMatch(/raw server text/);
+  });
+
+  it("RETURN_REFUND_OVER_LINE_HEADROOM shows the FIXED copy, never the server message", () => {
+    const err = {
+      response: { data: { code: "RETURN_REFUND_OVER_LINE_HEADROOM", message: "raw server text" } },
+    };
+    expect(refundErrorMessage(err, "raw server text")).toBe(RETURN_REFUND_OVER_LINE_HEADROOM_COPY);
+    expect(RETURN_REFUND_OVER_LINE_HEADROOM_COPY).not.toMatch(/raw server text/);
+  });
+  it("any other refusal keeps the caller's own text (the existing refund refusals name the invoice)", () => {
+    expect(
+      refundErrorMessage({ response: { data: { code: "OTHER" } } }, "named invoice text"),
+    ).toBe("named invoice text");
+    expect(refundErrorMessage(new Error("x"), undefined)).toBeUndefined();
   });
 });
