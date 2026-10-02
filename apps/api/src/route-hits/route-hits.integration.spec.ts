@@ -17,6 +17,7 @@ import {
 import { ConfigModule } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import request from "supertest";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 import { RouteHitsModule } from "./route-hits.module";
 import { RouteHitsRedis, RouteHitsService } from "./route-hits.service";
 
@@ -60,7 +61,7 @@ describe("route hit counter (real Nest app)", () => {
     }).compile();
     app = mod.createNestApplication();
     app.setGlobalPrefix("api/v1");
-    await app.init();
+    await listenOnLoopback(app); // #2267: bind to 127.0.0.1 once, before any request
     hits = app.get(RouteHitsService);
     hits.enabled = true;
     const redis: RouteHitsRedis = {
