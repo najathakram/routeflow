@@ -1549,13 +1549,6 @@ export class ProductsService {
       const item = dto.items[i];
       const rowNum = i + 1;
 
-      // B964-2: a formula-led name rejects THIS row (readable reason); the rest of the batch still imports.
-      const nameViolation = productNameViolation({ name: item.name });
-      if (nameViolation) {
-        errors.push({ row: rowNum, name: item.name, reason: nameViolation });
-        continue;
-      }
-
       try {
         // Check for duplicate name
         const nameTaken = await this.prisma.forTenant().product.findFirst({
@@ -1588,6 +1581,14 @@ export class ProductsService {
             skipped++;
             continue;
           }
+        }
+
+        // B964-2: a formula-led NEW name rejects THIS row (readable reason); the rest of the batch still imports. Checked only
+        // once the row would actually be created (change-only): a name that matches a stored product is a plain skip above.
+        const nameViolation = productNameViolation({ name: item.name });
+        if (nameViolation) {
+          errors.push({ row: rowNum, name: item.name, reason: nameViolation });
+          continue;
         }
 
         // B562 follow-up: an opening balance written straight onto

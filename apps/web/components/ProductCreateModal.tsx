@@ -18,6 +18,7 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 
 /**
  * Same `CreatedProduct` shape `InlineCreateProductModal` returns — callers
@@ -107,7 +108,7 @@ export function ProductCreateModal({
   initialUnitsPerBox,
 }: ProductCreateModalProps) {
   const { toast } = useToast();
-  const createProduct = useCreateProduct();
+  const createProduct = useCreateProduct({ localErrorToast: true });
 
   // Every standalone product, for the "Variant of" picker — fetched here so
   // callers don't need to load/pass the full catalog themselves.
@@ -310,7 +311,7 @@ export function ProductCreateModal({
     } catch (err: any) {
       toast({
         title: "Failed to create product",
-        description: err?.message,
+        description: safeTextErrorCopy(err) ?? "Check the details and try again.",
         variant: "error",
       });
       return;

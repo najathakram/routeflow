@@ -2755,6 +2755,13 @@ export class ImportService {
         skipRow("Rate is required for a new product");
         continue;
       }
+      // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
+      // real run, so a preview that says "create" would disagree with what the import then does.
+      const nameViolation = productNameViolation({ name });
+      if (nameViolation) {
+        skipRow(nameViolation);
+        continue;
+      }
       const dto: Record<string, unknown> = {
         name,
         unit: (parsed.values.unit as string | undefined) || "unit",

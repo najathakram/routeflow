@@ -11,6 +11,7 @@ import {
   type VariantAssignmentInput,
   type VariantAssignResult,
 } from "@/lib/api/variant-assign";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 
 /**
  * Move stock from a generic parent product to its variants — partial or
@@ -234,7 +235,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
     } catch (err: any) {
       toast({
         title: "Couldn't assign stock",
-        description: err?.response?.data?.message ?? "Please try again.",
+        description: safeTextErrorCopy(err) ?? "Please try again.",
         variant: "error",
       });
     }

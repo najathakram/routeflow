@@ -14,6 +14,7 @@ import {
   type ImportQueueItem,
   type UpdateBatchItemLinePatch,
 } from "@/lib/api/batch-import";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -38,8 +39,8 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
   const { data: suppliersData } = useSuppliers();
   const suppliers = (suppliersData as { id: string; name: string }[] | undefined) ?? [];
 
-  const updateItem = useUpdateBatchItem();
-  const resolveItem = useResolveItem();
+  const updateItem = useUpdateBatchItem({ localErrorToast: true });
+  const resolveItem = useResolveItem({ localErrorToast: true });
 
   const [supplierId, setSupplierId] = React.useState(item.supplierMatchId ?? "");
   // Local per-line decisions since the last save: productId picked, or "keep as custom".
@@ -86,7 +87,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
         onError: (e: any) =>
           toast({
             title: "Couldn't save",
-            description: e?.response?.data?.message ?? e.message,
+            description: safeTextErrorCopy(e) ?? "Please try again.",
             variant: "error",
           }),
       },
@@ -104,7 +105,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
         onError: (e: any) =>
           toast({
             title: "Couldn't resolve",
-            description: e?.response?.data?.message ?? e.message,
+            description: safeTextErrorCopy(e) ?? "Please try again.",
             variant: "error",
           }),
       },

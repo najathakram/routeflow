@@ -62,9 +62,10 @@ function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["inventory"] });
 }
 
-export function useCreateProduct() {
+export function useCreateProduct(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/products", data).then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
@@ -238,7 +239,7 @@ export interface BulkAssignParentResult {
   failed: Array<{ id: string; reason: string }>;
 }
 
-export function useBulkAssignParent() {
+export function useBulkAssignParent(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<
     BulkAssignParentResult,
@@ -248,6 +249,7 @@ export function useBulkAssignParent() {
       assignments: Array<{ id: string; variantName: string }>;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ parentProductId, assignments }) =>
       apiClient
         .post("/products/bulk-assign-parent", { parentProductId, assignments })

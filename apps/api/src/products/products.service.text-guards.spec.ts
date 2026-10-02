@@ -169,5 +169,15 @@ describe("ProductsService name guards (B964-2)", () => {
       expect(result.errors).toEqual([{ row: 1, name: "=HYPERLINK(1)", reason: MSG }]);
       expect(prisma.product.create).toHaveBeenCalledTimes(1);
     });
+
+    it("change-only: a formula-led name that ALREADY matches a stored product is a plain skip (nothing would be written), not an error", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "existing" }); // the name-taken lookup
+      const result = await service.importFromZoho({
+        items: [{ name: "=LEGACY", unit: "each", pricePerUnit: 5 }],
+      } as any);
+      expect(result.skipped).toBe(1);
+      expect(result.errors).toEqual([]);
+      expect(prisma.product.create).not.toHaveBeenCalled();
+    });
   });
 });

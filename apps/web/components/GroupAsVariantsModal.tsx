@@ -5,6 +5,7 @@ import { X, GitBranch, AlertCircle, ArrowRight } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useProducts, useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
 import { SearchableProductPicker } from "./SearchableProductPicker";
+import { groupAssignErrorCopy } from "@/lib/group-assign-error-copy";
 
 interface ProductLite {
   id: string;
@@ -59,7 +60,7 @@ export function GroupAsVariantsModal({
   const { toast } = useToast();
   const { data: allProductsData } = useProducts({ limit: 0 });
   const allProducts: ProductLite[] = allProductsData?.data ?? [];
-  const bulkAssign = useBulkAssignParent();
+  const bulkAssign = useBulkAssignParent({ localErrorToast: true });
 
   const [parentId, setParentId] = React.useState("");
   // Per-row override of the suggested variant name
@@ -103,10 +104,20 @@ export function GroupAsVariantsModal({
       variantName:
         overrides[p.id]?.trim() || suggestVariantName(p.name, parent?.name ?? "") || p.name,
     }));
-    const result = await bulkAssign.mutateAsync({
-      parentProductId: parentId,
-      assignments,
-    });
+    let result: BulkAssignParentResult;
+    try {
+      result = await bulkAssign.mutateAsync({
+        parentProductId: parentId,
+        assignments,
+      });
+    } catch (err: unknown) {
+      toast({
+        title: "Couldn't group these products",
+        description: groupAssignErrorCopy(err, selectedProducts),
+        variant: "error",
+      });
+      return;
+    }
     if (result.failed.length === 0) {
       toast({
         title: `Grouped ${result.succeeded.length} product${result.succeeded.length === 1 ? "" : "s"}`,
