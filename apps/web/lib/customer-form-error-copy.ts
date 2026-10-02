@@ -1,4 +1,5 @@
 import { API_ERROR_CODES } from "@routeflow/types";
+import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
 
 /**
@@ -16,6 +17,7 @@ const KNOWN_SERVER_SENTENCES: Record<string, string> = {
 
 const CUSTOMER_CAP_COPY =
   "Your plan's customer limit has been reached. Upgrade your plan to add more customers.";
+const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
 const PLAN_COPY = "This isn't included in your current plan.";
 const GENERIC_COPY = "Something went wrong. Please try again.";
 const NETWORK_COPY = "We couldn't reach the server. Check your connection and try again.";
@@ -35,9 +37,15 @@ export function customerFormErrorCopy(err: unknown): string {
   if (!err || typeof err !== "object") return GENERIC_COPY;
   const response = (err as { response?: { status?: number; data?: unknown } }).response;
   if (!response) return NETWORK_COPY;
-  const data = response.data as { code?: unknown; flag?: unknown; message?: unknown } | undefined;
-  if (data?.code === "PLAN_GATE" && data.flag === "meter.customers") return CUSTOMER_CAP_COPY;
-  if (data?.code === "PLAN_GATE" || data?.code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
+  const data = response.data as { code?: unknown; message?: unknown } | undefined;
+  // The shared gate parser (a plan gate only; PLAN_GATE_UNAVAILABLE means the gate service is down,
+  // so it falls through to the status copy).
+  const gate = parsePlanGate(err);
+  if (gate && gate.code !== "PLAN_GATE_UNAVAILABLE")
+    return gate.flag === "meter.customers" ? CUSTOMER_CAP_COPY : PLAN_COPY;
+  if (data?.code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
+  // RO-1: a blocked write against a READ_ONLY tenant, worded like the read-only toast.
+  if (data?.code === "READ_ONLY") return READ_ONLY_COPY;
   const message = data?.message;
   if (
     typeof message === "string" &&

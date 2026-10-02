@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { customerFormErrorCopy } from "./customer-form-error-copy";
 
@@ -53,6 +55,27 @@ describe("customerFormErrorCopy (B979)", () => {
     );
     expect(text).toBe("This isn't included in your current plan.");
     expect(customerFormErrorCopy(axiosErr(403, { code: API_ERROR_CODES.ADDON_GATE }))).toBe(text);
+  });
+
+  it("a READ_ONLY 403 has its own sentence (matching the read-only toast), not the permission copy", () => {
+    const text = customerFormErrorCopy(
+      axiosErr(403, { code: "READ_ONLY", message: "raw guard text" }),
+    );
+    expect(text).toBe("Your workspace is read-only, so this action is unavailable.");
+    expect(text).not.toBe(customerFormErrorCopy(axiosErr(403, {})));
+  });
+
+  it("PLAN_GATE_UNAVAILABLE (the gate service is down) is NOT the plan sentence", () => {
+    const text = customerFormErrorCopy(
+      axiosErr(503, { code: "PLAN_GATE_UNAVAILABLE", message: "x" }),
+    );
+    expect(text).toBe("Something went wrong on our side. Please try again.");
+  });
+
+  it("reads the gate through the shared parsePlanGate, with no hand-typed gate literals", () => {
+    const src = readFileSync(join(__dirname, "customer-form-error-copy.ts"), "utf8");
+    expect(src).toContain("parsePlanGate");
+    expect(src).not.toMatch(/["']PLAN_GATE["']/);
   });
 
   it.each([
