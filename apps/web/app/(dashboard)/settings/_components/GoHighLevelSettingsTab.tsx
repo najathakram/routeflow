@@ -29,7 +29,9 @@ import {
   useDismissHandoff,
   type CrmHandoffsResult,
 } from "@/lib/api/crm";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type { CrmConfigPatch, CrmPipeline, CrmHandoffRow } from "@routeflow/types";
+import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
 
 // 2026-09-11-crm-gohighlevel-handoff (WP4, fix round M14-M17/m3-m6) — Settings →
 // GoHighLevel tab. See ux-spec.md for the full copy/state contract (Cards 1-4) and
@@ -141,6 +143,15 @@ const ACTIVITY_BADGE: Record<string, { label: string; variant: BadgeVariant }> =
 function detailsText(row: CrmActivityRow): string {
   if (row.matchedBy) return `Existing customer matched by ${row.matchedBy}`;
   if (row.reason && HANDOFF_REASON_TEXT[row.reason]) return HANDOFF_REASON_TEXT[row.reason];
+  // B956: `name-refused:<field>` names the refused field in plain words (the raw payload is never
+  // shipped to this list, so the field travels in the reason itself).
+  if (row.reason?.startsWith("name-refused")) {
+    const field = row.reason.split(":")[1];
+    return (
+      safeTextBodyCopy({ code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD, field }) ??
+      "A name can't start with =, +, -, @ or a tab/line break."
+    );
+  }
   if (row.status === "WRITEBACK_PENDING") return "Created; still updating GoHighLevel";
   return "—";
 }

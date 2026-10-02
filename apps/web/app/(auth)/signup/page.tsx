@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { Input, Button } from "@routeflow/ui/web";
 import { AuthShell } from "@/components/auth";
+import { safeTextBodyCopy } from "@/lib/safe-text-error-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -222,9 +223,10 @@ function SignupInner() {
       if (!regRes.ok) {
         const body = await regRes.json().catch(() => ({}));
         const msg = (body as { message?: string | string[] }).message;
-        const text = Array.isArray(msg)
-          ? msg.join(". ")
-          : (msg ?? "Signup failed. Please try again.");
+        // B956: a refused business name is FIXED copy with a human label, never the raw message.
+        const text =
+          safeTextBodyCopy(body) ??
+          (Array.isArray(msg) ? msg.join(". ") : (msg ?? "Signup failed. Please try again."));
         setApiError(text);
         setIsLoading(false);
         return;

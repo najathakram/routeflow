@@ -21,7 +21,16 @@ import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./cr
 import { API_ERROR_CODES } from "../common/api-error-codes";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
-import { loadLineCredits, toHeadroomLine } from "./line-credit-headroom";
+import {
+  loadLineCredits,
+  countCreditableInvoices,
+  loadOrderPool,
+  lockOrderPoolRows,
+  pooledRefundRefusal,
+  pooledTakeRefusal,
+  toHeadroomLine,
+  type OrderPool,
+} from "./line-credit-headroom";
 import {
   CREDIT_NOT_APPLICABLE,
   CREDIT_SETTLE_EXCLUDED,
@@ -79,7 +88,13 @@ export class CreditNotesService {
     // #2648 / SA-535b(1): the reissue's pre-reserve DRY RUN only — leaves the note about to be
     // voided out of BOTH caps, so the dry run counts exactly the headroom its void frees. create()
     // never passes it, no DTO carries it, and the in-tx re-cap after the void runs without it.
-    opts: { excludeCreditNoteId?: string; ledgerReversedByReturn?: boolean } = {},
+    opts: {
+      excludeCreditNoteId?: string;
+      ledgerReversedByReturn?: boolean;
+      // B947: a return refund on an order with 2+ creditable invoices is a lump sum (no items); these are the
+      // returned products it must fit, in the ORDER POOL, re-checked here under the locks (the pre-claim check is stale).
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+    } = {},
   ): Promise<
     Array<{
       invoiceItemId: string;
@@ -99,6 +114,7 @@ export class CreditNotesService {
         total: true,
         customerId: true,
         status: true,
+        orderId: true,
         items: {
           select: {
             id: true,
@@ -145,6 +161,30 @@ export class CreditNotesService {
       );
     }
 
+    // B947: with 2+ creditable invoices on the order, ONE pool per product across ALL of them (see loadOrderPool): the credit
+    // note's own line room is still checked below; this is the second check. Locked in a tx (Order, then the invoices).
+    let pool: OrderPool | null = null;
+    if (
+      invoice.orderId &&
+      ((opts.pooledRefund?.length ?? 0) > 0 || lineItems) &&
+      (await countCreditableInvoices(db, invoice.orderId)) >= 2 // a lone invoice never pays for a pool read
+    ) {
+      pool = await loadOrderPool(db, invoice.orderId, {
+        excludeCreditNoteId: opts.excludeCreditNoteId,
+      });
+    }
+    if (pool)
+      for (const r of opts.pooledRefund ?? []) {
+        const refusal = pooledRefundRefusal(pool, r.productId, r.qty);
+        if (refusal)
+          // `pooled`: the refund path maps ONLY this refusal (not the invoice-total cap) to its own 409 wording
+          throw new BadRequestException({
+            code: API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            pooled: true,
+            message: `Refund of ${refusal.requestedQty} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingQty} left).`,
+          });
+      }
+
     if (!lineItems) return [];
 
     const lineById = new Map((invoice.items ?? []).map((it: any) => [it.id, it]));
@@ -189,11 +229,14 @@ export class CreditNotesService {
     // SA-628: the credited-so-far per line comes from the ONE shared headroom (credit-note ITEMS plus the legacy term for old
     // itemless refund notes), so a credit note and a return refund can never together exceed a line's value. Qty is credited
     // QUANTITY per line too (SA-401a, base pieces, like InvoiceItem.qty).
+    // B960: with the order pool active (2+ creditable invoices) the pool is the ONE source for itemless refund lumps (it attributes
+    // each across the COMBINED lines); the per-invoice legacy term would attribute the same lump to THIS invoice's lines and
+    // refuse what the pool allows. The line's own credit note items and inline returns still bind per line.
     const lineCredits = await loadLineCredits(
       db,
       dto.invoiceId,
       (invoice.items ?? []).map(toHeadroomLine),
-      opts,
+      { ...opts, skipLegacy: pool !== null },
     );
     const creditedByLine = new Map<string, number>();
     const creditedQtyByLine = new Map<string, number>();
@@ -269,6 +312,29 @@ export class CreditNotesService {
           : roundMoney(Number(line.categoryTaxAmount ?? 0) * frac),
       };
     });
+    if (pool) {
+      // Every row's qty binds, derived or typed (in PIECES). With the pool as the only source for refund lumps, an amount-only
+      // credit's derived qty is what keeps the PRODUCT's pieces (and the regulated reversal that follows them) from being credited
+      // past what was billed when lines of the product carry different prices (B960 review).
+      const byProduct = new Map<string, { amount: number; qty: number }>();
+      for (const row of cnItemsData) {
+        const productId = (lineById.get(row.invoiceItemId) as any)?.productId;
+        if (!productId) continue;
+        const prev = byProduct.get(productId) ?? { amount: 0, qty: 0 };
+        // the pool's qty is in PIECES (lines can use different units): the row's qty is on its line's own axis
+        const pieces =
+          row.qty * (pool.lines.find((l) => l.id === row.invoiceItemId)?.piecesPerQty ?? 1);
+        byProduct.set(productId, { amount: prev.amount + row.amount, qty: prev.qty + pieces });
+      }
+      for (const [productId, take] of byProduct) {
+        const refusal = pooledTakeRefusal(pool, productId, { amount: take.amount, qty: take.qty });
+        if (refusal)
+          throw cnBad(
+            API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM,
+            `Credit of ${refusal.requestedAmount} would exceed what this order's invoices still allow to be credited for the product (${refusal.remainingAmount} left, counting refunds already minted on other invoices).`,
+          );
+      }
+    }
     if (Math.abs(sum - dto.amount) > 0.01)
       throw cnBad(
         API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID,
@@ -451,7 +517,12 @@ export class CreditNotesService {
       /** P5-13: optional ISO date after which this credit is excluded from the wallet and can never apply. */
       expiresAt?: string;
     },
-    internal: { ledgerReversedByReturn?: boolean } = {},
+    internal: {
+      ledgerReversedByReturn?: boolean;
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+      /** B947: the Return this lump-sum refund belongs to; linked to the note inside the mint transaction. */
+      returnId?: string;
+    } = {},
   ) {
     if (!dto.amount || dto.amount <= 0)
       throw new BadRequestException("Amount must be greater than 0");
@@ -536,6 +607,9 @@ export class CreditNotesService {
             // SA-628 / SA-214 lock order: the INVOICE row first, tenant-scoped. The lock alone serialises the two
             // writers' transactions; it is the Serializable retry that makes the second one SEE the first's credit
             // (a stale snapshot aborts 40001 and re-reads the shared per-line headroom).
+            // B947: with 2+ creditable invoices on the order, the Order and ALL of them are locked FIRST (Order -> Invoice,
+            // id-sorted), so a refund on Y and a credit note on X serialise and no writer takes an Invoice then the Order.
+            if (dto.invoiceId) await lockOrderPoolRows(tx, dto.invoiceId, tenantId);
             if (dto.invoiceId) {
               await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${dto.invoiceId} AND "tenantId" = ${tenantId} FOR UPDATE`;
             }
@@ -550,7 +624,7 @@ export class CreditNotesService {
             // read"), so five parallel creates lost two even with the number already
             // reserved outside this tx. Customer is never written on this path, so
             // the value read before the tx is still the right one. Same shape out.
-            return this.insertCreditNoteInTx(
+            const created = await this.insertCreditNoteInTx(
               tx,
               {
                 creditNoteNumber,
@@ -564,6 +638,15 @@ export class CreditNotesService {
               tenantId,
               customer,
             );
+            // B947: a lump-sum refund is attributed to its product only THROUGH its Return's link, so the link is written in
+            // the SAME transaction as the note: a credit note item that reads the pool after the commit can never see the
+            // lump with no return (and a crash between the mint and a later link cannot leave it uncounted).
+            if (internal.returnId)
+              await tx.return.updateMany({
+                where: { id: internal.returnId, creditNoteId: null },
+                data: { creditNoteId: created.id },
+              });
+            return created;
           },
           { isolationLevel: "Serializable" },
         );
@@ -973,7 +1056,7 @@ export class CreditNotesService {
    * note that happens to sit on the same order/invoice (a manual credit, or a sibling
    * inline return's own CN).
    *
-   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors `voidCreditNote`'s
+   * Pulls back every non-VOID `CREDIT_NOTE` payment this note made (mirrors the void's
    * "un-apply first" rule, but un-applies here instead of refusing), then voids it and undoes
    * its regulated-ledger reversal. Throws `RETURN_CREDIT_CONSUMED` if `amountUsed` is still
    * non-zero after restoring everything a payment row could account for — money consumed
@@ -992,7 +1075,12 @@ export class CreditNotesService {
     });
     let restored = 0;
     for (const p of payments) {
-      restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));
+      restored = roundMoney(
+        restored +
+          (await this.restoreCreditFromPaymentInTx(tx, tz, p, undefined, {
+            voidingNoteId: creditNoteId,
+          })),
+      );
     }
 
     const cn = await tx.creditNote.findFirst({
@@ -1013,58 +1101,6 @@ export class CreditNotesService {
       await this.ledger.unreverseCreditNoteEntries({ creditNoteId, db: tx });
     }
     return { restored };
-  }
-
-  async voidCreditNote(id: string) {
-    // SA-392 (#2201): the WHOLE Serializable tx re-runs on a 40001/40P01 conflict (bounded).
-    const voided = await retryOnTxConflict(`credit void cn=${id}`, () =>
-      this.prisma.tenantTransaction(
-        async (tx: any) => {
-          const cn = await tx.creditNote.findFirst({
-            where: { id },
-            select: { status: true, amountUsed: true },
-          });
-          if (!cn) throw new NotFoundException("Credit note not found");
-          // A credit that's been consumed as a payment can't be voided — un-applying it
-          // first is the only safe path. Without this, void would delete the ledger
-          // reversal (re-inflating net sales) AND leave the InvoicePayment orphaned.
-          if (cn.status === "APPLIED" || Number(cn.amountUsed) > 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // Race-free flip: only ISSUED/DRAFT + unused → VOID. A concurrent
-          // applyToInvoice (also serializable) that sets amountUsed>0 / APPLIED makes
-          // this updateMany match 0 rows, so we refuse rather than orphan the payment.
-          const flipped = await tx.creditNote.updateMany({
-            where: { id, status: { notIn: ["APPLIED", "VOID"] }, amountUsed: 0 },
-            data: { status: "VOID" },
-          });
-          if (flipped.count === 0) {
-            throw new BadRequestException(
-              "Cannot void a credit note that has been applied — un-apply it first.",
-            );
-          }
-          // W5c: undo the regulated ledger reversal booked at creation (safe now — the
-          // credit was never consumed, so voiding restores the sale to full).
-          await this.ledger.unreverseCreditNoteEntries({ creditNoteId: id, db: tx });
-          return tx.creditNote.findUnique({ where: { id } });
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
-
-    // B343: emitted outside the tx, mirroring create()'s emitCreditNoteCreated — a
-    // void previously fired no event at all, so a customer statement or credit-notes
-    // view left open in another tab/session never learned the note was gone.
-    this.gateway.emitCreditNoteVoided(this.prisma.getTenantId(), {
-      creditNoteId: voided.id,
-      creditNoteNumber: voided.creditNoteNumber,
-      customerId: voided.customerId,
-      amount: Number(voided.amount),
-    });
-
-    return voided;
   }
 
   /**
@@ -1243,7 +1279,9 @@ export class CreditNotesService {
 
     const reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }> = [];
     for (const p of payments) {
-      const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
+      const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, undefined, {
+        voidingNoteId: id, // the note's OWN void: it ends VOID, nothing becomes spendable
+      });
       const row = reopened.find((r) => r.invoiceId === p.invoiceId);
       if (row) row.amount = roundMoney(row.amount + restored);
       else
@@ -1262,7 +1300,7 @@ export class CreditNotesService {
     });
     await tx.orderCreditNote.deleteMany({ where: { creditNoteId: id } });
 
-    // The same compare-and-set as voidCreditNote: every dollar is back, so amountUsed is 0.
+    // The same compare-and-set as the old plain void (removed, B957): every dollar is back, so amountUsed is 0.
     const flipped = await tx.creditNote.updateMany({
       where: { id, status: { not: "VOID" }, amountUsed: 0 },
       data: { status: "VOID" },
@@ -1292,7 +1330,7 @@ export class CreditNotesService {
    * SA-436 PR-2 (#2402): POST :id/void-with-reversal. Un-applies every live application of the
    * note (restoreCreditFromPaymentInTx recomputes each invoice's status), remembers each pair
    * (CreditNoteApplyBlock VOID_REVERSAL) and drops the note's order intents, then runs the SAME
-   * compare-and-set void and ledger un-reversal as voidCreditNote.
+   * compare-and-set void and ledger un-reversal the plain void used (B957: POST :id/void delegates here).
    *
    * Serializable and retried whole on a conflict (L-221). Lock order SA-214: the payments'
    * Orders (sorted), then their Invoices (sorted), then the CreditNote row. Every refusal is
@@ -1322,6 +1360,29 @@ export class CreditNotesService {
   }
 
   /**
+   * B949: refuse (409 CREDIT_NOTE_SOURCE_GONE) when any of these payments would restore money to a note carrying the
+   * SOURCE_DELETED marker. Callers run it over the WHOLE payment list BEFORE the first restore so the operation is refused
+   * atomically (the tx would roll back anyway, but nothing is even attempted). The way out is the note's own void.
+   */
+  private async refuseSourceGoneRestores(
+    tx: any,
+    payments: ReadonlyArray<{ creditNoteId: string | null }>,
+  ): Promise<void> {
+    const ids = [...new Set(payments.map((p) => p.creditNoteId).filter(Boolean) as string[])];
+    for (const id of ids) {
+      if (!(await hasSourceDeletedMarker(tx, id))) continue;
+      const cn = await tx.creditNote.findFirst({
+        where: { id },
+        select: { creditNoteNumber: true },
+      });
+      throw cnConflict(
+        API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE,
+        `Credit note ${cn?.creditNoteNumber ?? id} came from a deleted invoice. Void that credit note first, then try again.`,
+      );
+    }
+  }
+
+  /**
    * Inverse of applyCreditInTx: give (part of) an applied credit back to the wallet.
    * Deletes (or shrinks) the CREDIT_NOTE InvoicePayment, decrements amountUsed,
    * reverts APPLIED→ISSUED when the credit is no longer fully consumed, and
@@ -1333,11 +1394,18 @@ export class CreditNotesService {
     tz: string | null, // SA-495a: the caller's tenant zone, resolved once — never per row
     payment: { id: string; invoiceId: string; creditNoteId: string | null; amount: unknown },
     reduceBy?: number,
+    // B949: the note being VOIDED/CANCELLED right now: its OWN payments may be restored (it ends VOID, nothing becomes
+    // spendable). No global flag: any other note's marker still refuses.
+    opts: { voidingNoteId?: string } = {},
   ): Promise<number> {
     if (!payment.creditNoteId) return 0;
     const payAmt = roundMoney(Number(payment.amount));
     const restore = roundMoney(Math.min(payAmt, reduceBy ?? payAmt));
     if (!(restore > 0.001)) return 0;
+    // B949: the backstop of the pre-pass below. A restore would hand a SOURCE_DELETED note's money back as SPENDABLE wallet
+    // credit with no provenance; every path that restores refuses, before it writes any RESTORE (an operation such as an order cancel may already have written its own claim in the same transaction; the refusal rolls the whole transaction back).
+    if (payment.creditNoteId !== opts.voidingNoteId)
+      await this.refuseSourceGoneRestores(tx, [payment]);
 
     if (restore >= payAmt - 0.001) {
       await tx.invoicePayment.delete({ where: { id: payment.id } });
@@ -1547,6 +1615,7 @@ export class CreditNotesService {
       },
       orderBy: { createdAt: "desc" },
     });
+    await this.refuseSourceGoneRestores(tx, pays); // B949: before the first restore
     for (const p of pays) await this.restoreCreditFromPaymentInTx(tx, tz, p);
   }
 
@@ -1607,6 +1676,7 @@ export class CreditNotesService {
       orderBy: { createdAt: "desc" },
     });
 
+    await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
     const byNote = new Map<string, { creditNoteNumber: string; amount: number }>();
     for (const p of payments) {
       const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p);
@@ -1799,6 +1869,7 @@ export class CreditNotesService {
         .sort(
           (a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
+      await this.refuseSourceGoneRestores(tx, creditPays); // B949: before the first restore
       for (const p of creditPays) {
         if (!(excess > 0.001)) break;
         const restored = await this.restoreCreditFromPaymentInTx(tx, tz, p, excess);
@@ -1907,6 +1978,7 @@ export class CreditNotesService {
               "This credit note has no active application to that invoice",
             );
 
+          await this.refuseSourceGoneRestores(tx, payments); // B949: before the first restore
           let restored = 0;
           for (const p of payments) {
             restored = roundMoney(restored + (await this.restoreCreditFromPaymentInTx(tx, tz, p)));

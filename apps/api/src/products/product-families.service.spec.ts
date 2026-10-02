@@ -895,3 +895,41 @@ describe("SA-606i: the family price is REQUIRED on create (no implicit $0.00), H
     }
   });
 });
+
+describe("B964-2 (merged with master): a formula-led family / variant name is refused before any write", () => {
+  it("createFamily refuses a formula-led family name and a formula-led variant name; nothing is created", async () => {
+    for (const body of [
+      { family: { pricePerUnit: "1.00", name: "=SUM(A1)" }, variants: [variant("Cola")] },
+      { family: { pricePerUnit: "1.00", name: "Soda" }, variants: [variant("+cmd|' /C calc'!A0")] },
+    ]) {
+      const { service, tx, audit } = build();
+      await expect(service.createFamily(body as never, ACTOR)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(tx.products).toHaveLength(0);
+      expect(audit.log).not.toHaveBeenCalled();
+    }
+  });
+
+  it("updateVariants refuses a formula-led added or renamed variant; nothing is written", async () => {
+    const fam = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+    const kid = {
+      ...product({ id: "k1", name: "Kid k1" }),
+      kind: "VARIANT",
+      parentProductId: "fam",
+    } as never;
+    const added = build({ products: [fam, kid] });
+    await expect(
+      added.service.updateVariants("fam", { add: [variant("@HYPERLINK(1)")] as never }, ACTOR),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    const renamed = build({ products: [fam, kid] });
+    await expect(
+      renamed.service.updateVariants(
+        "fam",
+        { update: [{ id: "k1", name: "-2+3" }] as never },
+        ACTOR,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(renamed.tx.products.find((p) => p.id === "k1")!.name).toBe("Kid k1");
+  });
+});

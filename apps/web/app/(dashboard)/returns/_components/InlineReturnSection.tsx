@@ -44,6 +44,10 @@ import {
   sumChunkTotals,
   type ExcessOption,
   type InlineReturnLineDraft,
+  ALREADY_RETURNED_DRIVER_NOTE,
+  ALREADY_RETURNED_LABEL,
+  ALREADY_RETURNED_NOTE,
+  alreadyReturnedProductIds,
 } from "@routeflow/returns";
 
 // See RecordInlineReturnDialog's original SA-108 comment: `lineKey` is a section-local
@@ -281,6 +285,11 @@ export function InlineReturnSection({
     ? groupQuoteChunks(quote)
     : { covered: [] as InlineReturnQuoteChunk[], excess: [] as InlineReturnQuoteChunk[] };
   const excessTotals = sumChunkTotals(excess);
+  // B961 / SA-071c: an over-return chunk of goods the customer already returned or was credited for is labelled as such (not
+  // "Not on any invoice"); staff must type a reason per product, a driver's capture is held for the office.
+  const flaggedIds = quote ? alreadyReturnedProductIds(quote) : new Set<string>();
+  const anyAlreadyReturned = flaggedIds.size > 0;
+  const allExcessAlreadyReturned = excess.length > 0 && excess.every((c) => c.alreadyReturned);
   const onlyBoughtPossible = quote ? canReturnOnlyPurchased(quote) : false;
   const notBoughtBefore = quote && onlyBoughtPossible ? notBoughtBeforeNames(quote, lines) : [];
   const boxedIds = boxedProductIds(lines);
@@ -503,7 +512,34 @@ export function InlineReturnSection({
 
           {excess.length > 0 && (
             <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-navy">Not on any invoice</p>
+              <p className="text-sm font-medium text-navy">
+                {allExcessAlreadyReturned
+                  ? ALREADY_RETURNED_LABEL
+                  : anyAlreadyReturned
+                    ? `Not on any invoice, or ${ALREADY_RETURNED_LABEL.toLowerCase()}`
+                    : "Not on any invoice"}
+              </p>
+              {anyAlreadyReturned && (
+                <p className="text-xs text-amber-900">
+                  {canOverrideCredit ? ALREADY_RETURNED_NOTE : ALREADY_RETURNED_DRIVER_NOTE}
+                </p>
+              )}
+              {canOverrideCredit &&
+                [...flaggedIds].map((productId) => {
+                  const line = lines.find((l) => l.productId === productId);
+                  if (!line) return null;
+                  return (
+                    <Input
+                      key={`already-returned-reason-${productId}`}
+                      label={`Why credit ${line.productName} again (required)`}
+                      maxLength={CREDIT_OVERRIDE_REASON_MAX}
+                      value={line.alreadyReturnedReason ?? ""}
+                      onChange={(e) =>
+                        updateLine(line.lineKey, { alreadyReturnedReason: e.target.value })
+                      }
+                    />
+                  );
+                })}
               <p className="text-xs text-navy/70">
                 {excess.reduce((s, c) => s + c.pieces, 0)} piece(s) priced at the customer&apos;s
                 current price.

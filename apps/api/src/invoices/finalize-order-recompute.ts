@@ -6,6 +6,7 @@ import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import { withAdvisoryLock, LockTimeoutError, LockUnavailableError } from "../common/db-locks";
 import { QTY_EPSILON } from "../orders/merge-idempotency";
 import { billableQtyFromBasis, type DeliveredBasis } from "./delivered-basis-by-line";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface OrderRecomputeTotals {
   orderId: string;
@@ -95,13 +96,13 @@ export async function withOrderRecomputeLock<T>(
   } catch (e) {
     if (e instanceof LockTimeoutError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Another update to this order is in progress. Try again in a moment.",
       });
     }
     if (e instanceof LockUnavailableError) {
       throw new ServiceUnavailableException({
-        code: "LOCK_UNAVAILABLE",
+        code: API_ERROR_CODES.LOCK_UNAVAILABLE,
         message: "Order lock unavailable — retry shortly.",
       });
     }
@@ -109,7 +110,7 @@ export async function withOrderRecomputeLock<T>(
   }
   if (!result.acquired) {
     throw new ServiceUnavailableException({
-      code: "LOCK_UNAVAILABLE",
+      code: API_ERROR_CODES.LOCK_UNAVAILABLE,
       message: "Order lock unavailable — retry shortly.",
     });
   }

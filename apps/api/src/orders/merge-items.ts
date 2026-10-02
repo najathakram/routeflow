@@ -1,5 +1,6 @@
 import { ConflictException } from "@nestjs/common";
 import { normalizeBoxesPieces } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface MergeLineSnapshot {
   // SA-124f: the row's own id — carried through to the fold's output as `sourceLineId`, so a
@@ -257,7 +258,7 @@ export function foldMergeItems(
         // re-denominates the other lines in the same payload; the caller (a single
         // interactive request) simply retries.
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at a ${acc.unitsPerBox}-pack and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: [acc.unitsPerBox],
@@ -292,7 +293,7 @@ export function foldMergeItems(
       );
       if (knownPacks.length >= 1) {
         throw new ConflictException({
-          code: "MERGE_PACK_MISMATCH",
+          code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
           message: `Product ${item.productId} is on this order at packs [${knownPacks.join(", ")}] and the scanned item is a ${incomingUnitsPerBox}-pack — resolve the mismatch before merging.`,
           productId: item.productId,
           existingPacks: knownPacks,

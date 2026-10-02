@@ -1,4 +1,5 @@
 import { ConflictException, ForbiddenException } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1 — the fail-closed net under every path that REWRITES existing lines.
@@ -18,7 +19,7 @@ import { ConflictException, ForbiddenException } from "@nestjs/common";
  * Order create (4b-2b) and manual-invoice create (4c-1) now mint unit-aware lines (behind flag.units_v1);
  * every REWRITE path stays fenced here until it is converted.
  */
-export const UNIT_AWARE_LINE = "UNIT_AWARE_LINE";
+export const UNIT_AWARE_LINE = API_ERROR_CODES.UNIT_AWARE_LINE;
 
 interface LineLike {
   unitLabel?: string | null;
@@ -266,7 +267,7 @@ export async function assertInvoiceRewriteAllowed(
   // Fail CLOSED: a parent we cannot read (NULL-tenant / cross-tenant / vanished) proves nothing.
   if (!own || (invoice.orderId && !linked)) {
     throw new ConflictException({
-      code: "UNIT_AWARE_LINE_UNVERIFIABLE",
+      code: API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE,
       message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
     });
   }

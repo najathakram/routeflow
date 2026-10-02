@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import type { FamilyRowConflict } from "@routeflow/types";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -172,6 +173,10 @@ export class ProductFamiliesService {
     }
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
     const familyName = dto.family.name.trim();
+    // B964-2: a formula-led family / variant name is refused before any read or write (it is printed on invoices, exports, filings)
+    assertSafeProductNames({ name: familyName });
+    for (const v of dto.variants)
+      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
     // A family price copied to every variant must be a real price: missing or <= 0 would write $0.00 onto every variant.
     // Coded so a client can show it; checked BEFORE the generic "required" so the code is stable (nothing written).
     const copyPriceError = () =>
@@ -390,6 +395,11 @@ export class ProductFamiliesService {
       const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
+    // B964-2: the same guard on every added / renamed variant, before any read or write
+    for (const v of add)
+      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
+    for (const u of update)
+      if (u.name) assertSafeProductNames({ name: u.name.trim(), variantName: u.name.trim() });
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));
     const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
