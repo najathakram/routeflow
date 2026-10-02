@@ -18,6 +18,8 @@ import {
   type ReportTemplateDef,
 } from "@/lib/api/tracked-categories";
 import { sectionPickerOptions } from "@/lib/regulated-format";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 /**
  * Same `CreatedProduct` shape `InlineCreateProductModal` returns — callers
@@ -107,7 +109,7 @@ export function ProductCreateModal({
   initialUnitsPerBox,
 }: ProductCreateModalProps) {
   const { toast } = useToast();
-  const createProduct = useCreateProduct();
+  const createProduct = useCreateProduct({ localErrorToast: localToastForSafeTextRefusal });
 
   // Every standalone product, for the "Variant of" picker — fetched here so
   // callers don't need to load/pass the full catalog themselves.
@@ -308,11 +310,9 @@ export function ProductCreateModal({
       });
       toast({ title: "Product created", variant: "success" });
     } catch (err: any) {
-      toast({
-        title: "Failed to create product",
-        description: err?.message,
-        variant: "error",
-      });
+      // Only the formula-led refusal is ours; any other error already reached the global toast.
+      const copy = safeTextErrorCopy(err);
+      if (copy) toast({ title: "Failed to create product", description: copy, variant: "error" });
       return;
     }
 

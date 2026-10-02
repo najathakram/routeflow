@@ -22,8 +22,9 @@ import { makeWorld, baseState, git } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
 import { runCli } from "./helpers/spawn-cli";
+import { expectMode, scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 // built from parts so this file (scanned by the client-data guard) never holds a literal
 // `user:token@host` or `git@host` shape
@@ -583,8 +584,8 @@ describe("origin config file: mode, modes, remove", () => {
     const dir = path.join(root, "deep", "routeflow-control");
     const file = writeOriginFile("file:///tmp/acme/state.git", { CONTROL_CONFIG_DIR: dir });
     expect(file).toBe(path.join(dir, "origin"));
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    expectMode(file, 0o600);
+    expectMode(dir, 0o700);
     expect(resolveStateOrigin({ env: { CONTROL_CONFIG_DIR: dir } }).origin).toBe(
       "file:///tmp/acme/state.git",
     );
@@ -593,7 +594,7 @@ describe("origin config file: mode, modes, remove", () => {
     const env = { CONTROL_CONFIG_DIR: path.join(root, "c") };
     writeOriginFile("file:///tmp/acme/one.git", env);
     const file = writeOriginFile("file:///tmp/acme/two.git", env);
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expectMode(file, 0o600);
     expect(resolveStateOrigin({ env }).origin).toBe("file:///tmp/acme/two.git");
   });
   it("refuses to write the product repo and writes nothing", () => {
@@ -630,7 +631,7 @@ describe("ctl origin set | show | unset (CLI, never the network)", () => {
     expect(r.code).toBe(0);
     expect(r.stdout).toBe("state remote set: https://host.example.test/acme/state.git\n");
     expect(r.stdout + r.stderr).not.toContain("tok-cli-77");
-    expect(fs.statSync(path.join(cfg, "origin")).mode & 0o777).toBe(0o600);
+    expectMode(path.join(cfg, "origin"), 0o600);
   });
   it("set refuses the product repo (exit 2), writes nothing", async () => {
     const r = await runCli(world, ["origin", "set", `git${AT}github.com:${SLUG}.git`], {

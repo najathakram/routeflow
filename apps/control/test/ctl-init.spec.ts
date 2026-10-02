@@ -10,10 +10,11 @@ import { foldDir } from "../src/sources/state-branch";
 import { makeWorld, baseState, git, NOW } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
+import { IS_WIN, itPosix, scaled } from "./helpers/platform";
 import { runCli, bytes } from "./helpers/spawn-cli";
 import type { SpawnOpts } from "./helpers/spawn-cli";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 const AT = "@";
 const SLUG = ["najathakram", "routeflow"].join("/");
@@ -144,7 +145,9 @@ describe("roster validation (exit 2, precise message, nothing pushed)", () => {
     expect(junk.stderr).not.toContain("secret-marker-9");
   });
 
-  it("a FIFO roster is exit 2 immediately (never opened for a blocking read)", async () => {
+  // POSIX-only: Windows has no mkfifo and no /dev nodes (the directory case below still covers the
+  // "not a regular file" guard there)
+  itPosix("a FIFO roster is exit 2 immediately (never opened for a blocking read)", async () => {
     const fifo = path.join(world.root, "roster.fifo");
     execFileSync("mkfifo", [fifo]);
     const r = await init(["--roster", fifo]);
@@ -152,7 +155,7 @@ describe("roster validation (exit 2, precise message, nothing pushed)", () => {
     expect(r.stderr).toMatch(/roster: not a regular file/);
     expect(tmpEntries()).toEqual([]);
   });
-  it("a character device roster (/dev/zero) is exit 2, not an endless read", async () => {
+  itPosix("a character device roster (/dev/zero) is exit 2, not an endless read", async () => {
     const r = await init(["--roster", "/dev/zero"]);
     expect(r.code).toBe(2);
     expect(r.stderr).toMatch(/roster: not a regular file/);
@@ -482,39 +485,45 @@ describe("--dry-run", () => {
 });
 
 describe("end to end: init, then validate / next / lane register against that origin", () => {
-  it("validate passes, the fold knows every registered lane, next works, register appends", async () => {
-    expect((await init(["--roster", writeRoster(ROSTER)])).code).toBe(0);
+  it(
+    "validate passes, the fold knows every registered lane, next works, register appends",
+    async () => {
+      expect((await init(["--roster", writeRoster(ROSTER)])).code).toBe(0);
 
-    const v = await runCli(world, ["validate"], { lane: "lead", machine: "e2e" });
-    expect(v.code).toBe(0);
-    expect(v.stdout).toMatch(/valid \(3 events\)/);
+      const v = await runCli(world, ["validate"], { lane: "lead", machine: "e2e" });
+      expect(v.code).toBe(0);
+      expect(v.stdout).toMatch(/valid \(3 events\)/);
 
-    const clone = world.shallowClone("ctl/state", "fold");
-    const state = foldDir(clone, { tasks: [], releases: [] }, NOW);
-    expect(Object.keys(state.lanes).sort()).toEqual(["lane-a", "lane-b", "lead"]);
-    expect(state.lanes["lane-a"]).toMatchObject({
-      name: "Lane A",
-      machine: "mac-a",
-      kind: "feature",
-      active: true,
-    });
-    expect(state.lanes["lane-b"]).toMatchObject({ kind: "bug", active: false });
+      const clone = world.shallowClone("ctl/state", "fold");
+      const state = foldDir(clone, { tasks: [], releases: [] }, NOW);
+      expect(Object.keys(state.lanes).sort()).toEqual(["lane-a", "lane-b", "lead"]);
+      expect(state.lanes["lane-a"]).toMatchObject({
+        name: "Lane A",
+        machine: "mac-a",
+        kind: "feature",
+        active: true,
+      });
+      expect(state.lanes["lane-b"]).toMatchObject({ kind: "bug", active: false });
 
-    const n = await runCli(world, ["next", "--json"], { lane: "lane-a", machine: "e2e" });
-    expect(n.code).toBe(0);
-    expect(JSON.parse(n.stdout)).toMatchObject({ lane: "lane-a" });
+      const n = await runCli(world, ["next", "--json"], { lane: "lane-a", machine: "e2e" });
+      expect(n.code).toBe(0);
+      expect(JSON.parse(n.stdout)).toMatchObject({ lane: "lane-a" });
 
-    const reg = await runCli(
-      world,
-      ["lane", "register", "lane-c", "--name", "Lane C", "--machine", "mac-c", "--kind", "test"],
-      { lane: "lead", machine: "e2e" },
-    );
-    expect(reg.code).toBe(0);
-    expect(reg.stdout).toBe("registered lane-c\n");
-    expect(lines().map((l) => l.seq)).toEqual([1, 2, 3, 4]);
-    expect(lines()[3]).toMatchObject({ type: "lane.registered", laneId: "lane-c", lane: "lead" });
+      const reg = await runCli(
+        world,
+        ["lane", "register", "lane-c", "--name", "Lane C", "--machine", "mac-c", "--kind", "test"],
+        { lane: "lead", machine: "e2e" },
+      );
+      expect(reg.code).toBe(0);
+      expect(reg.stdout).toBe("registered lane-c\n");
+      expect(lines().map((l) => l.seq)).toEqual([1, 2, 3, 4]);
+      expect(lines()[3]).toMatchObject({ type: "lane.registered", laneId: "lane-c", lane: "lead" });
 
-    const v2 = await runCli(world, ["validate"], { lane: "lead", machine: "e2e" });
-    expect(v2.stdout).toMatch(/valid \(4 events\)/);
-  });
+      const v2 = await runCli(world, ["validate"], { lane: "lead", machine: "e2e" });
+      expect(v2.stdout).toMatch(/valid \(4 events\)/);
+      // init + validate + next + register + validate is six process starts, each a clone or a fetch; on
+      // Windows that is real work well past the 30 s default
+    },
+    IS_WIN ? 150_000 : undefined,
+  );
 });
