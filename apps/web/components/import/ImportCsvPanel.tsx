@@ -14,13 +14,13 @@ import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucid
 import { cn, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
 
-export interface ImportColumnAlias {
+interface ImportColumnAlias {
   field: string;
   canonical: string;
   aliases: string[];
 }
 
-export interface ImportRowPlan {
+interface ImportRowPlan {
   row: number;
   label: string;
   action: "create" | "update" | "skip";
