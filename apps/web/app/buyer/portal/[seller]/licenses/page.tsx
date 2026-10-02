@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useParams, useRouter } from "next/navigation";
 import { ShieldCheck, ShieldAlert, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { Badge, Button, useToast } from "@routeflow/ui/web";
@@ -77,7 +78,7 @@ function LicenseForm({
   onDone: () => void;
   onCancel: () => void;
 }) {
-  const submit = useSubmitBuyerAuthorization();
+  const submit = useSubmitBuyerAuthorization({ localErrorToast: true });
   const { toast } = useToast();
   const [licenseNumber, setLicenseNumber] = React.useState(row.licenseNumber ?? "");
   const [expiresAt, setExpiresAt] = React.useState(row.expiresAt ? row.expiresAt.slice(0, 10) : "");
@@ -110,10 +111,7 @@ function LicenseForm({
           onDone();
         },
         onError: (err: unknown) => {
-          const msg =
-            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
-            "Could not submit your license. Please try again.";
-          setError(Array.isArray(msg) ? msg.join(", ") : msg);
+          setError(safeTextErrorCopy(err) ?? "Could not submit your license. Please try again.");
         },
       },
     );
