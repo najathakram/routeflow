@@ -29,6 +29,14 @@ export interface ScanLevelProduct {
   barcodes?: readonly ScanBarcodeRow[] | null;
 }
 
+/**
+ * SA-626: a code that resolves at BOTH levels is "shared". The ONE rule web and mobile both call to decide
+ * whether a new scan line may start on the product's default selling unit (a box-only / unit-only code never does).
+ */
+export function isSharedScanCode(levels: readonly SellLevel[]): boolean {
+  return levels.includes("BOX") && levels.includes("UNIT");
+}
+
 /** Level for a staff scan, given the set of levels the hit code has on the product. Total. */
 export function resolveScanSellLevel(
   product: { unitsPerBox?: number | null },
