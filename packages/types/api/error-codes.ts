@@ -58,6 +58,10 @@
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
 //   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
 //                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
+//   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
+//                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
+//                    field (businessName, contactName, displayName). Clients show FIXED copy with a
+//                    human field label and never the server message.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -103,6 +107,7 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];
