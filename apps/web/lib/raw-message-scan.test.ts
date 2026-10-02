@@ -82,4 +82,4 @@ describe("no raw server message in apps/web UI (B986 ratchet)", () => {
 });
 
 /** Set by the generator; lower it as area PRs land. */
-const PENDING_CEILING = 220;
+const PENDING_CEILING = 197;

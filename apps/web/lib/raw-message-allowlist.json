@@ -19,10 +19,6 @@
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
-  "app/(dashboard)/customers/[id]/StandingOrderModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
   "app/(dashboard)/customers/[id]/page.tsx": {
     "count": 8,
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
@@ -83,29 +79,10 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
-  "app/(dashboard)/orders/[id]/page.tsx": {
-    "count": 8,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/CreditNotePicker.tsx": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/LicenseGuardModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/SplitInvoiceModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
-    "count": 4,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "count": 2,
+    "permanent": true,
+    "why": "comparison: e.message is matched against 'Network Error' / timeout to classify a transient failure, never rendered"
   },
   "app/(dashboard)/products/[id]/page.tsx": {
     "count": 2,
@@ -320,17 +297,9 @@
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
-  "lib/api/credit-limit.ts": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
   "lib/api/platform-pricing.ts": {
     "count": 1,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
-  },
-  "lib/api/selling-restricted.ts": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "lib/api/supplier-statements.ts": {
     "count": 1,
