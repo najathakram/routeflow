@@ -138,6 +138,12 @@
 //                    line: CONFIRMED | IMPLIED_PAID}; NO_BACKING_LINE {billId, billNumber}; OVER_LINE {billId, billNumber, amount,
 //                    lineAmount}; OVER_BALANCE {billId, billNumber, amount, remaining}. An unknown or other tenant's bill id stays the
 //                    uncoded 404.
+//                    SUPPLIER_PAYMENT_* / SUPPLIER_ALLOCATION* — `body.code` of the 400s of recording a supplier payment (SA-634; status and
+//                    message unchanged): SUPPLIER_PAYMENT_NOT_POSITIVE {}; SUPPLIER_PAYMENT_FULLY_PAID {billId: a REQUEST ECHO of the path
+//                    id}; SUPPLIER_PAYMENT_OVER_BALANCE {remaining}; SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT {allocatedTotal: the rounded
+//                    requested sum the message prints, totalAmount: the request's UNROUNDED value}; SUPPLIER_ALLOCATION_WRONG_SUPPLIER and
+//                    SUPPLIER_ALLOCATION_BILL_VOID {billId, billNumber}; SUPPLIER_ALLOCATION_OVER_BALANCE {billId, billNumber, amount,
+//                    remaining}. An unknown or other tenant's bill id stays the uncoded 404.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -299,6 +305,13 @@ export const API_ERROR_CODES = {
   STATEMENT_APPLY_NO_BACKING_LINE: "STATEMENT_APPLY_NO_BACKING_LINE",
   STATEMENT_APPLY_OVER_LINE: "STATEMENT_APPLY_OVER_LINE",
   STATEMENT_APPLY_OVER_BALANCE: "STATEMENT_APPLY_OVER_BALANCE",
+  SUPPLIER_PAYMENT_NOT_POSITIVE: "SUPPLIER_PAYMENT_NOT_POSITIVE",
+  SUPPLIER_PAYMENT_FULLY_PAID: "SUPPLIER_PAYMENT_FULLY_PAID",
+  SUPPLIER_PAYMENT_OVER_BALANCE: "SUPPLIER_PAYMENT_OVER_BALANCE",
+  SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT: "SUPPLIER_ALLOCATIONS_EXCEED_PAYMENT",
+  SUPPLIER_ALLOCATION_WRONG_SUPPLIER: "SUPPLIER_ALLOCATION_WRONG_SUPPLIER",
+  SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
+  SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
