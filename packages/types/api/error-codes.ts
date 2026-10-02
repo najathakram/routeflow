@@ -96,6 +96,12 @@
 //                    (FEATURE_MODE, RUN_ALREADY_SETTLED, STOP_ALREADY_COMPLETED, STOP_SKIPPED) and the selling-restrictions
 //                    409s (SELLING_RESTRICTED, SELLING_RESTRICTIONS_NOT_READY). SELLING_RESTRICTED is also a suspension REASON
 //                    value in recurring invoices / order templates, which is data, not an error code.
+//   B987-B — vendor-bill / supplier-statement / inventory / invoice refusals, now named here (value == key, byte-identical to what
+//                    was sent): PO_LINK_CONFLICT, PO_LINK_BROKEN, SCAN_ALREADY_POSTED (vendor-bill scan and PO link), the AI_* scan
+//                    failures (AI_KEY_INVALID, AI_SCAN_REJECTED, AI_UNAVAILABLE, AI_PARSE_FAILED: vendor-bill and statement scans),
+//                    INSUFFICIENT_UNASSIGNED, PO_LOT_PARTIALLY_CONSUMED, PO_HAS_LINKED_BILL, INVENTORY_LEDGER_GAP (inventory),
+//                    ALLOCATIONS_EXCEED_PAYMENT, INVOICE_CHANGED_DURING_EDIT (invoices) and EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED
+//                    (invoice send, buyer merge verification email).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -195,6 +201,21 @@ export const API_ERROR_CODES = {
   STOP_SKIPPED: "STOP_SKIPPED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
   SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
+  PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
+  SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
+  PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  AI_KEY_INVALID: "AI_KEY_INVALID",
+  AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
+  AI_UNAVAILABLE: "AI_UNAVAILABLE",
+  AI_PARSE_FAILED: "AI_PARSE_FAILED",
+  INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
+  PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
+  PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
+  INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
+  EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
+  EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
