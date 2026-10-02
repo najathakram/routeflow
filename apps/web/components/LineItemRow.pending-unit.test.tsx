@@ -1,5 +1,6 @@
 import * as React from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { LineItemRow, type LineItemRowItem, type LineItemRowProps } from "./LineItemRow";
 
 /**
@@ -109,5 +110,65 @@ describe("LineItemRow, pending selling unit", () => {
       "aria-busy",
       "false",
     );
+  });
+});
+
+describe("LineItemRow pending status: layout slot and keyboard (#2865 F2)", () => {
+  it("the status lives INSIDE the info column, never as a direct child of the row (at sm+ the row is a flex row and a 4th child was crushed)", () => {
+    for (const status of ["loading", "failed"] as const) {
+      const { container, unmount } = renderRow(
+        props({ pendingUnit: { status, taps: 2, onRetry: noop } }),
+      );
+      const el = screen.getByTestId("pending-unit-status");
+      const row = container.querySelector("li")!;
+      expect(el.parentElement).not.toBe(row);
+      expect(row.contains(el)).toBe(true);
+      expect(el.parentElement!.className).toMatch(/min-w-0/); // the info column
+      expect(el.className).toMatch(/\bw-full\b/);
+      expect(el.className).not.toMatch(/col-span-2/);
+      unmount();
+    }
+  });
+
+  const retryInForm = (onRetry: jest.Mock) => {
+    // the order modal's own rule: Enter in the form is preventDefault'ed (no implicit submit)
+    render(
+      <form onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}>
+        <ul>
+          <LineItemRow {...props({ pendingUnit: { status: "failed", taps: 2, onRetry } })} />
+        </ul>
+      </form>,
+    );
+    return screen.getByRole("button", { name: "Retry" });
+  };
+
+  it("Enter on Retry triggers the refetch even inside a form that preventDefaults Enter; Space still works", async () => {
+    const user = userEvent.setup();
+    const onRetry = jest.fn();
+    const retry = retryInForm(onRetry);
+    retry.focus();
+    await user.keyboard("{Enter}");
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    await user.keyboard(" ");
+    expect(onRetry).toHaveBeenCalledTimes(2);
+  });
+
+  it("an in-flight Retry ('Retrying…') is disabled, so Enter cannot fire it twice", async () => {
+    const user = userEvent.setup();
+    const onRetry = jest.fn();
+    render(
+      <form onKeyDown={(e) => e.key === "Enter" && e.preventDefault()}>
+        <ul>
+          <LineItemRow
+            {...props({ pendingUnit: { status: "failed", taps: 2, onRetry, retrying: true } })}
+          />
+        </ul>
+      </form>,
+    );
+    const busy = screen.getByRole("button", { name: "Retrying…" });
+    expect(busy).toBeDisabled();
+    busy.focus();
+    await user.keyboard("{Enter}");
+    expect(onRetry).not.toHaveBeenCalled();
   });
 });

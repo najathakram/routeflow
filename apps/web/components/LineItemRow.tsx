@@ -305,6 +305,9 @@ export function LineItemRow({
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
+          {/* #2865 F2: the pending-unit status lives IN the info column (full width at every breakpoint). As a row child it
+              became a fourth flex item at sm+ and was crushed between the qty controls and the total. */}
+          {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
           {/* Regulated tag (regulated-items-spec: "{Category} · regulated"). */}
           {category && (
             <span className="mt-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
@@ -545,7 +548,6 @@ export function LineItemRow({
           </button>
         </fieldset>
       )}
-      {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
       {/* Line total */}
       <span
         data-testid="line-total"
@@ -598,12 +600,17 @@ export function PendingUnitStatus({
     <div
       role="alert"
       data-testid="pending-unit-status"
-      className="col-span-2 flex flex-wrap items-center gap-2 text-xs text-danger"
+      className="mt-1 flex w-full flex-wrap items-center gap-2 text-xs text-danger"
     >
       <span>{pending.taps} added · Couldn&apos;t load the selling units.</span>
       <button
         type="button"
         onClick={pending.onRetry}
+        // #2865 F2: the order form's keydown rule preventDefaults Enter (no implicit submit), which also cancels a
+        // button's native Enter activation. Stop only THIS button's Enter from reaching it; every other control keeps it.
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.stopPropagation();
+        }}
         disabled={pending.retrying}
         aria-busy={pending.retrying || undefined}
         className="rounded border border-danger/40 px-2 py-0.5 font-medium hover:bg-danger/10 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
@@ -616,7 +623,7 @@ export function PendingUnitStatus({
       role="status"
       aria-live="polite"
       data-testid="pending-unit-status"
-      className="col-span-2 text-xs text-navy/60"
+      className="mt-1 w-full text-xs text-navy/60"
     >
       {pending.taps} · loading units
     </div>

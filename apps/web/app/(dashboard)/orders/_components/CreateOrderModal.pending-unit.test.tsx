@@ -513,4 +513,22 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
     ]);
   });
+
+  it("#2865 F2: Enter on the focused Retry runs the refetch inside the order form (whose Enter rule is preventDefault); the line ends at exactly N Bottles", async () => {
+    mockFetchProductUnits.mockRejectedValue(new Error("offline"));
+    await open(2);
+    await screen.findByRole("alert", {}, { timeout: 3000 });
+    const calls = mockFetchProductUnits.mock.calls.length;
+
+    mockFetchProductUnits.mockResolvedValue([bottleLevel, caseLevel]);
+    const retry = screen.getByRole("button", { name: "Retry" });
+    retry.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(mockFetchProductUnits.mock.calls.length).toBeGreaterThan(calls));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
+    ]);
+  });
 });
