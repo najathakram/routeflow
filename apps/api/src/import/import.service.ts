@@ -10,7 +10,11 @@ import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { customerNameViolation } from "../customers/customer-name-guard";
-import { addressViolation, licenseViolation } from "../common/text-cell-guards";
+import {
+  addressViolation,
+  licenseViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
@@ -2889,6 +2893,14 @@ export class ImportService {
           }
           updated++;
         } else {
+          // B964-2: a NEW product's name is written here; a formula-led one rejects THIS row (a matched existing product
+          // only has its stock updated above, so a legacy name never blocks a sync).
+          const nameViolation = productNameViolation({ name });
+          if (nameViolation) {
+            skipped++;
+            errors.push(`${name}: ${nameViolation}`);
+            continue;
+          }
           // Create new product with this stock level. B562 follow-up: writing
           // the opening balance straight onto currentStock with no
           // StockMovement would permanently "gap" this product's ledger —
