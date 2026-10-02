@@ -1,8 +1,14 @@
 /**
- * B985 / SA-631 (WRITTEN, NOT RUN by the author: F2's DB lane runs it and adjusts any fixture field the
+ * B985 / SA-631 PROPERTY PINS (WRITTEN, NOT RUN by the author: F2's DB lane runs it and adjusts any fixture field the
  * schema demands; the harness is the backorder-pieces DB spec's, unchanged): a buyer's forceNew order is
  * created with `{ skipAutoMerge: true }` (what BuyerController now passes; pinned in
  * buyer.controller.force-new.spec.ts), so it stays out of BOTH the post-commit and the HOURLY sweep.
+ *
+ * WHAT THESE ARE: property pins of the `skipAutoMerge: true` flag at the service and sweep level. They create
+ * the forceNew order the way the controller does (`orders.create(dto, buyer, { skipAutoMerge: true })`); they do
+ * NOT drive BuyerController.createOrder({ forceNew: true }). That the controller passes the flag, runs no
+ * post-commit sweep and returns the created order is pinned by the EXECUTED controller spec
+ * buyer.controller.force-new.spec.ts; together the two pin the whole path.
  * Real Postgres, the REAL sweeps:
  *  - with an existing PENDING order there are TWO live orders after the create;
  *  - then `mergeAllPendingForCustomer` AND `sweepAllPendingOrders()` (the hourly job's body): still TWO,
@@ -284,7 +290,7 @@ describeDb(
       );
     const hourlySweep = () => tenantCtx.run(tenantId, () => orders.sweepAllPendingOrders());
 
-    it("(a) forceNew with an existing PENDING order: TWO live orders, and the forceNew order persists its choice", async () => {
+    it("(a, property) a skipAutoMerge order with an existing PENDING order: TWO live orders, and the forceNew order persists its choice", async () => {
       const existing = await plainCreate(1);
       const separate = await forceNewCreate(1);
       expect(separate.skipAutoMerge).toBe(true);
@@ -293,7 +299,7 @@ describeDb(
       expect(rows.find((r) => r.id === separate.id)!.skipAutoMerge).toBe(true);
     }, 120_000);
 
-    it("(b) the post-commit sweep and then the HOURLY sweep: still TWO, the forceNew order is never folded and never hard-deleted", async () => {
+    it("(b, property) the post-commit sweep and then the HOURLY sweep: still TWO, the forceNew order is never folded and never hard-deleted", async () => {
       const existing = await plainCreate(1);
       const separate = await forceNewCreate(1);
       await postCommitSweep();
