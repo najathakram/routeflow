@@ -201,7 +201,7 @@ describe("RoutesService.reorderStops (template route)", () => {
   // House lock order for the route family: STOP rows (id order), then Route. The real-PG behaviour
   // is pinned in run-stop-reorder-lock.db.spec.ts; this fails fast in the default lane.
   describe("reorderRouteStopsInTx lock order", () => {
-    it("locks the route's stops, in id order, BEFORE the Route row, and before any read", async () => {
+    it("locks the route's stops, in id order, FOR NO KEY UPDATE (never FOR UPDATE: dispatch's FK check), BEFORE the Route row, and before any read", async () => {
       const events: string[] = [];
       const tx = {
         $executeRaw: jest.fn((strings: TemplateStringsArray) => {
@@ -223,7 +223,7 @@ describe("RoutesService.reorderStops (template route)", () => {
         { id: "a3", stopNumber: 3 },
       ]);
       expect(events.slice(0, 4)).toEqual([
-        'SELECT id FROM "RouteStop" WHERE "routeId" = ? ORDER BY id FOR UPDATE',
+        'SELECT id FROM "RouteStop" WHERE "routeId" = ? ORDER BY id FOR NO KEY UPDATE',
         'SELECT id FROM "Route" WHERE id = ? FOR UPDATE',
         "read route",
         "read stops",

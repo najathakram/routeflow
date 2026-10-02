@@ -12,6 +12,13 @@ import { BadRequestException, NotFoundException } from "@nestjs/common";
  * `route.update`) and the same house order as reorderRunStopsInTx (#2635). The caller wraps this in
  * `retryOnTxConflict`, so a residual 40P01 (the optimizer's own stop order is not id-sorted) is
  * retried, never a 500.
+ *
+ * The stop locks are FOR NO KEY UPDATE, never FOR UPDATE: dispatch (createRun) takes the Route row
+ * FOR UPDATE and then INSERTs RouteRunStop rows, whose FK check takes FOR KEY SHARE on each
+ * RouteStop. FOR UPDATE conflicts with that, so a reorder holding the stops and waiting on the
+ * Route deadlocked against a dispatch holding the Route and needing the stops (and createRun has no
+ * retry: a 500). FOR NO KEY UPDATE does not conflict with KEY SHARE, yet still serialises against
+ * the optimizer's stopNumber updates (stopNumber is in a unique index, so those take FOR UPDATE).
  */
 export async function reorderRouteStopsInTx(
   tx: any,
@@ -20,7 +27,7 @@ export async function reorderRouteStopsInTx(
 ): Promise<void> {
   // An undefined id would bind NULL and lock nothing (SA-533h): refuse before any query.
   if (!routeId) throw new Error("route id missing for the route-stop reorder");
-  await tx.$executeRaw`SELECT id FROM "RouteStop" WHERE "routeId" = ${routeId} ORDER BY id FOR UPDATE`;
+  await tx.$executeRaw`SELECT id FROM "RouteStop" WHERE "routeId" = ${routeId} ORDER BY id FOR NO KEY UPDATE`;
   await tx.$executeRaw`SELECT id FROM "Route" WHERE id = ${routeId} FOR UPDATE`;
   const route = await tx.route.findFirst({ where: { id: routeId } });
   if (!route) throw new NotFoundException("Route not found");

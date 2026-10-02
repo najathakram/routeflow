@@ -108,7 +108,14 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
           },
         },
         { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(undefined) } },
-        { provide: FeatureConfigService, useValue: { get: jest.fn(), isEnabled: jest.fn() } },
+        {
+          provide: FeatureConfigService,
+          useValue: {
+            get: jest.fn(),
+            isEnabled: jest.fn(),
+            getEffectiveMode: jest.fn().mockResolvedValue("unset"), // createRun's dispatch gate
+          },
+        },
         {
           provide: EmailService,
           useValue: {
@@ -610,4 +617,165 @@ describeDb("#2562 run-stop reorder vs a concurrent run start — real Postgres",
       otherErrors: errors.filter((e) => !/deadlock|40P01|P2034/i.test(e)),
     }).toEqual({ deadlocks: 0, otherErrors: [] });
   }, 120_000);
+
+  /** Postgres' own cumulative deadlock count for this database (a retried deadlock still counts). */
+  async function deadlockCount(): Promise<number> {
+    await prisma.$executeRaw`SELECT pg_stat_clear_snapshot()`;
+    const rows: Array<{ n: bigint | number }> = await prisma.$queryRaw`
+      SELECT deadlocks::int AS n FROM pg_stat_database WHERE datname = current_database()`;
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  // #2151 (Opus, on the stop-first lock order): DISPATCH (createRun) takes the Route row FOR UPDATE,
+  // then INSERTs RouteRunStop rows, whose FK check takes FOR KEY SHARE on each RouteStop. A reorder
+  // that locked the stops FOR UPDATE conflicts with that: it holds the stops and waits on the Route
+  // while dispatch holds the Route and needs the stops => 40P01, and createRun has no retry (500).
+  // FOR NO KEY UPDATE does not conflict with KEY SHARE. T0 replays dispatch's exact lock sequence
+  // (Route FOR UPDATE, then the RouteRun + RouteRunStop inserts through the real FK); the reorder
+  // starts while T0 holds the Route and is observed blocked BEFORE T0 inserts. The reorder's own
+  // retry would hide a lost deadlock, so the assertion is Postgres' deadlock counter, not an error.
+  it("#2151 (dispatch lock-order replay: Route FOR UPDATE, then RouteRunStop inserts): reorder never deadlocks (N rounds)", async () => {
+    const ROUNDS = 3;
+    const before = await deadlockCount();
+    const errors: string[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedRunWithTwoStops(`disp-dl${round}`);
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.routeRun.update({ where: { id: s.run.id }, data: { status: "CANCELLED" } });
+      let insert!: () => void;
+      const mayInsert = new Promise<void>((r) => (insert = r));
+      let holdsRoute!: () => void;
+      const routeHeld = new Promise<void>((r) => (holdsRoute = r));
+      const dispatch = prisma
+        .$transaction(
+          async (tx: any) => {
+            await tx.$executeRaw`SELECT id FROM "Route" WHERE id = ${s.route.id} FOR UPDATE`;
+            holdsRoute();
+            await mayInsert;
+            await tx.routeRun.create({
+              data: {
+                routeId: s.route.id,
+                status: "SCHEDULED",
+                scheduledDate: new Date(),
+                tenantId: s.tenantId,
+                stops: {
+                  create: [s.rs1, s.rs2].map((rs, i) => ({
+                    routeStopId: rs.id,
+                    stopNumber: i + 1,
+                    customerId: s.customer.id,
+                    tenantId: s.tenantId,
+                  })),
+                },
+              },
+            });
+          },
+          { timeout: 60_000 },
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      // eslint-disable-next-line no-await-in-loop
+      await routeHeld;
+      const reorder = tenantCtx
+        .run(s.tenantId, () =>
+          routesService.reorderStops(s.route.id, [
+            { id: s.rs1.id, stopNumber: 2 },
+            { id: s.rs2.id, stopNumber: 1 },
+          ]),
+        )
+        .then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await observeBlocked(reorder);
+      } finally {
+        insert();
+      }
+      // eslint-disable-next-line no-await-in-loop
+      const [dErr, rErr] = await Promise.all([dispatch, reorder]);
+      for (const e of [dErr, rErr]) if (e) errors.push(e);
+      // eslint-disable-next-line no-await-in-loop
+      const [runs, stops] = await Promise.all([
+        prisma.routeRun.count({ where: { routeId: s.route.id, status: "SCHEDULED" } }),
+        prisma.routeStop.findMany({
+          where: { routeId: s.route.id },
+          select: { id: true, stopNumber: true },
+        }),
+      ]);
+      expect({ runs, order: Object.fromEntries(stops.map((x) => [x.id, x.stopNumber])) }).toEqual({
+        runs: 1,
+        order: { [s.rs1.id]: 2, [s.rs2.id]: 1 },
+      });
+    }
+    expect({ errors, deadlocks: (await deadlockCount()) - before }).toEqual({
+      errors: [],
+      deadlocks: 0,
+    });
+  }, 120_000);
+
+  // The same race through the REAL createRun and reorderStops, unforced and repeated: no 500 (no
+  // deadlock, no un-mapped error), the run is created, and the run's stops carry a consistent
+  // 1..N numbering (createRun snapshots the template before it takes the Route lock, so the run may
+  // copy either the old or the new order, never a mixture). Regression guard: the interleaving is
+  // not forced here, the replay above is the deterministic one.
+  it("#2151 real createRun x reorderStops on one route, concurrently, several rounds: no 500, run created, consistent order (regression guard)", async () => {
+    const ROUNDS = 6;
+    const before = await deadlockCount();
+    const errors: string[] = [];
+    for (let round = 0; round < ROUNDS; round++) {
+      // eslint-disable-next-line no-await-in-loop
+      const s = await seedRunWithTwoStops(`disp-real${round}`);
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.routeRun.update({ where: { id: s.run.id }, data: { status: "CANCELLED" } });
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          () => null,
+          (e: unknown) => String((e as Error)?.message ?? e),
+        );
+      // eslint-disable-next-line no-await-in-loop
+      const [dErr, rErr] = await Promise.all([
+        settle(
+          tenantCtx.run(s.tenantId, () =>
+            routesService.createRun(
+              { routeId: s.route.id, scheduledDate: new Date().toISOString() } as never,
+              { sub: "r2151-operator", role: "OPERATOR" } as never,
+            ),
+          ),
+        ),
+        settle(
+          tenantCtx.run(s.tenantId, () =>
+            routesService.reorderStops(s.route.id, [
+              { id: s.rs1.id, stopNumber: 2 },
+              { id: s.rs2.id, stopNumber: 1 },
+            ]),
+          ),
+        ),
+      ]);
+      for (const e of [dErr, rErr]) if (e) errors.push(e);
+      // eslint-disable-next-line no-await-in-loop
+      const runs = await prisma.routeRun.findMany({
+        where: { routeId: s.route.id, status: "SCHEDULED" },
+        select: { stops: { select: { stopNumber: true }, orderBy: { stopNumber: "asc" } } },
+      });
+      expect(runs.length).toBe(1);
+      expect(runs[0].stops.map((x) => x.stopNumber)).toEqual([1, 2]);
+      // eslint-disable-next-line no-await-in-loop
+      const tpl = await prisma.routeStop.findMany({
+        where: { routeId: s.route.id },
+        select: { id: true, stopNumber: true },
+      });
+      expect(Object.fromEntries(tpl.map((x) => [x.id, x.stopNumber]))).toEqual({
+        [s.rs1.id]: 2,
+        [s.rs2.id]: 1,
+      });
+    }
+    expect({ errors, deadlocks: (await deadlockCount()) - before }).toEqual({
+      errors: [],
+      deadlocks: 0,
+    });
+  }, 180_000);
 });
