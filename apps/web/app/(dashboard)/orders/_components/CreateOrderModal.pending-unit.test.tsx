@@ -296,4 +296,47 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       { productId: "prod-1", qty: 3, unitLabel: "Bottle" },
     ]);
   });
+
+  /** Every qty control the row offers, driven the way a user (or a stray event) would. */
+  const hammerQtyControls = async () => {
+    for (const b of screen.queryAllByRole("button", { name: /^[+−]$/ })) fireEvent.click(b);
+    for (const el of screen.queryAllByRole("spinbutton"))
+      fireEvent.change(el, { target: { value: "2" } });
+    await act(async () => undefined);
+  };
+
+  it("SA-632 refusal: a '+' / typed qty / box edit before the ladder loads changes NOTHING; after the load the line is exactly 1 Bottle", async () => {
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(1);
+
+    await hammerQtyControls();
+    await act(async () => release([bottleLevel, caseLevel]));
+    await waitFor(() => expect(mockFetchProductUnits).toHaveBeenCalled());
+    await act(async () => undefined);
+    save();
+    expect(createOrderMutate).toHaveBeenCalledTimes(1);
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
+    ]);
+  });
+
+  it("SA-632 refusal + case d: after a FAILED load the controls still change nothing, submit stays blocked, Retry -> exactly 1 Bottle", async () => {
+    mockFetchProductUnits.mockRejectedValue(new Error("offline"));
+    await open(1);
+    await screen.findByRole("alert", {}, { timeout: 3000 });
+
+    await hammerQtyControls();
+    save();
+    await act(async () => undefined);
+    expect(createOrderMutate).not.toHaveBeenCalled();
+
+    mockFetchProductUnits.mockResolvedValue([bottleLevel, caseLevel]);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
+    ]);
+  });
 });

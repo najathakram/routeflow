@@ -52,4 +52,30 @@ describe("pending-unit lock wiring", () => {
       isUnitPending({ startOnDefaultUnit: 3, qty: 4 }),
     );
   });
+
+  it("SA-632 refusal, per handler: every qty-changing handler on the screen refuses a PENDING line IN THE LOGIC", () => {
+    const src = read("components/NewOrderScreen.tsx");
+    const starts = [
+      "const addOne = ",
+      "const removeOne = ",
+      "const setBoxes = ",
+      "const setPieces = ",
+      "const setUnits = ",
+      "const setSellBy = ",
+      "const setQty = ",
+    ];
+    for (const head of starts) {
+      const at = src.indexOf(head);
+      expect(at).toBeGreaterThan(0);
+      // the handler's own body: up to the next top-level handler declaration
+      const next = src.indexOf("\n  const ", at + head.length);
+      const body = src.slice(at, next > 0 ? next : at + 1500);
+      expect({ handler: head, guarded: /refusesPendingEdit\(/.test(body) }).toEqual({
+        handler: head,
+        guarded: true,
+      });
+    }
+    // only the default-start pick may add to a pending line (as a tap); the stepper "+" is refused
+    expect(src).toMatch(/refusesPendingEdit\(m\[id\], dflt, userRole\)/);
+  });
 });
