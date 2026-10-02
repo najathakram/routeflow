@@ -310,7 +310,7 @@ describe("GoogleOAuthService — lookup order & claims (#2495)", () => {
       deletedAt: null,
     } as any);
     prisma.user.findFirst.mockResolvedValue(null);
-    prisma.user.update.mockResolvedValue({} as any);
+    prisma.user.updateMany.mockResolvedValue({ count: 1 } as any); // the link is a CAS now
 
     const { service, logger } = buildService(prisma);
     await service.linkGoogleAccount({

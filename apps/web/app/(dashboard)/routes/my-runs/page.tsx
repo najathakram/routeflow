@@ -223,9 +223,12 @@ function FieldStopRow({
 function TodayRunHero({
   run,
   onOpenStop,
+  canAddOrder,
 }: {
   run: RouteRun;
   onOpenStop?: (stop: RouteRunStop) => void;
+  /** B966: false for a pure DRIVER, who cannot reach /orders (RouteGuard bounces them). */
+  canAddOrder: boolean;
 }) {
   const stops = run.stops ?? [];
   const total = run._count?.stops ?? stops.length;
@@ -265,13 +268,15 @@ function TodayRunHero({
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
       <div className="flex flex-wrap gap-3 px-5 pb-5">
-        <Link
-          href="/orders?action=new"
-          className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-strong px-5 text-base font-semibold text-white transition-colors hover:bg-accent-deep sm:flex-none sm:min-w-[220px]"
-        >
-          <ScanLine className="h-5 w-5" />
-          Scan to add order
-        </Link>
+        {canAddOrder && (
+          <Link
+            href="/orders?action=new"
+            className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-strong px-5 text-base font-semibold text-white transition-colors hover:bg-accent-deep sm:flex-none sm:min-w-[220px]"
+          >
+            <ScanLine className="h-5 w-5" />
+            Scan to add order
+          </Link>
+        )}
         <Link
           href={`/routes/${run.id}`}
           className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg border border-surface-border bg-white px-5 text-base font-semibold text-navy transition-colors hover:bg-surface-raised sm:flex-none sm:min-w-[180px]"
@@ -405,6 +410,7 @@ export default function MyRunsPage() {
           <TodayRunHero
             run={heroRun}
             onOpenStop={(stop) => setOpenStop({ stop, runId: heroRun.id })}
+            canAddOrder={!baseIsDriver}
           />
         ) : (
           <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">

@@ -20,6 +20,7 @@ import {
 import { retryOnTxConflict } from "../common/tx-retry";
 import { PrismaService } from "../prisma/prisma.service";
 import { reorderRunStopsInTx } from "./run-stop-reorder";
+import { reorderRouteStopsInTx } from "./route-stop-reorder";
 import { JwtPayload } from "../auth/jwt-payload.interface";
 import {
   UserRole,
@@ -512,26 +513,12 @@ export class RoutesService {
   }
 
   async reorderStops(routeId: string, order: { id: string; stopNumber: number }[]) {
-    await this.findRouteOrThrow(routeId);
-    const allStops = await this.prisma
-      .forTenant()
-      .routeStop.findMany({ where: { routeId }, select: { id: true, stopNumber: true } });
-    const offset = allStops.length + order.length + 100;
-    await this.prisma.$transaction([
-      ...allStops.map((s) =>
-        this.prisma.forTenant().routeStop.update({
-          where: { id: s.id },
-          data: { stopNumber: s.stopNumber + offset },
-        }),
-      ),
-      ...order.map(({ id, stopNumber }) =>
-        this.prisma.forTenant().routeStop.update({ where: { id }, data: { stopNumber } }),
-      ),
-      // See clearPlannedPolyline — a hand reorder invalidates the stored path.
-      this.prisma
-        .forTenant()
-        .route.update({ where: { id: routeId }, data: { plannedPolyline: null } }),
-    ]);
+    // A hand reorder x a concurrent optimize (stops, then route) lock conflict retries, never a raw
+    // P2034/40P01 (500). Each attempt re-locks and re-reads inside reorderRouteStopsInTx; the writes
+    // are absolute stop numbers, so re-running the whole transaction is idempotent.
+    await retryOnTxConflict("routes.reorderStops", () =>
+      this.prisma.tenantTransaction((tx: any) => reorderRouteStopsInTx(tx, routeId, order)),
+    );
     return { success: true };
   }
 

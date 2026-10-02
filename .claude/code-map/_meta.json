@@ -1,6 +1,6 @@
 {
-  "mappedSha": "e23a8b03530602be1e52b3efe2a9867b7f97912f",
-  "generatedAt": "2026-09-30T19:40:00.000Z",
+  "mappedSha": "b13f29c93c38af7621ff53fb2acf15cc6dd86688",
+  "generatedAt": "2026-10-02T02:30:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -15,5 +15,5 @@
     "packages": 0
   },
   "fileCount": 1045,
-  "notes": "**2026-09-30 \u2014 windows 9 and 11 landings #2185, #2781, #2796, #2795, #2754, #2790 (docs-only bookkeeping).** New `api/landing-2026-09-30-w9-w11.md` (web and packages included) and `mobile/landing-2026-09-30-w9-w11.md` (TOC rows in `api.md`/`mobile.md`), one bullet per PR, each grepped in the merged tree; #2781, #2185 and #2754 span both sides (bullet plus pointer). Gotcha recorded: #2790's local `round4` in `products-export.service.ts` (L-248). No source changed. mappedSha -> e23a8b03. See CHANGELOG.md."
+  "notes": "**2026-10-01 — windows 12-27 landings (about 40 PRs through #2920, master `fbb05cd19`) (docs-only bookkeeping).** New `api/landing-2026-10-01-w12-w27.md`, `web/landing-2026-10-01-w12-w27.md` and `mobile/landing-2026-10-01-w12-w27.md` (TOC rows in `api.md`/`web.md`/`mobile.md`), one bullet per PR grouped by area, each grepped at HEAD; `packages.md` gains a \"Landed 2026-10-01 (w12-w27)\" section (scanning, pricing, types, ui). The gate anchors on the last commit touching the map, `mappedSha` was restamped to `f8b58781a` (master after #2923) in the registry PR, which also adds #2921 and #2923 as a late section of the api landing file and files B945-B949. #2937 (B953, CSV guard) and #2939 (B954, PDF UTC dates) are mapped in the same late section, #2904 (B923, offline allow-list) in the mobile landing file, and `mappedSha` is restamped to `b13f29c93` (master after #2616, the reconcile argument parser; #2616 also adds a LEAD-LOG entry); #2988 (B965 + B967, mixed-unit refusal and pieces pool) and #2994 (W1-A/B script deletes) are in the api late section, #2980 (B966 web gate) in the web one; #2983 (B959), #2946 (B961) and #2986 (B960) are in the api late section; #2981 (B963, repair script) and #2979 (B962, web toast) are in the api and mobile late sections; #2943 (B949), #2936 (B957) and #2935 (B950, control) are in the same late section; #2933 (B947, order-wide pool) and #2978 (B955, UTC day, and the canonical lock-order comment) are in the same late section. No source changed. See CHANGELOG.md."
 }

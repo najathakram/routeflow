@@ -37,6 +37,56 @@
       "road": "ROAD-97",
       "key": "F-07",
       "note": "Money integrity for boxed units == '1a. Money-bug family (boxes/pieces/units math) — release gate'"
+    },
+    "1374": {
+      "road": "ROAD-96",
+      "key": "F-08",
+      "note": "Release 1 ship gate == the Release 1 tracking item"
+    },
+    "2009": {
+      "road": "ROAD-100",
+      "key": "F-03",
+      "note": "poor-signal retry queue (scanner/driver offline) == scanner redesign item"
+    },
+    "2012": {
+      "road": "ROAD-103",
+      "key": "F-06",
+      "note": "config-snapshot admin UI (A2c gap 2) == backoffice/entitlements"
+    },
+    "2090": {
+      "road": "ROAD-109",
+      "key": "-",
+      "note": "R1.3 item"
+    },
+    "2159": {
+      "road": "ROAD-108",
+      "key": "-",
+      "note": "onboarding epic"
+    },
+    "2400": {
+      "road": "ROAD-107",
+      "key": "-",
+      "note": "credit notes you see and control"
+    },
+    "2804": {
+      "road": "ROAD-110",
+      "key": "-",
+      "note": "owner feature gaps 2026-09-30 (sellability) epic"
+    },
+    "2805": {
+      "road": "ROAD-99",
+      "key": "-",
+      "note": "Purchase Orders sidebar/route (gap 01-A)"
+    },
+    "2806": {
+      "road": "ROAD-99",
+      "key": "-",
+      "note": "purchase order detail page (gap 01-B)"
+    },
+    "2820": {
+      "road": "ROAD-102",
+      "key": "-",
+      "note": "portal rules: Show in buyer portal (owner gaps 09-30 #15)"
     }
   }
 }

@@ -6,6 +6,8 @@
 export const PREF = {
   lowStockDigestEnabled: "lowStockDigestEnabled",
   pushEnabled: "pushEnabled",
+  staffOrderEmail: "staffOrderEmail",
+  staffBuyerChangeEmail: "staffBuyerChangeEmail",
   locale: "locale",
   billLastSupplierId: "bill.lastSupplierId",
   paymentLastMethod: "payment.lastMethod",
@@ -14,6 +16,8 @@ export const PREF = {
 export const PREFERENCE_KEYS = [
   PREF.lowStockDigestEnabled,
   PREF.pushEnabled,
+  PREF.staffOrderEmail,
+  PREF.staffBuyerChangeEmail,
   PREF.locale,
   PREF.billLastSupplierId,
   PREF.paymentLastMethod,

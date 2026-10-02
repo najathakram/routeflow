@@ -49,4 +49,38 @@ describe("handleMutationError (#1965)", () => {
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
   });
+
+  // B956: a refused formula-led name is FIXED copy with a human field label here too, never the raw
+  // server message ("businessName must not start with …") or the raw axios text.
+  describe("a refused name (TEXT_CELL_FORMULA_LEAD)", () => {
+    const refusal = (field: string) =>
+      axiosErr({
+        statusCode: 400,
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field,
+        message: `${field} must not start with = + - @ or a tab/line break`,
+      });
+
+    it("toasts the fixed copy with the field label, never the raw message", () => {
+      const { toast, router } = setup();
+      handleMutationError(refusal("businessName"), {}, toast, router);
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(toast).toHaveBeenCalledWith({
+        title: "Business name can't start with =, +, -, @ or a tab/line break.",
+        variant: "error",
+      });
+      expect(JSON.stringify(toast.mock.calls)).not.toMatch(/must not start|businessName/);
+    });
+
+    it("an opted-out mutation (the customer form shows its own banner) shows nothing, so it never shows twice", () => {
+      const { toast, router } = setup();
+      handleMutationError(
+        refusal("contactName"),
+        { meta: { localErrorToast: true } },
+        toast,
+        router,
+      );
+      expect(toast).not.toHaveBeenCalled();
+    });
+  });
 });

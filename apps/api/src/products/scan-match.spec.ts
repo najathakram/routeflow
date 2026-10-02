@@ -165,9 +165,17 @@ describe("findScanMatches — held-tenant legacy fallback (L-159: one presence c
 
 describe("findScanMatches — ranking (row > sku > unitSku, then id; deterministic)", () => {
   it("a row code equal to ANOTHER product's sku at the same candidate: the row wins even with the larger id", async () => {
-    const owner = product({ id: "zzz-owner", sku: "OWN", barcode: null, barcodes: [row({ productId: "zzz-owner", code: "CODE" })] });
+    const owner = product({
+      id: "zzz-owner",
+      sku: "OWN",
+      barcode: null,
+      barcodes: [row({ productId: "zzz-owner", code: "CODE" })],
+    });
     const skuHolder = product({ id: "aaa-skuholder", sku: "CODE", barcode: null, barcodes: [] });
-    for (const order of [[owner, skuHolder], [skuHolder, owner]]) {
+    for (const order of [
+      [owner, skuHolder],
+      [skuHolder, owner],
+    ]) {
       const db = makeDb({ rows: [row({ productId: "zzz-owner", code: "CODE" })], products: order });
       const hit = await findScanMatches(db as any, ["CODE"], {});
       expect(hit?.product.id).toBe("zzz-owner");
@@ -178,7 +186,11 @@ describe("findScanMatches — ranking (row > sku > unitSku, then id; determinist
     const a = product({ id: "a", sku: "T", barcode: null, unitSku: null });
     const b = product({ id: "b", sku: "T", barcode: null, unitSku: null });
     const u = product({ id: "0-unit", sku: null, barcode: null, unitSku: "T" });
-    const orders = [[a, b, u], [u, b, a], [b, u, a]];
+    const orders = [
+      [a, b, u],
+      [u, b, a],
+      [b, u, a],
+    ];
     for (const products of orders) {
       const hit = await findScanMatches(makeDb({ products }) as any, ["T"], {});
       expect(hit?.product.id).toBe("a");
@@ -216,7 +228,10 @@ describe("findScanMatches — invariant breach: >= 2 DISTINCT products for one c
   });
 
   it("the warn carries the collision COUNT only — no tenant id, slug, product id or name", async () => {
-    await findScanMatches(breachDb() as any, ["DUP"], { tenantId: "tenant-uuid-1234", slug: "acme" });
+    await findScanMatches(breachDb() as any, ["DUP"], {
+      tenantId: "tenant-uuid-1234",
+      slug: "acme",
+    });
     const logged = JSON.stringify(warn.mock.calls);
     expect(logged).toMatch(/\b2\b/);
     for (const forbidden of ["tenant-uuid-1234", "acme", "SECRET-NAME", "p-a", "p-b"]) {
@@ -229,7 +244,9 @@ describe("findScanMatches — invariant breach: >= 2 DISTINCT products for one c
     for (let i = 0; i < 4; i += 1) {
       const db = breachDb();
       if (i % 2) {
-        db.productBarcode.findMany.mockResolvedValue([...(await db.productBarcode.findMany())].reverse());
+        db.productBarcode.findMany.mockResolvedValue(
+          [...(await db.productBarcode.findMany())].reverse(),
+        );
         db.product.findMany.mockResolvedValue([...(await db.product.findMany())].reverse());
       }
       picks.add((await findScanMatches(db as any, ["DUP"], {}))!.product.id);
@@ -239,7 +256,11 @@ describe("findScanMatches — invariant breach: >= 2 DISTINCT products for one c
 
   it("NO warn when the one code sits at both levels of the SAME product (the normal shared code)", async () => {
     const rows = [row({ code: "SH", level: "BOX" }), row({ code: "SH", level: "UNIT" })];
-    await findScanMatches(makeDb({ rows, products: [product({ barcodes: rows })] }) as any, ["SH"], {});
+    await findScanMatches(
+      makeDb({ rows, products: [product({ barcodes: rows })] }) as any,
+      ["SH"],
+      {},
+    );
     expect(warn).not.toHaveBeenCalled();
   });
 });
@@ -254,12 +275,18 @@ describe("ProductsService.findByBarcode via findScanMatches (#2717 M4a-1)", () =
       providers: [
         ProductsService,
         { provide: PrismaService, useValue: prisma },
-        { provide: StorageService, useValue: { presignedUrl: jest.fn(), presignedUrls: jest.fn() } },
+        {
+          provide: StorageService,
+          useValue: { presignedUrl: jest.fn(), presignedUrls: jest.fn() },
+        },
         { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(false) } },
         { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         entitlementAuthorityFromEntitlements,
-        { provide: PlanCatalogService, useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: PlanCatalogService,
+          useValue: { upgradeTargetForFlag: jest.fn().mockResolvedValue(null) },
+        },
         { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
         { provide: RouteFlowGateway, useValue: { emitProductUpdated: jest.fn() } },
       ],
@@ -288,8 +315,12 @@ describe("ProductsService.findByBarcode via findScanMatches (#2717 M4a-1)", () =
 
     const { barcodes: _drop, ...legacyKeys } = p;
     expect(result).toMatchObject(legacyKeys);
-    expect(Object.keys(result)).toEqual(expect.arrayContaining([...Object.keys(legacyKeys), "barcodes", "scanMatch"]));
-    expect(result.barcodes).toEqual(synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: 6 }));
+    expect(Object.keys(result)).toEqual(
+      expect.arrayContaining([...Object.keys(legacyKeys), "barcodes", "scanMatch"]),
+    );
+    expect(result.barcodes).toEqual(
+      synthesizeLegacyBarcodes({ barcode: p.barcode, unitsPerBox: 6 }),
+    );
   });
 
   it("calls the shared findScanMatches exactly once with the normalised candidate set (L-167)", async () => {
