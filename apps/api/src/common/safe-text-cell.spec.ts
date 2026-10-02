@@ -54,7 +54,7 @@ describe("assertSafeTextCell", () => {
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err?.getStatus()).toBe(400);
     expect(err?.getResponse()).toMatchObject({
-      code: "text_cell_formula_lead",
+      code: "TEXT_CELL_FORMULA_LEAD",
       field: "businessName",
       message: "businessName must not start with = + - @ or a tab/line break",
     });

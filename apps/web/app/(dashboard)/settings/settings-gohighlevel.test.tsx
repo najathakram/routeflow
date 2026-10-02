@@ -61,33 +61,35 @@ describe("GoHighLevelSettingsTab", () => {
     expect(screen.getByText("No email or phone on the contact")).toBeInTheDocument();
   });
 
-  // B956: a formula-led contact name is its own plain-words outcome, on a real run (NEEDS_REVIEW)
-  // and on the dry-run preview row.
-  it.each(["NEEDS_REVIEW", "DRY_RUN"])(
-    "B956: renders the name-refused copy for a %s row with reason name-refused",
-    (status) => {
-      render(
-        <GoHighLevelSettingsTab
-          status="CONNECTED"
-          locationName="Acme HQ"
-          activity={[
-            {
-              id: "h1",
-              status,
-              reason: "name-refused",
-              opportunityName: "Big Order",
-              contactName: "Acme Foods",
-            },
-          ]}
-        />,
-      );
+  // B956: a formula-led contact name is its own plain-words outcome that NAMES the refused field,
+  // on a real run (NEEDS_REVIEW) and on the dry-run preview row.
+  it.each([
+    ["NEEDS_REVIEW", "name-refused:businessName", "Business name"],
+    ["NEEDS_REVIEW", "name-refused:contactName", "Contact name"],
+    ["DRY_RUN", "name-refused:displayName", "Display name"],
+    ["DRY_RUN", "name-refused", "This field"],
+  ])("B956: a %s row with reason %s names %s", (status, reason, label) => {
+    render(
+      <GoHighLevelSettingsTab
+        status="CONNECTED"
+        locationName="Acme HQ"
+        activity={[
+          {
+            id: "h1",
+            status,
+            reason,
+            opportunityName: "Big Order",
+            contactName: "Acme Foods",
+          },
+        ]}
+      />,
+    );
 
-      expect(
-        screen.getByText("Contact name can't start with =, +, -, @ or a tab/line break"),
-      ).toBeInTheDocument();
-      expect(screen.queryByText("name-refused")).not.toBeInTheDocument();
-    },
-  );
+    expect(
+      screen.getByText(`${label} can't start with =, +, -, @ or a tab/line break.`),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/name-refused/)).not.toBeInTheDocument();
+  });
 
   // M14 / ux-spec Card 2 — the stage picker renders the selected pipeline's
   // stages and "Save" sends the trigger patch (triggerMode/pipelineId/stageId).

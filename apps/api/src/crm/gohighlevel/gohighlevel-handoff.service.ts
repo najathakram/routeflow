@@ -15,7 +15,10 @@
 // collide with, another tenant's rows.
 import { randomBytes } from "crypto";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import { refusedCustomerNameField } from "../../customers/customer-name-guard";
+import {
+  CUSTOMER_NAME_FIELDS,
+  refusedCustomerNameField,
+} from "../../customers/customer-name-guard";
 import { normalizeEmail, normalizePhoneE164, slugUsername } from "../crm-identity";
 import type { GhlContact, GhlOpportunity } from "./gohighlevel.client";
 
@@ -95,6 +98,17 @@ function createNames(contact: GhlContact): { businessName: string; contactName: 
   const contactName =
     [contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.name || businessName;
   return { businessName, contactName };
+}
+
+/**
+ * The handoff reason for a refused name (B956): `name-refused:<field>` for one of the three customer
+ * name fields (a closed set, so the settings table can name the field WITHOUT the raw payload, which
+ * is never shipped to the Activity list), else a bare `name-refused`.
+ */
+function nameRefusedReason(field: string | null | undefined): string {
+  return field && (CUSTOMER_NAME_FIELDS as readonly string[]).includes(field)
+    ? `name-refused:${field}`
+    : "name-refused";
 }
 
 /** The first create-name field the customer guard would refuse (B956), or null. */
@@ -403,10 +417,10 @@ export class GoHighLevelHandoffService {
       await this.updateHandoff(connection, opportunity, opts, {
         status: "DRY_RUN",
         matchedBy: match?.how ?? null,
-        ...(nameCheck ? { reason: "name-refused" } : {}),
+        ...(nameCheck ? { reason: nameRefusedReason(nameCheck) } : {}),
         payload: {
           action: match ? "link" : nameCheck ? "refused" : "create",
-          ...(nameCheck ? { reason: "name-refused", field: nameCheck } : {}),
+          ...(nameCheck ? { reason: nameRefusedReason(nameCheck), field: nameCheck } : {}),
           matchedBy: match?.how,
           // M8: keep the opportunity itself so "Retry" on a DRY_RUN row does not lose the
           // deal name/value/source (the client has no single-opportunity GET).
@@ -525,7 +539,7 @@ export class GoHighLevelHandoffService {
         { code?: string; field?: string } | undefined;
       const refusedField =
         body?.code === API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD ? (body.field ?? "") : null;
-      if (refusedField !== null) reason = "name-refused";
+      if (refusedField !== null) reason = nameRefusedReason(refusedField);
       else if (name === "BadRequestException") reason = "identity-conflict";
       else if (name === "CustomerCapExceededException" || /customer.?cap/i.test(message)) {
         reason = "customer-cap";
@@ -534,7 +548,7 @@ export class GoHighLevelHandoffService {
         status: "NEEDS_REVIEW",
         reason,
         ...(reason === "create-failed" ? { payload: { message } } : {}),
-        ...(reason === "name-refused" ? { payload: { field: refusedField } } : {}),
+        ...(refusedField !== null ? { payload: { field: refusedField } } : {}),
       });
       return { status: "NEEDS_REVIEW", reason };
     }

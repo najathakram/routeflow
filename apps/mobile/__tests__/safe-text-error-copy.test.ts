@@ -8,7 +8,7 @@ import {
 
 const body = (field?: string) => ({
   statusCode: 400,
-  code: "text_cell_formula_lead",
+  code: "TEXT_CELL_FORMULA_LEAD",
   field,
   message: "businessName must not start with = + - @ or a tab/line break",
 });

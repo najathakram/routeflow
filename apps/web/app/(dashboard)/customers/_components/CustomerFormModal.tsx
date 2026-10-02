@@ -184,8 +184,8 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   const { toast } = useToast();
   const router = useRouter();
   const qc = useQueryClient();
-  const createCustomer = useCreateCustomer();
-  const updateCustomer = useUpdateCustomer();
+  const createCustomer = useCreateCustomer({ localErrorToast: true }); // the banner below shows errors
+  const updateCustomer = useUpdateCustomer({ localErrorToast: true });
 
   const [streetError, setStreetError] = React.useState("");
   const [cityError, setCityError] = React.useState("");

@@ -6,7 +6,7 @@ import {
 
 const body = (field?: string) => ({
   statusCode: 400,
-  code: "text_cell_formula_lead",
+  code: "TEXT_CELL_FORMULA_LEAD",
   field,
   message: "businessName must not start with = + - @ or a tab/line break",
 });
@@ -40,7 +40,7 @@ describe("safeTextErrorCopy (B956)", () => {
     expect(safeTextErrorCopy({ response: { data: { message: "x" } } })).toBeNull();
     expect(safeTextErrorCopy(new Error("Request failed with status code 400"))).toBeNull();
     expect(safeTextErrorCopy(null)).toBeNull();
-    expect(safeTextBodyCopy("text_cell_formula_lead")).toBeNull();
+    expect(safeTextBodyCopy("TEXT_CELL_FORMULA_LEAD")).toBeNull();
   });
 
   it("labels exist for the three customer name fields only", () => {

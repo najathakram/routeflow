@@ -27,6 +27,8 @@ const GUARDED: Record<string, readonly string[]> = {
   // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
   tenant: ["name"],
   // Printed on buyer documents and on the tobacco filing header.
+  // Blind spot: tenants.service updateBranding builds `const data` first, so the scan cannot see it;
+  // only its assertSafeTextCell call (and a spec) protects that write.
   tenantConfig: ["businessName"],
 };
 

@@ -221,7 +221,7 @@ describe("TenantsService", () => {
         .catch((e) => e);
       expect(err).toBeInstanceOf(BadRequestException);
       expect(err.getResponse()).toMatchObject({
-        code: "text_cell_formula_lead",
+        code: "TEXT_CELL_FORMULA_LEAD",
         field: "businessName",
       });
       expect(prisma.tenant.create).not.toHaveBeenCalled();

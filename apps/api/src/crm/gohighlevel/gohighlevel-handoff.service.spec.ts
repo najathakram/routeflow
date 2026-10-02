@@ -372,11 +372,11 @@ describe("GoHighLevelHandoffService.handle (T26-T31, T51)", () => {
 
       const out = await service.handle(connection, opportunity, {});
 
-      expect(out).toEqual({ status: "NEEDS_REVIEW", reason: "name-refused" });
+      expect(out).toEqual({ status: "NEEDS_REVIEW", reason: "name-refused:businessName" });
       const data = deps.prisma.crmHandoff.update.mock.calls[0][0].data;
       expect(data).toMatchObject({
         status: "NEEDS_REVIEW",
-        reason: "name-refused",
+        reason: "name-refused:businessName",
         payload: { field: "businessName" },
       });
       expect(JSON.stringify(data)).not.toContain("HYPERLINK"); // the raw name is never stored
@@ -407,10 +407,10 @@ describe("GoHighLevelHandoffService.handle (T26-T31, T51)", () => {
 
       const call = deps.prisma.crmHandoff.update.mock.calls[0][0];
       expect(call.data.status).toBe("DRY_RUN");
-      expect(call.data.reason).toBe("name-refused"); // the settings table reads the row's reason
+      expect(call.data.reason).toBe("name-refused:businessName"); // the settings table reads the row's reason
       expect(call.data.payload).toMatchObject({
         action: "refused",
-        reason: "name-refused",
+        reason: "name-refused:businessName",
         field: "businessName",
       });
       expect(deps.customersService.create).not.toHaveBeenCalled();

@@ -103,18 +103,24 @@ export function useCustomer(id: string) {
   });
 }
 
-export function useCreateCustomer() {
+/**
+ * `localErrorToast`: the caller renders its own error UI (the customer form's banner), so the
+ * app-wide generic error toast must not show the same failure a second time.
+ */
+export function useCreateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/customers", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
   });
 }
 
-export function useUpdateCustomer() {
+export function useUpdateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/customers/${id}`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {

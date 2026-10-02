@@ -3,21 +3,25 @@ import { renderWithProviders, screen } from "@/test-utils/render";
 import { CustomerFormModal } from "./CustomerFormModal";
 
 /**
- * B956: a refused formula-led name (400 `text_cell_formula_lead`) shows FIXED copy with a human field
+ * B956: a refused formula-led name (400 `TEXT_CELL_FORMULA_LEAD`) shows FIXED copy with a human field
  * label in the form's error banner, on both create and update. Never the raw axios "Request failed
  * with status code 400" and never the camelCase field key or the server message.
  */
 let createError: unknown = null;
 let updateError: unknown = null;
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
+const createOpts = jest.fn();
+const updateOpts = jest.fn();
 jest.mock("@/lib/api/customers", () => ({
-  useCreateCustomer: () => ({
+  useCreateCustomer: (o: unknown) => ({
+    ...(createOpts(o), {}),
     mutate: jest.fn(),
     isPending: false,
     error: createError,
     reset: jest.fn(),
   }),
-  useUpdateCustomer: () => ({
+  useUpdateCustomer: (o: unknown) => ({
+    ...(updateOpts(o), {}),
     mutate: jest.fn(),
     isPending: false,
     error: updateError,
@@ -39,7 +43,7 @@ const axiosRefusal = (field: string) =>
       status: 400,
       data: {
         statusCode: 400,
-        code: "text_cell_formula_lead",
+        code: "TEXT_CELL_FORMULA_LEAD",
         field,
         message: `${field} must not start with = + - @ or a tab/line break`,
       },
@@ -76,6 +80,12 @@ describe("CustomerFormModal — refused name (B956)", () => {
       screen.getByText("Contact name can't start with =, +, -, @ or a tab/line break."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Request failed with status code 400/)).not.toBeInTheDocument();
+  });
+
+  it("the form's mutations opt out of the app-wide error toast (the banner is the one place it shows)", () => {
+    renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);
+    expect(createOpts).toHaveBeenCalledWith({ localErrorToast: true });
+    expect(updateOpts).toHaveBeenCalledWith({ localErrorToast: true });
   });
 
   it("any other error keeps the existing banner text", () => {
