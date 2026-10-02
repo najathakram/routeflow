@@ -9,6 +9,7 @@ import {
 } from "@routeflow/pricing";
 import { CreatePromotionDto } from "./dto/create-promotion.dto";
 import { UpdatePromotionDto } from "./dto/update-promotion.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * The stored promotion fields the zero-price guard reads back. `value` is a Prisma
@@ -134,7 +135,7 @@ export class PromotionsService {
     throw new BadRequestException({
       statusCode: 400,
       error: "Bad Request",
-      code: "PROMOTION_ZERO_PRICE",
+      code: API_ERROR_CODES.PROMOTION_ZERO_PRICE,
       message: `${zeroPriceWarning(impact)} Lower the amount, narrow the scope, or resend with allowZeroPrice: true to confirm.`,
       zeroPriceCount: impact.count,
       inScopeCount: impact.inScope,

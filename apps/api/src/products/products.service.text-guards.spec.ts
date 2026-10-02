@@ -99,6 +99,82 @@ describe("ProductsService name guards (B964-2)", () => {
     });
   });
 
+  describe("free-text Product.category (B990)", () => {
+    const CAT_MSG = "Category can't start with =, +, -, @ or a tab/line break";
+
+    it("create refuses a formula-led category before any read or write", async () => {
+      const err = await refused(
+        service.create({
+          name: "Cola",
+          unit: "each",
+          pricePerUnit: "1.00",
+          category: "=cmd",
+        } as any),
+        "category",
+      );
+      expect(err.getResponse().message).toBe(CAT_MSG);
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it("create refuses a formula-led typed category EVEN when a structured subcategory is chosen, or the parent has none (the written value can still be the typed one)", async () => {
+      for (const extra of [{ trackedSubcategoryId: "sub-1" }, { parentProductId: "parent-1" }]) {
+        prisma.tenantTransaction.mockClear();
+        await refused(
+          service.create({
+            name: "Cola",
+            unit: "each",
+            pricePerUnit: "1.00",
+            category: "=cmd",
+            ...extra,
+          } as any),
+          "category",
+        );
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      }
+    });
+
+    const stored = (over: Record<string, unknown> = {}) => ({
+      id: "prod-1",
+      name: "Cola",
+      variantName: null,
+      category: "Drinks",
+      trackedSubcategoryId: null,
+      trackedSubcategory: null,
+      parentProductId: null,
+      imageKeys: [],
+      ...over,
+    });
+
+    it("update refuses a CHANGED formula-led category and writes nothing", async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      await refused(service.update("prod-1", { category: "@evil" } as any), "category");
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("update lets a LEGACY formula-led category echoed back unchanged through", async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ category: "=LEGACY" }));
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored({ category: "=LEGACY" }));
+      await expect(
+        service.update("prod-1", { category: "=LEGACY", description: "x" } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it("update refuses a changed formula-led category BEFORE any Tobacco section is resolved or created (no orphan type)", async () => {
+      addonService.hasAddon.mockResolvedValue(true); // the tobacco add-on is granted: the flag path would otherwise create the type
+      prisma.product.findUnique.mockResolvedValue(stored());
+      const created = jest.spyOn(service as any, "resolveOrCreateTobaccoCategory");
+      await refused(
+        service.update("prod-1", { category: "=evil", isTobacco: true } as any),
+        "category",
+      );
+      expect(created).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe("update", () => {
     const stored = (over: Record<string, unknown> = {}) => ({
       id: "prod-1",
@@ -168,6 +244,25 @@ describe("ProductsService name guards (B964-2)", () => {
       expect(result.created).toBe(1);
       expect(result.errors).toEqual([{ row: 1, name: "=HYPERLINK(1)", reason: MSG }]);
       expect(prisma.product.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects ONLY the row whose category is formula-led (readable reason); the rest imports", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-1" });
+      const result = await service.importFromZoho({
+        items: [
+          { name: "Widget", category: "=HYPERLINK(1)", unit: "each", pricePerUnit: 5 },
+          { name: "Gadget", category: "Tools", unit: "each", pricePerUnit: 5 },
+        ],
+      } as any);
+      expect(result.created).toBe(1);
+      expect(result.errors).toEqual([
+        {
+          row: 1,
+          name: "Widget",
+          reason: "Category can't start with =, +, -, @ or a tab/line break",
+        },
+      ]);
     });
 
     it("change-only: a formula-led name that ALREADY matches a stored product is a plain skip (nothing would be written), not an error", async () => {
