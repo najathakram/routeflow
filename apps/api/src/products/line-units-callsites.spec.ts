@@ -98,6 +98,10 @@ const NON_WRITERS = new Set([
   "products/product-units.service.ts",
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
+  // #2871: reads the live pack ONLY to choose the unit NOUN on a stock-shortfall line (boxed -> omit,
+  // so clients say "pieces"); display-only, derives no factor/quantity/price and writes nothing.
+  // order-stock.ts itself stays at ZERO direct reads.
+  "orders/stock-shortfall-label.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.
