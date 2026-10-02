@@ -11,6 +11,14 @@
 
 import * as React from "react";
 import { genericToastCopy } from "@/lib/generic-toast-copy";
+
+/** A 400 (unreadable / malformed file) or a 413 (too large) says what to fix; anything else is the shared generic copy. */
+const FILE_PROBLEM_COPY =
+  "The file couldn't be read. Check that it is a CSV that follows the template, and split a very large file into smaller ones.";
+function importFailureCopy(err: unknown): string {
+  const status = (err as { response?: { status?: number } } | null)?.response?.status;
+  return status === 400 || status === 413 ? FILE_PROBLEM_COPY : genericToastCopy(err);
+}
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
 import type { ImportColumnAlias } from "@routeflow/types";
@@ -234,7 +242,7 @@ export function ImportCsvPanel({
       } else {
         toast({
           title: dryRun ? "Preview failed" : "Import failed",
-          description: genericToastCopy(err),
+          description: importFailureCopy(err),
           variant: "error",
         });
       }
