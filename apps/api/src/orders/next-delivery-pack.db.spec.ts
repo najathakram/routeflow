@@ -32,6 +32,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
@@ -96,6 +97,7 @@ describeDb("D-20 next-delivery pack (C8) — real Postgres", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         ChangeRequestsService,
         { provide: TenantContextService, useValue: tenantCtx },

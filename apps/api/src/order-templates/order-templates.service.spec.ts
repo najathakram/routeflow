@@ -1,3 +1,4 @@
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test } from "@nestjs/testing";
 import { BadRequestException, ConflictException, ForbiddenException } from "@nestjs/common";
 import { OrderTemplatesService } from "./order-templates.service";
@@ -68,6 +69,7 @@ describe("OrderTemplatesService — regulated license guard on reorder", () => {
 
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -257,6 +259,7 @@ describe("OrderTemplatesService — template ownership (F2-003)", () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -428,6 +431,7 @@ describe("OrderTemplatesService — pricing pin, tier 1 unchanged (T16)", () => 
 
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
@@ -491,6 +495,7 @@ describe("OrderTemplatesService — update() with no items key (T27)", () => {
     prisma = createMockPrisma();
     const mod = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrderTemplatesService,
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },

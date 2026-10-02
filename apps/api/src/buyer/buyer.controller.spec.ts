@@ -11,6 +11,7 @@
  * secondary fix here ensures the controller routes bypass the userId lookup
  * entirely by passing customerId directly + OPERATOR role.
  */
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BuyerController } from "./buyer.controller";
 import { BuyerService } from "./buyer.service";
@@ -105,6 +106,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },
         { provide: BuyerDashboardService, useValue: {} },
@@ -213,7 +215,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
       const result = await controller.reorderFromTemplate("tpl-1", MOCK_CTX as any);
 
       expect(templatesService.generateOrder).toHaveBeenCalledTimes(1);
-      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false);
+      expect(templatesService.generateOrder).toHaveBeenCalledWith("tpl-1", false, false); // (id, isStaffRole, allowOversell: policy off)
       expect(result).toEqual({ id: "o1" });
     });
 
