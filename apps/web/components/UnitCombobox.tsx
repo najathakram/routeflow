@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
 
-export const COMMON_UNITS = [
+const COMMON_UNITS = [
   "each",
   "unit",
   "pcs",
