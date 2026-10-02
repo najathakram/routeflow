@@ -23,6 +23,8 @@ describe("TEXT_CELL_FIELD_LABELS: the readable 400 text names the field by a hum
     ["tobaccoLicenseNo", "Tobacco license number"],
     ["licenseNumber", "License number"],
     ["buyerName", "Name"],
+    ["categoryName", "Category name"],
+    ["subcategoryName", "Subcategory name"],
     ["productName", "Product name"],
     ["variantName", "Variant name"],
   ])("%s -> %s", (field, label) => {

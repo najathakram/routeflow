@@ -17,6 +17,7 @@ import {
   assertNoOpenRecipe,
   lockProductsForCategoryWrite,
 } from "../products/recipe-category-guard";
+import { assertSafeCategoryName, assertSafeSubcategoryName } from "../common/text-cell-guards";
 
 /**
  * CRUD for tenant-defined regulated ("tracked") categories — the generic system
@@ -123,6 +124,7 @@ export class TrackedCategoriesService {
     if (!tenantId) {
       throw new BadRequestException("A tenant context is required to create a category.");
     }
+    assertSafeCategoryName(dto.name); // B983: refuse a formula-led name before any write
     this.assertSupportedTaxConfig(dto.taxType, dto.rate, dto.priceIncludesTax);
     this.assertValidReportColumnPrefs((dto as any).reportColumnPrefs);
     try {
@@ -140,6 +142,7 @@ export class TrackedCategoriesService {
 
   async update(id: string, dto: UpdateTrackedCategoryDto) {
     const existing = await this.findOne(id);
+    if (dto.name !== undefined) assertSafeCategoryName(dto.name, (existing as any).name); // B983: change-only
     // Validate the MERGED config so a partial update (e.g. flipping only
     // priceIncludesTax) is checked against the row's existing taxType/rate.
     this.assertSupportedTaxConfig(
@@ -342,6 +345,7 @@ export class TrackedCategoriesService {
     if (!name) {
       throw new BadRequestException("Subcategory name is required.");
     }
+    assertSafeSubcategoryName(name); // B983: refuse a formula-led name before any read or write
     const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
       where: {
         trackedCategoryId: categoryId,
@@ -382,6 +386,7 @@ export class TrackedCategoriesService {
       if (!name) {
         throw new BadRequestException("Subcategory name is required.");
       }
+      assertSafeSubcategoryName(name, existingSub.name); // B983: change-only; before the product mirror
       const existing = await this.prisma.forTenant().trackedSubcategory.findFirst({
         where: {
           trackedCategoryId: categoryId,

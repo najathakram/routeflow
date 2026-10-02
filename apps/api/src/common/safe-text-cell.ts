@@ -36,6 +36,9 @@ export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
   buyerName: "Name",
   productName: "Product name",
   variantName: "Variant name",
+  // B983: category / subcategory names (regulated filings, invoices, exports)
+  categoryName: "Category name",
+  subcategoryName: "Subcategory name",
 };
 
 /** Readable text for the 400 (and for an import row's skip reason). */

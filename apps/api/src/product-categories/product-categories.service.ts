@@ -12,6 +12,7 @@ import { activeRuleWhere } from "../selling-restrictions/selling-restrictions.co
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { CreateProductCategoryDto } from "./dto/create-product-category.dto";
 import { UpdateProductCategoryDto } from "./dto/update-product-category.dto";
+import { assertSafeCategoryName } from "../common/text-cell-guards";
 
 /**
  * Tenant-defined restriction categories ("Alcohol", "THC") — the label vocabulary the selling-
@@ -75,6 +76,7 @@ export class ProductCategoriesService {
 
   async create(dto: CreateProductCategoryDto, user: JwtPayload): Promise<LabelCategoryDto> {
     const tenantId = this.requireTenant();
+    assertSafeCategoryName(dto.name); // B983: refuse a formula-led name before any write or audit
     try {
       const row = await this.prisma.forTenant().productCategory.create({
         data: { name: dto.name, tenantId },
@@ -110,6 +112,7 @@ export class ProductCategoriesService {
       select: this.select(now),
     });
     if (!existing) throw new NotFoundException("Category not found");
+    if (dto.name !== undefined) assertSafeCategoryName(dto.name, existing.name); // B983: change-only
 
     const archiving = dto.archived === true && !existing.archivedAt;
     const data: Prisma.ProductCategoryUpdateInput = {};
