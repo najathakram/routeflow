@@ -31,6 +31,7 @@
  */
 
 import { BadRequestException } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import {
   categoryTaxSnapshotOf,
   computeCategoryTax,
@@ -428,12 +429,15 @@ export async function loadEditCatalog(
           where: { id: { in: productIds } },
           select: {
             id: true,
+            name: true,
+            kind: true,
             unitsPerBox: true,
             trackedCategoryId: true,
             trackedSubcategoryId: true,
           },
         })
       : [];
+  assertSellableLines(products); // WS8: PATCH /invoices/:id can never put a FAMILY on a line
   const catIds = [...new Set(products.map((p) => p.trackedCategoryId).filter(Boolean))] as string[];
   const cats: any[] =
     catIds.length > 0 ? await db.trackedCategory.findMany({ where: { id: { in: catIds } } }) : [];
