@@ -15,6 +15,10 @@
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
+  "app/(dashboard)/_components/gates/PlanGates.tsx": {
+    "count": 2,
+    "why": "B986-8 the rest: renders the plan-gate payload's server message (gate.message); pending"
+  },
   "app/(dashboard)/choose-plan/page.tsx": {
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
@@ -22,6 +26,10 @@
   "app/(dashboard)/compliance/[categoryId]/_components/CompliancePackPanel.tsx": {
     "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/credit-notes/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(dashboard)/customers/[id]/StandingOrderModal.tsx": {
     "count": 2,
@@ -47,13 +55,21 @@
     "count": 1,
     "why": "B986-5 routes + deliveries: per-surface raw message read, pending"
   },
-  "app/(dashboard)/drivers/_components/AddDriverModal.tsx": {
+  "app/(dashboard)/drivers/[id]/page.tsx": {
     "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
+  "app/(dashboard)/drivers/_components/AddDriverModal.tsx": {
+    "count": 2,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "app/(dashboard)/drivers/_components/EditDriverModal.tsx": {
-    "count": 1,
+    "count": 2,
     "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/drivers/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(dashboard)/estimates/[id]/page.tsx": {
     "count": 1,
@@ -62,6 +78,10 @@
   "app/(dashboard)/finance/commissions/[id]/page.tsx": {
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/finance/expenses/new/page.tsx": {
+    "count": 3,
+    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(dashboard)/finance/payment-requests/page.tsx": {
     "count": 1,
@@ -131,9 +151,17 @@
     "count": 2,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
+  "app/(dashboard)/products/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
   "app/(dashboard)/promotions/page.tsx": {
     "count": 2,
     "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "app/(dashboard)/returns/[id]/page.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
   "app/(dashboard)/routes/[id]/dispatch/page.tsx": {
     "count": 3,
@@ -259,6 +287,10 @@
     "count": 8,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
+  "app/(platform-admin)/admin/tenants/new/page.tsx": {
+    "count": 1,
+    "why": "B986-2 platform-admin: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
+  },
   "app/(platform-admin)/admin/tenants/page.tsx": {
     "count": 6,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
@@ -342,6 +374,10 @@
   "components/PackSizeUnknownModal.tsx": {
     "count": 1,
     "why": "B986-6 invoices + bills + finance: the modal description reads the 409 payload message (a live read the first scanner missed), pending"
+  },
+  "components/PlanGateNotice.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: renders the plan-gate payload's server message (gate.message); pending"
   },
   "components/ProductCreateModal.tsx": {
     "count": 1,

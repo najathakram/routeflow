@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { maskSource, rawMessageReads, scanTree } from "./raw-message-scan";
+import { rawMessageReads, scanTree } from "./raw-message-scan";
 import ALLOWLIST from "./raw-message-allowlist.json";
 
 /**
@@ -27,7 +27,7 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/reason-copy.ts": 1,
 };
 /** The exact pending total (reads still to be converted by the B986 area PRs). */
-const PENDING_TOTAL = 249;
+const PENDING_TOTAL = 263;
 
 describe("no raw server message in apps/web UI (B986 ratchet)", () => {
   const found = scanTree(WEB);
@@ -93,6 +93,12 @@ describe("scanTree catches every bypass form (file fixtures)", () => {
     "a/template.tsx": "const t = `Failed: ${err.message}`;",
     "a/template-nested.tsx": "const t = `a ${cond ? `b ${e.message}` : ''}`;",
     "a/jsx.tsx": "const x = <p>{err.message}</p>;",
+    // The two JSX holes the string-masking scanner had: an apostrophe in JSX TEXT, and `/>` after a quoted attribute.
+    "a/jsx-apostrophe.tsx": "const x = <p>Don't show {err.message}</p>;",
+    "a/jsx-apostrophe-after.tsx": "const x = <p>It's {err.message} and it's {e.message}</p>;",
+    "a/jsx-selfclose.tsx": 'const x = <><input value="a" />{err.message}</>;',
+    "a/jsx-attr-expr.tsx": 'const x = <Alert title="oops" description={body.message} />;',
+    "a/gate-receiver.tsx": "const x = <p>{gate.message}</p>;",
   };
   const MUST_IGNORE: Record<string, string> = {
     "b/line-comment.ts": "// err.message is never shown\nconst x = 1;",
@@ -123,10 +129,14 @@ describe("scanTree catches every bypass form (file fixtures)", () => {
     expect(rawMessageReads("x = (err as Error).message")).toHaveLength(1);
   });
 
-  it("maskSource blanks comments, string contents and regexes but keeps template expressions", () => {
-    const m = maskSource('a("x//y"); // c\n/* d */ b(`t ${v.w} u`); /r\\/x/.test(q);');
-    expect(m).not.toMatch(/x\/\/y|\bc\b|\bd\b|\bt\b|\bu\b|r\\\/x/);
-    expect(m).toContain("v.w");
-    expect(m).toContain("a(");
+  it("a JSX apostrophe or a self-closing tag no longer blanks the rest of the line", () => {
+    expect(rawMessageReads("const x = <p>Don't {err.message}</p>;")).toHaveLength(1);
+    expect(rawMessageReads('const x = <><input value="a" />{err.message}</>;')).toHaveLength(1);
+  });
+
+  it(".ts mode parses type assertions and generics", () => {
+    expect(
+      rawMessageReads("const m = (<Error>err).message; const f = <T,>(x: T) => x;", "ts"),
+    ).toHaveLength(1);
   });
 });
