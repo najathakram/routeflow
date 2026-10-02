@@ -21,7 +21,9 @@
 // id and the repo are the only ids pinned, per the task's own Facts section.
 //
 // Usage:
-//   node scripts/work/reconcile.mjs [--dry-run] [--json] [--quiet]
+//   node scripts/work/reconcile.mjs [--apply] [--dry-run] [--json] [--quiet] [--help]
+// A bare run is a DRY RUN (#2284): only an explicit --apply writes to the board. An unknown
+// argument (a typo, --dryrun, anything) exits 2 with the usage and writes nothing.
 //
 // Every exported function above the "── IO" marker is pure (no gh/fs/Date.now
 // calls) and is what scripts/work/reconcile.self-test.mjs exercises directly.
@@ -790,6 +792,35 @@ export function decideWorkStatusIssue({
 }
 
 // ════════════════════════════════════════════════════════════════════════
+// ── CLI arguments (#2284) ──────────────────────────────────────────────
+// `--help` once ran a LIVE apply: the old parser only looked for three flags, ignored anything
+// else, and defaulted to writing. Now every argument must be known, writing needs an explicit
+// `--apply`, and the verdict is decided before the lock, the log or any gh call.
+export const RECONCILE_USAGE =
+  "usage: node scripts/work/reconcile.mjs [--apply] [--dry-run] [--json] [--quiet] [--help]\n" +
+  "  a bare run is a dry run; only --apply writes to the board";
+const RECONCILE_FLAGS = new Set(["--apply", "--dry-run", "--json", "--quiet", "--help", "-h"]);
+
+/**
+ * Pure. `{ ok: true, help, apply, dryRun, json, quiet }`, or `{ ok: false, error }` for an
+ * unknown argument or `--apply` together with `--dry-run`. `dryRun` is true unless `--apply`.
+ */
+export function parseArgs(argv) {
+  const unknown = argv.filter((a) => !RECONCILE_FLAGS.has(a));
+  if (unknown.length) return { ok: false, error: `unknown argument(s): ${unknown.join(" ")}` };
+  const apply = argv.includes("--apply");
+  if (apply && argv.includes("--dry-run"))
+    return { ok: false, error: "--apply and --dry-run are mutually exclusive" };
+  return {
+    ok: true,
+    help: argv.includes("--help") || argv.includes("-h"),
+    apply,
+    dryRun: !apply,
+    json: argv.includes("--json"),
+    quiet: argv.includes("--quiet"),
+  };
+}
+
 // ── IO ─────────────────────────────────────────────────────────────────
 // Everything below here talks to `gh` or the filesystem/clock.
 // ════════════════════════════════════════════════════════════════════════
@@ -1321,16 +1352,19 @@ function postProjectStatusUpdate(projectId, status, body, dryRun) {
 // main
 // ════════════════════════════════════════════════════════════════════════
 
-function parseArgs(argv) {
-  return {
-    dryRun: argv.includes("--dry-run"),
-    json: argv.includes("--json"),
-    quiet: argv.includes("--quiet"),
-  };
-}
-
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  // #2284: decided before the lock, the log or any gh call, so a bad argument writes nothing.
+  if (!args.ok) {
+    console.error(`work reconcile: ${args.error}\n${RECONCILE_USAGE}`);
+    process.exitCode = 2;
+    return;
+  }
+  if (args.help) {
+    console.log(RECONCILE_USAGE);
+    process.exitCode = 0;
+    return;
+  }
   const now = new Date();
   const started = Date.now();
   let exitCode = 0;
