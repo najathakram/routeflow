@@ -8,6 +8,7 @@ import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pric
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 
 interface CreatedTenant {
   slug: string;
@@ -94,7 +95,10 @@ export default function AdminCreateTenantPage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message;
-      setError(Array.isArray(msg) ? msg.join(", ") : (msg ?? "Failed to create tenant"));
+      setError(
+        safeTextErrorCopy(err) ??
+          (Array.isArray(msg) ? msg.join(", ") : (msg ?? "Failed to create tenant")),
+      );
     } finally {
       setIsLoading(false);
     }

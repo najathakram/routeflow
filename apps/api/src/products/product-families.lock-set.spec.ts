@@ -59,7 +59,7 @@ describe("families writers take ONE sorted code-lock set", () => {
     const h = harness({ products: [] });
     await h.service.createFamily(
       {
-        family: { name: "Soda" },
+        family: { pricePerUnit: "1.00", name: "Soda" },
         variants: [
           v("Z", { sku: "ZZ-9", barcode: "900" }),
           v("A", { sku: "AA-1", barcode: "100" }),

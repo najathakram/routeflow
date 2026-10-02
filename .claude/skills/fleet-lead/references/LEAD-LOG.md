@@ -1226,3 +1226,64 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: The merge decision read the PR's last PASS, not the #2554 comments posted after it that named the PR
 - guard: Before merging, the coordinator lists every #2554 comment that names the PR and was posted after its last PASS; any open fold, HOLD or FAIL blocks the merge
 - rule: A verdict is only current until the next comment that names the PR; re-read the thread after it, not the last PASS
+
+## 2026-09-28 #2185
+- what: #2185 carried a PC 'full verify green' (api unit 10569) yet import-invoice-reimport.db.spec fails 12/12 on DI (ImportService gained ProductsService), found only when F2 ran #2190 stacked on it
+- cause: The PC verify runs unit lanes only; a constructor change on a tier-1 import service was never exercised by the module's DB specs before the verdicts
+- guard: A PR that changes a Nest service constructor lists every *.spec.ts/*.db.spec.ts that builds that service (git grep 'ServiceName' in createTestingModule) and F2 runs the module's full DB lane at the gated sha before any PASS
+- rule: Tier-1 money reviews run the module's FULL DB lane, not just the PR's spec
+
+## 2026-09-28 #2707
+- what: #2707 passed lead Opus + SA + F2 (billing lane, seeded+fresh) and then ROLLED on CI: common/publish-and-repin.db.spec.ts expected 15 loss keys and got fewer, because the union removed false losses from the publish-and-repin mirror
+- cause: The F2 lane and both review briefs were scoped by the module FOLDER (billing/**), while the PR changed a shared resolution consumed by a db spec in common/
+- guard: The DB lane for a tier-1 PR = every *.db.spec.ts that imports, or greps, any module the PR changes (git grep -l on each changed module's export names across **/*.db.spec.ts), listed in the F2 brief and the review brief before the run
+- rule: Tier-1 money reviews run the module's FULL DB lane, not just the PR's spec
+
+## 2026-09-28 #2690
+- what: The lead planned the #2690 sim re-proof over a PC→Mac LAN route; the PC F-prover built and started the stack (holding ~6 GB of WSL RAM and blocking two lane pushes) before anyone checked that the machines could reach each other; they are on different subnets (192.168.12.x vs 192.168.4.x)
+- cause: The cross-machine route was assumed from 'same house' rather than tested; no reachability check preceded the resource spend
+- guard: Any cross-machine proof plan starts with a reachability probe from the consumer (ping + curl of a trivial port) posted on the board before the provider builds anything
+- rule: Probe reachability from the consuming machine before any cross-machine stack is built
+
+## 2026-09-28 #2707
+- what: The lead sent the MacBook lane's owed #2707 fold and #2695 PR-2 to 'RouteFlow MacBook bookkeeping' [30402e], a PC session whose title says MacBook; the real MacBook lane was offline, and the PC session nearly took tier-1 work onto a 97%-full disk
+- cause: A session was picked by title alone; two sessions share 'MacBook' in their titles, and ListAgents showed [30402e] as a local Claude Desktop session on the PC
+- guard: Before assigning work, the lead reads the target's ListAgents row (machine: local vs Remote Control, state) and its last self-reported worktree path; the assignment message names the expected machine, and the lane refuses if it differs
+- rule: Assign by title AND verified machine/state from ListAgents, never by title alone
+
+## 2026-09-28 #2719
+- what: #2719 rolled on CI: the size ratchet (orders/[id]/page.tsx 3756 > 3745); the lead's tier-2 'touched workspaces only' verify ran web jest but the ratchet spec lives in apps/api/src/common
+- cause: Cross-workspace guard specs (size-ratchet, enum-parity, no-bare-cron, addon-gate registry) run under api but guard files in every workspace; a workspace-scoped verify skips them
+- guard: Every tier-2 verify also runs the cross-workspace guard specs (apps/api/src/common/size-ratchet.spec.ts, enum-parity.spec.ts, no-bare-cron.spec.ts, the addon-gate registry spec), adopted 21:51Z and relayed to all lanes
+- rule: A scoped verify always includes the repo's cross-workspace guard specs
+
+## 2026-09-29 #2554
+- what: The owner paused the fleet 'for 10 mins, until I update Claude'; the lead resumed PC lanes at 02:43Z on elapsed time and a session-resume hook, without the owner's word; the owner then said 'hold the fleet'
+- cause: The lead inferred the pause's end condition instead of asking; an owner-ordered pause was treated as a timer
+- guard: An owner-ordered pause ends only on the owner's explicit resume word in chat; the lead's resume message must quote it verbatim with its time, and resume messages without a quote are not sent
+- rule: Only the owner lifts an owner-ordered pause, in words, quoted in the resume
+
+## 2026-09-29 #2554
+- what: Lead rotation card 2026-09-29 was told to live at .claude/handoffs/ but existed only in local-assets/handoff/ and unmerged branch docs/lead-handoff-2026-09-27; the SessionStart hook surfaced the stale 09-27 handoff as newest
+- cause: The card was committed on a docs branch and copied to local-assets, never to the main checkout's .claude/handoffs; the hook reads only that directory
+- guard: SessionStart newest-handoff hook also scans local-assets/handoff/ and origin docs/* branches for a newer *-lead-*.md and prints the newest by mtime/commit date with its location
+- rule: A rotation card is read by path from where the next session's hook looks; write it there, not only on a branch
+
+## 2026-09-29 SA-575
+- what: M2 commit 1 (2e59d820) passed split --check, lint-migrations and tsc yet its migration lacked CREATE TYPE RecipeStatus; deploy would have failed
+- cause: none of the static gates compare the enums a migration's tables use against the CREATE TYPEs it contains; only a real replay does
+- guard: migration-shape spec per schema PR asserts every enum used by a new column has a CREATE TYPE in that migration; F2 replays commit 1 fresh+seeded before any service code builds on it
+- rule: schema-freeze commit 1 gets a real-PG replay before the build continues
+
+## 2026-09-30 #2796
+- what: Lead assigned N-kit ownership of the delivery types in packages/types; the types then contradicted spec 08-B and duplicated the bundle's Prisma enums (#2796 FAIL)
+- cause: The type-ownership ruling was made from the lane plan, without reading spec 08-B and the MASTER-PLAN bundle contents that put EmailDeliveryStatus/EmailReasonCode in Prisma
+- guard: Before assigning ownership of a shared type, grep the specs and MASTER-PLAN for the type/enum names and cite path:line in the assignment; Prisma-backed enums go to enums.ts via the bundle owner only
+- rule: Type-ownership rulings cite the spec path:line that defines the shape
+
+## 2026-10-02 #2616
+
+- what: The lead ran `node scripts/work/reconcile.mjs --help` to read its usage and it APPLIED a live board update anyway (+1 issue, 40 fields set, a digest published).
+- cause: The old argument parser looked only for `--dry-run`, `--json` and `--quiet`, ignored every other argument, and defaulted to writing.
+- guard: #2616 (`b13f29c93`): `parseArgs` in `scripts/work/reconcile.mjs` rejects any unknown argument (exit 2 with the usage, nothing written, decided before the lock, the log or any gh call), a bare run is a DRY RUN, and writing needs an explicit `--apply`: `npm run work:reconcile` is the dry run and `npm run work:reconcile:apply` writes (`docs/work/WORKFLOW.md` states it). B973 tracks the follow-up self-test hardening (a temp ROOT, `--help --apply` and `--apply=1` cases).
+- rule: A command that writes shared state needs an explicit opt-in flag and an allow-list parser; a help or typo path must never reach the writer, and "I only wanted the usage" is not a safe assumption about any script.

@@ -4,11 +4,13 @@ import * as React from "react";
 import type { useToast } from "@routeflow/ui/web";
 import {
   levelsForScannedCode,
+  isSharedScanCode,
   resolveScanSellLevel,
   scanMatchIsForCode,
   type ScanBarcodeRow,
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
+import { UNITS_LOADING_SCAN_MESSAGE } from "@/lib/default-unit-line";
 import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
@@ -16,6 +18,8 @@ type ToastFn = ReturnType<typeof useToast>["toast"];
 /** What resolving one scanned code came to — what the scan screen cues, highlights and undoes. */
 export type ScanResolution =
   | { kind: "added"; product: any; created: boolean }
+  /** #2865 (SA-632 H2): a scan of a different level landed on a line still waiting for its default unit. */
+  | { kind: "refused"; message: string }
   | { kind: "archived"; name: string }
   | { kind: "unknown" }
   | {
@@ -65,8 +69,7 @@ export function scanLevelsForHit(code: string, product: any): SellLevel[] {
 
 /** #2784: a code that resolves at BOTH levels is "shared"; only then may the new line start on the default unit. */
 export function scanCodeIsShared(code: string, product: any): boolean {
-  const levels = scanLevelsForHit(code, product);
-  return levels.includes("BOX") && levels.includes("UNIT");
+  return isSharedScanCode(scanLevelsForHit(code, product));
 }
 
 export function scanLevelForHit(code: string, product: any): SellLevel {
@@ -86,7 +89,7 @@ export interface ScanCodeHandlerDeps {
     product: any,
     level: SellLevel,
     opts?: { startOnDefaultUnit?: boolean },
-  ) => { created: boolean } | void;
+  ) => { created: boolean; refused?: boolean } | void;
   /** Nothing in the catalog matched — the caller opens create-product with `code` as the SKU. */
   onUnknownCode: (code: string) => void;
   toast: ToastFn;
@@ -156,9 +159,12 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
       // bug, never a connectivity failure, and must never be silently queued/re-added.
       const level = scanLevelForHit(code, result.product);
       // #2784: only a SHARED code may start on the default selling unit (box-only / unit-only: the code decides).
-      const added = scanCodeIsShared(code, result.product)
-        ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
-        : deps.addLineItem(result.product, level);
+      // SA-626a: a multi-match (first row wins) is a picker-style pick, so it starts on the default unit too.
+      const added =
+        result.ambiguous || scanCodeIsShared(code, result.product)
+          ? deps.addLineItem(result.product, level, { startOnDefaultUnit: true })
+          : deps.addLineItem(result.product, level);
+      if (added?.refused) return { kind: "refused", message: UNITS_LOADING_SCAN_MESSAGE };
       return { kind: "added", product: result.product, created: added?.created ?? true };
     }
     // Nothing found — let the caller open create-product with the scanned barcode as SKU. Not for a

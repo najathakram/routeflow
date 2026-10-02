@@ -1,6 +1,6 @@
 import * as React from "react";
 import { act, render, waitFor } from "@testing-library/react";
-import { useContinuousScanCamera } from "./useContinuousScanCamera";
+import { useContinuousScanCamera, type ScanFrame } from "./useContinuousScanCamera";
 
 const decodeFromStream = jest.fn();
 jest.mock("@zxing/browser", () => ({
@@ -14,7 +14,7 @@ function Harness({
   probe,
 }: {
   enabled: boolean;
-  onDetect: (c: string) => void;
+  onDetect: (c: string, frame?: ScanFrame) => void;
   probe: (cam: ReturnType<typeof useContinuousScanCamera>) => void;
 }) {
   const cam = useContinuousScanCamera({ enabled, onDetect });
@@ -28,7 +28,7 @@ describe("useContinuousScanCamera", () => {
   let trackStop: jest.Mock;
   let track: { stop: jest.Mock; getCapabilities: () => object; applyConstraints: jest.Mock };
   let stream: { getTracks: () => unknown[]; getVideoTracks: () => unknown[] };
-  let deliver: (code: string | null) => void;
+  let deliver: (code: string | null, points?: Array<[number, number]>) => void;
   let latest: ReturnType<typeof useContinuousScanCamera>;
   const probe = (c: ReturnType<typeof useContinuousScanCamera>) => {
     latest = c;
@@ -52,7 +52,18 @@ describe("useContinuousScanCamera", () => {
     decodeFromStream.mockReset();
     decodeFromStream.mockImplementation(
       async (_s: unknown, _v: unknown, cb: (r: unknown, e: unknown, c: unknown) => void) => {
-        deliver = (code) => cb(code ? { getText: () => code } : undefined, undefined, { stop });
+        deliver = (code, points) =>
+          cb(
+            code
+              ? {
+                  getText: () => code,
+                  getResultPoints: () =>
+                    (points ?? []).map(([x, y]) => ({ getX: () => x, getY: () => y })),
+                }
+              : undefined,
+            undefined,
+            { stop },
+          );
         return { stop };
       },
     );
@@ -76,6 +87,53 @@ describe("useContinuousScanCamera", () => {
 
     expect(onDetect.mock.calls.map((c) => c[0])).toEqual(["111", "222", "111"]);
     expect(stop).not.toHaveBeenCalled();
+  });
+
+  it("reads fast enough for steady-read: zxing's default 500 ms throttles would stretch a 3-frame streak past its gap window", async () => {
+    // @zxing/browser waits delayBetweenScanSuccess (default 500 ms) after every decode and delayBetweenScanAttempts
+    // (default 500 ms) after a miss; steady-read resets a streak after 700 ms and treats ~800 ms as an absence, so a held
+    // code on a slow phone would never scan (or be re-accepted after one missed decode). Keep the cadence well inside it.
+    const { BrowserMultiFormatReader } = jest.requireMock("@zxing/browser");
+    BrowserMultiFormatReader.mockClear();
+    render(<Harness enabled onDetect={jest.fn()} probe={probe} />);
+    await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
+    expect(BrowserMultiFormatReader).toHaveBeenCalledWith(undefined, {
+      delayBetweenScanSuccess: 100,
+      delayBetweenScanAttempts: 100,
+    });
+  });
+
+  it("aim box + steady-read inputs: every decode carries the result-point bounds and the DRAWN box in video pixels", async () => {
+    const onDetect = jest.fn();
+    render(<Harness enabled onDetect={onDetect} probe={probe} />);
+    await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
+    const video = latest.videoRef.current!;
+    for (const [k, v] of [
+      ["videoWidth", 1200],
+      ["videoHeight", 600],
+      ["clientWidth", 600],
+      ["clientHeight", 300],
+    ] as const) {
+      Object.defineProperty(video, k, { value: v, configurable: true });
+    }
+    act(() =>
+      deliver("111", [
+        [550, 290],
+        [650, 310],
+      ]),
+    );
+    expect(onDetect).toHaveBeenCalledWith("111", {
+      bounds: { origin: { x: 550, y: 290 }, size: { width: 100, height: 20 } },
+      aimBox: { x: 100, y: 120, width: 1000, height: 360 },
+    });
+  });
+
+  it("no geometry (video not sized yet, no result points): the frame carries nothing, so the filter fails OPEN", async () => {
+    const onDetect = jest.fn();
+    render(<Harness enabled onDetect={onDetect} probe={probe} />);
+    await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
+    act(() => deliver("111"));
+    expect(onDetect).toHaveBeenCalledWith("111", { bounds: undefined, aimBox: undefined });
   });
 
   it("ignores a decode callback with no result (zxing reports 'not found' per frame)", async () => {
@@ -102,7 +160,7 @@ describe("useContinuousScanCamera", () => {
     await waitFor(() => expect(decodeFromStream).toHaveBeenCalled());
     rerender(<Harness enabled onDetect={second} probe={probe} />);
     act(() => deliver("111"));
-    expect(second).toHaveBeenCalledWith("111");
+    expect(second).toHaveBeenCalledWith("111", expect.anything());
     expect(first).not.toHaveBeenCalled();
   });
 

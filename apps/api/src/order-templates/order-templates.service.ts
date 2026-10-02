@@ -35,12 +35,7 @@ import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
 import { assertSellableLines } from "../products/sellable-lines";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -435,7 +430,7 @@ export class OrderTemplatesService {
   async generateDailyOrders() {
     const today = new Date();
     // ISO weekday: 1=Mon, 7=Sun
-    const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay();
+    const dayOfWeek = isoWeekdayUtc(today);
 
     this.logger.log(`Running daily order generation for day ${dayOfWeek}`);
 
@@ -482,7 +477,7 @@ export class OrderTemplatesService {
           const existing = await this.prisma.forTenant().order.findFirst({
             where: {
               templateId: template.id,
-              createdAt: { gte: startOfDay(today) },
+              createdAt: { gte: startOfUtcDay(today) },
             },
           });
           if (existing) {

@@ -45,7 +45,9 @@ OPERATOR, DRIVER, CUSTOMER), Redis queues & Socket.io.
 | [api/landing-2026-09-29-early.md](api/landing-2026-09-29-early.md) | Landing 2026-09-29 early: scanning package, component price, paying predicate, run/stop lock order, Jest cache, buyer types, order credits |
 | [api/landing-2026-09-29-midday.md](api/landing-2026-09-29-midday.md) | Landing 2026-09-29 midday: unitLineCount tripwire, lint:migrations SET LOCAL, plane deploy ids, shared PaymentMethod |
 | [api/landing-2026-09-29-late.md](api/landing-2026-09-29-late.md) | Landing 2026-09-29 late: staff price-override rule, driver mode 1a, push-guard, lint-migrations exemptions |
+| [api/landing-2026-10-01-w12-w27.md](api/landing-2026-10-01-w12-w27.md) | Landing 2026-10-01 (w12-w27): credit-note reissue, bill locks, sign-in handoff, Apple sign-in, scan lookup, movements CSV |
 | [api/landing-2026-09-30-w9-w11.md](api/landing-2026-09-30-w9-w11.md) | Landing 2026-09-30 (windows 9+11): CSV import columns, M3 mixed-pack documents, CSV export, messaging triggers, PO receive pack |
+| [api/landing-2026-09-30-drift-c38f2b0.md](api/landing-2026-09-30-drift-c38f2b0.md) | Landing 2026-09-30 (earlier drift): M2 recipes, db-lane selector, lint wrap rule, linear return credits, Google sub-first sign-in |
 | [api/landing-2026-09-28-night.md](api/landing-2026-09-28-night.md) | Landing batch 2026-09-28 night: unique field ids (B891), invoice-edit 390px grid (B890), draft-order scanner, hybrid mobile shell, catalog v13 |
 | [api/landing-2026-09-28-evening.md](api/landing-2026-09-28-evening.md) | Landing batch 2026-09-28 evening: NSF goods-only inferred rate + NSF line never taxed (#2673) |
 | [api/landing-2026-09-28-afternoon.md](api/landing-2026-09-28-afternoon.md) | Landing batch 2026-09-28 afternoon (18 PRs after 2f8a155f): returns scan/override, invoice caps, onboarding S4/S5, mailbox outbox |

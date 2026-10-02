@@ -27,8 +27,7 @@ const FILES = [
 // Attribute context: <word>=ios.something  → <word>={ios.something}
 // Match a JSX attribute where the value is a bare `ios.X[.Y][\[N\]]` expression.
 // Must stop at the next attribute boundary (space, tab, newline, />, or >).
-const attrTokenPattern =
-  /([A-Za-z_][\w-]*)=((?:ios\.[A-Za-z_][\w.]*(?:\[[0-9]+\])?))(?=[\s/>])/g;
+const attrTokenPattern = /([A-Za-z_][\w-]*)=((?:ios\.[A-Za-z_][\w.]*(?:\[[0-9]+\])?))(?=[\s/>])/g;
 
 let totalFiles = 0;
 let totalFixes = 0;

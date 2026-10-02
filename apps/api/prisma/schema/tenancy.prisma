@@ -299,6 +299,7 @@ model User {
   username            String
   password            String?
   googleId            String?
+  appleId             String? // #2309 (SA-418): Apple's stable `sub`, scoped per tenant like googleId.
   role                UserRole
   status              UserStatus @default(ACTIVE)
   forcePasswordChange Boolean    @default(false)
@@ -333,6 +334,7 @@ model User {
   @@unique([tenantId, email])
   @@unique([tenantId, username])
   @@unique([tenantId, googleId])
+  @@unique([tenantId, appleId])
   @@index([tenantId])
   @@index([role])
   @@index([status])
@@ -429,6 +431,11 @@ model BuyerAccount {
   phone               String?
   mobile              String?
   googleId            String?            @unique
+  appleId             String?            @unique // #2309 (SA-418): Apple's stable `sub`.
+  // #2309 (SA-418): AES-256-GCM ciphertext of the Apple refresh token (common/encryption.service.ts),
+  // obtained by exchanging authorizationCode at first sign-in — used to call Apple's /auth/revoke
+  // on account deletion.
+  appleRefreshTokenEnc String?
   status              BuyerAccountStatus @default(ACTIVE)
   emailVerified       Boolean            @default(false)
   failedLoginAttempts Int                @default(0)

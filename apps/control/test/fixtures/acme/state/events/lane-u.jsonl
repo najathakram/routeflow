@@ -1,0 +1,4 @@
+{"seq":1,"ts":"2026-01-10T09:00:00Z","lane":"lane-u","type":"task.started","by":"agent","task":"RF-1","sha":"abc1234","note":"starting"}
+{"seq":2,"ts":"2026-01-10T09:05:00Z","lane":"lane-u","type":"task.progress","by":"agent","task":"RF-1","phase":"phase1"}
+{"seq":3,"ts":"2026-01-10T09:30:00Z","lane":"lane-u","type":"task.done","by":"agent","task":"RF-1","pr":2801,"sha":"abc1235"}
+{"seq":4,"ts":"2026-01-10T10:00:00Z","lane":"lane-u","type":"task.started","by":"agent","task":"RF-3","sha":"abc1236"}

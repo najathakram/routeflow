@@ -91,6 +91,13 @@ export interface TenantFeaturesResponse {
   /** The shadow resolver's own verdict for every FEATURE_REGISTRY key — informational only;
    *  `served` is what's actually enforced while entitlements.mode is "shadow". */
   resolver: Record<string, boolean>;
+  /**
+   * Feature modes plus (SA-138) the TENANT-scope effective value of every policy registry key
+   * that allows TENANT scope. A policy value rides here as an `enum` value verbatim (`"amend"`)
+   * or, for `money`/`set`, as its JSON text (`"null"`, `"250"`,
+   * `'["originalPrice","discount","msrp"]'`). A missing key or an unparseable value means
+   * "today's behaviour" (the registry default). Customer/category-scope values never ride here.
+   */
   modes: Record<string, string>;
   catalogVersionId: string;
   computedAt: string;

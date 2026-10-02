@@ -292,7 +292,8 @@ describe("sales-facts rules", () => {
 
     it("neutralizes a spreadsheet formula in a TEXT cell (CSV injection)", () => {
       expect(csvCell("=HYPERLINK(1)")).toBe("'=HYPERLINK(1)");
-      expect(csvCell("+1")).toBe("'+1");
+      expect(csvCell("+1e5")).toBe("'+1e5");
+      expect(csvCell("+SUM(A1)")).toBe("'+SUM(A1)");
       expect(csvCell("@cmd")).toBe("'@cmd");
       expect(csvCell("-2+3")).toBe("'-2+3");
     });

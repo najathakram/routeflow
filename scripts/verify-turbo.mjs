@@ -12,7 +12,7 @@ import { spawnSync } from "node:child_process";
 import { totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
-import { decideScope } from "./lib/verify-scope.mjs";
+import { decideScope, loadWorkspaces } from "./lib/verify-scope.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -59,6 +59,107 @@ export function jestPassthrough(jestMaxWorkers) {
  *  branch below without actually running turbo. */
 export function buildArgv(args, turboFlags, passthrough = []) {
   return ["turbo", "run", ...args, ...turboFlags, ...passthrough];
+}
+
+/**
+ * VERIFY_EXCLUDE (lead ruling 2026-10-01): a comma-separated list of workspace names that THIS run
+ * does not verify because CI verifies them in their OWN job (`.github/workflows/control.yml` for
+ * `@routeflow/control`). ci.yml's Verify step sets it; developers do NOT, so a local FULL_VERIFY
+ * and the pre-push affected scope still run control.
+ *
+ * ALLOW-LIST, not a free list: only EXACTLY the names in `VERIFY_EXCLUDE_ALLOWED` are accepted and
+ * anything else is REFUSED LOUDLY (a thrown Error, `main()` exits 1 before any turbo call), so a
+ * later ci.yml edit, a typo or a hostile value can never silently exclude api, web or anything else
+ * from the shared Verify. Widening the list is a deliberate edit of this file (and its self-test).
+ *
+ * Pure. Trims each entry, drops empties and duplicates (first appearance wins). An allow-listed
+ * name that is absent from `knownNames` (the workspace was removed) is dropped: nothing to exclude.
+ * A non-string (the variable is unset) is `[]`.
+ */
+export const VERIFY_EXCLUDE_ALLOWED = Object.freeze(["@routeflow/control"]);
+export function parseVerifyExclude(raw, knownNames) {
+  if (typeof raw !== "string") return [];
+  const known = knownNames ? new Set(knownNames) : null;
+  const out = [];
+  for (const part of raw.split(",")) {
+    const name = part.trim();
+    if (!name) continue;
+    if (!VERIFY_EXCLUDE_ALLOWED.includes(name)) {
+      throw new Error(
+        `VERIFY_EXCLUDE may only name ${VERIFY_EXCLUDE_ALLOWED.join(", ")} (CI verifies that ` +
+          `workspace in its own job); refusing ${JSON.stringify(name.slice(0, 60))}. Widening the ` +
+          `allow-list is a deliberate edit of scripts/verify-turbo.mjs.`,
+      );
+    }
+    if (known && !known.has(name)) continue;
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/** The one line printed when something is excluded; `null` (print nothing) when nothing is. */
+export function excludedLine(excluded) {
+  return excluded.length
+    ? `EXCLUDED FROM THIS RUN (separate CI job): ${excluded.join(", ")}`
+    : null;
+}
+
+/**
+ * Pure planner for every turbo call a run makes (no spawn, no env), so the self-test can assert the
+ * exact argv for FULL/AFFECTED x unsplit/split x excluded/not. `splitJest` is "JEST_MAX_WORKERS is
+ * set": check-types/lint and the jest tasks then go in separate invocations so the `--maxWorkers`
+ * passthrough (`jest: true` calls) never reaches tsc/eslint. Returns `{ calls: [{ jest, args }], note }`
+ * in execution order; the caller runs every call and exits with the first non-zero status.
+ *
+ * With `excluded` empty the calls are byte-identical to the pre-VERIFY_EXCLUDE ones.
+ *  - FULL: turbo's "only negative filters = everything except those", so each call gets
+ *    `--filter=!<name>` per excluded workspace.
+ *  - AFFECTED: the selection already is a positive filter list, so excluded names are simply dropped
+ *    from it (a negative filter next to positive ones would WIDEN the run, never narrow it). If no
+ *    workspace is left that call is skipped; the api `test:repo-truth` tripwire is skipped only if
+ *    api itself is excluded. `note` is set when no call is left at all.
+ */
+export function planTurboCalls({ scope, excluded = [], splitJest }) {
+  const drop = new Set(excluded);
+  if (scope.mode === "full") {
+    const negatives = excluded.map((name) => `--filter=!${name}`);
+    return splitJest
+      ? {
+          calls: [
+            { jest: false, args: ["check-types", "lint", ...negatives] },
+            { jest: true, args: ["test", "test:repo-truth", ...negatives] },
+          ],
+          note: null,
+        }
+      : {
+          calls: [
+            { jest: false, args: ["check-types", "lint", "test", "test:repo-truth", ...negatives] },
+          ],
+          note: null,
+        };
+  }
+  const filters = scope.workspaces.filter((w) => !drop.has(w)).map((w) => `--filter=${w}`);
+  const API = "@routeflow/api";
+  const calls = [];
+  // Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
+  const repoTruth = drop.has(API) ? [] : ["--filter=" + API];
+  if (!splitJest) {
+    if (filters.length)
+      calls.push({ jest: false, args: ["check-types", "lint", "test", ...filters] });
+    if (repoTruth.length) calls.push({ jest: false, args: ["test:repo-truth", ...repoTruth] });
+  } else {
+    if (filters.length) {
+      calls.push({ jest: false, args: ["check-types", "lint", ...filters] });
+      calls.push({ jest: true, args: ["test", ...filters] });
+    }
+    if (repoTruth.length) calls.push({ jest: true, args: ["test:repo-truth", ...repoTruth] });
+  }
+  return {
+    calls,
+    note: calls.length
+      ? null
+      : `nothing left to verify after the exclusions (${excluded.join(", ")}) — no turbo calls`,
+  };
 }
 
 /**
@@ -154,47 +255,44 @@ export function main() {
   }
 
   const scope = decideScope(ROOT);
+  let excluded;
+  try {
+    excluded = parseVerifyExclude(
+      process.env.VERIFY_EXCLUDE,
+      loadWorkspaces(ROOT).map((w) => w.name),
+    );
+  } catch (e) {
+    // refuse BEFORE any turbo call: a bad exclusion list must never run a narrowed verify
+    console.error(`verify: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
+  const banner = excludedLine(excluded);
+  if (banner) console.log(banner);
 
   if (scope.mode === "full") {
     console.log(`FULL SCOPE (${scope.reason}) — every workspace`);
-    if (!JEST_MAX_WORKERS) {
-      process.exit(turbo(["check-types", "lint", "test", "test:repo-truth"]));
+  } else {
+    console.log(
+      `AFFECTED SCOPE: ${scope.workspaces.join(", ")} (changed: ${scope.changed.join(", ") || "none"}; ` +
+        `always-run tripwires: @routeflow/pricing tests, @routeflow/api test:repo-truth). ` +
+        `FULL_VERIFY=1 runs everything.`,
+    );
+    if (scope.stale?.length) {
+      console.log(
+        `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
+          `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
+      );
     }
-    // JEST_MAX_WORKERS is set: split check-types/lint from test/test:repo-truth so the
-    // --maxWorkers passthrough only ever reaches jest, never tsc/eslint.
-    const ctLint = turbo(["check-types", "lint"]);
-    const testAll = turboJest(["test", "test:repo-truth"]);
-    process.exit(ctLint || testAll);
   }
 
-  console.log(
-    `AFFECTED SCOPE: ${scope.workspaces.join(", ")} (changed: ${scope.changed.join(", ") || "none"}; ` +
-      `always-run tripwires: @routeflow/pricing tests, @routeflow/api test:repo-truth). ` +
-      `FULL_VERIFY=1 runs everything.`,
-  );
-  if (scope.stale?.length) {
-    console.log(
-      `+ STALE REPORTS: ${scope.stale.join(", ")} — campaign-check would refuse their report, so ` +
-        `their tests join the run (turbo regenerates the report on a cache miss; the --freshness-only pre-step forces a real run on a hit). No enforcement is relaxed.`,
-    );
-  }
-  const filters = scope.workspaces.map((w) => `--filter=${w}`);
-  // Keep going after a failure so one push reports every red workspace, like the full chain does.
-  // Only apps/api defines test:repo-truth today; a second workspace adding one must be added here.
-  let first, second;
-  if (!JEST_MAX_WORKERS) {
-    first = turbo(["check-types", "lint", "test", ...filters]);
-    second = turbo(["test:repo-truth", "--filter=@routeflow/api"]);
-  } else {
-    // Both calls always run (never `A() || B()`) so a check-types/lint failure can't skip the
-    // jest run and hide its results from one push's report — same "report every red workspace"
-    // property the unsplit default path gets from a single bundled invocation.
-    const ctLint = turbo(["check-types", "lint", ...filters]);
-    const testOnly = turboJest(["test", ...filters]);
-    first = ctLint || testOnly;
-    second = turboJest(["test:repo-truth", "--filter=@routeflow/api"]);
-  }
-  process.exit(first || second);
+  // Every planned call always runs (never `A() || B()`) so a check-types/lint failure can't skip
+  // the jest run and hide its results from one push's report — a single bundled invocation gives the
+  // unsplit path that property by itself. With JEST_MAX_WORKERS set the calls are split so the
+  // --maxWorkers passthrough only ever reaches jest, never tsc/eslint. Exit = first non-zero status.
+  const plan = planTurboCalls({ scope, excluded, splitJest: Boolean(JEST_MAX_WORKERS) });
+  if (plan.note) console.log(plan.note);
+  const statuses = plan.calls.map((c) => (c.jest ? turboJest(c.args) : turbo(c.args)));
+  process.exit(statuses.find((status) => status !== 0) ?? 0);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import type { FamilyRowConflict } from "@routeflow/types";
 import { roundMoney, roundUnitCost } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSafeProductNames } from "../common/text-cell-guards";
 import { AuditService } from "../audit/audit.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -66,9 +67,16 @@ const blank = (v: string | undefined | null): string | null =>
   typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 const sameMoney = (a: Prisma.Decimal | null, b: Prisma.Decimal | null): boolean =>
   a != null && b != null && roundMoney(Number(a)) === roundMoney(Number(b));
-/** A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3). */
+/**
+ * A money field that is PRESENT must hold a value: null / "" would otherwise fall through to $0 (Tier 1, #2881 r3).
+ * In "required" mode an ABSENT (undefined) value is refused too (SA-606i): no price is ever implied.
+ */
 const given = (v: unknown, field: string, mode: "omit" | "required" = "omit"): void => {
-  if (v === null || (typeof v === "string" && v.trim() === "")) {
+  if (
+    v === null ||
+    (mode === "required" && v === undefined) ||
+    (typeof v === "string" && v.trim() === "")
+  ) {
     throw new BadRequestException(
       mode === "required"
         ? `${field} is required`
@@ -86,13 +94,16 @@ const costOf = (v: unknown): string | undefined => {
 const outOfRange = (what: string) =>
   new BadRequestException(`${what} is out of range for a stored amount.`);
 /** Decimal(10,2): the DTO bounds the integer part, this catches a ROUNDING overflow (99999999.999 -> 100000000.00). */
-const money = (v: unknown, fallback = 0): string => {
-  if (v != null && typeof v !== "string")
-    throw new BadRequestException("A price must be a string amount.");
-  if (v != null && v.trim() !== "" && !Number.isFinite(Number(v))) {
+const money = (v: unknown): string => {
+  // SA-606i: NO implicit fallback. A caller with no price handles that itself (PATCH update rows call this only for a PRESENT
+  // price; everything on create goes through given(..., "required") first).
+  if (typeof v !== "string" || v.trim() === "") {
+    throw new BadRequestException("A price is required and must be a string amount.");
+  }
+  if (!Number.isFinite(Number(v))) {
     throw new BadRequestException("A price must be a non-negative amount.");
   }
-  const r = roundMoney(v != null && v.trim() !== "" ? Number(v) : fallback);
+  const r = roundMoney(Number(v));
   if (!(r >= 0 && r < 1e8)) throw outOfRange("A price");
   return r.toFixed(2);
 };
@@ -161,9 +172,28 @@ export class ProductFamiliesService {
       throw new BadRequestException(`A family takes 1 to ${MAX_ROWS} variants per request.`);
     }
     const variantRows = dto.variants.map((v, i) => ({ row: i, ...v }));
-    const familyPrice = money(dto.family.pricePerUnit);
     const familyName = dto.family.name.trim();
+    // B964-2: a formula-led family / variant name is refused before any read or write (it is printed on invoices, exports, filings)
+    assertSafeProductNames({ name: familyName });
+    for (const v of dto.variants)
+      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
+    // A family price copied to every variant must be a real price: missing or <= 0 would write $0.00 onto every variant.
+    // Coded so a client can show it; checked BEFORE the generic "required" so the code is stable (nothing written).
+    const copyPriceError = () =>
+      new BadRequestException({
+        code: API_ERROR_CODES.FAMILY_COPY_PRICE_REQUIRED,
+        message:
+          "Enter a family price above $0.00 to copy it to every variant, or turn off copying the family price.",
+      });
+    if (
+      dto.copyFamilyPrice &&
+      (typeof dto.family.pricePerUnit !== "string" || dto.family.pricePerUnit.trim() === "")
+    ) {
+      throw copyPriceError();
+    }
     given(dto.family.pricePerUnit, "family pricePerUnit", "required");
+    const familyPrice = money(dto.family.pricePerUnit);
+    if (dto.copyFamilyPrice && !(Number(familyPrice) > 0)) throw copyPriceError();
     const familyCost = costOf(dto.family.standardCost);
     if (familyCost !== undefined) cost4(familyCost);
     for (const v of dto.variants) {
@@ -365,6 +395,10 @@ export class ProductFamiliesService {
       const c = costOf(v.standardCost);
       if (c !== undefined) cost4(c);
     }
+    // B964-2: an ADDED variant's name is new text, so it is guarded here, before any read or write. A RENAME is guarded
+    // CHANGE-ONLY inside the transaction (against the stored name), before any write.
+    for (const v of add)
+      assertSafeProductNames({ name: v.name.trim(), variantName: v.name.trim() });
     const touchedIds = [...new Set([...update.map((u) => u.id), ...deactivate])];
     const addRows = add.map((v, i) => ({ row: i, ...v }));
     const updRows = update.map((u, i) => ({ row: add.length + i, ...u }));
@@ -403,16 +437,27 @@ export class ProductFamiliesService {
         if (family.kind !== "FAMILY") {
           throw new BadRequestException("This product is not a family.");
         }
-        const mine: Array<{ id: string }> = touchedIds.length
-          ? await tx.product.findMany({
-              where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
-              select: { id: true },
-            })
-          : [];
+        const mine: Array<{ id: string; name: string; variantName: string | null }> =
+          touchedIds.length
+            ? await tx.product.findMany({
+                where: { tenantId, parentProductId: familyId, id: { in: touchedIds } },
+                select: { id: true, name: true, variantName: true },
+              })
+            : [];
         const foreign = touchedIds.filter((id) => !mine.some((m) => m.id === id));
         if (foreign.length > 0) {
           throw new BadRequestException(
             "Every updated or deactivated id must be a variant of this family.",
+          );
+        }
+        // B964-2 (CHANGE-ONLY, as master's rule): a legacy formula-led name that is sent back UNCHANGED (e.g. with a sku
+        // edit) is not refused; only a name that CHANGES to formula-led text is, before any write.
+        for (const u of update) {
+          if (!u.name) continue;
+          const stored = mine.find((m) => m.id === u.id);
+          assertSafeProductNames(
+            { name: u.name.trim(), variantName: u.name.trim() },
+            stored && { name: stored.name, variantName: stored.variantName },
           );
         }
 

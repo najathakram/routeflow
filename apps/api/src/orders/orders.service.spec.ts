@@ -365,6 +365,20 @@ describe("OrdersService", () => {
       );
     });
 
+    it("B917: the no-customer-record 403 carries the machine-readable CUSTOMER_NOT_LINKED code", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+
+      // untyped call: the typed form adds a spec type error to the check-types ratchet baseline
+      const findAll = (service as unknown as { findAll(q: unknown, u: unknown): Promise<unknown> })
+        .findAll;
+      await expect(
+        findAll.call(service, { page: 1, limit: 20 }, customerPayload),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: "CUSTOMER_NOT_LINKED", message: "Customer record not found" },
+      });
+    });
+
     it("should filter by status", async () => {
       prisma.order.findMany.mockResolvedValue([]);
       prisma.order.count.mockResolvedValue(0);

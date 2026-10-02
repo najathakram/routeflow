@@ -207,19 +207,19 @@ label: "Main", addressType }]` — with the SAME required-field validation add m
   2. **EditTermsModal linkage** (`[id]/page.tsx` :958-968): when the Terms select changes
      to a term with known days, recompute the due date from the invoice's ISSUE date:
      `tsx
-     onChange={(e) => {
-       const label = e.target.value;
-       setPaymentTermsLabel(label);
-       // The client-reported bug: changing the term used to leave the old due
-       // date in place, persisting "Net 60" over Net-30 arithmetic. A known term
-       // recomputes from the ISSUE date (the anchor the server itself uses);
-       // picking "Select terms…" leaves the date alone for a manual correction.
-       const days = getDaysForTerms(label);
-       if (days != null && invoice.issueDate) {
-         setDueDate(addDaysIso(String(invoice.issueDate).slice(0, 10), days));
-       }
-     }}
-     `
+onChange={(e) => {
+  const label = e.target.value;
+  setPaymentTermsLabel(label);
+  // The client-reported bug: changing the term used to leave the old due
+  // date in place, persisting "Net 60" over Net-30 arithmetic. A known term
+  // recomputes from the ISSUE date (the anchor the server itself uses);
+  // picking "Select terms…" leaves the date alone for a manual correction.
+  const days = getDaysForTerms(label);
+  if (days != null && invoice.issueDate) {
+    setDueDate(addDaysIso(String(invoice.issueDate).slice(0, 10), days));
+  }
+}}
+`
      The user may still hand-adjust the date AFTER picking a term (explicit correction —
      the server accepts both fields as sent). Add a small muted helper line under the
      grid: `Picking a term recalculates the due date from the issue date

@@ -73,6 +73,12 @@ export type LineState = {
   unitLabel?: string | null;
   /** #2784 UI-only: the qty a NEW picker-tap line was created with. The default unit applies only while `qty` still equals it (any qty edit ends the default-start; a boxed qty is total pieces, so a fixed `qty <= 1` guard would never match) and no operator price is typed. UnitPickerRow applies it once. */
   startOnDefaultUnit?: number;
+  /** #2865 case c UI-only: how many default-start taps this PENDING line recorded (N taps = N of the default unit on resolve). */
+  pendingTaps?: number;
+  /** #2865 (F3): the scan code that CREATED this pending line; a repeat scan of the same label is a default-unit tap. */
+  pendingCode?: string;
+  /** SA-626d: the remembered PACK price stashed while the line sells by a unit (re-applied on an explicit pack pick). */
+  packUnitPrice?: number;
   /**
    * units_v1: the chosen unit's own resolved tier price — the comparison base `unitPrice`
    * diverging from means a genuine operator override, in place of `catalogPrice` (the PACK's
@@ -110,4 +116,19 @@ export function toNumber(v: number | string | null | undefined): number {
  *  (tier) price. Callers pass the customer's effective tier price as `basePrice`. */
 export function effectiveUnitPrice(line: LineState | undefined, basePrice: number): number {
   return line?.unitPrice != null ? line.unitPrice : basePrice;
+}
+
+/**
+ * Conditional remembered-price pre-fill (mirrors web CreateOrderModal): only a genuine one-time DISCOUNT (below the
+ * tier price) or UPSELL (above list) pre-fills, never over a SPECIAL tier price (already the customer's permanent
+ * price). An equal-to-tier remembered price does not pre-fill (strict < >).
+ */
+export function rememberedPricePrefill(
+  hist: { lastPrice: number } | null | undefined,
+  listPrice: number,
+  tierPrice: number,
+  isSpecial: boolean,
+): number | undefined {
+  if (isSpecial || hist == null) return undefined;
+  return hist.lastPrice < tierPrice || hist.lastPrice > listPrice ? hist.lastPrice : undefined;
 }

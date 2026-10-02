@@ -1,3 +1,4 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import {
   BadRequestException,
   ConflictException,
@@ -47,7 +48,11 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
-import { atStopConflict } from "./at-stop-conflicts";
+import {
+  atStopConflict,
+  CHANGE_WINDOW_ORDER_STATUS,
+  CHANGE_WINDOW_RUN_NOT_ACTIVE,
+} from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
@@ -357,7 +362,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer) throw new ForbiddenException("Customer record not found");
+      if (!customer)
+        throw new ForbiddenException({
+          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
+          message: "Customer record not found",
+        });
       where.customerId = customer.id;
     } else if (customerId) {
       where.customerId = customerId;
@@ -1495,7 +1504,11 @@ export class OrdersService implements OnApplicationBootstrap {
       const customer = await this.prisma
         .forTenant()
         .customer.findFirst({ where: { userId: user.sub, deletedAt: null } });
-      if (!customer) throw new ForbiddenException("Customer record not found");
+      if (!customer)
+        throw new ForbiddenException({
+          code: API_ERROR_CODES.CUSTOMER_NOT_LINKED,
+          message: "Customer record not found",
+        });
       customerId = customer.id;
     }
 
@@ -2561,7 +2574,7 @@ export class OrdersService implements OnApplicationBootstrap {
               });
               if (claimed.count === 0)
                 throw new ConflictException({
-                  code: "ORDER_CHANGED_DURING_EDIT",
+                  code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
                   message:
                     "The order changed while it was being cancelled — review it and try again.",
                 });
@@ -4172,7 +4185,7 @@ export class OrdersService implements OnApplicationBootstrap {
           if (inlineReturnCredit > 0.001 && total < inlineReturnCredit - 0.001) {
             throw new BadRequestException({
               statusCode: 400,
-              code: "ORDER_BELOW_RETURN_CREDIT",
+              code: API_ERROR_CODES.ORDER_BELOW_RETURN_CREDIT,
               message:
                 `Order total (${total}) cannot drop below the credit already issued/held ` +
                 `against its inline returns (${roundMoney(inlineReturnCredit)}).`,
@@ -4581,7 +4594,10 @@ export class OrdersService implements OnApplicationBootstrap {
     const cr = await this.prisma.forTenant().changeRequest.findUnique({ where: { id: crId } });
     if (!cr) throw new NotFoundException("Change request not found");
     if (cr.status !== ChangeRequestStatus.PENDING) {
-      throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED", status: cr.status });
+      throw new ConflictException({
+        code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED,
+        status: cr.status,
+      });
     }
     const payload = cr.payload as any;
 
@@ -4595,16 +4611,16 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+      throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
     }
     if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+      throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
     }
     if (
       order.routeRunStop != null &&
       ["COMPLETED", "SKIPPED"].includes(order.routeRunStop.status)
     ) {
-      throw atStopConflict("STOP_ALREADY_COMPLETED");
+      throw atStopConflict(API_ERROR_CODES.STOP_ALREADY_COMPLETED);
     }
 
     // NOTE-type requests carry no money delta: claim + return, nothing else.
@@ -4629,7 +4645,7 @@ export class OrdersService implements OnApplicationBootstrap {
           }),
       );
       if (claimed.count !== 1) {
-        throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+        throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
       }
       const subtotal = Number(order.subtotal);
       const tax = Number(order.tax);
@@ -4733,16 +4749,16 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         if (!live) throw new NotFoundException("Order not found");
         if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+          throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
         }
         if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+          throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
         }
         if (
           live.routeRunStop != null &&
           ["COMPLETED", "SKIPPED"].includes(live.routeRunStop.status)
         ) {
-          throw atStopConflict("STOP_ALREADY_COMPLETED");
+          throw atStopConflict(API_ERROR_CODES.STOP_ALREADY_COMPLETED);
         }
 
         // B134 (REG-B134): auto-revert a SENT pending-mirror invoice to DRAFT INSIDE the merge tx
@@ -4775,7 +4791,7 @@ export class OrdersService implements OnApplicationBootstrap {
           },
         });
         if (claimed.count !== 1) {
-          throw new ConflictException({ code: "CHANGE_REQUEST_ALREADY_RESOLVED" });
+          throw new ConflictException({ code: API_ERROR_CODES.CHANGE_REQUEST_ALREADY_RESOLVED });
         }
 
         let mutationRow: {
@@ -4795,7 +4811,7 @@ export class OrdersService implements OnApplicationBootstrap {
             throw new BadRequestException("Order line not found or already cancelled");
           }
           if (Number((held ?? li).deliveredQty ?? 0) > 0) {
-            throw new ConflictException({ code: "LINE_ALREADY_DELIVERED" });
+            throw new ConflictException({ code: API_ERROR_CODES.LINE_ALREADY_DELIVERED });
           }
           // `heldItems` is a narrow select (status/qty/deliveredQty), so the money fields come
           // from a full re-read of the same locked row — the ADD_ITEM idiom below. `src` is what
@@ -4807,7 +4823,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // vanish inside this same tx, so a null re-read means the lock did not hold — never
             // a licence to price the edit off the stale snapshot.
             throw new ConflictException({
-              code: "CONCURRENT_UPDATE",
+              code: API_ERROR_CODES.CONCURRENT_UPDATE,
               reason: "LINE_VANISHED",
               retryable: true,
               message: "Another update changed this order line. Try again.",

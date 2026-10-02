@@ -23,7 +23,7 @@ const COST = /^\d{1,6}(\.\d+)?$/;
 // An explicit null is NOT "omitted": it must fail the money rule, never silently write $0 (Tier 1, #2881 r3).
 /** Readable messages for a null (Tier 1, #2881 r3): a price is required; an optional amount is omitted, never null. */
 const moneyMessage = (field: string, required: boolean) => (a: { value?: unknown }) =>
-  a.value === null
+  a.value == null
     ? required
       ? `${field} is required`
       : `${field} cannot be null; omit the field to leave it unchanged`
@@ -65,9 +65,9 @@ export class FamilyInfoDto {
   @Transform(trimmed) @IsString() @IsNotEmpty() name: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
-  @ValidateIf(notUndefined)
+  /** SA-606i: REQUIRED on create (no implicit $0.00); an explicit "0.00" is a deliberate free family. */
   @Matches(MONEY, { message: moneyMessage("pricePerUnit", true) })
-  pricePerUnit?: string;
+  pricePerUnit: string;
   /** SA-606a: optional family cost; a variant that omits its own standardCost inherits it (no copy flag). */
   @IsOptional()
   @Transform(({ value }) => blankToUndefined(value))

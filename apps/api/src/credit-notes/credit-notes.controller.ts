@@ -13,6 +13,7 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
+import { ApiOperation } from "@nestjs/swagger";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { PlanFlagGuard } from "../billing/plan-flag.guard";
@@ -21,6 +22,7 @@ import { CreditNotesService } from "./credit-notes.service";
 import { CreditNoteReissueService } from "./credit-note-reissue.service";
 import { ReissueCreditNoteDto } from "./dto/reissue-credit-note.dto";
 import { CreateCreditNoteDto } from "./dto/create-credit-note.dto";
+import { VoidCreditNoteDto } from "./dto/void-credit-note.dto";
 import { UpdateCreditNoteDto } from "./dto/update-credit-note.dto";
 import { SetAutoApplyExclusionDto } from "./dto/set-auto-apply-exclusion.dto";
 import { ApplyCreditNoteDto, UnapplyCreditNoteDto } from "./dto/apply-credit-note.dto";
@@ -81,12 +83,27 @@ export class CreditNotesController {
   }
 
   @Post(":id/void")
+  @ApiOperation({
+    deprecated: true,
+    summary:
+      "Void a credit note (use POST :id/void-with-reversal, which also returns the reopened invoices)",
+  })
   @UseGuards(RolesGuard)
   // #2403 / SA-436 PR-3: a staff action; TENANT_ADMIN named explicitly (RolesGuard already
   // lets it satisfy OPERATOR).
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  voidNote(@Param("id") id: string) {
-    return this.creditNotesService.voidCreditNote(id);
+  // B957: the same door as :id/void-with-reversal (the URL is kept for old clients): the RETURN_BACKED refusal and the
+  // reason/actor audit apply, and a note in use is reversed then voided, exactly like the main path.
+  voidNote(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: VoidCreditNoteDto,
+  ) {
+    // the kept URL's response is still the voided credit-note row (old clients read `.status`); the reopened invoices are
+    // what :id/void-with-reversal adds.
+    return this.creditNotesService
+      .voidWithReversal(id, user?.sub ?? null, dto?.reason)
+      .then((r) => r.creditNote);
   }
 
   // SA-436 PR-2 (#2402): the invoices a void-with-reversal reopens, and any refusal. Read-only.
@@ -101,8 +118,12 @@ export class CreditNotesController {
   @Post(":id/void-with-reversal")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR, UserRole.TENANT_ADMIN)
-  voidWithReversal(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
-    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null);
+  voidWithReversal(
+    @Param("id") id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto?: VoidCreditNoteDto,
+  ) {
+    return this.creditNotesService.voidWithReversal(id, user?.sub ?? null, dto?.reason);
   }
 
   // #2648 / SA-535(b): an amount/line edit = void-with-reversal + an unapplied replacement, in ONE

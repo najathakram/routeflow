@@ -7,6 +7,7 @@ import {
 import type { HandoffRealm } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { hashSignedToken, mintSignedToken, verifySignedToken } from "../../common/signed-token";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 
 /**
  * #2653 sign-in handoff (SA-542a/b): the shared core behind BOTH realms' mint + exchange.
@@ -66,7 +67,7 @@ export function handoffRoleNotAllowed(): ForbiddenException {
 export function handoffCodeInvalid(): UnauthorizedException {
   return new UnauthorizedException({
     statusCode: 401,
-    code: "HANDOFF_CODE_INVALID",
+    code: API_ERROR_CODES.HANDOFF_CODE_INVALID,
     message: "This sign-in link is invalid or has expired. Sign in again.",
   });
 }

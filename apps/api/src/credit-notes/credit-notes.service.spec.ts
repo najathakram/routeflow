@@ -393,51 +393,6 @@ describe("CreditNotesService — W5c regulated reversal", () => {
       service.create({ customerId: "c1", invoiceId: "inv-1", amount: 30 }),
     ).rejects.toThrow(/exceed invoice total/);
   });
-
-  it("voidCreditNote un-reverses the ledger for an unused (ISSUED) credit", async () => {
-    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
-    prisma.creditNote.updateMany.mockResolvedValue({ count: 1 }); // race-free flip succeeds
-    prisma.creditNote.findUnique.mockResolvedValue({
-      id: "cn-1",
-      creditNoteNumber: "CN-2026-0001",
-      customerId: "c1",
-      amount: 50,
-    });
-    await service.voidCreditNote("cn-1");
-    expect(prisma.creditNote.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: "cn-1", amountUsed: 0 }),
-        data: { status: "VOID" },
-      }),
-    );
-    expect(ledger.unreverseCreditNoteEntries).toHaveBeenCalledWith(
-      expect.objectContaining({ creditNoteId: "cn-1" }),
-    );
-    // B343: a void previously fired no socket event at all.
-    expect(gateway.emitCreditNoteVoided).toHaveBeenCalledWith(expect.anything(), {
-      creditNoteId: "cn-1",
-      creditNoteNumber: "CN-2026-0001",
-      customerId: "c1",
-      amount: 50,
-    });
-  });
-
-  it("refuses the void when a concurrent apply already consumed the credit (0 rows flipped)", async () => {
-    // Guard read sees ISSUED/unused, but the race-free updateMany matches 0 rows.
-    prisma.creditNote.findFirst.mockResolvedValue({ status: "ISSUED", amountUsed: 0 });
-    prisma.creditNote.updateMany.mockResolvedValue({ count: 0 });
-    await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
-    expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
-    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
-  });
-
-  it("blocks voiding an APPLIED credit note (must un-apply first) — no ledger touch", async () => {
-    prisma.creditNote.findFirst.mockResolvedValue({ status: "APPLIED", amountUsed: 110 });
-    await expect(service.voidCreditNote("cn-1")).rejects.toThrow(/un-apply/i);
-    expect(ledger.unreverseCreditNoteEntries).not.toHaveBeenCalled();
-    expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
-    expect(prisma.creditNote.updateMany).not.toHaveBeenCalled();
-  });
 });
 
 describe("CreditNotesService — P5-13 apply-math + auto-apply", () => {
@@ -1882,6 +1837,31 @@ describe("CreditNotesService — order credit-note intents (unapply / settle / v
 
       expect(prisma.creditNote.update).not.toHaveBeenCalled();
       expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("#2848: an expiry change on a note whose source invoice was deleted is a 409; a reason edit still works", async () => {
+      prisma.creditNote.findFirst.mockResolvedValue({
+        id: "cn-1",
+        status: "ISSUED",
+        reason: "r",
+        expiresAt: null,
+      });
+      prisma.auditLog.findFirst.mockResolvedValue({ id: "al-1" });
+
+      await expect(
+        service.updateCreditNote("cn-1", { expiresAt: "2999-01-01T00:00:00.000Z" }, "u"),
+      ).rejects.toThrow(/source invoice was deleted/);
+      expect(prisma.creditNote.update).not.toHaveBeenCalled();
+      // PR-C: the refusal carries the typed code (the UI maps it to fixed copy), not just the text.
+      const err: any = await service
+        .updateCreditNote("cn-1", { expiresAt: "2999-01-01T00:00:00.000Z" }, "u")
+        .catch((e: unknown) => e);
+      expect(err?.getStatus?.()).toBe(409);
+      expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_SOURCE_GONE);
+
+      prisma.creditNote.update.mockResolvedValue({ id: "cn-1", reason: "new" });
+      await service.updateCreditNote("cn-1", { reason: "new" }, "u");
+      expect(prisma.creditNote.update).toHaveBeenCalledTimes(1);
     });
 
     it("insertCreditNoteInTx rounds the amount to cents on the write", async () => {

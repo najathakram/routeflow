@@ -15,7 +15,7 @@
 import { defaultSellLevel, SELL_LEVEL_VALUES, type SellLevel } from "@routeflow/pricing";
 import {
   levelsForScannedCode,
-  resolveScanSellChoice,
+  isSharedScanCode,
   resolveScanSellLevel,
   scanMatchIsForCode,
 } from "./scan-level";
@@ -255,58 +255,23 @@ describe("levelsForScannedCode — a row whose level is not BOX/UNIT never contr
   });
 });
 
-describe("resolveScanSellChoice (#2784): a SHARED code honours the default selling unit; the code still decides otherwise", () => {
-  const p = { unitsPerBox: 6 };
-  const both: Array<"BOX" | "UNIT"> = ["BOX", "UNIT"];
-
-  it("with NO default args it is exactly resolveScanSellLevel, and never carries a unitLabel", () => {
-    for (const upb of [undefined, null, 0, 1, 6, 24]) {
-      for (const levels of [[], ["BOX"], ["UNIT"], both, [...both].reverse()] as Array<
-        Array<"BOX" | "UNIT">
-      >) {
-        const product = { unitsPerBox: upb };
-        expect(resolveScanSellChoice(product, levels)).toEqual({
-          level: resolveScanSellLevel(product, levels),
-        });
-      }
-    }
+describe("isSharedScanCode (SA-626): the ONE rule web and mobile share for 'start on the default unit'", () => {
+  it("is true only when the code resolves at BOTH levels", () => {
+    expect(isSharedScanCode(["BOX", "UNIT"])).toBe(true);
+    expect(isSharedScanCode(["UNIT", "BOX"])).toBe(true);
   });
 
-  it("rung 1: the CUSTOMER's default unit wins a shared code", () => {
-    expect(
-      resolveScanSellChoice(p, both, {
-        customerDefaultUnitLabel: "Case",
-        defaultUnitLabel: "Carton",
-      }),
-    ).toEqual({ level: "BOX", unitLabel: "Case" });
+  it("is false for a box-only, a unit-only and an unmatched code (the code decides the level)", () => {
+    expect(isSharedScanCode(["BOX"])).toBe(false);
+    expect(isSharedScanCode(["UNIT"])).toBe(false);
+    expect(isSharedScanCode([])).toBe(false);
   });
+});
 
-  it("rung 2: else the tenant-flagged product default", () => {
-    expect(resolveScanSellChoice(p, both, { defaultUnitLabel: "Carton" })).toEqual({
-      level: "BOX",
-      unitLabel: "Carton",
-    });
-    expect(
-      resolveScanSellChoice(p, both, { customerDefaultUnitLabel: null, defaultUnitLabel: "Carton" })
-        .unitLabel,
-    ).toBe("Carton");
-    expect(
-      resolveScanSellChoice(p, both, { customerDefaultUnitLabel: "  ", defaultUnitLabel: "Carton" })
-        .unitLabel,
-    ).toBe("Carton");
-  });
-
-  it("rung 3: else today's default sell level, no unitLabel (blank/absent labels add nothing)", () => {
-    expect(resolveScanSellChoice(p, both, { defaultUnitLabel: null })).toEqual({ level: "BOX" });
-    expect(resolveScanSellChoice({ unitsPerBox: 1 }, both, { defaultUnitLabel: "" })).toEqual({
-      level: "UNIT",
-    });
-  });
-
-  it("box-only stays BOX and unit-only stays UNIT: the CODE decides, whatever the defaults say", () => {
-    const opts = { customerDefaultUnitLabel: "Case", defaultUnitLabel: "Carton" };
-    expect(resolveScanSellChoice(p, ["BOX"], opts)).toEqual({ level: "BOX" });
-    expect(resolveScanSellChoice(p, ["UNIT"], opts)).toEqual({ level: "UNIT" });
-    expect(resolveScanSellChoice(p, [], opts)).toEqual({ level: "BOX" }); // no levels: today's fallback, no label
+describe("no second 'which unit label' rule lives in @routeflow/scanning (SA-626a)", () => {
+  it("resolveScanSellChoice / ScanSellChoice / ScanDefaultUnits are not exported (defaultSellingLabel in pricing is the one rule)", () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require("./scan-level") as Record<string, unknown>;
+    expect(mod.resolveScanSellChoice).toBeUndefined();
   });
 });

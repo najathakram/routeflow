@@ -9,13 +9,16 @@ import {
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @Injectable()
 export class BuyerMergeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Buyer: initiate merge ────────────────────────────────────────────────────
@@ -96,7 +99,10 @@ export class BuyerMergeService {
         .delete({ where: { id: mergeRequest.id } })
         .catch(() => {});
       throw new BadRequestException({
-        code: sendResult.transport === "none" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_SEND_FAILED",
+        code:
+          sendResult.transport === "none"
+            ? API_ERROR_CODES.EMAIL_NOT_CONFIGURED
+            : API_ERROR_CODES.EMAIL_SEND_FAILED,
         message:
           sendResult.transport === "none"
             ? "Email isn't set up, so the verification email couldn't be sent. Ask the seller to configure email under Settings → Email, then try again."
@@ -415,6 +421,25 @@ export class BuyerMergeService {
         });
       }
 
+      // 3b. Apple identity (BuyerAccount_appleId_key is UNIQUE): free the secondary's appleId FIRST
+      // so the soft-deleted row can never shadow a later Apple sign-in, then let the primary inherit
+      // it (and the encrypted refresh token used for /auth/revoke) only when it has none.
+      if (secondaryAccount.appleId) {
+        await tx.buyerAccount.update({
+          where: { id: secondaryAccount.id },
+          data: { appleId: null, appleRefreshTokenEnc: null },
+        });
+        if (!primaryAccount.appleId) {
+          await tx.buyerAccount.update({
+            where: { id: primaryAccount.id },
+            data: {
+              appleId: secondaryAccount.appleId,
+              appleRefreshTokenEnc: secondaryAccount.appleRefreshTokenEnc,
+            },
+          });
+        }
+      }
+
       // 4. Invalidate all secondary's sessions
       await tx.buyerRefreshToken.deleteMany({
         where: { buyerAccountId: secondaryAccount.id },
@@ -436,6 +461,17 @@ export class BuyerMergeService {
         data: { status: BuyerMergeRequestStatus.COMPLETED, completedAt: new Date() },
       });
     });
+
+    // B944: when the primary KEEPS its own Apple identity, the secondary's stored Apple refresh
+    // token was just discarded by the transaction. Revoke it AT APPLE now, from the value loaded
+    // BEFORE the merge, and only after the merge COMMITTED (a failed merge leaves the secondary's
+    // grant alone). If the primary inherited the grant instead, nothing is revoked. Best-effort:
+    // revokeRefreshToken logs and never throws; the .catch is belt and braces.
+    if (secondaryAccount.appleId && primaryAccount.appleId) {
+      await this.appleOAuth
+        .revokeRefreshToken(secondaryAccount.appleRefreshTokenEnc, secondaryAccount.id)
+        .catch(() => undefined);
+    }
 
     // 7. Send notification emails (outside transaction)
     try {

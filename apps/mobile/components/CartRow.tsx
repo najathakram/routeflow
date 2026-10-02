@@ -14,6 +14,7 @@ import { displayProductName as displayName } from "../lib/product-display";
 import { marginFactorFor, unitPriceBase, type UnitOption } from "../lib/unit-options";
 import { MONEY_INPUT_MAX_WIDTH } from "../lib/row-layout";
 import { effectiveUnitPrice, toNumber, type LineState, type Product } from "../lib/cart-line-state";
+import { isPendingDefaultUnit } from "../lib/default-unit-line";
 import { MoneyTextInput } from "./MoneyTextInput";
 import { SellByToggle } from "./SellByToggle";
 import { CostHistorySheet } from "./CostHistorySheet";
@@ -239,12 +240,7 @@ export function CartRow({
         product={product}
         tier={tier}
         // Only while no qty/price edit consumed the flag (the screen clears it) and no operator price (Opus #2865 B2/r2).
-        startOnDefaultUnit={
-          line.startOnDefaultUnit != null &&
-          line.startOnDefaultUnit === line.qty &&
-          line.priceSource !== "operator" &&
-          line.unitPrice == null
-        }
+        startOnDefaultUnit={isPendingDefaultUnit(line)}
         onChange={onChangeUnit}
         style={{ marginBottom: isBoxed ? 2 : 8 }}
       />
