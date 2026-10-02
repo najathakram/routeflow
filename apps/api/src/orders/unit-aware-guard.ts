@@ -267,7 +267,7 @@ export async function assertInvoiceRewriteAllowed(
   // Fail CLOSED: a parent we cannot read (NULL-tenant / cross-tenant / vanished) proves nothing.
   if (!own || (invoice.orderId && !linked)) {
     throw new ConflictException({
-      code: "UNIT_AWARE_LINE_UNVERIFIABLE",
+      code: API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE,
       message: "This invoice's lines could not be verified, so it can't be edited. Ask an admin.",
     });
   }

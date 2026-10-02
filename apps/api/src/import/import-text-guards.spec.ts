@@ -253,4 +253,31 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     expect(res.errors.some((e: string) => e.endsWith(CITY_MSG))).toBe(true);
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
   });
+
+  describe("importInventory (Zoho stock CSV): product names (B964-2)", () => {
+    it("rejects a NEW product whose name is formula-led (readable row error) and still creates the good one", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "p-new" });
+      const res = await service.importInventory(
+        Buffer.from("Item Name,SKU,Closing Stock\n=HYPERLINK(1),,5\nCola,,5\n"),
+        "user-1",
+      );
+      expect(res.created).toBe(1);
+      expect(res.skipped).toBe(1);
+      expect(res.errors).toEqual([
+        "=HYPERLINK(1): Product name can't start with =, +, -, @ or a tab/line break",
+      ]);
+    });
+
+    it("an EXISTING product with a legacy formula-led name still gets its stock synced (only its stock is written)", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "p-1", name: "=LEGACY", currentStock: 1 });
+      prisma.product.update.mockResolvedValue({ id: "p-1" });
+      const res = await service.importInventory(
+        Buffer.from("Item Name,SKU,Closing Stock\n=LEGACY,,9\n"),
+        "user-1",
+      );
+      expect(res.errors).toEqual([]);
+      expect(res.updated).toBe(1);
+    });
+  });
 });
