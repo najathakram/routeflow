@@ -38,6 +38,7 @@ import { ReceiveVendorBillDto } from "./dto/receive-vendor-bill.dto";
 import { SaveProductMappingDto } from "./dto/save-product-mapping.dto";
 import { RecordSupplierPaymentDto } from "./dto/supplier-payment.dto";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSellableLines } from "../products/sellable-lines";
 
 /** What clients render when a bill is blocked as a duplicate. */
 export interface VendorBillDuplicatePayload {
@@ -1245,9 +1246,16 @@ export class VendorBillsService {
         // product compound correctly instead of using the pre-tx snapshot
         const product = await tx.product.findFirst({
           where: { id: item.productId },
-          select: { currentStock: true, averageCost: true, costingMethod: true },
+          select: {
+            name: true,
+            kind: true,
+            currentStock: true,
+            averageCost: true,
+            costingMethod: true,
+          },
         });
         if (!product) continue;
+        assertSellableLines([{ id: item.productId, ...product }]); // WS8: a FAMILY is never stocked
 
         const newAvgCost = nextAverageCost(
           product.currentStock,

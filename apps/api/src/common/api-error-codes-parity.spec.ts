@@ -131,6 +131,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "AI_PARSE_FAILED",
   ],
   "apps/mobile/lib/at-stop-cr-outcome.ts": ["CHANGE_REQUEST_ALREADY_RESOLVED"],
+  "apps/mobile/lib/authorizations-logic.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/mobile/lib/credit-limit-error.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/mobile/lib/inline-return-submit-key.ts": [
     "INLINE_RETURN_ORDER_NOT_FOUND",
@@ -156,6 +157,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "PO_LOT_PARTIALLY_CONSUMED",
   ],
   "apps/web/app/(dashboard)/invoices/[id]/page.tsx": ["EMAIL_NOT_CONFIGURED", "EMAIL_SEND_FAILED"],
+  "apps/web/app/(dashboard)/invoices/new/page.tsx": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": [
     "CHANGE_REQUEST_ALREADY_RESOLVED",
     "CHANGE_WINDOW_CLOSED",
@@ -165,11 +167,14 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": ["MERGE_CHOICE_REQUIRED"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/buyer/portal/[seller]/cart/page.tsx": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/app/buyer/portal/[seller]/orders/[id]/page.tsx": [
     "CHANGE_WINDOW_CLOSED",
     "EDIT_WINDOW_OPEN",
+    "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
+  "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
@@ -189,12 +194,13 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "STOP_ALREADY_COMPLETED",
     "SELLING_RESTRICTED",
     "SELLING_RESTRICTIONS_NOT_READY",
+    "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 66;
+const CONSUMER_ALLOWLIST_TOTAL = 72;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -222,6 +228,15 @@ const SELLING_RESTRICTED_REASON_FILES = [
   "apps/api/src/order-templates/order-templates.service.ts",
 ];
 
+/**
+ * `ONBOARDING_STEP_WAIVED` is ALSO an audit ACTION key (`ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED"`) in the audit-actions
+ * constant: data, not an error code. The 409 body (in onboarding.service.ts) goes through the constant, and the audit file may
+ * not spell it as a `code`.
+ */
+const ONBOARDING_STEP_WAIVED_AUDIT_FILES = [
+  "apps/api/src/platform-admin/audit-actions.constant.ts",
+];
+
 /** A READ_ONLY literal used as an error CODE: a property (`code: "READ_ONLY"`) or a comparison (`code === "READ_ONLY"`, `!==`, `==`). */
 const READ_ONLY_CODE_LITERAL = /\bcode\b\s*(?::|[!=]==?)\s*["'`]READ_ONLY/;
 
@@ -239,6 +254,10 @@ describe("API error codes: no bare string literal in production source (#2163)",
         .filter((rel) => !(key === "READ_ONLY" && READ_ONLY_STATUS_FILES.includes(rel)))
         .filter(
           (rel) => !(key === "SELLING_RESTRICTED" && SELLING_RESTRICTED_REASON_FILES.includes(rel)),
+        )
+        .filter(
+          (rel) =>
+            !(key === "ONBOARDING_STEP_WAIVED" && ONBOARDING_STEP_WAIVED_AUDIT_FILES.includes(rel)),
         );
       expect(offenders).toEqual([]);
     },
@@ -297,6 +316,24 @@ describe("API error codes: no bare string literal in production source (#2163)",
     expect(svc?.text).toContain("code: API_ERROR_CODES.SELLING_RESTRICTED");
   });
 
+  it("ONBOARDING_STEP_WAIVED: the audit file really spells it as an audit action, never as an error `code`, and the 409 body goes through the constant", () => {
+    const codeLiteral =
+      /\bcode["'`]?\s*(?::|[!=]==?)\s*["'`]ONBOARDING_STEP_WAIVED|["'`]ONBOARDING_STEP_WAIVED["'`]\s*[!=]==?\s*[\w$.?[\]"'`]*\bcode\b/;
+    for (const rel of ONBOARDING_STEP_WAIVED_AUDIT_FILES) {
+      const src = sources.find((s) => posix(s.rel) === rel);
+      expect(src?.text).toMatch(/ONBOARDING_STEP_WAIVED:\s*["'`]ONBOARDING_STEP_WAIVED["'`]/);
+      expect(src?.text).not.toMatch(codeLiteral);
+    }
+    expect(codeLiteral.test('code: "ONBOARDING_STEP_WAIVED"')).toBe(true);
+    expect(codeLiteral.test("body.code === 'ONBOARDING_STEP_WAIVED'")).toBe(true);
+    expect(codeLiteral.test('ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    expect(codeLiteral.test('action: "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    const svc = sources.find(
+      (s) => posix(s.rel) === "apps/api/src/onboarding/onboarding.service.ts",
+    );
+    expect(svc?.text).toContain("code: API_ERROR_CODES.ONBOARDING_STEP_WAIVED");
+  });
+
   it("READ_ONLY: the status files really spell the status, and the guard's 403 body goes through the constant", () => {
     for (const rel of READ_ONLY_STATUS_FILES) {
       const src = sources.find((s) => posix(s.rel) === rel);
@@ -309,6 +346,24 @@ describe("API error codes: no bare string literal in production source (#2163)",
       (s) => posix(s.rel) === "apps/api/src/tenant/tenant-status.guard.ts",
     );
     expect(guard?.text).toContain("code: API_ERROR_CODES.READ_ONLY");
+  });
+});
+
+describe("API error codes: the onboarding contracts are registered (B987-C)", () => {
+  // The three onboarding contract lists are pinned against the service sources by their own specs; those specs accept the
+  // constant form, so this pin makes sure every listed code IS registered here (value == key), in both directions of drift.
+  it("every INTAKE / ONBOARDING / TENANT_ONBOARDING contract code is an API_ERROR_CODES key with value == key", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = require("@routeflow/types") as Record<string, readonly string[]>;
+    const lists = [
+      shared.INTAKE_ERROR_CODES,
+      shared.ONBOARDING_CONFLICT_CODES,
+      shared.TENANT_ONBOARDING_CONFLICT_CODES,
+    ];
+    for (const list of lists) {
+      expect(Array.isArray(list) && list.length > 0).toBe(true);
+      for (const code of list) expect((API_LOCAL as Record<string, string>)[code]).toBe(code);
+    }
   });
 });
 
