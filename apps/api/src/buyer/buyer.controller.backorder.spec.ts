@@ -228,6 +228,22 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
       expect(figures(res)).toEqual([3]);
     });
 
+    it("other orders folded INTO the created one (same id, the swept order has MORE lines): the response is the swept post-sweep order, not the stale created", async () => {
+      orders.create.mockResolvedValue(
+        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
+      );
+      orders.mergeAllPendingForCustomer.mockResolvedValue(
+        orderOf("o-new", [
+          ["x1", "p", 4],
+          ["c1", "p", 8],
+        ]),
+      );
+      const res: any = await controller.createOrder(cart as any, CTX as any);
+      expect(res.id).toBe("o-new");
+      expect(res.lineItems).toHaveLength(2);
+      expect(figures(res)).toEqual([0, 3]);
+    });
+
     it("created was not merge-eligible and the sweep returned another order: that order is returned with no figure", async () => {
       orders.create.mockResolvedValue(
         withStockWrite(

@@ -224,6 +224,15 @@ describe("buyerCreateResponse — which order carries the figure after the post-
     expect(figures(res)).toEqual([3]);
   });
 
+  it("SAME id but other orders were folded INTO created: the sweep's FULL post-sweep read (lines with a product) is returned, with the figure on ITS lines — never the stale pre-fold created", () => {
+    // created held one line of 8; the sweep folded an older order's 4 pieces into it.
+    const swept = { ...order([li("x", "p", 4), li("c1", "p", 8)]), id: "o-new", total: 120 };
+    const res: any = buyerCreateResponse(created(), swept);
+    expect(res).toBe(swept);
+    expect(res.lineItems).toHaveLength(2);
+    expect(figures(res)).toEqual([0, 3]); // stock-first over the merged lines, sum == the overshoot
+  });
+
   it("no sweep result (null / nothing to fold) -> `created`", () => {
     expect(figures(buyerCreateResponse(created(), null))).toEqual([3]);
     expect(figures(buyerCreateResponse(created(), undefined))).toEqual([3]);

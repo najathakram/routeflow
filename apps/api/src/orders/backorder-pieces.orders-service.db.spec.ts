@@ -318,7 +318,11 @@ describeDb(
 
     it("(single) a plain checkout with NO other pending order: the sweep returns the bare created row and the figure still lands", async () => {
       await setPolicy("backorder");
-      const created: any = await createOrder(buyer(0), 8); // stock 5 -> -3, overshoot 3
+      // a PLAIN create (no skipAutoMerge): the shared createOrder helper passes skipAutoMerge:true, which
+      // keeps the order out of the sweep, so it could never return this row.
+      const created: any = await tenantCtx.run(tenantId, () =>
+        orders.create({ items: [{ productId, qty: 8 }] }, buyer(0)),
+      ); // stock 5 -> -3, overshoot 3
       const swept: any = await tenantCtx.run(tenantId, () =>
         orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
       );
@@ -354,6 +358,12 @@ describeDb(
       const loser = await raw.order.findUnique({ where: { id: loserId } });
       expect(loser === null || loser.status === "CANCELLED").toBe(true);
       const response: any = buyerCreateResponse(second, swept);
+      // The response is the POST-SWEEP order that holds this request's lines (the winner is the most
+      // recently updated order, i.e. `second`, with the other order folded INTO it): its id, both
+      // orders' 8 pieces and its total, not the stale pre-fold `second`.
+      expect(response.id).toBe(swept.id);
+      expect(response.lineItems.reduce((n: number, l: any) => n + Number(l.qty), 0)).toBe(8);
+      expect(Number(response.total)).toBe(Number(swept.total));
       expect(sum(figures(response))).toBe(3);
       expect(await overshootOf()).toBe(3);
     }, 120_000);
