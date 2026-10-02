@@ -66,6 +66,7 @@ export interface FamilyValidation {
 const PRICE_MSG = "Enter a price like 1.50.";
 const DUP_MSG = "Appears more than once.";
 export const CANNOT_CLEAR_MSG = "Can't be cleared once set. Enter a new value.";
+export const FAMILY_PRICE_REQUIRED_MSG = "Enter the family price.";
 export const COPY_PRICE_NEEDS_PRICE_MSG = "Enter the family price to copy it onto the variants.";
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -126,9 +127,9 @@ export function validateRows(
 export function validateFamilyForm(f: FamilyForm): FamilyValidation {
   const family: FamilyValidation["family"] = {};
   if (!f.name.trim()) family.name = "Enter a family name.";
-  if (f.pricePerUnit.trim() && !MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
-  // Copying the family price with none entered would save the family and every variant at $0.00.
-  if (f.copyFamilyPrice && !f.pricePerUnit.trim()) family.pricePerUnit = COPY_PRICE_NEEDS_PRICE_MSG;
+  // SA-606i: the family price is REQUIRED by the API (no implicit $0.00), so a blank one is refused here, not at the server.
+  if (!f.pricePerUnit.trim()) family.pricePerUnit = FAMILY_PRICE_REQUIRED_MSG;
+  else if (!MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
   if (f.standardCost.trim() && !COST.test(f.standardCost.trim()))
     family.standardCost = "Enter a cost like 0.80.";
   const r = validateRows(f.rows);
@@ -162,7 +163,7 @@ export function toCreateRequest(f: FamilyForm): CreateFamilyRequest {
       name: trim(f.name),
       ...(given(f.category) ? { category: trim(f.category) } : {}),
       ...(given(f.description) ? { description: trim(f.description) } : {}),
-      ...(given(f.pricePerUnit) ? { pricePerUnit: trim(f.pricePerUnit) } : {}),
+      pricePerUnit: trim(f.pricePerUnit),
       ...(given(f.standardCost) ? { standardCost: trim(f.standardCost) } : {}),
     },
     variants: f.rows.map(variantInput),

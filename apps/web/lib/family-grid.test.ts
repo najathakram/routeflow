@@ -21,7 +21,7 @@ const form = (over: Partial<FamilyForm> = {}): FamilyForm => ({
   name: "Cola",
   category: "",
   description: "",
-  pricePerUnit: "",
+  pricePerUnit: "2.00", // the family price is required (SA-606i)
   standardCost: "",
   copyFamilyPrice: false,
   rows: [row()],
@@ -65,14 +65,18 @@ describe("validateFamilyForm — mirrors the API DTO so the common mistakes neve
     expect(v.rows[0]?.standardCost ?? null).toBe(msg);
   });
 
-  it("family price / cost, when given, follow the same rules; blank is allowed", () => {
+  it("family cost, when given, follows its rule; the family PRICE is required (SA-606i) and follows the price rule", () => {
     expect(validateFamilyForm(form({ pricePerUnit: "x" })).family.pricePerUnit).toBe(
       "Enter a price like 1.50.",
     );
     expect(validateFamilyForm(form({ standardCost: "x" })).family.standardCost).toBe(
       "Enter a cost like 0.80.",
     );
-    expect(validateFamilyForm(form({ pricePerUnit: "", standardCost: "" })).valid).toBe(true);
+    expect(
+      validateFamilyForm(form({ pricePerUnit: "", standardCost: "" })).family.pricePerUnit,
+    ).toBe("Enter the family price.");
+    expect(validateFamilyForm(form({ pricePerUnit: "", standardCost: "" })).valid).toBe(false);
+    expect(validateFamilyForm(form({ pricePerUnit: "2.00", standardCost: "" })).valid).toBe(true);
   });
 
   it("variant name required; units/case must be a whole number >= 1 when given", () => {
@@ -279,16 +283,18 @@ describe("requestRowCount — the server caps add + update + deactivate, not the
 });
 
 describe("B1 (#2919): copy-family-price needs a family price (else every variant saves at $0.00)", () => {
-  it("ticked with a blank family price -> an error on the family price, form invalid", () => {
+  it("ticked with a blank family price -> an error on the family price, form invalid (the family price is required anyway)", () => {
     const v = validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "" }));
-    expect(v.family.pricePerUnit).toBe("Enter the family price to copy it onto the variants.");
+    expect(v.family.pricePerUnit).toBe("Enter the family price.");
     expect(v.valid).toBe(false);
   });
-  it("ticked with a price -> fine; unticked with a blank price -> fine (variants carry their own)", () => {
+  it("ticked with a price -> fine; unticked with a blank price is REFUSED too (the server requires a family price, no $0.00 default)", () => {
     expect(validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "2.00" })).valid).toBe(
       true,
     );
-    expect(validateFamilyForm(form({ copyFamilyPrice: false, pricePerUnit: "" })).valid).toBe(true);
+    expect(validateFamilyForm(form({ copyFamilyPrice: false, pricePerUnit: "" })).valid).toBe(
+      false,
+    );
   });
 });
 
@@ -326,5 +332,14 @@ describe("B4 (#2919): the row cap belongs to the create form, not to a saved fam
     expect(validateRows(many).formError).toBe("A family takes up to 200 variants at a time.");
     expect(validateRows(many, { capRows: false }).formError).toBeNull();
     expect(validateRows(many, { capRows: false }).valid).toBe(true);
+  });
+});
+
+describe("SA-606i (#2881 merge): the create request ALWAYS carries the family price", () => {
+  it("toCreateRequest sends the trimmed family price (never omitted)", () => {
+    const req = toCreateRequest(
+      form({ name: "Cola", pricePerUnit: " 2.00 ", rows: [row({ name: "Lime" })] }),
+    );
+    expect(req.family.pricePerUnit).toBe("2.00");
   });
 });

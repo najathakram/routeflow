@@ -40,6 +40,7 @@ const type = (label: string | RegExp, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const fillValid = () => {
   type("Family name", "Cola");
+  type("Family price", "2.00"); // required (SA-606i)
   type("Variant 1 name", "Cherry");
   type("Variant 1 price", "1.50");
 };
@@ -239,13 +240,26 @@ describe("CreateFamilyModal", () => {
     expect(copy).toBeDisabled();
   });
 
-  it("B1: a form can never post copyFamilyPrice with no family price (no $0.00 family)", async () => {
+  it("SA-606i: a blank family price is REFUSED with 'Enter the family price.' and nothing is posted (no $0.00 family)", async () => {
     mount();
     fillValid();
+    type("Family price", "");
     expect(screen.getByLabelText(/Copy the family price onto the variants/)).toBeDisabled();
     submit();
-    await waitFor(() => expect(post).toHaveBeenCalled());
-    expect(post.mock.calls[0][1]).not.toHaveProperty("copyFamilyPrice");
+    expect(await screen.findByText("Enter the family price.")).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("the create request ALWAYS carries the trimmed family price", async () => {
+    post.mockResolvedValueOnce({
+      data: { family: { id: "fam1", name: "Cola" }, variants: [{ id: "v1" }] },
+    });
+    mount();
+    fillValid();
+    type("Family price", " 3.25 ");
+    submit();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post.mock.calls[0][1].family).toMatchObject({ pricePerUnit: "3.25" });
   });
 
   it("blank cost hint is visible (SA-606g: blank = inherits the family cost)", () => {
