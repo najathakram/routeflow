@@ -1,4 +1,5 @@
 import type { ProductUnitLevel } from "@routeflow/types";
+import { isUnitPending } from "@routeflow/pricing";
 import {
   applyLineUnit,
   ladderProductOf,
@@ -23,6 +24,8 @@ export interface DefaultUnitLine extends UnitLine {
   productId: string;
   isUnlisted?: boolean;
   startOnDefaultUnit?: boolean;
+  /** #2865 case c: how many default-start taps this PENDING line has recorded (N taps = N of the default unit). */
+  pendingTaps?: number;
   priceEdited?: boolean;
 }
 
@@ -41,7 +44,9 @@ export function keepsDefaultStart(prev: DefaultUnitLine, dflt?: boolean): boolea
 }
 
 /** Fast adds before the ladder loaded: N adds = N of the default unit (a boxed line's qty is total pieces). */
-export function pendingCount(line: UnitLine): number {
+export function pendingCount(line: UnitLine & { pendingTaps?: number }): number {
+  // #2865 case c: the PENDING TAP COUNT is recorded explicitly (never inferred from a quantity in a guessed unit).
+  if (line.pendingTaps != null && line.pendingTaps >= 1) return line.pendingTaps;
   return Math.max(
     1,
     line.unitsPerBox ? (line.boxes ?? Math.round(line.qty / line.unitsPerBox)) : line.qty,
@@ -50,7 +55,8 @@ export function pendingCount(line: UnitLine): number {
 
 /** Still waiting for its default unit. Qty is not a guard (on a boxed line it is total pieces). */
 export function isPendingDefaultUnit(line: DefaultUnitLine): boolean {
-  return line.startOnDefaultUnit === true && !isShapedLine(line);
+  // #2865 case c (SA-632): the shared definition (one predicate for web and mobile, @routeflow/pricing).
+  return isUnitPending({ startOnDefaultUnit: line.startOnDefaultUnit, shaped: isShapedLine(line) });
 }
 
 /**
@@ -73,6 +79,7 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   const next = {
     ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit }),
     startOnDefaultUnit: false,
+    pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
     ...(option.kind !== "pack" && isPendingDefaultUnit(target)
       ? { qty: pendingCount(target) }
@@ -184,6 +191,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
 }
 
 const UNIT_FIELDS = [
+  "pendingTaps",
   "unitLabel",
   "unit",
   "unitsPerBox",

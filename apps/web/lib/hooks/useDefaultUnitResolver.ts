@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useSubscription } from "@/lib/api/billing";
 import { fetchProductUnits, productUnitsKey, UNITS_FLAG } from "@/lib/api/product-units";
@@ -42,6 +42,10 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
+  // #2865 case c (SA-632): the lines whose units ladder FAILED to load (tempIds). A pending line not in this set is
+  // still loading. The controls stay locked either way; a failed line shows the error and a Retry.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+
   const pendingKey = lines
     .filter(isPendingDefaultUnit)
     .map((l) => `${l.tempId}:${pendingCount(l)}`)
@@ -50,8 +54,10 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     if (!pendingKey) return;
     const before = linesRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done }) => {
-      if (live) setLines((cur) => mergeResolvedLines(cur, before, done));
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done, blocked }) => {
+      if (!live) return;
+      setLines((cur) => mergeResolvedLines(cur, before, done));
+      setFailed(new Set(blocked));
     });
     return () => {
       live = false;
@@ -60,7 +66,7 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
   // "Try again" after a blocked submit refetches the units answer first (N10).
-  return useCallback(async (cur: T[]) => {
+  const resolveBeforeSubmit = useCallback(async (cur: T[]) => {
     const fresh = await refreshUnitsAnswer(
       depsRef.current!,
       async () => {
@@ -71,4 +77,21 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     );
     return resolvePendingDefaultUnits(cur, fresh);
   }, []);
+
+  /** Retry from a failed line's own button: the same refetch + resolve path, merged back like the effect does. */
+  const retry = useCallback(async () => {
+    const before = linesRef.current;
+    const { lines: done, blocked } = await resolveBeforeSubmit(before);
+    setLines((cur) => mergeResolvedLines(cur, before, done));
+    setFailed(new Set(blocked));
+  }, [resolveBeforeSubmit, setLines]);
+
+  /** `loading` while the ladder is being fetched, `failed` once it could not be; undefined for a settled line. */
+  const statusFor = useCallback(
+    (line: T): "loading" | "failed" | undefined =>
+      isPendingDefaultUnit(line) ? (failed.has(line.tempId) ? "failed" : "loading") : undefined,
+    [failed],
+  );
+
+  return { resolveBeforeSubmit, retry, statusFor };
 }

@@ -326,3 +326,37 @@ describe("SA-626g N10 + N9 (web): try again refetches the units answer; the read
     expect(d.getUnits).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * #2865 case c (SA-632): N taps before the ladder loads are recorded as a PENDING TAP COUNT, never a quantity in a
+ * guessed unit. On resolve the line is N x the default unit; a failed load keeps the count and the line pending, so a
+ * retry gives N bottles (never cases).
+ */
+describe("pending tap count (case c)", () => {
+  it("3 taps before load -> 3 bottles after (the count, not 3 cases)", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [line({ pendingTaps: 3, qty: 36, boxes: 3 })],
+      deps([BOTTLE, CASE_LEVEL]),
+    );
+    expect(lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3, startOnDefaultUnit: false });
+    expect(lines[0].pendingTaps).toBeUndefined();
+  });
+
+  it("3 taps + a FAILED load: blocked, the line is untouched and still pending with its count; retry -> 3 bottles", async () => {
+    const pendingLine = line({ pendingTaps: 3, qty: 36, boxes: 3 });
+    const failed = await resolvePendingDefaultUnits([pendingLine], deps(new Error("offline")));
+    expect(failed.blocked).toEqual(["t1"]);
+    expect(failed.lines[0]).toBe(pendingLine);
+    expect(isPendingDefaultUnit(failed.lines[0])).toBe(true);
+    const retried = await resolvePendingDefaultUnits(failed.lines, deps([BOTTLE, CASE_LEVEL]));
+    expect(retried.lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("the count wins over any inferred quantity (never derived from a pack-unit qty)", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [line({ pendingTaps: 2, qty: 24, boxes: 2 })],
+      deps([BOTTLE, CASE_LEVEL]),
+    );
+    expect(lines[0].qty).toBe(2);
+  });
+});

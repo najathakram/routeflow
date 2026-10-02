@@ -62,13 +62,29 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
 
   it("Opus #2865 r2: every qty / price handler CONSUMES the flag (qty is total pieces on a boxed line, so the picker cannot guard on it)", () => {
     const slice = (a: string, b: string) => src.slice(src.indexOf(a), src.indexOf(b));
+    // #2865 case c: the six qty handlers are one-liners over the pure editors in lib/line-qty-edit.ts, which
+    // CONSUME the flag on a settled line and REFUSE a pending one (the same array comes back).
+    const editLib = readFileSync(
+      join(__dirname, "..", "..", "..", "..", "lib", "line-qty-edit.ts"),
+      "utf8",
+    );
+    for (const [name, call] of [
+      ["const setQty", "setQtyOnLines"],
+      ["const updateQty", "stepQtyOnLines"],
+      ["const setBoxes", "setBoxesOnLines"],
+      ["const setPieces", "setPiecesOnLines"],
+      ["const setUnitQty", "setUnitQtyOnLines"],
+      ["const setSellBy", "setSellByOnLines"],
+    ] as const) {
+      const handler = src.slice(src.indexOf(name), src.indexOf(name) + 200);
+      expect({ name, delegates: handler.includes(`${call}(prev, tempId`) }).toEqual({
+        name,
+        delegates: true,
+      });
+    }
+    expect(editLib.match(/startOnDefaultUnit: false/g)?.length).toBeGreaterThanOrEqual(6);
+    expect(editLib).toMatch(/isPending\(target\)\) return lines/);
     for (const [name, next] of [
-      ["const setQty", "const updateQty"],
-      ["const updateQty", "const setBoxes"],
-      ["const setBoxes", "const setPieces"],
-      ["const setPieces", "const setUnitQty"],
-      ["const setUnitQty", "const setSellBy"],
-      ["const setSellBy", "/** The effective price tier"],
       ["const stepLineUnit", "const addLineItem"],
       ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
