@@ -1,5 +1,5 @@
 import * as React from "react";
-import { renderWithProviders, screen } from "@/test-utils/render";
+import { renderWithProviders, screen, waitFor } from "@/test-utils/render";
 import { CustomerFormModal } from "./CustomerFormModal";
 
 /**
@@ -50,6 +50,10 @@ const axiosRefusal = (field: string) =>
     },
   });
 
+/** Radix focuses the dialog's first control once it opens; a submit failure happens AFTER that. */
+const openSettled = () =>
+  waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toHaveFocus());
+
 beforeEach(() => {
   createError = null;
   updateError = null;
@@ -64,6 +68,46 @@ describe("CustomerFormModal — refused name (B956)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Request failed with status code 400/)).not.toBeInTheDocument();
     expect(screen.queryByText(/businessName/)).not.toBeInTheDocument();
+  });
+
+  // The form scrolls inside the modal, so a banner at the top is out of view after the address is
+  // filled: a refusal must scroll it into view, focus the refused field and be announced.
+  it("create: scrolls the banner into view, focuses the refused Business name field, and announces it", async () => {
+    const scrollIntoView = jest.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    const ui = <CustomerFormModal isOpen onClose={jest.fn()} mode="add" />;
+    const { rerender } = renderWithProviders(ui); // open first, then SUBMIT fails (as in real use)
+    await openSettled();
+    createError = axiosRefusal("businessName");
+    rerender(ui);
+
+    const banner = screen.getByRole("alert");
+    expect(banner).toHaveTextContent(
+      "Business name can't start with =, +, -, @ or a tab/line break.",
+    );
+    expect(banner).toHaveAttribute("aria-live", "assertive");
+    expect(scrollIntoView).toHaveBeenCalled();
+    expect(scrollIntoView.mock.instances).toContain(banner);
+    expect(screen.getByLabelText(/^Business Name/)).toHaveFocus();
+  });
+
+  it("a refused Contact name focuses the Contact name field", async () => {
+    window.HTMLElement.prototype.scrollIntoView = jest.fn();
+    const ui = <CustomerFormModal isOpen onClose={jest.fn()} mode="add" />;
+    const { rerender } = renderWithProviders(ui);
+    await openSettled();
+    createError = axiosRefusal("contactName");
+    rerender(ui);
+    expect(screen.getByLabelText(/^Contact Name/)).toHaveFocus();
+  });
+
+  it("an ordinary error does NOT steal focus or scroll", () => {
+    const scrollIntoView = jest.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+    createError = new Error("Email or username already taken");
+    renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/^Business Name/)).not.toHaveFocus();
   });
 
   it("update: shows the Contact name copy", () => {
