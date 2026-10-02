@@ -42,6 +42,7 @@ import { RegulatedScopeTabs } from "@/components/RegulatedScopeTabs";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { QuickEditCell, type EditRecord } from "./_components/QuickEditCell";
 import { SectionEditCell } from "./_components/SectionEditCell";
+import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
@@ -1200,6 +1201,7 @@ export default function ProductsPage() {
                 section: sectionFilter,
               }}
             />
+            <NewFamilyButton />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>

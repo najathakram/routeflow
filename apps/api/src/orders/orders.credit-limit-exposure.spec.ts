@@ -26,6 +26,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -85,6 +86,7 @@ describe("OrdersService — credit-limit exposure (D6 / B462, option B)", () => 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: PrismaService, useValue: prisma },
         { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },

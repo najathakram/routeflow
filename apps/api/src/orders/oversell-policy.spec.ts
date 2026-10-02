@@ -1,6 +1,7 @@
 import { UserRole } from "@prisma/client";
 import {
   backorderPiecesForLine,
+  backorderPiecesForEditDelta,
   backorderPiecesForLines,
   orderableAndBackorder,
   parseOversellPolicy,
@@ -235,5 +236,148 @@ describe("orderableAndBackorder", () => {
     [3, true, { orderable: true, backorder: false }],
   ])("stock %p allow %p", (stock, allowOversell, want) => {
     expect(orderableAndBackorder({ stock, allowOversell })).toEqual(want);
+  });
+});
+
+describe("backorderPiecesForLines: negative lines are a caller bug (SA ruling N5)", () => {
+  const line = (qty: number) => ({ qty, boxes: null, pieces: null, unitLabel: "Units" });
+
+  // Pinned by exception CLASS only, never a message.
+  it("a negative line throws a RangeError (not clamped to 0)", () => {
+    expect(() =>
+      backorderPiecesForLines({ lines: [line(-3)], availablePieces: 5, allowOversell: true }),
+    ).toThrow(RangeError);
+  });
+
+  it("[-10, +10] is NOT netted to 0: it throws", () => {
+    expect(() =>
+      backorderPiecesForLines({
+        lines: [line(-10), line(10)],
+        availablePieces: 0,
+        allowOversell: true,
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it("throws even when allowOversell is false (a caller bug is not hidden by the policy)", () => {
+    expect(() =>
+      backorderPiecesForLines({ lines: [line(-1)], availablePieces: 5, allowOversell: false }),
+    ).toThrow(RangeError);
+  });
+
+  it("backorderPiecesForLine inherits it", () => {
+    expect(() =>
+      backorderPiecesForLine({ line: line(-1), availablePieces: 5, allowOversell: true }),
+    ).toThrow(RangeError);
+  });
+
+  it("zero and positive lines still work (a zero line is not negative)", () => {
+    expect(
+      backorderPiecesForLines({
+        lines: [line(0), line(7)],
+        availablePieces: 5,
+        allowOversell: true,
+      }),
+    ).toBe(2);
+  });
+});
+
+describe("backorderPiecesForEditDelta (per-product DELTA from settleStockForEdit)", () => {
+  const m = (o: Record<string, number>) => new Map(Object.entries(o));
+
+  it("an edit raising a line by +5 against 2 available backorders 3", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ p1: 5 }),
+      availableByProduct: m({ p1: 2 }),
+      allowOversell: true,
+    });
+    expect(r.get("p1")).toBe(3);
+  });
+
+  it("a lowered product is 0 and has no effect on another product", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ lowered: -4, raised: 5 }),
+      availableByProduct: m({ lowered: 0, raised: 2 }),
+      allowOversell: true,
+    });
+    expect(r.get("lowered")).toBe(0);
+    expect(r.get("raised")).toBe(3);
+  });
+
+  it("an unchanged product (delta 0) is 0", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ p1: 0 }),
+      availableByProduct: m({ p1: 0 }),
+      allowOversell: true,
+    });
+    expect(r.get("p1")).toBe(0);
+  });
+
+  it("allowOversell=false yields 0 for every product", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ a: 5, b: 9 }),
+      availableByProduct: m({ a: 0, b: 1 }),
+      allowOversell: false,
+    });
+    expect([...r.entries()]).toEqual([
+      ["a", 0],
+      ["b", 0],
+    ]);
+  });
+
+  it("a negative or missing available counts as 0", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ neg: 4, missing: 6 }),
+      availableByProduct: m({ neg: -3 }),
+      allowOversell: true,
+    });
+    expect(r.get("neg")).toBe(4);
+    expect(r.get("missing")).toBe(6);
+  });
+
+  it("enough stock for the raise backorders nothing", () => {
+    const r = backorderPiecesForEditDelta({
+      deltaByProduct: m({ p1: 5 }),
+      availableByProduct: m({ p1: 5 }),
+      allowOversell: true,
+    });
+    expect(r.get("p1")).toBe(0);
+  });
+});
+
+describe("CUSTOMER follows the policy on every non-cron source with exactly one read (C5)", () => {
+  it.each(["staff_entry", "buyer", "promotion", "edit"] as OversellSource[])(
+    "source %s: backorder -> true, off -> false, one read with the customerId",
+    async (source) => {
+      for (const [policy, want] of [
+        ["backorder", true],
+        ["off", false],
+      ] as const) {
+        const { reader, read } = fakeReader(policy);
+        await expect(
+          resolveOversellAllowed(reader, {
+            tenantId: "t1",
+            role: UserRole.CUSTOMER,
+            source,
+            customerId: "c1",
+          }),
+        ).resolves.toBe(want);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(read).toHaveBeenCalledWith({ tenantId: "t1", customerId: "c1" });
+      }
+    },
+  );
+
+  it("template_cron stays true for CUSTOMER with NO read (current behaviour, pending owner question Q6)", async () => {
+    const { reader, read } = fakeReader("off");
+    await expect(
+      resolveOversellAllowed(reader, {
+        tenantId: "t1",
+        role: UserRole.CUSTOMER,
+        source: "template_cron",
+        customerId: "c1",
+      }),
+    ).resolves.toBe(true);
+    expect(read).not.toHaveBeenCalled();
   });
 });

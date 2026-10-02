@@ -29,6 +29,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -101,6 +102,7 @@ describe("OrdersService.updateOrderItems — DRIVER edit-down vs. inline-return 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

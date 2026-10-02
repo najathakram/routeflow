@@ -91,6 +91,7 @@ jest.mock("../common/db-locks", () => {
   return { withAdvisoryLock, LockTimeoutError, LockUnavailableError, __lockEvents: events };
 });
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ForbiddenException, Logger } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -149,6 +150,7 @@ async function buildOrdersService(
 ): Promise<OrdersService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       {
         provide: TenantContextService,
