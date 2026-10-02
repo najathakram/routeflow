@@ -1,3 +1,5 @@
+import { normalizeBoxesPieces } from "./pricing";
+
 /**
  * #2865 case c (SA-632): the ONE definition of a PENDING order line, shared by web and mobile (L-072, no
  * second mirror). A line is pending while its default selling unit has not been resolved: the line was
@@ -166,5 +168,7 @@ export function packQtyForTaps(
 ): { qty: number; boxes?: number; pieces?: number } {
   const n = pendingTapCount(taps, 1);
   const upb = Number(unitsPerBox ?? 0);
-  return upb > 1 ? { boxes: n, pieces: 0, qty: n * upb } : { qty: n };
+  if (upb <= 1) return { qty: n };
+  const split = normalizeBoxesPieces({ boxes: n, pieces: 0, unitsPerBox: upb });
+  return { boxes: split.boxes ?? n, pieces: split.pieces ?? 0, qty: split.qty };
 }

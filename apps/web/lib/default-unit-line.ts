@@ -2,7 +2,6 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import {
   isUnitPending,
   mayMergeResolved,
-  packQtyForTaps,
   pendingResolvePlan,
   pendingTapCount,
   refreshUnitsAnswer as refreshUnitsAnswerShared,
@@ -15,6 +14,7 @@ import {
   sameProductUnit,
   type UnitLine,
 } from "@/lib/order-line-unit";
+import { newLineQty } from "@/app/(dashboard)/orders/_components/add-line-merge";
 import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
 
 /**
@@ -130,7 +130,8 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
 function settleOnPack<T extends DefaultUnitLine>(li: T): T {
   return {
     ...li,
-    ...packQtyForTaps(pendingCount(li), li.unitsPerBox),
+    // web treats ANY non-zero units-per-box as boxed (even 1), so a settled N-pack line is exactly the manual one
+    ...newLineQty(li.unitsPerBox, pendingCount(li)),
     startOnDefaultUnit: false,
     pendingTaps: undefined,
   };

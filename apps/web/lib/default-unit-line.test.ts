@@ -10,6 +10,7 @@ import {
   startLineOnDefault,
 } from "./default-unit-line";
 import { buildUnitOptions } from "./unit-options";
+import { mergeQtyIntoLine } from "@/app/(dashboard)/orders/_components/add-line-merge";
 
 /**
  * SA-626c (tier 1 money), web: the default unit belongs to the LINE. A line flagged `startOnDefaultUnit` (picker tap,
@@ -489,5 +490,15 @@ describe("N3 (SA-632): a settle on the PACK keeps the tap count (N taps = N pack
       deps([BOTTLE], { unitsEnabled: false }),
     );
     expect(one.lines[0]).toMatchObject({ qty: 1 });
+  });
+
+  it("N4: units-per-box = 1 (web treats any non-zero upb as boxed): 3 taps -> {qty 3, boxes 3}, and the next + gives 4 (it is not silently dropped to 2)", async () => {
+    const one = line({ pendingTaps: 3, unitsPerBox: 1, boxes: 1, pieces: 0, qty: 1 });
+    const { lines } = await resolvePendingDefaultUnits(
+      [one],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(lines[0]).toMatchObject({ qty: 3, boxes: 3, pieces: 0, startOnDefaultUnit: false });
+    expect(mergeQtyIntoLine(lines[0], 1)).toMatchObject({ qty: 4, boxes: 4 });
   });
 });
