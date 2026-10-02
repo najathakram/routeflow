@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { pendingResolveKey, pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
 import { useSubscription } from "@/lib/api/billing";
 import { fetchProductUnits, productUnitsKey, UNITS_FLAG } from "@/lib/api/product-units";
 import {
@@ -42,17 +43,28 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   const linesRef = useRef(lines);
   linesRef.current = lines;
 
-  const pendingKey = lines
-    .filter(isPendingDefaultUnit)
-    .map((l) => `${l.tempId}:${pendingCount(l)}`)
-    .join("|");
+  // #2865 case c (SA-632): the lines whose units ladder FAILED to load (tempIds). A pending line not in this set is
+  // still loading. The controls stay locked either way; a failed line shows the error and a Retry.
+  const [blockedReasons, setBlockedReasons] = useState<
+    Readonly<Record<string, PendingBlockReason>>
+  >({});
+  // Retry in flight (LOW): the Retry button shows it and a failed retry returns to the failed state.
+  const [retrying, setRetrying] = useState(false);
+
+  const pendingKey = pendingResolveKey(
+    lines.filter(isPendingDefaultUnit).map((l) => ({ id: l.tempId, count: pendingCount(l) })),
+  );
   useEffect(() => {
     if (!pendingKey) return;
     const before = linesRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done }) => {
-      if (live) setLines((cur) => mergeResolvedLines(cur, before, done));
-    });
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(
+      ({ lines: done, reasons, folds }) => {
+        if (!live) return;
+        setLines((cur) => mergeResolvedLines(cur, before, done, folds));
+        setBlockedReasons(reasons);
+      },
+    );
     return () => {
       live = false;
     };
@@ -60,7 +72,7 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
   // "Try again" after a blocked submit refetches the units answer first (N10).
-  return useCallback(async (cur: T[]) => {
+  const resolveBeforeSubmit = useCallback(async (cur: T[]) => {
     const fresh = await refreshUnitsAnswer(
       depsRef.current!,
       async () => {
@@ -71,4 +83,32 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     );
     return resolvePendingDefaultUnits(cur, fresh);
   }, []);
+
+  /** Retry from a failed line's own button: the same refetch + resolve path, merged back like the effect does. */
+  const retry = useCallback(async () => {
+    const before = linesRef.current;
+    setRetrying(true);
+    try {
+      const { lines: done, reasons, folds } = await resolveBeforeSubmit(before);
+      setLines((cur) => mergeResolvedLines(cur, before, done, folds));
+      setBlockedReasons(reasons);
+    } finally {
+      setRetrying(false);
+    }
+  }, [resolveBeforeSubmit, setLines]);
+
+  /**
+   * `loading` while the units answer or the ladder is still being fetched (the subscription read in flight is NOT a
+   * failure, M1); `failed` once it could not be loaded; undefined for a settled line. The shared rule decides.
+   */
+  const statusFor = useCallback(
+    (line: T): "loading" | "failed" | undefined =>
+      pendingStatus(isPendingDefaultUnit(line), {
+        reason: blockedReasons[line.tempId],
+        subscriptionFailed: sub.isError,
+      }),
+    [blockedReasons, sub.isError],
+  );
+
+  return { resolveBeforeSubmit, retry, statusFor, retrying };
 }

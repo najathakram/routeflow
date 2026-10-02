@@ -73,6 +73,10 @@ export type LineState = {
   unitLabel?: string | null;
   /** #2784 UI-only: the qty a NEW picker-tap line was created with. The default unit applies only while `qty` still equals it (any qty edit ends the default-start; a boxed qty is total pieces, so a fixed `qty <= 1` guard would never match) and no operator price is typed. UnitPickerRow applies it once. */
   startOnDefaultUnit?: number;
+  /** #2865 case c UI-only: how many default-start taps this PENDING line recorded (N taps = N of the default unit on resolve). */
+  pendingTaps?: number;
+  /** #2865 (F3): the scan code that CREATED this pending line; a repeat scan of the same label is a default-unit tap. */
+  pendingCode?: string;
   /** SA-626d: the remembered PACK price stashed while the line sells by a unit (re-applied on an explicit pack pick). */
   packUnitPrice?: number;
   /**

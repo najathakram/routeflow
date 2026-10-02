@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { pendingResolveKey, pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
 import type { LineState } from "../lib/cart-line-state";
 import {
   isPendingDefaultUnit,
@@ -46,17 +47,28 @@ export function useDefaultUnitResolver(
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
-  const pendingKey = Object.entries(items)
-    .filter(([, l]) => isPendingDefaultUnit(l))
-    .map(([id, l]) => `${id}:${l.qty}`)
-    .join("|");
+  // #2865 case c (SA-632): why a pending line is blocked (line ids). A pending line with no reason is still loading, and
+  // so is one whose subscription read is still in flight: only a real failure is "failed" (the shared pendingStatus).
+  const [reasons, setReasons] = useState<Readonly<Record<string, PendingBlockReason>>>({});
+
+  // #2865 (N1): keyed on each pending line's TAP COUNT (a tap no longer moves qty), so a tap that lands during the
+  // ladder fetch re-runs the resolver instead of leaving the line on "loading" forever.
+  const pendingKey = pendingResolveKey(
+    Object.entries(items)
+      .filter(([, l]) => isPendingDefaultUnit(l))
+      .map(([id, l]) => ({ id, count: l.pendingTaps ?? l.qty })),
+  );
   useEffect(() => {
     if (!pendingKey) return;
     const before = itemsRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ items: done }) => {
-      if (live) setItems((cur) => mergeResolvedDefaults(cur, before, done));
-    });
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(
+      ({ items: done, reasons: why }) => {
+        if (!live) return;
+        setItems((cur) => mergeResolvedDefaults(cur, before, done));
+        setReasons(why);
+      },
+    );
     return () => {
       live = false;
     };
@@ -64,7 +76,7 @@ export function useDefaultUnitResolver(
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
   // "Try again" after a blocked submit refetches the units answer first (N10).
-  return useCallback(async (cur: Items) => {
+  const resolveBeforeSubmit = useCallback(async (cur: Items) => {
     const fresh = await refreshUnitsAnswer(
       depsRef.current!,
       async () => {
@@ -75,4 +87,16 @@ export function useDefaultUnitResolver(
     );
     return resolvePendingDefaultUnits(cur, fresh);
   }, []);
+
+  /** `loading` while the units answer or the ladder is being fetched, `failed` once it could not be; undefined if settled. */
+  const statusFor = useCallback(
+    (id: string, line: LineState | undefined): "loading" | "failed" | undefined =>
+      pendingStatus(isPendingDefaultUnit(line), {
+        reason: reasons[id],
+        subscriptionFailed: sub.isError,
+      }),
+    [reasons, sub.isError],
+  );
+
+  return { resolveBeforeSubmit, statusFor };
 }

@@ -44,15 +44,21 @@ function run(code: string, over: Partial<Parameters<typeof makeScanHandler<P>>[0
 
 describe("scan ladder: shared code starts on the default unit (SA-626)", () => {
   it("a shared code asks the screen to start on the default unit", async () => {
-    expect(await run(SHARED_CODE)).toEqual([{ level: "BOX", opts: { startOnDefault: true } }]);
+    expect(await run(SHARED_CODE)).toEqual([
+      { level: "BOX", opts: { startOnDefault: true, code: SHARED_CODE } },
+    ]);
+  });
+
+  it("every accept carries the scanned code (a repeat of the SAME label is told apart from another)", async () => {
+    expect((await run(PIECE_CODE))[0].opts).toMatchObject({ code: PIECE_CODE });
   });
 
   it("a unit-only code does not", async () => {
-    expect(await run(PIECE_CODE)).toEqual([{ level: "UNIT", opts: undefined }]);
+    expect(await run(PIECE_CODE)).toEqual([{ level: "UNIT", opts: { code: PIECE_CODE } }]);
   });
 
   it("a box-only code does not", async () => {
-    expect(await run(BOX_SKU)).toEqual([{ level: "BOX", opts: undefined }]);
+    expect(await run(BOX_SKU)).toEqual([{ level: "BOX", opts: { code: BOX_SKU } }]);
   });
 
   it("the server-resolved hit follows the same rule", async () => {
@@ -61,7 +67,7 @@ describe("scan ladder: shared code starts on the default unit (SA-626)", () => {
       source: "barcode",
     });
     expect(await run(SHARED_CODE, { products: [], resolve })).toEqual([
-      { level: "BOX", opts: { startOnDefault: true } },
+      { level: "BOX", opts: { startOnDefault: true, code: SHARED_CODE } },
     ]);
   });
 });

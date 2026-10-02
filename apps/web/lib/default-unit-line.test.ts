@@ -10,6 +10,7 @@ import {
   startLineOnDefault,
 } from "./default-unit-line";
 import { buildUnitOptions } from "./unit-options";
+import { mergeQtyIntoLine } from "@/app/(dashboard)/orders/_components/add-line-merge";
 
 /**
  * SA-626c (tier 1 money), web: the default unit belongs to the LINE. A line flagged `startOnDefaultUnit` (picker tap,
@@ -324,5 +325,180 @@ describe("SA-626g N10 + N9 (web): try again refetches the units answer; the read
     expect(blocked).toEqual([]);
     expect(lines[0]!.startOnDefaultUnit).toBe(false);
     expect(d.getUnits).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #2865 case c (SA-632): N taps before the ladder loads are recorded as a PENDING TAP COUNT, never a quantity in a
+ * guessed unit. On resolve the line is N x the default unit; a failed load keeps the count and the line pending, so a
+ * retry gives N bottles (never cases).
+ */
+describe("pending tap count (case c)", () => {
+  it("3 taps before load -> 3 bottles after (the count, not 3 cases)", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [line({ pendingTaps: 3, qty: 36, boxes: 3 })],
+      deps([BOTTLE, CASE_LEVEL]),
+    );
+    expect(lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3, startOnDefaultUnit: false });
+    expect(lines[0].pendingTaps).toBeUndefined();
+  });
+
+  it("3 taps + a FAILED load: blocked, the line is untouched and still pending with its count; retry -> 3 bottles", async () => {
+    const pendingLine = line({ pendingTaps: 3, qty: 36, boxes: 3 });
+    const failed = await resolvePendingDefaultUnits([pendingLine], deps(new Error("offline")));
+    expect(failed.blocked).toEqual(["t1"]);
+    expect(failed.lines[0]).toBe(pendingLine);
+    expect(isPendingDefaultUnit(failed.lines[0])).toBe(true);
+    const retried = await resolvePendingDefaultUnits(failed.lines, deps([BOTTLE, CASE_LEVEL]));
+    expect(retried.lines[0]).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("the count wins over any inferred quantity (never derived from a pack-unit qty)", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [line({ pendingTaps: 2, qty: 24, boxes: 2 })],
+      deps([BOTTLE, CASE_LEVEL]),
+    );
+    expect(lines[0].qty).toBe(2);
+  });
+});
+
+describe("LOW: a twin-fold never leaves a line stuck pending; M1: reasons say loading vs failed", () => {
+  it("resolving a pending line that has a settled twin folds into it and leaves NO pending line", () => {
+    const bottleOpt = buildUnitOptions(
+      { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" } as never,
+      [BOTTLE, CASE_LEVEL],
+      1,
+    ).find((o) => o.value === "Bottle")!;
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
+    const folded = applyUnitToLines([line({ pendingTaps: 2 }), twin], "t1", bottleOpt, false, 1);
+    expect(folded.some(isPendingDefaultUnit)).toBe(false);
+    expect(folded).toHaveLength(1);
+  });
+
+  it("an unknown units answer is blocked as 'units-unknown' (loading), a failed ladder as 'ladder-failed'", async () => {
+    const unknown = await resolvePendingDefaultUnits(
+      [line()],
+      deps([BOTTLE], { unitsKnown: false }),
+    );
+    expect(unknown.reasons).toEqual({ t1: "units-unknown" });
+    const failed = await resolvePendingDefaultUnits([line()], deps(new Error("offline")));
+    expect(failed.reasons).toEqual({ t1: "ladder-failed" });
+  });
+});
+
+describe("TWIN-FOLD (SA-632): a pending line that folds into a settled twin leaves NO pending line after the merge", () => {
+  it("resolve + merge into the CURRENT lines removes the folded line and adds its taps to the twin (2 taps + 3 Bottles = 5)", async () => {
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
+    const before = [line({ pendingTaps: 2 }), twin];
+    const done = await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE_LEVEL]));
+    const merged = mergeResolvedLines(before, before, done.lines, done.folds);
+    expect(merged.some(isPendingDefaultUnit)).toBe(false);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ tempId: "t2", unitLabel: "Bottle", qty: 5 });
+  });
+
+  it("a tap that landed on the folded line while the ladder loaded is NOT lost: the merge skips, the resolver re-runs on the new count", async () => {
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
+    const before = [line({ pendingTaps: 1 }), twin];
+    const done = await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE_LEVEL]));
+    const cur = [line({ pendingTaps: 2 }), twin]; // a 2nd tap landed during the fetch
+    expect(mergeResolvedLines(cur, before, done.lines, done.folds)).toBe(cur); // stale: skipped
+    const again = await resolvePendingDefaultUnits(cur, deps([BOTTLE, CASE_LEVEL]));
+    const merged = mergeResolvedLines(cur, cur, again.lines, again.folds);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ unitLabel: "Bottle", qty: 5 });
+  });
+});
+
+describe("N3 (SA-632): a settle on the PACK keeps the tap count (N taps = N packs, never one)", () => {
+  const taps3 = () => line({ pendingTaps: 3 }); // 3 default-start taps on a case-packed line (12 per case)
+  const THREE_PACKS = { boxes: 3, pieces: 0, qty: 36, startOnDefaultUnit: false };
+
+  it("no flagged non-pack default on the ladder: 3 taps -> 3 PACKS (3 cases), not one", async () => {
+    const noDefault = [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" }), CASE_LEVEL];
+    const { lines } = await resolvePendingDefaultUnits([taps3()], deps(noDefault));
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+    expect(lines[0].pendingTaps).toBeUndefined();
+    expect(lines[0].unitLabel).toBeUndefined(); // still the pack
+  });
+
+  it("units OFF (known): 3 taps -> 3 PACKS", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [taps3()],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+  });
+
+  it("a role that never sells by a unit (not staff): 3 taps -> 3 PACKS", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [taps3()],
+      deps([BOTTLE], { isStaff: false }),
+    );
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+  });
+
+  it("startLineOnDefault with no default option offered settles on the pack with the count too", () => {
+    const out = startLineOnDefault(
+      taps3(),
+      [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" })],
+      1,
+    );
+    expect(out).toMatchObject(THREE_PACKS);
+  });
+
+  it("a plain (non-case) line: 3 taps -> qty 3; ONE tap is unchanged (one pack)", async () => {
+    const plain = (taps: number) =>
+      line({
+        pendingTaps: taps,
+        unitsPerBox: undefined,
+        boxes: undefined,
+        pieces: undefined,
+        qty: 1,
+      });
+    const three = await resolvePendingDefaultUnits(
+      [plain(3)],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(three.lines[0]).toMatchObject({ qty: 3, startOnDefaultUnit: false });
+    const one = await resolvePendingDefaultUnits(
+      [plain(1)],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(one.lines[0]).toMatchObject({ qty: 1 });
+  });
+
+  it("N4: units-per-box = 1 (web treats any non-zero upb as boxed): 3 taps -> {qty 3, boxes 3}, and the next + gives 4 (it is not silently dropped to 2)", async () => {
+    const one = line({ pendingTaps: 3, unitsPerBox: 1, boxes: 1, pieces: 0, qty: 1 });
+    const { lines } = await resolvePendingDefaultUnits(
+      [one],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(lines[0]).toMatchObject({ qty: 3, boxes: 3, pieces: 0, startOnDefaultUnit: false });
+    expect(mergeQtyIntoLine(lines[0], 1)).toMatchObject({ qty: 4, boxes: 4 });
   });
 });

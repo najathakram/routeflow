@@ -1,11 +1,20 @@
 import type { ProductUnitLevel } from "@routeflow/types";
 import {
+  isUnitPending,
+  mayMergeResolved,
+  pendingResolvePlan,
+  pendingTapCount,
+  refreshUnitsAnswer as refreshUnitsAnswerShared,
+  type PendingBlockReason,
+} from "@routeflow/pricing";
+import {
   applyLineUnit,
   ladderProductOf,
   mergeSameLine,
   sameProductUnit,
   type UnitLine,
 } from "@/lib/order-line-unit";
+import { newLineQty } from "@/app/(dashboard)/orders/_components/add-line-merge";
 import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
 
 /**
@@ -15,6 +24,9 @@ import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-
  * OrderLineUnitPicker resolves through the same predicate and writer, so there is one rule and no second copy.
  */
 
+/** #2865 (SA-632 H2): the visible refusal of a scan of a DIFFERENT level while a line's default unit is loading. */
+export const UNITS_LOADING_SCAN_MESSAGE = "Units are still loading. Scan again in a moment";
+
 type Tier = number;
 
 /** The line fields the rule reads (structurally satisfied by the modal's LineItem). */
@@ -23,6 +35,8 @@ export interface DefaultUnitLine extends UnitLine {
   productId: string;
   isUnlisted?: boolean;
   startOnDefaultUnit?: boolean;
+  /** #2865 case c: how many default-start taps this PENDING line has recorded (N taps = N of the default unit). */
+  pendingTaps?: number;
   priceEdited?: boolean;
 }
 
@@ -41,22 +55,31 @@ export function keepsDefaultStart(prev: DefaultUnitLine, dflt?: boolean): boolea
 }
 
 /** Fast adds before the ladder loaded: N adds = N of the default unit (a boxed line's qty is total pieces). */
-export function pendingCount(line: UnitLine): number {
-  return Math.max(
-    1,
+export function pendingCount(line: UnitLine & { pendingTaps?: number }): number {
+  // #2865 case c: the PENDING TAP COUNT is recorded explicitly (never inferred from a quantity in a guessed unit).
+  return pendingTapCount(
+    line.pendingTaps,
     line.unitsPerBox ? (line.boxes ?? Math.round(line.qty / line.unitsPerBox)) : line.qty,
   );
 }
 
 /** Still waiting for its default unit. Qty is not a guard (on a boxed line it is total pieces). */
 export function isPendingDefaultUnit(line: DefaultUnitLine): boolean {
-  return line.startOnDefaultUnit === true && !isShapedLine(line);
+  // #2865 case c (SA-632): the shared definition (one predicate for web and mobile, @routeflow/pricing).
+  return isUnitPending({ startOnDefaultUnit: line.startOnDefaultUnit, shaped: isShapedLine(line) });
 }
 
 /**
  * The ONE writer of a chosen unit on an order's lines (the picker's onChange and the default start): switches the line,
  * CONSUMES the default-start flag, and folds into a twin line of the same product + unit.
  */
+/** One line folded into a twin of the same product + unit while resolving (the resolved line, before it disappeared). */
+export interface UnitFold<T> {
+  from: string;
+  into: string;
+  add: T;
+}
+
 export function applyUnitToLines<T extends DefaultUnitLine>(
   prev: T[],
   tempId: string,
@@ -64,8 +87,18 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   refresh: boolean,
   tier: Tier,
 ): T[] {
+  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier).lines;
+}
+
+export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
+  prev: T[],
+  tempId: string,
+  option: UnitOption,
+  refresh: boolean,
+  tier: Tier,
+): { lines: T[]; fold?: UnitFold<T> } {
   const target = prev.find((li) => li.tempId === tempId);
-  if (!target) return prev;
+  if (!target) return { lines: prev };
   // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount can never re-apply the default over
   // the operator's choice (Opus #2865 B1).
   // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
@@ -73,16 +106,35 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   const next = {
     ...applyLineUnit(target, option, { tier, keepQty: refresh || sameUnit }),
     startOnDefaultUnit: false,
+    pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); any other choice resets to 1, as always.
     ...(option.kind !== "pack" && isPendingDefaultUnit(target)
       ? { qty: pendingCount(target) }
       : {}),
   };
   const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-  if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-  return prev
-    .filter((li) => li.tempId !== tempId)
-    .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+  if (!twin) return { lines: prev.map((li) => (li.tempId === tempId ? next : li)) };
+  return {
+    lines: prev
+      .filter((li) => li.tempId !== tempId)
+      .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li)),
+    fold: { from: tempId, into: twin.tempId, add: next },
+  };
+}
+
+/**
+ * #2865 (N3): a pending line whose default unit IS the pack (nothing flagged, units off, a role that never sells by a
+ * unit) settles on the PACK with the TAP COUNT it recorded: N taps = N packs, never one. The shared pricing rule decides
+ * the quantity; the flag and the count are consumed.
+ */
+function settleOnPack<T extends DefaultUnitLine>(li: T): T {
+  return {
+    ...li,
+    // web treats ANY non-zero units-per-box as boxed (even 1), so a settled N-pack line is exactly the manual one
+    ...newLineQty(li.unitsPerBox, pendingCount(li)),
+    startOnDefaultUnit: false,
+    pendingTaps: undefined,
+  };
 }
 
 /** The default-unit option for this line's ladder, or undefined (stay on the pack). */
@@ -107,7 +159,7 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
   const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
-  return (only as T | undefined) ?? { ...line, startOnDefaultUnit: false };
+  return (only as T | undefined) ?? settleOnPack(line);
 }
 
 /** Only STAFF may sell by a unit (the server's assertMayUseUnits): mirrors the mobile copy (SA-626f). */
@@ -126,26 +178,12 @@ export interface DefaultUnitDeps {
   tierFor: (productId: string) => Tier;
 }
 
-/**
- * "Try again" on the blocked message: a STAFF caller whose units answer is still unknown (the subscription read failed or
- * never settled) REFETCHES it instead of staying stuck on the stale failure (SA-626g N10). A known answer, a non-staff
- * caller, or a refetch that fails again leave the deps as they were, so the line stays blocked, never the pack.
- */
-export async function refreshUnitsAnswer(
+/** "Try again" on the blocked message: the shared rule (@routeflow/pricing), kept under its old name for callers. */
+export const refreshUnitsAnswer: (
   deps: DefaultUnitDeps,
   refetch: () => Promise<{ isSuccess: boolean; flags: readonly string[] }>,
   unitsFlag: string,
-): Promise<DefaultUnitDeps> {
-  if (!deps.isStaff || deps.unitsKnown) return deps;
-  try {
-    const r = await refetch();
-    return r.isSuccess
-      ? { ...deps, unitsKnown: true, unitsEnabled: r.flags.includes(unitsFlag) }
-      : deps;
-  } catch {
-    return deps;
-  }
-}
+) => Promise<DefaultUnitDeps> = refreshUnitsAnswerShared;
 
 /**
  * Resolves every pending line, fetching the ladder when it is not cached. A line whose ladder cannot be loaded is
@@ -154,36 +192,52 @@ export async function refreshUnitsAnswer(
 export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
   lines: T[],
   deps: DefaultUnitDeps,
-): Promise<{ lines: T[]; blocked: string[] }> {
+): Promise<{
+  lines: T[];
+  blocked: string[];
+  reasons: Record<string, PendingBlockReason>;
+  folds: UnitFold<T>[];
+}> {
   let out = lines;
+  const folds: UnitFold<T>[] = [];
   const blocked: string[] = [];
+  const reasons: Record<string, PendingBlockReason> = {};
+  const block = (id: string, reason: PendingBlockReason) => {
+    blocked.push(id);
+    reasons[id] = reason;
+  };
   for (const line of lines) {
     if (!isPendingDefaultUnit(line)) continue;
-    if (line.isUnlisted || !deps.isStaff || (deps.unitsKnown && !deps.unitsEnabled)) {
-      out = out.map((li) =>
-        li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
-      );
+    // #2865 (SA-632 M4): the per-line plan is the shared rule (@routeflow/pricing).
+    const plan = pendingResolvePlan({ ...deps, unlisted: line.isUnlisted });
+    if (plan.plan === "settle") {
+      out = out.map((li) => (li.tempId === line.tempId ? settleOnPack(li) : li));
       continue;
     }
-    if (!deps.unitsKnown) {
-      blocked.push(line.tempId);
+    if (plan.plan === "blocked") {
+      block(line.tempId, plan.reason);
       continue;
     }
     try {
       const units = await deps.getUnits(line.productId);
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
-      out = option
-        ? applyUnitToLines(out, line.tempId, option, false, tier)
-        : out.map((li) => (li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li));
+      if (option) {
+        const applied = applyUnitToLinesDetailed(out, line.tempId, option, false, tier);
+        out = applied.lines;
+        if (applied.fold) folds.push(applied.fold);
+      } else {
+        out = out.map((li) => (li.tempId === line.tempId ? settleOnPack(li) : li));
+      }
     } catch {
-      blocked.push(line.tempId);
+      block(line.tempId, "ladder-failed");
     }
   }
-  return { lines: out, blocked };
+  return { lines: out, blocked, reasons, folds };
 }
 
 const UNIT_FIELDS = [
+  "pendingTaps",
   "unitLabel",
   "unit",
   "unitsPerBox",
@@ -211,13 +265,43 @@ export function mergeResolvedLines<T extends DefaultUnitLine>(
   cur: T[],
   before: T[],
   done: T[],
+  folds: ReadonlyArray<UnitFold<T>> = [],
 ): T[] {
   let out = cur;
+  // A pending line that FOLDED into a twin while resolving is gone from `done`: take it out of the current lines and add
+  // its resolved count to the twin, or it would sit on "loading" forever (and keep Create Order disabled).
+  for (const f of folds) {
+    const b = before.find((li) => li.tempId === f.from);
+    const c = out.find((li) => li.tempId === f.from);
+    const into = out.find((li) => li.tempId === f.into);
+    if (
+      !b ||
+      !into ||
+      !mayMergeResolved({
+        cur: c && { startOnDefaultUnit: c.startOnDefaultUnit, shaped: isShapedLine(c) },
+        curCount: c ? pendingCount(c) : 0,
+        beforeCount: pendingCount(b),
+        changed: true,
+      })
+    )
+      continue;
+    out = out
+      .filter((li) => li.tempId !== f.from)
+      .map((li) => (li.tempId === f.into ? mergeSameLine(li, f.add) : li));
+  }
   for (const d of done) {
     const b = before.find((li) => li.tempId === d.tempId);
     const c = out.find((li) => li.tempId === d.tempId);
     // still pending AND the same count: a 2nd fast add that landed while this resolved must not be overwritten
-    if (!b || d === b || !c || !isPendingDefaultUnit(c) || pendingCount(c) !== pendingCount(b))
+    if (
+      !b ||
+      !mayMergeResolved({
+        cur: c && { startOnDefaultUnit: c.startOnDefaultUnit, shaped: isShapedLine(c) },
+        curCount: c ? pendingCount(c) : 0,
+        beforeCount: pendingCount(b),
+        changed: d !== b,
+      })
+    )
       continue;
     // only the unit fields: a note (or any other edit) typed while the units loaded must survive the merge (N3)
     out = out.map((li) => (li.tempId === d.tempId ? { ...li, ...pickUnitFields(d) } : li));

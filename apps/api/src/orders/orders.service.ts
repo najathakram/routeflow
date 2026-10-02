@@ -48,7 +48,11 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
-import { atStopConflict } from "./at-stop-conflicts";
+import {
+  atStopConflict,
+  CHANGE_WINDOW_ORDER_STATUS,
+  CHANGE_WINDOW_RUN_NOT_ACTIVE,
+} from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
@@ -4607,10 +4611,10 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+      throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
     }
     if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+      throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
     }
     if (
       order.routeRunStop != null &&
@@ -4745,10 +4749,10 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         if (!live) throw new NotFoundException("Order not found");
         if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+          throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
         }
         if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+          throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
         }
         if (
           live.routeRunStop != null &&
