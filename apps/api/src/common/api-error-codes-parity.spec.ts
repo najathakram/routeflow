@@ -33,7 +33,8 @@ function readShared(): Record<string, unknown> {
 }
 
 const CONSTANTS_FILE = path.join("apps", "api", "src", "common", "api-error-codes.ts");
-const SCAN_ROOTS = ["apps/api/src", "apps/web", "apps/mobile"];
+const SHARED_CONSTANTS_FILE = path.join("packages", "types", "api", "error-codes.ts");
+const SCAN_ROOTS = ["apps/api/src", "apps/web", "apps/mobile", "packages"];
 const SKIP_DIRS = new Set([
   "node_modules",
   ".next",
@@ -94,7 +95,7 @@ describe("API error codes: local copy = shared list (#2163, L-072)", () => {
     expect(stub.API_ERROR_CODES).toEqual(readShared());
   });
 
-  it("the scan actually covered all three apps (guards a path typo turning the scan vacuous)", () => {
+  it("the scan actually covered all three apps and the packages (guards a path typo turning the scan vacuous)", () => {
     for (const root of SCAN_ROOTS) {
       // `rel` uses the platform separator (\ on win32): compare against the same form.
       const platformRoot = path.join(...root.split("/"));
@@ -206,6 +207,34 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
 const CONSUMER_ALLOWLIST_TOTAL = 75;
 
 /**
+ * B987-D: literals in packages/ that CANNOT use the constants because a value import of `@routeflow/types` is impossible there.
+ * Both are compiled CJS packages (`tsc` to dist, `main: ./dist/index.js`); `@routeflow/types` has no build step (its entry is
+ * raw TypeScript), so a value import would emit a `require("@routeflow/types")` from dist that node cannot parse. packages/pricing
+ * enforces this itself (`no-runtime-types-import.spec.ts`, SA-478a: the API loads pricing's dist at runtime); packages/returns
+ * is the same build shape and today imports types as `import type` only. SHRINK-ONLY: an entry whose file no longer spells the
+ * code fails (delete it), the total is pinned, and every entry states why. Everything else under packages/ uses the constants.
+ */
+const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
+  "packages/pricing/src/money-invariants.ts": {
+    codes: ["MONEY_INVARIANT"],
+    reason:
+      "MoneyInvariantError's `code` field; pricing's dist is loaded by the API at runtime (SA-478a, no value import of @routeflow/types)",
+  },
+  "packages/returns/src/inline-return-state.ts": {
+    codes: [
+      "ADDON_GATE",
+      "PLAN_GATE",
+      "PLAN_GATE_UNAVAILABLE",
+      "RETURN_REFUND_OVER_LINE_HEADROOM",
+      "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+    ],
+    reason:
+      "compiled CJS package with type-only imports of @routeflow/types; a value import would require the raw-TS package from dist",
+  },
+};
+const PACKAGE_ALLOWLIST_TOTAL = 6;
+
+/**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
  * code, so a bare `"READ_ONLY"` in these API files is the status. The one error-code use (the guard's
  * 403 body) must still go through the constant (pinned below).
@@ -251,9 +280,13 @@ describe("API error codes: no bare string literal in production source (#2163)",
     (key, code) => {
       const literal = new RegExp(`["'\`]${code}["'\`]`);
       const offenders = sources
-        .filter((s) => s.rel !== CONSTANTS_FILE && literal.test(s.text))
+        .filter(
+          (s) =>
+            s.rel !== CONSTANTS_FILE && s.rel !== SHARED_CONSTANTS_FILE && literal.test(s.text),
+        )
         .map((s) => posix(s.rel))
         .filter((rel) => !(CONSUMER_ALLOWLIST[rel] ?? []).includes(code))
+        .filter((rel) => !(PACKAGE_ALLOWLIST[rel]?.codes ?? []).includes(code))
         .filter((rel) => !(key === "READ_ONLY" && READ_ONLY_STATUS_FILES.includes(rel)))
         .filter(
           (rel) => !(key === "SELLING_RESTRICTED" && SELLING_RESTRICTED_REASON_FILES.includes(rel)),
@@ -265,6 +298,20 @@ describe("API error codes: no bare string literal in production source (#2163)",
       expect(offenders).toEqual([]);
     },
   );
+
+  it("every package allowlist entry is still a real literal use, states its reason, and the total is pinned (shrink-only)", () => {
+    let total = 0;
+    for (const [rel, entry] of Object.entries(PACKAGE_ALLOWLIST)) {
+      const src = sources.find((s) => posix(s.rel) === rel);
+      expect(src).toBeDefined();
+      expect(entry.reason.length).toBeGreaterThan(20);
+      for (const code of entry.codes) {
+        total += 1;
+        expect(new RegExp(`["'\`]${code}["'\`]`).test(src?.text ?? "")).toBe(true);
+      }
+    }
+    expect(total).toBe(PACKAGE_ALLOWLIST_TOTAL);
+  });
 
   it("every consumer allowlist entry is still a real literal use (shrink-only), and the total is pinned", () => {
     let total = 0;
@@ -329,8 +376,13 @@ describe("API error codes: no bare string literal in production source (#2163)",
     }
     expect(codeLiteral.test('code: "ONBOARDING_STEP_WAIVED"')).toBe(true);
     expect(codeLiteral.test("body.code === 'ONBOARDING_STEP_WAIVED'")).toBe(true);
+    expect(codeLiteral.test('{ "code": "ONBOARDING_STEP_WAIVED" }')).toBe(true);
+    expect(codeLiteral.test('"ONBOARDING_STEP_WAIVED" === code')).toBe(true);
+    expect(codeLiteral.test("'ONBOARDING_STEP_WAIVED' !== err.response?.data?.code")).toBe(true);
     expect(codeLiteral.test('ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED"')).toBe(false);
     expect(codeLiteral.test('action: "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    expect(codeLiteral.test('action === "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    expect(codeLiteral.test('"ONBOARDING_STEP_WAIVED" === auditAction')).toBe(false);
     const svc = sources.find(
       (s) => posix(s.rel) === "apps/api/src/onboarding/onboarding.service.ts",
     );
