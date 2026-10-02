@@ -408,6 +408,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
   it("the writer FILE list is frozen (a new writer must be added here with its registry rows)", () => {
     expect(writers.map((w) => w.rel).sort()).toEqual([
       "email/email.service.ts",
+      "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
       "route-optimization/route-optimization.service.ts",
       "system-config/settings.controller.ts",
@@ -471,6 +472,7 @@ describe("settings registry — structural source scan of every SystemConfig wri
     const direct = writers.filter((w) => PRISMA_WRITE.test(w.src)).map((w) => w.rel);
     expect(direct.sort()).toEqual([
       "email/email.service.ts",
+      "messaging/staff-email-settings.service.ts",
       "restrictions-settings/restrictions-settings.service.ts",
       "system-config/system-config.service.ts",
     ]);
@@ -488,6 +490,21 @@ describe("settings registry — structural source scan of every SystemConfig wri
   it("finds email.sendingDomain (defined as a constant in email.service.ts)", () => {
     const email = writers.find((w) => w.rel === "email/email.service.ts")!;
     expect(scanKeys(email.src, NAMESPACES)).toContain("email.sendingDomain");
+  });
+
+  it("messaging/staff-email-settings writes ONE key, from one constant, and it is registered", () => {
+    const w = writers.find((x) => x.rel === "messaging/staff-email-settings.service.ts")!;
+    expect(w.src).toMatch(/const STAFF_CC_KEY = "notifications\.staffCc"/);
+    // every `key:` in the file is that constant (no second key can slip in)
+    const keyArgs = [...w.src.matchAll(/\bkey\s*:\s*([^,}\s]+)/g)].map((m) => m[1]);
+    expect(keyArgs.length).toBeGreaterThan(0);
+    expect(new Set(keyArgs)).toEqual(new Set(["STAFF_CC_KEY"]));
+    expect(scanKeys(w.src, NAMESPACES)).toEqual(["notifications.staffCc"]);
+    expect(SETTINGS_REGISTRY.find((r) => r.key === "notifications.staffCc")).toMatchObject({
+      home: "systemConfig",
+      kind: "config",
+      status: "pending WS4",
+    });
   });
 
   it("planted writers are detected: the cast form, a renamed field, createMany, raw SQL", () => {
