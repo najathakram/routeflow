@@ -121,6 +121,10 @@
 //                    INTAKE_SECTION_NOT_REVIEWABLE, ONBOARDING_BOOKING_HAS_CASE, ONBOARDING_CASE_CLOSED, ONBOARDING_CASE_NOT_OPEN,
 //                    ONBOARDING_GATE_BLOCKED, ONBOARDING_SIGN_OFF_NOT_AVAILABLE, ONBOARDING_STEP_BEHIND_GATE, ONBOARDING_STEP_NOT_PENDING,
 //                    ONBOARDING_STEP_NOT_REACHED, ONBOARDING_STEP_WAIVED (value == key, byte-identical to what was sent).
+//   B987-D — regulated / common refusals, now named here (value == key, byte-identical to what was sent): MONEY_INVARIANT (the 400 of
+//                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
+//                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
+//                    report and the parked-reversal resolver), REGULATED_POD_REQUIRED (the 400s of the regulated proof-of-delivery guard).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -266,6 +270,10 @@ export const API_ERROR_CODES = {
   ONBOARDING_STEP_NOT_PENDING: "ONBOARDING_STEP_NOT_PENDING",
   ONBOARDING_STEP_NOT_REACHED: "ONBOARDING_STEP_NOT_REACHED",
   ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED",
+  MONEY_INVARIANT: "MONEY_INVARIANT",
+  PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
+  PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
+  REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
