@@ -1,11 +1,11 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Badge, Button, EmptyState, Skeleton, useToast } from "@routeflow/ui/web";
 import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
-import { unitsLabel } from "@/lib/stock-label";
 import { fmtCalendarDate } from "@/lib/formatting";
 import {
   usePurchaseOrders,
@@ -13,20 +13,14 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import {
-  resolveStoredPOLineAmounts,
-  type POItem,
-  type POStatus,
-  type PurchaseOrder,
-  type Supplier,
-  linePack,
-} from "./purchase-orders-shared";
+import type { POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
 import { isEditable } from "./purchase-orders-edit";
+import { PurchaseOrderReadOnlyLines } from "./PurchaseOrderReadOnlyLines";
 
-function poStatusBadge(status: POStatus) {
+export function poStatusBadge(status: POStatus) {
   const map: Record<
     POStatus,
     { variant: "neutral" | "info" | "warning" | "success"; label: string }
@@ -75,60 +69,7 @@ function PODetailRow({
     <tr>
       <td colSpan={8} className="px-6 py-4 bg-surface-raised/40">
         <div className="space-y-3">
-          {/* Line items */}
-          <div className="rounded-lg border border-surface-border overflow-hidden bg-white">
-            <table className="w-full text-xs">
-              <thead className="bg-surface-raised text-navy/70">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-right font-medium">Qty</th>
-                  <th className="px-3 py-2 text-right font-medium">Unit Cost</th>
-                  <th className="px-3 py-2 text-right font-medium">Received</th>
-                  <th className="px-3 py-2 text-right font-medium">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {(po.items ?? []).map((item: POItem) => {
-                  const upb = linePack(
-                    item,
-                    Number(catalogById.get(item.productId)?.unitsPerBox ?? 0),
-                  );
-                  const isBoxed = upb > 1;
-                  const ordered = Number(item.qtyOrdered ?? 0);
-                  const received = Number(item.qtyReceived ?? 0);
-                  // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
-                  // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
-                  const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
-                  return (
-                    <tr key={item.id}>
-                      <td className="px-3 py-2 font-medium text-navy">
-                        {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {isBoxed ? unitsLabel(ordered, upb) : ordered}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
-                        {isBoxed && <span className="text-navy/30"> /pc</span>}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {item.qtyReceived != null ? (
-                          isBoxed ? (
-                            unitsLabel(received, upb)
-                          ) : (
-                            received
-                          )
-                        ) : (
-                          <span className="text-navy/30">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <PurchaseOrderReadOnlyLines items={po.items ?? []} catalogById={catalogById} />
 
           {/* Notes */}
           {po.notes && (
@@ -186,9 +127,15 @@ const PAGE_SIZE = 20;
 export function PurchaseOrdersTab({
   suppliers,
   products,
+  headerExtra,
+  highlightId,
 }: {
   suppliers: Supplier[];
   products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  /** Extra header action(s), rendered before "New purchase order". */
+  headerExtra?: React.ReactNode;
+  /** A PO to mark as just drafted: filters clear and the list returns to page 1 so it is on screen. */
+  highlightId?: string | null;
 }) {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [supplierFilter, setSupplierFilter] = React.useState("");
@@ -225,6 +172,15 @@ export function PurchaseOrdersTab({
     setPage(1);
   };
 
+  React.useEffect(() => {
+    if (!highlightId) return;
+    setStatusFilter("");
+    setSupplierFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  }, [highlightId]);
+
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
   const total: number = poData?.meta?.total ?? orders.length;
   const totalPages: number = poData?.meta?.totalPages ?? 1;
@@ -240,13 +196,16 @@ export function PurchaseOrdersTab({
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-base font-semibold text-navy">All purchase orders</h3>
-        <Button
-          size="sm"
-          leftIcon={<Plus className="h-4 w-4" />}
-          onClick={() => setShowCreateModal(true)}
-        >
-          New purchase order
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {headerExtra}
+          <Button
+            size="sm"
+            leftIcon={<Plus className="h-4 w-4" />}
+            onClick={() => setShowCreateModal(true)}
+          >
+            New purchase order
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -379,9 +338,19 @@ export function PurchaseOrdersTab({
             <tbody className="divide-y divide-surface-border">
               {orders.map((po) => (
                 <React.Fragment key={po.id}>
-                  <tr className="transition-colors hover:bg-surface-raised/40">
+                  <tr
+                    data-highlighted={po.id === highlightId ? "true" : undefined}
+                    className={`transition-colors hover:bg-surface-raised/40 ${
+                      po.id === highlightId ? "bg-brand-50" : ""
+                    }`}
+                  >
                     <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
-                      {po.poNumber}
+                      <Link
+                        href={`/purchase-orders/${po.id}`}
+                        className="text-brand-500 hover:underline"
+                      >
+                        {po.poNumber}
+                      </Link>
                     </td>
                     <td className="px-4 py-3 text-navy/70">{po.supplier?.name ?? "—"}</td>
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>

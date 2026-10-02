@@ -1,0 +1,312 @@
+[
+  {
+    "number": 301,
+    "title": "acme: invoice dates",
+    "url": "https://github.com/acme/acme/pull/301",
+    "isDraft": false,
+    "state": "OPEN",
+    "headRefName": "feat/RF-2-invoice-dates",
+    "headRefOid": "eca1a6c879d71c2057ea1e74f6053e62a4e1a4bc",
+    "baseRefName": "master",
+    "createdAt": "2026-01-10T08:00:00Z",
+    "updatedAt": "2026-01-11T09:00:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "body": "Task: RF-2\n",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-11T09:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "SUCCESS"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 302,
+    "title": "acme: pdf date fix",
+    "url": "https://github.com/acme/acme/pull/302",
+    "isDraft": true,
+    "state": "OPEN",
+    "headRefName": "fix/B905-pdf-date",
+    "headRefOid": "bf69d1d5d335b5def076e4e381487e38e1988692",
+    "baseRefName": "master",
+    "createdAt": "2026-01-05T08:00:00Z",
+    "updatedAt": "2026-01-06T08:00:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "UNKNOWN",
+    "reviewDecision": null,
+    "body": "",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-06T08:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "PENDING"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 303,
+    "title": "acme: misc cleanup",
+    "url": "https://github.com/acme/acme/pull/303",
+    "isDraft": false,
+    "state": "OPEN",
+    "headRefName": "chore/misc-cleanup",
+    "headRefOid": "8ededbe73f6a691cb016906f48f079d555e17199",
+    "baseRefName": "master",
+    "createdAt": "2026-01-03T08:00:00Z",
+    "updatedAt": "2026-01-08T08:00:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "CONFLICTING",
+    "reviewDecision": "CHANGES_REQUESTED",
+    "body": "",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-08T08:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "FAILURE"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 304,
+    "title": "acme: route export",
+    "url": "https://github.com/acme/acme/pull/304",
+    "isDraft": false,
+    "state": "MERGED",
+    "headRefName": "feat/F-05-route-export",
+    "headRefOid": "960682d66b0964a1178e591b028ed4bc8c29912d",
+    "baseRefName": "master",
+    "createdAt": "2026-01-06T08:00:00Z",
+    "updatedAt": "2026-01-07T10:00:00Z",
+    "closedAt": "2026-01-07T10:00:00Z",
+    "mergedAt": "2026-01-07T10:00:00Z",
+    "mergeCommit": {
+      "oid": "6ff6f051253262de30374ece6e649fdbbfd89206"
+    },
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "body": "Feature: F-05\nCloses #2775\nLane: r-ui\n",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-07T10:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "SUCCESS"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 305,
+    "title": "acme: old spike",
+    "url": "https://github.com/acme/acme/pull/305",
+    "isDraft": false,
+    "state": "CLOSED",
+    "headRefName": "spike/old-idea",
+    "headRefOid": "19ee6211fc0b353e4b0eff48711e61fedac5d2c1",
+    "baseRefName": "master",
+    "createdAt": "2026-01-01T08:00:00Z",
+    "updatedAt": "2026-01-04T08:00:00Z",
+    "closedAt": "2026-01-04T08:00:00Z",
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "UNKNOWN",
+    "reviewDecision": null,
+    "body": "",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-04T08:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "ERROR"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 306,
+    "title": "acme: docs follow-up",
+    "url": "https://github.com/acme/acme/pull/306",
+    "isDraft": false,
+    "state": "MERGED",
+    "headRefName": "docs/bookkeeping-304",
+    "headRefOid": "c078e599dff596ca2d39cbbf7f3a9aba3bc16b03",
+    "baseRefName": "master",
+    "createdAt": "2026-01-07T11:00:00Z",
+    "updatedAt": "2026-01-07T12:00:00Z",
+    "closedAt": "2026-01-07T12:00:00Z",
+    "mergedAt": "2026-01-07T12:00:00Z",
+    "mergeCommit": {
+      "oid": "5c7972f53c4f88a625ca70de1699b07033d6e573"
+    },
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "body": "Bookkeeping-Follow-Up: pending\nTask: RF-1\n",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-07T12:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "SUCCESS"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 307,
+    "title": "acme: trailer beats branch",
+    "url": "https://github.com/acme/acme/pull/307",
+    "isDraft": false,
+    "state": "OPEN",
+    "headRefName": "feat/RF-7-other",
+    "headRefOid": "8fe2393a4ba83554a3501ded0f7765d7904142d6",
+    "baseRefName": "master",
+    "createdAt": "2026-01-11T08:00:00Z",
+    "updatedAt": "2026-01-11T08:00:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "MERGEABLE",
+    "reviewDecision": null,
+    "body": "Task: RF-2\r\nBug: B905\r\n",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-11T08:00:00Z",
+            "message": "acme: commit\n\nLane: lane-x",
+            "statusCheckRollup": {
+              "state": "PENDING"
+            }
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 308,
+    "title": "acme: no checks yet",
+    "url": "https://github.com/acme/acme/pull/308",
+    "isDraft": false,
+    "state": "OPEN",
+    "headRefName": "feat/no-links",
+    "headRefOid": "7efc54b47c67cec83d9f8793196cdda37a5d6cc7",
+    "baseRefName": "master",
+    "createdAt": "2026-01-12T07:00:00Z",
+    "updatedAt": "2026-01-12T07:00:00Z",
+    "closedAt": null,
+    "mergedAt": null,
+    "mergeCommit": null,
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "REVIEW_REQUIRED",
+    "body": "",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-12T07:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": null
+          }
+        }
+      ]
+    }
+  },
+  {
+    "number": 309,
+    "title": "acme: hotfix",
+    "url": "https://github.com/acme/acme/pull/309",
+    "isDraft": false,
+    "state": "MERGED",
+    "headRefName": "hotfix/quick-patch",
+    "headRefOid": "3294e53415f5e7e721e1646666f9980e23802291",
+    "baseRefName": "master",
+    "createdAt": "2026-01-08T08:00:00Z",
+    "updatedAt": "2026-01-08T09:00:00Z",
+    "closedAt": "2026-01-08T09:00:00Z",
+    "mergedAt": "2026-01-08T09:00:00Z",
+    "mergeCommit": {
+      "oid": "61f5e89629fa708bc936d8ada4ac821040c12b88"
+    },
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "body": "Defers: D-11\n",
+    "labels": {
+      "nodes": []
+    },
+    "commits": {
+      "nodes": [
+        {
+          "commit": {
+            "committedDate": "2026-01-08T09:00:00Z",
+            "message": "acme: synthetic commit",
+            "statusCheckRollup": {
+              "state": "SUCCESS"
+            }
+          }
+        }
+      ]
+    }
+  }
+]

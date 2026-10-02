@@ -41,7 +41,7 @@ export interface CreditLimitCheckDeps {
  * request cleanly; this call site cannot.)
  */
 export async function isCreditLimitCheckEnabled(deps: CreditLimitCheckDeps): Promise<boolean> {
-  // Release toggle (REMOVE by 2026-10-01): plan-flag enforcement ships dark.
+  // Release toggle (review by 2027-01-31): plan-flag enforcement ships dark.
   // "on" = enforce; anything else = legacy behavior (always check).
   if ((process.env.PLAN_FLAG_ENFORCEMENT ?? "off") !== "on") return true;
   const tenantId = deps.prisma.getTenantId();

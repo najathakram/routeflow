@@ -20,6 +20,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { compressImage } from "../storage/compress.util";
 import { TRIAL_LENGTH_DAYS, planKeyFromEnum } from "../billing/plan-catalog.constants";
 import { escapeHtml } from "../common/html-escape";
+import { assertSafeTextCell } from "../common/safe-text-cell";
 
 const RESERVED_SLUGS = new Set([
   "api",
@@ -89,6 +90,7 @@ export class TenantsService {
 
   async register(dto: RegisterTenantDto) {
     const { slug, businessName, adminEmail, adminUsername, adminPassword } = dto;
+    assertSafeTextCell({ businessName }); // B956: the name is mirrored into a Customer row
 
     if (RESERVED_SLUGS.has(slug)) {
       throw new ConflictException(`Slug "${slug}" is reserved`);
@@ -402,6 +404,7 @@ export class TenantsService {
   async updateBranding(tenantId: string, dto: UpdateBrandingDto) {
     const cfg = await this.prisma.tenantConfig.findFirst({ where: { tenantId } });
     if (!cfg) throw new NotFoundException("Tenant config not found");
+    assertSafeTextCell({ businessName: dto.businessName }, { businessName: cfg.businessName });
 
     const data: any = {};
     if (dto.businessName !== undefined) data.businessName = dto.businessName;

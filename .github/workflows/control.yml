@@ -1,0 +1,158 @@
+# ─── Control (apps/control) ─────────────────────────────────────────────────────
+# Type-check, lint and the Jest suite of the control service — in its OWN workflow, started only
+# by PRs that touch apps/control or a file its specs read. Lead ruling 2026-10-01.
+#
+# WHY IT LEFT THE SHARED `Verify` JOB (ci.yml).
+# Control's Jest suite spawns real git, a real server and the real CLI in most specs, so it is far
+# heavier per test than the product workspaces, and it was pushing the one shared Verify toward its
+# 20-minute cap. A product PR (api/web/mobile) gains nothing from running it and should not wait on
+# it. ci.yml's Verify step therefore sets VERIFY_EXCLUDE=@routeflow/control (scripts/verify-turbo.mjs)
+# and this workflow gates the PRs that DO touch control. Locally nothing changes: the pre-push
+# affected scope still selects control whenever apps/control changes, and a FULL_VERIFY run
+# includes it (developers do not set VERIFY_EXCLUDE).
+#
+# WHY A SEPARATE WORKFLOW FILE AND NOT A JOB IN ci.yml (read ci.yml's minutes budget first).
+# ci.yml's rule 2 says "do not add a job that installs dependencies" because each extra job paid a
+# 75s `npm ci` plus a whole billed minute for job setup. That rule is sound for jobs that run on
+# EVERY PR. This one does not: native `on.pull_request.paths` filtering decides BEFORE any runner
+# is allocated, so a PR that touches no control file costs ZERO runner minutes here. A job-level
+# `if:` on a path filter inside ci.yml cannot do that — the workflow has already started, the job
+# still needs a runner to evaluate it (billed), and ci.yml's own `paths-ignore` is a different,
+# workflow-wide filter. So: separate file, native `paths:`.
+#
+# WHAT IT INSTALLS: ONLY control's own tree.
+#     npm ci --engine-strict=false --ignore-scripts -w @routeflow/control --include-workspace-root=false
+# is the same shape apps/control/Dockerfile uses (control has no @routeflow/* dependency and no
+# runtime dependency at all). Measured offline (`--dry-run`) against the committed lockfile: 594
+# packages, versus 2,568 for the plain `npm ci` of the whole workspace. `--ignore-scripts` is safe —
+# control has no install script and the root `postinstall` (which builds packages/*) is exactly what
+# we skip; there is no Prisma client to generate.
+#
+# WHY jsdom AND jest-environment-jsdom ARE CONTROL devDependencies. Specs load jsdom directly
+# (client.spec.ts, writeback-client.spec.ts, contrast.spec.ts: they run the dashboard's browser
+# script against a real DOM), and client.spec.ts and writeback-client.spec.ts select the
+# `@jest-environment jsdom` test environment, which is the jest-environment-jsdom package. Both
+# used to reach node_modules only because apps/web (and the root manifest) pull them in, and a
+# workspace-scoped install installs neither. The first Control CI run would have failed `Cannot
+# find module 'jsdom'` and `Test environment jest-environment-jsdom cannot be found` on a tree that
+# works on every developer machine and in the full-workspace Verify job. Declaring them (with the
+# matching lockfile edges) puts them in this install; apps/control/test/declared-deps.spec.ts fails
+# any spec or source file that loads a package (or names a `@jest-environment`) that control's own
+# package.json does not declare. The one exemption, js-yaml (workflow-triggers.spec.ts), is a hard
+# dependency of eslint (via @eslint/eslintrc), so it is in every scoped install; ts-jest transpiles
+# without type-checking the specs (tsconfig `isolatedModules`), so @types/js-yaml is not needed.
+#
+# NO lockfile-edge gate here (scripts/validate-lock-edges.mjs). It needs `semver`, which ci.yml
+# fetches with a separate `npm install` into a scratch dir — one more install step in a job whose
+# point is to be cheap. It is not lost: ci.yml's Verify runs it on every PR that changes
+# package.json or package-lock.json (neither is ignored there), and `npm ci` itself refuses a
+# lockfile that does not match the manifests.
+#
+# RULES carried over from ci.yml: ubuntu-latest ONLY (Windows bills 2x, macOS 10x); no turbo cache
+# and no actions/cache of build output (a cached replay is a false green); no secrets; drafts and
+# Dependabot are skipped, same as Verify; NO `push:` trigger (the PR run is the correctness run,
+# and .github/workflows/** is pinned by test/workflow-triggers.spec.ts); maxWorkers is 2 because
+# apps/control/jest.config.js sets it whenever CI is set.
+#
+# `paths:` is pinned two ways by apps/control/test/ci-workflow.spec.ts: every repo path control's
+# specs read outside apps/control must be matched by a glob below, so a new cross-package read
+# cannot ship without its trigger. If you add such a read, add the path here.
+#
+# KNOWN LIMIT (accepted): GitHub skips evaluating a `paths:` filter when the PR diff exceeds 300
+# files, and the workflow then does not start. A PR that large (a repo-wide rename, a mass
+# reformat) must run this workflow by hand with `workflow_dispatch` on its branch.
+#
+# ⚠️ Do NOT make `Control (apps/control)` a required status check. A path-filtered workflow that
+# does not start leaves a required check "pending" forever and wedges every PR that does not touch
+# control. (This repo has no branch protection today; keep it that way for this check.)
+# ────────────────────────────────────────────────────────────────────────────────
+
+name: Control
+
+on:
+  pull_request:
+    # Same set as ci.yml: the default omits ready_for_review, and the job skips drafts.
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      # Control itself.
+      - "apps/control/**"
+      # Read by control's specs and by its running server (src/sources/denylist.ts).
+      - "scripts/campaign/plane-denylist.json"
+      # Read by control's specs: workspace-wiring (root scripts), the install, and the lockfile.
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      # workflow-triggers.spec.ts parses EVERY workflow file for a push trigger; this file and
+      # ci.yml are inside the glob. ci-workflow.spec.ts reads both.
+      - ".github/workflows/**"
+      # stop-gates-unaffected.spec.ts pins that the stop hook still holds Gates 2 and 3.
+      - ".claude/hooks/stop.mjs"
+      # rule-text.spec.ts and workspace-wiring.spec.ts read the rule text.
+      - ".claude/control/**"
+      # workspace-wiring.spec.ts asserts the per-machine lane file is gitignored.
+      - ".gitignore"
+      # The server's watchPatterns fallback reads apps/<svc>/railway.toml (src/http/server.ts);
+      # server-wiring.spec.ts asserts the api and web patterns it yields.
+      - "apps/api/railway.toml"
+      - "apps/web/railway.toml"
+      # eslint-plugin-prettier resolves the root Prettier config for the lint step.
+      - "prettier.config.js"
+      - ".prettierignore"
+      # .gitattributes sets the line endings (`* text=auto eol=lf`) of every checked-out file, so it
+      # governs the bytes of the golden render fixtures the specs compare against.
+      - ".gitattributes"
+  workflow_dispatch:
+
+# A new push to the same PR cancels the stale run (nothing here is deploy-driven, unlike ci.yml).
+concurrency:
+  group: control-${{ github.ref }}
+  cancel-in-progress: true
+
+# Same definition as ci.yml's top-level env: one place per file, and ci-workflow.spec.ts pins that
+# the two agree.
+env:
+  NODE_VERSION: "24"
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    name: Control (apps/control)
+    # The same expression as ci.yml's `verify` job (pinned equal by ci-workflow.spec.ts): manual
+    # dispatch, or a non-draft PR not opened by Dependabot. Dependabot PRs get their real run by
+    # `workflow_dispatch` on the PR branch before merge, exactly as ci.yml documents for Verify.
+    if: >
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft != true)) &&
+      (github.event_name != 'pull_request' || github.actor != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # nothing in this job pushes: do not leave the workflow token in .git/config for later steps
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # npm's download cache only (keyed by setup-node on the root package-lock.json), never
+          # node_modules or build output — `npm ci` still runs for real every time.
+          cache: npm
+
+      # Control's tree only — see the header. The Dockerfile installs it the same way.
+      # --engine-strict=false: the root .npmrc sets engine-strict=true; kept as ci.yml's
+      # warn-don't-block behaviour so an engines drift in a transitive dev dependency cannot block it.
+      - name: Install control's dependencies only
+        run: npm ci --engine-strict=false --ignore-scripts -w @routeflow/control --include-workspace-root=false
+
+      - name: Type-check
+        run: npm run check-types -w apps/control
+
+      - name: Lint
+        run: npm run lint -w apps/control
+
+      # CI=1 makes apps/control/jest.config.js use maxWorkers 2; globalSetup compiles the server once.
+      - name: Test
+        run: CI=1 npm test -w apps/control

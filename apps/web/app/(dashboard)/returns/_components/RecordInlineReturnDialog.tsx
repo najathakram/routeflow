@@ -20,9 +20,12 @@ import Link from "next/link";
 import { Button, Modal, Select, useToast } from "@routeflow/ui/web";
 import { useOrders } from "@/lib/api/orders";
 import { useCaptureInlineReturn } from "@/lib/api/inline-returns";
+import { useOptionalAuth } from "@/lib/auth-context";
 import type { InlineReturnRecord } from "@routeflow/types";
 import {
   buildCaptureRequest,
+  canOverrideReturnCredit,
+  missingAlreadyReturnedReasons,
   DEFAULT_EXCESS_OPTION,
   extractRefusalMessage,
   keyReusedReturnOf,
@@ -55,6 +58,7 @@ export function RecordInlineReturnDialog({
   customerName,
   orderId,
 }: RecordInlineReturnDialogProps) {
+  const role = useOptionalAuth()?.user?.role;
   const { toast } = useToast();
   const { data: customerOrders } = useOrders(
     { customerId, limit: 25 },
@@ -176,7 +180,13 @@ export function RecordInlineReturnDialog({
         )}
         renderQuoteActions={() => (
           <Button
-            disabled={!sectionState.captureReason}
+            disabled={
+              !sectionState.captureReason ||
+              // B961: staff must give a reason for every "already returned or credited" product (the server refuses otherwise)
+              (!!sectionState.quote &&
+                canOverrideReturnCredit(role) &&
+                missingAlreadyReturnedReasons(sectionState.lines, sectionState.quote).length > 0)
+            }
             loading={captureMutation.isPending}
             onClick={handleConfirm}
           >

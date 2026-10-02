@@ -68,6 +68,12 @@
 //                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
 //                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
+//   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
+//                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
+//   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
+//                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
+//                    field (businessName, contactName, displayName). Clients show FIXED copy with a
+//                    human field label and never the server message.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -102,6 +108,8 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+  RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
   CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
@@ -111,8 +119,12 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
+  RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

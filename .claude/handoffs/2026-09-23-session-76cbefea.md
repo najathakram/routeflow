@@ -1,4 +1,5 @@
 # Handoff — 2026-09-23 · 2026-09-23-session-76cbefea
+
 - Task: close out pipeline run '2026-09-23-session-76cbefea' (light-loop, unknown scale)
 - State: closed out
 - Branch/tree: ops/t6-a0-owner-batch @ 3439439e3 · uncommitted: 97 files · worktrees: 90 extra
