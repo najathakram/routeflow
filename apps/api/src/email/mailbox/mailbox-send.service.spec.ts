@@ -51,7 +51,9 @@ describe("MailboxSendService", () => {
       findFirst: jest.fn().mockResolvedValue(null),
     };
     prisma.$transaction ??= jest.fn(async (fn: (tx: unknown) => unknown) => fn(prisma));
-    const service = new MailboxSendService(prisma, encryption, config);
+    const service = new MailboxSendService(prisma, encryption, config, {
+      decide: jest.fn().mockResolvedValue({ outcome: "granted", overrides: new Map() }),
+    } as any);
     return { service, prisma, encryption };
   }
 

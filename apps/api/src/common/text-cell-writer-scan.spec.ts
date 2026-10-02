@@ -23,7 +23,18 @@ import { join } from "node:path";
 
 /** model accessor -> the guarded fields written under it. Extend for B964 (addresses, licenses…). */
 const GUARDED: Record<string, readonly string[]> = {
-  customer: ["businessName", "contactName", "displayName", "tobaccoLicenseNo"],
+  customer: [
+    "businessName",
+    "contactName",
+    "displayName",
+    "tobaccoLicenseNo",
+    // B984: the Customer's own copy of the person name
+    "salutation",
+    "firstName",
+    "lastName",
+  ],
+  // B984: a contact person's name (printed on statements, route sheets, exports). Email / phone / mobile are not guarded.
+  contactPerson: ["salutation", "firstName", "lastName"],
   // B964-1: addresses (printed on documents, route sheets, the tobacco filing header), license numbers, buyer names.
   customerAddress: ["label", "line1", "line2", "city", "state", "zip"],
   customerAuthorization: ["licenseNumber"],
@@ -51,6 +62,9 @@ const GUARD_CALLS = [
   "assertSafeBuyerName",
   "safeBuyerDisplayName",
   "isFormulaLedText",
+  // B984
+  "assertSafePersonName",
+  "personNameViolation",
   // B964-2
   "assertSafeProductNames",
   "productNameViolation",

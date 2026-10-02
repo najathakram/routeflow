@@ -24,6 +24,10 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
   // B964-2: product names
   productName: "Product name",
   variantName: "Variant name",
+  // B984: a person's name (customer / contact person)
+  salutation: "Salutation",
+  firstName: "First name",
+  lastName: "Last name",
 };
 
 const UNKNOWN_FIELD_LABEL = "This field";
