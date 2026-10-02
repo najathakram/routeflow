@@ -180,8 +180,14 @@ describe("the other response reads the buyer figure is attributed over", () => {
     expect(include.lineItems.include.product.select.unitsPerBox).toBe(true);
   });
 
-  it("create() and both merge-sweep survivor reads share RESPONSE_LINE_ITEMS (a fold response carries the pack and a stable order)", () => {
+  it("only create() uses RESPONSE_LINE_ITEMS: the two merge-sweep survivor reads keep master's select (SA-631d moved the buyer holder read to findOne, so widening them would be a dead change)", () => {
     const text = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
-    expect(text.match(/lineItems: cancelledLines\.RESPONSE_LINE_ITEMS/g)).toHaveLength(3);
+    expect(text.match(/lineItems: cancelledLines\.RESPONSE_LINE_ITEMS/g)).toHaveLength(1);
+    // the sweep survivor reads are the original narrow select again (staff / template responses are unchanged)
+    expect(
+      text.match(
+        /lineItems: \{\s*include: \{ product: \{ select: \{ id: true, name: true, unit: true \} \} \},\s*\},/g,
+      ),
+    ).toHaveLength(2);
   });
 });

@@ -927,7 +927,9 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: winner.id },
             include: {
               customer: { select: { id: true, businessName: true } },
-              lineItems: cancelledLines.RESPONSE_LINE_ITEMS,
+              lineItems: {
+                include: { product: { select: { id: true, name: true, unit: true } } },
+              },
             },
           });
         },
@@ -1172,7 +1174,9 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: winner.id },
             include: {
               customer: { select: { id: true, businessName: true } },
-              lineItems: cancelledLines.RESPONSE_LINE_ITEMS,
+              lineItems: {
+                include: { product: { select: { id: true, name: true, unit: true } } },
+              },
             },
           });
         },
