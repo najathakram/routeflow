@@ -27,6 +27,8 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
     ["tobaccoLicenseNo", "Tobacco license number can't start with =, +, -, @ or a tab/line break."],
     ["licenseNumber", "License number can't start with =, +, -, @ or a tab/line break."],
     ["buyerName", "Name can't start with =, +, -, @ or a tab/line break."],
+    ["productName", "Product name can't start with =, +, -, @ or a tab/line break."],
+    ["variantName", "Variant name can't start with =, +, -, @ or a tab/line break."],
   ])("%s → human label copy", (field, expected) => {
     expect(safeTextErrorCopy({ response: { data: body(field) } })).toBe(expected);
     expect(safeTextBodyCopy(body(field))).toBe(expected);
@@ -62,6 +64,8 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
         "tobaccoLicenseNo",
         "licenseNumber",
         "buyerName",
+        "productName",
+        "variantName",
       ].sort(),
     );
   });

@@ -34,6 +34,8 @@ export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
   tobaccoLicenseNo: "Tobacco license number",
   licenseNumber: "License number",
   buyerName: "Name",
+  productName: "Product name",
+  variantName: "Variant name",
 };
 
 /** Readable text for the 400 (and for an import row's skip reason). */

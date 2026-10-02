@@ -10,7 +10,11 @@ import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { customerNameViolation } from "../customers/customer-name-guard";
-import { addressViolation, licenseViolation } from "../common/text-cell-guards";
+import {
+  addressViolation,
+  licenseViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
@@ -2704,6 +2708,19 @@ export class ImportService {
           continue;
         }
 
+        // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
+        // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
+        if (typeof changes.name === "string") {
+          const renameViolation = productNameViolation(
+            { name: changes.name },
+            { name: existing.name as string | null },
+          );
+          if (renameViolation) {
+            skipRow(renameViolation);
+            continue;
+          }
+        }
+
         const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
         for (const [field, to] of Object.entries(changes)) {
           plannedChanges[field] = { from: (existing as any)[field] ?? null, to };
@@ -2751,6 +2768,13 @@ export class ImportService {
       }
       if (parsed.values.pricePerUnit === undefined) {
         skipRow("Rate is required for a new product");
+        continue;
+      }
+      // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
+      // real run, so a preview that says "create" would disagree with what the import then does.
+      const nameViolation = productNameViolation({ name });
+      if (nameViolation) {
+        skipRow(nameViolation);
         continue;
       }
       const dto: Record<string, unknown> = {
@@ -2901,6 +2925,14 @@ export class ImportService {
           }
           updated++;
         } else {
+          // B964-2: a NEW product's name is written here; a formula-led one rejects THIS row (a matched existing product
+          // only has its stock updated above, so a legacy name never blocks a sync).
+          const nameViolation = productNameViolation({ name });
+          if (nameViolation) {
+            skipped++;
+            errors.push(`${name}: ${nameViolation}`);
+            continue;
+          }
           // Create new product with this stock level. B562 follow-up: writing
           // the opening balance straight onto currentStock with no
           // StockMovement would permanently "gap" this product's ledger —

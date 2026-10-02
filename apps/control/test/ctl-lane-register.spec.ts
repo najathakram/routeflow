@@ -11,8 +11,9 @@ import type { World } from "./helpers/temp-repo";
 import { makeGitShim } from "./helpers/git-shim";
 import { runCli, makeWorkRepo, bytes } from "./helpers/spawn-cli";
 import type { SpawnOpts } from "./helpers/spawn-cli";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 let world: World;
 beforeEach(() => {

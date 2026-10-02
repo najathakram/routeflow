@@ -7,8 +7,9 @@ import * as path from "path";
 import { makeWorld, baseState, git } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { runCli, makeWorkRepo, bytes } from "./helpers/spawn-cli";
+import { IS_WIN, scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 let world: World;
 beforeEach(() => {
@@ -109,25 +110,31 @@ describe("T19 lane resolution", () => {
 });
 
 describe("T20 push exhausted parks and drains", () => {
-  it("exit 5 with the line in pending/; the next call pushes both lines", async () => {
-    const hook = path.join(world.originDir, "hooks", "pre-receive");
-    fs.mkdirSync(path.dirname(hook), { recursive: true });
-    fs.writeFileSync(hook, "#!/bin/sh\nexit 1\n");
-    fs.chmodSync(hook, 0o755);
-    const tip = world.remoteHead();
+  it(
+    "exit 5 with the line in pending/; the next call pushes both lines",
+    async () => {
+      const hook = path.join(world.originDir, "hooks", "pre-receive");
+      fs.mkdirSync(path.dirname(hook), { recursive: true });
+      fs.writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+      fs.chmodSync(hook, 0o755);
+      const tip = world.remoteHead();
 
-    const r = await runCli(world, ["note", "x"]);
-    expect(r.code).toBe(5);
-    expect(world.remoteHead()).toBe(tip);
-    const pending = path.join(world.cloneDirOf("a"), "pending", "lane-u.jsonl");
-    expect(fs.readFileSync(pending, "utf8")).toContain('"note":"x"');
+      // the CLI retries a rejected push 6 times with a 0.5 s..8 s backoff (~16 s of real waiting on POSIX);
+      // each attempt is a clone/fetch/push cycle, ~5x slower to spawn on Windows, so that run gets the room
+      const r = await runCli(world, ["note", "x"], { timeoutMs: IS_WIN ? 100_000 : undefined });
+      expect(r.code).toBe(5);
+      expect(world.remoteHead()).toBe(tip);
+      const pending = path.join(world.cloneDirOf("a"), "pending", "lane-u.jsonl");
+      expect(fs.readFileSync(pending, "utf8")).toContain('"note":"x"');
 
-    fs.rmSync(hook);
-    const r2 = await runCli(world, ["note", "y"]);
-    expect(r2.code).toBe(0);
-    const lines = world.remoteLines("lane-u");
-    expect(lines.map((l) => l.seq)).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(lines.slice(4).map((l) => l.note)).toEqual(["x", "y"]);
-    expect(git(world.originDir, ["rev-parse", "ctl/state"]).trim()).toBe(world.remoteHead());
-  });
+      fs.rmSync(hook);
+      const r2 = await runCli(world, ["note", "y"]);
+      expect(r2.code).toBe(0);
+      const lines = world.remoteLines("lane-u");
+      expect(lines.map((l) => l.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(lines.slice(4).map((l) => l.note)).toEqual(["x", "y"]);
+      expect(git(world.originDir, ["rev-parse", "ctl/state"]).trim()).toBe(world.remoteHead());
+    },
+    IS_WIN ? 180_000 : undefined,
+  );
 });
