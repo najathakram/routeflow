@@ -787,12 +787,14 @@ export class ImportService {
               zip: shippingZip,
             })) ??
         this.commercialTextViolation(parsedCommercial.values, existing) ??
-        // B984: the row's person name (salutation / first / last name) is written into the Customer row AND, when a contact is
-        // created, into a new ContactPerson. A contact is created for a new customer or an existing one with none: that write is
-        // unconditional, so it is checked WITHOUT a stored row; otherwise only a changed value against the customer's own copy.
+        // B984: the row's person name (salutation / first / last name). A ContactPerson is created only for a row with a first or last
+        // name, for a new customer or an existing one with none: that write is verbatim, so it is checked WITHOUT a stored row.
+        // Otherwise only a CHANGED value is checked, against the customer's own copy.
         personNameViolation(
           { salutation, firstName, lastName },
-          existing && (existing.contactPersons?.length ?? 0) > 0 ? (existing as never) : null,
+          (firstName || lastName) && (!existing || (existing.contactPersons?.length ?? 0) === 0)
+            ? null
+            : (existing as never),
         );
       if (textViolation) {
         skipContact(textViolation);

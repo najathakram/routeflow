@@ -30,7 +30,6 @@ import {
 } from "../../../../lib/api/customers";
 import { FormSheet, FormField, FormSection, FormTextInput } from "../../../../components/FormSheet";
 import { showToast } from "../../../../lib/toast";
-import { safeTextErrorCopy } from "../../../../lib/safe-text-error-copy";
 import { confirm } from "../../../../lib/confirm";
 
 function ContactSheet({
@@ -72,9 +71,7 @@ function ContactSheet({
         showToast(editing ? "Contact updated" : "Contact added");
         onClose();
       },
-      // B984: a refused formula-led name is fixed copy with a field label, never the server message.
-      onError: (e: any) =>
-        showToast(safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again."),
+      onError: (e: any) => showToast(e?.response?.data?.message ?? e?.message ?? "Try again."),
     };
     if (editing) updateMut.mutate({ contactId: editing.id, ...dto }, opts);
     else addMut.mutate(dto, opts);

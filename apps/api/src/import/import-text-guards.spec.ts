@@ -267,6 +267,18 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
       expect(res.skipped).toBe(0);
     });
 
+    it("B984 (Opus): an existing customer with NO contact is checked ONLY when a contact will be created: a legacy salutation echo without a first/last name is not refused", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { ...existingCustomer([]), salutation: "=LEGACY", contactPersons: [] },
+      ]);
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,Salutation\nAcme,=LEGACY\n"),
+        "user-1",
+      );
+      expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+      expect(res.skipped).toBe(0);
+    });
+
     it("an existing customer with NO contact would get the CSV name written into a NEW ContactPerson: refused even if the customer's own copy matches", async () => {
       prisma.customer.findMany.mockResolvedValue([
         {
