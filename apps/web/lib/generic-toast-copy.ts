@@ -109,6 +109,15 @@ function unlinkedCopy(data: Record<string, unknown>): string {
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
+/** Static server sentences that already tell the user what to do (B986-7: send email, delete order). */
+const ACTIONABLE_REFUSALS: Record<string, string> = {
+  "No email address on file for this customer. Provide an email address.":
+    "No email address on file for this customer. Provide an email address.",
+  "This order has returns recorded against it. Delete those returns first.":
+    "This order has returns recorded against it. Delete those returns first.",
+};
+const DELETE_STATUS =
+  /^Only DRAFT, PENDING, or CANCELLED orders can be deleted\. This order is (?:DRAFT|PENDING|CONFIRMED|PROCESSING|READY|OUT_FOR_DELIVERY|DELIVERED|PARTIALLY_DELIVERED|COMPLETED|FULFILLED|CANCELLED|[A-Z_]{3,24})\.$/;
 const DUPLICATE_FIELD: Record<string, string> = {
   "SKU already exists": "That SKU is already used by another product. Use a different SKU.",
   "Barcode already exists":
@@ -125,6 +134,10 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
     return KNOWN_REFUSAL_SENTENCES[message];
   if (Object.prototype.hasOwnProperty.call(DUPLICATE_FIELD, message))
     return DUPLICATE_FIELD[message];
+  if (Object.prototype.hasOwnProperty.call(ACTIONABLE_REFUSALS, message))
+    return ACTIONABLE_REFUSALS[message];
+  if (DELETE_STATUS.test(message))
+    return "Only draft, pending or cancelled orders can be deleted. Cancel this order first if it's still open.";
   const dup = DUPLICATE_NAME.exec(message);
   if (dup) return `A ${dup[1]} with that name already exists. Choose a different name.`;
   return null;

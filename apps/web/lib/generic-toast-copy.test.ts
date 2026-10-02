@@ -204,6 +204,39 @@ describe("genericToastCopy: codes users rely on", () => {
       expect(genericToastCopy(err(400, { message }))).toBe(copy);
     });
 
+    it.each([
+      [
+        "No email address on file for this customer. Provide an email address.",
+        "No email address on file for this customer. Provide an email address.",
+      ],
+      [
+        "This order has returns recorded against it. Delete those returns first.",
+        "This order has returns recorded against it. Delete those returns first.",
+      ],
+      [
+        "Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is DELIVERED.",
+        "Only draft, pending or cancelled orders can be deleted. Cancel this order first if it's still open.",
+      ],
+    ])(
+      "B986-7: the actionable delete / email refusal %s keeps a fixed sentence",
+      (message, copy) => {
+        expect(genericToastCopy(err(400, { message }), "SURFACE")).toBe(copy);
+        expect(genericToastCopy(err(409, { message }), "SURFACE")).toBe(copy);
+      },
+    );
+
+    it("a delete refusal with a status outside the closed list, or extra text, is not trusted", () => {
+      expect(
+        genericToastCopy(
+          err(400, {
+            message:
+              "Only DRAFT, PENDING, or CANCELLED orders can be deleted. This order is " + RAW,
+          }),
+          "SURFACE",
+        ),
+      ).toBe("SURFACE");
+    });
+
     it("a duplicate sentence that echoes user text or names another noun is NOT trusted", () => {
       expect(genericToastCopy(err(409, { message: 'A secret named "x" already exists.' }))).toBe(
         NEUTRAL_409,
