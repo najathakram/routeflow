@@ -1226,3 +1226,10 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: The merge decision read the PR's last PASS, not the #2554 comments posted after it that named the PR
 - guard: Before merging, the coordinator lists every #2554 comment that names the PR and was posted after its last PASS; any open fold, HOLD or FAIL blocks the merge
 - rule: A verdict is only current until the next comment that names the PR; re-read the thread after it, not the last PASS
+
+## 2026-10-02 #2616
+
+- what: The lead ran `node scripts/work/reconcile.mjs --help` to read its usage and it APPLIED a live board update anyway (+1 issue, 40 fields set, a digest published).
+- cause: The old argument parser looked only for `--dry-run`, `--json` and `--quiet`, ignored every other argument, and defaulted to writing.
+- guard: #2616 (`b13f29c93`): `parseArgs` in `scripts/work/reconcile.mjs` rejects any unknown argument (exit 2 with the usage, nothing written, decided before the lock, the log or any gh call), a bare run is a DRY RUN, and writing needs an explicit `--apply`: `npm run work:reconcile` is the dry run and `npm run work:reconcile:apply` writes (`docs/work/WORKFLOW.md` states it). B973 tracks the follow-up self-test hardening (a temp ROOT, `--help --apply` and `--apply=1` cases).
+- rule: A command that writes shared state needs an explicit opt-in flag and an allow-list parser; a help or typo path must never reach the writer, and "I only wanted the usage" is not a safe assumption about any script.
