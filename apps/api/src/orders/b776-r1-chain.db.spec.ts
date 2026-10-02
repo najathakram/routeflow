@@ -54,6 +54,7 @@ jest.mock("../notifications/notifications.service", () => ({
   })),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { randomUUID } from "crypto";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
@@ -116,6 +117,7 @@ describeDb("B776 R1 chain (SA-124g/h gate) — real Postgres", () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         { provide: TenantContextService, useValue: tenantCtx },
         { provide: PrismaService, useValue: dbPrisma },

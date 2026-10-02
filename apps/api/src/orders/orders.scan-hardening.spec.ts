@@ -128,6 +128,7 @@ function requireDbLocksMock(): any {
   return require("../common/db-locks");
 }
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
 import {
@@ -220,6 +221,7 @@ async function buildOrdersService(
 ): Promise<OrdersService> {
   const module: TestingModule = await Test.createTestingModule({
     providers: [
+      oversellReaderOffProvider,
       OrdersService,
       { provide: PrismaService, useValue: prisma },
       { provide: getQueueToken("invoices"), useValue: { add: jest.fn() } },
@@ -1541,6 +1543,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },
         { provide: BuyerDashboardService, useValue: {} },

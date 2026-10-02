@@ -68,6 +68,7 @@ jest.mock("../common/db-locks", () => ({
   LockUnavailableError: MockLockUnavailableError,
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { getQueueToken } from "@nestjs/bull";
@@ -118,6 +119,7 @@ describe("OrdersService merge paths — customer advisory lock (T3, R3)", () => 
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

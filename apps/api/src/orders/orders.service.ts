@@ -134,6 +134,8 @@ import {
   type StockLineUnits,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
+import { resolveOversellAllowed } from "./oversell-policy";
+import { PolicyOversellReader } from "./policy-oversell-reader";
 import {
   isBuyerPricedLine,
   mergeBoxedContributions,
@@ -237,6 +239,9 @@ export class OrdersService implements OnApplicationBootstrap {
     // and regulated-filing-cron) so every forTenant() call inside the merge resolves
     // that tenant's own config/data, never another tenant's.
     private readonly tenantCtx: TenantContextService,
+    // WS9: the backorder policy reader behind resolveOversellAllowed (resolved once per request,
+    // before the transaction). Required (never @Optional): a missing provider is a DI error.
+    private readonly oversellReader: PolicyOversellReader,
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
@@ -1996,6 +2001,17 @@ export class OrdersService implements OnApplicationBootstrap {
       await this.creditGate({ customerId, projectedTotal: total, principal: user });
     }
 
+    // WS9: the oversell policy is resolved ONCE, here, before the transaction (so before any
+    // FOR UPDATE); only the resulting boolean enters the locked stock section below.
+    const allowOversell = isDraft
+      ? false
+      : await resolveOversellAllowed(this.oversellReader, {
+          tenantId: (user.tenantId ?? this.prisma.getTenantId()) as string,
+          role: user.role,
+          source: user.role === UserRole.CUSTOMER ? "buyer" : "staff_entry",
+          customerId,
+        });
+
     // RF-017 + RF-014: create the order inside a transaction so we can
     // (a) hold a pessimistic lock on product rows while checking/decrementing
     //     stock, preventing concurrent oversell, and
@@ -2033,7 +2049,7 @@ export class OrdersService implements OnApplicationBootstrap {
               // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
               // as a non-draft create(), so it calls the identical helper (no
               // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, isStaffRole, {
+              await this.decrementStockForSale(tx, stockLines, allowOversell, {
                 orderId,
                 notes: "CREATE",
                 performedById: user.sub,
@@ -2468,7 +2484,13 @@ export class OrdersService implements OnApplicationBootstrap {
         // order.status !== DRAFT` (below) credited stock back for a
         // promotion that never took any — a phantom stock credit on
         // DRAFT → PENDING → CANCELLED.
-        const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
+        // WS9: resolved once, BEFORE the transaction; only the boolean enters the locked section.
+        const allowOversell = await resolveOversellAllowed(this.oversellReader, {
+          tenantId: (user.tenantId ?? this.prisma.getTenantId()) as string,
+          role: user.role,
+          source: "promotion",
+          customerId: order.customerId,
+        });
         return this.prisma.tenantTransaction(
           async (tx) => {
             // B283 (REG-B283) round 2 (F2): claim the row with a compare-and-set
@@ -2500,7 +2522,7 @@ export class OrdersService implements OnApplicationBootstrap {
               );
             }
             const stockLines = activeItems.filter((li): li is StockLine => !!li.productId);
-            await this.decrementStockForSale(tx, stockLines, isStaffRole, {
+            await this.decrementStockForSale(tx, stockLines, allowOversell, {
               orderId: id,
               notes: "PROMOTE",
               performedById: user.sub,
@@ -3103,6 +3125,18 @@ export class OrdersService implements OnApplicationBootstrap {
     // reference reads above — the credit guard runs inside the transaction and
     // must not issue a non-transactional query from in there.
     const creditCheckEnabled = await this.isCreditLimitCheckEnabled();
+
+    // WS9: resolved ONCE, before the tx opens (so before any FOR UPDATE); only the boolean enters
+    // the locked settleStockForEdit. A DRAFT edit never settles stock, so it reads no policy.
+    const allowOversell =
+      order.status !== "DRAFT"
+        ? await resolveOversellAllowed(this.oversellReader, {
+            tenantId: (user?.tenantId ?? this.prisma.getTenantId()) as string,
+            role: user?.role,
+            source: "edit",
+            customerId: order.customerId,
+          })
+        : false;
 
     await inlineReturn.reserveEditReturnNumber(inlineRet); // #2094: after every refusal above
 
@@ -4225,7 +4259,9 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
-          await this.settleStockForEdit(tx, order, heldItems, activeItems, user);
+          await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
+            allowOversell,
+          });
           creditGate = () =>
             assertWithinCreditLimit(
               tx,
