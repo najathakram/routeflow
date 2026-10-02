@@ -147,13 +147,14 @@ export function assertHeldCancelledLines(
 
 /**
  * The line include every edit/create RESPONSE read shares. SA-606o: the product's pack is the stock
- * decrement's own fallback when a line has no snapshot, and `createdAt` then `id` makes the line
- * order deterministic (a replace-all writes its rows in one statement, so `createdAt` alone ties),
- * which the buyer backorder attribution needs ("stock-first over a random order" is not a rule).
+ * decrement's own fallback when a line has no snapshot, and the line order is deterministic —
+ * `position` first (as `findOne` orders), then `createdAt`, then `id` (a replace-all writes its rows
+ * in one statement, so `createdAt` alone ties) — which the buyer backorder attribution needs
+ * ("stock-first over a random order" is not a rule).
  */
 export const RESPONSE_LINE_ITEMS = {
   include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
-  orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }],
+  orderBy: [{ position: "asc" as const }, { createdAt: "asc" as const }, { id: "asc" as const }],
 };
 
 /** `updateOrderItems`'s response shape: the order with its lines (creation order) and products. */

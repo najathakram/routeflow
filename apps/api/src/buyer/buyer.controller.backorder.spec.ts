@@ -85,6 +85,7 @@ const line = (id: string, productId: string, qty: number) => ({
 });
 const orderOf = (id: string, rows: Array<[string, string, number]>) => ({
   id,
+  skipAutoMerge: false, // merge-eligible, as a default buyer create is
   lineItems: rows.map(([i, p, q]) => line(i, p, q)),
 });
 const figures = (o: any) => o.lineItems.map((l: any) => l.backorderPieces);
@@ -209,6 +210,35 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
         { ...CTX } as any,
       );
       expect(figures(res)).toEqual([3]);
+    });
+
+    it("a PLAIN checkout (no other pending order): the sweep returns the BARE created row and the figure still lands (the real merge shape, not a null mock)", async () => {
+      orders.create.mockResolvedValue(
+        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
+      );
+      // what mergeAllPendingForCustomer returns for <= 1 pending order: that row read with lineItems
+      // only (no `product`, no carrier)
+      orders.mergeAllPendingForCustomer.mockResolvedValue({
+        id: "o-new",
+        customerId: CTX.customerId,
+        lineItems: [{ id: "c1", productId: "p", qty: 8, status: "PENDING" }],
+      });
+      const res: any = await controller.createOrder(cart as any, CTX as any);
+      expect(res.id).toBe("o-new");
+      expect(figures(res)).toEqual([3]);
+    });
+
+    it("created was not merge-eligible and the sweep returned another order: that order is returned with no figure", async () => {
+      orders.create.mockResolvedValue(
+        withStockWrite(
+          { ...orderOf("o-new", [["c1", "p", 8]]), skipAutoMerge: true },
+          write([["p", 3]]),
+        ),
+      );
+      orders.mergeAllPendingForCustomer.mockResolvedValue(orderOf("o-other", [["m1", "p", 8]]));
+      const res: any = await controller.createOrder(cart as any, CTX as any);
+      expect(res.id).toBe("o-other");
+      expect(noKey(res)).toBe(true);
     });
 
     it("a fold into another order attributes onto the MERGED order's lines (same rule)", async () => {

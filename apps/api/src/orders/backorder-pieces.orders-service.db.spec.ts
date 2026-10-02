@@ -39,7 +39,7 @@ import { PolicyService } from "../policy/policy.service";
 import { PolicyOversellReader } from "./policy-oversell-reader";
 import { OrdersService } from "./orders.service";
 import { stockWriteOf } from "./order-stock";
-import { withBackorderPieces } from "./backorder-response";
+import { buyerCreateResponse, withBackorderPieces } from "./backorder-response";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -287,10 +287,11 @@ describeDb(
       await setPolicy("backorder");
       const [a, b]: any[] = await Promise.all([createOrder(buyer(0), 4), createOrder(buyer(1), 4)]);
       const total =
-        stockWriteOf(a)!.backorderByProduct.get(productId)! +
-        stockWriteOf(b)!.backorderByProduct.get(productId)!;
+        sum(figures(withBackorderPieces(a, stockWriteOf(a)))) +
+        sum(figures(withBackorderPieces(b, stockWriteOf(b))));
       expect(await stockNow()).toBe(-3);
-      expect(total).toBe(3);
+      expect(total).toBe(3); // the RESPONSE lines across both orders, not just the raw write
+      expect(await overshootOf()).toBe(3);
       expect(await orderCount()).toBe(2);
     }, 120_000);
 
@@ -301,6 +302,7 @@ describeDb(
       const write = stockWriteOf(edited)!;
       expect(write.backorderByProduct.get(productId)).toBe(4);
       expect(await stockNow()).toBe(-4);
+      expect(await overshootOf()).toBe(4);
       expect(sum(figures(withBackorderPieces(edited, write)))).toBe(4);
     }, 120_000);
 
@@ -314,18 +316,44 @@ describeDb(
       expect(figures(withBackorderPieces(lowered, stockWriteOf(lowered)))).toEqual([0]);
     }, 120_000);
 
-    it("(fold) a second order folded into the first: the merged order's lines sum to the write's overshoot", async () => {
+    it("(single) a plain checkout with NO other pending order: the sweep returns the bare created row and the figure still lands", async () => {
       await setPolicy("backorder");
-      await tenantCtx.run(tenantId, () =>
+      const created: any = await createOrder(buyer(0), 8); // stock 5 -> -3, overshoot 3
+      const swept: any = await tenantCtx.run(tenantId, () =>
+        orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
+      );
+      expect(swept?.id).toBe(created.id); // the real shape: that one order, read with lineItems only
+      const response: any = buyerCreateResponse(created, swept);
+      expect(response.id).toBe(created.id);
+      expect(sum(figures(response))).toBe(3);
+      expect(await overshootOf()).toBe(3);
+    }, 120_000);
+
+    it("(fold) a second order folded into the first: the fold HAPPENED, and the merged lines sum to the overshoot", async () => {
+      await setPolicy("backorder");
+      const first: any = await tenantCtx.run(tenantId, () =>
         orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
       ); // stock 5 -> 1, no overshoot
       const second: any = await tenantCtx.run(tenantId, () =>
         orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
       ); // 1 - 4 -> -3, overshoot 3
-      const merged: any = await tenantCtx.run(tenantId, () =>
+      const swept: any = await tenantCtx.run(tenantId, () =>
         orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
       );
-      const response: any = withBackorderPieces(merged, stockWriteOf(second));
+      // The fold actually happened (a no-op sweep or a merge-at-create would also give sum 3):
+      // exactly ONE live PENDING order remains, it holds BOTH orders' 8 pieces, and the order that
+      // was folded away is gone or cancelled. With skipAutoMerge:true on both creates this is red.
+      const live = await raw.order.findMany({
+        where: { tenantId, customerId: customerIds[0], status: "PENDING" },
+        include: { lineItems: true },
+      });
+      expect(live).toHaveLength(1);
+      expect(live[0].id).toBe(swept.id);
+      expect(live[0].lineItems.reduce((n, l) => n + Number(l.qty), 0)).toBe(8);
+      const loserId = swept.id === first.id ? second.id : first.id;
+      const loser = await raw.order.findUnique({ where: { id: loserId } });
+      expect(loser === null || loser.status === "CANCELLED").toBe(true);
+      const response: any = buyerCreateResponse(second, swept);
       expect(sum(figures(response))).toBe(3);
       expect(await overshootOf()).toBe(3);
     }, 120_000);

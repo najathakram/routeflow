@@ -1,5 +1,5 @@
 import { stockWriteOf, withStockWrite, type StockWriteResult } from "./order-stock";
-import { withBackorderPieces } from "./backorder-response";
+import { buyerCreateResponse, withBackorderPieces } from "./backorder-response";
 
 /**
  * SA-606o: the buyer response carries `backorderPieces` per line = the pieces THIS write
@@ -203,5 +203,61 @@ describe("the stock-write carrier", () => {
     expect(stockWriteOf(null)).toBeUndefined();
     expect(withStockWrite({ id: "o" }, undefined)).toEqual({ id: "o" });
     expect(stockWriteOf(withStockWrite({ id: "o" }, undefined))).toBeUndefined();
+  });
+});
+
+describe("buyerCreateResponse — which order carries the figure after the post-commit sweep", () => {
+  const created = (extra: Record<string, unknown> = {}) =>
+    withStockWrite(
+      { ...order([li("c1", "p", 8)]), id: "o-new", skipAutoMerge: false, ...extra },
+      sw([["p", 3]]),
+    );
+
+  it("a PLAIN checkout: the sweep returns the BARE created row (same id, lines without a product) -> the figure lands on `created`", () => {
+    const bare = {
+      id: "o-new",
+      customerId: "cust-1",
+      lineItems: [{ id: "c1", productId: "p", qty: 8, status: "PENDING" }], // the real findMany shape: no `product`
+    };
+    const res: any = buyerCreateResponse(created(), bare);
+    expect(res.id).toBe("o-new");
+    expect(figures(res)).toEqual([3]);
+  });
+
+  it("no sweep result (null / nothing to fold) -> `created`", () => {
+    expect(figures(buyerCreateResponse(created(), null))).toEqual([3]);
+    expect(figures(buyerCreateResponse(created(), undefined))).toEqual([3]);
+  });
+
+  it("a fold into ANOTHER order (created was merge-eligible) -> the figure lands on the merged order's lines", () => {
+    const merged = { ...order([li("m1", "p", 5), li("m2", "p", 8)]), id: "o-old" };
+    const res: any = buyerCreateResponse(created(), merged);
+    expect(res.id).toBe("o-old");
+    expect(figures(res)).toEqual([0, 3]);
+  });
+
+  it("created was NOT merge-eligible and the sweep returned another order: that order is returned untouched, NO number invented on it", () => {
+    const other = { ...order([li("m1", "p", 8)]), id: "o-other" };
+    const res: any = buyerCreateResponse(created({ skipAutoMerge: true }), other);
+    expect(res).toBe(other);
+    expect(noKey(res)).toBe(true);
+  });
+
+  it("an unknown eligibility (no skipAutoMerge on created) is never treated as eligible", () => {
+    const other = { ...order([li("m1", "p", 8)]), id: "o-other" };
+    const c: any = created();
+    delete c.skipAutoMerge;
+    expect(noKey(buyerCreateResponse(c, other) as any)).toBe(true);
+  });
+
+  it("is total: a throwing created order still returns something, never throws", () => {
+    const bad: any = {};
+    Object.defineProperty(bad, "id", {
+      get() {
+        throw new Error("boom");
+      },
+    });
+    const merged = { id: "o-x", lineItems: [] };
+    expect(() => buyerCreateResponse(bad, merged)).not.toThrow();
   });
 });
