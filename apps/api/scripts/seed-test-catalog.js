@@ -118,7 +118,7 @@ const GROUPS = [
         reorder: 10,
       },
       {
-        name: "Orange Juice 1gal",
+        name: "Orange Juice 64oz", // renamed: prisma/seed.ts has "Orange Juice 1gal" (active names are unique, SA-603b)
         unit: "case",
         price: 18.0,
         cost: 12.5,
@@ -309,7 +309,9 @@ const GROUPS = [
       },
       { name: "Sponges 6pk", unit: "each", price: 4.0, cost: 2.2, stock: 5, box: null, reorder: 8 },
       {
-        name: "All-Purpose Cleaner 32oz",
+        // Renamed: "All-Purpose Cleaner 32oz" is prisma/seed.ts's product, and a product NAME is unique among ACTIVE
+        // products (SA-603b), so the old name silently lost this row on a tenant that had both seeds.
+        name: "Multi-Surface Cleaner 32oz",
         unit: "each",
         price: 3.9,
         cost: 2.3,
@@ -794,8 +796,14 @@ async function main() {
     `   test data mix → missing-cost: ${noCost} · out-of-stock: ${outOfStock} · low-stock: ${lowStock}`,
   );
   if (conflicts.length) {
-    console.log(`\n⚠  ${conflicts.length} product(s) skipped (name/barcode already in use):`);
+    console.log(
+      `\n❌ ${conflicts.length} product(s) NOT seeded (name/sku/barcode already in use):`,
+    );
     for (const c of conflicts) console.log(`     - ${c.sku} ${c.name}: ${c.reason}`);
+    // Loud, never silent (the active-name unique made a skipped row a real defect): a non-zero exit fails the caller.
+    process.exitCode = 1;
+    console.log(`\n❌ Test-catalog seed ${DRY_RUN ? "dry run" : ""} finished WITH CONFLICTS.\n`);
+    return;
   }
   console.log(`\n✅ Test-catalog seed ${DRY_RUN ? "dry run" : ""} complete.\n`);
 }

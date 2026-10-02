@@ -60,6 +60,7 @@ import {
 } from "./family-price";
 import {
   barcodeRowsToView,
+  liveBarcodeRows,
   mirrorableImageKeys,
   parseFocalFromKey,
   synthesizeLegacyBarcodes,
@@ -427,7 +428,7 @@ export class ProductsService {
     // The presigned-url map below reuses the SAME imageKeys/imageUrls pairing above (never a second
     // presign of the same key).
     const urlByKey = new Map(imageKeys.map((k, i) => [k, imageUrls[i] ?? null]));
-    const barcodeRows = product.barcodes ?? [];
+    const barcodeRows = liveBarcodeRows(product.barcodes);
     const imageRows = product.images ?? [];
     const barcodes =
       barcodeRows.length > 0
