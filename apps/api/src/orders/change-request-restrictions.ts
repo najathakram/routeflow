@@ -7,6 +7,7 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Selling restrictions at `OrdersService.approveChangeRequestAtStop` (lane R 2a-8), the same shape as
@@ -40,7 +41,7 @@ export async function planChangeRequestRestrictions(
         )
       )
         throw new ConflictException({
-          code: "ORDER_CHANGED_DURING_EDIT",
+          code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
           message:
             "The order changed while the change was being applied — review it and try again.",
         });

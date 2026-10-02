@@ -348,6 +348,29 @@ describe("AppleOAuthService — token verification (SA-418 §1)", () => {
     expect(result.kind).toBe("buyer");
   });
 
+  it("B964-1: a formula-led Apple fullName never blocks the sign-in: the buyer is created with the email local-part as the name", async () => {
+    const { service, privateKey, prisma } = await buildService();
+    prisma.buyerAccount.findFirst.mockResolvedValue(null);
+    prisma.buyerAccount.create.mockImplementation(async ({ data }: any) => ({
+      id: "buyer-1",
+      ...data,
+    }));
+    const { nonce, identityToken } = await mintAndSign(service, privateKey, {
+      context: "buyer-standalone",
+    });
+    const result = await service.signIn({
+      identityToken,
+      authorizationCode: "code",
+      nonce,
+      context: "buyer-standalone",
+      fullName: "=HYPERLINK(1)",
+    } as any);
+    expect(result.kind).toBe("buyer");
+    expect(prisma.buyerAccount.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ name: "buyer" }), // "buyer@example.com" local part
+    });
+  });
+
   it("no prisma write happens on a rejected token", async () => {
     const { service, privateKey, prisma } = await buildService();
     const { nonce, identityToken } = await mintAndSign(service, privateKey, {

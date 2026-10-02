@@ -1,3 +1,4 @@
+import { safeBuyerDisplayName } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -829,7 +830,8 @@ export class GoogleOAuthService {
           email: profile.email,
           passwordHash,
           passwordSet: false,
-          name: profile.name,
+          // B964: the provider's name never blocks a sign-in; a formula-led one is neutralised to the email local-part
+          name: safeBuyerDisplayName(profile.name, profile.email),
           googleId: profile.googleId,
           status: "ACTIVE",
           emailVerified: true,

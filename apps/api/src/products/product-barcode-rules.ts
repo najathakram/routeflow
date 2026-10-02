@@ -173,3 +173,13 @@ export function synthesizeLegacyImages(
     };
   });
 }
+
+/**
+ * SA-603a: `ProductBarcode.code` is NULL once a deactivated product's code is released
+ * (`retiredCode` keeps it). A released row is not a live code: every reader skips it.
+ */
+export function liveBarcodeRows<T extends { code: string | null }>(
+  rows: readonly T[] | null | undefined,
+): Array<T & { code: string }> {
+  return (rows ?? []).filter((r): r is T & { code: string } => r.code != null);
+}
