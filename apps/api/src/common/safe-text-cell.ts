@@ -40,6 +40,10 @@ export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
   category: "Category", // Product.category (free text, B990)
   categoryName: "Category name",
   subcategoryName: "Subcategory name",
+  // B984: a person's name (Customer / ContactPerson)
+  salutation: "Salutation",
+  firstName: "First name",
+  lastName: "Last name",
 };
 
 /** Readable text for the 400 (and for an import row's skip reason). */

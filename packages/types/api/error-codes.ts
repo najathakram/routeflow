@@ -56,6 +56,11 @@
 //                    into whole boxes; a server tripwire, never a client-fixable input.
 //   COMPOSED_LINE_EDIT — `body.code` of the 409 when a DRAFT invoice edit changes a mixed-pack line
 //                    by anything other than whole boxes or a price (#2717 M3).
+//   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 the messaging delivery-log / health / staff-email-settings
+//                    endpoints answer when the caller has no tenant context (SUPER_ADMIN without an
+//                    impersonated tenant): their unscoped client would read or write another tenant's rows.
+//   STAFF_CC_INVALID — `body.code` of the 400 a PUT /messaging/staff-email-settings answers for a
+//                    bad "Also send to" list; `body.details` is `{ index, reason }` (WS4, SA-606).
 //   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
 //                    SA-608 closed set). The client maps each to FIXED copy and never renders the
 //                    server message. 409: VOID_NOT_EDITABLE (the note is void), RETURN_BACKED (edit the
@@ -121,6 +126,8 @@ export const API_ERROR_CODES = {
   COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
   COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
+  STAFF_CC_INVALID: "STAFF_CC_INVALID",
+  TENANT_CONTEXT_REQUIRED: "TENANT_CONTEXT_REQUIRED",
   CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",

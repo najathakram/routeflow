@@ -142,3 +142,30 @@ export function productCategoryViolation(
   );
   return field === null ? null : formulaLeadMessage(field);
 }
+
+type PersonNameInput = {
+  salutation?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+function pickPerson(src: PersonNameInput) {
+  return { salutation: src.salutation, firstName: src.firstName, lastName: src.lastName };
+}
+
+/**
+ * A person's name (B984): ContactPerson.salutation / firstName / lastName and the Customer's own copy of the same three
+ * columns. Printed on statements, route sheets and exports. Change-only. Email, phone and mobile stay unguarded.
+ */
+export function assertSafePersonName(next: PersonNameInput, stored?: PersonNameInput | null): void {
+  assertSafeTextCell(pickPerson(next), stored ? pickPerson(stored) : null);
+}
+
+/** Non-throwing form for importers, which reject the ROW (not the batch) with this text. */
+export function personNameViolation(
+  next: PersonNameInput,
+  stored?: PersonNameInput | null,
+): string | null {
+  const field = firstFormulaLedField(pickPerson(next), stored ? pickPerson(stored) : null);
+  return field === null ? null : formulaLeadMessage(field);
+}

@@ -32,6 +32,9 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
     ["category", "Category can't start with =, +, -, @ or a tab/line break."],
     ["categoryName", "Category name can't start with =, +, -, @ or a tab/line break."],
     ["subcategoryName", "Subcategory name can't start with =, +, -, @ or a tab/line break."],
+    ["salutation", "Salutation can't start with =, +, -, @ or a tab/line break."],
+    ["firstName", "First name can't start with =, +, -, @ or a tab/line break."],
+    ["lastName", "Last name can't start with =, +, -, @ or a tab/line break."],
   ])("%s → human label copy", (field, expected) => {
     expect(safeTextErrorCopy({ response: { data: body(field) } })).toBe(expected);
     expect(safeTextBodyCopy(body(field))).toBe(expected);
@@ -72,6 +75,9 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
         "category",
         "categoryName",
         "subcategoryName",
+        "salutation",
+        "firstName",
+        "lastName",
       ].sort(),
     );
   });
