@@ -7,6 +7,7 @@ import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { rmTree } from "./platform";
 
 export const STATE_BRANCH = "ctl/state";
 export const ARCHIVE_BRANCH = "ctl/archive";
@@ -131,7 +132,7 @@ export function makeWorld(): World {
       return dir;
     },
     cleanup() {
-      fs.rmSync(root, { recursive: true, force: true });
+      rmTree(root);
     },
   };
   return world;
