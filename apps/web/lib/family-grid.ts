@@ -1,3 +1,4 @@
+import { roundMoney } from "@routeflow/pricing";
 import type {
   CreateFamilyRequest,
   FamilyVariantInput,
@@ -130,6 +131,10 @@ export function validateFamilyForm(f: FamilyForm): FamilyValidation {
   // SA-606i: the family price is REQUIRED by the API (no implicit $0.00), so a blank one is refused here, not at the server.
   if (!f.pricePerUnit.trim()) family.pricePerUnit = FAMILY_PRICE_REQUIRED_MSG;
   else if (!MONEY.test(f.pricePerUnit.trim())) family.pricePerUnit = PRICE_MSG;
+  // Copying a family price that rounds to $0.00 would save every variant at $0.00: the server refuses it (coded 400), so
+  // it is blocked here with the same fixed copy (the money rounding is @routeflow/pricing's).
+  else if (f.copyFamilyPrice && roundMoney(Number(f.pricePerUnit.trim())) <= 0)
+    family.pricePerUnit = COPY_PRICE_NEEDS_PRICE_MSG;
   if (f.standardCost.trim() && !COST.test(f.standardCost.trim()))
     family.standardCost = "Enter a cost like 0.80.";
   const r = validateRows(f.rows);

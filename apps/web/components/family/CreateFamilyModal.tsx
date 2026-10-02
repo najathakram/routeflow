@@ -4,9 +4,12 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Button, Modal, useToast } from "@routeflow/ui/web";
 import { useCreateFamily, checkCodeAvailable } from "@/lib/api/product-families";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { getFamilyConflicts } from "@/lib/family-conflicts";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import {
   blankRow,
+  COPY_PRICE_NEEDS_PRICE_MSG,
   toCreateRequest,
   validateFamilyForm,
   type FamilyForm,
@@ -40,6 +43,8 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
   const [serverCells, setServerCells] = React.useState<Record<string, CellMessage>>({});
   const [familyServerMessages, setFamilyServerMessages] = React.useState<string[]>([]);
   const [summary, setSummary] = React.useState<string | null>(null);
+  // The server's coded refusals shown as FIELD errors in fixed copy (never the raw message, never the generic toast).
+  const [priceServerMessage, setPriceServerMessage] = React.useState<string | null>(null);
 
   const validation = React.useMemo(() => validateFamilyForm(form), [form]);
   // Latest rows, for async results that arrive after the grid changed under them.
@@ -92,6 +97,7 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
     setShowErrors(true);
     setSummary(null);
     setFamilyServerMessages([]);
+    setPriceServerMessage(null);
     if (!validation.valid) return;
     create.mutate(toCreateRequest(form), {
       onSuccess: (res) => {
@@ -108,6 +114,17 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
           setServerCells(conflicts.cells);
           setFamilyServerMessages(conflicts.familyMessages);
           setSummary(conflicts.summary);
+          return;
+        }
+        const code = (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data
+          ?.code;
+        if (code === API_ERROR_CODES.FAMILY_COPY_PRICE_REQUIRED) {
+          setPriceServerMessage(COPY_PRICE_NEEDS_PRICE_MSG);
+          return;
+        }
+        const formulaCopy = safeTextErrorCopy(err);
+        if (formulaCopy) {
+          setFamilyServerMessages([formulaCopy]);
           return;
         }
         toast({ title: "Couldn't create the family. Please try again.", variant: "error" });
@@ -179,7 +196,9 @@ export function CreateFamilyModal({ open, onClose }: { open: boolean; onClose: (
           {field(
             "Family price",
             "pricePerUnit",
-            showErrors ? validation.family.pricePerUnit : undefined,
+            (showErrors ? validation.family.pricePerUnit : undefined) ??
+              priceServerMessage ??
+              undefined,
           )}
           {field(
             "Family cost",

@@ -266,4 +266,56 @@ describe("CreateFamilyModal", () => {
     mount();
     expect(screen.getByText(/Leave cost blank to use the family cost\./)).toBeInTheDocument();
   });
+
+  it("B1: a zero family price with copy TICKED is refused inline and nothing is posted; the server's FAMILY_COPY_PRICE_REQUIRED shows the same fixed copy on the price field, never the generic toast", async () => {
+    mount();
+    fillValid();
+    type("Family price", "0.00");
+    fireEvent.click(screen.getByLabelText(/Copy the family price onto the variants/));
+    submit();
+    expect(
+      await screen.findByText("Enter the family price to copy it onto the variants."),
+    ).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it("B1: the coded 400 FAMILY_COPY_PRICE_REQUIRED maps to the fixed price copy (no generic toast)", async () => {
+    reject(400, { code: "FAMILY_COPY_PRICE_REQUIRED" });
+    mount();
+    fillValid();
+    type("Family price", "2.00");
+    fireEvent.click(screen.getByLabelText(/Copy the family price onto the variants/));
+    submit();
+    expect(
+      await screen.findByText("Enter the family price to copy it onto the variants."),
+    ).toBeInTheDocument();
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Couldn't create the family. Please try again." }),
+    );
+  });
+
+  it("(a) TEXT_CELL_FORMULA_LEAD on a name -> the FIELD error under the family name (fixed copy), not the generic toast", async () => {
+    reject(400, { code: "TEXT_CELL_FORMULA_LEAD", field: "productName" });
+    mount();
+    fillValid();
+    submit();
+    expect(
+      await screen.findByText("Product name can't start with =, +, -, @ or a tab/line break."),
+    ).toBeInTheDocument();
+    expect(toast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Couldn't create the family. Please try again." }),
+    );
+  });
+
+  it("(b) the request carries the trimmed price: ' 12.50 ' is posted as '12.50'", async () => {
+    post.mockResolvedValueOnce({
+      data: { family: { id: "fam1", name: "Cola" }, variants: [{ id: "v1" }] },
+    });
+    mount();
+    fillValid();
+    type("Family price", " 12.50 ");
+    submit();
+    await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+    expect(post.mock.calls[0][1].family.pricePerUnit).toBe("12.50");
+  });
 });

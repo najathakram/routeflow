@@ -343,3 +343,31 @@ describe("SA-606i (#2881 merge): the create request ALWAYS carries the family pr
     expect(req.family.pricePerUnit).toBe("2.00");
   });
 });
+
+describe("B1 (#2919 Opus): copy-family-price needs a price that rounds to MORE than $0.00", () => {
+  it.each(["0", "0.00", "0.004", "0.0049"])(
+    "ticked with a family price of %s -> the family-price error (the server would refuse it), form invalid",
+    (price) => {
+      const v = validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: price }));
+      expect(v.family.pricePerUnit).toBe("Enter the family price to copy it onto the variants.");
+      expect(v.valid).toBe(false);
+    },
+  );
+  it("a zero price UNticked is fine (variants carry their own); a real price ticked is fine", () => {
+    expect(validateFamilyForm(form({ copyFamilyPrice: false, pricePerUnit: "0.00" })).valid).toBe(
+      true,
+    );
+    expect(validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "0.01" })).valid).toBe(
+      true,
+    );
+    expect(validateFamilyForm(form({ copyFamilyPrice: true, pricePerUnit: "0.005" })).valid).toBe(
+      true,
+    );
+  });
+  it("the create request carries the TRIMMED family price (' 12.50 ' -> '12.50')", () => {
+    expect(
+      toCreateRequest(form({ pricePerUnit: " 12.50 ", rows: [row({ name: "Lime" })] })).family
+        .pricePerUnit,
+    ).toBe("12.50");
+  });
+});
