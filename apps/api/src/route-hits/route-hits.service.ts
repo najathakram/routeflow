@@ -18,6 +18,7 @@ export interface RouteHitsRedis {
     exec(): Promise<unknown>;
   };
   quit?(): Promise<unknown>;
+  disconnect?(): void;
   on?(event: string, fn: (...a: unknown[]) => void): unknown;
 }
 
@@ -61,6 +62,7 @@ export class RouteHitsService implements OnModuleInit, OnModuleDestroy {
         maxRetriesPerRequest: 1,
         enableOfflineQueue: false, // a down Redis fails the flush fast instead of queueing it
         connectTimeout: 5_000,
+        commandTimeout: 5_000, // a hung Redis fails the flush instead of stalling it
       });
       client.on("error", () => this.warnOnce());
       this.redis = client;
@@ -73,7 +75,9 @@ export class RouteHitsService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.flush(); // best effort; a failure here only loses the last <=10 s
-    await this.redis?.quit?.().catch?.(() => undefined);
+    const redis = this.redis;
+    // quit() flushes politely; if it fails (Redis down), drop the socket so shutdown never hangs.
+    await redis?.quit?.().catch?.(() => redis?.disconnect?.());
   }
 
   /** Counts one call to `key` (a route template). Synchronous, in memory only. */

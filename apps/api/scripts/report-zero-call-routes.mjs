@@ -12,8 +12,8 @@
 // and the self-test proves any other command throws).
 //
 //   node apps/api/scripts/report-zero-call-routes.mjs --self-test
-//   REDIS_URL=redis://… node apps/api/scripts/report-zero-call-routes.mjs --days 14      # owner-run
-//   railway run --service <redis-service> node apps/api/scripts/report-zero-call-routes.mjs --days 14
+//   REDIS_PUBLIC_URL=redis://… node apps/api/scripts/report-zero-call-routes.mjs --days 14   # owner-run
+//   (under `railway run` the REDIS_URL is the PRIVATE *.railway.internal host: set REDIS_PUBLIC_URL to the public proxy URL)
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -70,8 +70,44 @@ export function summarize(routes, dayHashes, windowDays) {
 export function readOnlyRedis(client) {
   return {
     hgetall: (key) => client.hgetall(key),
-    quit: () => client.quit(),
+    // quit() is polite; if it fails (Redis down) drop the socket so the script never hangs.
+    quit: () => client.quit().catch(() => client.disconnect()),
   };
+}
+
+/**
+ * The Redis URL to read: `REDIS_PUBLIC_URL` when present (a `railway run` shell gets the PRIVATE
+ * `*.railway.internal` REDIS_URL, which is unreachable from outside Railway: the B768 class), else REDIS_URL.
+ */
+export function pickRedisUrl(env) {
+  return env.REDIS_PUBLIC_URL || env.REDIS_URL || null;
+}
+
+/** `redis://host:port/db` with NO credentials, safe to print. */
+export function redactRedisUrl(url) {
+  try {
+    const u = new URL(url);
+    const db = u.pathname && u.pathname !== "/" ? u.pathname : "";
+    return `${u.protocol}//${u.hostname}${u.port ? `:${u.port}` : ""}${db}`;
+  } catch {
+    return "<unparseable redis url>";
+  }
+}
+
+/**
+ * Connects BEFORE the first command. The client is `lazyConnect` with the offline queue OFF, so a command
+ * issued before the socket is up rejects at once; `await connect()` is what makes the read possible.
+ */
+export async function connectReadOnly(url, makeClient) {
+  const raw = makeClient(url, {
+    lazyConnect: true,
+    maxRetriesPerRequest: 2,
+    enableOfflineQueue: false,
+    connectTimeout: 10_000,
+    commandTimeout: 10_000,
+  });
+  await raw.connect();
+  return readOnlyRedis(raw);
 }
 
 export function render(summary) {
@@ -100,14 +136,20 @@ async function main() {
     console.error(`${TAG}: --days must be an integer 1..45`);
     return 1;
   }
-  const url = process.env.REDIS_URL;
+  const url = pickRedisUrl(process.env);
   if (!url) {
-    console.error(`${TAG}: set REDIS_URL (run under 'railway run' against the Redis service)`);
+    console.error(`${TAG}: set REDIS_PUBLIC_URL (or REDIS_URL) for the Redis service`);
+    return 2;
+  }
+  console.log(`${TAG}: reading ${redactRedisUrl(url)}`);
+  if (/\.railway\.internal\b/.test(url)) {
+    console.error(
+      `${TAG}: that is Railway's PRIVATE hostname, unreachable from here; set REDIS_PUBLIC_URL to the public TCP proxy URL`,
+    );
     return 2;
   }
   const { default: Redis } = await import("ioredis");
-  const raw = new Redis(url, { maxRetriesPerRequest: 2, enableOfflineQueue: false });
-  const redis = readOnlyRedis(raw);
+  const redis = await connectReadOnly(url, (u, o) => new Redis(u, o));
   try {
     const dayHashes = [];
     for (const key of dayKeys(new Date(), days)) {
@@ -116,11 +158,11 @@ async function main() {
     console.log(render(summarize(loadNoCallerRoutes(), dayHashes, days)));
     return 0;
   } finally {
-    await redis.quit().catch(() => undefined);
+    await redis.quit();
   }
 }
 
-function selfTest() {
+async function selfTest() {
   const routes = [
     { route: "GET /api/v1/a/:id", deadConfidence: "high" },
     { route: "POST /api/v1/b", deadConfidence: "medium" },
@@ -209,6 +251,69 @@ function selfTest() {
       },
     ],
     [
+      "connectReadOnly: lazyConnect, and connect() runs BEFORE the first command (an offline-queue-off client rejects otherwise)",
+      () => {
+        let opts;
+        let connected = false;
+        const makeClient = (_url, o) => {
+          opts = o;
+          return {
+            connect: async () => {
+              connected = true;
+            },
+            hgetall: async () => {
+              if (!connected)
+                throw new Error("Stream isn't writeable and enableOfflineQueue options is false");
+              return { ok: "1" };
+            },
+            quit: async () => undefined,
+            disconnect: () => undefined,
+          };
+        };
+        return connectReadOnly("redis://h:1", makeClient).then(async (r) => {
+          const out = await r.hgetall("k");
+          return (
+            opts.lazyConnect === true &&
+            opts.enableOfflineQueue === false &&
+            opts.commandTimeout > 0 &&
+            out.ok === "1"
+          );
+        });
+      },
+    ],
+    [
+      "readOnlyRedis.quit falls back to disconnect() when quit() rejects",
+      () => {
+        let dropped = false;
+        const w = readOnlyRedis({
+          hgetall: async () => ({}),
+          quit: () => Promise.reject(new Error("down")),
+          disconnect: () => {
+            dropped = true;
+          },
+        });
+        return w.quit().then(() => dropped === true);
+      },
+    ],
+    [
+      "pickRedisUrl prefers REDIS_PUBLIC_URL; redactRedisUrl never prints a credential",
+      () => {
+        const url = pickRedisUrl({
+          REDIS_PUBLIC_URL: "redis://default:s3cret@proxy.example:6543",
+          REDIS_URL: "redis://default:other@redis.railway.internal:6379",
+        });
+        const shown = redactRedisUrl(url);
+        return (
+          url.includes("proxy.example") &&
+          shown === "redis://proxy.example:6543" &&
+          !/s3cret|default/.test(shown) &&
+          pickRedisUrl({ REDIS_URL: "redis://a:1" }) === "redis://a:1" &&
+          pickRedisUrl({}) === null &&
+          redactRedisUrl("not a url") === "<unparseable redis url>"
+        );
+      },
+    ],
+    [
       "the checked-in route list has 111 unique METHOD /api/v1 routes with a confidence",
       () => {
         const list = loadNoCallerRoutes();
@@ -227,7 +332,7 @@ function selfTest() {
   ];
   let failed = 0;
   for (const [name, fn] of cases) {
-    const ok = fn();
+    const ok = await fn();
     if (!ok) failed += 1;
     console.log(`${ok ? "ok  " : "FAIL"} ${name}`);
   }
@@ -238,7 +343,7 @@ function selfTest() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const run = process.argv.includes("--self-test") ? Promise.resolve(selfTest()) : main();
+  const run = process.argv.includes("--self-test") ? selfTest() : main();
   run.then(
     (code) => process.exit(code),
     (e) => {
