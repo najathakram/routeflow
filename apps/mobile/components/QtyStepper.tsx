@@ -70,7 +70,6 @@ export function QtyStepper({
   emptyMeansZero = true,
   size = "md",
   suffix,
-  locked = false,
 }: {
   value: number;
   onChangeQty: (n: number) => void;
@@ -81,8 +80,6 @@ export function QtyStepper({
   emptyMeansZero?: boolean;
   size?: "md" | "mini";
   suffix?: string;
-  /** #2865 case c: the line's default unit is still loading; controls are disabled (the logic refuses the edit too). */
-  locked?: boolean;
 }) {
   const dec = () => {
     if (onDecrement) onDecrement();
@@ -95,15 +92,7 @@ export function QtyStepper({
   const s = size === "mini" ? mini : md;
   return (
     <View style={s.pill}>
-      <Pressable
-        style={s.btn}
-        onPress={dec}
-        hitSlop={6}
-        disabled={locked}
-        accessibilityRole="button"
-        accessibilityLabel="Decrease quantity"
-        accessibilityState={{ disabled: locked, busy: locked }}
-      >
+      <Pressable style={s.btn} onPress={dec} hitSlop={6}>
         <Text style={s.btnText}>−</Text>
       </Pressable>
       <QtyTextInput
@@ -113,19 +102,9 @@ export function QtyStepper({
         max={max}
         emptyMeansZero={emptyMeansZero}
         style={s.input}
-        editable={!locked}
-        accessibilityState={{ disabled: locked, busy: locked }}
       />
       {suffix ? <Text style={s.suffix}>{suffix}</Text> : null}
-      <Pressable
-        style={s.btn}
-        onPress={inc}
-        hitSlop={6}
-        disabled={locked}
-        accessibilityRole="button"
-        accessibilityLabel="Increase quantity"
-        accessibilityState={{ disabled: locked, busy: locked }}
-      >
+      <Pressable style={s.btn} onPress={inc} hitSlop={6}>
         <Text style={s.btnText}>+</Text>
       </Pressable>
     </View>

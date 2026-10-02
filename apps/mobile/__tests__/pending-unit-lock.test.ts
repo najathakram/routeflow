@@ -3,7 +3,9 @@ import type { LadderProduct } from "@routeflow/pricing";
 import type { LineState } from "../lib/cart-line-state";
 import {
   isPendingDefaultUnit,
-  refusesPendingEdit,
+  mergeResolvedDefaults,
+  refusesLineEdit,
+  scanDecisionFor,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
 } from "../lib/default-unit-line";
@@ -41,7 +43,10 @@ const pending = (over: Partial<LineState> = {}): LineState => ({
   pendingTaps: 1,
   ...over,
 });
-const deps = (units: ProductUnitLevel[] | Error): DefaultUnitDeps => ({
+const deps = (
+  units: ProductUnitLevel[] | Error,
+  over: Partial<DefaultUnitDeps> = {},
+): DefaultUnitDeps => ({
   isStaff: true,
   unitsEnabled: true,
   unitsKnown: true,
@@ -51,6 +56,7 @@ const deps = (units: ProductUnitLevel[] | Error): DefaultUnitDeps => ({
   }),
   productFor: () => PRODUCT,
   tierFor: () => 1,
+  ...over,
 });
 
 describe("isPendingDefaultUnit (the shared predicate)", () => {
@@ -62,26 +68,34 @@ describe("isPendingDefaultUnit (the shared predicate)", () => {
   });
 });
 
-describe("refusesPendingEdit", () => {
-  it("refuses EVERY edit on a pending line (stepper, typed, boxes, pieces), with no default-start flag", () => {
-    expect(refusesPendingEdit(pending(), false, "OPERATOR")).toBe(true);
-    expect(refusesPendingEdit(pending(), undefined, "OPERATOR")).toBe(true);
+describe("refusesLineEdit (the shared refusal rule, at the handler level)", () => {
+  it("refuses EVERY edit on a pending line: stepper increment (M3), typed qty, units total, and a typed PRICE (H1)", () => {
+    for (const intent of ["increment", "qty", "unit", "price"] as const) {
+      expect(refusesLineEdit(pending(), intent)).toBe(true);
+    }
   });
 
-  it("lets a STAFF default-start pick (picker tap / shared scan) add to a pending line", () => {
-    expect(refusesPendingEdit(pending(), true, "OPERATOR")).toBe(false);
-    expect(refusesPendingEdit(pending(), true, "TENANT_ADMIN")).toBe(false);
-  });
-
-  it("a non-staff 'default start' never adds to a pending line either (they never start pending)", () => {
-    expect(refusesPendingEdit(pending(), true, "DRIVER")).toBe(true);
+  it("lets a default-unit TAP add to a pending line", () => {
+    expect(refusesLineEdit(pending(), "tap")).toBe(false);
   });
 
   it("never refuses a settled line or a line that does not exist yet", () => {
-    expect(refusesPendingEdit(undefined, false, "OPERATOR")).toBe(false);
-    expect(refusesPendingEdit(pending({ startOnDefaultUnit: undefined }), false, "OPERATOR")).toBe(
-      false,
-    );
+    for (const intent of ["increment", "qty", "unit", "price", "tap"] as const) {
+      expect(refusesLineEdit(undefined, intent)).toBe(false);
+      expect(refusesLineEdit(pending({ startOnDefaultUnit: undefined }), intent)).toBe(false);
+    }
+  });
+});
+
+describe("scanDecisionFor (H2: a scan landing on a pending line)", () => {
+  it("a scan that maps to the DEFAULT unit (shared code) is a tap; a DIFFERENT level is refused, not counted", () => {
+    expect(scanDecisionFor(pending(), true)).toBe("tap");
+    expect(scanDecisionFor(pending(), false)).toBe("refuse");
+  });
+
+  it("a settled or absent line takes the scan as usual", () => {
+    expect(scanDecisionFor(pending({ startOnDefaultUnit: undefined }), false)).toBe("add");
+    expect(scanDecisionFor(undefined, false)).toBe("add");
   });
 });
 
@@ -107,15 +121,49 @@ describe("pending tap count (case c)", () => {
     expect(retried.items.p1).toMatchObject({ unitLabel: "Bottle", qty: 3 });
   });
 
-  it("refusesPendingEdit tracks the line's lifecycle: pending refuses, a FAILED load keeps refusing, a successful retry allows", async () => {
+  it("refusesLineEdit tracks the line's lifecycle: pending refuses, a FAILED load keeps refusing, a successful retry allows", async () => {
     const line = pending({ pendingTaps: 2, qty: 24, boxes: 2, startOnDefaultUnit: 24 });
-    expect(refusesPendingEdit(line, false, "OPERATOR")).toBe(true); // pending
+    expect(refusesLineEdit(line, "qty")).toBe(true); // pending
     const failed = await resolvePendingDefaultUnits({ p1: line }, deps(new Error("offline")));
     expect(failed.blocked).toEqual(["p1"]);
-    expect(refusesPendingEdit(failed.items.p1, false, "OPERATOR")).toBe(true); // failed: still refuses
+    expect(refusesLineEdit(failed.items.p1, "qty")).toBe(true); // failed: still refuses
     const retried = await resolvePendingDefaultUnits(failed.items, deps([BOTTLE, CASE]));
     expect(retried.blocked).toEqual([]);
-    expect(refusesPendingEdit(retried.items.p1, false, "OPERATOR")).toBe(false); // settled: allows
+    expect(refusesLineEdit(retried.items.p1, "qty")).toBe(false); // settled: allows
     expect(retried.items.p1).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+  });
+
+  it("M2: taps count only; the line's own quantity is never touched (3 taps on a 1-case line -> 3 Bottles, never 3 cases)", async () => {
+    const line = pending({ pendingTaps: 3 }); // qty 12 / 1 case, flag 12: the quantity did not move
+    const { items } = await resolvePendingDefaultUnits({ p1: line }, deps([BOTTLE, CASE]));
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("M1: an unknown units answer is 'units-unknown' (loading), a failed ladder 'ladder-failed'; neither settles the line", async () => {
+    const unknown = await resolvePendingDefaultUnits(
+      { p1: pending() },
+      deps([BOTTLE], { unitsKnown: false }),
+    );
+    expect(unknown.reasons).toEqual({ p1: "units-unknown" });
+    expect(isPendingDefaultUnit(unknown.items.p1)).toBe(true);
+    const failed = await resolvePendingDefaultUnits({ p1: pending() }, deps(new Error("x")));
+    expect(failed.reasons).toEqual({ p1: "ladder-failed" });
+  });
+
+  it("retry keeps the count: a failed load then a working one ends at exactly N default units", async () => {
+    const line = pending({ pendingTaps: 4 });
+    const failed = await resolvePendingDefaultUnits({ p1: line }, deps(new Error("x")));
+    expect(failed.items.p1.pendingTaps).toBe(4);
+    const ok = await resolvePendingDefaultUnits(failed.items, deps([BOTTLE, CASE]));
+    expect(ok.items.p1).toMatchObject({ unitLabel: "Bottle", qty: 4 });
+  });
+
+  it("an async resolve never overwrites a tap that landed meanwhile (the tap count differs)", async () => {
+    const before = { p1: pending({ pendingTaps: 1 }) };
+    const done = (await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE]))).items;
+    const cur = { p1: pending({ pendingTaps: 2 }) }; // a 2nd tap landed while this resolved
+    expect(mergeResolvedDefaults(cur, before, done)).toBe(cur);
+    const same = { p1: pending({ pendingTaps: 1 }) };
+    expect(mergeResolvedDefaults(same, before, done).p1).toMatchObject({ unitLabel: "Bottle" });
   });
 });

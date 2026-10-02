@@ -44,10 +44,12 @@ import { showToast } from "../lib/toast";
 import {
   applyUnitOption,
   isPendingDefaultUnit,
+  UNITS_LOADING_SCAN_MESSAGE,
   isStaffRole,
   keepsDefaultStart,
   pendingTapCount,
-  refusesPendingEdit,
+  refusesLineEdit,
+  scanDecisionFor,
   mergeResolvedDefaults,
 } from "../lib/default-unit-line";
 import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
@@ -79,7 +81,6 @@ import {
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
-import type { PendingUnit } from "./PendingUnitNotice";
 import type { CreatedProduct } from "../lib/api/products";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
@@ -451,6 +452,8 @@ function ProductPickView({
   // parked productId against the LIVE catalog, so a stale/removed product or
   // price can never render, let alone autosave back to the server.
   const [items, setItems] = useState<Record<string, LineState>>({});
+  const itemsRef = useRef(items); // the latest committed lines, for the pending-line scan/tap decision in addOne
+  itemsRef.current = items;
   // Ad-hoc (non-catalog) lines need no live-product check — DraftUnlistedLine
   // is field-for-field the same shape as this screen's UnlistedLine, so the
   // seed drops in directly.
@@ -781,7 +784,13 @@ function ProductPickView({
    * "UNIT" adds one LOOSE piece instead of a box, rolling over at unitsPerBox. A "+1" tap or a
    * catalog pick passes no level and adds a box, as before.
    */
-  const addOne = (id: string, snap?: Product, level: SellLevel = "BOX", dflt?: boolean) => {
+  const addOne = (
+    id: string,
+    snap?: Product,
+    level: SellLevel = "BOX",
+    dflt?: boolean,
+    viaRow?: boolean,
+  ): boolean => {
     const p = snap ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
     const isBoxed = upb > 1;
@@ -791,10 +800,18 @@ function ProductPickView({
       p ? tierPriceFor(p) : 0,
       isSpecialTier(effectiveTierFor(id)),
     );
+    // #2865 case c (SA-632 H2/M3): while a line is PENDING (default unit not resolved) its quantity must never depend on
+    // load timing. The row "+" and a scan of a DIFFERENT level are REFUSED (not counted, not "Added"); only a default-unit
+    // scan (shared code) records one more tap. The shared rule decides, IN THE LOGIC.
+    const refuses = (cur: LineState | undefined) =>
+      viaRow ? refusesLineEdit(cur, "increment") : scanDecisionFor(cur, !!dflt) === "refuse";
+    if (refuses(itemsRef.current[id])) return false;
     setItems((m) => {
-      // #2865 case c (SA-632): a PENDING line (default unit not resolved) refuses every add that is not a default-start
-      // pick (the stepper "+" before the ladder loads), IN THE LOGIC: its quantity must never depend on load timing.
-      if (refusesPendingEdit(m[id], dflt, userRole)) return m;
+      if (refuses(m[id])) return m;
+      if (m[id] && keepsDefaultStart(m[id], dflt, userRole)) {
+        // M2: a tap on a pending line ONLY counts; its own quantity (cases) is never touched
+        return { ...m, [id]: { ...m[id]!, pendingTaps: pendingTapCount(m[id]!, upb) + 1 } };
+      }
       const isNew = !m[id];
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
@@ -806,8 +823,7 @@ function ProductPickView({
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
       if (keepsDefaultStart(m[id], dflt, userRole)) {
         line.startOnDefaultUnit = line.qty;
-        // N taps before the ladder loads = N of the default unit, recorded as a COUNT (never a guessed-unit qty)
-        line.pendingTaps = isNew ? 1 : pendingTapCount(prev, upb) + 1;
+        line.pendingTaps = 1; // the first tap; later taps only count (above)
       }
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
@@ -832,6 +848,7 @@ function ProductPickView({
     if (p) {
       setScannedById((m) => (id in m ? m : { ...m, [id]: p }));
     }
+    return true;
   };
 
   const removeOne = (id: string) => {
@@ -841,7 +858,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
-      if (refusesPendingEdit(prev, false, userRole)) return m; // #2865 case c: refused in the logic
+      if (refusesLineEdit(prev, "increment")) return m; // #2865 case c: refused in the logic
       const line = stepLineQty(prev, -1, isBoxed, upb);
       if (!line) {
         const next = { ...m };
@@ -857,7 +874,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
-      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
+      if (refusesLineEdit(m[id], "qty")) return m; // #2865 case c: refused in the logic
       const line = setLineBoxes(prev, boxes, upb);
       if (!line) {
         const next = { ...m };
@@ -872,7 +889,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
-      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
+      if (refusesLineEdit(m[id], "qty")) return m; // #2865 case c: refused in the logic
       const line = setLinePieces(prev, pieces, upb);
       if (!line) {
         const next = { ...m };
@@ -890,7 +907,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
-      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
+      if (refusesLineEdit(m[id], "unit")) return m; // #2865 case c: refused in the logic
       const line = setLineUnits(prev, units, upb);
       if (!line) {
         const next = { ...m };
@@ -902,9 +919,7 @@ function ProductPickView({
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
     setItems((m) =>
-      m[id] && !refusesPendingEdit(m[id], false, userRole)
-        ? { ...m, [id]: { ...m[id], sellBy } }
-        : m,
+      m[id] && !refusesLineEdit(m[id], "unit") ? { ...m, [id]: { ...m[id], sellBy } } : m,
     );
 
   /**
@@ -920,37 +935,18 @@ function ProductPickView({
   const setUnitLabel = (id: string, option: UnitOption) =>
     setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
   // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
-  const {
-    resolveBeforeSubmit: resolveDefaultUnits,
-    retry: retryUnits,
-    statusFor: unitStatusFor,
-  } = useDefaultUnitResolver(
-    items,
-    setItems,
-    isStaff,
-    (id) => productById.get(id),
-    effectiveTierFor,
-  );
-  const anyUnitPending = Object.values(items).some(isPendingDefaultUnit);
-  /** #2865 case c: loading/failed + the recorded tap count for a pending line; undefined once it settled. */
-  const pendingUnitFor = useCallback(
-    (id: string, line: LineState | undefined): PendingUnit | undefined => {
-      const status = unitStatusFor(id, line);
-      return status && line
-        ? {
-            status,
-            taps: pendingTapCount(line, productById.get(id)?.unitsPerBox),
-            onRetry: () => void retryUnits(),
-          }
-        : undefined;
-    },
-    [unitStatusFor, retryUnits, productById],
+  const { resolveBeforeSubmit: resolveDefaultUnits, statusFor: unitStatusFor } =
+    useDefaultUnitResolver(items, setItems, isStaff, (id) => productById.get(id), effectiveTierFor);
+  // #2865 case d (SA-632): Confirm is disabled only while a line is LOADING (a failed load stays pressable: that press is the
+  // retry, see submitOrder).
+  const anyUnitLoading = Object.entries(items).some(
+    ([id, l]) => unitStatusFor(id, l) === "loading",
   );
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
       const prev = m[id] ?? { qty: 0 };
-      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
+      if (refusesLineEdit(m[id], "qty")) return m; // #2865 case c: refused in the logic
       // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
       const line = setLineQty(prev, qty);
       if (!line) {
@@ -979,6 +975,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
+      if (refusesLineEdit(prev, "price")) return m; // #2865 (SA-632 H1): a typed price would settle a pending line as cases
       if (value == null || value < 0) {
         const { unitPrice: _drop, priceSource: _dropSource, ...rest } = prev;
         delete rest.overrideReason;
@@ -1051,7 +1048,13 @@ function ProductPickView({
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
-    addOne(product.id, product, level, opts?.startOnDefault);
+    if (!addOne(product.id, product, level, opts?.startOnDefault)) {
+      // #2865 (SA-632 H2): refused while the line's default unit is loading: not counted, no "Added".
+      showToast(UNITS_LOADING_SCAN_MESSAGE);
+      return scanOpen
+        ? undefined
+        : { feedback: { kind: "error", text: UNITS_LOADING_SCAN_MESSAGE } };
+    }
     bumpScanned(product.id);
     clearSearch();
     const label =
@@ -1302,7 +1305,7 @@ function ProductPickView({
    * always holds the current render's closures behind that stable identity.
    */
   const rowActions = {
-    add: (id: string) => addOne(id, undefined, "BOX", true),
+    add: (id: string) => addOne(id, undefined, "BOX", true, true),
     remove: removeOne,
     setQty,
     setBoxes,
@@ -1459,7 +1462,6 @@ function ProductPickView({
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
             onEdit={openCart}
-            pendingUnit={pendingUnitFor(p.id, line)}
           />
         ) : null;
 
@@ -1478,7 +1480,6 @@ function ProductPickView({
           onIncrement={onRowIncrement}
           onDecrement={onRowDecrement}
           unitLabel={line?.unitLabel}
-          pendingUnit={pendingUnitFor(p.id, line)}
         >
           {band}
         </ProductRow>
@@ -1496,7 +1497,6 @@ function ProductPickView({
       onRowChangeBoxes,
       onRowChangePieces,
       openCart,
-      pendingUnitFor,
     ],
   );
 
@@ -1833,6 +1833,9 @@ function ProductPickView({
       return endSubmit();
     }
     setItems((cur) => mergeResolvedDefaults(cur, items, lines)); // keeps edits made while this waited
+    // #2865 case d (SA-632): a Confirm press that had to RESOLVE a pending line (the retry after a failed load) STOPS
+    // here: the user sees the settled line (N default units) and presses Confirm again. Never submits in the same press.
+    if (Object.values(items).some(isPendingDefaultUnit)) return endSubmit();
     const catalogPayload: CreateOrderItemInput[] = Object.entries(lines)
       .map(([productId, line]): CreateOrderItemInput => {
         const p = productById.get(productId);
@@ -2378,12 +2381,12 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending || anyUnitPending) && styles.confirmBtnDisabled,
+              (!canSave || createOrder.isPending || anyUnitLoading) && styles.confirmBtnDisabled,
             ]}
             // #2865 case d (SA-632): no order is sent while ANY line is still waiting on its default unit
-            disabled={!canSave || anyUnitPending}
+            disabled={!canSave || anyUnitLoading}
             onPress={() => onSave()}
-            accessibilityState={{ disabled: !canSave || anyUnitPending, busy: anyUnitPending }}
+            accessibilityState={{ disabled: !canSave || anyUnitLoading, busy: anyUnitLoading }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
               {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
@@ -2556,7 +2559,6 @@ function ProductPickView({
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
-        pendingUnitFor={pendingUnitFor}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
         onChangeUnlistedNote={updateUnlistedNote}

@@ -4,44 +4,87 @@ import { isUnitPending } from "@routeflow/pricing";
 import { isPendingDefaultUnit } from "../lib/default-unit-line";
 
 /**
- * #2865 case c (SA-632) wiring pins: every mobile qty surface locks while a line is pending (disabled + busy +
- * labelled), the notice has a real Retry button, and the submit gate refuses a pending line whose ladder failed (case d).
+ * #2865 (SA-632) wiring pins for the OLD native screen (hybrid ruling: logic refusals + Confirm state only, no new
+ * lock UI or notice). The behaviour itself is pinned at the shared-rule level in pending-unit-lock.test.ts; these pins
+ * only prove the screen CALLS the shared rules.
  */
 const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
+const screen = () => read("components/NewOrderScreen.tsx");
+const body = (src: string, head: string, len = 1800) => {
+  const at = src.indexOf(head);
+  expect(at).toBeGreaterThan(0);
+  const next = src.indexOf("\n  const ", at + head.length);
+  return src.slice(at, next > 0 ? Math.min(next, at + len) : at + len);
+};
 
-describe("pending-unit lock wiring", () => {
-  it("QtyStepper / CartStepperRow disable +/- and the input while locked, with busy state", () => {
-    for (const f of ["components/QtyStepper.tsx", "components/CartStepperRow.tsx"]) {
+describe("pending-unit wiring (mobile, old native screen)", () => {
+  it("M5: no new lock UI or notice on the old native screen", () => {
+    for (const f of [
+      "components/QtyStepper.tsx",
+      "components/CartStepperRow.tsx",
+      "components/ProductRow.tsx",
+      "components/BoxedQtyBand.tsx",
+      "components/CartRow.tsx",
+      "components/new-order/CartModal.tsx",
+      "components/NewOrderScreen.tsx",
+    ]) {
       const src = read(f);
-      expect(src).toMatch(/disabled=\{locked\}/);
-      expect(src).toMatch(/editable=\{!locked\}/);
-      expect(src).toMatch(/busy: locked/);
+      expect(src).not.toMatch(/PendingUnitNotice|pendingUnitFor|pendingUnit=|\blocked=\{/);
     }
   });
 
-  it("every row that renders a qty control threads the pending state", () => {
-    expect(read("components/ProductRow.tsx")).toMatch(/locked=\{!!pendingUnit\}/);
-    expect(read("components/BoxedQtyBand.tsx")).toMatch(/locked=\{!!pendingUnit\}/);
-    const cart = read("components/CartRow.tsx");
-    expect(cart.match(/locked=\{!!pendingUnit\}/g)?.length).toBeGreaterThanOrEqual(4);
-    expect(read("components/new-order/CartModal.tsx")).toMatch(/pendingUnit=\{pendingUnitFor\?\./);
-    const screen = read("components/NewOrderScreen.tsx");
-    expect(screen.match(/pendingUnit=\{pendingUnitFor\(p\.id, line\)\}/g)?.length).toBe(2);
-    expect(screen).toMatch(/pendingUnitFor=\{pendingUnitFor\}/);
+  it("SA-632 refusal, per handler: every qty-changing handler refuses a PENDING line IN THE LOGIC through the shared rule", () => {
+    const src = screen();
+    for (const head of [
+      "const removeOne = ",
+      "const setBoxes = ",
+      "const setPieces = ",
+      "const setUnits = ",
+      "const setSellBy = ",
+      "const setQty = ",
+      "const setLinePrice = ",
+    ]) {
+      expect({ head, guarded: /refusesLineEdit\(/.test(body(src, head)) }).toEqual({
+        head,
+        guarded: true,
+      });
+    }
+    expect(body(src, "const setLinePrice = ")).toMatch(/refusesLineEdit\(prev, "price"\)/); // H1
   });
 
-  it("the failure copy is a readable error plus a real Retry button", () => {
-    const src = read("components/PendingUnitNotice.tsx");
-    expect(src).toMatch(/Couldn't load the selling units\./);
-    expect(src).toMatch(/accessibilityRole="button"/);
-    expect(src).toMatch(/loading units/);
+  it("H2/M3: addOne refuses through the shared rules (row '+' via the row, a different-level scan via the scan rule) and returns whether it added", () => {
+    const add = body(screen(), "const addOne = ", 3500);
+    expect(add).toMatch(
+      /viaRow \? refusesLineEdit\(cur, "increment"\) : scanDecisionFor\(cur, !!dflt\) === "refuse"/,
+    );
+    expect(add).toMatch(/if \(refuses\(itemsRef\.current\[id\]\)\) return false;/);
+    expect(add).toMatch(/pendingTaps: pendingTapCount\(m\[id\]!, upb\) \+ 1/); // M2: a tap only counts
+    expect(screen()).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true, true\)/); // M3: the row "+"
   });
 
-  it("case d: submit is blocked while a line is PENDING with its ladder unresolved", () => {
-    const src = read("components/NewOrderScreen.tsx");
+  it("H2: a refused scan is NOT counted or toasted 'Added': finishAccept returns before bumpScanned", () => {
+    const fin = body(screen(), "const finishAccept: ", 1500);
+    const refusal = fin.indexOf("UNITS_LOADING_SCAN_MESSAGE");
+    expect(refusal).toBeGreaterThan(0);
+    expect(refusal).toBeLessThan(fin.indexOf("bumpScanned(product.id)"));
+    expect(fin).toMatch(/if \(!addOne\(/);
+  });
+
+  it("case d (SA-632): Confirm is disabled + busy only while a line is LOADING; a failed line's press is the retry and STOPS", () => {
+    const src = screen();
+    expect(src).toMatch(/unitStatusFor\(id, l\) === "loading"/);
+    expect(src).toMatch(/disabled=\{!canSave \|\| anyUnitLoading\}/);
+    expect(src).toMatch(
+      /accessibilityState=\{\{ disabled: !canSave \|\| anyUnitLoading, busy: anyUnitLoading \}\}/,
+    );
+    // the press that resolved a pending line returns before submitting (the user presses Confirm again)
     const i = src.indexOf("await resolveDefaultUnits(items)");
     expect(i).toBeGreaterThan(0);
-    expect(src.slice(i, i + 200)).toMatch(/if \(blocked\.length\)/);
+    const after = src.slice(i, i + 1400);
+    expect(after.indexOf("if (blocked.length)")).toBeGreaterThan(0);
+    expect(after).toMatch(
+      /Object\.values\(items\)\.some\(isPendingDefaultUnit\)\) return endSubmit\(\)/,
+    );
   });
 
   it("web and mobile share ONE predicate (the mobile wrapper calls isUnitPending)", () => {
@@ -53,40 +96,16 @@ describe("pending-unit lock wiring", () => {
     );
   });
 
-  it("SA-632 refusal, per handler: every qty-changing handler on the screen refuses a PENDING line IN THE LOGIC", () => {
-    const src = read("components/NewOrderScreen.tsx");
-    const starts = [
-      "const addOne = ",
-      "const removeOne = ",
-      "const setBoxes = ",
-      "const setPieces = ",
-      "const setUnits = ",
-      "const setSellBy = ",
-      "const setQty = ",
-    ];
-    for (const head of starts) {
-      const at = src.indexOf(head);
-      expect(at).toBeGreaterThan(0);
-      // the handler's own body: up to the next top-level handler declaration
-      const next = src.indexOf("\n  const ", at + head.length);
-      const body = src.slice(at, next > 0 ? next : at + 1500);
-      expect({ handler: head, guarded: /refusesPendingEdit\(/.test(body) }).toEqual({
-        handler: head,
-        guarded: true,
-      });
+  it("M4: the pure rules live in @routeflow/pricing; the mobile adapter imports them instead of redefining", () => {
+    const lib = read("lib/default-unit-line.ts");
+    for (const name of [
+      "pendingResolvePlan",
+      "mayMergeResolved",
+      "pendingScanDecision",
+      "refreshUnitsAnswerShared",
+    ]) {
+      expect(lib).toMatch(new RegExp(name));
     }
-    // only the default-start pick may add to a pending line (as a tap); the stepper "+" is refused
-    expect(src).toMatch(/refusesPendingEdit\(m\[id\], dflt, userRole\)/);
-  });
-
-  it("case d on mobile (SA-632): Confirm is disabled + busy while ANY line is pending (the shared predicate)", () => {
-    const src = read("components/NewOrderScreen.tsx");
-    expect(src).toMatch(
-      /const anyUnitPending = Object\.values\(items\)\.some\(isPendingDefaultUnit\)/,
-    );
-    expect(src).toMatch(/disabled=\{!canSave \|\| anyUnitPending\}/);
-    expect(src).toMatch(
-      /accessibilityState=\{\{ disabled: !canSave \|\| anyUnitPending, busy: anyUnitPending \}\}/,
-    );
+    expect(read("hooks/useDefaultUnitResolver.ts")).toMatch(/pendingStatus\(/);
   });
 });
