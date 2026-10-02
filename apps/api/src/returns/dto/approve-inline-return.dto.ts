@@ -1,4 +1,5 @@
-import { IsNumber, IsOptional, Min } from "class-validator";
+import { Transform } from "class-transformer";
+import { IsNumber, IsOptional, IsString, MaxLength, Min } from "class-validator";
 
 /**
  * Returns Inside Order Creation — PR-1c fix round (Opus review HIGH-3): the controller used
@@ -17,4 +18,12 @@ export class ApproveInlineReturnDto {
   @IsNumber()
   @Min(0.01)
   amount?: number;
+
+  /** B961: why staff credit goods the customer already returned or was credited for — REQUIRED to approve a hold that the
+   * capture marked "already returned" (400 coded otherwise); ignored for an ordinary driver-cap hold. */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
 }

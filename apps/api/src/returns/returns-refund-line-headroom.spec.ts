@@ -56,6 +56,7 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     prisma.creditNoteItem.findMany.mockResolvedValue([]);
     prisma.creditNote.findMany.mockResolvedValue([]);
     prisma.return.findMany.mockResolvedValue([]);
+    prisma.invoice.findMany.mockResolvedValue([]); // B947: the order pool read (empty unless a test sets it)
   });
 
   const withReturn = (ord: any, items = [{ productId: "pa", qty: 1 }]) =>
@@ -132,6 +133,82 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
     const arg = creditNotesCreate.mock.calls[0][0];
     expect(arg.invoiceId).toBe("inv-2");
     expect(arg.items).toBeUndefined();
+  });
+
+  it("B947: 2+ creditable invoices: a refund whose product line on the OLDER invoice is already credited is REFUSED 409 before the claim, and nothing is minted", async () => {
+    // pool read: X (older) carries A and B, Y (latest) carries C; A on X is fully credited by a credit note item
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A, LINE_B] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    prisma.creditNoteItem.findMany.mockResolvedValue([
+      { invoiceItemId: "line-a", amount: 100, qty: 1 },
+    ]);
+    withReturn(
+      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
+    );
+    const err = await service.processRefund("ret-1").catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "RETURN_REFUND_OVER_LINE_HEADROOM" });
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+    expect(prisma.return.updateMany).not.toHaveBeenCalled(); // before the RECEIVED->REFUNDED claim
+  });
+
+  it("B947: a 2+ invoice refund that fits still mints the SAME lump sum on the latest invoice, and hands create() the returned products to re-check under its locks", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A, LINE_B] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    withReturn(
+      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
+    );
+    await service.processRefund("ret-1");
+    const [arg, opts] = creditNotesCreate.mock.calls[0];
+    expect(arg.invoiceId).toBe("inv-2");
+    expect(arg.items).toBeUndefined(); // the mint is unchanged: no items
+    expect(opts).toEqual({
+      ledgerReversedByReturn: true,
+      pooledRefund: [{ productId: "pa", qty: 1 }],
+      returnId: "ret-1", // linked to the note INSIDE the mint tx, so the pool attributes the lump the moment it commits
+    });
+  });
+
+  it("B947: a racing credit note that takes the pooled room between the check and the mint (create() refuses OVER_HEADROOM) is the SAME 409, and the claim is compensated back to RECEIVED", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A, LINE_B] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    creditNotesCreate.mockRejectedValue(
+      new BadRequestException({ code: "CREDIT_NOTE_OVER_HEADROOM", pooled: true, message: "over" }),
+    );
+    withReturn(
+      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
+    );
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+    });
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ret-1", status: "REFUNDED", creditNoteId: null } }),
+    );
+  });
+
+  it("B947 N5: the latest invoice's own TOTAL cap (an OVER_HEADROOM that is not the pool's) keeps its own error: never relabelled 'line is worth', and the claim is still compensated", async () => {
+    prisma.invoice.findMany.mockResolvedValue([
+      { id: "inv-1", items: [LINE_A, LINE_B] },
+      { id: "inv-2", items: [{ id: "line-c", productId: "pc", qty: 1, subtotal: 100 }] },
+    ]);
+    creditNotesCreate.mockRejectedValue(
+      new BadRequestException({ code: "CREDIT_NOTE_OVER_HEADROOM", message: "invoice total" }),
+    );
+    withReturn(
+      order([invoice("inv-1"), { ...invoice("inv-2"), createdAt: new Date("2026-02-01") }]),
+    );
+    const err = await service.processRefund("ret-1").catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "CREDIT_NOTE_OVER_HEADROOM" });
+    expect(prisma.return.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "ret-1", status: "REFUNDED", creditNoteId: null } }),
+    );
   });
 
   it("an order with no invoice keeps the unsourced lump-sum credit", async () => {

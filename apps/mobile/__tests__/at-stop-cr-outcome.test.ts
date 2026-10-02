@@ -11,6 +11,8 @@ import { classifyAtStopResolveError } from "../lib/at-stop-cr-outcome";
 describe("classifyAtStopResolveError", () => {
   it("REG-B790: offline — no decline, no server error to key on", () => {
     expect(classifyAtStopResolveError({ isOfflineQueued: true })).toEqual({ action: "offline" });
+    // B923: the create step is online-only now; its refusal is an offline outcome, not a decline.
+    expect(classifyAtStopResolveError({ isOnlineRequired: true })).toEqual({ action: "offline" });
   });
 
   it("REG-B790: REGULATED_AUTH_REQUIRED — the deferred (not immediate) branch, blocked categories carried through", () => {
