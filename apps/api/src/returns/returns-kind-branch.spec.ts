@@ -152,7 +152,7 @@ describe("ReturnsService — kind branch (M6/§2.3): every standard-path method 
     prisma.return.count.mockResolvedValue(1);
     const spy = jest.spyOn(service as any, "priceReturn");
     const { data } = await service.findAll({});
-    expect(spy).toHaveBeenCalledWith([], undefined);
+    expect(spy).toHaveBeenCalledWith([], undefined, expect.any(Map));
     expect(data[0].refundEstimateReason).not.toBe("INLINE");
   });
 

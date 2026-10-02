@@ -95,6 +95,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 export type LockMode = "wait" | "try";
 /**
@@ -109,6 +110,7 @@ export const LOCK_FAMILIES = [
   "tenant-mirror",
   "demo-booking",
   "mailbox",
+  "policy-write",
 ] as const;
 export type LockFamily = (typeof LOCK_FAMILIES)[number];
 export interface AdvisoryLockOptions {
@@ -170,6 +172,12 @@ const POOL_MAX: Record<string, number | undefined> = {
   // admin actions. Same size as `billing`/`tenant-mirror` for the same reason: short,
   // request-path, no real hot-path volume.
   mailbox: 4,
+  // `policy-write` (SA-138 policy layer phase 1): `PolicyService#set/#clear`, keyed
+  // `${tenantId}:${key}` — the supersede-then-insert window that keeps ONE active PolicyValue row
+  // per (tenant, key, scope) (Prisma cannot express that partial unique index). A tenant-admin
+  // settings action: request-path, short (one tx), rarer than even `billing`'s add-on toggles —
+  // same size as `billing` for the same reason.
+  "policy-write": 4,
 };
 const DEFAULT_POOL_MAX = 8;
 function lockPool(family: string): Pool {
@@ -407,7 +415,7 @@ export async function lockRowsNoWait(
       /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
     if (!lockUnavailable) throw err;
     throw new ConflictException({
-      code: "CONCURRENT_UPDATE",
+      code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
       retryable: true,
       message: "Another update to this record is in progress. Try again in a moment.",
