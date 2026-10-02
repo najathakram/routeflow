@@ -24,6 +24,9 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(auth)/signup": { webOnly: "tenant signup stays on web (Apple 5.1.1(v))" },
   "change-password": { mobile: ["(auth)/force-change-password"] },
   "verify-email": { webOnly: "email-link flow; the browser handles it" },
+  handoff: {
+    webOnly: "the hybrid shell's sign-in entry (#2653); the WebView loads it, no native screen",
+  },
 
   // ─── Operator dashboard: orders, dispatch, routes (plan §1.3) ───
   "(dashboard)/dashboard": { mobile: ["(operator)/(tabs)/home"] },
@@ -61,6 +64,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/inventory/stock-counts": { mobile: ["(operator)/products/stock-counts"] },
   "(dashboard)/inventory": { mobile: ["(operator)/(tabs)/warehouse"] },
   "(dashboard)/purchase-orders": { mobile: ["(operator)/purchase-orders/index"] },
+  "(dashboard)/purchase-orders/[id]": { mobile: ["(operator)/purchase-orders/[id]"] },
   "(dashboard)/products/[id]": { mobile: ["(operator)/products/[id]"] },
   "(dashboard)/products/create": { mobile: ["(operator)/products/create"] },
   "(dashboard)/products": { mobile: ["(operator)/products/index"] },

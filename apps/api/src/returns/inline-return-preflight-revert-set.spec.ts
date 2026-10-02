@@ -55,6 +55,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
     db.invoice.findMany.mockResolvedValue([]);
     db.return.findMany.mockResolvedValue([]);
     db.returnItem.findMany.mockResolvedValue([]);
+    db.invoiceItem.findMany.mockResolvedValue([]); // B948: the preflight's line-headroom read (no source line: nothing to cap)
   });
 
   const request = {
@@ -75,7 +76,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
   it("preflightCapture: with revertOrderId, excludes exactly what the shared revert selector returns", async () => {
     const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma,
-      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12 }) },
+      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12, chunks: [] }) },
     });
     db.invoice.findMany.mockResolvedValue([
       { id: "inv-own", invoiceNumber: "INV-1", internalNotes: null, depositPercent: null },
@@ -98,7 +99,7 @@ describe("#2178 — the preflight prices against the post-revert matching set", 
   it("preflightCapture: without revertOrderId, nothing is excluded and the revert set is never read", async () => {
     const svc: any = Object.assign(Object.create(InlineReturnsService.prototype), {
       prisma,
-      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12 }) },
+      quoteService: { priceInlineReturn: jest.fn().mockResolvedValue({ total: 12, chunks: [] }) },
     });
     await svc.preflightCapture(
       { customerId: "cust-1", orderId: "ord-1", items: request.items },

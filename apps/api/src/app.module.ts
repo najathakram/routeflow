@@ -25,6 +25,7 @@ import { TripsModule } from "./trips/trips.module";
 import { OrdersModule } from "./orders/orders.module";
 import { BookkeepingModule } from "./bookkeeping/bookkeeping.module";
 import { SystemConfigModule } from "./system-config/system-config.module";
+import { PolicyModule } from "./policy/policy.module";
 import { NotificationsModule } from "./notifications/notifications.module";
 import { RouteOptimizationModule } from "./route-optimization/route-optimization.module";
 import { GatewaysModule } from "./gateways/gateways.module";
@@ -47,6 +48,7 @@ import { EmailModule } from "./email/email.module";
 import { MailboxModule } from "./email/mailbox/mailbox.module";
 import { PlatformAdminModule } from "./platform-admin/platform-admin.module";
 import { AuditModule } from "./audit/audit.module";
+import { RouteHitsModule } from "./route-hits/route-hits.module";
 import { BillingModule } from "./billing/billing.module";
 import { FeatureConfigModule } from "./billing/feature-config.module"; // feature grants v2 brief C (PR-4)
 import { StripeConnectModule } from "./stripe-connect/stripe-connect.module";
@@ -139,6 +141,7 @@ import { AppService } from "./app.service";
     OrdersModule,
     BookkeepingModule,
     SystemConfigModule,
+    PolicyModule,
     NotificationsModule,
     RouteOptimizationModule,
     GatewaysModule,
@@ -163,6 +166,7 @@ import { AppService } from "./app.service";
     // ─── Platform administration + audit (global) ─────────────────────────────
     PlatformAdminModule,
     AuditModule,
+    RouteHitsModule,
     // ─── Billing (Stripe) ──────────────────────────────────────────────────────
     BillingModule,
     FeatureConfigModule,

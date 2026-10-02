@@ -10,14 +10,14 @@ the same shape: **allocation reads what the allocator can see, and nobody — hu
 the `bugs.mjs file` tool itself — can see an id reserved in an unmerged branch until it's
 fetched.**
 
-| # | What happened | Root cause |
-|---|---|---|
-| 1 | Lead handed out B526 from a "next free" read of merged master | unaware PR #901 (unmerged) had already reserved B526–B532 |
-| 2 | A lane's fix commit self-resolved to B523 as "the next real id" | blind to a second, earlier-filed branch independently claiming B523 |
-| 3 | Lead allocated B536/B537 to a lane from memory | a request already asking the registry owner for B536 was still in flight, unacknowledged |
-| 4 | A fix commit self-referenced "B510" in its own message | its actual registry record had been renumbered to B526 during filing, same day |
-| 5 | Registry owner's own `bugs.mjs file` (no `--id`) minted B533 | which was already taken on a sibling branch pushed minutes earlier — caught before commit, not by the tool |
-| 6 | Lane D minted a lesson as "L-199" | correct by their local view of `origin/master` (nextId 199 there); already taken in the unmerged consolidated PR (nextId 205) |
+| #   | What happened                                                   | Root cause                                                                                                                    |
+| --- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Lead handed out B526 from a "next free" read of merged master   | unaware PR #901 (unmerged) had already reserved B526–B532                                                                     |
+| 2   | A lane's fix commit self-resolved to B523 as "the next real id" | blind to a second, earlier-filed branch independently claiming B523                                                           |
+| 3   | Lead allocated B536/B537 to a lane from memory                  | a request already asking the registry owner for B536 was still in flight, unacknowledged                                      |
+| 4   | A fix commit self-referenced "B510" in its own message          | its actual registry record had been renumbered to B526 during filing, same day                                                |
+| 5   | Registry owner's own `bugs.mjs file` (no `--id`) minted B533    | which was already taken on a sibling branch pushed minutes earlier — caught before commit, not by the tool                    |
+| 6   | Lane D minted a lesson as "L-199"                               | correct by their local view of `origin/master` (nextId 199 there); already taken in the unmerged consolidated PR (nextId 205) |
 
 Every one of these was caught **by a human/agent doing a manual `git fetch --all --prune` +
 `git log --all -- <path>` scan** — the exact thing this proposal turns into a single command.
@@ -40,7 +40,7 @@ bugs.mjs next-id [--for bug|lesson] [--reserve "<short description>"]
   from any worktree at any time.
 - `--reserve` is the one piece of NEW mechanism: appends a line to a small, git-tracked
   `.claude/campaign/reservations.jsonl` (append-only, one line per reservation: id, requester,
-  description, timestamp) so a *second* caller running `next-id` a minute later sees the
+  description, timestamp) so a _second_ caller running `next-id` a minute later sees the
   reservation even before the reserving branch has a commit to scan. Without this, two people
   running `next-id` in the same 30 seconds can still both get the same answer — the `--reserve`
   file is what actually closes that last race, not just the fetch-and-scan.
@@ -81,7 +81,7 @@ bugs.mjs neighbors --paths <file1> <file2> ...
 
 ## What this does NOT fix
 
-- It doesn't stop someone from *not running* `next-id` — a human or agent can still hand out an
+- It doesn't stop someone from _not running_ `next-id` — a human or agent can still hand out an
   id from memory, as happened three times tonight even with the discipline already in place.
   The command makes the correct path cheap and fast; it can't force anyone onto it. Pairing this
   with a `bugs.mjs file` refusal when `--id` is omitted AND `next-id` wasn't run in the last N

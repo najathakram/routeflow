@@ -14,6 +14,7 @@ Second principle: **fix causes, not symptoms.** Swapping a banned word for a syn
 the synthetic skeleton intact. Rewrite the thought.
 
 Contents:
+
 - Part 1: The Seven Root Causes
 - Part 2: The Rewrite Protocol (five moves)
 - Part 3: Pattern Library
@@ -94,6 +95,7 @@ When a passage smells synthetic, do not synonym-swap. Apply one of these five mo
 
 **Move 1: Replace interpretation with consequence.**
 Cut the abstract "why it matters" and state what concretely happens or changes.
+
 - Before: "The new booking system streamlines the client experience, reflecting our
   commitment to convenience."
 - After: "Couples pick a date, sign, and pay in one sitting. Booking takes eleven minutes
@@ -101,12 +103,14 @@ Cut the abstract "why it matters" and state what concretely happens or changes.
 
 **Move 2: Replace the category with the instance.**
 Swap the general noun for the specific thing, person, number, or moment.
+
 - Before: "We capture the meaningful moments and authentic emotions of your special day."
 - After: "We're there when your dad sees you in the dress and pretends he isn't crying."
 
 **Move 3: Replace the claim with the proof.**
 If evidence exists, show it instead of asserting the quality. If it does not exist, shrink
 the claim to what is true or flag `[PROOF NEEDED]`.
+
 - Before: "Our industry-leading support team delivers exceptional service."
 - After: "Support answers in under four hours, weekends included. Last month's median was
   51 minutes."
@@ -115,6 +119,7 @@ the claim to what is true or flag `[PROOF NEEDED]`.
 Break the uniform pattern. Give the one important point three sentences and fold the minor
 points into one. Delete the transition if the logic carries itself. Vary sentence length on
 purpose.
+
 - Before: three bullets, each "**Label:** twelve-word sentence."
 - After: one strong paragraph about the thing that matters, with the two minor points as a
   single trailing sentence.
@@ -333,6 +338,7 @@ service, and attention to detail" differentiates nothing, because every competit
 it. Use only what competitors cannot truthfully claim.
 
 Product benefit fog. Do not float features up into lifestyle abstraction.
+
 - Feature: cloud sync. Weak: "Stay connected wherever life takes you."
 - Better: "Start the draft on your laptop. Finish it on your phone without emailing
   yourself a file."
@@ -572,7 +578,7 @@ Keep scanning for these recognizable recent habits:
 - "It's not about X, it's about Y" in its newer compressed forms ("Less X. More Y.").
 - "TL;DR" headers in polished marketing prose.
 - "Pro tip:" sprinkled more than once.
-- "chef's kiss", "*mic drop*", "IYKYK" and other borrowed-meme voice in brand copy.
+- "chef's kiss", "_mic drop_", "IYKYK" and other borrowed-meme voice in brand copy.
 - Emoji as bullet points or section markers in professional assets.
 - "In a sea of X", "cut through the noise", "move the needle", "low-hanging fruit",
   "secret sauce", "north star" cluster.

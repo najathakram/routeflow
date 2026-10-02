@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
@@ -64,7 +65,7 @@ import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
+import { fmt, fmtCalendarDate, fmtDate, displayEmail } from "@/lib/formatting";
 import {
   isSpecialTier,
   getTierPrice,
@@ -1961,8 +1962,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
-  const addAddress = useAddCustomerAddress();
-  const updateAddress = useUpdateCustomerAddress();
+  const addAddress = useAddCustomerAddress({ localErrorToast: true });
+  const updateAddress = useUpdateCustomerAddress({ localErrorToast: true });
   const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
@@ -2232,10 +2233,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             setIsAddAddressOpen(false);
             setEditingAddress(null);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Update failed",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },
@@ -2248,10 +2249,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             toast({ title: "Address added", variant: "success" });
             setIsAddAddressOpen(false);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Couldn't add address",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },
@@ -2472,7 +2473,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
                     )}
-                    {customer.email && <InfoRow icon={Mail} label="Email" value={customer.email} />}
+                    {displayEmail(customer.email) && (
+                      <InfoRow icon={Mail} label="Email" value={customer.email} />
+                    )}
                     {customer.mobile && (
                       <InfoRow icon={Phone} label="Mobile" value={customer.mobile} />
                     )}
@@ -3141,7 +3144,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       {portalStatus?.status === "ACTIVE" && portalStatus.buyerAccount && (
                         <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
                           <p className="font-medium">{portalStatus.buyerAccount.name}</p>
-                          <p>{portalStatus.buyerAccount.email}</p>
+                          {displayEmail(portalStatus.buyerAccount.email) && (
+                            <p>{portalStatus.buyerAccount.email}</p>
+                          )}
                         </div>
                       )}
 

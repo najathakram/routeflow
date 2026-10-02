@@ -5,6 +5,9 @@ import { ConfigModule, ConfigService } from "@nestjs/config";
 import { Reflector } from "@nestjs/core";
 import { AppConfig } from "../config/configuration";
 import { EmailModule } from "../email/email.module";
+// #2309 (SA-418 §7): deleteAccount() calls AppleOAuthService.revokeForBuyer — no
+// circular dependency (AuthModule never imports BuyerModule).
+import { AuthModule } from "../auth/auth.module";
 import { TenantModule } from "../tenant/tenant.module";
 import { OrdersModule } from "../orders/orders.module";
 import { InvoicesModule } from "../invoices/invoices.module";
@@ -25,6 +28,8 @@ import { BuyerMergeController } from "./buyer-merge.controller";
 import { BuyerAdminMergeController } from "./buyer-admin-merge.controller";
 
 import { BuyerAuthService } from "./buyer-auth.service";
+import { BuyerHandoffService } from "./buyer-handoff.service";
+import { HandoffCodeService } from "../auth/handoff/handoff-code.service";
 import { BuyerService } from "./buyer.service";
 import { BuyerAdminService } from "./buyer-admin.service";
 import { BuyerMergeService } from "./buyer-merge.service";
@@ -47,6 +52,7 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
   imports: [
     PassportModule,
     EmailModule,
+    AuthModule,
     TenantModule,
     OrdersModule,
     InvoicesModule,
@@ -84,6 +90,9 @@ import { BuyerPaymentsController } from "../payment-requests/buyer-payments.cont
   providers: [
     Reflector,
     BuyerAuthService,
+    // #2653 in-app sign-in handoff (buyer realm); HandoffCodeService is stateless.
+    HandoffCodeService,
+    BuyerHandoffService,
     BuyerService,
     BuyerAdminService,
     BuyerMergeService,

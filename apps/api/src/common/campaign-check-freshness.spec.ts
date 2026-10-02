@@ -3,6 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// The ONE shared GIT_* scrub (scripts/lib/scrubbed-git-env.cjs; check-git-hooks.mjs re-exports it).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { scrubbedGitEnv } = require("../../../../scripts/lib/scrubbed-git-env.cjs") as {
+  scrubbedGitEnv: (env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+};
+
 // campaign-check freshness guard — pins the T1/T2/T3 (F01–F09) requirements from
 // .claude/pipeline/2026-09-06-campaign-check-freshness/spec.md: a `.campaign/runs/<ws>.json`
 // report older than the newest commit touching its workspace's tests or the ledger shards must
@@ -39,22 +45,7 @@ function iso(epochSeconds: number): string {
 // scrubs, not just the three the harness spec names) so a fixture repo can never silently
 // re-point at this checkout's own .git.
 function scrubGitEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const key of [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_QUARANTINE_PATH",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-  ]) {
-    delete env[key];
-  }
-  return { ...env, ...extra };
+  return { ...scrubbedGitEnv(), ...extra };
 }
 
 function git(args: string[], cwd: string, extraEnv: NodeJS.ProcessEnv = {}): void {

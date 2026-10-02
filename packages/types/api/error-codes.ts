@@ -24,7 +24,7 @@
 //   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
 //                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
 //                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
-//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all when its soft-delete set holds more
+//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
 //                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
 //   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
 //                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
@@ -68,6 +68,22 @@
 //                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
 //                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
+//   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
+//                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
+//   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
+//                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
+//                    field (businessName, contactName, displayName). Clients show FIXED copy with a
+//                    human field label and never the server message.
+//   B982 — codes the API threw as hand-typed literals, now named here. Each is `body.code` of the refusal
+//                    its throw site names (value == key, byte-identical to what was sent):
+//                    PLAN_GATE / PLAN_GATE_UNAVAILABLE (billing/plan-gate.ts, plan-flag-denial.ts), READ_ONLY
+//                    (tenant-status.guard.ts: a blocked write on a READ_ONLY tenant; the same word is also a
+//                    tenant STATUS value, which is not an error code), INSUFFICIENT_STOCK (the order-edit
+//                    oversell 409), the INLINE_RETURN_* family (returns/inline-returns*.ts, returns.service.ts),
+//                    UNIT_AWARE_LINE, MERGE_PACK_MISMATCH, ORDER_CHANGED_DURING_EDIT, CONCURRENT_UPDATE,
+//                    MERGE_IN_PROGRESS, LOCK_UNAVAILABLE (order/customer contention), PO_ALREADY_BILLED,
+//                    BILL_EXCEEDS_PO (vendor bills), INVOICE_HAS_UNSPENT_CREDIT (credit notes),
+//                    HANDOFF_CODE_INVALID (auth handoff).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -102,6 +118,8 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+  RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
   CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
@@ -111,6 +129,42 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
+  BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
+  BILL_VOID: "BILL_VOID",
+  RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
+  PLAN_GATE: "PLAN_GATE",
+  PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
+  READ_ONLY: "READ_ONLY",
+  INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
+  INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+  INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  INLINE_RETURN_ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+  INLINE_RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  INLINE_RETURN_KEY_TAKEN: "INLINE_RETURN_KEY_TAKEN",
+  INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+  INLINE_RETURN_PRIOR_BASIS_UNKNOWN: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+  INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
+  INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
+  INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
+  MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
+  ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
+  MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
+  LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
+  BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
+  INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
+} as const;
+
+/** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
+export const PLAN_GATE_FLAG_KEYS = {
+  METER_CUSTOMERS: "meter.customers",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

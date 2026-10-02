@@ -51,9 +51,7 @@ async function main() {
     // Double-check no invoice exists for this order
     const existing = await prisma.invoice.findFirst({ where: { orderId: order.id } });
     if (existing) {
-      console.log(
-        `   ⏭  Order ${order.orderNumber} already has invoice ${existing.invoiceNumber}`,
-      );
+      console.log(`   ⏭  Order ${order.orderNumber} already has invoice ${existing.invoiceNumber}`);
       skipped++;
       continue;
     }

@@ -11,7 +11,7 @@ scoped to production tenants, reconcile every real tenant's `TenantSubscription`
 dry-run/apply script, fix the READ_ONLY quote allowlist and the OAuth device-info gap, then
 bootstrap the `routeflow-hq` tenant and a `TenantMirrorService` that keeps one HQ `Customer` row
 per real tenant in sync. Three small, targeted web changes (Create Tenant plan picker, tenant
-list/detail plan display, dashboard/billing MRR fields) close the loop so what the admin *sees*
+list/detail plan display, dashboard/billing MRR fields) close the loop so what the admin _sees_
 matches what the database now knows.
 
 **Tech Stack:** NestJS 11 + Prisma 7 (schema folder) on the API; Next.js 15 App Router on the
@@ -40,7 +40,7 @@ for context on later phases this one unblocks.
   with it (TEST for everything that pattern matches except `routeflow-demo`, which is DEMO).
 - No `--force-reset`, no destructive migrations without a `-- reason:` + `-- squawk-ignore`
   comment. Prod schema changes only via `railway run --service postgres node
-  apps/api/scripts/prod-migrate.mjs`, after a fresh backup.
+apps/api/scripts/prod-migrate.mjs`, after a fresh backup.
 - Every PR passes `npm run verify` (check-types/lint/test) before push; DB-backed specs run via
   `npm run local:test:db` against the compose stack; no `SKIP_VERIFY` without a reason.
 - Prettier: semicolons, double quotes, `printWidth` 100, trailing commas. Conventional Commit
@@ -52,60 +52,62 @@ for context on later phases this one unblocks.
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `apps/api/prisma/schema/tenancy.prisma` | Modify: add `TenantClass` enum, `Tenant.class` field; widen `TenantPlan` enum with `GROWTH`, `SCALE` |
-| `apps/api/prisma/schema/sales.prisma` | Modify: add `Customer.representsTenantId` (nullable, unique) |
-| `apps/api/prisma/migrations/<ts>_backoffice_phase0_truth/migration.sql` | Create: the one migration covering all three schema changes above |
-| `apps/api/src/common/tenant-class.util.ts` | Create: pure `classifyTenantSlug(slug): TenantClass` classification logic, shared by the backfill script and the class-change endpoint's validation |
-| `apps/api/src/common/tenant-class.util.spec.ts` | Create: unit tests for the classifier |
-| `apps/api/src/auth/device-info.util.ts` | Create: promote `extractDeviceInfo(req)` out of `AuthController` into a shared, exported function |
-| `apps/api/src/auth/auth.controller.ts` | Modify: import and use the promoted `extractDeviceInfo` (no behavior change, just the extraction) |
-| `apps/api/src/auth/auth.service.ts` | Modify: `DeviceInfo` type already exported here — no change needed beyond what's already there |
-| `apps/api/src/auth/google-oauth.service.ts` | Modify: thread an optional `DeviceInfo` through `findOrCreateUser` → `handlePlatformAuth`/`handleTenantAuth` → `issueUserTokenPair` → `storeUserRefreshToken`, which gains `userAgent`/`ipAddress` columns on create/update |
-| `apps/api/src/auth/platform-google-auth.controller.ts` | Modify: accept `@Req()`, extract device info, pass it into `findOrCreateUser` |
-| `apps/api/src/tenant/tenant-status.guard.ts` | Modify: add `POST /api/v1/billing/quote` to the READ_ONLY allowlist |
-| `apps/api/src/tenant/tenant-status.guard.spec.ts` | Modify: add the repro test (fails before the fix, passes after) |
-| `apps/api/src/billing/plan-catalog.constants.ts` | Modify: add `TRIAL_LENGTH_DAYS = 14` |
-| `apps/api/src/tenants/tenants.service.ts` | Modify: use `TRIAL_LENGTH_DAYS` instead of the inline `14` |
-| `apps/api/src/platform-admin/dto/create-tenant.dto.ts` | Modify: validate `plan` against live `PLAN_KEYS`, add optional `trialLengthDays` |
-| `apps/api/src/platform-admin/dto/update-tenant-class.dto.ts` | Create: `{ class: TenantClass; reason: string }` |
-| `apps/api/src/platform-admin/audit-actions.constant.ts` | Modify: add `TENANT_CLASS_CHANGED` code + label |
-| `apps/api/src/platform-admin/platform-admin.service.ts` | Modify: `createTenant` (trial length + plan validation), `getStats()` (call `MrrService` instead of the estimator, add `ledgerMrr`, add `class` to responses), add `updateTenantClass()` |
-| `apps/api/src/platform-admin/platform-admin.controller.ts` | Modify: add `PATCH /platform-admin/tenants/:id/class`; add `includeClasses` query param |
-| `apps/api/src/platform-admin/platform-admin.service.spec.ts` | Modify: update `getStats()` tests for the new MRR source; add tests for `updateTenantClass` |
-| `apps/api/src/platform-admin/platform-config.service.ts` | Modify: add `getHouseTenantId()`/`setHouseTenantId()` wrappers over the existing `getValue`/`setValue` |
-| `apps/api/src/platform-admin/tenant-mirror.service.ts` | Create: `TenantMirrorService.upsert(tenantId)` + nightly `@LeaderCron` sweep |
-| `apps/api/src/platform-admin/tenant-mirror.service.spec.ts` | Create: unit tests for `upsert()` idempotency and per-tenant error isolation in the sweep |
-| `apps/api/src/platform-admin/platform-admin.module.ts` | Modify: register `TenantMirrorService` |
-| `apps/api/src/billing/billing.module.ts` | Modify: add `MrrService` to `exports` (currently only a provider — `PlatformAdminService` cannot inject it otherwise) |
-| `apps/api/src/billing/mrr.service.ts` | Modify: scope every query by `tenant: { class: "PRODUCTION" }` |
-| `apps/api/src/billing/mrr.service.spec.ts` | Create (if it doesn't exist) or modify: test that a TEST/DEMO-class tenant's subscription is excluded from `mrr` and `ledgerMrr` |
-| `apps/api/scripts/backfill-tenant-class.mjs` | Create: dark backfill of `Tenant.class` from `classifyTenantSlug` |
-| `apps/api/scripts/backfill-tenant-class.db.spec.ts` | Create: DB-lane test |
-| `apps/api/scripts/backfill-subscription-reconciliation.mjs` | Create: dry-run/apply reconciliation of `TenantSubscription` rows |
-| `apps/api/scripts/backfill-subscription-reconciliation.db.spec.ts` | Create: DB-lane test |
-| `apps/api/scripts/bootstrap-house-tenant.mjs` | Create: one-time, idempotent `routeflow-hq` tenant creation + `PlatformConfig` key |
-| `apps/web/lib/api/platform-pricing.ts` | Modify: nothing structural — `fetchPlanCatalog()` already exists and is reused as-is |
-| `apps/web/app/(platform-admin)/_components/AdminBadge.tsx` | Modify: add `GROWTH`/`SCALE` to `PLAN_LABELS`/`PLAN_COLORS` |
-| `apps/web/app/(platform-admin)/admin/tenants/new/page.tsx` | Modify: replace the hardcoded `PLANS` array with a live catalog fetch |
-| `apps/web/app/(platform-admin)/admin/dashboard/page.tsx` | Modify: read `mrr`/`ledgerMrr` instead of `estMrrUsd` |
-| `apps/web/app/(platform-admin)/admin/billing/page.tsx` | Modify: read the same `mrr` field so the two pages agree |
+| File                                                                    | Responsibility                                                                                                                                                                                                              |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/api/prisma/schema/tenancy.prisma`                                 | Modify: add `TenantClass` enum, `Tenant.class` field; widen `TenantPlan` enum with `GROWTH`, `SCALE`                                                                                                                        |
+| `apps/api/prisma/schema/sales.prisma`                                   | Modify: add `Customer.representsTenantId` (nullable, unique)                                                                                                                                                                |
+| `apps/api/prisma/migrations/<ts>_backoffice_phase0_truth/migration.sql` | Create: the one migration covering all three schema changes above                                                                                                                                                           |
+| `apps/api/src/common/tenant-class.util.ts`                              | Create: pure `classifyTenantSlug(slug): TenantClass` classification logic, shared by the backfill script and the class-change endpoint's validation                                                                         |
+| `apps/api/src/common/tenant-class.util.spec.ts`                         | Create: unit tests for the classifier                                                                                                                                                                                       |
+| `apps/api/src/auth/device-info.util.ts`                                 | Create: promote `extractDeviceInfo(req)` out of `AuthController` into a shared, exported function                                                                                                                           |
+| `apps/api/src/auth/auth.controller.ts`                                  | Modify: import and use the promoted `extractDeviceInfo` (no behavior change, just the extraction)                                                                                                                           |
+| `apps/api/src/auth/auth.service.ts`                                     | Modify: `DeviceInfo` type already exported here — no change needed beyond what's already there                                                                                                                              |
+| `apps/api/src/auth/google-oauth.service.ts`                             | Modify: thread an optional `DeviceInfo` through `findOrCreateUser` → `handlePlatformAuth`/`handleTenantAuth` → `issueUserTokenPair` → `storeUserRefreshToken`, which gains `userAgent`/`ipAddress` columns on create/update |
+| `apps/api/src/auth/platform-google-auth.controller.ts`                  | Modify: accept `@Req()`, extract device info, pass it into `findOrCreateUser`                                                                                                                                               |
+| `apps/api/src/tenant/tenant-status.guard.ts`                            | Modify: add `POST /api/v1/billing/quote` to the READ_ONLY allowlist                                                                                                                                                         |
+| `apps/api/src/tenant/tenant-status.guard.spec.ts`                       | Modify: add the repro test (fails before the fix, passes after)                                                                                                                                                             |
+| `apps/api/src/billing/plan-catalog.constants.ts`                        | Modify: add `TRIAL_LENGTH_DAYS = 14`                                                                                                                                                                                        |
+| `apps/api/src/tenants/tenants.service.ts`                               | Modify: use `TRIAL_LENGTH_DAYS` instead of the inline `14`                                                                                                                                                                  |
+| `apps/api/src/platform-admin/dto/create-tenant.dto.ts`                  | Modify: validate `plan` against live `PLAN_KEYS`, add optional `trialLengthDays`                                                                                                                                            |
+| `apps/api/src/platform-admin/dto/update-tenant-class.dto.ts`            | Create: `{ class: TenantClass; reason: string }`                                                                                                                                                                            |
+| `apps/api/src/platform-admin/audit-actions.constant.ts`                 | Modify: add `TENANT_CLASS_CHANGED` code + label                                                                                                                                                                             |
+| `apps/api/src/platform-admin/platform-admin.service.ts`                 | Modify: `createTenant` (trial length + plan validation), `getStats()` (call `MrrService` instead of the estimator, add `ledgerMrr`, add `class` to responses), add `updateTenantClass()`                                    |
+| `apps/api/src/platform-admin/platform-admin.controller.ts`              | Modify: add `PATCH /platform-admin/tenants/:id/class`; add `includeClasses` query param                                                                                                                                     |
+| `apps/api/src/platform-admin/platform-admin.service.spec.ts`            | Modify: update `getStats()` tests for the new MRR source; add tests for `updateTenantClass`                                                                                                                                 |
+| `apps/api/src/platform-admin/platform-config.service.ts`                | Modify: add `getHouseTenantId()`/`setHouseTenantId()` wrappers over the existing `getValue`/`setValue`                                                                                                                      |
+| `apps/api/src/platform-admin/tenant-mirror.service.ts`                  | Create: `TenantMirrorService.upsert(tenantId)` + nightly `@LeaderCron` sweep                                                                                                                                                |
+| `apps/api/src/platform-admin/tenant-mirror.service.spec.ts`             | Create: unit tests for `upsert()` idempotency and per-tenant error isolation in the sweep                                                                                                                                   |
+| `apps/api/src/platform-admin/platform-admin.module.ts`                  | Modify: register `TenantMirrorService`                                                                                                                                                                                      |
+| `apps/api/src/billing/billing.module.ts`                                | Modify: add `MrrService` to `exports` (currently only a provider — `PlatformAdminService` cannot inject it otherwise)                                                                                                       |
+| `apps/api/src/billing/mrr.service.ts`                                   | Modify: scope every query by `tenant: { class: "PRODUCTION" }`                                                                                                                                                              |
+| `apps/api/src/billing/mrr.service.spec.ts`                              | Create (if it doesn't exist) or modify: test that a TEST/DEMO-class tenant's subscription is excluded from `mrr` and `ledgerMrr`                                                                                            |
+| `apps/api/scripts/backfill-tenant-class.mjs`                            | Create: dark backfill of `Tenant.class` from `classifyTenantSlug`                                                                                                                                                           |
+| `apps/api/scripts/backfill-tenant-class.db.spec.ts`                     | Create: DB-lane test                                                                                                                                                                                                        |
+| `apps/api/scripts/backfill-subscription-reconciliation.mjs`             | Create: dry-run/apply reconciliation of `TenantSubscription` rows                                                                                                                                                           |
+| `apps/api/scripts/backfill-subscription-reconciliation.db.spec.ts`      | Create: DB-lane test                                                                                                                                                                                                        |
+| `apps/api/scripts/bootstrap-house-tenant.mjs`                           | Create: one-time, idempotent `routeflow-hq` tenant creation + `PlatformConfig` key                                                                                                                                          |
+| `apps/web/lib/api/platform-pricing.ts`                                  | Modify: nothing structural — `fetchPlanCatalog()` already exists and is reused as-is                                                                                                                                        |
+| `apps/web/app/(platform-admin)/_components/AdminBadge.tsx`              | Modify: add `GROWTH`/`SCALE` to `PLAN_LABELS`/`PLAN_COLORS`                                                                                                                                                                 |
+| `apps/web/app/(platform-admin)/admin/tenants/new/page.tsx`              | Modify: replace the hardcoded `PLANS` array with a live catalog fetch                                                                                                                                                       |
+| `apps/web/app/(platform-admin)/admin/dashboard/page.tsx`                | Modify: read `mrr`/`ledgerMrr` instead of `estMrrUsd`                                                                                                                                                                       |
+| `apps/web/app/(platform-admin)/admin/billing/page.tsx`                  | Modify: read the same `mrr` field so the two pages agree                                                                                                                                                                    |
 
 ---
 
 ### Task 1: `TenantClass` enum, `TenantPlan` widening, `Customer.representsTenantId` — schema + migration
 
 **Files:**
+
 - Modify: `apps/api/prisma/schema/tenancy.prisma`
 - Modify: `apps/api/prisma/schema/sales.prisma`
 - Create: `apps/api/prisma/migrations/<timestamp>_backoffice_phase0_truth/migration.sql` (generated, not hand-written)
 
 **Interfaces:**
+
 - Produces: `TenantClass` enum (`PRODUCTION | DEMO | TEST | INTERNAL`) and `Tenant.class` field
   (default `PRODUCTION`), consumed by every later task in this plan and by Phase 1+.
 - Produces: `TenantPlan` enum gains `GROWTH`, `SCALE` members (alongside the existing `STARTER,
-  TEAM, BUSINESS, PROFESSIONAL, ENTERPRISE`), consumed by Task 6 (`CreateTenantDto`) and every
+TEAM, BUSINESS, PROFESSIONAL, ENTERPRISE`), consumed by Task 6 (`CreateTenantDto`) and every
   DTO that does `@IsEnum(TenantPlan)`.
 - Produces: `Customer.representsTenantId String? @unique`, schema-only in this phase (no writer
   until Phase 1); consumed by the HQ bootstrap work in Task 11 only as a column that must exist.
@@ -198,10 +200,12 @@ git commit -m "feat(schema): add Tenant.class, widen TenantPlan with GROWTH/SCAL
 ### Task 2: `classifyTenantSlug` utility + unit tests
 
 **Files:**
+
 - Create: `apps/api/src/common/tenant-class.util.ts`
 - Create: `apps/api/src/common/tenant-class.util.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `TenantClass` from `@prisma/client` (Task 1); `TEST_TENANT_SLUGS`,
   `TEST_TENANT_PATTERN` from `scripts/lib/test-tenants.cjs` (already exist — read-only reuse, no
   changes to that file).
@@ -294,10 +298,12 @@ git commit -m "feat(common): add classifyTenantSlug for Tenant.class backfill"
 ### Task 3: Dark backfill script for `Tenant.class`
 
 **Files:**
+
 - Create: `apps/api/scripts/backfill-tenant-class.mjs`
 - Create: `apps/api/scripts/backfill-tenant-class.db.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `classifyTenantSlug` (Task 2) — imported via a small `.mjs`-compatible re-export, see
   Step 1's note on ESM/CJS interop.
 - Produces: every existing `Tenant` row gets a correct `class` value. No KPI query reads this
@@ -453,12 +459,14 @@ git commit -m "feat(scripts): dark Tenant.class backfill (dry-run/apply)"
 ### Task 4: `TRIAL_LENGTH_DAYS` constant
 
 **Files:**
+
 - Modify: `apps/api/src/billing/plan-catalog.constants.ts`
 - Modify: `apps/api/src/tenants/tenants.service.ts:97-98`
 - Modify: `apps/api/src/platform-admin/platform-admin.service.ts:232` (also touched again in
   Task 6 for the `trialLengthDays` override — this step just centralizes the constant)
 
 **Interfaces:**
+
 - Produces: `TRIAL_LENGTH_DAYS: number`, consumed by Task 6.
 
 - [ ] **Step 1: Add the constant**
@@ -511,11 +519,13 @@ replaced in Task 6, alongside the plan-validation change, since both touch `crea
 ### Task 5: Promote `extractDeviceInfo` to a shared utility
 
 **Files:**
+
 - Create: `apps/api/src/auth/device-info.util.ts`
 - Modify: `apps/api/src/auth/auth.controller.ts:481-488` (delete the private method, import the
   new one, update the 4 call sites at lines 84, 102, 139, 159 to call the imported function)
 
 **Interfaces:**
+
 - Produces: `extractDeviceInfo(req: Request): { userAgent?: string; ipAddress?: string }`,
   consumed by `auth.controller.ts` (unchanged behavior) and by Task 7
   (`platform-google-auth.controller.ts`).
@@ -571,12 +581,14 @@ git commit -m "refactor(auth): promote extractDeviceInfo to a shared utility"
 ### Task 6: Thread `DeviceInfo` through the Google OAuth platform-admin flow
 
 **Files:**
+
 - Modify: `apps/api/src/auth/google-oauth.service.ts` (`findOrCreateUser` at line 392,
   `handlePlatformAuth` at line 400, `issueUserTokenPair` at line 676,
   `storeUserRefreshToken` at line 746)
 - Modify: `apps/api/src/auth/platform-google-auth.controller.ts` (`handleCallback` at line 84)
 
 **Interfaces:**
+
 - Consumes: `extractDeviceInfo` (Task 5), `DeviceInfo` type (already exported from
   `auth.service.ts:19-23`).
 - Produces: `RefreshToken.userAgent`/`ipAddress` populated for platform-admin Google sign-ins
@@ -737,6 +749,7 @@ git commit -m "fix(auth): record device info for Google OAuth sessions (both pla
 > The steps below are kept verbatim as the specification of what the fix must do.
 
 **Files:**
+
 - Modify: `apps/api/src/tenant/tenant-status.guard.ts:134-138`
 - Modify: `apps/api/src/tenant/tenant-status.guard.spec.ts`
 
@@ -789,7 +802,7 @@ Expected: PASS (including all pre-existing tests in the file, unaffected).
 
 With `npm run local:up` running, force a tenant to `READ_ONLY` (via the platform-admin
 `PATCH .../status` endpoint against a `qa-*` tenant) and confirm the choose-plan page's Subscribe
-button now renders instead of erroring on the quote call. If any *other* route the Subscribe flow
+button now renders instead of erroring on the quote call. If any _other_ route the Subscribe flow
 needs also 403s, add it to the same allowlist in this same commit.
 
 - [ ] **Step 6: Commit**
@@ -804,6 +817,7 @@ git commit -m "fix(billing): allow POST /billing/quote for READ_ONLY tenants so 
 ### Task 8: `updateTenantClass` endpoint
 
 **Files:**
+
 - Create: `apps/api/src/platform-admin/dto/update-tenant-class.dto.ts`
 - Modify: `apps/api/src/platform-admin/audit-actions.constant.ts`
 - Modify: `apps/api/src/platform-admin/platform-admin.service.ts`
@@ -811,11 +825,12 @@ git commit -m "fix(billing): allow POST /billing/quote for READ_ONLY tenants so 
 - Modify: `apps/api/src/platform-admin/platform-admin.service.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `classifyTenantSlug` is NOT used here — this is a manual override endpoint, distinct
   from the automated backfill; it takes an explicit target class from the admin, not a derived
   one.
 - Produces: `PlatformAdminService.updateTenantClass(tenantId, dto, adminId): Promise<{id, slug,
-  class}>`, and `PATCH /platform-admin/tenants/:id/class`, consumed by no other task in this
+class}>`, and `PATCH /platform-admin/tenants/:id/class`, consumed by no other task in this
   plan (later phases' Tenant 360 UI is Phase 5) but exercised by its own tests here.
 
 - [ ] **Step 1: Write the failing DTO test and service test**
@@ -842,10 +857,18 @@ Add to `platform-admin.service.spec.ts` (follow the existing spec's mock-prisma 
 ```typescript
 describe("updateTenantClass", () => {
   it("updates the class, writes an audit row, and emits a BillingEvent when leaving PRODUCTION", async () => {
-    prisma.tenant.findUniqueOrThrow.mockResolvedValue({ id: TENANT_ID, slug: "acme", class: "PRODUCTION" });
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "acme",
+      class: "PRODUCTION",
+    });
     prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "acme", class: "TEST" });
 
-    await service.updateTenantClass(TENANT_ID, { class: "TEST", reason: "reclassified as QA" }, ADMIN_ID);
+    await service.updateTenantClass(
+      TENANT_ID,
+      { class: "TEST", reason: "reclassified as QA" },
+      ADMIN_ID,
+    );
 
     expect(prisma.tenant.update).toHaveBeenCalledWith({
       where: { id: TENANT_ID },
@@ -859,10 +882,18 @@ describe("updateTenantClass", () => {
   });
 
   it("does not emit a BillingEvent when moving between two non-PRODUCTION classes", async () => {
-    prisma.tenant.findUniqueOrThrow.mockResolvedValue({ id: TENANT_ID, slug: "qa-1", class: "TEST" });
+    prisma.tenant.findUniqueOrThrow.mockResolvedValue({
+      id: TENANT_ID,
+      slug: "qa-1",
+      class: "TEST",
+    });
     prisma.tenant.update.mockResolvedValue({ id: TENANT_ID, slug: "qa-1", class: "DEMO" });
 
-    await service.updateTenantClass(TENANT_ID, { class: "DEMO", reason: "repurposed for sales demo" }, ADMIN_ID);
+    await service.updateTenantClass(
+      TENANT_ID,
+      { class: "DEMO", reason: "repurposed for sales demo" },
+      ADMIN_ID,
+    );
 
     expect(billingEventService.record).not.toHaveBeenCalled();
   });
@@ -882,6 +913,7 @@ In `audit-actions.constant.ts`, add to `AdminAuditAction` and `ADMIN_AUDIT_ACTIO
 ```typescript
   TENANT_CLASS_CHANGED: "TENANT_CLASS_CHANGED",
 ```
+
 ```typescript
   TENANT_CLASS_CHANGED: "Class changed",
 ```
@@ -967,6 +999,7 @@ git commit -m "feat(platform-admin): add PATCH tenants/:id/class with audit + le
 ### Task 9: One MRR engine — export `MrrService`, scope it by class, wire `getStats()`
 
 **Files:**
+
 - Modify: `apps/api/src/billing/billing.module.ts`
 - Modify: `apps/api/src/billing/mrr.service.ts`
 - Modify or create: `apps/api/src/billing/mrr.service.spec.ts`
@@ -974,6 +1007,7 @@ git commit -m "feat(platform-admin): add PATCH tenants/:id/class with audit + le
 - Modify: `apps/api/src/platform-admin/platform-admin.service.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `MrrService.computeOverview()` (already exists — see Task description for its
   return shape), `Tenant.class` (Task 1 + the manual checkpoint after Task 3).
 - Produces: `getStats()` response gains `mrr` and `ledgerMrr` fields; `estMrrUsd` is removed.
@@ -1025,7 +1059,9 @@ it("excludes non-PRODUCTION tenants from mrr and ledgerMrr", async () => {
     }),
   );
   expect(prisma.billingEvent.aggregate).toHaveBeenCalledWith(
-    expect.objectContaining({ where: expect.objectContaining({ tenant: { class: "PRODUCTION" } }) }),
+    expect.objectContaining({
+      where: expect.objectContaining({ tenant: { class: "PRODUCTION" } }),
+    }),
   );
 });
 ```
@@ -1074,8 +1110,16 @@ assertion on `estMrrUsd` with one on `mrr`/`ledgerMrr`:
 ```typescript
 it("sources MRR from MrrService, not the legacy estimator", async () => {
   mrrService.computeOverview.mockResolvedValue({
-    mrr: 748, baseMrr: 748, addonMrr: 0, discountTotal: 0, payingTenants: 2,
-    trialTenants: 1, readOnlyTenants: 0, byPlan: [], ledgerMrr: 748, momDelta: 0,
+    mrr: 748,
+    baseMrr: 748,
+    addonMrr: 0,
+    discountTotal: 0,
+    payingTenants: 2,
+    trialTenants: 1,
+    readOnlyTenants: 0,
+    byPlan: [],
+    ledgerMrr: 748,
+    momDelta: 0,
   });
   // ...existing mocked prisma calls for tenant counts unchanged...
 
@@ -1220,6 +1264,7 @@ git commit -m "fix(billing): one MRR engine — getStats() reads MrrService, sco
 ### Task 10: `CreateTenantDto` plan validation + trial length + the `updatePlan`/`activateSubscription` DTOs pick up GROWTH/SCALE for free
 
 **Files:**
+
 - Modify: `apps/api/src/platform-admin/dto/create-tenant.dto.ts`
 - Modify: `apps/api/src/platform-admin/platform-admin.service.ts` (`createTenant`)
 - Modify: `apps/api/src/platform-admin/platform-admin.controller.ts` (pass `adminId` — already
@@ -1227,6 +1272,7 @@ git commit -m "fix(billing): one MRR engine — getStats() reads MrrService, sco
 - Modify: `apps/api/src/platform-admin/platform-admin.service.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `PLAN_KEYS`, `TRIAL_LENGTH_DAYS` (Task 4) from `plan-catalog.constants.ts`.
 - Produces: `CreateTenantDto.plan` now validated against the live 4-key catalog instead of
   accepting any string; `CreateTenantDto.trialLengthDays?: number` new optional field.
@@ -1262,7 +1308,18 @@ Expected: FAIL — today any string is accepted and cast.
 
 ```typescript
 // create-tenant.dto.ts
-import { IsString, MinLength, MaxLength, Matches, IsEmail, IsOptional, IsIn, IsInt, Min, Max } from "class-validator";
+import {
+  IsString,
+  MinLength,
+  MaxLength,
+  Matches,
+  IsEmail,
+  IsOptional,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+} from "class-validator";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { PLAN_KEYS } from "../../billing/plan-catalog.constants";
 
@@ -1274,7 +1331,9 @@ export class CreateTenantDto {
   @IsIn(PLAN_KEYS)
   plan?: (typeof PLAN_KEYS)[number];
 
-  @ApiPropertyOptional({ description: "Trial length override in days (default: TRIAL_LENGTH_DAYS)" })
+  @ApiPropertyOptional({
+    description: "Trial length override in days (default: TRIAL_LENGTH_DAYS)",
+  })
   @IsOptional()
   @IsInt()
   @Min(1)
@@ -1323,10 +1382,12 @@ git commit -m "fix(platform-admin): validate CreateTenantDto.plan against the li
 ### Task 11: Subscription-set reconciliation script
 
 **Files:**
+
 - Create: `apps/api/scripts/backfill-subscription-reconciliation.mjs`
 - Create: `apps/api/scripts/backfill-subscription-reconciliation.db.spec.ts`
 
 **Interfaces:**
+
 - Consumes: the published `PlanVersion`/`PlanDefinition` catalog (read via
   `PlanCatalogService`-equivalent raw queries — the script runs standalone, outside Nest DI, so
   it queries `PlanVersion`/`PlanDefinition` directly via Prisma rather than injecting the
@@ -1403,8 +1464,12 @@ async function main() {
       }
     }
 
-    console.log(`${tenants.length} tenants scanned, ${rows.length} change(s), ${skipped.length} skipped:`);
-    console.table(rows.map((r) => ({ slug: r.slug, action: r.action, planKey: r.planKey, price: r.price })));
+    console.log(
+      `${tenants.length} tenants scanned, ${rows.length} change(s), ${skipped.length} skipped:`,
+    );
+    console.table(
+      rows.map((r) => ({ slug: r.slug, action: r.action, planKey: r.planKey, price: r.price })),
+    );
     if (skipped.length) {
       console.log("\nSKIPPED — needs manual decision:");
       console.table(skipped);
@@ -1429,7 +1494,11 @@ async function main() {
       } else {
         await prisma.tenantSubscription.update({
           where: { tenantId: r.tenantId },
-          data: { planKey: r.planKey, basePriceSnapshot: r.price, planVersionId: publishedVersion.id },
+          data: {
+            planKey: r.planKey,
+            basePriceSnapshot: r.price,
+            planVersionId: publishedVersion.id,
+          },
         });
       }
       await prisma.billingEvent.create({
@@ -1480,41 +1549,67 @@ describe("backfill-subscription-reconciliation (db)", () => {
     publishedVersionId = version.id;
 
     tenantNoSub = await prisma.tenant.create({
-      data: { slug: "qa-phase0-recon-1", name: "qa-phase0-recon-1", status: "ACTIVE", class: "TEST", plan: "STARTER" },
+      data: {
+        slug: "qa-phase0-recon-1",
+        name: "qa-phase0-recon-1",
+        status: "ACTIVE",
+        class: "TEST",
+        plan: "STARTER",
+      },
     });
     tenantMissingSnapshot = await prisma.tenant.create({
       data: {
-        slug: "qa-phase0-recon-2", name: "qa-phase0-recon-2", status: "ACTIVE", class: "TEST", plan: "PROFESSIONAL",
+        slug: "qa-phase0-recon-2",
+        name: "qa-phase0-recon-2",
+        status: "ACTIVE",
+        class: "TEST",
+        plan: "PROFESSIONAL",
         subscription: { create: { planKey: null, basePriceSnapshot: null } },
       },
     });
   });
 
   afterAll(async () => {
-    await prisma.tenantSubscription.deleteMany({ where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } } });
-    await prisma.billingEvent.deleteMany({ where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } } });
-    await prisma.tenant.deleteMany({ where: { id: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } } });
+    await prisma.tenantSubscription.deleteMany({
+      where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } },
+    });
+    await prisma.billingEvent.deleteMany({
+      where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } },
+    });
+    await prisma.tenant.deleteMany({
+      where: { id: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } },
+    });
     await prisma.$disconnect();
   });
 
   it("dry run makes no writes", async () => {
-    execSync("node apps/api/scripts/backfill-subscription-reconciliation.mjs", { encoding: "utf-8" });
+    execSync("node apps/api/scripts/backfill-subscription-reconciliation.mjs", {
+      encoding: "utf-8",
+    });
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenantNoSub.id } });
     expect(sub).toBeNull();
   });
 
   it("apply creates a missing subscription and backfills a partial one", async () => {
-    execSync("node apps/api/scripts/backfill-subscription-reconciliation.mjs --apply", { encoding: "utf-8" });
+    execSync("node apps/api/scripts/backfill-subscription-reconciliation.mjs --apply", {
+      encoding: "utf-8",
+    });
 
-    const created = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenantNoSub.id } });
+    const created = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantNoSub.id },
+    });
     expect(created.planKey).toBe("STARTER");
     expect(Number(created.basePriceSnapshot)).toBeGreaterThan(0);
 
-    const backfilled = await prisma.tenantSubscription.findUnique({ where: { tenantId: tenantMissingSnapshot.id } });
+    const backfilled = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: tenantMissingSnapshot.id },
+    });
     expect(backfilled.planKey).toBe("SCALE"); // PROFESSIONAL maps to SCALE
     expect(Number(backfilled.basePriceSnapshot)).toBeGreaterThan(0);
 
-    const events = await prisma.billingEvent.findMany({ where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } } });
+    const events = await prisma.billingEvent.findMany({
+      where: { tenantId: { in: [tenantNoSub.id, tenantMissingSnapshot.id] } },
+    });
     expect(events).toHaveLength(2);
   });
 });
@@ -1543,10 +1638,12 @@ git commit -m "feat(scripts): subscription-set reconciliation (dry-run/apply)"
 ### Task 12: `PlatformConfig` house-tenant key + `bootstrap-house-tenant.mjs`
 
 **Files:**
+
 - Modify: `apps/api/src/platform-admin/platform-config.service.ts`
 - Create: `apps/api/scripts/bootstrap-house-tenant.mjs`
 
 **Interfaces:**
+
 - Produces: `PlatformConfigService.getHouseTenantId(): Promise<string | null>` and
   `setHouseTenantId(id: string): Promise<void>`, consumed by Task 13 (`TenantMirrorService`).
 
@@ -1659,6 +1756,7 @@ git commit -m "feat(platform-admin): bootstrap the routeflow-hq house tenant + P
 ### Task 13: `TenantMirrorService`
 
 **Files:**
+
 - Create: `apps/api/src/platform-admin/tenant-mirror.service.ts`
 - Create: `apps/api/src/platform-admin/tenant-mirror.service.spec.ts`
 - Modify: `apps/api/src/platform-admin/platform-admin.module.ts`
@@ -1666,6 +1764,7 @@ git commit -m "feat(platform-admin): bootstrap the routeflow-hq house tenant + P
   `createTenant` and wherever `updateTenantConfig` lives)
 
 **Interfaces:**
+
 - Consumes: `PlatformConfigService.getHouseTenantId()` (Task 12); `Customer.representsTenantId`
   (Task 1).
 - Produces: `TenantMirrorService.upsert(tenantId: string): Promise<void>`, best-effort (never
@@ -1744,7 +1843,10 @@ export class TenantMirrorService {
       select: {
         id: true,
         name: true,
-        users: { where: { role: "TENANT_ADMIN", deletedAt: null }, select: { email: true, username: true } },
+        users: {
+          where: { role: "TENANT_ADMIN", deletedAt: null },
+          select: { email: true, username: true },
+        },
       },
     });
 
@@ -1805,7 +1907,9 @@ export class TenantMirrorService {
       }
     }
     if (failures.length) {
-      this.logger.warn(`Mirror sync completed with ${failures.length} failure(s): ${failures.join(", ")}`);
+      this.logger.warn(
+        `Mirror sync completed with ${failures.length} failure(s): ${failures.join(", ")}`,
+      );
     }
   }
 }
@@ -1858,12 +1962,14 @@ git commit -m "feat(platform-admin): TenantMirrorService — keep one HQ Custome
 ### Task 14: Web — live catalog in the Create Tenant plan picker, plan label fixes, MRR field rename
 
 **Files:**
+
 - Modify: `apps/web/app/(platform-admin)/_components/AdminBadge.tsx`
 - Modify: `apps/web/app/(platform-admin)/admin/tenants/new/page.tsx`
 - Modify: `apps/web/app/(platform-admin)/admin/dashboard/page.tsx`
 - Modify: `apps/web/app/(platform-admin)/admin/billing/page.tsx`
 
 **Interfaces:**
+
 - Consumes: `fetchPlanCatalog()` from `@/lib/api/platform-pricing` (already exists, no change);
   the API's new `mrr`/`ledgerMrr` fields (Task 9).
 
