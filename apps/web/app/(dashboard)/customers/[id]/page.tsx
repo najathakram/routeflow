@@ -155,6 +155,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { BrandMark } from "@/components/brand";
+import { focusRefusedContactField } from "@/lib/refused-text-field";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -828,10 +829,10 @@ function ContactPersonModal({
     if (editingContact) {
       updateContact.mutate(
         { ...payload, contactId: editingContact.id },
-        { onSuccess: () => onClose() },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose() });
+      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
     }
   };
 
@@ -871,12 +872,14 @@ function ContactPersonModal({
               </select>
             </div>
             <Input
+              id="contact-first-name"
               label="First Name *"
               placeholder="John"
               value={form.firstName}
               onChange={handleChange("firstName") as any}
             />
             <Input
+              id="contact-last-name"
               label="Last Name"
               placeholder="Doe"
               value={form.lastName}
