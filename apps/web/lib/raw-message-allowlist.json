@@ -136,8 +136,8 @@
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending (2: the pre-existing one, plus #2865's `res.message` for a refused scan lookup, a server sentence that needs a code first: B991 / B987-E)"
+    "count": 1,
+    "why": "B986-7 orders + customers: folds an unexpected scan-resolver rejection (a JS Error, not a server body) into the scan error message; reviewed, pending a code for the lookup failure (B987-E). The refused-scan read is gone (B993)."
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
     "count": 4,
