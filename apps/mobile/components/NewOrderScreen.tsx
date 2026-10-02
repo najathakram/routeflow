@@ -1055,8 +1055,10 @@ function ProductPickView({
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
     if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code)) {
-      // #2865 (SA-632 H2): refused while the line's default unit is loading: not counted, no "Added". EXACTLY ONE toast: this
-      // one. The outcome carries no feedback (an error pill beside it was the second, stacked copy, F4).
+      // #2865 (SA-632 H2): refused while the line's default unit is loading: not counted, no "Added". EXACTLY ONE message, in
+      // the layer the operator can see: with the scan sheet open its own error pill (the app toast renders UNDER the sheet's
+      // Modal, F3), otherwise the app toast (an error pill beside it was the stacked second copy, F4).
+      if (scanOpen) return { feedback: { kind: "error", text: UNITS_LOADING_SCAN_MESSAGE } };
       showToast(UNITS_LOADING_SCAN_MESSAGE);
       return undefined;
     }

@@ -130,6 +130,10 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     const fin = body(src, "const finishAccept: ", 1500);
     const refusal = fin.slice(fin.indexOf("if (!addOne("), fin.indexOf("bumpScanned(product.id)"));
     expect(refusal).toMatch(/return undefined;/);
-    expect(refusal).not.toMatch(/feedback:/); // no feedback pill: that was the stacked second copy
+    // with the sheet open the message is the sheet's own pill (the app toast sits under its Modal); never both layers
+    expect(refusal).toMatch(
+      /if \(scanOpen\) return \{ feedback: \{ kind: "error", text: UNITS_LOADING_SCAN_MESSAGE \} \};/,
+    );
+    expect(refusal.indexOf("if (scanOpen)")).toBeLessThan(refusal.indexOf("showToast("));
   });
 });
