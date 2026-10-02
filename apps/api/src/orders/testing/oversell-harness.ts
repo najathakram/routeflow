@@ -136,8 +136,10 @@ export async function buildOversellOrders(policy: PolicyFor = "off") {
   const decrement = orderStock.decrementStockForSale as unknown as jest.Mock;
   const settle = orderStock.settleStockForEdit as unknown as jest.Mock;
   resolve.mockClear();
-  decrement.mockReset().mockResolvedValue(undefined);
-  settle.mockReset().mockResolvedValue(undefined);
+  // SA-606k: the stock functions return a result; a bare mock must not hand callers `undefined`.
+  const noBackorder = () => ({ backorderByProduct: new Map<string, number>() });
+  decrement.mockReset().mockResolvedValue(noBackorder());
+  settle.mockReset().mockResolvedValue(noBackorder());
 
   const actualStock = jest.requireActual("../order-stock") as typeof orderStock;
   return {

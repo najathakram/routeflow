@@ -43,6 +43,18 @@ export interface UnitAwareLineInput {
   unitLabel?: string | null;
 }
 
+/**
+ * SA-606k/n: a buyer order line's backorder, in PIECES. The pieces of THIS line that the write took
+ * below zero stock (the tenant must still source them); 0 means fully in stock. Present on every
+ * line of a buyer create / merge / edit response; ABSENT means "not computed here" (a staff or
+ * standing-order response) and must be read as UNKNOWN, never as 0. Pieces only: a client shows it in
+ * the line's own unit by converting with the LINE's snapshot (a boxed line's `unitsPerBox`, a
+ * unit-aware line's `factorToBase`), never the product's current pack.
+ */
+export interface BackorderLineFields {
+  backorderPieces?: number;
+}
+
 // ─── Draft/park line price provenance (B755) ────────────────────────────────────
 // Draft-only — never sent on the actual order-create/update payload. Distinct name
 // from `ReturnPriceSource` (inline-returns.ts) on purpose: a different feature's
