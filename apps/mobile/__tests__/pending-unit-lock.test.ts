@@ -1,4 +1,5 @@
 import type { ProductUnitLevel } from "@routeflow/types";
+import { pendingResolveKey } from "@routeflow/pricing";
 import type { LadderProduct } from "@routeflow/pricing";
 import type { LineState } from "../lib/cart-line-state";
 import {
@@ -165,5 +166,23 @@ describe("pending tap count (case c)", () => {
     expect(mergeResolvedDefaults(cur, before, done)).toBe(cur);
     const same = { p1: pending({ pendingTaps: 1 }) };
     expect(mergeResolvedDefaults(same, before, done).p1).toMatchObject({ unitLabel: "Bottle" });
+  });
+
+  it("N1: a tap that lands DURING the ladder fetch is not lost: the stale merge skips, the resolver re-runs, N+1 default units", async () => {
+    const before = { p1: pending({ pendingTaps: 1 }) };
+    const done = (await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE]))).items;
+    const cur = { p1: pending({ pendingTaps: 2 }) }; // the 2nd tap landed while the ladder loaded
+    expect(mergeResolvedDefaults(cur, before, done)).toBe(cur); // the stale resolve is skipped...
+    // ...and the resolver key changed with the tap count, so it runs again on the current line
+    const key = (m: Record<string, LineState>) =>
+      pendingResolveKey(
+        Object.entries(m).map(([id, l]) => ({ id, count: l.pendingTaps ?? l.qty })),
+      );
+    expect(key(cur)).not.toBe(key(before));
+    const again = (await resolvePendingDefaultUnits(cur, deps([BOTTLE, CASE]))).items;
+    expect(mergeResolvedDefaults(cur, cur, again).p1).toMatchObject({
+      unitLabel: "Bottle",
+      qty: 2,
+    });
   });
 });

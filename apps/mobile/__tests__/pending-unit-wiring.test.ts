@@ -108,4 +108,11 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     }
     expect(read("hooks/useDefaultUnitResolver.ts")).toMatch(/pendingStatus\(/);
   });
+
+  it("N1: the resolver effect is keyed on each pending line's TAP COUNT (pendingResolveKey), not a quantity", () => {
+    const hook = read("hooks/useDefaultUnitResolver.ts");
+    expect(hook).toMatch(/pendingResolveKey\(/);
+    expect(hook).toMatch(/count: l\.pendingTaps \?\? l\.qty/);
+    expect(hook).not.toMatch(/\$\{id\}:\$\{l\.qty\}/);
+  });
 });

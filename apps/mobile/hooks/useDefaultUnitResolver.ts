@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
+import { pendingResolveKey, pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
 import type { LineState } from "../lib/cart-line-state";
 import {
   isPendingDefaultUnit,
@@ -51,10 +51,13 @@ export function useDefaultUnitResolver(
   // so is one whose subscription read is still in flight: only a real failure is "failed" (the shared pendingStatus).
   const [reasons, setReasons] = useState<Readonly<Record<string, PendingBlockReason>>>({});
 
-  const pendingKey = Object.entries(items)
-    .filter(([, l]) => isPendingDefaultUnit(l))
-    .map(([id, l]) => `${id}:${l.qty}`)
-    .join("|");
+  // #2865 (N1): keyed on each pending line's TAP COUNT (a tap no longer moves qty), so a tap that lands during the
+  // ladder fetch re-runs the resolver instead of leaving the line on "loading" forever.
+  const pendingKey = pendingResolveKey(
+    Object.entries(items)
+      .filter(([, l]) => isPendingDefaultUnit(l))
+      .map(([id, l]) => ({ id, count: l.pendingTaps ?? l.qty })),
+  );
   useEffect(() => {
     if (!pendingKey) return;
     const before = itemsRef.current;
