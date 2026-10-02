@@ -255,12 +255,38 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
     });
   });
 
-  describe("paths that must NOT report it (absent = unknown)", () => {
-    it("the standing-order Reorder (generateOrder) returns its order with no backorderPieces key", async () => {
+  describe("buyer Reorder (generateOrder) PRESENT; staff manual run and cron ABSENT (B975, SA-606q)", () => {
+    it("a Reorder that wrote stock reports the figure on its lines, same rule as checkout", async () => {
+      templates.generateOrder.mockResolvedValue(
+        withStockWrite(orderOf("o-r", [["r1", "p", 8]]), write([["p", 3]])),
+      );
+      const res = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(figures(res)).toEqual([3]);
+    });
+
+    it("a Reorder order with no write behind it omits the key, never 0", async () => {
       templates.generateOrder.mockResolvedValue(orderOf("o-r", [["r1", "p", 4]]));
       const res = await controller.reorderFromTemplate("t-1", CTX as any);
       expect(noKey(res)).toBe(true);
       expect(JSON.stringify(res)).not.toMatch(/backorder/i);
+    });
+
+    it("a lost write on the Reorder (lines lowered before the re-read) omits the key on the whole order", async () => {
+      templates.generateOrder.mockResolvedValue(
+        withStockWrite(orderOf("o-r", [["r1", "p", 2]]), write([["p", 3]])),
+      );
+      expect(noKey(await controller.reorderFromTemplate("t-1", CTX as any))).toBe(true);
+    });
+
+    it("a failure while attributing after the commit still returns the Reorder order, key absent", async () => {
+      const broken: any = withStockWrite({ id: "o-r" }, write([["p", 3]]));
+      Object.defineProperty(broken, "lineItems", {
+        get() {
+          throw new Error("boom after commit");
+        },
+      });
+      templates.generateOrder.mockResolvedValue(broken);
+      await expect(controller.reorderFromTemplate("t-1", CTX as any)).resolves.toBe(broken);
     });
 
     it("the staff controllers never map it (static pin: no import of the response helper)", () => {

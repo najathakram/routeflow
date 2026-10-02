@@ -1,0 +1,175 @@
+jest.mock("../orders/order-stock", () => ({
+  ...jest.requireActual("../orders/order-stock"),
+  decrementStockForSale: jest.fn(),
+}));
+jest.mock("../orders/oversell-policy", () => {
+  const actual = jest.requireActual("../orders/oversell-policy");
+  return { ...actual, resolveOversellAllowed: jest.fn(actual.resolveOversellAllowed) };
+});
+// @LeaderCron wraps generateDailyOrders in an advisory lock; no DB here, so a pass-through.
+jest.mock("../common/db-locks", () => ({
+  withAdvisoryLock: async (_opts: unknown, fn: () => Promise<unknown>) => ({
+    acquired: true,
+    value: await fn(),
+  }),
+  LockTimeoutError: class extends Error {},
+  LockUnavailableError: class extends Error {},
+}));
+
+import { Test } from "@nestjs/testing";
+import { OrderTemplatesService } from "./order-templates.service";
+import { PrismaService } from "../prisma/prisma.service";
+import { TenantContextService } from "../tenant/tenant-context.service";
+import { SystemConfigService } from "../system-config/system-config.service";
+import { OrdersService } from "../orders/orders.service";
+import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { AuditService } from "../audit/audit.service";
+import { createMockPrisma } from "../testing/prisma-mock";
+import { decrementStockForSale, stockWriteOf } from "../orders/order-stock";
+import { withBackorderPieces } from "../orders/backorder-response";
+import * as cancelledLines from "../orders/order-edit-cancelled";
+import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import type { JwtPayload } from "../auth/jwt-payload.interface";
+
+/**
+ * B975 (SA-606q): the buyer Reorder (generateOrder) reports the same per-line `backorderPieces` as the
+ * buyer's checkout. The template service hands the locked write back on the order it returns (the
+ * non-enumerable carrier), so the BuyerController can map it; the staff manual run and the 06:00
+ * cron never map it. Harness copied from order-templates.oversell-call-sites.spec.ts.
+ */
+describe("OrderTemplatesService returns the locked write (B975)", () => {
+  let service: OrderTemplatesService;
+  let prisma: ReturnType<typeof createMockPrisma>;
+  let merge: jest.Mock;
+  const decrement = decrementStockForSale as jest.Mock;
+  const realResolver = (OrdersService.prototype as any).resolveBuyerLinePrice;
+  const write = (n: number) => ({ backorderByProduct: new Map([["p1", n]]) });
+
+  async function build(opts: { pack?: number | null; qty?: number } = {}) {
+    const pack = opts.pack ?? null;
+    prisma = createMockPrisma();
+    (resolveOversellAllowed as unknown as jest.Mock).mockClear();
+    decrement.mockReset().mockResolvedValue({ backorderByProduct: new Map() });
+    merge = jest.fn().mockResolvedValue(null);
+    const mod = await Test.createTestingModule({
+      providers: [
+        OrderTemplatesService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: TenantContextService, useValue: { run: jest.fn((_id, fn) => fn()) } },
+        { provide: SystemConfigService, useValue: { get: jest.fn().mockResolvedValue("10") } },
+        {
+          provide: OrdersService,
+          useValue: {
+            mergeAllPendingForCustomer: merge,
+            loadActivePromotions: jest.fn().mockResolvedValue([]),
+            getCustomerPriceHistory: jest.fn().mockResolvedValue({}),
+            resolveBuyerLinePrice: jest.fn((...a: any[]) => realResolver(...a)),
+          },
+        },
+        {
+          provide: AuthorizationGuardService,
+          useValue: { checkAuthorized: jest.fn().mockResolvedValue({ blocked: [] }) },
+        },
+        {
+          provide: NotificationsService,
+          useValue: {
+            sendToCustomer: jest.fn().mockResolvedValue(1),
+            sendToUser: jest.fn().mockResolvedValue(1),
+          },
+        },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        {
+          provide: PolicyOversellReader,
+          useValue: { read: jest.fn().mockResolvedValue("backorder") },
+        },
+      ],
+    }).compile();
+    service = mod.get(OrderTemplatesService);
+    prisma.customer.findUnique.mockResolvedValue({ id: "c1", pricingTier: 1 });
+    prisma.customerPrice.findMany.mockResolvedValue([]);
+    prisma.trackedCategory.findMany.mockResolvedValue([]);
+    prisma.product.findMany.mockResolvedValue([
+      { id: "p1", pricePerUnit: 10, unitsPerBox: pack, trackedCategoryId: null },
+    ]);
+    // Honour the include the way Prisma would: the product's pack is present ONLY if it was selected.
+    prisma.order.create.mockImplementation((a: any) => {
+      const select = a.include?.lineItems?.include?.product?.select ?? {};
+      const lineItems = a.data.lineItems.create.map((li: any, i: number) => ({
+        id: `l${i}`,
+        status: "PENDING",
+        boxes: null,
+        pieces: null,
+        unitsPerBox: null,
+        unitLabel: null,
+        ...li,
+        product: {
+          id: li.productId,
+          name: "Widget",
+          unit: "case",
+          ...(select.unitsPerBox ? { unitsPerBox: pack } : {}),
+        },
+      }));
+      return Promise.resolve({ id: "o1", ...a.data, lineItems, customer: { id: "c1" } });
+    });
+    prisma.orderTemplate.findUnique.mockResolvedValue({
+      id: "t1",
+      customerId: "c1",
+      name: "Weekly",
+      isActive: true,
+      items: [{ productId: "p1", qty: opts.qty ?? 3, notes: null }],
+    });
+  }
+  const staff = { sub: "u-op", role: "OPERATOR", tenantId: "test-tenant" } as unknown as JwtPayload;
+
+  it("generateOrder returns the order carrying the decrement's result, nothing on the wire", async () => {
+    await build();
+    decrement.mockResolvedValue(write(3));
+    const order: any = await service.generateOrder("t1", false, true);
+    expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
+    expect(JSON.stringify(order)).not.toMatch(/backorder/i);
+  });
+
+  it("a fold into another order keeps the CREATED order's write on the merged result", async () => {
+    await build();
+    decrement.mockResolvedValue(write(3));
+    const merged = { id: "o-merged", lineItems: [] };
+    merge.mockResolvedValue(merged);
+    const order: any = await service.generateOrder("t1", false, true);
+    expect(order).toBe(merged);
+    expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
+  });
+
+  it("the created order's lines are read with the shared include (the pack + a stable order)", async () => {
+    await build();
+    await service.generateOrder("t1", false, true);
+    const include = (prisma.order.create as jest.Mock).mock.calls[0][0].include;
+    expect(include.lineItems).toBe(cancelledLines.RESPONSE_LINE_ITEMS);
+  });
+
+  it("a BOXED template line: the response demand equals the decrement's pieces (2 cases of 12 = 24; overshoot 4)", async () => {
+    await build({ pack: 12, qty: 2 });
+    decrement.mockResolvedValue(write(4)); // 24 pieces against stock 20
+    const order: any = await service.generateOrder("t1", false, true);
+    const response: any = withBackorderPieces(order, stockWriteOf(order));
+    expect(response.lineItems.map((l: any) => l.backorderPieces)).toEqual([4]);
+  });
+
+  it("the staff manual run returns no figure on the wire (the service carries it, nothing maps it)", async () => {
+    await build();
+    decrement.mockResolvedValue(write(3));
+    const order: any = await service.generateOrderForUser("t1", staff);
+    expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
+    expect(JSON.stringify(order)).not.toMatch(/backorder/i);
+    expect(order.lineItems.every((l: any) => !("backorderPieces" in l))).toBe(true);
+  });
+});
