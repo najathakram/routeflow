@@ -11,7 +11,7 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
-jest.mock("@/lib/buyer-auth", () => ({
+jest.mock("@/lib/buyer-auth-context", () => ({
   useBuyerAuth: () => ({ register: registerMock, isAuthenticated: false }),
 }));
 
@@ -22,7 +22,7 @@ const refusal = (body: object) =>
 
 async function submit() {
   render(<BuyerRegisterPage />);
-  fireEvent.change(screen.getByLabelText(/name/i, { selector: "input[name='name']" }), {
+  fireEvent.change(document.querySelector("input[name='name']") as HTMLInputElement, {
     target: { value: "=HYPERLINK(1)" },
   });
   fireEvent.change(document.querySelector("input[name='email']") as HTMLInputElement, {

@@ -47,12 +47,23 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
     expect(safeTextErrorCopy(null)).toBeNull();
   });
 
-  it("labels exist for the three customer name fields only", () => {
-    expect(Object.keys(SAFE_TEXT_FIELD_LABELS).sort()).toEqual([
-      "businessName",
-      "contactName",
-      "displayName",
-    ]);
+  it("labels exist for the customer name fields (B956) and the B964 address / license / buyer-name fields", () => {
+    expect(Object.keys(SAFE_TEXT_FIELD_LABELS).sort()).toEqual(
+      [
+        "businessName",
+        "contactName",
+        "displayName",
+        "label",
+        "line1",
+        "line2",
+        "city",
+        "state",
+        "zip",
+        "tobaccoLicenseNo",
+        "licenseNumber",
+        "buyerName",
+      ].sort(),
+    );
   });
 });
 
