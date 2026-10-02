@@ -1,4 +1,6 @@
+import { BadRequestException } from "@nestjs/common";
 import { ImportEntityType } from "@prisma/client";
+import { API_ERROR_CODES } from "../../common/api-error-codes";
 import { GoHighLevelHandoffService } from "./gohighlevel-handoff.service";
 import { GoHighLevelWritebackService } from "./gohighlevel-writeback.service";
 import { CrmHttpError } from "./gohighlevel.client";
@@ -347,6 +349,104 @@ describe("GoHighLevelHandoffService.handle (T26-T31, T51)", () => {
         data: expect.objectContaining({ status: "NEEDS_REVIEW", reason: "identity-conflict" }),
       }),
     );
+  });
+
+  // B956: a refused formula-led name is its OWN outcome (not an identity conflict), and the dry run
+  // previews the SAME outcome the real run reaches.
+  describe("B956 — a formula-led contact name", () => {
+    const evilContact: GhlContact = { ...noMatchContact, companyName: "=HYPERLINK(1)" };
+    const refusal = () =>
+      new BadRequestException({
+        statusCode: 400,
+        code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+        field: "businessName",
+        message: "businessName must not start with = + - @ or a tab/line break",
+      });
+
+    it("real run: CustomersService.create refusing the name → NEEDS_REVIEW reason name-refused with the field", async () => {
+      const deps = makeDeps();
+      deps.ghlClient.getContact.mockResolvedValue(evilContact);
+      deps.customersService.create.mockRejectedValue(refusal());
+      const service = new GoHighLevelHandoffService(deps);
+      jest.spyOn(service, "matchExistingCustomer").mockResolvedValue(null);
+
+      const out = await service.handle(connection, opportunity, {});
+
+      expect(out).toEqual({ status: "NEEDS_REVIEW", reason: "name-refused:businessName" });
+      const data = deps.prisma.crmHandoff.update.mock.calls[0][0].data;
+      expect(data).toMatchObject({
+        status: "NEEDS_REVIEW",
+        reason: "name-refused:businessName",
+        payload: { field: "businessName" },
+      });
+      expect(JSON.stringify(data)).not.toContain("HYPERLINK"); // the raw name is never stored
+    });
+
+    it("real run: the OTHER BadRequestException (email/username taken) stays identity-conflict", async () => {
+      const deps = makeDeps();
+      deps.ghlClient.getContact.mockResolvedValue(noMatchContact);
+      deps.customersService.create.mockRejectedValue(
+        new BadRequestException("Email or username already taken"),
+      );
+      const service = new GoHighLevelHandoffService(deps);
+      jest.spyOn(service, "matchExistingCustomer").mockResolvedValue(null);
+
+      expect(await service.handle(connection, opportunity, {})).toEqual({
+        status: "NEEDS_REVIEW",
+        reason: "identity-conflict",
+      });
+    });
+
+    it("dry run previews the SAME outcome: action refused + reason name-refused (not create)", async () => {
+      const deps = makeDeps();
+      deps.ghlClient.getContact.mockResolvedValue(evilContact);
+      const service = new GoHighLevelHandoffService(deps);
+      jest.spyOn(service, "matchExistingCustomer").mockResolvedValue(null);
+
+      await service.handle({ ...connection, dryRun: true }, opportunity, {});
+
+      const call = deps.prisma.crmHandoff.update.mock.calls[0][0];
+      expect(call.data.status).toBe("DRY_RUN");
+      expect(call.data.reason).toBe("name-refused:businessName"); // the settings table reads the row's reason
+      expect(call.data.payload).toMatchObject({
+        action: "refused",
+        reason: "name-refused:businessName",
+        field: "businessName",
+      });
+      expect(deps.customersService.create).not.toHaveBeenCalled();
+    });
+
+    it("parity: a safe name previews create in the dry run and creates in the real run", async () => {
+      const dry = makeDeps();
+      dry.ghlClient.getContact.mockResolvedValue(noMatchContact);
+      const drySvc = new GoHighLevelHandoffService(dry);
+      jest.spyOn(drySvc, "matchExistingCustomer").mockResolvedValue(null);
+      await drySvc.handle({ ...connection, dryRun: true }, opportunity, {});
+      expect(dry.prisma.crmHandoff.update.mock.calls[0][0].data.payload.action).toBe("create");
+
+      const real = makeDeps();
+      real.ghlClient.getContact.mockResolvedValue(noMatchContact);
+      real.customersService.create.mockResolvedValue({ id: "cust-1" });
+      const realSvc = new GoHighLevelHandoffService(real);
+      jest.spyOn(realSvc, "matchExistingCustomer").mockResolvedValue(null);
+      await realSvc.handle(connection, opportunity, {});
+      expect(real.customersService.create).toHaveBeenCalled();
+    });
+
+    it("a matched contact is a LINK in the dry run even with a formula-led name (a link never writes names)", async () => {
+      const deps = makeDeps();
+      deps.ghlClient.getContact.mockResolvedValue(evilContact);
+      const service = new GoHighLevelHandoffService(deps);
+      jest
+        .spyOn(service, "matchExistingCustomer")
+        .mockResolvedValue({ customerId: "cust-9", how: "email" } as never);
+
+      await service.handle({ ...connection, dryRun: true }, opportunity, {});
+
+      const payload = deps.prisma.crmHandoff.update.mock.calls[0][0].data.payload;
+      expect(payload.action).toBe("link");
+      expect(payload.reason).toBeUndefined();
+    });
   });
 
   it("T30 — the returned tempPassword is discarded and never logged", async () => {

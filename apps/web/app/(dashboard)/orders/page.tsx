@@ -33,6 +33,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess } from "@/lib/api/addons";
+import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
 
@@ -111,6 +112,119 @@ function OrderDateCell({ order }: { order: Order }) {
         </span>
       )}
     </span>
+  );
+}
+
+// ─── Pager (shared by the desktop table-card footer and the mobile-only card) ─────
+
+interface PagerMeta {
+  total: number;
+  totalPages?: number;
+}
+
+/** "Showing X to Y of N" / an empty-result message. */
+function PagerInfo({
+  meta,
+  page,
+  limit,
+  customerSearch,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  customerSearch: string;
+}) {
+  return (
+    <span>
+      {meta.total > 0 ? (
+        <>
+          Showing{" "}
+          <span className="font-mono tabular-nums text-navy">
+            {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
+          </span>{" "}
+          of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
+          {customerSearch ? " (filtered)" : ""}
+        </>
+      ) : customerSearch ? (
+        "No orders match your search"
+      ) : (
+        "No orders found"
+      )}
+    </span>
+  );
+}
+
+/** Per-page select + prev/page-number/next controls. */
+function PagerControls({
+  meta,
+  page,
+  limit,
+  setLimit,
+  setPage,
+}: {
+  meta: PagerMeta;
+  page: number;
+  limit: number;
+  setLimit: (n: number) => void;
+  setPage: (next: number | ((prev: number) => number)) => void;
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5">
+        <span>Per page</span>
+        <select
+          value={limit}
+          onChange={(e) => {
+            setLimit(Number(e.target.value));
+            setPage(1);
+          }}
+          className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
+        >
+          {[10, 20, 50, 100].map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </div>
+      {(meta.totalPages ?? 1) > 1 && (
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+            aria-label="Previous page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+          {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
+            const totalPages = meta.totalPages ?? 1;
+            const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
+            if (p < 1 || p > totalPages) return null;
+            return (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={cn(
+                  "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
+                  p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                )}
+              >
+                {p}
+              </button>
+            );
+          })}
+          <button
+            disabled={page >= (meta.totalPages ?? 1)}
+            onClick={() => setPage((p) => p + 1)}
+            aria-label="Next page"
+            className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -216,6 +330,13 @@ export default function OrdersPage() {
   const { toast } = useToast();
   const updateStatus = useUpdateOrderStatus();
   const bulkDelete = useBulkDeleteOrders();
+  // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen;
+  // below md there isn't enough vertical room for the toolbar above it AND the dock's own
+  // footprint, so the dock can land on top of the first visible rows. Reserve clearance
+  // (the spacer below) only when a draft is actually parked — same react-query cache key
+  // as the dock's own fetch, so this costs no extra request.
+  const { data: drafts } = useDrafts();
+  const hasDrafts = (drafts?.length ?? 0) > 0;
 
   const toggleSelect = (id: string) =>
     setSelected((prev) => {
@@ -626,6 +747,40 @@ export default function OrdersPage() {
           onChange={(e) => setCustomerSearch(e.target.value)}
           className="h-10 w-64 rounded-ctl border border-surface-border bg-white px-3 text-sm text-navy placeholder:text-navy/40 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
         />
+        {/* B823 review (Opus): mobile has no way to sort at all — the desktop table's
+            sort is column-header clicks, invisible below md. Same sortCol/sortDir/
+            toggleSort state; a direction button next to it matches SortIcon's own glyph. */}
+        <div className="flex items-center gap-1.5 md:hidden">
+          <div className="w-36">
+            <Select
+              aria-label="Sort orders by"
+              options={[
+                { value: "createdAt", label: "Created" },
+                { value: "deliveryDate", label: "Delivery Date" },
+                { value: "orderNumber", label: "Order #" },
+                { value: "customer", label: "Customer" },
+                { value: "total", label: "Total" },
+                { value: "status", label: "Status" },
+              ]}
+              value={sortCol}
+              onChange={(e) => {
+                const col = e.target.value;
+                if (col === sortCol) return;
+                setSortCol(col);
+                setSortDir(col === "createdAt" || col === "deliveryDate" ? "desc" : "asc");
+              }}
+              className="h-10"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSort(sortCol)}
+            aria-label={sortDir === "asc" ? "Sort ascending" : "Sort descending"}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-ctl border border-surface-border bg-white text-navy/70 hover:bg-surface-raised"
+          >
+            <SortIcon col={sortCol} />
+          </button>
+        </div>
         <div className="w-48">
           <Select
             options={STATUS_OPTIONS}
@@ -744,302 +899,370 @@ export default function OrdersPage() {
         )}
       </div>
 
-      {/* Table card — urgent rows get red left border via wrapper trick */}
-      <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b border-surface-border bg-surface-raised">
-              <tr>
-                {selectMode && <th className="w-10 px-3 py-3" />}
-                <th className="w-4 px-3 py-3" />
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("orderNumber")}
+      {/* Results — loading/error/empty are shared across both layouts below; only "has
+          data" branches into the mobile card list (below md) vs. the desktop table (md+). */}
+      {isLoading ? (
+        <div className="flex items-center justify-center rounded-lg border border-surface-border bg-white py-16 shadow-card">
+          <Loader2 className="h-6 w-6 animate-spin text-navy/70" />
+        </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-surface-border bg-white py-16 text-center text-sm text-danger shadow-card">
+          Failed to load orders. Please try again.
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
+          {statusFilter ||
+          urgentOnly ||
+          dateFrom ||
+          dateTo ||
+          productIdFilter ||
+          fulfillPathFilter ||
+          customerSearch ? (
+            <EmptyState
+              variant="orders"
+              title="No matching orders"
+              description="No orders match your current search and filters."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    setCustomerSearch("");
+                    clearFilters();
+                  }}
                 >
-                  Order # <SortIcon col="orderNumber" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("customer")}
-                >
-                  Customer <SortIcon col="customer" />
-                </th>
-                <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
-                  Items
-                </th>
-                <th
-                  className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("total")}
-                >
-                  Total <SortIcon col="total" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("status")}
-                >
-                  Status <SortIcon col="status" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("deliveryDate")}
-                >
-                  Delivery Date <SortIcon col="deliveryDate" />
-                </th>
-                <th
-                  className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
-                  onClick={() => toggleSort("createdAt")}
-                >
-                  Created <SortIcon col="createdAt" />
-                </th>
-                <th className="w-10 px-3 py-3" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-border bg-white">
-              {isLoading ? (
-                <tr>
-                  <td colSpan={selectMode ? 10 : 9} className="px-4 py-12 text-center">
-                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                  </td>
-                </tr>
-              ) : isError ? (
-                <tr>
-                  <td
-                    colSpan={selectMode ? 10 : 9}
-                    className="px-4 py-12 text-center text-sm text-danger"
-                  >
-                    Failed to load orders. Please try again.
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={selectMode ? 10 : 9} className="p-0">
-                    {statusFilter ||
-                    urgentOnly ||
-                    dateFrom ||
-                    dateTo ||
-                    productIdFilter ||
-                    fulfillPathFilter ||
-                    customerSearch ? (
-                      <EmptyState
-                        variant="orders"
-                        title="No matching orders"
-                        description="No orders match your current search and filters."
-                        action={
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => {
-                              setCustomerSearch("");
-                              clearFilters();
-                            }}
-                          >
-                            Clear filters
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <EmptyState
-                        variant="orders"
-                        title="No orders yet"
-                        description="Create an order on behalf of a customer to get started."
-                        action={
-                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                            Create order
-                          </Button>
-                        }
-                      />
-                    )}
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((order) => (
-                  <tr
-                    key={order.id}
-                    role="link"
-                    tabIndex={0}
-                    onClick={() => {
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              variant="orders"
+              title="No orders yet"
+              description="Create an order on behalf of a customer to get started."
+              action={
+                <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                  Create order
+                </Button>
+              }
+            />
+          )}
+        </div>
+      ) : (
+        <>
+          {/* B823: clearance for the parked-draft dock (see hasDrafts above) — only
+              needed below md, where the toolbar leaves no room to keep the dock clear
+              of the first rows on its own. */}
+          {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
+
+          {/* Card list — below md the desktop table only scrolled sideways with TOTAL
+              off-screen and no visible affordance that it could scroll at all (B823).
+              One tappable card per order instead, mirroring the buyer orders list
+              pattern (buyer/portal/[seller]/orders/page.tsx). */}
+          <ul className="space-y-3 md:hidden">
+            {filtered.map((order) => (
+              <li key={order.id}>
+                <div
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => {
+                    if (selectMode) toggleSelect(order.id);
+                    else router.push(`/orders/${order.id}`);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
                       if (selectMode) toggleSelect(order.id);
                       else router.push(`/orders/${order.id}`);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        if (selectMode) toggleSelect(order.id);
-                        else router.push(`/orders/${order.id}`);
-                      }
-                    }}
-                    className={cn(
-                      "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
-                      order.urgent && "border-l-2 border-l-danger",
-                      selected.has(order.id) && "bg-brand-50",
-                    )}
-                  >
-                    {selectMode && (
-                      <td
-                        className="px-3 py-3"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelect(order.id);
-                        }}
-                      >
+                    }
+                  }}
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-2 rounded-xl border border-surface-border bg-white p-4 shadow-card transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+                    order.urgent && "border-l-2 border-l-danger",
+                    selected.has(order.id) && "bg-brand-50",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      {selectMode && (
                         <input
                           type="checkbox"
                           checked={selected.has(order.id)}
                           onChange={() => toggleSelect(order.id)}
-                          // Without this, a click ON the checkbox toggles twice:
-                          // onChange here, then the bubble reaches the td's
-                          // onClick — net zero, the box appears dead.
                           onClick={(e) => e.stopPropagation()}
-                          className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                          className="h-4 w-4 shrink-0 cursor-pointer rounded border-navy/30 accent-brand-500"
                         />
-                      </td>
-                    )}
-                    <td className="px-3 py-3">
-                      {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
-                      {order.orderNumber}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-navy">
-                      {order.customer?.businessName ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
-                      {order.lineItems.length}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
-                      ${Number(order.total).toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <Badge status={order.status} label={orderStatusLabel(order.status)} />
-                        {order.fulfillPath === "SHIP" && (
-                          <span
-                            title="Shipped by supplier/carrier — won't appear on delivery routes"
-                            className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
-                          >
-                            <Truck className="h-3 w-3" aria-hidden />
-                            Shipped
-                          </span>
-                        )}
-                        {/* P5-11: pending post-dispatch change requests on this order
-                            (filtered _count from the list endpoint; absent = no pill). */}
-                        {(order._count?.changeRequests ?? 0) > 0 && (
-                          <span
-                            title={`${order._count!.changeRequests} pending change request${
-                              (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
-                            }`}
-                            className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
-                          >
-                            {order._count!.changeRequests} change
-                            {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm">
-                      {order.requestedDeliveryDate ? (
-                        <span className="text-navy/70">
-                          {formatDateOnly(order.requestedDeliveryDate)}
-                        </span>
-                      ) : (
-                        <span className="text-navy/30">—</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-navy/70">
-                      <OrderDateCell order={order} />
-                    </td>
-                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        title="View order"
-                        aria-label="View order details"
-                        onClick={() => router.push(`/orders/${order.id}`)}
-                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      {order.urgent && <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />}
+                      <span className="truncate font-mono text-xs font-semibold text-ink-900">
+                        {order.orderNumber}
+                      </span>
+                    </div>
+                    <span className="shrink-0 font-mono text-sm font-semibold text-ink-900">
+                      $
+                      {Number(order.total).toLocaleString("en-US", {
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                  <p className="truncate text-sm font-medium text-navy">
+                    {order.customer?.businessName ?? "—"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                    {order.fulfillPath === "SHIP" && (
+                      <span
+                        title="Shipped by supplier/carrier — won't appear on delivery routes"
+                        className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
                       >
-                        <Eye className="h-4 w-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                        <Truck className="h-3 w-3" aria-hidden />
+                        Shipped
+                      </span>
+                    )}
+                    {(order._count?.changeRequests ?? 0) > 0 && (
+                      <span
+                        title={`${order._count!.changeRequests} pending change request${
+                          (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
+                        }`}
+                        className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                      >
+                        {order._count!.changeRequests} change
+                        {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-navy/60">
+                    <span>
+                      {order.lineItems.length} item{order.lineItems.length === 1 ? "" : "s"}
+                    </span>
+                    <OrderDateCell order={order} />
+                  </div>
+                  {/* B823 review (Opus): the desktop table's own Delivery Date column,
+                      missing from the card entirely — same formatDateOnly, same em-dash
+                      fallback. */}
+                  <div className="text-xs text-navy/60">
+                    Delivery:{" "}
+                    {order.requestedDeliveryDate ? (
+                      formatDateOnly(order.requestedDeliveryDate)
+                    ) : (
+                      <span className="text-navy/30">—</span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
 
-        {/* Pager — Ledger card footer */}
-        {meta && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70">
-            <span>
-              {meta.total > 0 ? (
-                <>
-                  Showing{" "}
-                  <span className="font-mono tabular-nums text-navy">
-                    {(page - 1) * limit + 1} to {Math.min(page * limit, meta.total)}
-                  </span>{" "}
-                  of <span className="font-mono tabular-nums text-navy">{meta.total}</span>
-                  {customerSearch ? " (filtered)" : ""}
-                </>
-              ) : customerSearch ? (
-                "No orders match your search"
-              ) : (
-                "No orders found"
-              )}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <span>Per page</span>
-              <select
-                value={limit}
-                onChange={(e) => {
-                  setLimit(Number(e.target.value));
-                  setPage(1);
-                }}
-                className="h-7 rounded-ctl border border-surface-border bg-white px-2 font-mono text-xs text-navy focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500"
-              >
-                {[10, 20, 50, 100].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {(meta.totalPages ?? 1) > 1 && (
-              <div className="ml-auto flex items-center gap-0.5">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  aria-label="Previous page"
-                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </button>
-                {Array.from({ length: Math.min(meta.totalPages ?? 1, 7) }, (_, i) => {
-                  const totalPages = meta.totalPages ?? 1;
-                  const p = totalPages <= 7 ? i + 1 : page <= 4 ? i + 1 : page + i - 3;
-                  if (p < 1 || p > totalPages) return null;
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p)}
+          {/* Table — from md up. Urgent rows get red left border via wrapper trick. */}
+          <div className="hidden overflow-hidden rounded-lg border border-surface-border bg-white shadow-card md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="border-b border-surface-border bg-surface-raised">
+                  <tr>
+                    {selectMode && <th className="w-10 px-3 py-3" />}
+                    <th className="w-4 px-3 py-3" />
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("orderNumber")}
+                    >
+                      Order # <SortIcon col="orderNumber" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("customer")}
+                    >
+                      Customer <SortIcon col="customer" />
+                    </th>
+                    <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70">
+                      Items
+                    </th>
+                    <th
+                      className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("total")}
+                    >
+                      Total <SortIcon col="total" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("status")}
+                    >
+                      Status <SortIcon col="status" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("deliveryDate")}
+                    >
+                      Delivery Date <SortIcon col="deliveryDate" />
+                    </th>
+                    <th
+                      className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-navy/70 cursor-pointer select-none hover:text-navy transition-colors"
+                      onClick={() => toggleSort("createdAt")}
+                    >
+                      Created <SortIcon col="createdAt" />
+                    </th>
+                    <th className="w-10 px-3 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-border bg-white">
+                  {filtered.map((order) => (
+                    <tr
+                      key={order.id}
+                      role="link"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (selectMode) toggleSelect(order.id);
+                        else router.push(`/orders/${order.id}`);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          if (selectMode) toggleSelect(order.id);
+                          else router.push(`/orders/${order.id}`);
+                        }
+                      }}
                       className={cn(
-                        "grid h-7 min-w-7 place-items-center rounded-ctl px-2 font-mono text-xs tabular-nums transition-colors",
-                        p === page ? "bg-navy text-white" : "text-navy/70 hover:bg-surface-raised",
+                        "cursor-pointer transition-colors hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+                        order.urgent && "border-l-2 border-l-danger",
+                        selected.has(order.id) && "bg-brand-50",
                       )}
                     >
-                      {p}
-                    </button>
-                  );
-                })}
-                <button
-                  disabled={page >= (meta.totalPages ?? 1)}
-                  onClick={() => setPage((p) => p + 1)}
-                  aria-label="Next page"
-                  className="grid h-7 w-7 place-items-center rounded-ctl text-navy/70 hover:bg-surface-raised disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
+                      {selectMode && (
+                        <td
+                          className="px-3 py-3"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleSelect(order.id);
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected.has(order.id)}
+                            onChange={() => toggleSelect(order.id)}
+                            // Without this, a click ON the checkbox toggles twice:
+                            // onChange here, then the bubble reaches the td's
+                            // onClick — net zero, the box appears dead.
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 cursor-pointer rounded border-navy/30 accent-brand-500"
+                          />
+                        </td>
+                      )}
+                      <td className="px-3 py-3">
+                        {order.urgent && <AlertTriangle className="h-4 w-4 text-danger" />}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs font-semibold text-ink-900">
+                        {order.orderNumber}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-navy">
+                        {order.customer?.businessName ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums text-navy/70">
+                        {order.lineItems.length}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono tabular-nums font-medium text-ink-900">
+                        $
+                        {Number(order.total).toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                          {order.fulfillPath === "SHIP" && (
+                            <span
+                              title="Shipped by supplier/carrier — won't appear on delivery routes"
+                              className="inline-flex h-[21px] items-center gap-1 rounded-full bg-sky-50 px-2 text-[11px] font-semibold text-sky-700 ring-1 ring-sky-200"
+                            >
+                              <Truck className="h-3 w-3" aria-hidden />
+                              Shipped
+                            </span>
+                          )}
+                          {/* P5-11: pending post-dispatch change requests on this order
+                              (filtered _count from the list endpoint; absent = no pill). */}
+                          {(order._count?.changeRequests ?? 0) > 0 && (
+                            <span
+                              title={`${order._count!.changeRequests} pending change request${
+                                (order._count!.changeRequests ?? 0) > 1 ? "s" : ""
+                              }`}
+                              className="inline-flex h-[21px] items-center rounded-full bg-amber-50 px-2 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200"
+                            >
+                              {order._count!.changeRequests} change
+                              {(order._count!.changeRequests ?? 0) > 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {order.requestedDeliveryDate ? (
+                          <span className="text-navy/70">
+                            {formatDateOnly(order.requestedDeliveryDate)}
+                          </span>
+                        ) : (
+                          <span className="text-navy/30">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-navy/70">
+                        <OrderDateCell order={order} />
+                      </td>
+                      <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          title="View order"
+                          aria-label="View order details"
+                          onClick={() => router.push(`/orders/${order.id}`)}
+                          className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* #2057 review (Opus): the pager lives INSIDE the table's own card at md+ —
+                pulling it into a separate shadow card (below) added a visible 20px gap and
+                a second card border on desktop too, which the "≥768 unchanged" pass
+                criterion forbids. Mobile keeps the separate always-visible card (below)
+                since the table itself — and this nested footer — is hidden below md. */}
+            {meta && (
+              <div className="hidden flex-wrap items-center gap-x-4 gap-y-2 border-t border-surface-border px-4 py-3 text-[12.5px] text-navy/70 md:flex">
+                <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+                <PagerControls
+                  meta={meta}
+                  page={page}
+                  limit={limit}
+                  setLimit={setLimit}
+                  setPage={setPage}
+                />
               </div>
             )}
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {/* Pager — mobile-only card (see the nested md+ footer above), visible at every
+          width regardless of card list vs. table state. data-testid disambiguates it
+          from the md+ footer above for e2e — both render the same "Showing X to Y" text,
+          one of them always `hidden` at any given viewport. */}
+      {meta && (
+        <div
+          data-testid="pager-mobile"
+          className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-surface-border bg-white px-4 py-3 text-[12.5px] text-navy/70 shadow-card md:hidden"
+        >
+          <PagerInfo meta={meta} page={page} limit={limit} customerSearch={customerSearch} />
+          <PagerControls
+            meta={meta}
+            page={page}
+            limit={limit}
+            setLimit={setLimit}
+            setPage={setPage}
+          />
+        </div>
+      )}
+
+      {/* B823 review (Opus): the top-of-list spacer only helps the FIRST paint — the
+          DraftDock sits `absolute` outside <main>'s scroll container, so it stays pinned
+          to the same screen band regardless of scroll position. Scrolled all the way
+          down, the LAST card and this pager land in that exact band. Bottom clearance,
+          matching the top spacer's own size, so the end of the list can clear it too. */}
+      {hasDrafts && <div className="h-40 md:hidden" aria-hidden />}
 
       <CreateOrderModal
         isOpen={isCreateOpen}

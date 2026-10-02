@@ -179,6 +179,63 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       ]);
     });
 
+    it("B949: the note's OWN void passes voidingNoteId to every restore (the one exemption from the SOURCE_DELETED guard, scoped to THAT note)", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const restore = jest.spyOn(service as any, "restoreCreditFromPaymentInTx");
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      expect(restore).toHaveBeenCalledTimes(2);
+      for (const call of restore.mock.calls) expect(call[4]).toEqual({ voidingNoteId: "cn-a" });
+      restore.mockRestore();
+    });
+
+    it("SA-608g: an optional `extra` set (the reissue's SOURCE invoice and order) joins the SAME sorted Order and Invoice sets, de-duplicated, before the CreditNote", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      const tx = { ...prisma, $executeRaw: exec };
+
+      await service.voidWithReversalInTx(tx, "cn-a", "user-7", null, undefined, {
+        orderIds: ["o-9", "o-0", "o-1"], // o-1 is already in the set
+        invoiceIds: ["inv-5", "inv-1"], // inv-1 is already in the set
+      });
+
+      const locked = exec.mock.calls.map(
+        (c: any[]) => `${c[0].join("?").match(/FROM "(\w+)"/)[1]}:${c[1]}`,
+      );
+      expect(locked.slice(0, 8)).toEqual([
+        "Order:o-0",
+        "Order:o-1",
+        "Order:o-2",
+        "Order:o-9",
+        "Invoice:inv-1",
+        "Invoice:inv-2",
+        "Invoice:inv-5",
+        "CreditNote:cn-a",
+      ]);
+    });
+
+    it("SA-608g: with no `extra` (the endpoint) the lock set is exactly what it was", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+      const exec = jest.fn().mockResolvedValue(0);
+      await service.voidWithReversalInTx({ ...prisma, $executeRaw: exec }, "cn-a", "user-7", null);
+      const locked = exec.mock.calls.map(
+        (c: any[]) => `${c[0].join("?").match(/FROM "(\w+)"/)[1]}:${c[1]}`,
+      );
+      expect(locked.slice(0, 5)).toEqual([
+        "Order:o-1",
+        "Order:o-2",
+        "Invoice:inv-1",
+        "Invoice:inv-2",
+        "CreditNote:cn-a",
+      ]);
+    });
+
     it("SA-498a: an order holding only an intent (no payment) joins the sorted Order lock set", async () => {
       armNote();
       armRestore();
@@ -263,6 +320,61 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(gateway.emitCreditNoteVoided).toHaveBeenCalled();
     });
 
+    it("#2540: the optional void reason is recorded in the VOIDED audit row, trimmed", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "  duplicate of CN-0042  ");
+
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: "VOIDED",
+          meta: expect.objectContaining({ reason: "duplicate of CN-0042" }),
+        }),
+      });
+    });
+
+    it("#2540: no reason (or a blank one) leaves the audit meta without a reason key", async () => {
+      armNote();
+      armRestore();
+      prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+
+      await service.voidWithReversal("cn-a", "user-7", "   ");
+
+      const meta = prisma.auditLog.create.mock.calls[0][0].data.meta;
+      expect(meta).not.toHaveProperty("reason");
+      expect(meta).toHaveProperty("reversed");
+    });
+
+    it("#2540: the reopened invoice's overdue is judged in the TENANT zone, not UTC", async () => {
+      jest.useFakeTimers().setSystemTime(new Date("2026-09-10T03:00:00Z"));
+      try {
+        armNote();
+        armRestore();
+        // Due 2026-09-09: over in UTC (03:00Z on the 10th) but still running in Honolulu (UTC-10).
+        prisma.invoice.findUnique.mockImplementation((args: any) =>
+          Promise.resolve({
+            id: args.where.id,
+            total: args.where.id === "inv-2" ? 40 : 50,
+            dueDate: new Date("2026-09-09T00:00:00Z"),
+            status: "PAID",
+            payments: [],
+          }),
+        );
+        prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+        prisma.tenantConfig.findUnique.mockResolvedValue({ timezone: "Pacific/Honolulu" });
+
+        await service.voidWithReversal("cn-a", "user-7");
+
+        const statuses = prisma.invoice.update.mock.calls.map((c: any) => c[0].data.status);
+        expect(statuses.length).toBeGreaterThan(0);
+        expect(statuses.every((st: string) => st === "SENT")).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it("an unused note voids with no restores and no blocks", async () => {
       armNote({ status: "ISSUED", amountUsed: 0 });
       armRestore();
@@ -273,6 +385,71 @@ describe("CreditNotesService — SA-436 PR-2 void-with-reversal", () => {
       expect(res.reopened).toEqual([]);
       expect(prisma.creditNoteApplyBlock.createMany).not.toHaveBeenCalled();
       expect(prisma.creditNote.updateMany).toHaveBeenCalled();
+    });
+
+    // B957: POST :id/void was a SECOND void door (skipped CREDIT_NOTE_RETURN_BACKED and the reason/actor audit). It now
+    // delegates to voidWithReversal; the URL stays, voidCreditNote is gone.
+    describe("B957: POST :id/void is the SAME door as :id/void-with-reversal", () => {
+      const door = () =>
+        new CreditNotesController(service as never, {} as never).voidNote(
+          "cn-a",
+          { sub: "user-7" } as never,
+          { reason: "  duplicate  " } as never,
+        );
+
+      it("SA-630a: the kept URL is marked deprecated in Swagger", () => {
+        const meta = Reflect.getMetadata(
+          "swagger/apiOperation",
+          CreditNotesController.prototype.voidNote,
+        );
+        expect(meta).toMatchObject({ deprecated: true });
+      });
+      it("the service has no second void method", () => {
+        expect((service as any).voidCreditNote).toBeUndefined();
+      });
+      it("the kept URL still answers the voided credit-note row (old clients read .status), not the wrapper", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        prisma.creditNote.findUnique.mockResolvedValue({ id: "cn-a", status: "VOID" });
+        const res: any = await door();
+        expect(res).toMatchObject({ id: "cn-a", status: "VOID" });
+        expect(res.creditNote).toBeUndefined();
+      });
+      it("a return-backed note is a 409 CREDIT_NOTE_RETURN_BACKED and NOTHING changes", async () => {
+        armNote();
+        prisma.return.findFirst.mockResolvedValue({ returnNumber: "RET-9" });
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        const err = await door().catch((e: unknown) => e);
+        expect(codeOf(err)).toBe(CODES.CREDIT_NOTE_RETURN_BACKED);
+        noWrites();
+        expect(gateway.emitCreditNoteVoided).not.toHaveBeenCalled();
+      });
+      it("a plain unused note is voided and leaves an audit row naming the actor and the reason", async () => {
+        armNote({ status: "ISSUED", amountUsed: 0 });
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue([]);
+        await door();
+        expect(prisma.creditNote.updateMany).toHaveBeenCalled();
+        expect(prisma.auditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            userId: "user-7",
+            action: "VOIDED",
+            entityType: "CreditNote",
+            entityId: "cn-a",
+            meta: expect.objectContaining({ reason: "duplicate" }),
+          }),
+        });
+        expect(gateway.emitCreditNoteVoided).toHaveBeenCalled();
+      });
+      it("a note in use behaves exactly like the main void path: its applications are reversed, then it is voided", async () => {
+        armNote();
+        armRestore();
+        prisma.invoicePayment.findMany.mockResolvedValue(livePayments);
+        await door();
+        expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-2" } });
+        expect(prisma.invoicePayment.delete).toHaveBeenCalledWith({ where: { id: "pay-1" } });
+      });
     });
 
     it.each([
