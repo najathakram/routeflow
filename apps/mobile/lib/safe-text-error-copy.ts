@@ -24,6 +24,9 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
   // B964-2: product names
   productName: "Product name",
   variantName: "Variant name",
+  // B983: category / subcategory names
+  categoryName: "Category name",
+  subcategoryName: "Subcategory name",
   // B984: a person's name (customer / contact person)
   salutation: "Salutation",
   firstName: "First name",

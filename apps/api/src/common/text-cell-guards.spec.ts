@@ -25,6 +25,8 @@ describe("TEXT_CELL_FIELD_LABELS: the readable 400 text names the field by a hum
     ["tobaccoLicenseNo", "Tobacco license number"],
     ["licenseNumber", "License number"],
     ["buyerName", "Name"],
+    ["categoryName", "Category name"],
+    ["subcategoryName", "Subcategory name"],
     ["salutation", "Salutation"],
     ["firstName", "First name"],
     ["lastName", "Last name"],

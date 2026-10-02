@@ -101,6 +101,28 @@ export function productNameViolation(
   return field === null ? null : formulaLeadMessage(field);
 }
 
+/** A category name (ProductCategory label category, TrackedCategory section): printed on filings, invoices, exports (B983). Change-only. */
+export function assertSafeCategoryName(
+  name: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell(
+    { categoryName: name },
+    stored === undefined ? null : { categoryName: stored },
+  );
+}
+
+/** A TrackedSubcategory name (B983). Change-only. */
+export function assertSafeSubcategoryName(
+  name: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell(
+    { subcategoryName: name },
+    stored === undefined ? null : { subcategoryName: stored },
+  );
+}
+
 type PersonNameInput = {
   salutation?: string | null;
   firstName?: string | null;
