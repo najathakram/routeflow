@@ -3,7 +3,7 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
 import type { OrderDraftPayload } from "../lib/drafts-payload";
 
-export interface StopCartEntry {
+interface StopCartEntry {
   payload: OrderDraftPayload;
 }
 

@@ -20,14 +20,12 @@ import type {
 } from "../sales-facts/legacy-product-shapes";
 import type { DemandRange } from "./demand-range";
 
-export const TOBACCO_ADDON_KEY = "tobacco_dealer";
+const TOBACCO_ADDON_KEY = "tobacco_dealer";
 export const TOBACCO_EXCLUDE_KEY = "tobacco.excludeFromMainAnalytics";
 
 // #2118: the per-product read shapes moved with their producer (the sales-facts layer).
 export type {
-  ProductDemandBucket,
   ProductDemandSeries,
-  ProductSaleLine,
   ProductSalesHistory,
 } from "../sales-facts/legacy-product-shapes";
 

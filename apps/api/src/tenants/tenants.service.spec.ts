@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { ConflictException } from "@nestjs/common";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { TenantsService } from "./tenants.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -209,6 +209,39 @@ describe("TenantsService", () => {
 
       expect(sent).toBe(false);
       expect(loggerErrorSpy).toHaveBeenCalledWith(expect.stringContaining("NOT delivered"));
+    });
+  });
+
+  // B956: the tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer
+  // documents, so signup and the branding edit refuse a formula-led name like the customer DTOs.
+  describe("business name guard (B956)", () => {
+    it("register refuses a formula-led businessName with a readable 400 and writes nothing", async () => {
+      const err = await service
+        .register({ ...REGISTER_DTO, businessName: "=HYPERLINK(1)" })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "businessName",
+      });
+      expect(prisma.tenant.create).not.toHaveBeenCalled();
+    });
+
+    it("updateBranding refuses a CHANGED formula-led name; an unchanged legacy one passes", async () => {
+      (prisma.tenantConfig.findFirst as jest.Mock).mockResolvedValue({
+        tenantId: "t1",
+        businessName: "=LEGACY",
+        primaryColor: null,
+        logoKey: null,
+      });
+      (prisma.tenantConfig.update as jest.Mock).mockResolvedValue({ logoKey: null });
+      await expect(service.updateBranding("t1", { businessName: "@NEW" })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.tenantConfig.update).not.toHaveBeenCalled();
+      await expect(
+        service.updateBranding("t1", { businessName: "=LEGACY", primaryColor: "#FFF" }),
+      ).resolves.toBeDefined();
     });
   });
 });
