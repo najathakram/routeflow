@@ -159,7 +159,7 @@ export function genericToastCopy(err: unknown): string {
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
-  if (code === "ALLOCATIONS_EXCEED_PAYMENT") return allocationsCopy(data); // B987 moves this code into API_ERROR_CODES
+  if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
