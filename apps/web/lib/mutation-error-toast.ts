@@ -1,11 +1,12 @@
 import type { ToastData } from "@routeflow/ui/web";
+import { genericToastCopy } from "./generic-toast-copy";
 import { safeTextBodyCopy } from "./safe-text-error-copy";
 
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
  * testable). A mutation that renders its own error UI opts out with
- * `meta: { localErrorToast: true }` — otherwise a failed save shows this generic toast (the raw
- * server message) on top of the page's own sentence.
+ * `meta: { localErrorToast: true }` — otherwise a failed save shows this generic toast (FIXED copy by
+ * code/status, B980) on top of the page's own sentence.
  */
 type ToastFn = (opts: Omit<ToastData, "id">) => unknown;
 
@@ -50,10 +51,9 @@ export function handleMutationError(
   // message with a title the tenant understands plus a way out, instead of
   // just swallowing the toast like the other HANDLED_CODES above.
   if (data?.code === "READ_ONLY") {
-    const message = data?.message || "This action is unavailable while read-only.";
     toast({
       title: "Your workspace is read-only",
-      description: message,
+      description: "Choose a plan to make changes.",
       variant: "warning",
       action: { label: "Choose a plan", onClick: () => router.push("/choose-plan") },
     });
@@ -69,6 +69,6 @@ export function handleMutationError(
     toast({ title: refusedName, variant: "error" });
     return;
   }
-  const message = data?.message || (error as Error)?.message || "Something went wrong";
-  toast({ title: message, variant: "error" });
+  // B980: fixed copy by code/status, never the server message (lib/generic-toast-copy.ts).
+  toast({ title: genericToastCopy(error), variant: "error" });
 }

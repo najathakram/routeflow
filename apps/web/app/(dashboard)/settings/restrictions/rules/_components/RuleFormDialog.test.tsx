@@ -87,7 +87,7 @@ describe("RuleFormDialog", () => {
     expect(post.mock.calls[0][1]).not.toHaveProperty("states");
   });
 
-  it("a refused create raises exactly ONE toast, the server's message, and keeps the values", async () => {
+  it("a refused create raises exactly ONE toast, the fixed copy, and keeps the values", async () => {
     post.mockRejectedValueOnce(
       Object.assign(new Error("Request failed"), {
         response: { status: 400, data: { message: "That category is archived" } },
@@ -105,7 +105,10 @@ describe("RuleFormDialog", () => {
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Ban" } });
     submit();
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
-    expect(toast).toHaveBeenCalledWith({ title: "That category is archived", variant: "error" });
+    expect(toast).toHaveBeenCalledWith({
+      title: "Some details aren't valid. Check what you entered and try again.",
+      variant: "error",
+    });
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Reason")).toHaveValue("Ban");
   });

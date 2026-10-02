@@ -10,7 +10,7 @@ import { safeTextErrorCopy } from "./safe-text-error-copy";
  */
 
 /** Exact server sentences (customers.service create/update) that name a fixable cause. */
-const KNOWN_SERVER_SENTENCES: Record<string, string> = {
+export const KNOWN_SERVER_SENTENCES: Record<string, string> = {
   "Email or username already taken": "That email is already in use. Use a different email.",
   "Unknown sales agent": "That sales agent is no longer available. Pick another.",
 };

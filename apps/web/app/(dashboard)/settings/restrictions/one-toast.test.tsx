@@ -81,11 +81,14 @@ describe("one failed save = exactly one toast", () => {
     expect(toast.mock.calls[0][0].title).toMatch(/two steps/i);
   });
 
-  it("any other error: the global handler's toast only, with the server message", async () => {
+  it("any other error: the global handler's toast only, with FIXED copy (B980)", async () => {
     reject(500, { message: "Boom" });
     await flip();
     await waitFor(() => expect(toast).toHaveBeenCalled());
     expect(toast).toHaveBeenCalledTimes(1);
-    expect(toast.mock.calls[0][0]).toMatchObject({ title: "Boom", variant: "error" });
+    expect(toast.mock.calls[0][0]).toMatchObject({
+      title: "Something went wrong on our side. Please try again.",
+      variant: "error",
+    });
   });
 });

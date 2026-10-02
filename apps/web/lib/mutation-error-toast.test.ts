@@ -12,10 +12,13 @@ describe("handleMutationError (#1965)", () => {
   });
   const setup = () => ({ toast: jest.fn(), router: { push: jest.fn() } });
 
-  it("shows the generic toast for an ordinary mutation (behaviour unchanged)", () => {
+  it("shows FIXED copy for an ordinary mutation, never the server message (B980)", () => {
     const { toast, router } = setup();
     handleMutationError(axiosErr({ message: "Nope" }), { meta: undefined }, toast, router);
-    expect(toast).toHaveBeenCalledWith({ title: "Nope", variant: "error" });
+    expect(toast).toHaveBeenCalledWith({
+      title: "Something went wrong on our side. Please try again.",
+      variant: "error",
+    });
   });
 
   it("shows NOTHING when the mutation opts out with meta.localErrorToast", () => {
@@ -39,6 +42,8 @@ describe("handleMutationError (#1965)", () => {
     );
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+    // B980: the description is fixed copy too, never the raw guard message.
+    expect(toast.mock.calls[0][0].description).toBe("Choose a plan to make changes.");
   });
 
   it("still swallows HANDLED_CODES and still turns READ_ONLY into the read-only toast", () => {
