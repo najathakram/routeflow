@@ -432,3 +432,62 @@ describe("TWIN-FOLD (SA-632): a pending line that folds into a settled twin leav
     expect(merged[0]).toMatchObject({ unitLabel: "Bottle", qty: 5 });
   });
 });
+
+describe("N3 (SA-632): a settle on the PACK keeps the tap count (N taps = N packs, never one)", () => {
+  const taps3 = () => line({ pendingTaps: 3 }); // 3 default-start taps on a case-packed line (12 per case)
+  const THREE_PACKS = { boxes: 3, pieces: 0, qty: 36, startOnDefaultUnit: false };
+
+  it("no flagged non-pack default on the ladder: 3 taps -> 3 PACKS (3 cases), not one", async () => {
+    const noDefault = [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" }), CASE_LEVEL];
+    const { lines } = await resolvePendingDefaultUnits([taps3()], deps(noDefault));
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+    expect(lines[0].pendingTaps).toBeUndefined();
+    expect(lines[0].unitLabel).toBeUndefined(); // still the pack
+  });
+
+  it("units OFF (known): 3 taps -> 3 PACKS", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [taps3()],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+  });
+
+  it("a role that never sells by a unit (not staff): 3 taps -> 3 PACKS", async () => {
+    const { lines } = await resolvePendingDefaultUnits(
+      [taps3()],
+      deps([BOTTLE], { isStaff: false }),
+    );
+    expect(lines[0]).toMatchObject(THREE_PACKS);
+  });
+
+  it("startLineOnDefault with no default option offered settles on the pack with the count too", () => {
+    const out = startLineOnDefault(
+      taps3(),
+      [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" })],
+      1,
+    );
+    expect(out).toMatchObject(THREE_PACKS);
+  });
+
+  it("a plain (non-case) line: 3 taps -> qty 3; ONE tap is unchanged (one pack)", async () => {
+    const plain = (taps: number) =>
+      line({
+        pendingTaps: taps,
+        unitsPerBox: undefined,
+        boxes: undefined,
+        pieces: undefined,
+        qty: 1,
+      });
+    const three = await resolvePendingDefaultUnits(
+      [plain(3)],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(three.lines[0]).toMatchObject({ qty: 3, startOnDefaultUnit: false });
+    const one = await resolvePendingDefaultUnits(
+      [plain(1)],
+      deps([BOTTLE], { unitsEnabled: false }),
+    );
+    expect(one.lines[0]).toMatchObject({ qty: 1 });
+  });
+});

@@ -1,6 +1,7 @@
 import {
   isUnitPending,
   mayMergeResolved,
+  packQtyForTaps,
   pendingResolveKey,
   pendingResolvePlan,
   pendingScanDecision,
@@ -209,5 +210,17 @@ describe("pendingResolveKey (N1: the resolver re-runs when a tap lands during th
       ]),
     ).toBe("a:1|b:2");
     expect(pendingResolveKey([])).toBe("");
+  });
+});
+
+describe("packQtyForTaps (N3: a settle on the PACK keeps the tap count)", () => {
+  it("a case-packed line settles to N whole cases (boxes N, qty N x units per box)", () => {
+    expect(packQtyForTaps(3, 12)).toEqual({ boxes: 3, pieces: 0, qty: 36 });
+    expect(packQtyForTaps(1, 12)).toEqual({ boxes: 1, pieces: 0, qty: 12 });
+  });
+  it("a plain line settles to qty N; no recorded taps is ONE pack", () => {
+    expect(packQtyForTaps(3, 1)).toEqual({ qty: 3 });
+    expect(packQtyForTaps(3, null)).toEqual({ qty: 3 });
+    expect(packQtyForTaps(undefined, 12)).toEqual({ boxes: 1, pieces: 0, qty: 12 });
   });
 });

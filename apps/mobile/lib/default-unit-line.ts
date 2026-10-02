@@ -3,6 +3,7 @@ import type { LineState } from "./cart-line-state";
 import { sameScanCode } from "./scan-accept-guard";
 import {
   isUnitPending,
+  packQtyForTaps,
   mayMergeResolved,
   pendingResolvePlan,
   pendingScanDecision,
@@ -150,6 +151,26 @@ export function keepsDefaultStart(
   return !!dflt && isStaffRole(role) && (!prev || isPendingDefaultUnit(prev));
 }
 
+/**
+ * #2865 (N3): a pending line whose default unit IS the pack (no flagged non-pack default, units off, a role that never sells
+ * by a unit) settles on the PACK with the TAP COUNT it recorded: N taps = N packs, never one. The shared pricing rule decides
+ * the quantity; the flag, the count and the creating code are consumed.
+ */
+export function settleOnPack(line: LineState, unitsPerBox?: number | string | null): LineState {
+  // the pack size: the product's, else what the line itself holds (a case-packed line carries boxes + total pieces)
+  const upb = Number(unitsPerBox ?? 0) || (line.boxes ? line.qty / line.boxes : 0);
+  const pack = packQtyForTaps(pendingTapCount(line, upb), upb);
+  return {
+    ...line,
+    qty: pack.qty,
+    boxes: pack.boxes,
+    pieces: pack.pieces,
+    startOnDefaultUnit: undefined,
+    pendingTaps: undefined,
+    pendingCode: undefined,
+  };
+}
+
 /** The line once its ladder is known: on the flagged default unit, or (nothing flagged/offered) left on the pack. */
 export function startLineOnDefault(
   line: LineState,
@@ -159,7 +180,7 @@ export function startLineOnDefault(
 ): LineState {
   if (!isPendingDefaultUnit(line)) return line;
   const start = defaultStartOption(product, units, tier, { hasUnit: !!line.unitLabel });
-  if (!start) return { ...line, startOnDefaultUnit: undefined };
+  if (!start) return settleOnPack(line, product.unitsPerBox);
   return applyUnitOption(line, start, product.unitsPerBox);
 }
 
@@ -208,7 +229,7 @@ export async function resolvePendingDefaultUnits(
     const product = deps.productFor(id);
     const plan = pendingResolvePlan({ ...deps, productKnown: !!product });
     if (plan.plan === "settle") {
-      next[id] = { ...line, startOnDefaultUnit: undefined };
+      next[id] = settleOnPack(line, deps.productFor(id)?.unitsPerBox);
       continue;
     }
     if (plan.plan === "blocked") {

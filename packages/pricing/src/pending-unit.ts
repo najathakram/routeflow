@@ -153,3 +153,18 @@ export function undoPendingTap(
 export function pendingResolveKey(entries: ReadonlyArray<{ id: string; count: number }>): string {
   return entries.map((e) => `${e.id}:${e.count}`).join("|");
 }
+
+/**
+ * #2865 (N3): the quantity a PENDING line settles to when its default unit IS the pack (no flagged non-pack default, units
+ * switched off, or a role that never sells by a unit). N taps = N PACKS, never one: a case-packed line (units per box > 1)
+ * is N whole cases (boxes N, qty N x units per box), a plain line is qty N. EVERY settle path uses this, so the count the
+ * user tapped is never dropped by a clear-the-flag-only settle.
+ */
+export function packQtyForTaps(
+  taps: number | null | undefined,
+  unitsPerBox?: number | null,
+): { qty: number; boxes?: number; pieces?: number } {
+  const n = pendingTapCount(taps, 1);
+  const upb = Number(unitsPerBox ?? 0);
+  return upb > 1 ? { boxes: n, pieces: 0, qty: n * upb } : { qty: n };
+}

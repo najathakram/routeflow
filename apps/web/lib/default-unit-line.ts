@@ -2,6 +2,7 @@ import type { ProductUnitLevel } from "@routeflow/types";
 import {
   isUnitPending,
   mayMergeResolved,
+  packQtyForTaps,
   pendingResolvePlan,
   pendingTapCount,
   refreshUnitsAnswer as refreshUnitsAnswerShared,
@@ -121,6 +122,20 @@ export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
   };
 }
 
+/**
+ * #2865 (N3): a pending line whose default unit IS the pack (nothing flagged, units off, a role that never sells by a
+ * unit) settles on the PACK with the TAP COUNT it recorded: N taps = N packs, never one. The shared pricing rule decides
+ * the quantity; the flag and the count are consumed.
+ */
+function settleOnPack<T extends DefaultUnitLine>(li: T): T {
+  return {
+    ...li,
+    ...packQtyForTaps(pendingCount(li), li.unitsPerBox),
+    startOnDefaultUnit: false,
+    pendingTaps: undefined,
+  };
+}
+
 /** The default-unit option for this line's ladder, or undefined (stay on the pack). */
 function defaultOptionFor(
   line: DefaultUnitLine,
@@ -143,7 +158,7 @@ export function startLineOnDefault<T extends DefaultUnitLine>(
   if (!isPendingDefaultUnit(line)) return line;
   const option = defaultOptionFor(line, units, tier);
   const [only] = option ? applyUnitToLines([line], line.tempId, option, false, tier) : [];
-  return (only as T | undefined) ?? { ...line, startOnDefaultUnit: false };
+  return (only as T | undefined) ?? settleOnPack(line);
 }
 
 /** Only STAFF may sell by a unit (the server's assertMayUseUnits): mirrors the mobile copy (SA-626f). */
@@ -195,9 +210,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
     // #2865 (SA-632 M4): the per-line plan is the shared rule (@routeflow/pricing).
     const plan = pendingResolvePlan({ ...deps, unlisted: line.isUnlisted });
     if (plan.plan === "settle") {
-      out = out.map((li) =>
-        li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
-      );
+      out = out.map((li) => (li.tempId === line.tempId ? settleOnPack(li) : li));
       continue;
     }
     if (plan.plan === "blocked") {
@@ -213,9 +226,7 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
         out = applied.lines;
         if (applied.fold) folds.push(applied.fold);
       } else {
-        out = out.map((li) =>
-          li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
-        );
+        out = out.map((li) => (li.tempId === line.tempId ? settleOnPack(li) : li));
       }
     } catch {
       block(line.tempId, "ladder-failed");

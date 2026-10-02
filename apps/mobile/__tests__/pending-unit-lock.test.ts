@@ -8,6 +8,8 @@ import {
   refusesLineEdit,
   scanDecisionFor,
   scanMapsToDefault,
+  startLineOnDefault,
+  settleOnPack,
   isPendingTap,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
@@ -215,5 +217,46 @@ describe("pending tap count (case c)", () => {
       false,
     );
     expect(isPendingTap(created, true, "012345678905", "DRIVER")).toBe(false);
+  });
+
+  describe("N3: a settle on the PACK keeps the tap count (N taps = N packs, never one)", () => {
+    const taps3 = () => pending({ pendingTaps: 3 }); // 12 per case, qty 12 / 1 case, flag 12
+    const THREE_PACKS = { boxes: 3, pieces: 0, qty: 36 };
+
+    it("no flagged non-pack default on the ladder: 3 taps -> 3 PACKS (3 cases)", async () => {
+      const noDefault = [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" }), CASE];
+      const { items } = await resolvePendingDefaultUnits({ p1: taps3() }, deps(noDefault));
+      expect(items.p1).toMatchObject(THREE_PACKS);
+      expect(items.p1.pendingTaps).toBeUndefined();
+      expect(items.p1.unitLabel).toBeUndefined(); // still the pack
+    });
+
+    it("units OFF (known): 3 taps -> 3 PACKS", async () => {
+      const { items } = await resolvePendingDefaultUnits(
+        { p1: taps3() },
+        deps([BOTTLE], { unitsEnabled: false }),
+      );
+      expect(items.p1).toMatchObject(THREE_PACKS);
+    });
+
+    it("a role that never sells by a unit (not staff): 3 taps -> 3 PACKS", async () => {
+      const { items } = await resolvePendingDefaultUnits(
+        { p1: taps3() },
+        deps([BOTTLE], { isStaff: false }),
+      );
+      expect(items.p1).toMatchObject(THREE_PACKS);
+    });
+
+    it("startLineOnDefault with no default option settles on the pack with the count; one tap is unchanged", () => {
+      const noDefault = [lvl({ label: "Bottle", factorToBase: 1, price: "2.00" })];
+      expect(startLineOnDefault(taps3(), PRODUCT, noDefault, 1)).toMatchObject(THREE_PACKS);
+      expect(settleOnPack(pending({ pendingTaps: 1 }), 12)).toMatchObject({ boxes: 1, qty: 12 });
+    });
+
+    it("a plain (non-case) line: 3 taps -> qty 3", () => {
+      const plain = { qty: 1, startOnDefaultUnit: 1, pendingTaps: 3 } as LineState;
+      expect(settleOnPack(plain, null)).toMatchObject({ qty: 3 });
+      expect(settleOnPack(plain, null).boxes).toBeUndefined();
+    });
   });
 });
