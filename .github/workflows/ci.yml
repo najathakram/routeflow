@@ -288,9 +288,10 @@ jobs:
       # an empty, always-passing list — never a false red on a manual run.
       #
       # Placed right after install (needs only node_modules/prettier, not the Prisma client)
-      # and BEFORE the heavier steps below, so a formatting violation fails in seconds and
-      # still gets reported even when `Verify` itself is red — `--continue=dependencies-
-      # successful` is turbo's own concern, not this step's; this step has no dependency on it.
+      # and BEFORE the heavier steps below, so a formatting violation fails in seconds. Steps run
+      # in order and a failed step stops the job: when this step is red, `Verify` below does NOT
+      # run on that push, so the type/lint/test verdicts only appear once the formatting is fixed.
+      # That is the trade for a seconds-long gate; it is not a second verify.
       - name: Prettier check (PR changed files)
         run: node scripts/ci-prettier-changed.mjs
 
