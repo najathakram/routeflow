@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -134,7 +135,7 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
     const onErr = (err: any) =>
       toast({
         title: `Failed to ${editing ? "update" : "create"} category`,
-        description: err?.response?.data?.message ?? "Please try again.",
+        description: genericToastCopy(err),
         variant: "error",
       });
 

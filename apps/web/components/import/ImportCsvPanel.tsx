@@ -10,6 +10,7 @@
  */
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
 import { apiClient } from "@/lib/api-client";
@@ -231,13 +232,12 @@ export function ImportCsvPanel({
       }
     } catch (err: any) {
       if (err?.response?.status === 403) {
-        setGateError(err?.response?.data?.message ?? "This column needs an add-on to import");
+        setGateError("This column needs an add-on to import");
         setPreview(null);
       } else {
         toast({
           title: dryRun ? "Preview failed" : "Import failed",
-          description:
-            err?.response?.data?.message ?? "Please check your file format and try again",
+          description: genericToastCopy(err),
           variant: "error",
         });
       }

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Truck, ExternalLink, Pencil } from "lucide-react";
 import { Button, Card, Modal, cn, useToast } from "@routeflow/ui/web";
 import { CARRIERS, carrierLabel, getTrackingUrl } from "@/lib/shipping";
@@ -80,7 +81,7 @@ export function ShipmentCard({
       const err = e as { response?: { data?: { message?: string } }; message?: string };
       toast({
         title: "Could not save shipment",
-        description: err?.response?.data?.message || err?.message,
+        description: genericToastCopy(err),
         variant: "error",
       });
     }

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { ImagePlus, X as XIcon } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useCreateProduct, useProducts, uploadProductImages } from "@/lib/api/products";
@@ -310,7 +311,7 @@ export function ProductCreateModal({
     } catch (err: any) {
       toast({
         title: "Failed to create product",
-        description: err?.message,
+        description: genericToastCopy(err),
         variant: "error",
       });
       return;

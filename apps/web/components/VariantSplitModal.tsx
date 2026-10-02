@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import Link from "next/link";
 import { X, ArrowRightLeft, Search, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
@@ -234,7 +235,7 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
     } catch (err: any) {
       toast({
         title: "Couldn't assign stock",
-        description: err?.response?.data?.message ?? "Please try again.",
+        description: genericToastCopy(err),
         variant: "error",
       });
     }

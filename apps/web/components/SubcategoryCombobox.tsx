@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
 import { useTrackedSubcategories, useCreateSubcategory } from "@/lib/api/tracked-categories";
@@ -110,7 +111,8 @@ export function SubcategoryCombobox({
         }
       }
       toast({
-        title: err?.response?.data?.message ?? "Failed to create category",
+        title: "Failed to create category",
+        description: genericToastCopy(err),
         variant: "error",
       });
     }
