@@ -80,24 +80,44 @@ function build<T>(order: T, stockWrite: StockWriteResult | undefined): T | undef
 }
 
 /**
- * Opus r1 on #3017: which order carries the figure after a buyer create's post-commit sweep.
- * `mergeAllPendingForCustomer` returns, for <= 1 pending order, THAT row read with `lineItems` only
- * (no product, no write), so the figure cannot be attributed onto it:
- *  - nothing returned, or the SAME order (a plain checkout) -> attribute onto `created`;
- *  - a DIFFERENT order and `created` was merge-eligible (`skipAutoMerge === false`) -> it was folded
- *    into that order, attribute onto its lines;
- *  - a different order and `created` was NOT (or is not known to be) eligible -> that order is
- *    someone else's: return it untouched, never a number invented on its lines.
- * Total: it never throws.
+ * Which order a buyer create returns, and carries the figure on (SA-631d, Opus r1 + r2 on #3017):
+ * the POST-SWEEP state of the order that holds THIS request's lines, read fresh with the shared
+ * response include (the sweep's own return selects no pack, so it cannot be attributed). The holder
+ * is decided by row EXISTENCE, never by the `skipAutoMerge` flag or the shape of the sweep's return:
+ * only the sweep deletes an order between the commit and this response.
+ *  1. `created` still exists -> it holds the lines, untouched or as the fold winner (the older orders'
+ *     lines folded INTO it): return that fresh read with the figure;
+ *  2. it is gone and the sweep returned another order -> `created` was folded into it: re-read that
+ *     survivor and return it with the figure;
+ *  3. neither can be read -> the holder is unknown: `merged ?? created` untouched, key omitted.
+ * A concurrent edit between the sweep and the re-read is covered by `withBackorderPieces`' lost-write
+ * rule (it omits the key). The write has COMMITTED, so this is TOTAL: a reader that throws is "gone".
  */
-export function buyerCreateResponse<C, M>(created: C, merged: M | null | undefined): C | M {
+export async function buyerCreateResponse<C, M>(
+  created: C,
+  merged: M | null | undefined,
+  readOrder: (id: string) => Promise<unknown>,
+): Promise<unknown> {
+  const read = async (id: unknown): Promise<unknown> => {
+    if (typeof id !== "string") return null;
+    try {
+      return (await readOrder(id)) ?? null;
+    } catch {
+      return null; // a 404, a dropped connection: that holder is unknown
+    }
+  };
   try {
     const write = stockWriteOf(created);
-    const c = created as { id?: string; skipAutoMerge?: boolean } | null;
-    const m = merged as { id?: string } | null | undefined;
-    if (!m || m.id === c?.id) return withBackorderPieces(created, write);
-    return c?.skipAutoMerge === false ? withBackorderPieces(merged as M, write) : (merged as M);
+    const createdId = (created as { id?: unknown } | null)?.id;
+    const own = await read(createdId);
+    if (own) return withBackorderPieces(own, write);
+    const mergedId = (merged as { id?: unknown } | null | undefined)?.id;
+    if (mergedId && mergedId !== createdId) {
+      const survivor = await read(mergedId);
+      if (survivor) return withBackorderPieces(survivor, write);
+    }
   } catch {
-    return (merged ?? created) as C | M;
+    /* unknown holder: fall through */
   }
+  return merged ?? created;
 }

@@ -123,6 +123,13 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     LockUnavailableError: new (cause?: unknown) => Error;
   };
 
+  /** The create-new path re-reads the created order by id (SA-631d): findOne answers with it. */
+  const rereadsCreated = () =>
+    ordersService.findOne.mockImplementation(async () => {
+      mockCallOrder.push("findOne");
+      return { id: "order-fresh" };
+    });
+
   beforeEach(async () => {
     mockCallOrder.length = 0;
     locks = requireDbLocksMock();
@@ -275,6 +282,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
 
   it("no active order: the lock is still taken, and the create-new path runs unchanged after it", async () => {
     ordersService.findActiveOrder.mockResolvedValue(null);
+    rereadsCreated();
     const dto = { items: [{ productId: "prod-a", qty: 3 }] };
 
     const result = await controller.createOrder(dto as any, MOCK_CTX as any);
@@ -287,6 +295,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
       "lock:exit",
       "create",
       "mergeAllPendingForCustomer",
+      "findOne", // SA-631d: the created order is re-read fresh after the sweep
     ]);
     expect(result).toEqual({ id: "order-fresh" });
   });
@@ -341,6 +350,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
   it("R1: the POST-CREATE consolidation is called with { lockMode: 'try' } and, when it defers with the coded 503, the created order still comes back — one warning", async () => {
     ordersService.findActiveOrder.mockResolvedValue(null);
     ordersService.mergeAllPendingForCustomer.mockRejectedValueOnce(lockUnavailable());
+    rereadsCreated();
     const warn = jest.spyOn((controller as any).logger, "warn").mockImplementation(() => undefined);
 
     const result = await controller.createOrder(dtoOf() as any, MOCK_CTX as any);

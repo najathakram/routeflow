@@ -754,7 +754,10 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return buyerCreateResponse(created, merged); // SA-606o + Opus r1: which order carries the figure
+    // SA-631d: the holder of this request's lines is decided by existence and re-read fresh.
+    return buyerCreateResponse(created, merged, (id) =>
+      this.ordersService.findOne(id, makePseudoUser(ctx)),
+    );
   }
 
   @Patch("orders/:id/items")
