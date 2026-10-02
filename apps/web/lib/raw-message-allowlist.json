@@ -136,8 +136,8 @@
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "count": 2,
+    "why": "B986-7 orders + customers: per-surface raw message read, pending (2: the pre-existing one, plus #2865's `res.message` for a refused scan lookup, a server sentence that needs a code first: B991 / B987-E)"
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
     "count": 4,
@@ -148,7 +148,7 @@
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/products/[id]/page.tsx": {
-    "count": 2,
+    "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "app/(dashboard)/products/page.tsx": {
@@ -193,10 +193,6 @@
   },
   "app/(dashboard)/settings/_components/MailboxCard.tsx": {
     "count": 10,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/settings/_components/RegulatedSettingsTab.tsx": {
-    "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
   "app/(dashboard)/settings/_components/SendingDomainCard.tsx": {

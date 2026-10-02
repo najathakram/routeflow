@@ -31,6 +31,11 @@
 //   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
 //                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
 //                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
+//   FAMILY_NOT_SELLABLE — `body.code` of the 400 when a FAMILY container (kind FAMILY) is named on an order, invoice,
+//                    estimate or PO line; `productIds` names them (WS8: a family is non-stocked and non-sellable).
+//   FAMILY_ROWS_CONFLICT — `body.code` of the 409 from POST /products/families and PATCH /products/:id/variants: `rows` lists
+//                    EVERY conflicting row (see FamilyRowsConflictError), never just the first.
+//   FAMILY_NOT_FOUND — `body.code` of the 404 from PATCH /products/:id/variants when `:id` is not a product of the tenant.
 //   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
 //                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
@@ -48,6 +53,8 @@
 //   FAMILY_PRICE_AUTHORITY — `body.code` of the 409 a variant price write answers while the
 //                    tenant's mixed_packs mode is on and the family owns the price; body carries
 //                    `familyId`.
+//   FAMILY_COPY_PRICE_REQUIRED — `body.code` of the 400 a family create answers when copyFamilyPrice is set and the
+//                    family price is missing or rounds to <= 0 (nothing is written).
 //   FIXED_WHOLE_BOXES / COMPOSED_UNIT_LINE / RECIPE_PACK_MISMATCH / COMPONENT_SUM_MISMATCH —
 //                    `body.code` of a mixed-pack (FIXED) line write refusal (#2717 M3): loose pieces
 //                    (400), a unit-aware line (400), a recipe pack size that differs from the line's
@@ -56,6 +63,11 @@
 //                    into whole boxes; a server tripwire, never a client-fixable input.
 //   COMPOSED_LINE_EDIT — `body.code` of the 409 when a DRAFT invoice edit changes a mixed-pack line
 //                    by anything other than whole boxes or a price (#2717 M3).
+//   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 the messaging delivery-log / health / staff-email-settings
+//                    endpoints answer when the caller has no tenant context (SUPER_ADMIN without an
+//                    impersonated tenant): their unscoped client would read or write another tenant's rows.
+//   STAFF_CC_INVALID — `body.code` of the 400 a PUT /messaging/staff-email-settings answers for a
+//                    bad "Also send to" list; `body.details` is `{ index, reason }` (WS4, SA-606).
 //   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
 //                    SA-608 closed set). The client maps each to FIXED copy and never renders the
 //                    server message. 409: VOID_NOT_EDITABLE (the note is void), RETURN_BACKED (edit the
@@ -91,6 +103,22 @@
 //                    (FEATURE_MODE, RUN_ALREADY_SETTLED, STOP_ALREADY_COMPLETED, STOP_SKIPPED) and the selling-restrictions
 //                    409s (SELLING_RESTRICTED, SELLING_RESTRICTIONS_NOT_READY). SELLING_RESTRICTED is also a suspension REASON
 //                    value in recurring invoices / order templates, which is data, not an error code.
+//   B987-B — vendor-bill / supplier-statement / inventory / invoice refusals, now named here (value == key, byte-identical to what
+//                    was sent): PO_LINK_CONFLICT, PO_LINK_BROKEN, SCAN_ALREADY_POSTED (vendor-bill scan and PO link), the AI_* scan
+//                    failures (AI_KEY_INVALID, AI_SCAN_REJECTED, AI_UNAVAILABLE, AI_PARSE_FAILED: vendor-bill and statement scans),
+//                    INSUFFICIENT_UNASSIGNED, PO_LOT_PARTIALLY_CONSUMED, PO_HAS_LINKED_BILL, INVENTORY_LEDGER_GAP (inventory),
+//                    ALLOCATIONS_EXCEED_PAYMENT, INVOICE_CHANGED_DURING_EDIT (invoices) and EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED
+//                    (invoice send, buyer merge verification email).
+//   B987-C — billing / tenants / auth / authorizations / customers / promotions / platform-admin refusals, now named here (value == key,
+//                    byte-identical to what was sent): ADDON_DEFAULT_GRANTED, EXPIRES_AT_MUST_BE_FUTURE, FEATURE_KEY_UNKNOWN,
+//                    FEATURE_MODE_REQUIRES, FEATURE_REQUIRES_UNMET, PLAN_CHANGED_DURING_SUBSCRIBE (billing), FEATURES_UNAVAILABLE (tenants),
+//                    HANDOFF_NOT_CONFIGURED, HANDOFF_ROLE_NOT_ALLOWED (auth handoff), REGULATED_AUTH_REQUIRED (authorizations),
+//                    WALLET_LOCK_BUSY (customers), PROMOTION_ZERO_PRICE (promotions), UNEXPLAINED_DIFFS (platform-admin). The AI_* union in
+//                    finance.ts is derived from the constants above.
+//   B987-C (onboarding) — the onboarding case and intake refusals: INTAKE_ANSWERS_INVALID, INTAKE_ORDER_NOT_READY, INTAKE_SECTION_LOCKED,
+//                    INTAKE_SECTION_NOT_REVIEWABLE, ONBOARDING_BOOKING_HAS_CASE, ONBOARDING_CASE_CLOSED, ONBOARDING_CASE_NOT_OPEN,
+//                    ONBOARDING_GATE_BLOCKED, ONBOARDING_SIGN_OFF_NOT_AVAILABLE, ONBOARDING_STEP_BEHIND_GATE, ONBOARDING_STEP_NOT_PENDING,
+//                    ONBOARDING_STEP_NOT_REACHED, ONBOARDING_STEP_WAIVED (value == key, byte-identical to what was sent).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -106,6 +134,9 @@ export const API_ERROR_CODES = {
   CODE_TAKEN: "CODE_TAKEN",
   NAME_TAKEN: "NAME_TAKEN",
   HOLDERS_CHANGED: "HOLDERS_CHANGED",
+  FAMILY_NOT_SELLABLE: "FAMILY_NOT_SELLABLE",
+  FAMILY_ROWS_CONFLICT: "FAMILY_ROWS_CONFLICT",
+  FAMILY_NOT_FOUND: "FAMILY_NOT_FOUND",
   CODES_CHANGED: "CODES_CHANGED",
   CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
@@ -115,12 +146,15 @@ export const API_ERROR_CODES = {
   RECIPE_VERSION_CONFLICT: "RECIPE_VERSION_CONFLICT",
   RECIPE_INVALID: "RECIPE_INVALID",
   FAMILY_PRICE_AUTHORITY: "FAMILY_PRICE_AUTHORITY",
+  FAMILY_COPY_PRICE_REQUIRED: "FAMILY_COPY_PRICE_REQUIRED",
   FIXED_WHOLE_BOXES: "FIXED_WHOLE_BOXES",
   COMPOSED_UNIT_LINE: "COMPOSED_UNIT_LINE",
   RECIPE_PACK_MISMATCH: "RECIPE_PACK_MISMATCH",
   COMPONENT_SUM_MISMATCH: "COMPONENT_SUM_MISMATCH",
   COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
+  STAFF_CC_INVALID: "STAFF_CC_INVALID",
+  TENANT_CONTEXT_REQUIRED: "TENANT_CONTEXT_REQUIRED",
   CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
@@ -188,6 +222,47 @@ export const API_ERROR_CODES = {
   STOP_SKIPPED: "STOP_SKIPPED",
   SELLING_RESTRICTED: "SELLING_RESTRICTED",
   SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
+  PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
+  SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
+  PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  AI_KEY_INVALID: "AI_KEY_INVALID",
+  AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
+  AI_UNAVAILABLE: "AI_UNAVAILABLE",
+  AI_PARSE_FAILED: "AI_PARSE_FAILED",
+  INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
+  PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
+  PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
+  INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
+  EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
+  EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+  ADDON_DEFAULT_GRANTED: "ADDON_DEFAULT_GRANTED",
+  EXPIRES_AT_MUST_BE_FUTURE: "EXPIRES_AT_MUST_BE_FUTURE",
+  FEATURE_KEY_UNKNOWN: "FEATURE_KEY_UNKNOWN",
+  FEATURE_MODE_REQUIRES: "FEATURE_MODE_REQUIRES",
+  FEATURE_REQUIRES_UNMET: "FEATURE_REQUIRES_UNMET",
+  PLAN_CHANGED_DURING_SUBSCRIBE: "PLAN_CHANGED_DURING_SUBSCRIBE",
+  FEATURES_UNAVAILABLE: "FEATURES_UNAVAILABLE",
+  HANDOFF_NOT_CONFIGURED: "HANDOFF_NOT_CONFIGURED",
+  HANDOFF_ROLE_NOT_ALLOWED: "HANDOFF_ROLE_NOT_ALLOWED",
+  REGULATED_AUTH_REQUIRED: "REGULATED_AUTH_REQUIRED",
+  WALLET_LOCK_BUSY: "WALLET_LOCK_BUSY",
+  PROMOTION_ZERO_PRICE: "PROMOTION_ZERO_PRICE",
+  UNEXPLAINED_DIFFS: "UNEXPLAINED_DIFFS",
+  INTAKE_ANSWERS_INVALID: "INTAKE_ANSWERS_INVALID",
+  INTAKE_ORDER_NOT_READY: "INTAKE_ORDER_NOT_READY",
+  INTAKE_SECTION_LOCKED: "INTAKE_SECTION_LOCKED",
+  INTAKE_SECTION_NOT_REVIEWABLE: "INTAKE_SECTION_NOT_REVIEWABLE",
+  ONBOARDING_BOOKING_HAS_CASE: "ONBOARDING_BOOKING_HAS_CASE",
+  ONBOARDING_CASE_CLOSED: "ONBOARDING_CASE_CLOSED",
+  ONBOARDING_CASE_NOT_OPEN: "ONBOARDING_CASE_NOT_OPEN",
+  ONBOARDING_GATE_BLOCKED: "ONBOARDING_GATE_BLOCKED",
+  ONBOARDING_SIGN_OFF_NOT_AVAILABLE: "ONBOARDING_SIGN_OFF_NOT_AVAILABLE",
+  ONBOARDING_STEP_BEHIND_GATE: "ONBOARDING_STEP_BEHIND_GATE",
+  ONBOARDING_STEP_NOT_PENDING: "ONBOARDING_STEP_NOT_PENDING",
+  ONBOARDING_STEP_NOT_REACHED: "ONBOARDING_STEP_NOT_REACHED",
+  ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

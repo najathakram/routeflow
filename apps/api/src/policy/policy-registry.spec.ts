@@ -12,6 +12,7 @@ import { FEATURE_REGISTRY } from "../billing/feature-registry";
 import { FLAG_KEYS } from "../billing/plan-catalog.constants";
 import {
   POLICY_PILOT_PENDING_ALLOWLIST,
+  BUYER_OVERSELL_MODES,
   POLICY_REGISTRY,
   policyJsonSchema,
   type PolicyEntry,
@@ -147,5 +148,37 @@ describe("POLICY_REGISTRY pins (SA-138 §3.1)", () => {
     expect(flagged.filter((k) => !POLICY_PILOT_PENDING_ALLOWLIST.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !PHASE1_PILOTS.includes(k))).toEqual([]);
     expect(POLICY_PILOT_PENDING_ALLOWLIST.filter((k) => !flagged.includes(k))).toEqual([]);
+  });
+});
+
+describe("orders.buyerOversell (WS9)", () => {
+  const e = ENTRIES.find((x) => x.key === "orders.buyerOversell");
+
+  it("is registered as an internal enum defaulting to today's hard block", () => {
+    expect(e).toBeDefined();
+    expect(e?.area).toBe("orders");
+    expect(e?.kind).toBe("enum");
+    expect(e?.default).toBe("off");
+    expect(e?.added).toBe("2026-09-30");
+    expect(BUYER_OVERSELL_MODES).toEqual(["off", "backorder"]);
+  });
+
+  it("allows exactly the TENANT and CUSTOMER scopes (a CATEGORY write is refused)", () => {
+    expect([...(e?.scopes ?? [])].sort()).toEqual(["CUSTOMER", "TENANT"]);
+  });
+
+  it("is server-side only: clientVisible is false so it never reaches `modes`", () => {
+    expect(e?.clientVisible).toBe(false);
+  });
+
+  it("accepts off/backorder and rejects everything else", () => {
+    for (const ok of ["off", "backorder"]) expect(e?.schema.safeParse(ok).success).toBe(true);
+    for (const bad of ["yes", "allow", "BACKORDER", "Off", null, 1, true, undefined, ""])
+      expect(e?.schema.safeParse(bad).success).toBe(false);
+  });
+
+  it("is NOT pilotPending: PolicyOversellReader is its production call site (P1b), and the shrink-only allow-list never grew", () => {
+    expect(e?.pilotPending).toBeUndefined();
+    expect(POLICY_PILOT_PENDING_ALLOWLIST).not.toContain("orders.buyerOversell");
   });
 });

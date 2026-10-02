@@ -81,6 +81,64 @@ describe("MigrationService", () => {
     });
   });
 
+  describe("B990: the free-text category of a staged product", () => {
+    it("stage: a formula-led category is staged SKIPPED (flag unsafe-category), the preview agrees", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "FETCHING",
+      });
+      await service.stageRecords("j1", [
+        {
+          entityType: "PRODUCT",
+          externalId: "item_1",
+          payload: { name: "Fine", category: "=HYPERLINK(1)" },
+        },
+        {
+          entityType: "PRODUCT",
+          externalId: "item_2",
+          payload: { name: "Fine too", category: "Drinks" },
+        },
+      ]);
+      const rows = prisma.migrationStagingRecord.create.mock.calls.map((c) => c[0].data);
+      expect(rows[0]).toMatchObject({ status: "SKIPPED", flags: ["unsafe-category"] });
+      expect(rows[1]).toMatchObject({ status: "PENDING" });
+    });
+
+    it("confirm: a staged formula-led category is SKIPPED and never reaches products.create (the job is never wedged)", async () => {
+      prisma.migrationJob.findUnique.mockResolvedValue({
+        id: "j1",
+        source: "ZOHO",
+        status: "STAGED",
+      });
+      prisma.migrationStagingRecord.findMany.mockResolvedValue([
+        {
+          id: "r1",
+          entityType: "PRODUCT",
+          externalId: "item_1",
+          rawPayload: { name: "Fine", category: "@cmd" },
+          flags: [],
+        },
+        {
+          id: "r2",
+          entityType: "PRODUCT",
+          externalId: "item_2",
+          rawPayload: { name: "Ok", pricePerUnit: "5" },
+          flags: [],
+        },
+      ]);
+      const res = await service.confirmJob("j1");
+      expect(products.create).toHaveBeenCalledTimes(1);
+      expect(prisma.migrationStagingRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "r1" },
+          data: { status: "SKIPPED", flags: ["unsafe-category"] },
+        }),
+      );
+      expect(res).toMatchObject({ committed: 1, skipped: 1 });
+    });
+  });
+
   describe("confirmJob", () => {
     it("commits a product, records its external ref, and opens a 24h undo window", async () => {
       prisma.migrationJob.findUnique.mockResolvedValue({

@@ -3621,7 +3621,7 @@ export class InvoicesService {
     // caught after the attempt below.
     if (!(await this.emailService.isEmailConfigured())) {
       throw new BadRequestException({
-        code: "EMAIL_NOT_CONFIGURED",
+        code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED,
         message:
           "Email isn't set up yet, so the invoice wasn't emailed. Configure your email/SMTP settings under Settings → Email, then try again.",
       });
@@ -3717,7 +3717,7 @@ export class InvoicesService {
     // it in Settings → Email rather than believing the customer received the invoice.
     if (!sendResult.delivered) {
       throw new BadRequestException({
-        code: "EMAIL_SEND_FAILED",
+        code: API_ERROR_CODES.EMAIL_SEND_FAILED,
         message: `The invoice couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
       });
     }
@@ -3796,7 +3796,7 @@ export class InvoicesService {
     // R5: don't claim a reminder was sent when email isn't set up.
     if (!(await this.emailService.isEmailConfigured())) {
       throw new BadRequestException({
-        code: "EMAIL_NOT_CONFIGURED",
+        code: API_ERROR_CODES.EMAIL_NOT_CONFIGURED,
         message:
           "Email isn't set up yet, so the reminder wasn't sent. Configure your email/SMTP settings under Settings → Email, then try again.",
       });
@@ -3871,7 +3871,7 @@ export class InvoicesService {
 
     if (!sendResult.delivered) {
       throw new BadRequestException({
-        code: "EMAIL_SEND_FAILED",
+        code: API_ERROR_CODES.EMAIL_SEND_FAILED,
         message: `The reminder couldn't be emailed${sendResult.error ? ` (${sendResult.error})` : ""}. Check your email settings under Settings → Email and try again.`,
       });
     }
