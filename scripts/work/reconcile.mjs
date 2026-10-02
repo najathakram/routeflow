@@ -804,7 +804,7 @@ export function decideWorkStatusIssue({
 export const RECONCILE_USAGE =
   "usage: node scripts/work/reconcile.mjs [--apply] [--dry-run] [--json] [--quiet] [--help]\n" +
   "  a bare run is a dry run; only --apply writes to the board\n" +
-  "  RECONCILE_WORK_DIR=<dir> relocates the lock/state/log (default local-assets/work); announced on stderr when set";
+  "  RECONCILE_WORK_DIR=<absolute dir> relocates the lock/state/log (for tests); announced on stderr, and --apply is refused while it is set";
 const RECONCILE_FLAGS = new Set(["--apply", "--dry-run", "--json", "--quiet", "--help", "-h"]);
 
 /**
@@ -1373,6 +1373,15 @@ async function main() {
   if (args.help) {
     console.log(RECONCILE_USAGE);
     process.exitCode = 0;
+    return;
+  }
+  // B973 (lead Opus): a relocated work dir must never WRITE to the board. The real scheduler's callers (run.mjs swallows
+  // stderr, trigger.mjs is stdio:ignore) would otherwise silently use a lock that no other reconcile can see: a double apply.
+  if (args.apply && WORK_DIR !== DEFAULT_WORK_DIR) {
+    console.error(
+      "work reconcile: refusing --apply while RECONCILE_WORK_DIR is set (it relocates the lock, so a second reconcile could run alongside). Unset it to apply.",
+    );
+    process.exitCode = 2;
     return;
   }
   const now = new Date();

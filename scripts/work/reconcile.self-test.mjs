@@ -1324,6 +1324,11 @@ const pr = (overrides = {}) => ({
       RECONCILE_USAGE.includes("RECONCILE_WORK_DIR"),
       true,
     );
+    check(
+      "B973 usage says the dir must be ABSOLUTE",
+      /RECONCILE_WORK_DIR=<absolute dir>/.test(RECONCILE_USAGE),
+      true,
+    );
     {
       const r = cli(["--help"]);
       check(
@@ -1336,6 +1341,53 @@ const pr = (overrides = {}) => ({
         "B973 a run WITHOUT it prints no relocation notice",
         d.err.includes("RECONCILE_WORK_DIR in effect"),
         false,
+      );
+    }
+    // B973 (lead Opus): `--apply` with a RELOCATED work dir is REFUSED (exit 2, nothing written, no gh call). A stray export would
+    // otherwise move the real scheduler's lock/state/log (run.mjs swallows stderr; trigger.mjs is stdio:ignore) and risk a double apply.
+    {
+      const before = snap();
+      const r = cli(["--apply"]);
+      check("B973 CLI --apply with RECONCILE_WORK_DIR set: exit 2", r.status, 2);
+      check(
+        "B973 CLI --apply with RECONCILE_WORK_DIR set: says why on stderr",
+        /refus/i.test(r.err) && r.err.includes("RECONCILE_WORK_DIR"),
+        true,
+      );
+      check(
+        "B973 CLI --apply with RECONCILE_WORK_DIR set: lock/log/state untouched",
+        snap(),
+        before,
+      );
+      const q = cli(["--apply", "--quiet"]);
+      check("B973 CLI --apply --quiet with RECONCILE_WORK_DIR set: still refused", q.status, 2);
+      // a dry run (bare) and --help stay allowed with the override: the refusal is for the write only
+      const h = cli(["--help"]);
+      check("B973 CLI --help with RECONCILE_WORK_DIR set: still help (exit 0)", h.status, 0);
+    }
+    // B973 (lead Opus): mutation-proof isolation: the lock, state and log (and the scratch body file) are ALL built from WORK_DIR,
+    // and the real path appears ONCE in the code (the default), in any form. A path built another way would fail one of these.
+    {
+      const code = readPkgFile(new URL("./reconcile.mjs", import.meta.url), "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join("\n");
+      for (const name of ["STATE_FILE", "LOG_FILE", "RECONCILE_LOCK_FILE"]) {
+        check(
+          `B973 reconcile.mjs builds ${name} from WORK_DIR`,
+          new RegExp(`const ${name} = join\\(WORK_DIR, "`).test(code),
+          true,
+        );
+      }
+      check(
+        "B973 reconcile.mjs builds the scratch body file from WORK_DIR",
+        /join\(WORK_DIR, "\.work-status-body\.md"\)/.test(code),
+        true,
+      );
+      check(
+        "B973 reconcile.mjs mentions local-assets once in code (the default dir), in any form",
+        code.split("local-assets").length - 1,
+        1,
       );
     }
     // B973: isolation proof: none of the CLI runs above touched the REAL local-assets/work files (read-only stat).
