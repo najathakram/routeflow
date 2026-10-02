@@ -111,9 +111,17 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
+  "app/(dashboard)/orders/[id]/page.tsx": {
+    "count": 6,
+    "why": "B991 / B987-E (codes + structured fields first): the delete / cancel / fulfillment refusals are UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); pending"
+  },
+  "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
+    "count": 2,
+    "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
+  },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
     "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "why": "B986-7 orders + customers: folds an unexpected scan-resolver rejection (a JS Error, not a server body) into the scan error message; reviewed, pending a code for the lookup failure (B987-E)"
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
     "count": 2,

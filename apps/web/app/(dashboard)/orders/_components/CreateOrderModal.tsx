@@ -73,7 +73,7 @@ import {
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -1291,15 +1291,21 @@ export function CreateOrderModal({
 
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
-    const err = createOrder.error as unknown;
+    const err = createOrder.error as {
+      response?: { data?: { message?: string } };
+      message?: string;
+    } | null;
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err as never)) return null;
-    // B986: fixed copy by code/status (an out-of-stock create reads the shared stock sentence), never the server message.
-    return genericToastCopy(
-      err,
-      "The order couldn't be created. Check the customer and lines, then try again.",
+    if (parseSellingRestricted(err)) return null;
+    // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
+    // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
+    return (
+      codedToastCopy(err) ||
+      err.response?.data?.message ||
+      err.message ||
+      "Something went wrong. Please try again."
     );
   })();
 

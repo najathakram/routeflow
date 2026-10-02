@@ -129,7 +129,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
+import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -1990,9 +1990,11 @@ export default function OrderDetailPage() {
   );
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
+  // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
+  const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
   const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
-  const deleteOrder = useDeleteOrder();
+  const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
   const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
@@ -2354,7 +2356,7 @@ export default function OrderDetailPage() {
       setShowCancelConfirm(false);
       return;
     }
-    updateStatus.mutate(
+    cancelOrder.mutate(
       { id: order.id, status: "CANCELLED" },
       {
         onSuccess: () => {
@@ -2365,10 +2367,10 @@ export default function OrderDetailPage() {
           // Previously silent: a server refusal produced no toast at all.
           toast({
             title: "Couldn't cancel this order",
-            description: genericToastCopy(
-              err,
-              "This order can't be cancelled right now. Check its invoices and applied credits, then try again.",
-            ),
+            description:
+              codedToastCopy(err) ??
+              err?.response?.data?.message ??
+              "Please try again, or refresh and check its invoices.",
             variant: "error",
           });
         },
@@ -2502,7 +2504,10 @@ export default function OrderDetailPage() {
                 toast({ title: successTitle, variant: "success" });
                 router.push("/orders");
               },
-              onError: () => setShowDeleteConfirm(false),
+              onError: (e) => {
+                toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
+                setShowDeleteConfirm(false);
+              },
             });
           }}
         >
@@ -2707,14 +2712,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({
-                              title: "Couldn't delete the order",
-                              description: genericToastCopy(
-                                e,
-                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
-                              ),
-                              variant: "error",
-                            });
+                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2779,14 +2777,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({
-                              title: "Couldn't delete the order",
-                              description: genericToastCopy(
-                                e,
-                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
-                              ),
-                              variant: "error",
-                            });
+                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2973,14 +2964,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({
-                              title: "Couldn't delete the order",
-                              description: genericToastCopy(
-                                e,
-                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
-                              ),
-                              variant: "error",
-                            });
+                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -3431,10 +3415,7 @@ export default function OrderDetailPage() {
                             onError: (err: any) =>
                               toast({
                                 title: "Could not update fulfillment",
-                                description: genericToastCopy(
-                                  err,
-                                  "The fulfillment path couldn't be changed. Check the order's status, then try again.",
-                                ),
+                                description: codedToastCopy(err) ?? err?.response?.data?.message,
                                 variant: "error",
                               }),
                           },
@@ -3700,7 +3681,7 @@ export default function OrderDetailPage() {
         }
         confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
-        loading={updateStatus.isPending || cancelImpact.isLoading}
+        loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
       />
 
       {/* Demote reason modal */}
@@ -3708,7 +3689,7 @@ export default function OrderDetailPage() {
         open={!!demoteTarget}
         onClose={() => setDemoteTarget(null)}
         onConfirm={handleDemote}
-        loading={updateStatus.isPending}
+        loading={updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
       />
 

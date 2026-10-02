@@ -997,10 +997,8 @@ describe("CreateOrderModal", () => {
         mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
-        expect(
-          screen.getByText("Something went wrong on our side. Please try again."),
-        ).toBeInTheDocument();
-        expect(screen.queryByText("Boom happened")).not.toBeInTheDocument();
+        // an UNCODED refusal keeps today's server sentence (B986-7 Opus: never a vaguer fallback)
+        expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
 
       // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard

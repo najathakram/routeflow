@@ -15,9 +15,7 @@ const D = "app/(dashboard)";
 
 describe("no raw server message on the orders + customers surfaces", () => {
   it.each([
-    `${D}/orders/[id]/page.tsx`,
     `${D}/orders/page.tsx`,
-    `${D}/orders/_components/CreateOrderModal.tsx`,
     `${D}/orders/_components/CreditNotePicker.tsx`,
     `${D}/orders/_components/LicenseGuardModal.tsx`,
     `${D}/orders/_components/SplitInvoiceModal.tsx`,
@@ -30,15 +28,8 @@ describe("no raw server message on the orders + customers surfaces", () => {
 
   it("each surface passes its OWN actionable sentence for an uncoded refusal", () => {
     const want: Record<string, RegExp[]> = {
-      [`${D}/orders/[id]/page.tsx`]: [
-        /couldn't be marked as sent/,
-        /email couldn't be sent/,
-        /can't be cancelled right now/,
-        /can't be deleted in its current state/,
-        /fulfillment path couldn't be changed/,
-      ],
+      [`${D}/orders/[id]/page.tsx`]: [/couldn't be marked as sent/, /email couldn't be sent/],
       [`${D}/orders/page.tsx`]: [/orders export couldn't be created/],
-      [`${D}/orders/_components/CreateOrderModal.tsx`]: [/order couldn't be created/],
       [`${D}/orders/_components/CreditNotePicker.tsx`]: [/credit note couldn't be created/],
       [`${D}/orders/_components/LicenseGuardModal.tsx`]: [
         /license couldn't be saved/,
@@ -105,5 +96,42 @@ describe("the hooks carry meta.localErrorToast only when asked", () => {
     expect(await metaOf(() => tpl.useUpdateOrderTemplate(o))).toEqual(on);
     expect(await metaOf(() => cn.useCreateCreditNote(o))).toEqual(on);
     expect(await metaOf(() => ord.useCreateOrder())).toBeUndefined();
+  });
+});
+
+describe("B986-7 Opus: uncoded refusals keep TODAY's server sentence (never a vaguer fallback); coded ones are mapped", () => {
+  const D2 = "app/(dashboard)";
+  it("CreateOrderModal banner, order delete (all four sites), cancel and fulfillment use codedToastCopy(err) ?? today's text", () => {
+    const banner = read(`${D2}/orders/_components/CreateOrderModal.tsx`);
+    expect(banner).toContain("codedToastCopy(err)");
+    expect(banner).toMatch(/err\.response\?\.data\?\.message \|\|\s*err\.message/);
+    expect(banner).not.toContain("The order couldn't be created. Check the customer and lines");
+    const page = read(`${D2}/orders/[id]/page.tsx`);
+    expect((page.match(/codedToastCopy\(e\) \?\? e\.message/g) ?? []).length).toBe(4);
+    expect(page).toMatch(
+      /codedToastCopy\(err\)\s*\?\?\s*err\?\.response\?\.data\?\.message\s*\?\?\s*"Please try again, or refresh and check its invoices\."/,
+    );
+    expect(page).toMatch(/codedToastCopy\(err\) \?\? err\?\.response\?\.data\?\.message/);
+    for (const vague of [
+      "can't be cancelled right now",
+      "can't be deleted in its current state",
+      "fulfillment path couldn't be changed",
+    ])
+      expect(page).not.toContain(vague);
+  });
+
+  it("order delete and cancel own their error (all call sites show it), so those hooks opt out", () => {
+    const page = read(`${D2}/orders/[id]/page.tsx`);
+    expect(page).toContain("useDeleteOrder({ localErrorToast: true })");
+    expect(page).toContain("const cancelOrder = useUpdateOrderStatus({ localErrorToast: true })");
+    // every deleteOrder.mutate has an onError that toasts (the first one used to rely on the global toast)
+    const sites = page.split("deleteOrder.mutate(").slice(1);
+    expect(sites).toHaveLength(4);
+    for (const site of sites) expect(site.slice(0, 700)).toContain("onError");
+  });
+
+  it("the global handler honours a PREDICATE localErrorToast (an exported predicate must not silently drop every toast)", () => {
+    const src = read("lib/mutation-error-toast.ts");
+    expect(src).toMatch(/typeof local === "function" \? local\(error\) : local/);
   });
 });

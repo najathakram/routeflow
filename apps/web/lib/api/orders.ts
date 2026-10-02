@@ -419,9 +419,10 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
   });
 }
 
-export function useUpdateOrderStatus() {
+export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, status, reason }) =>
       apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -534,9 +535,10 @@ export function useReopenOrder() {
   });
 }
 
-export function useDeleteOrder() {
+export function useDeleteOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.delete(`/orders/${id}`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
