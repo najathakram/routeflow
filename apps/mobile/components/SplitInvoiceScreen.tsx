@@ -27,7 +27,7 @@ import {
   stepBillQty,
 } from "../lib/split-invoice-cases";
 
-export interface SplitInvoiceItem {
+interface SplitInvoiceItem {
   id: string;
   productName: string;
   qty: number;

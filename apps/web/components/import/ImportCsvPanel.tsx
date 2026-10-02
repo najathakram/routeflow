@@ -12,15 +12,10 @@
 import * as React from "react";
 import { Upload, AlertCircle, CheckCircle2, ChevronDown, ChevronUp } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
+import type { ImportColumnAlias } from "@routeflow/types";
 import { apiClient } from "@/lib/api-client";
 
-export interface ImportColumnAlias {
-  field: string;
-  canonical: string;
-  aliases: string[];
-}
-
-export interface ImportRowPlan {
+interface ImportRowPlan {
   row: number;
   label: string;
   action: "create" | "update" | "skip";

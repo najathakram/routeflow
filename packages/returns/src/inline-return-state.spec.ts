@@ -12,6 +12,8 @@ import {
   DEFAULT_EXCESS_OPTION,
   dropExcessAndRequote,
   extractRefusalMessage,
+  alreadyReturnedProductIds,
+  missingAlreadyReturnedReasons,
   INLINE_RETURN_OVER_LINE_HEADROOM_MESSAGE,
   groupQuoteChunks,
   hasAnyQtyEntered,
@@ -813,5 +815,61 @@ describe("extractRefusalMessage: the line-headroom 409 (B948)", () => {
         response: { status: 400, data: { code: "OTHER", message: "named" } },
       }),
     ).toBe("named");
+  });
+});
+
+describe("B961: already returned or credited", () => {
+  const chunk = (productId: string, alreadyReturned?: boolean) =>
+    ({
+      sourceOrderId: null,
+      sourceInvoiceItemId: null,
+      sourceOrderItemId: null,
+      productId,
+      pieces: 2,
+      subtotal: 10,
+      taxAmount: 0,
+      categoryTax: 0,
+      priceSource: "BASE",
+      unitPrice: 5,
+      ...(alreadyReturned ? { alreadyReturned: true } : {}),
+    }) as any;
+  const quote = { chunks: [chunk("p1", true), chunk("p2")] } as any;
+
+  it("alreadyReturnedProductIds lists only the flagged chunks' products", () => {
+    expect([...alreadyReturnedProductIds(quote)]).toEqual(["p1"]);
+  });
+  it("missingAlreadyReturnedReasons names the flagged products without a (non-blank) reason", () => {
+    expect(missingAlreadyReturnedReasons([{ productId: "p1" }], quote)).toEqual(["p1"]);
+    expect(
+      missingAlreadyReturnedReasons([{ productId: "p1", alreadyReturnedReason: "   " }], quote),
+    ).toEqual(["p1"]);
+    expect(
+      missingAlreadyReturnedReasons(
+        [{ productId: "p1", alreadyReturnedReason: "slip lost" }],
+        quote,
+      ),
+    ).toEqual([]);
+  });
+  it("buildCaptureRequest sends the trimmed reason on the line, and the QUOTE request never carries it", () => {
+    const lines = [
+      {
+        productId: "p1",
+        productName: "P1",
+        boxes: "0",
+        pieces: "2",
+        reason: "",
+        note: "",
+        alreadyReturnedReason: "  slip lost  ",
+      },
+    ] as any;
+    const cap = buildCaptureRequest({
+      customerId: "c",
+      orderId: "o",
+      lines,
+      returnKey: "k",
+      reason: "DAMAGED",
+    } as any);
+    expect(cap.items[0]).toMatchObject({ alreadyReturnedReason: "slip lost" });
+    expect(JSON.stringify(buildQuoteRequest("c", lines))).not.toMatch(/alreadyReturnedReason/);
   });
 });
