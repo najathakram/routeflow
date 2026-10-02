@@ -1,3 +1,4 @@
+import { safeBuyerDisplayName } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ForbiddenException,
@@ -263,7 +264,10 @@ export class AppleOAuthService {
     if (dto.context === "staff") {
       return this.handleStaffAuth(dto.tenantSlug, appleId, email, deviceInfo);
     }
-    return this.handleBuyerAuth(appleId, email, name, dto.authorizationCode);
+    // B964: the provider-supplied name never blocks a buyer sign-in; a formula-led one is neutralised (email local-part, else "Customer")
+    const buyerName =
+      dto.fullName || email ? safeBuyerDisplayName(dto.fullName ?? email, email) : name;
+    return this.handleBuyerAuth(appleId, email, buyerName, dto.authorizationCode);
   }
 
   // ─── Staff flow (SA-418 §3) ─────────────────────────────────────────────────

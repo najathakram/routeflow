@@ -61,6 +61,7 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { customerUpdateData } from "./customer-update-data";
 import { assertSafeCustomerNames } from "./customer-name-guard";
+import { assertSafeAddress, assertSafeLicense } from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -531,6 +532,7 @@ export class CustomersService {
 
   async create(dto: CreateCustomerDto) {
     assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
+    for (const addr of dto.addresses ?? []) assertSafeAddress(addr); // B964: every address row, before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
     await this.assertCustomerCapNotExceeded();
@@ -793,6 +795,7 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
+    assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
@@ -876,6 +879,7 @@ export class CustomersService {
 
   async addAddress(id: string, dto: CreateAddressDto) {
     await this.findCustomerOrThrow(id);
+    assertSafeAddress(dto); // B964: before the geocode call and the transaction
     // Geocode before creating so lat/lng are set from the start
     const coords = await this.geocodeIfPossible(dto);
     return this.prisma.tenantTransaction(async (tx) => {
@@ -905,6 +909,11 @@ export class CustomersService {
 
   async updateAddress(id: string, addrId: string, dto: UpdateAddressDto) {
     await this.findCustomerOrThrow(id);
+    // B964: a formula-led CHANGE is refused before the transaction; the stored row is read once (change-only: a legacy value echoed back passes)
+    const storedAddress = await this.prisma.forTenant().customerAddress.findFirst({
+      where: { id: addrId, customerId: id },
+    });
+    assertSafeAddress(dto, storedAddress);
     const updated = await this.prisma.tenantTransaction(async (tx) => {
       if (dto.isDefault) {
         await tx.customerAddress.updateMany({
