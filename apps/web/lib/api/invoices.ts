@@ -17,6 +17,7 @@ import type {
   StandalonePaymentDto,
   UpdateInvoiceItem,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -422,9 +423,10 @@ export function useUpdateInvoiceShipment() {
   });
 }
 
-export function useSendInvoice() {
+export function useSendInvoice(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.post(`/invoices/${id}/send`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -452,13 +454,14 @@ export function deriveInvoiceVariant(inv: {
   return "draft";
 }
 
-export function useSendInvoiceEmail() {
+export function useSendInvoiceEmail(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     SendInvoiceEmailResult,
     Error,
     { id: string; email?: string; variant?: InvoicePdfVariant }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, email, variant }) =>
       apiClient.post(`/invoices/${id}/send-email`, { email, variant }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -904,9 +907,10 @@ export function useCreateInvoiceFromOrder() {
  * (and how many of each) to bill on this invoice + a due date. Each call increments
  * OrderItem.invoicedQty server-side so the order can't be over-invoiced.
  */
-export function useCreatePartialInvoiceFromOrder() {
+export function useCreatePartialInvoiceFromOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Invoice, Error, CreatePartialInvoiceDto>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ orderId, ...dto }) =>
       apiClient.post(`/invoices/from-order/${orderId}/partial`, dto).then((r) => r.data),
     onSuccess: (_, { orderId }) => {

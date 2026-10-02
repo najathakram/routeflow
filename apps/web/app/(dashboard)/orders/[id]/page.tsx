@@ -129,6 +129,7 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -151,8 +152,8 @@ interface InvoiceModalData {
 
 function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
   const { toast } = useToast();
-  const sendInvoice = useSendInvoice();
-  const sendInvoiceEmail = useSendInvoiceEmail();
+  const sendInvoice = useSendInvoice({ localErrorToast: true });
+  const sendInvoiceEmail = useSendInvoiceEmail({ localErrorToast: true });
   const [pdfLoading, setPdfLoading] = React.useState(false);
   const [printLoading, setPrintLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
@@ -170,7 +171,15 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         setSent(true);
         toast({ title: "Invoice marked as sent", variant: "success" });
       },
-      onError: (e) => toast({ title: e.message, variant: "error" }),
+      onError: (e) =>
+        toast({
+          title: "Couldn't mark the invoice as sent",
+          description: genericToastCopy(
+            e,
+            "The invoice couldn't be marked as sent. Check its status, then try again.",
+          ),
+          variant: "error",
+        }),
     });
   }
 
@@ -190,7 +199,10 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         onError: (e: any) =>
           toast({
             title: "Failed to send email",
-            description: e?.response?.data?.message || e.message,
+            description: genericToastCopy(
+              e,
+              "The email couldn't be sent. Check the customer's email address, then try again.",
+            ),
             variant: "error",
           }),
       },
@@ -1983,7 +1995,7 @@ export default function OrderDetailPage() {
   const deleteOrder = useDeleteOrder();
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
-  const patchFulfillPath = usePatchOrderFulfillPath();
+  const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
   // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
   // tracking-entry dialog open — see openSignal prop below.
   const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
@@ -2353,9 +2365,10 @@ export default function OrderDetailPage() {
           // Previously silent: a server refusal produced no toast at all.
           toast({
             title: "Couldn't cancel this order",
-            description:
-              err?.response?.data?.message ??
-              "Please try again, or refresh and check its invoices.",
+            description: genericToastCopy(
+              err,
+              "This order can't be cancelled right now. Check its invoices and applied credits, then try again.",
+            ),
             variant: "error",
           });
         },
@@ -2694,7 +2707,14 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({
+                              title: "Couldn't delete the order",
+                              description: genericToastCopy(
+                                e,
+                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
+                              ),
+                              variant: "error",
+                            });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2759,7 +2779,14 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({
+                              title: "Couldn't delete the order",
+                              description: genericToastCopy(
+                                e,
+                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
+                              ),
+                              variant: "error",
+                            });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2946,7 +2973,14 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({
+                              title: "Couldn't delete the order",
+                              description: genericToastCopy(
+                                e,
+                                "This order can't be deleted in its current state. Cancel it instead, or check its invoices.",
+                              ),
+                              variant: "error",
+                            });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -3397,7 +3431,10 @@ export default function OrderDetailPage() {
                             onError: (err: any) =>
                               toast({
                                 title: "Could not update fulfillment",
-                                description: err?.response?.data?.message,
+                                description: genericToastCopy(
+                                  err,
+                                  "The fulfillment path couldn't be changed. Check the order's status, then try again.",
+                                ),
                                 variant: "error",
                               }),
                           },

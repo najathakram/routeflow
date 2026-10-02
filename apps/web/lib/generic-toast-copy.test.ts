@@ -214,6 +214,37 @@ describe("genericToastCopy: codes users rely on", () => {
     });
   });
 
+  describe("surfaceRefusal (B986-7)", () => {
+    const FIX = "The order couldn't be created. Check the customer and lines, then try again.";
+    it("replaces the status copy for an UNCODED 400 / 409 / 422 only", () => {
+      for (const status of [400, 409, 422]) expect(genericToastCopy(err(status), FIX)).toBe(FIX);
+      expect(genericToastCopy(err(500), FIX)).toBe(
+        "Something went wrong on our side. Please try again.",
+      );
+      expect(genericToastCopy(err(403), FIX)).toBe("You don't have permission to do that.");
+      expect(genericToastCopy(err(404), FIX)).toBe(
+        "That item no longer exists. Refresh and try again.",
+      );
+    });
+    it("never overrides a coded refusal, a known sentence, a safe-text refusal or the stock sentence", () => {
+      expect(genericToastCopy(err(409, { code: "INSUFFICIENT_STOCK" }), FIX)).toBe(
+        "Some items aren't available in that quantity.",
+      );
+      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PACK_SIZE_UNKNOWN }), FIX)).toMatch(
+        /pack size/,
+      );
+      expect(
+        genericToastCopy(err(409, { message: 'A category named "x" already exists.' }), FIX),
+      ).toMatch(/already exists/);
+      expect(
+        genericToastCopy(err(400, { code: "TEXT_CELL_FORMULA_LEAD", field: "businessName" }), FIX),
+      ).toMatch(/Business name can't start/);
+    });
+    it("never shows the server message, with or without a surface sentence", () => {
+      expect(genericToastCopy(err(409), FIX)).not.toContain(RAW);
+    });
+  });
+
   it("a plan gate is the plan copy; PLAN_GATE_UNAVAILABLE falls through to the status copy", () => {
     expect(genericToastCopy(err(403, { code: "PLAN_GATE", flag: "x" }))).toBe(
       "This isn't included in your current plan.",

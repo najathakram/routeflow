@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import type { OrderTemplateItem } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 export type { OrderTemplateItem } from "@routeflow/types";
 
 export interface OrderTemplate {
@@ -35,7 +36,7 @@ export function useOrderTemplate(id: string) {
   });
 }
 
-export function useCreateOrderTemplate() {
+export function useCreateOrderTemplate(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     OrderTemplate,
@@ -48,6 +49,7 @@ export function useCreateOrderTemplate() {
       items: { productId: string; qty: number; notes?: string }[];
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (dto) => apiClient.post("/order-templates", dto).then((r) => r.data),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["order-templates", data.customerId] });
@@ -56,7 +58,7 @@ export function useCreateOrderTemplate() {
   });
 }
 
-export function useUpdateOrderTemplate() {
+export function useUpdateOrderTemplate(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     OrderTemplate,
@@ -70,6 +72,7 @@ export function useUpdateOrderTemplate() {
       items?: { productId: string; qty: number; notes?: string }[];
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, ...dto }) =>
       apiClient.patch(`/order-templates/${id}`, dto).then((r) => r.data),
     onSuccess: (data) => {

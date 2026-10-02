@@ -73,6 +73,7 @@ import {
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -177,7 +178,7 @@ export function CreateOrderModal({
   onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
-  const createOrder = useCreateOrder();
+  const createOrder = useCreateOrder({ localErrorToast: true });
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -1290,15 +1291,16 @@ export function CreateOrderModal({
 
   // Extract the API's error message from Axios error structure
   const apiError: string | null = (() => {
-    const err = createOrder.error as {
-      response?: { data?: { message?: string } };
-      message?: string;
-    } | null;
+    const err = createOrder.error as unknown;
     if (!err) return null;
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
-    if (parseSellingRestricted(err)) return null;
-    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+    if (parseSellingRestricted(err as never)) return null;
+    // B986: fixed copy by code/status (an out-of-stock create reads the shared stock sentence), never the server message.
+    return genericToastCopy(
+      err,
+      "The order couldn't be created. Check the customer and lines, then try again.",
+    );
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.

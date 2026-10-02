@@ -61,7 +61,9 @@ const PLAN_COPY = "This isn't included in your current plan.";
 const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
-function statusCopy(status: number): string {
+function statusCopy(status: number, refusal?: string): string {
+  // A surface may say what to fix for an UNCODED refusal (400 / 409 / 422); every other status keeps its own sentence.
+  if (refusal && (status === 400 || status === 409 || status === 422)) return refusal;
   if (status === 400 || status === 422)
     return "Some details aren't valid. Check what you entered and try again.";
   if (status === 401) return "Your session expired. Sign in again.";
@@ -127,8 +129,11 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
   return null;
 }
 
-/** The fixed sentence a generic mutation toast shows for `err`. */
-export function genericToastCopy(err: unknown): string {
+/**
+ * The fixed sentence a generic mutation toast shows for `err`. `surfaceRefusal` (optional) is the surface's own actionable
+ * sentence for an UNCODED 400 / 409 / 422; coded refusals, known sentences and every other status are unchanged.
+ */
+export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
   if (!err || typeof err !== "object") return GENERIC_COPY;
@@ -153,5 +158,7 @@ export function genericToastCopy(err: unknown): string {
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];
   const known = sentenceForMessage(data);
   if (known) return known;
-  return typeof response.status === "number" ? statusCopy(response.status) : GENERIC_COPY;
+  return typeof response.status === "number"
+    ? statusCopy(response.status, surfaceRefusal)
+    : GENERIC_COPY;
 }
