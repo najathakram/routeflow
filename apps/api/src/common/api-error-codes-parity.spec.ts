@@ -150,7 +150,6 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
   "apps/web/lib/mutation-error-toast.ts": [
-    "READ_ONLY",
     "CHANGE_REQUEST_ALREADY_RESOLVED",
     "CHANGE_WINDOW_CLOSED",
     "EDIT_WINDOW_OPEN",
@@ -165,7 +164,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 46;
+const CONSUMER_ALLOWLIST_TOTAL = 45;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error

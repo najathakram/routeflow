@@ -2,6 +2,8 @@
 import { BadRequestException } from "@nestjs/common";
 import {
   productNameViolation,
+  assertSafePersonName,
+  personNameViolation,
   assertSafeProductNames,
   addressViolation,
   assertSafeAddress,
@@ -25,6 +27,9 @@ describe("TEXT_CELL_FIELD_LABELS: the readable 400 text names the field by a hum
     ["buyerName", "Name"],
     ["categoryName", "Category name"],
     ["subcategoryName", "Subcategory name"],
+    ["salutation", "Salutation"],
+    ["firstName", "First name"],
+    ["lastName", "Last name"],
     ["productName", "Product name"],
     ["variantName", "Variant name"],
   ])("%s -> %s", (field, label) => {
@@ -179,5 +184,36 @@ describe("assertSafeProductNames (B964-2)", () => {
       "Product name can't start with =, +, -, @ or a tab/line break",
     );
     expect(productNameViolation({ name: "Cola" })).toBeNull();
+  });
+});
+
+describe("person-name guard (B984)", () => {
+  it.each(["salutation", "firstName", "lastName"] as const)(
+    "refuses a formula-led %s with a labelled 400",
+    (field) => {
+      const err: any = (() => {
+        try {
+          assertSafePersonName({ [field]: "=HYPERLINK(1)" });
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "TEXT_CELL_FORMULA_LEAD", field });
+    },
+  );
+
+  it("is change-only, leaves email/phone alone, and has a non-throwing importer form", () => {
+    expect(() => assertSafePersonName({ lastName: "=OLD" }, { lastName: "=OLD" })).not.toThrow();
+    expect(() => assertSafePersonName({ lastName: "=NEW" }, { lastName: "=OLD" })).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      assertSafePersonName({ firstName: "Jo", phone: "+1 555 0100" } as never),
+    ).not.toThrow();
+    expect(personNameViolation({ firstName: "@x" })).toBe(
+      "First name can't start with =, +, -, @ or a tab/line break",
+    );
+    expect(personNameViolation({ firstName: "Jo", lastName: "Lee" })).toBeNull();
   });
 });

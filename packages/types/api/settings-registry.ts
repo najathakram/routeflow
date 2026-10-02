@@ -140,6 +140,17 @@ export const SETTINGS_REGISTRY: SettingRow[] = [
       plannedSurface: "PR-3 credit Off/Watch card",
     }),
   ),
+  // WS4 (SA-606) staff order email "Also send to" list: tenant CONFIG DATA (a JSON array of
+  // addresses, written by `StaffEmailSettingsService` via `PUT /messaging/staff-email-settings`).
+  // The switch that decides whether anything is sent is the policy row below, not this key.
+  {
+    key: "notifications.staffCc",
+    home: "systemConfig",
+    kind: "config",
+    status: "pending WS4",
+    plannedSurface: "WS4 staff order email 'Also send to' list (Settings → Notifications tab)",
+    adminOnly: true,
+  },
   // ── policy (#1337): pending, no code yet ─────────────────────────────────────
   ...(
     [
