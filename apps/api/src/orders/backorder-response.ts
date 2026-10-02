@@ -1,4 +1,4 @@
-import { stockWriteOf, toPieces, type StockWriteResult } from "./order-stock";
+import { stockWriteOf, toPieces, withStockWrite, type StockWriteResult } from "./order-stock";
 import { attributeBackorderToLines } from "./oversell-policy";
 
 /**
@@ -80,24 +80,31 @@ function build<T>(order: T, stockWrite: StockWriteResult | undefined): T | undef
 }
 
 /**
- * Opus r1 on #3017: which order carries the figure after a buyer create's post-commit sweep.
+ * Which order a create's post-commit sweep result stands for, and where its stock write rides.
  * `mergeAllPendingForCustomer` returns, for <= 1 pending order, THAT row read with `lineItems` only
- * (no product, no write), so the figure cannot be attributed onto it:
- *  - nothing returned, or the SAME order (a plain checkout) -> attribute onto `created`;
+ * (no product, no write), so a figure cannot be attributed onto it (Opus r1 on #3017):
+ *  - nothing returned, or the SAME order (a plain checkout) -> the CREATED order, carrying its write;
  *  - a DIFFERENT order and `created` was merge-eligible (`skipAutoMerge === false`) -> it was folded
- *    into that order, attribute onto its lines;
+ *    into that order: that order, carrying the write;
  *  - a different order and `created` was NOT (or is not known to be) eligible -> that order is
- *    someone else's: return it untouched, never a number invented on its lines.
- * Total: it never throws.
+ *    someone else's: returned untouched, carrying NOTHING (a carrier must only ride on an order it
+ *    describes, or a mapper would put a number on another order's lines).
+ * One rule for the buyer create and the template Reorder. Total: it never throws.
  */
-export function buyerCreateResponse<C, M>(created: C, merged: M | null | undefined): C | M {
+export function carryCreatedWrite<C, M>(created: C, merged: M | null | undefined): C | M {
   try {
     const write = stockWriteOf(created);
     const c = created as { id?: string; skipAutoMerge?: boolean } | null;
     const m = merged as { id?: string } | null | undefined;
-    if (!m || m.id === c?.id) return withBackorderPieces(created, write);
-    return c?.skipAutoMerge === false ? withBackorderPieces(merged as M, write) : (merged as M);
+    if (!m || m.id === c?.id) return withStockWrite(created, write);
+    return c?.skipAutoMerge === false ? withStockWrite(merged as M, write) : (merged as M);
   } catch {
     return (merged ?? created) as C | M;
   }
+}
+
+/** The buyer create's response: the order `carryCreatedWrite` picks, with the figure on its lines. */
+export function buyerCreateResponse<C, M>(created: C, merged: M | null | undefined): C | M {
+  const target = carryCreatedWrite(created, merged);
+  return withBackorderPieces(target, stockWriteOf(target));
 }

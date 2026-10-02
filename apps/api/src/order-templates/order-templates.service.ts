@@ -32,7 +32,8 @@ import {
 } from "@routeflow/pricing";
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
-import { decrementStockForSale, stockWriteOf, withStockWrite } from "../orders/order-stock";
+import { decrementStockForSale, withStockWrite } from "../orders/order-stock";
+import { carryCreatedWrite } from "../orders/backorder-response";
 import { RESPONSE_LINE_ITEMS } from "../orders/order-edit-cancelled";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
@@ -862,7 +863,7 @@ export class OrderTemplatesService {
         `post-commit consolidation deferred (merge in progress) tenant=${tenantId} customer=${template.customerId}`,
       );
     }
-    return withStockWrite(merged ?? created, stockWriteOf(created)); // survives a fold
+    return carryCreatedWrite(created, merged); // B975: the write rides only on the order it describes
   }
 
   /**

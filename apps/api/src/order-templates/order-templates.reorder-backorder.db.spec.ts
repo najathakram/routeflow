@@ -30,11 +30,11 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { EncryptionService } from "../common/encryption.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { PolicyService } from "../policy/policy.service";
-import { PolicyOversellReader } from "./policy-oversell-reader";
-import { OrdersService } from "./orders.service";
-import { OrderTemplatesService } from "../order-templates/order-templates.service";
-import { stockWriteOf } from "./order-stock";
-import { withBackorderPieces } from "./backorder-response";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import { OrdersService } from "../orders/orders.service";
+import { OrderTemplatesService } from "./order-templates.service";
+import { stockWriteOf } from "../orders/order-stock";
+import { withBackorderPieces } from "../orders/backorder-response";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
