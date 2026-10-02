@@ -14,6 +14,7 @@ jest.mock("../common/db-locks", () => ({
  */
 import { Test } from "@nestjs/testing";
 import { OrderTemplatesService } from "./order-templates.service";
+import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -62,6 +63,7 @@ describe("OrderTemplatesService.generateDailyOrders — UTC day window (B955)", 
         { provide: NotificationsService, useValue: notifications },
         { provide: SellingRestrictionsService, useValue: restrictions },
         { provide: AuditService, useValue: audit },
+        oversellReaderOffProvider, // L-247: OrderTemplatesService now injects PolicyOversellReader (WS9)
       ],
     }).compile();
     service = mod.get(OrderTemplatesService);

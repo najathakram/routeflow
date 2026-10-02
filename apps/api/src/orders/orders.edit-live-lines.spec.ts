@@ -21,6 +21,7 @@ jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({})),
 }));
 
+import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bull";
 import { ConfigService } from "@nestjs/config";
@@ -91,6 +92,7 @@ describe("updateOrderItems — operator diff branch reads the locked line, not t
     prisma = createMockPrisma();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        oversellReaderOffProvider,
         OrdersService,
         {
           provide: TenantContextService,

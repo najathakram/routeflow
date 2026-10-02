@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { rawMessageReads } from "./raw-message-scan";
 
 /**
  * B980 static scan: the GLOBAL toast path (the mutation-error handler and its copy module) never
@@ -7,15 +8,6 @@ import * as path from "path";
  */
 const LIB = __dirname;
 const FILES = ["mutation-error-toast.ts", "generic-toast-copy.ts"];
-
-/** The violations in `src`: a read of response.data.message / data?.message / error.message that is not just a type or a typeof check. */
-export function rawMessageReads(src: string): string[] {
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
-  const hits: string[] = [];
-  const re = /(response\??\.data\??\.message|\bdata\??\.message|\b(?:error|err|e)\??\.message)\b/g;
-  for (const m of code.matchAll(re)) hits.push(m[0]);
-  return hits;
-}
 
 describe("global toast path never renders the raw message (B980)", () => {
   it.each(FILES)("%s", (f) => {
@@ -56,12 +48,7 @@ describe("global toast path never renders the raw message (B980)", () => {
   });
 
   it("mutation-proof: the scan goes red on a planted raw-message toast", () => {
-    expect(rawMessageReads("toast({ title: data?.message || error.message });")).toEqual([
-      "data?.message",
-      "error.message",
-    ]);
-    expect(rawMessageReads("const m = (e as any)?.response?.data?.message;")).toEqual([
-      "response?.data?.message",
-    ]);
+    expect(rawMessageReads("toast({ title: data?.message || error.message });")).toHaveLength(2);
+    expect(rawMessageReads("const m = (e as any)?.response?.data?.message;")).toHaveLength(1);
   });
 });

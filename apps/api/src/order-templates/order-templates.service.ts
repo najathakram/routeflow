@@ -33,6 +33,8 @@ import {
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
+import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertSellableLines } from "../products/sellable-lines";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
@@ -61,6 +63,9 @@ export class OrderTemplatesService {
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // WS9: the backorder policy reader behind resolveOversellAllowed (once per generated order, before
+    // the transaction). Required (never @Optional): a missing provider is a DI error (L-247).
+    private readonly oversellReader: PolicyOversellReader,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
     @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
@@ -376,17 +381,25 @@ export class OrderTemplatesService {
 
   // ─── Order generation ─────────────────────────────────────────────────────────
 
-  // #1208 review LOW-MED: `isStaffRole` defaults true so the cron path (which never
-  // passes it) and any other internal caller keep the pre-existing warn-and-oversell
-  // posture — only generateOrderForUser overrides it, per the caller's own JWT role.
-  async generateOrder(templateId: string, isStaffRole = true) {
+  // `isStaffRole` (default true: the cron and any other internal caller keep the warn-and-oversell
+  // posture) picks the selling-restriction channel of a manual run. WS9: `allowOversell` is the
+  // ALREADY-RESOLVED oversell boolean (resolveOversellAllowed ran in the caller, before this
+  // transaction); the two are independent (a buyer backorder run is still a BUYER_PORTAL run), and an
+  // absent value falls back to `isStaffRole`, today's value.
+  async generateOrder(templateId: string, isStaffRole = true, allowOversell?: boolean) {
     const template = await this.prisma.forTenant().orderTemplate.findUnique({
       where: { id: templateId },
       include: { items: true },
     });
     if (!template) throw new NotFoundException("Order template not found");
     if (!template.isActive) throw new BadRequestException("Template is not active");
-    const order = await this.createOrderFromTemplate(template, isStaffRole);
+    const order = await this.createOrderFromTemplate(
+      template,
+      isStaffRole,
+      false,
+      undefined,
+      allowOversell,
+    );
     // Null = every line was a license-gated category the customer isn't verified
     // for, so nothing was ordered. Surface it (the cron path tolerates null; a
     // manual reorder should tell the caller why the order is empty).
@@ -417,13 +430,18 @@ export class OrderTemplatesService {
   }
 
   async generateOrderForUser(templateId: string, user: JwtPayload) {
-    await this.findOneForUser(templateId, user);
-    // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller), and a
-    // hardcoded isStaffRole=true let a buyer's own "Reorder" silently oversell where
-    // their own checkout (orders.service.ts create()) returns 409 INSUFFICIENT_STOCK —
-    // same isStaffRole predicate orders.service.ts uses (:1647, :2661).
+    const template = await this.findOneForUser(templateId, user);
+    // #1208 review LOW-MED: POST :id/generate is open to CUSTOMER (controller); a buyer's own
+    // "Reorder" must not oversell where their own checkout would 409. WS9: the policy is resolved
+    // ONCE here, before the run's transaction (source "buyer" for a CUSTOMER, "staff_entry" else).
     const isStaffRole = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
-    return this.generateOrder(templateId, isStaffRole);
+    const allowOversell = await resolveOversellAllowed(this.oversellReader, {
+      tenantId: (user.tenantId ?? this.prisma.getTenantId()) as string,
+      role: user.role,
+      source: user.role === UserRole.CUSTOMER ? "buyer" : "staff_entry",
+      customerId: template.customerId,
+    });
+    return this.generateOrder(templateId, isStaffRole, allowOversell);
   }
 
   @LeaderCron("0 6 * * *", "order-templates.generateDailyOrders")
@@ -534,6 +552,8 @@ export class OrderTemplatesService {
     unattended = false,
     /** Unattended runs: filled with the ban note, so the CALLER can notify after the attempt (finally). */
     ctx?: { ban: { count: number; names: string } | null; placed?: boolean },
+    /** WS9: the caller's resolved boolean for a manual run (default = isStaffRole, today's value). */
+    allowOversellArg?: boolean,
   ) {
     // F-05: a banned product refuses a manual run (409 — the operator decides). The unattended cron run
     // instead SKIPS the banned line(s), still orders the rest, notifies once and marks each banned template
@@ -767,6 +787,17 @@ export class OrderTemplatesService {
     // a second implementation. Un-fixed, the order posted with zero stock references at
     // all, while a later cancel still credited stock back — inflating currentStock on
     // every cancelled standing order.
+    // WS9: ONE resolve per generated order, BEFORE the transaction. The unattended 06:00 run is
+    // source "template_cron" (true for every role, policy NOT read: today's behaviour, owner
+    // question Q6 is open). A manual run arrives with its caller's already-resolved boolean.
+    const allowOversell = unattended
+      ? await resolveOversellAllowed(this.oversellReader, {
+          tenantId: this.prisma.getTenantId() as string,
+          role: undefined,
+          source: "template_cron",
+          customerId: template.customerId,
+        })
+      : (allowOversellArg ?? isStaffRole);
     const created = await this.prisma.tenantTransaction(async (tx) => {
       const order = await tx.order.create({
         data: {
@@ -789,15 +820,13 @@ export class OrderTemplatesService {
       });
       await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
-      // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
-      // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's
-      // own "Reorder" now carries the SAME hard block their checkout would have given
-      // them, via the caller-supplied isStaffRole (generateOrderForUser → generateOrder).
+      // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
+      // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
       await decrementStockForSale(
         { logger: this.logger, tenantId: this.prisma.getTenantId() },
         tx,
         stockLines,
-        isStaffRole,
+        allowOversell,
         // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
         { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
       );

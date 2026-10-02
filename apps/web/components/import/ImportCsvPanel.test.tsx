@@ -137,6 +137,49 @@ describe("ImportCsvPanel", () => {
     expect(screen.getByTestId("products-import-button")).toBeDisabled();
   });
 
+  it.each([400, 413])(
+    "B986: a %i failure toasts ONE fixed sentence that says what to fix, never the server message",
+    async (status) => {
+      post.mockRejectedValueOnce({
+        response: { status, data: { message: "secret parser detail at row 9" } },
+      });
+      render(
+        <ImportCsvPanel
+          endpoint="/import/products"
+          title="Products"
+          columns={columns}
+          testIdPrefix="products"
+        />,
+      );
+      pickFile("products");
+      fireEvent.click(screen.getByTestId("products-preview-button"));
+      await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+      const t = toast.mock.calls[0][0];
+      expect(t.description).toBe(
+        "The file couldn't be read. Check that it is a CSV that follows the template, and split a very large file into smaller ones.",
+      );
+      expect(JSON.stringify(t)).not.toContain("secret parser detail");
+    },
+  );
+
+  it("B986: any other import failure is the shared generic copy", async () => {
+    post.mockRejectedValueOnce({ response: { status: 500, data: { message: "db down" } } });
+    render(
+      <ImportCsvPanel
+        endpoint="/import/products"
+        title="Products"
+        columns={columns}
+        testIdPrefix="products"
+      />,
+    );
+    pickFile("products");
+    fireEvent.click(screen.getByTestId("products-preview-button"));
+    await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
+    expect(toast.mock.calls[0][0].description).toBe(
+      "Something went wrong on our side. Please try again.",
+    );
+  });
+
   it("renders unknown columns and warnings from the plan", async () => {
     post.mockResolvedValueOnce({
       data: {
