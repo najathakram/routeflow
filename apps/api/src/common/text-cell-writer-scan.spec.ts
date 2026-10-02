@@ -41,7 +41,8 @@ const GUARDED: Record<string, readonly string[]> = {
   buyerAccount: ["name"],
   // B964-2: product names (invoices, order sheets, exports, regulated filings). #2881's family create/update writes the same
   // columns: it fails this scan until it calls the guard.
-  product: ["name", "variantName"],
+  // B990: the free-text Product.category too (printed on exports, buyer facets, filings).
+  product: ["name", "variantName", "category"],
   // B983: category / subcategory names (regulated filings, invoices, exports). ProductCategory's rename writes through a variable
   // `data` + updateMany (a scan blind spot): product-categories.name-guards.spec.ts pins that write.
   productCategory: ["name"],
@@ -76,6 +77,9 @@ const GUARD_CALLS = [
   // B964-2
   "assertSafeProductNames",
   "productNameViolation",
+  // B990
+  "assertSafeProductCategory",
+  "productCategoryViolation",
 ];
 
 /** file (relative to src/) -> why an unguarded write of the fields there is safe. */

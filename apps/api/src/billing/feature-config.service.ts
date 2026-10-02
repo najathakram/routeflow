@@ -12,6 +12,7 @@ import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
 import { FeatureConfigStore } from "./feature-config.store";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export const FEATURE_CONFIG_SET_ACTION = "FEATURE_CONFIG_SET";
 export const FEATURE_CONFIG_CLEARED_ACTION = "FEATURE_CONFIG_CLEARED";
@@ -178,7 +179,7 @@ export class FeatureConfigService {
     for (const required of modeDef.requires?.allOf ?? []) {
       if (!(await this.can(tenantId, required))) {
         throw new ConflictException({
-          code: "FEATURE_MODE_REQUIRES",
+          code: API_ERROR_CODES.FEATURE_MODE_REQUIRES,
           key,
           mode,
           missing: required,

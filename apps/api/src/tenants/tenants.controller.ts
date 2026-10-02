@@ -36,6 +36,7 @@ import { UpdateBrandingDto } from "./dto/update-branding.dto";
 import { MB, uploadLimits } from "../common/upload-limits";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import type { TenantFeaturesResponse } from "@routeflow/types";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @ApiTags("tenants")
 @Controller("tenants")
@@ -67,7 +68,7 @@ export class TenantsController {
     // able to tell "genuinely nothing granted" apart from "the server couldn't tell you."
     if (!user.tenantId) {
       throw new ServiceUnavailableException({
-        code: "FEATURES_UNAVAILABLE",
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
         message: "No tenant context.",
       });
     }
@@ -84,7 +85,7 @@ export class TenantsController {
     ]);
     if (!resolved || served === null) {
       throw new ServiceUnavailableException({
-        code: "FEATURES_UNAVAILABLE",
+        code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
         message: "Feature resolution is temporarily unavailable. Please retry.",
       });
     }
