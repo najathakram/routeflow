@@ -1,4 +1,8 @@
+import { NotFoundException } from "@nestjs/common";
 import { stockWriteOf, toPieces, type StockWriteResult } from "./order-stock";
+
+const GONE = Symbol("gone");
+const UNKNOWN = Symbol("unknown");
 import { attributeBackorderToLines } from "./oversell-policy";
 
 /**
@@ -98,23 +102,27 @@ export async function buyerCreateResponse<C, M>(
   merged: M | null | undefined,
   readOrder: (id: string) => Promise<unknown>,
 ): Promise<unknown> {
+  // Only a null or a NotFound means the row is GONE (the sweep deleted it). Any other failure (a dropped
+  // connection, a timeout) leaves the holder UNKNOWN: the survivor must NOT be tried, or a transient error
+  // on `created` could return another order's lines as this request's response.
   const read = async (id: unknown): Promise<unknown> => {
-    if (typeof id !== "string") return null;
+    if (typeof id !== "string") return UNKNOWN;
     try {
-      return (await readOrder(id)) ?? null;
-    } catch {
-      return null; // a 404, a dropped connection: that holder is unknown
+      return (await readOrder(id)) ?? GONE;
+    } catch (e) {
+      return e instanceof NotFoundException ? GONE : UNKNOWN;
     }
   };
   try {
     const write = stockWriteOf(created);
     const createdId = (created as { id?: unknown } | null)?.id;
     const own = await read(createdId);
-    if (own) return withBackorderPieces(own, write);
+    if (own === UNKNOWN) return merged ?? created;
+    if (own !== GONE) return withBackorderPieces(own, write);
     const mergedId = (merged as { id?: unknown } | null | undefined)?.id;
     if (mergedId && mergedId !== createdId) {
       const survivor = await read(mergedId);
-      if (survivor) return withBackorderPieces(survivor, write);
+      if (survivor !== GONE && survivor !== UNKNOWN) return withBackorderPieces(survivor, write);
     }
   } catch {
     /* unknown holder: fall through */
