@@ -206,67 +206,84 @@ describe("the stock-write carrier", () => {
   });
 });
 
-describe("buyerCreateResponse — which order carries the figure after the post-commit sweep", () => {
+describe("buyerCreateResponse — the holder is decided by EXISTENCE and read fresh (SA-631d)", () => {
   const created = (extra: Record<string, unknown> = {}) =>
-    withStockWrite(
-      { ...order([li("c1", "p", 8)]), id: "o-new", skipAutoMerge: false, ...extra },
-      sw([["p", 3]]),
-    );
+    withStockWrite({ id: "o-new", skipAutoMerge: false, lineItems: [], ...extra }, sw([["p", 3]]));
+  /** A reader over a fixed set of rows: an id with no row reads as GONE (null), like findOne's 404. */
+  const reader = (rows: Record<string, unknown>) => jest.fn(async (id: string) => rows[id] ?? null);
 
-  it("a PLAIN checkout: the sweep returns the BARE created row (same id, lines without a product) -> the figure lands on `created`", () => {
-    const bare = {
-      id: "o-new",
-      customerId: "cust-1",
-      lineItems: [{ id: "c1", productId: "p", qty: 8, status: "PENDING" }], // the real findMany shape: no `product`
-    };
-    const res: any = buyerCreateResponse(created(), bare);
+  it("(i) other orders were folded INTO created (same id, more lines): the fresh read has the merged lines and total, with the figure", async () => {
+    const read = reader({
+      "o-new": { ...order([li("x", "p", 4), li("c1", "p", 8)]), id: "o-new", total: 120 },
+    });
+    const res: any = await buyerCreateResponse(created(), { id: "o-new", lineItems: [] }, read);
     expect(res.id).toBe("o-new");
-    expect(figures(res)).toEqual([3]);
+    expect(res.total).toBe(120);
+    expect(res.lineItems.map((l: any) => l.id)).toEqual(["x", "c1"]);
+    expect(figures(res)).toEqual([0, 3]); // sum == the overshoot
+    expect(read).toHaveBeenCalledWith("o-new");
   });
 
-  it("SAME id but other orders were folded INTO created: the sweep's FULL post-sweep read (lines with a product) is returned, with the figure on ITS lines — never the stale pre-fold created", () => {
-    // created held one line of 8; the sweep folded an older order's 4 pieces into it.
-    const swept = { ...order([li("x", "p", 4), li("c1", "p", 8)]), id: "o-new", total: 120 };
-    const res: any = buyerCreateResponse(created(), swept);
-    expect(res).toBe(swept);
-    expect(res.lineItems).toHaveLength(2);
-    expect(figures(res)).toEqual([0, 3]); // stock-first over the merged lines, sum == the overshoot
-  });
-
-  it("no sweep result (null / nothing to fold) -> `created`", () => {
-    expect(figures(buyerCreateResponse(created(), null))).toEqual([3]);
-    expect(figures(buyerCreateResponse(created(), undefined))).toEqual([3]);
-  });
-
-  it("a fold into ANOTHER order (created was merge-eligible) -> the figure lands on the merged order's lines", () => {
-    const merged = { ...order([li("m1", "p", 5), li("m2", "p", 8)]), id: "o-old" };
-    const res: any = buyerCreateResponse(created(), merged);
+  it("(ii) created was folded INTO another order (its row is gone): the survivor is re-read and returned with the figure", async () => {
+    const read = reader({
+      "o-old": { ...order([li("m1", "p", 5), li("m2", "p", 8)]), id: "o-old" },
+    });
+    const res: any = await buyerCreateResponse(created(), { id: "o-old" }, read);
     expect(res.id).toBe("o-old");
     expect(figures(res)).toEqual([0, 3]);
+    expect(read.mock.calls.map((c) => c[0])).toEqual(["o-new", "o-old"]);
   });
 
-  it("created was NOT merge-eligible and the sweep returned another order: that order is returned untouched, NO number invented on it", () => {
-    const other = { ...order([li("m1", "p", 8)]), id: "o-other" };
-    const res: any = buyerCreateResponse(created({ skipAutoMerge: true }), other);
-    expect(res).toBe(other);
-    expect(noKey(res)).toBe(true);
+  it("(iii) created is not merge-eligible while another pair is swept: created still EXISTS, so it is returned (re-read) with the figure", async () => {
+    const read = reader({ "o-new": { ...order([li("c1", "p", 8)]), id: "o-new" } });
+    const res: any = await buyerCreateResponse(
+      created({ skipAutoMerge: true }),
+      { id: "o-other" },
+      read,
+    );
+    expect(res.id).toBe("o-new");
+    expect(figures(res)).toEqual([3]);
+    expect(read).not.toHaveBeenCalledWith("o-other");
   });
 
-  it("an unknown eligibility (no skipAutoMerge on created) is never treated as eligible", () => {
-    const other = { ...order([li("m1", "p", 8)]), id: "o-other" };
-    const c: any = created();
-    delete c.skipAutoMerge;
-    expect(noKey(buyerCreateResponse(c, other) as any)).toBe(true);
+  it("a PLAIN checkout (the sweep returned the bare created row): created is re-read FULL and carries the figure", async () => {
+    const read = reader({ "o-new": { ...order([li("c1", "p", 8)]), id: "o-new" } });
+    const bare = {
+      id: "o-new",
+      lineItems: [{ id: "c1", productId: "p", qty: 8, status: "PENDING" }],
+    };
+    expect(figures(await buyerCreateResponse(created(), bare, read))).toEqual([3]);
+    expect(figures(await buyerCreateResponse(created(), null, read))).toEqual([3]);
   });
 
-  it("is total: a throwing created order still returns something, never throws", () => {
-    const bad: any = {};
-    Object.defineProperty(bad, "id", {
-      get() {
-        throw new Error("boom");
-      },
+  it("(iv) created is gone (a concurrent sweep) and the sweep returned null: the stale created comes back, key omitted, no throw", async () => {
+    const c = created();
+    const res = await buyerCreateResponse(c, null, reader({}));
+    expect(res).toBe(c);
+    expect(JSON.stringify(res)).not.toMatch(/backorder/i);
+  });
+
+  it("neither row exists but the sweep returned an order: that order comes back untouched, key omitted", async () => {
+    const m = { id: "o-old", lineItems: [] };
+    expect(await buyerCreateResponse(created(), m, reader({}))).toBe(m);
+  });
+
+  it("(v) a lowering edit between the sweep and the re-read (lines below the overshoot): the key is omitted on the whole order", async () => {
+    const read = reader({ "o-new": { ...order([li("c1", "p", 2)]), id: "o-new" } });
+    expect(noKey((await buyerCreateResponse(created(), null, read)) as any)).toBe(true);
+  });
+
+  it("is total: a reader that throws (a 404, a dropped connection) is 'gone', never an error", async () => {
+    const boom = jest.fn(async () => {
+      throw new Error("db down");
     });
-    const merged = { id: "o-x", lineItems: [] };
-    expect(() => buyerCreateResponse(bad, merged)).not.toThrow();
+    const c = created();
+    await expect(buyerCreateResponse(c, null, boom)).resolves.toBe(c);
+    await expect(buyerCreateResponse(c, { id: "o-old" }, boom)).resolves.toEqual({ id: "o-old" });
+  });
+
+  it("a created order with no id (malformed) is unknown: returned untouched, no throw", async () => {
+    const bad: any = withStockWrite({}, sw([["p", 3]]));
+    await expect(buyerCreateResponse(bad, null, reader({}))).resolves.toBe(bad);
   });
 });

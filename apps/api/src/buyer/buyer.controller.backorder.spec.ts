@@ -58,7 +58,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
-import { ConflictException } from "@nestjs/common";
+import { ConflictException, NotFoundException } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { withStockWrite } from "../orders/order-stock";
@@ -196,15 +196,21 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
     });
   });
 
-  describe("create branch (no active order, or forceNew)", () => {
+  describe("create branch (no active order, or forceNew): the holder is re-read by existence (SA-631d)", () => {
+    const notFound = () => Promise.reject(new NotFoundException("Order not found"));
+    /** findOne over fixed rows; an id with no row rejects like the real 404. */
+    const rowsOf = (rows: Record<string, unknown>) =>
+      orders.findOne.mockImplementation(async (id: string) => rows[id] ?? notFound());
+    const created = (extra: Record<string, unknown> = {}) =>
+      withStockWrite({ ...orderOf("o-new", [["c1", "p", 8]]), ...extra }, write([["p", 3]]));
+
     it.each([
       ["no active order", {}],
       ["forceNew", { forceNew: true }],
     ])("%s: the created order carries the figure", async (_n, extra) => {
       if ((extra as any).forceNew) orders.findActiveOrder.mockResolvedValue(activeOrder); // must be ignored
-      orders.create.mockResolvedValue(
-        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
-      );
+      orders.create.mockResolvedValue(created());
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
       const res = await controller.createOrder(
         { ...cart, ...(extra as object) } as any,
         { ...CTX } as any,
@@ -212,75 +218,71 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
       expect(figures(res)).toEqual([3]);
     });
 
-    it("a PLAIN checkout (no other pending order): the sweep returns the BARE created row and the figure still lands (the real merge shape, not a null mock)", async () => {
-      orders.create.mockResolvedValue(
-        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
-      );
-      // what mergeAllPendingForCustomer returns for <= 1 pending order: that row read with lineItems
-      // only (no `product`, no carrier)
+    it("a PLAIN checkout: the sweep returns the BARE created row, the response is the created order re-read in full, with the figure", async () => {
+      orders.create.mockResolvedValue(created());
       orders.mergeAllPendingForCustomer.mockResolvedValue({
         id: "o-new",
         customerId: CTX.customerId,
         lineItems: [{ id: "c1", productId: "p", qty: 8, status: "PENDING" }],
       });
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
       const res: any = await controller.createOrder(cart as any, CTX as any);
       expect(res.id).toBe("o-new");
       expect(figures(res)).toEqual([3]);
     });
 
-    it("other orders folded INTO the created one (same id, the swept order has MORE lines): the response is the swept post-sweep order, not the stale created", async () => {
-      orders.create.mockResolvedValue(
-        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
-      );
-      orders.mergeAllPendingForCustomer.mockResolvedValue(
-        orderOf("o-new", [
+    it("(i) other orders folded INTO the created one: the response is the post-sweep order with the merged lines", async () => {
+      orders.create.mockResolvedValue(created());
+      orders.mergeAllPendingForCustomer.mockResolvedValue({ id: "o-new", lineItems: [] });
+      rowsOf({
+        "o-new": orderOf("o-new", [
           ["x1", "p", 4],
           ["c1", "p", 8],
         ]),
-      );
+      });
       const res: any = await controller.createOrder(cart as any, CTX as any);
-      expect(res.id).toBe("o-new");
       expect(res.lineItems).toHaveLength(2);
       expect(figures(res)).toEqual([0, 3]);
     });
 
-    it("created was not merge-eligible and the sweep returned another order: that order is returned with no figure", async () => {
-      orders.create.mockResolvedValue(
-        withStockWrite(
-          { ...orderOf("o-new", [["c1", "p", 8]]), skipAutoMerge: true },
-          write([["p", 3]]),
-        ),
-      );
-      orders.mergeAllPendingForCustomer.mockResolvedValue(orderOf("o-other", [["m1", "p", 8]]));
-      const res: any = await controller.createOrder(cart as any, CTX as any);
-      expect(res.id).toBe("o-other");
-      expect(noKey(res)).toBe(true);
-    });
-
-    it("a fold into another order attributes onto the MERGED order's lines (same rule)", async () => {
-      orders.create.mockResolvedValue(
-        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
-      );
-      orders.mergeAllPendingForCustomer.mockResolvedValue(
-        orderOf("o-old", [
+    it("(ii) the created order was folded INTO another (its row is gone): the survivor is returned with the figure", async () => {
+      orders.create.mockResolvedValue(created());
+      orders.mergeAllPendingForCustomer.mockResolvedValue({ id: "o-old", lineItems: [] });
+      rowsOf({
+        "o-old": orderOf("o-old", [
           ["m1", "p", 5],
           ["m2", "p", 8],
         ]),
-      );
-      expect(figures(await controller.createOrder(cart as any, CTX as any))).toEqual([0, 3]);
+      });
+      const res: any = await controller.createOrder(cart as any, CTX as any);
+      expect(res.id).toBe("o-old");
+      expect(figures(res)).toEqual([0, 3]);
     });
 
-    it("a deferred / contended fold falls back to the created order", async () => {
-      orders.create.mockResolvedValue(
-        withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
-      );
+    it("(iii) created not merge-eligible while another pair was swept: the response is the CREATED order, with the figure", async () => {
+      orders.create.mockResolvedValue(created({ skipAutoMerge: true }));
+      orders.mergeAllPendingForCustomer.mockResolvedValue({ id: "o-other", lineItems: [] });
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
+      const res: any = await controller.createOrder(cart as any, CTX as any);
+      expect(res.id).toBe("o-new");
+      expect(figures(res)).toEqual([3]);
+    });
+
+    it("a deferred / contended fold falls back to the created order, re-read, with the figure", async () => {
+      orders.create.mockResolvedValue(created());
       orders.mergeAllPendingForCustomer.mockRejectedValue(
-        new ConflictException({
-          code: MERGE_IN_PROGRESS,
-          message: MERGE_IN_PROGRESS_MESSAGE,
-        }),
+        new ConflictException({ code: MERGE_IN_PROGRESS, message: MERGE_IN_PROGRESS_MESSAGE }),
       );
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
       expect(figures(await controller.createOrder(cart as any, CTX as any))).toEqual([3]);
+    });
+
+    it("(iv) neither row can be read: the sweep's order (or created) comes back untouched, key omitted, no throw", async () => {
+      orders.create.mockResolvedValue(created());
+      const sweep = { id: "o-old", lineItems: [] };
+      orders.mergeAllPendingForCustomer.mockResolvedValue(sweep);
+      rowsOf({});
+      await expect(controller.createOrder(cart as any, CTX as any)).resolves.toBe(sweep);
     });
   });
 
