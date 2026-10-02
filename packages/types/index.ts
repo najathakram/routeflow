@@ -58,16 +58,9 @@ export enum TxnStatus {
   PAID = "PAID",
 }
 
-export enum PaymentMethod {
-  CASH = "CASH",
-  CHECK = "CHECK",
-  ACH = "ACH",
-  OTHER = "OTHER",
-  CREDIT_NOTE = "CREDIT_NOTE",
-  ADVANCE = "ADVANCE",
-  CREDIT_CARD = "CREDIT_CARD",
-  ZELLE = "ZELLE",
-}
+// #2722: the legacy `enum PaymentMethod` that lived here SHADOWED api/enums.ts' PaymentMethod
+// (a local declaration beats `export *`), so importers got a TS enum that string literals don't
+// satisfy. The one PaymentMethod is now PAYMENT_METHOD_VALUES' union (api/enums.ts, parity-pinned).
 
 export enum FulfillPath {
   ROUTE = "ROUTE",
@@ -133,9 +126,14 @@ export { formatCountList, parsePackSizeDetailed, suggestPackSize } from "./pack-
 
 export * from "./trip-grouping";
 
+// ─── Sentinel emails (B910 — one impl for web/mobile; the api keeps a spec-pinned local copy) ──
+
+export * from "./internal-email";
+
 // ─── Post-delivery invoice prompt (#2089) ─────────────────────────────────────
 
 export * from "./post-delivery-invoice-prompt";
+export * from "./order-applied-credits";
 
 // ─── Shared API DTOs + Prisma-enum parity (wave E / imp-10b) ──────────────────
 //
@@ -148,13 +146,16 @@ export * from "./post-delivery-invoice-prompt";
 export * from "./api/enums";
 export * from "./api/billing";
 export * from "./api/orders";
+export * from "./api/purchase-orders";
 export * from "./api/customers";
 export * from "./api/products";
 export * from "./api/finance";
+export * from "./api/credit-notes";
 export * from "./api/returns";
 export * from "./api/inline-returns";
 export * from "./api/regulated";
 export * from "./api/routes";
+export * from "./api/decimal";
 export * from "./api/buyer";
 export * from "./api/misc";
 export * from "./api/invoices";
@@ -165,11 +166,17 @@ export * from "./api/restrictions";
 export * from "./api/restrictions-settings";
 export * from "./api/product-labels";
 export * from "./api/restrictions-admin";
+export * from "./api/messaging-matrix";
 export * from "./api/us-states";
 export * from "./api/config-snapshots";
+export * from "./api/import";
 export * from "./api/analytics-insights";
 export * from "./api/order-tracking";
+export * from "./api/onboarding";
+export * from "./api/order-tracking-view";
 export * from "./api/error-codes";
+export * from "./api/preferences";
+export * from "./api/settings-registry";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 

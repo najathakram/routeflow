@@ -9,6 +9,7 @@ import { formatMoney } from "@/lib/format";
 import type { OrderItem } from "@/lib/api/orders";
 import { orderLineName } from "@/lib/product-display";
 import { displayLineStatus } from "./line-status";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 
 /**
  * The order-detail line list (read-only table). Extracted VERBATIM from `orders/[id]/page.tsx`
@@ -30,11 +31,11 @@ export function OrderLineItemsTable({
       <table className="w-full text-sm">
         <thead className="border-b border-surface-border bg-surface-raised">
           <tr>
-            <th className="overline px-6 py-2.5 text-left">Product</th>
-            <th className="overline px-4 py-2.5 text-right">Qty</th>
-            <th className="overline px-4 py-2.5 text-right">Unit Price</th>
-            <th className="overline px-4 py-2.5 text-right">Line Total</th>
-            <th className="overline px-6 py-2.5 text-left">Status</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Product</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Qty</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Unit Price</th>
+            <th className="eyebrow-label px-4 py-2.5 text-right">Line Total</th>
+            <th className="eyebrow-label px-6 py-2.5 text-left">Status</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-surface-border">
@@ -62,6 +63,7 @@ export function OrderLineItemsTable({
                         {li.notes}
                       </p>
                     )}
+                    <ComponentSubLines components={li.components} />
                   </div>
                   {!li.productId && (
                     <span className="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 ring-1 ring-brand-200">

@@ -914,6 +914,26 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
       expect(await serverHolds(client.socket.id!)).toBe(true);
     });
 
+    // #2596 (SA-515d nit): the other mismatch direction — the token asserts canActAsDriver TRUE while
+    // the row says false — at connect and at resync.
+    it("#2596: a token asserting canActAsDriver TRUE for a row with it false is refused at connect", async () => {
+      expect(
+        await keptAfterConnect(staffToken("u-op", "OPERATOR", "t-1", { canActAsDriver: true })),
+      ).toEqual({ kept: false, reason: "io server disconnect" });
+    });
+
+    it("#2596: when the row's canActAsDriver is turned OFF under a token asserting TRUE, the socket ends at the next resync", async () => {
+      const client = await connect(
+        staffToken("u-op-drv", "OPERATOR", "t-1", { canActAsDriver: true }),
+      );
+      const id = client.socket.id!;
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(id)).toBe(true);
+      user("u-op-drv").canActAsDriver = false;
+      await gateway.resyncBuyerRooms();
+      expect(await serverHolds(id)).toBe(false);
+    });
+
     it("#1534: the user read failing refuses a staff connection (fails closed)", async () => {
       prisma.user.findMany.mockRejectedValueOnce(new Error("db down"));
       expect((await keptAfterConnect(staffToken("u-op", "OPERATOR", "t-1"))).kept).toBe(false);
@@ -1085,6 +1105,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         payments: [],
       };
       const tx = {
+        $executeRaw: jest.fn(async () => 0), // SA-608g: deleteInvoice takes the invoice row lock
         invoice: { findUnique: jest.fn(async () => inv), delete: jest.fn(async () => inv) },
         creditNote: {
           findMany: jest.fn(async () => []),
@@ -1112,6 +1133,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         { removeInvoiceCommission: jest.fn(async () => undefined) } as never,
         none, // numbering
         none, // selling restrictions
+        none, // entitlement authority (#2241)
       );
       jest
         .spyOn(

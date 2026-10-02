@@ -54,6 +54,7 @@ import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { StorageService } from "../storage/storage.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { EstimatesService } from "../estimates/estimates.service";
 import { NumberingService } from "../import/numbering.service";
@@ -154,6 +155,13 @@ describeDb("B214 invoice delete vs sourced credit notes — real Postgres", () =
         { provide: CreditNotesService, useValue: mockCreditNotes },
         { provide: MessagingService, useValue: mockMessaging },
         { provide: StorageService, useValue: mockStorage },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
+        },
         { provide: EntitlementsService, useValue: mockEntitlements },
         { provide: CommissionEngineService, useValue: mockCommissionEngine },
       ],
@@ -277,6 +285,64 @@ describeDb("B214 invoice delete vs sourced credit notes — real Postgres", () =
     const noteAfter = await prisma.creditNote.findUnique({ where: { id: cn.id } });
     expect(noteAfter?.invoiceId).toBe(inv.id);
   });
+
+  // SA-608g — the race: a reissue's mint (a NEW unspent note with invoiceId = X, holding KEY SHARE on
+  // X until it commits) is in flight while deleteInvoice(X) runs. Without the invoice lock the delete
+  // reads the sourced notes BEFORE the mint commits, sees none, deletes, and the FK's SET NULL leaves
+  // an UNSPENT, UNMARKED orphan. With it, the delete WAITS on X, then re-reads and refuses (B214).
+  it("SA-608g: deleteInvoice WAITS on a concurrent mint, then refuses it: never an unmarked orphan", async () => {
+    const t = await seedTenant("r608g");
+    const customer = await seedCustomer(t.id, "r608g");
+    const inv = await seedInvoice(t.id, customer.id, "r608g");
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let minted!: () => void;
+    const mintedP = new Promise<void>((r) => (minted = r));
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await tx.creditNote.create({
+          data: {
+            tenantId: t.id,
+            customerId: customer.id,
+            invoiceId: inv.id,
+            creditNoteNumber: `CN-608G-${RUN_SUFFIX}`,
+            amount: 50,
+            amountUsed: 0,
+            status: "ISSUED",
+          },
+        });
+        minted();
+        await gate; // the mint stays uncommitted: it holds KEY SHARE on the invoice row
+      },
+      { timeout: 30_000 },
+    );
+    await mintedP;
+
+    let settled = false;
+    const del = tenantCtx
+      .run(t.id, () => invoicesService.deleteInvoice(inv.id))
+      .then(
+        (v) => ({ ok: v }),
+        (e) => ({ err: e }),
+      )
+      .finally(() => (settled = true));
+    await new Promise((r) => setTimeout(r, 1_500)); // under 5 s: the lock wait, not a statement timeout
+    expect(settled).toBe(false); // it is blocked on the invoice lock
+
+    release();
+    await holder;
+    const res: any = await del;
+    expect(res.err).toMatchObject({ response: { code: "INVOICE_HAS_UNSPENT_CREDIT" } });
+
+    // exactly one winner: the invoice is still there and the note is still linked and unmarked
+    expect(await prisma.invoice.findUnique({ where: { id: inv.id } })).not.toBeNull();
+    const note = await prisma.creditNote.findFirst({ where: { invoiceId: inv.id } });
+    expect(note).not.toBeNull();
+    expect(
+      await prisma.auditLog.count({ where: { tenantId: t.id, action: "SOURCE_DELETED" } }),
+    ).toBe(0);
+  }, 60_000);
 
   // P5 — pin: a fully spent sourced note does not block the delete, and is unlinked as today.
   it("deleteInvoice with a fully spent sourced note (P5) resolves and unlinks the note", async () => {

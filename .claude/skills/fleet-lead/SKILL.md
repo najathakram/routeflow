@@ -28,7 +28,11 @@ itself.** When you catch one, write the guard, not the apology.
 ## 2. Standing rules the lead is bound by
 
 - **A fact restated in a second place is the copy that goes wrong; resolve against the primary
-  source** (#1207, B689, #1233, SA-E13; promoted from the log 2026-09-22 after four entries).
+  source** (#1207, B689, #1233, SA-E13; promoted from the log 2026-09-22 after four entries;
+  re-anchored 2026-09-28: #2245, SA-542 — a spec "Facts" line needs a path:line read at a pinned sha).
+- **merge-tree exit 0 proves no textual conflict, never a green merged tree; run the touched specs
+  on the merge result** (#2301, #2646, #2624; promoted 2026-09-28). A re-pin after master changed a
+  shared mock contract states "specs executed on merged tree: yes/no" — "no" blocks the PASS.
 - **Verify before instructing.** Ids, shas, counts, times and states come from command output
   you ran now (`gh`, `git ls-remote`, `date -u`), never from memory, a relay, or an earlier read.
   A claim about a specific sha is tested at that sha, in a pinned detached worktree if needed
@@ -52,12 +56,16 @@ itself.** When you catch one, write the guard, not the apology.
 - **Test tenants only**, never a live client name anywhere; `railway run` only with the owner's
   per-call yes after posting the exact command, purpose and safety; the four production flags
   are never flipped by an agent (owner policy 2026-09-13; client-data policy in CLAUDE.md).
+- **A money fixture must be shaped by the writer** (#2274, #2245, #2305). Pins drive the real
+  writer with the real callers' payload shapes (amount-only credits, tier-priced catalogs), never a
+  hand-built argument; a review brief names each caller shape it must cover.
+- **Never brief from an issue title or a PR title; read the body, the last comments and the code at a pinned sha first** (#2474, #2647, #2075, #2665, #2693).
 
 ## 3. Gates (the merge contract)
 
 | Tier | Applies to                                                 | Gate                                                                                                                   |
 | ---- | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#938) at the exact merging sha** + real green CI                         |
+| 1    | pricing, regulated ledger, invoice/order money, migrations | **two independent PASSes posted on the board (#2554; #938 until 2026-09-27) at the exact merging sha** + real green CI |
 | 2    | UI, docs, tests, tooling                                   | real green CI + one posted PASS at the sha (+ Playwright 1440/768/390 for any UI, from one host, OS/Chromium recorded) |
 
 - The coordinator resolves every sha against origin before merging (`merge-base --is-ancestor`);
@@ -118,6 +126,10 @@ frontmatter blocked every push fleet-wide).
 - A builder gets a **spec file**, not a message thread: scope, rules, API facts with path:line
   from a context pack pinned to a sha, red-first cases, the gate, and what is out of scope.
   Sonnet gathers the pack; Fable writes the spec; SA rules the product questions.
+- **Never brief from an issue title or a PR title.** Before assigning or specifying: `git grep
+'#<n>'` on origin/master and search the board for the issue and its rulings; quote the
+  selection predicate / read values / invariant at path:line. Three briefs in one night paraphrased
+  scope and were wrong (#2489 purge scope, SA-523a CAS values, SA-393 #2236 already fixed).
 - Mark the traps the prose loses: a bare qty means BOXES to this API; `returnKey` per attempt
   and `replayed: true` is success; the client never posts back a figure it displayed; one
   predicate in one file (SA-070); the live product pack never reinterprets a stored line (R-029).
@@ -151,7 +163,7 @@ frontmatter blocked every push fleet-wide).
 Keep three documents current as you go, never at the end: the **owner brief** (plain words,
 decisions the owner must make in order, what changed since they last read it), the **lead
 handoff card** (`.claude/handoffs/<date>-lead-*.md`: bridge addresses, gates, in-flight state,
-rulings, lessons), and the **board** (#938) where verdicts and shas live. Update the tracker
+rulings, lessons), and the **board** (#2554, successor of #938 — roll at ~2,300 comments, L-240) where verdicts and shas live. Update the tracker
 artifact only from master's registers. Write the memory entry for the lead rules at day's end.
 
 ## 10. Checklist per window
@@ -190,7 +202,7 @@ The skill improves only through its log. `scripts/lead-closeout.mjs` beside this
 **Decision relay:** "Owner, question box HH:MMZ: '<verbatim>'. Supersedes <earlier>. Build list:
 (1)… (2)…; NOT tonight: …; reviewers: …; declaration after …"
 
-**Gate message to the coordinator:** "#N at <full sha>: PASS 1 <who> + PASS 2 <who> on #938 at
+**Gate message to the coordinator:** "#N at <full sha>: PASS 1 <who> + PASS 2 <who> on #2554 at
 that sha; tier 1; squash; base check before, ref check after; BUILDING → SUCCESS; then …"
 
 **Checkpoint timer:** `until [ "$(date -u +%H%M)" -ge HHMM ]; do sleep 30; done; …` in the

@@ -188,6 +188,19 @@ export default defineConfig({
       },
     },
 
+    // ── CSV export then and there ──────────────────────────────────────────────
+    // Products export popover, per-card analytics CSVs, product insights export;
+    // every endpoint mocked. Self-skips on builds predating each control.
+    {
+      name: "csv-export",
+      testMatch: /63-csv-export\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
     // ── Search survives Back ───────────────────────────────────────────────────
     // Back-navigation restoration of a list search — the one behavior no other spec
     // covers (nothing else in the suite calls goBack). Read-only: it types in search
@@ -402,6 +415,25 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
 
+    // ── units_v1 deploy gate: order → edit → invoice lane (#2233, spec 53) ────
+    // SA-390: a Case line survives create (server truth in base pieces, SA-388),
+    // order-detail display ("3 Cases"), a price-only edit through the web UI
+    // (qty/boxes unchanged), and invoice-from-order (the invoice shows the unit
+    // too). Self-provisions via the API against the standing units_v1 fixture
+    // (`e2e-seed.js`'s `ensureUnitsFixture`, #2195) and the shared
+    // "E2E Fixture Deli Three" customer; a missing fixture is a hard failure,
+    // never a skip. Mutating but self-contained: leaves one PENDING order + one
+    // invoice on e2e-routeflow (same no-cleanup tolerance 21/22/24's own
+    // throwaway fixtures take — neither resource has an API delete).
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent where exactly that happened and a spec sat dead.
+    {
+      name: "units-order-lane",
+      testMatch: /53-units-order-lane\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
     // ── B465 fix round 2: SPECIAL-tier reason required (spec 48) ─────────────
     // Same posture as order-edit-pricing above — a client-side requirement
     // with no web unit runner behind it, so this runs only against a live app
@@ -432,6 +464,14 @@ export default defineConfig({
     {
       name: "cancelled-edit-banner",
       testMatch: /27-cancelled-edit-banner\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
+    },
+
+    // ── #2791: /invoices/[id]/edit redirects a pending-mirror draft to its order (spec 64).
+    {
+      name: "invoice-edit-pending-mirror",
+      testMatch: /64-invoice-edit-pending-mirror\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], storageState: path.join(AUTH_DIR, "operator.json") },
     },
@@ -858,6 +898,21 @@ export default defineConfig({
     {
       name: "date-input-grid-overflow",
       testMatch: /57-date-input-grid-overflow\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
+
+    // PageHeader action-slot wrap (B749/B770 shared root cause) — proves no
+    // page-level header action overflows the viewport at 390px across every
+    // affected list page. Operator auth, same shape as "orders" et al.
+    // WITHOUT THIS ENTRY THE SPEC NEVER RUNS — see 08-create-order-escape's
+    // header for the precedent.
+    {
+      name: "pageheader-action-wrap",
+      testMatch: /57-pageheader-action-wrap\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],

@@ -15,8 +15,11 @@ import { PageHeader, Badge, Button, StatCard } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
 import { useAuth } from "@/lib/auth-context";
 import { useDriveMode } from "@/lib/drive-mode";
-import { useRouteRuns, type RouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { useRouteRuns, useMyRuns, type RouteRun, type RouteRunStop } from "@/lib/api/routes";
+import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useTenantAddons } from "@/lib/api/tobacco";
 import { fmtCalendarDateWithWeekday } from "@/lib/calendar-date";
+import { StopSheet } from "./StopSheet";
 
 type RunStatus = "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "SCHEDULED";
 
@@ -149,8 +152,15 @@ function StopStatusIcon({ status }: { status: RouteRunStop["status"] }) {
  *  same stop data the run detail page consumes — no new fetch, no new handler:
  *  just a bigger presentation for the field. Line-item totals aren't part of
  *  the typed `RouteRunStop.orders` shape here (see api/routes.ts), so this
- *  shows order count rather than re-deriving money math outside pricing.ts. */
-function FieldStopRow({ stop }: { stop: RouteRunStop }) {
+ *  shows order count rather than re-deriving money math outside pricing.ts.
+ *  PHASE 1a: tapping the row opens the stop sheet (Navigate/Call/Start/Skip). */
+function FieldStopRow({
+  stop,
+  onOpen,
+}: {
+  stop: RouteRunStop;
+  onOpen?: (stop: RouteRunStop) => void;
+}) {
   const orderCount = stop.orders?.length ?? 0;
   const addressLine = stop.customerAddress
     ? `${stop.customerAddress.line1}, ${stop.customerAddress.city}`
@@ -158,6 +168,19 @@ function FieldStopRow({ stop }: { stop: RouteRunStop }) {
   const isNext = stop.status === "PENDING";
   return (
     <li
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={onOpen ? () => onOpen(stop) : undefined}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(stop);
+              }
+            }
+          : undefined
+      }
       className={
         isNext
           ? "flex items-center gap-3 rounded-lg bg-brand-50/60 px-3 py-4"
@@ -197,7 +220,16 @@ function FieldStopRow({ stop }: { stop: RouteRunStop }) {
  *  of the (unchanged) `useRouteRuns` payload for this run. Money totals aren't
  *  re-derived here (pricing.ts owns that) — "Delivered" reflects completed stops
  *  and their order count instead of a re-summed dollar figure. */
-function TodayRunHero({ run }: { run: RouteRun }) {
+function TodayRunHero({
+  run,
+  onOpenStop,
+  canAddOrder,
+}: {
+  run: RouteRun;
+  onOpenStop?: (stop: RouteRunStop) => void;
+  /** B966: false for a pure DRIVER, who cannot reach /orders (RouteGuard bounces them). */
+  canAddOrder: boolean;
+}) {
   const stops = run.stops ?? [];
   const total = run._count?.stops ?? stops.length;
   const doneCount = stops.filter((s) => s.status === "COMPLETED").length;
@@ -236,13 +268,15 @@ function TodayRunHero({ run }: { run: RouteRun }) {
 
       {/* Primary action row — big touch targets, scanner shortcut front and center */}
       <div className="flex flex-wrap gap-3 px-5 pb-5">
-        <Link
-          href="/orders?action=new"
-          className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-strong px-5 text-base font-semibold text-white transition-colors hover:bg-accent-deep sm:flex-none sm:min-w-[220px]"
-        >
-          <ScanLine className="h-5 w-5" />
-          Scan to add order
-        </Link>
+        {canAddOrder && (
+          <Link
+            href="/orders?action=new"
+            className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-accent-strong px-5 text-base font-semibold text-white transition-colors hover:bg-accent-deep sm:flex-none sm:min-w-[220px]"
+          >
+            <ScanLine className="h-5 w-5" />
+            Scan to add order
+          </Link>
+        )}
         <Link
           href={`/routes/${run.id}`}
           className="inline-flex h-14 flex-1 items-center justify-center gap-2 rounded-lg border border-surface-border bg-white px-5 text-base font-semibold text-navy transition-colors hover:bg-surface-raised sm:flex-none sm:min-w-[180px]"
@@ -256,7 +290,7 @@ function TodayRunHero({ run }: { run: RouteRun }) {
         <div className="border-t border-surface-border px-2 pb-2">
           <ul className="divide-y divide-surface-border">
             {stops.map((stop) => (
-              <FieldStopRow key={stop.id} stop={stop} />
+              <FieldStopRow key={stop.id} stop={stop} onOpen={onOpenStop} />
             ))}
           </ul>
         </div>
@@ -269,17 +303,42 @@ export default function MyRunsPage() {
   const { setTitle } = usePageTitle();
   const { user } = useAuth();
   const { driveMode, setDriveMode } = useDriveMode();
+  const [openStop, setOpenStop] = React.useState<{ stop: RouteRunStop; runId: string } | null>(
+    null,
+  );
 
   React.useEffect(() => {
     setTitle("My Routes");
   }, [setTitle]);
 
+  // PHASE 1a: a pure DRIVER-role account gets this view directly (its own
+  // GET /route-runs/my-runs, server-scoped to the authenticated driver) —
+  // the pre-existing canActAsDriver path (a dual-role operator toggled into
+  // driver mode, GET /route-runs?assignedToMe=true) is untouched.
+  const baseIsDriver = user?.role === "DRIVER";
   const canActAsDriver = (user as any)?.canActAsDriver === true;
+  const canAccessMyRuns = canActAsDriver || baseIsDriver;
 
-  const { data, isLoading, isError } = useRouteRuns(
+  const operatorQuery = useRouteRuns(
     { assignedToMe: true, limit: 100 },
-    { refetchInterval: 60_000 },
+    { refetchInterval: 60_000, enabled: canActAsDriver },
   );
+  // #2145: GET /route-runs/my-runs 403s without the routes or delivery add-on, and
+  // RouteGuard bounces that driver to /dashboard only once the add-ons read resolves.
+  // Hold the loading state until the driver's access is known, and never fire the read
+  // without it, so the 403 error can't flash first. Fails open on an add-ons error,
+  // the same way RouteGuard does.
+  const { isError: addonsFailed } = useTenantAddons();
+  const { enabled: routesAccess } = useRoutesAccess();
+  const { enabled: deliveryAccess } = useDeliveryAccess();
+  const driverRunsOpen = baseIsDriver && (routesAccess || deliveryAccess || addonsFailed);
+  const driverQuery = useMyRuns({ refetchInterval: 60_000, enabled: driverRunsOpen });
+  const activeQuery = baseIsDriver ? driverQuery : operatorQuery;
+  const { data, isError } = activeQuery;
+  const isLoading = activeQuery.isLoading || (baseIsDriver && !driverRunsOpen);
+
+  // A pure driver has no "operator view" to toggle back to — always field layout.
+  const fieldLayout = baseIsDriver || driveMode;
 
   const { todayRuns, upcomingRuns } = React.useMemo(() => {
     const all = data?.data ?? [];
@@ -309,7 +368,7 @@ export default function MyRunsPage() {
     todayRuns[0];
   const restOfToday = todayRuns.filter((r) => r.id !== heroRun?.id);
 
-  if (!canActAsDriver) {
+  if (!canAccessMyRuns) {
     return (
       <div className="space-y-6 p-6">
         <PageHeader title="My Routes" subtitle="Runs assigned to you." />
@@ -324,17 +383,20 @@ export default function MyRunsPage() {
   }
 
   // ── Drive mode: field layout — today's run first, big targets, scanner shortcut ──
-  if (driveMode) {
+  if (fieldLayout) {
     return (
       <div className="space-y-5 p-4 sm:p-6">
         <PageHeader
           title="My Routes"
           subtitle="Today's run first — everything else is one tap away."
           action={
-            <Button variant="secondary" size="md" onClick={() => setDriveMode(false)}>
-              <Truck className="h-4 w-4" />
-              Exit drive mode
-            </Button>
+            // A pure driver has no operator view to exit back to.
+            !baseIsDriver ? (
+              <Button variant="secondary" size="md" onClick={() => setDriveMode(false)}>
+                <Truck className="h-4 w-4" />
+                Exit drive mode
+              </Button>
+            ) : undefined
           }
         />
 
@@ -345,7 +407,11 @@ export default function MyRunsPage() {
             <span className="text-sm text-danger">Failed to load data. Please try refreshing.</span>
           </div>
         ) : heroRun ? (
-          <TodayRunHero run={heroRun} />
+          <TodayRunHero
+            run={heroRun}
+            onOpenStop={(stop) => setOpenStop({ stop, runId: heroRun.id })}
+            canAddOrder={!baseIsDriver}
+          />
         ) : (
           <section className="rounded-lg border border-surface-border bg-white p-6 shadow-card">
             <p className="text-sm text-navy/70">No runs scheduled for you today.</p>
@@ -373,6 +439,12 @@ export default function MyRunsPage() {
             driveMode
           />
         </CardShell>
+
+        <StopSheet
+          stop={openStop?.stop ?? null}
+          runId={openStop?.runId ?? null}
+          onClose={() => setOpenStop(null)}
+        />
       </div>
     );
   }

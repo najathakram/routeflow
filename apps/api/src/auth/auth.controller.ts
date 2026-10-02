@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
@@ -23,6 +24,11 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
+import { AppleOAuthService } from "./apple-oauth.service";
+import { AppleNonceDto } from "./dto/apple-nonce.dto";
+import { AppleSignInDto } from "./dto/apple-sign-in.dto";
+import { AppleLinkDto } from "./dto/apple-link.dto";
+import { AppleNotificationDto } from "./dto/apple-notification.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -32,6 +38,9 @@ import { ResetPasswordDto } from "./dto/reset-password.dto";
 import { ExchangeCodeDto } from "./dto/exchange-code.dto";
 import { resolveLoginThrottle } from "./login-throttle.config";
 import { extractDeviceInfo } from "./device-info.util";
+import { StaffHandoffService } from "./handoff/staff-handoff.service";
+import { HandoffExchangeDto, HandoffMintDto } from "./handoff/handoff.dto";
+import type { JwtPayload } from "./jwt-payload.interface";
 
 // SEC-4 / F11-002: name + scope of the httpOnly refresh cookie. Path is scoped
 // to the auth routes so it is never sent to unrelated API endpoints. Kept in
@@ -58,6 +67,8 @@ export class AuthController {
     private readonly configService: ConfigService,
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
+    private readonly staffHandoff: StaffHandoffService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {
     this.webUrl = AuthController.normalizeOrigin(
       configService.get<string>("WEB_URL") || "http://localhost:3001",
@@ -129,6 +140,41 @@ export class AuthController {
     // SEC-4 / F11-002: ALSO set the refresh token as an httpOnly cookie. Purely
     // additive — the body still carries the token, so mobile and the current web
     // client are unaffected; web can later stop persisting it in localStorage.
+    this.setRefreshCookie(res, result.refreshToken);
+    return result;
+  }
+
+  // ─── #2653 in-app sign-in handoff (SA-542a/b), staff realm ──────────────────────
+
+  @Post("handoff")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Mint a one-time code for the in-app web shell (OPERATOR/TENANT_ADMIN)",
+  })
+  mintHandoff(@CurrentUser() user: JwtPayload, @Body() dto: HandoffMintDto) {
+    return this.staffHandoff.mint(user, dto.deviceId);
+  }
+
+  @Post("handoff/exchange")
+  @HttpCode(HttpStatus.OK)
+  // Same throttle as login: an exchange signs someone in.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Trade a one-time handoff code for a fresh session" })
+  async exchangeHandoff(
+    @Body() dto: HandoffExchangeDto,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.staffHandoff.exchange(dto.code, extractDeviceInfo(req));
+    // The same httpOnly refresh cookie login() sets (SEC-4).
     this.setRefreshCookie(res, result.refreshToken);
     return result;
   }
@@ -523,6 +569,80 @@ export class AuthController {
     }
   }
 
+  // ─── Sign in with Apple (#2309, SA-418 — native iOS only) ─────────────────
+  //
+  // ENV VARS required in Railway:
+  //   APPLE_BUNDLE_ID     — the app's bundle identifier (exact `aud` match)
+  //   APPLE_TEAM_ID       — Apple Developer Team ID
+  //   APPLE_KEY_ID        — Sign in with Apple private key's Key ID
+  //   APPLE_PRIVATE_KEY   — the .p8 private key contents, verbatim
+  //
+  // No redirect flow — the native client (expo-apple-authentication) does the
+  // consent UI itself and posts identityToken/authorizationCode directly.
+
+  @Post("apple/nonce")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: "Mint a server-side nonce for a Sign in with Apple request" })
+  async appleNonce(@Body() dto: AppleNonceDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.mintNonce(dto.tenantSlug, dto.context);
+  }
+
+  @Post("apple")
+  @HttpCode(HttpStatus.OK)
+  // SA-418 §1: the SAME throttle as /auth/login.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Sign in with Apple (native iOS only)" })
+  async appleSignIn(@Body() dto: AppleSignInDto, @Req() req: Request) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.signIn(dto, extractDeviceInfo(req));
+  }
+
+  @Post("apple/link")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Link an Apple account to the current user" })
+  async appleLink(@CurrentUser() user: { sub: string }, @Body() dto: AppleLinkDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    await this.appleOAuth.linkAppleAccount(user.sub, dto.identityToken, dto.nonce);
+    return { message: "Apple account linked" };
+  }
+
+  @Post("apple/notifications")
+  // Unauthenticated and does a JWKS lookup + a Redis write per call: its own tight limit.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Apple server-to-server notifications (consent-revoked, account-delete)",
+  })
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    // Unconfigured ⇒ refuse: with no bundle id there is no audience to verify against.
+    if (!this.appleOAuth.isNotificationConfigured()) {
+      throw new ServiceUnavailableException("Sign in with Apple is not configured");
+    }
+    await this.appleOAuth.handleNotification((dto.payload ?? dto.signedPayload) as string);
+    return { received: true };
+  }
+
   // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────
   // Kept for backward compatibility. New integrations should use the header-based flow above.
 
@@ -618,6 +738,8 @@ export class AuthController {
       "google_email_is_staff",
       "google_already_linked",
       "google_id_taken",
+      // #2495: an email match already bound to a DIFFERENT Google sub.
+      "google_account_mismatch",
     ]);
     return allowed.has(raw) ? raw : "unknown_error";
   }

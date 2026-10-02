@@ -365,6 +365,20 @@ describe("OrdersService", () => {
       );
     });
 
+    it("B917: the no-customer-record 403 carries the machine-readable CUSTOMER_NOT_LINKED code", async () => {
+      prisma.customer.findFirst.mockResolvedValue(null);
+
+      // untyped call: the typed form adds a spec type error to the check-types ratchet baseline
+      const findAll = (service as unknown as { findAll(q: unknown, u: unknown): Promise<unknown> })
+        .findAll;
+      await expect(
+        findAll.call(service, { page: 1, limit: 20 }, customerPayload),
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: "CUSTOMER_NOT_LINKED", message: "Customer record not found" },
+      });
+    });
+
     it("should filter by status", async () => {
       prisma.order.findMany.mockResolvedValue([]);
       prisma.order.count.mockResolvedValue(0);
@@ -4022,7 +4036,7 @@ describe("OrdersService", () => {
       ],
     };
 
-    it("flags a lowered unit price as a MANUAL override and records audit fields", async () => {
+    it("flags a lowered unit price as a DISCOUNTED override (below list) and records audit fields", async () => {
       prisma.order.findUnique.mockResolvedValue(draftOrder);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
 
@@ -4043,7 +4057,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             unitPrice: 4,
             subtotal: 12,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             originalPrice: 4.99,
             overrideReason: "promo",
             overriddenBy: "user-op",
@@ -4335,7 +4349,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             unitPrice: 3,
             subtotal: 9,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             originalPrice: 4.99,
             overrideReason: "loyalty",
             overriddenBy: "user-op",
@@ -4741,7 +4755,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 20,
@@ -4840,7 +4854,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-tob",
             unitPrice: 8,
@@ -5160,7 +5174,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-loose",
             // 2 * (unitsPerBox ?? 0) would have been qty 0 / subtotal 0 — a free line.
@@ -5380,7 +5394,7 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(b) operator supplies an explicit different price on a new line — that price, MANUAL (not tier-resolved)", async () => {
+    it("(b) operator supplies an explicit different price on a new line — that price, DISCOUNTED below list (not tier-resolved)", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
@@ -5407,7 +5421,7 @@ describe("OrdersService", () => {
             productId: "prod-1",
             unitPrice: 6,
             originalPrice: 10,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "loyalty",
             overriddenBy: "user-op",
             subtotal: 12,
@@ -5571,7 +5585,7 @@ describe("OrdersService", () => {
             productId: "prod-1",
             unitPrice: 6,
             originalPrice: 10,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "manager approved",
             overriddenBy: "user-op",
             subtotal: 12,
@@ -5794,7 +5808,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             productId: "prod-1",
             unitPrice: 6,
-            priceType: "MANUAL",
+            priceType: "DISCOUNTED",
             overrideReason: "manager approved",
             subtotal: 12,
           }),
@@ -5904,16 +5918,14 @@ describe("OrdersService", () => {
       );
     });
 
-    it("(r4-1) B465 fix round 4 (Opus BLOCK item 1, HIGH, revert-probe): the staff create-merge's own auto-merge (isCreateMerge) lets a NEW line for a SPECIAL customer through with no reason, storing the sent price", async () => {
-      // Separate create (POST /orders with no existing PENDING order to merge
-      // into) has no reason requirement in this PR (the B465 follow-up covers
-      // it). The auto-merge branch of that SAME create endpoint folds a fresh
-      // scan into an EXISTING order via replaceAll:true — a line brand-new to
-      // that order (no existing counterpart at all) must be treated identically
-      // to separate create, not like an operator's own edit of an existing
-      // order. orders.controller.ts's create-merge call site is the ONLY
-      // caller that ever sets opts.isCreateMerge; a plain replaceAll:true from
-      // the edit screen never does, per test (item3)/(item3b) above.
+    it("(r4-1) #2696(c) SA-558d (i): the staff create-merge's own auto-merge (isCreateMerge) treats a NEW line exactly as separate create — rule A: an off-tier price on a SPECIAL line needs a reason (400), with one it is DISCOUNTED", async () => {
+      // B465 round 4 let this line through with no reason because separate create
+      // (POST /orders with no existing PENDING order to merge into) had no reason
+      // requirement then. #2696(c) gives create rule A (decideStaffOverride), and this
+      // arm follows it: a fresh order and a folded one price the same payload the same.
+      // orders.controller.ts's create-merge call site is the ONLY caller that ever sets
+      // opts.isCreateMerge; a plain replaceAll:true from the edit screen never does, per
+      // test (item3)/(item3b) above.
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "DRAFT" as const,
@@ -5924,11 +5936,22 @@ describe("OrdersService", () => {
       prisma.product.findMany.mockResolvedValue([TIERED_PRODUCT]);
       prisma.orderItem.findMany.mockResolvedValue([{ subtotal: 12, status: "PENDING" }]);
 
+      await expect(
+        service.updateOrderItems(
+          "ord-1",
+          { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+          operatorPayload as never,
+          { isCreateMerge: true },
+        ),
+      ).rejects.toThrow(/Tiered Widget/);
+      expect(prisma.orderItem.create).not.toHaveBeenCalled();
+
       await service.updateOrderItems(
         "ord-1",
-        // A discounted price with NO reason -- would 400 on a plain edit-screen
-        // replaceAll (see (item3)), but this is the create path's own merge.
-        { items: [{ productId: "prod-1", qty: 2, unitPrice: 6 }], replaceAll: true },
+        {
+          items: [{ productId: "prod-1", qty: 2, unitPrice: 6, overrideReason: " bent box " }],
+          replaceAll: true,
+        },
         operatorPayload,
         { isCreateMerge: true },
       );
@@ -5940,6 +5963,10 @@ describe("OrdersService", () => {
             qty: 2,
             unitPrice: 6,
             subtotal: 12,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+            overrideReason: "bent box",
+            overriddenBy: "user-op",
           }),
         }),
       );
@@ -6663,7 +6690,7 @@ describe("OrdersService", () => {
 
       expect(prisma.orderItem.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: "li-A" },
+          where: { id: "li-A", orderId: "ord-1" },
           data: expect.objectContaining({
             productId: "prod-sub",
             unitPrice: 8,
@@ -6824,12 +6851,19 @@ describe("OrdersService", () => {
       expect(created.pieces).toBeNull();
     });
 
-    it("customer ADD of a NEW boxed line (not yet on the order) splits + prorates by the box", async () => {
-      // Buyer create/merge path (buyer.controller.createOrder) folds a shelf/cart
-      // Add into an active order and re-runs updateOrderItems as CUSTOMER. A boxed
-      // product NOT already on the order has no line in `pieceDenominated`, yet its
-      // incoming qty is PIECES (24 = 2 boxes of 12). It must split to boxes=2 and
-      // price 2 × $30 = $60 — NOT store 24 boxes at $30 = $720 (unitsPerBox× over).
+    it("SA-601/#2780: buyer plain qty 3 on a NEW boxed product (x12) = 3 PACKS ($90), not 3 pieces", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 3 });
+      expect(line).toMatchObject({ qty: 3, boxes: null, pieces: null, unitsPerBox: null });
+      expect(line.subtotal).toBeCloseTo(90, 2); // 3 packs x $30, never 3 pieces = $7.50
+    });
+
+    it("SA-601/#2780: buyer EXPLICIT boxes on a NEW boxed product still wins (qty 24 + boxes 2 = $60)", async () => {
+      const line = await buyerAddsNewBoxed({ productId: "prod-box-new", qty: 24, boxes: 2 });
+      expect(line).toMatchObject({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 });
+      expect(line.subtotal).toBeCloseTo(60, 2); // 2 boxes x $30, never 24 packs = $720
+    });
+
+    async function buyerAddsNewBoxed(item: Record<string, unknown>) {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "PENDING",
@@ -6840,20 +6874,9 @@ describe("OrdersService", () => {
         { id: "prod-box-new", pricePerUnit: 30, unitsPerBox: 12 },
       ]);
       prisma.orderItem.findMany.mockResolvedValue([]);
-
-      await service.updateOrderItems(
-        "ord-1",
-        { items: [{ productId: "prod-box-new", qty: 24 }] },
-        customerPayload,
-      );
-
-      const created = prisma.orderItem.create.mock.calls[0][0].data;
-      expect(created.qty).toBe(24);
-      expect(created.boxes).toBe(2);
-      expect(created.pieces).toBe(0);
-      expect(created.subtotal).toBeCloseTo(60, 2); // 2 boxes × $30
-      expect(created.subtotal).not.toBeCloseTo(720, 2);
-    });
+      await service.updateOrderItems("ord-1", { items: [item] }, customerPayload as never);
+      return prisma.orderItem.create.mock.calls[0][0].data;
+    }
 
     it("operator UPDATE prorates a boxed line when the client sends boxes/pieces", async () => {
       prisma.order.findUnique.mockResolvedValue({

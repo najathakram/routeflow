@@ -78,7 +78,19 @@ export function createMockPrisma(): MockPrisma {
   // update returned (the SALE movement's stockAfter), so the product mock returns one by default.
   const productProxy = () => {
     const proxy = modelProxy();
-    proxy.update.mockResolvedValue({ currentStock: 0, averageCost: null });
+    // #2717 M1: a real Product row always carries barcode/unitsPerBox/imageKeys; the dual-write
+    // sync reads them from the UPDATE's result.
+    proxy.update.mockResolvedValue({
+      currentStock: 0,
+      averageCost: null,
+      barcode: null,
+      unitsPerBox: null,
+      imageKeys: [],
+    });
+    // #2717 M1: products.service.ts create() syncs ProductBarcode rows keyed off the CREATED row's
+    // id — a spec that doesn't stub product.create needs a non-empty id, or the sync call 500s on
+    // "productId required" instead of the no-op it should be (no barcode -> nothing to sync).
+    proxy.create.mockResolvedValue({ id: "mock-product-id", barcode: null, unitsPerBox: null });
     return proxy;
   };
 
@@ -90,8 +102,19 @@ export function createMockPrisma(): MockPrisma {
     driverLocation: modelProxy(),
     product: productProxy(),
     productUnit: modelProxy(),
+    // #2717 M1: additive barcode-by-level / photo rows (product-catalog-sync.ts). Default
+    // findMany() -> [] (modelProxy) matches "no rows yet" — a spec that seeds rows stubs
+    // .findMany.mockResolvedValue([...]) same as any other model.
+    productBarcode: modelProxy(),
+    productImage: modelProxy(),
+    // #2717 M2: recipe versions and their component lines. Default findMany() -> [] / findFirst()
+    // -> null ("no recipe"); a spec that seeds one stubs the method like any other model.
+    recipe: modelProxy(),
+    recipeComponent: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
+    // #2717 M3: frozen FIXED-line component rows (default findMany() -> [] = a plain line).
+    orderItemComponent: modelProxy(),
     orderRevision: modelProxy(),
     changeRequest: modelProxy(),
     deliveryMutation: modelProxy(),
@@ -106,6 +129,7 @@ export function createMockPrisma(): MockPrisma {
     payment: modelProxy(),
     invoice: modelProxy(),
     invoiceItem: modelProxy(),
+    invoiceItemComponent: modelProxy(),
     invoicePayment: modelProxy(),
     paymentCounter: modelProxy(),
     creditNote: modelProxy(),
@@ -209,8 +233,13 @@ export function createMockPrisma(): MockPrisma {
     driver: modelProxy(),
     product: productProxy(),
     productUnit: modelProxy(),
+    productBarcode: modelProxy(),
+    productImage: modelProxy(),
+    recipe: modelProxy(),
+    recipeComponent: modelProxy(),
     order: modelProxy(),
     orderItem: modelProxy(),
+    orderItemComponent: modelProxy(),
     orderRevision: modelProxy(),
     changeRequest: modelProxy(),
     deliveryMutation: modelProxy(),
@@ -221,6 +250,7 @@ export function createMockPrisma(): MockPrisma {
     payment: modelProxy(),
     invoice: modelProxy(),
     invoiceItem: modelProxy(),
+    invoiceItemComponent: modelProxy(),
     invoicePayment: modelProxy(),
     paymentCounter: modelProxy(),
     creditNote: modelProxy(),

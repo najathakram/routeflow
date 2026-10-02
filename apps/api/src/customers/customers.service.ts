@@ -15,6 +15,8 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
+import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
   assertNoDeliveryHistory,
@@ -23,6 +25,7 @@ import {
   assertRecordFreeInTx,
   countDeliveryHistory,
   countMoneyRecords,
+  deleteCustomerRowsFkRaceAs409,
   deleteDeliveryHistoryCas,
   deleteMoneyRecordCas,
   deleteNonBlockingInvoicesCas,
@@ -56,6 +59,7 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { customerUpdateData } from "./customer-update-data";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -65,14 +69,16 @@ import { JwtPayload } from "../auth/jwt-payload.interface";
 import { UserRole } from "@prisma/client";
 import { MeterService, MeterReading } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
 import { addressStateFields } from "./address-state";
+import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { buildCustomersCsv } from "./customers-csv";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -86,7 +92,7 @@ export class CustomersService {
     private readonly storage: StorageService,
     private readonly meter: MeterService,
     private readonly catalog: PlanCatalogService,
-    private readonly entitlements: EntitlementsService,
+    private readonly authority: EntitlementAuthority,
     private readonly commissionEngine: CommissionEngineService,
     // Every path that DESTROYS an invoice must reverse its regulated-sales
     // ledger rows first — the ledger is append-only with no FK to Invoice, so
@@ -103,7 +109,8 @@ export class CustomersService {
   private async assertMsrpAllowed(): Promise<void> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) return; // no tenant context (e.g. SUPER_ADMIN) — nothing to gate
-    if (await this.entitlements.hasFlag(tenantId, "flag.msrp")) return;
+    // #2198: the ONE evaluation point the flag.msrp route guard uses (overrides + live-mode resolver).
+    if (await this.authority.can(tenantId, "flag.msrp")) return;
     const upgrade = await this.catalog.upgradeTargetForFlag("flag.msrp").catch(() => ({
       planKey: null,
       planMonthlyPrice: null,
@@ -776,7 +783,7 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto) {
+  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -785,44 +792,13 @@ export class CustomersService {
     }
     return this.prisma.forTenant().customer.update({
       where: { id },
-      data: {
-        ...(dto.businessName && { businessName: dto.businessName }),
-        ...(dto.contactName && { contactName: dto.contactName }),
-        ...(dto.phone !== undefined && { phone: dto.phone }),
-        ...(dto.notes !== undefined && { notes: dto.notes }),
-        ...(dto.fulfillPath && { fulfillPath: dto.fulfillPath }),
-        ...(dto.deliveryWindowStart !== undefined && {
-          deliveryWindowStart: dto.deliveryWindowStart || null,
-        }),
-        ...(dto.deliveryWindowEnd !== undefined && {
-          deliveryWindowEnd: dto.deliveryWindowEnd || null,
-        }),
-        ...(dto.email !== undefined && { email: dto.email }),
-        ...(dto.mobile !== undefined && { mobile: dto.mobile }),
-        ...(dto.customerType !== undefined && { customerType: dto.customerType }),
-        ...(dto.displayName !== undefined && { displayName: dto.displayName }),
-        ...(dto.salutation !== undefined && { salutation: dto.salutation }),
-        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
-        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
-        ...(dto.taxId !== undefined && { taxId: dto.taxId }),
-        ...(dto.isTaxExempt !== undefined && { isTaxExempt: dto.isTaxExempt }),
-        ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
-        ...(dto.currency !== undefined && { currency: dto.currency }),
-        ...(dto.pricingTier !== undefined && { pricingTier: dto.pricingTier }),
-        // "" clears to null ("use the tenant default"); a real label is stored verbatim.
-        ...(dto.defaultPaymentTerms !== undefined && {
-          defaultPaymentTerms: dto.defaultPaymentTerms || null,
-        }),
-        // null clears the deposit default; a number sets/replaces it.
-        ...(dto.defaultDepositPercent !== undefined && {
-          defaultDepositPercent: dto.defaultDepositPercent,
-        }),
-        ...(dto.orderStatusEmails !== undefined && {
-          orderStatusEmails: dto.orderStatusEmails,
-        }),
-      },
+      data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
   }
+
+  /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */
+  readonly setCustomerConsent = (...args: compliance.ConsentArgs) =>
+    compliance.writeConsentWithEvidence(this.prisma, ...args);
 
   async changeStatus(id: string, dto: ChangeCustomerStatusDto) {
     const customer = await this.findCustomerOrThrow(id);
@@ -1856,33 +1832,20 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const header =
-      "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
-    const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
-      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
-
-      return [
-        escCsv(c.businessName),
-        escCsv(c.contactName),
-        escCsv(c.email),
-        escCsv(c.phone),
-        escCsv(c.customerType),
-        escCsv(c.user?.status),
-        roundMoney(receivables).toFixed(2),
-        credits.toFixed(2),
-      ].join(",");
-    });
-
-    return [header, ...rows].join("\n");
+    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
+    // receivableBalance itself); the CSV builder only formats.
+    return buildCustomersCsv(
+      customers.map((c) => ({
+        businessName: c.businessName,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+        customerType: c.customerType,
+        status: c.user?.status,
+        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+      })),
+    );
   }
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
@@ -2474,7 +2437,7 @@ export class CustomersService {
       await tx.expense.updateMany({ where: { customerId: id }, data: { customerId: null } });
 
       // Finally delete customer + user
-      await tx.customer.delete({ where: { id } });
+      await deleteCustomerRowsFkRaceAs409(tx.customer.delete({ where: { id } })); // #2572
       await tx.user.delete({ where: { id: customer.userId } });
     });
 
@@ -2655,7 +2618,9 @@ export class CustomersService {
           data: { customerId: null },
         });
 
-        await tx.customer.deleteMany({ where: { id: { in: customerIds } } });
+        await deleteCustomerRowsFkRaceAs409(
+          tx.customer.deleteMany({ where: { id: { in: customerIds } } }),
+        ); // #2572
         await tx.user.deleteMany({ where: { id: { in: userIds } } });
       },
       { timeout: 60_000 },
@@ -2665,8 +2630,23 @@ export class CustomersService {
   }
 
   // ─── Cleanup Imported Customers ───────────────────────────────────────────────
+  // #2629: DISABLED until a real import marker exists — see cleanup-imported-disabled.ts.
 
   async previewImportedCleanup(): Promise<{
+    toDelete: number;
+    toKeep: number;
+    buyers: { id: string; businessName: string }[];
+  }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCleanupPreview();
+  }
+
+  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+    assertCleanupImportedEnabled();
+    return this.runImportedCustomersCleanup();
+  }
+
+  async runImportedCleanupPreview(): Promise<{
     toDelete: number;
     toKeep: number;
     buyers: { id: string; businessName: string }[];
@@ -2687,7 +2667,8 @@ export class CustomersService {
     };
   }
 
-  async deleteImportedCustomers(): Promise<{ deleted: number; preserved: number }> {
+  /** #2629: the kept body, verbatim (its safety pins still run); no controller reaches it. */
+  async runImportedCustomersCleanup(): Promise<{ deleted: number; preserved: number }> {
     // #2569: a destructive bulk delete has no all-tenant mode (forTenant() is UNSCOPED without a
     // tenant); refuse a null tenant exactly as deleteAllCustomers does.
     if (!this.prisma.getTenantId())
@@ -2714,7 +2695,7 @@ export class CustomersService {
 
     await this.prisma.tenantTransaction(
       async (tx) => {
-        // Invoices (DRAFT/VOID only by now: any blocking one is a 409 and a rollback here)
+        // Invoices (DRAFT only by now: any blocking one is a 409 and a rollback here)
         const invoices = await readInvoicesAssertingNoneBlocking(tx, ids);
         await assertNoMoneyRecordsInTx(tx, ids); // #2587/SA-516
         await assertNoDeliveryHistory(tx, ids); // #2591/SA-516b: the in-tx twin
@@ -2841,7 +2822,7 @@ export class CustomersService {
         await tx.customerLink.deleteMany({ where: { customerId: { in: ids } } });
 
         // Finally delete customer + user rows
-        await tx.customer.deleteMany({ where: { id: { in: ids } } });
+        await deleteCustomerRowsFkRaceAs409(tx.customer.deleteMany({ where: { id: { in: ids } } })); // #2572
         await tx.user.deleteMany({ where: { id: { in: uids } } });
       },
       { timeout: 120_000 },
@@ -2872,11 +2853,13 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",

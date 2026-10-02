@@ -37,6 +37,7 @@ const { Pool } = require("../../../node_modules/pg");
 const bcrypt = require("../../../node_modules/bcrypt");
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { isLocalDbTarget, localConnectionConfig } = require("./lib/local-db-target.cjs");
+const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
 
 const LOCAL_DEFAULT_DB_URL = "postgresql://user:pass@localhost:5432/routeflow_dev";
 
@@ -98,6 +99,19 @@ const TENANT_ADMIN_PASSWORD = "TenantAdmin1!";
 // storageState: operator.json project also loads.
 const SESSIONS_OP_USERNAME = "e2e_sessions_op";
 const SESSIONS_OP_PASSWORD = "Sessions1!";
+// PHASE 1a (web driver mode) precondition, item 7 — a throwaway DRIVER-role
+// fixture so the driver-mode Playwright proof can sign in as a real driver.
+// The localhost-seed exception: agents never create accounts, but seeding a
+// fixture user on the approved e2e-routeflow tenant is the standing carve-out
+// (assertTestTenant guards it below, same as every other user this script
+// creates). Linked to its own Driver row (userId) — routes.service.ts's
+// findMyRuns resolves the authenticated driver by that link, not by role alone.
+const DRIVER_USERNAME = "e2e_driver";
+// Never hardcoded (this repo goes public for CI and the seed can target the prod e2e tenant):
+// read from E2E_DRIVER_PASSWORD. Unset -> the driver fixture is skipped, the rest still seeds.
+const DRIVER_PASSWORD = process.env.E2E_DRIVER_PASSWORD || "";
+const DRIVER_SKIP_NOTE =
+  "  ! E2E_DRIVER_PASSWORD is not set - skipping the e2e_driver fixture (set it to seed the driver)";
 // Approved-buyer fixture (buyer-facing compliance proofs need a BUYER that can reach the order
 // call, and a fresh self-registered buyer has no seller link). Linked to a DEDICATED customer:
 // CustomerLink.customerId is @unique, so one customer holds one buyer - never harbor_cafe or the
@@ -268,6 +282,22 @@ async function ensureFixtureUser(tenantId, c) {
     user = await prisma.user.update({ where: { id: user.id }, data: { deletedAt: null } });
   }
   return user;
+}
+
+// B917: the e2e customer LOGIN (harbor_cafe) must be linked to a Customer row, or GET /orders answers it
+// 403 CUSTOMER_NOT_LINKED and the customer dashboard cannot load. userId is @unique -> a safe upsert;
+// `update` un-deletes a soft-deleted row so a re-seed repairs it. Never overwrites the business name.
+async function ensureCustomerRecordFor(tenantId, userId) {
+  return prisma.customer.upsert({
+    where: { userId },
+    create: {
+      userId,
+      businessName: "E2E Harbor Cafe",
+      contactName: "E2E Customer",
+      tenantId,
+    },
+    update: { deletedAt: null },
+  });
 }
 
 async function ensureCommerceFixtures(tenantId) {
@@ -603,6 +633,13 @@ async function main() {
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
     }
+    // B917: link the customer login to a Customer record (idempotent).
+    {
+      const loginUser = await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: CUSTOMER_USERNAME },
+      });
+      if (loginUser) await ensureCustomerRecordFor(existing.id, loginUser.id);
+    }
 
     // ── TENANT_ADMIN (B138 e2e precondition) ────────────────────────────────────
     // platform-admin impersonate() requires an ACTIVE TENANT_ADMIN; without one the
@@ -651,6 +688,40 @@ async function main() {
       console.log(`  ✓ Created missing sessions-op operator: ${SESSIONS_OP_USERNAME}`);
     } else {
       console.log(`  ✓ Sessions-op operator "${SESSIONS_OP_USERNAME}" exists`);
+    }
+
+    // ── DRIVER fixture (PHASE 1a Playwright proof precondition) ────────────────
+    if (!DRIVER_PASSWORD) {
+      console.log(DRIVER_SKIP_NOTE);
+    } else {
+      const { user: dr, created } = await ensureDriverUser({
+        prisma,
+        hash: (pw) => bcrypt.hash(pw, 10),
+        tenantId: existing.id,
+        username: DRIVER_USERNAME,
+        email: "e2e_driver@e2e-routeflow.test",
+        password: DRIVER_PASSWORD,
+      });
+      console.log(
+        created
+          ? `  ✓ Created missing driver: ${DRIVER_USERNAME}`
+          : `  ✓ Driver "${DRIVER_USERNAME}" exists (password re-synced from E2E_DRIVER_PASSWORD)`,
+      );
+      const drRecord = await prisma.driver.findFirst({ where: { userId: dr.id } });
+      if (!drRecord) {
+        await prisma.driver.create({
+          data: {
+            tenantId: existing.id,
+            userId: dr.id,
+            contactName: "E2E Driver",
+            phone: "(512) 555-0199",
+            status: "ACTIVE",
+          },
+        });
+        console.log("  ✓ Created missing Driver record for e2e_driver");
+      } else {
+        console.log("  ✓ Driver record for e2e_driver exists");
+      }
     }
 
     // ── Feature addons (developer_mode + recurring_routes + order_delivery) ─────
@@ -741,7 +812,7 @@ async function main() {
   console.log(`  ✓ Operator created: ${OPERATOR_USERNAME} / ${OPERATOR_PASSWORD}`);
 
   // ── Customer user ────────────────────────────────────────────────────────────
-  await prisma.user.create({
+  const customerLogin = await prisma.user.create({
     data: {
       email: "harbor_cafe@e2e-routeflow.test",
       username: CUSTOMER_USERNAME,
@@ -752,6 +823,8 @@ async function main() {
       tenantId: tenant.id,
     },
   });
+  // B917: link the customer login to a Customer record (idempotent).
+  await ensureCustomerRecordFor(tenant.id, customerLogin.id);
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
 
   // ── Tenant admin user (B138 e2e precondition) ────────────────────────────────
@@ -783,6 +856,33 @@ async function main() {
   console.log(
     `  ✓ Sessions-op operator created: ${SESSIONS_OP_USERNAME} / ${SESSIONS_OP_PASSWORD}`,
   );
+
+  // ── DRIVER fixture (PHASE 1a Playwright proof precondition) ─────────────────
+  if (!DRIVER_PASSWORD) {
+    console.log(DRIVER_SKIP_NOTE);
+  } else {
+    const driverUser = await prisma.user.create({
+      data: {
+        email: "e2e_driver@e2e-routeflow.test",
+        username: DRIVER_USERNAME,
+        password: await bcrypt.hash(DRIVER_PASSWORD, 10),
+        role: "DRIVER",
+        status: "ACTIVE",
+        forcePasswordChange: false,
+        tenantId: tenant.id,
+      },
+    });
+    await prisma.driver.create({
+      data: {
+        tenantId: tenant.id,
+        userId: driverUser.id,
+        contactName: "E2E Driver",
+        phone: "(512) 555-0199",
+        status: "ACTIVE",
+      },
+    });
+    console.log(`  ✓ Driver created: ${DRIVER_USERNAME}`);
+  }
 
   // ── Feature addons (developer_mode + recurring_routes + order_delivery) ───────
   await ensureAddon(tenant.id, DEVELOPER_MODE_ADDON);

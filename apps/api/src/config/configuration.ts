@@ -111,6 +111,12 @@ export interface AppConfig {
   googleMaps: {
     apiKey: string;
   };
+  apple: {
+    bundleId: string;
+    teamId: string;
+    keyId: string;
+    privateKey: string;
+  };
   mapbox: {
     accessToken: string;
   };
@@ -120,9 +126,6 @@ export interface AppConfig {
   stripe: {
     secretKey: string;
     webhookSecret: string;
-    priceStarter: string;
-    priceProfessional: string;
-    priceEnterprise: string;
     /** Connect platform client id (ca_…) — tenant-account OAuth linking. */
     connectClientId: string;
     /** Signing secret of the "events on connected accounts" webhook endpoint. */
@@ -180,6 +183,16 @@ export const configuration = (): AppConfig => ({
   googleMaps: {
     apiKey: process.env.GOOGLE_MAPS_API_KEY ?? "",
   },
+  // #2309 (SA-418): Sign in with Apple, native iOS only. Read directly by name via the
+  // untyped ConfigService (AppleOAuthService.isConfigured()), same pattern as GOOGLE_CLIENT_ID —
+  // not consumed through this "apple" object, but declared here so every config name the app
+  // reads has one place naming it.
+  apple: {
+    bundleId: process.env.APPLE_BUNDLE_ID ?? "",
+    teamId: process.env.APPLE_TEAM_ID ?? "",
+    keyId: process.env.APPLE_KEY_ID ?? "",
+    privateKey: process.env.APPLE_PRIVATE_KEY ?? "",
+  },
   mapbox: {
     accessToken: process.env.MAPBOX_ACCESS_TOKEN ?? "",
   },
@@ -189,9 +202,6 @@ export const configuration = (): AppConfig => ({
   stripe: {
     secretKey: process.env.STRIPE_SECRET_KEY ?? "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
-    priceStarter: process.env.STRIPE_PRICE_STARTER ?? "",
-    priceProfessional: process.env.STRIPE_PRICE_PROFESSIONAL ?? "",
-    priceEnterprise: process.env.STRIPE_PRICE_ENTERPRISE ?? "",
     connectClientId: process.env.STRIPE_CONNECT_CLIENT_ID ?? "",
     connectWebhookSecret: process.env.STRIPE_CONNECT_WEBHOOK_SECRET ?? "",
   },

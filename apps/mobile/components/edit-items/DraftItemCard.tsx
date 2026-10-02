@@ -6,6 +6,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { UnitPickerRow } from "../../components/UnitPickerRow";
 import { unitPriceBase, type UnitOption } from "../../lib/unit-options";
+import { priceUnitSuffix } from "../../lib/invoice-line-display";
 import {
   classifyMargin,
   computeLineSubtotal,
@@ -19,6 +20,7 @@ import { setLineUnits } from "../../lib/sale-line";
 import { draftFreeUnits, ladderProductFor, type DraftItem } from "../../lib/edit-items-draft";
 import { StepperRow } from "../../components/EditItemsStepperRow";
 import { SellByToggle } from "../../components/SellByToggle";
+import { canRemoveLooseUnits, looseUnitsVisible } from "../../lib/loose-units";
 import { toNumber } from "../../lib/cart-line-state";
 import { styles } from "./styles";
 
@@ -108,6 +110,9 @@ export function DraftItemCard({
   const upb = Number(item.unitsPerBox ?? 0);
   // units_v1: a unit-sold line is never boxed UI — see CartRow's identical gate.
   const isBoxed = upb > 1 && canSplitBoxes && !item.unitLabel;
+  // #2698 (SA-564): one unit sold — loose units are opt-in, the same rule as CartRow.
+  const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
+  const showLoose = looseUnitsVisible(looseUnitsOpen, item.pieces);
   const sellBy = item.sellBy ?? "case";
   const qty = effectiveQty(item, item.unitsPerBox);
   const freeUnits = draftFreeUnits(item);
@@ -158,13 +163,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -188,13 +187,7 @@ export function DraftItemCard({
                   numberOfLines={2}
                 >
                   ${item.unitPrice.toFixed(2)}
-                  {isBoxed
-                    ? ` / box of ${upb}`
-                    : item.unitLabel
-                      ? ` / ${item.unitLabel}`
-                      : item.unit
-                        ? ` / ${item.unit}`
-                        : ""}
+                  {priceUnitSuffix(item, upb)}
                   {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
                 </Text>
                 {isUpsell ? (
@@ -273,13 +266,61 @@ export function DraftItemCard({
           ) : (
             <>
               <StepperRow label="Cases" value={item.boxes ?? 0} onChange={onSetBoxes} />
-              <StepperRow
-                label={`Loose ${item.unit ?? "units"}`}
-                value={item.pieces ?? 0}
-                onChange={onSetPieces}
-                max={upb - 1}
-                hint={`${upb} per case`}
-              />
+              {showLoose ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={{ flex: 1 }}>
+                    <StepperRow
+                      label="Extra loose units"
+                      value={item.pieces ?? 0}
+                      onChange={onSetPieces}
+                      max={upb - 1}
+                      hint={`${item.unit ?? "units"} · ${upb} per case`}
+                    />
+                  </View>
+                  {canRemoveLooseUnits(item.boxes) ? (
+                    <Pressable
+                      onPress={() => {
+                        onSetPieces(0);
+                        setLooseUnitsOpen(false);
+                      }}
+                      hitSlop={8}
+                      style={{
+                        width: 32,
+                        height: 32,
+                        borderRadius: 16,
+                        alignItems: "center",
+                        justifyContent: "center",
+                        backgroundColor: ios.fill,
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove extra units"
+                    >
+                      <Ionicons name="close" size={16} color={ios.label2} />
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : (
+                <Pressable
+                  onPress={() => setLooseUnitsOpen(true)}
+                  hitSlop={8}
+                  style={{
+                    alignSelf: "flex-start",
+                    paddingHorizontal: 12,
+                    minHeight: 32,
+                    justifyContent: "center",
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderStyle: "dashed",
+                    borderColor: ios.separator,
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Add extra loose units"
+                >
+                  <Text style={{ fontSize: 13, fontFamily: "Inter_600SemiBold", color: ios.brand }}>
+                    + units
+                  </Text>
+                </Pressable>
+              )}
             </>
           )}
         </View>

@@ -1,5 +1,5 @@
 import { Test } from "@nestjs/testing";
-import { classifySaleAxis, prorateLineSubtotal } from "@routeflow/pricing";
+import { classifySaleAxis, creditedThrough } from "@routeflow/pricing";
 import { RegulatedLedgerService, priceCorrectionTarget } from "./regulated-ledger.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -3194,18 +3194,17 @@ describe("RegulatedLedgerService", () => {
       expect(await run([sale(), returned, applied], [line()])).toBe(0);
     });
 
-    it("goes through the pricing package's proration helper: BUY_N_GET_M free units are honoured", async () => {
+    it("B894/SA-576: the target is the pricing package's LINEAR slice — free units do not bend it", async () => {
       const held = [sale({ netSales: 200, categoryTax: 50 })];
       const l = line({ promoFreeUnits: 1, netSales: 250, categoryTax: 62.5 });
       await run(held, [l]);
-      // full qty held: prorate(250, 72, 72, 1 free box of 12) is the stored 250 verbatim
-      expect(prorateLineSubtotal(250, 72, 72, 1, 12)).toBe(250);
+      // full qty held: the whole new figure, verbatim
+      expect(creditedThrough(250, 72, 72)).toBe(250);
       expect(rows()[0]).toMatchObject({ netSales: 50, categoryTax: 12.5 });
-      // and priceCorrectionTarget is that helper (free size 12 for a box-split line, 1 otherwise)
-      expect(priceCorrectionTarget(250, 60, l)).toBe(prorateLineSubtotal(250, 60, 72, 1, 12));
-      expect(priceCorrectionTarget(250, 60, { ...l, boxes: null })).toBe(
-        prorateLineSubtotal(250, 60, 72, 1, 1),
-      );
+      // and priceCorrectionTarget IS that helper — the same slice rule as a return credit — whatever the free units / split
+      expect(priceCorrectionTarget(250, 60, l)).toBe(creditedThrough(250, 60, 72));
+      const noSplit = { ...l, boxes: null };
+      expect(priceCorrectionTarget(250, 60, noSplit)).toBe(208.33);
     });
 
     it("skips a line with no live SALE, a fully returned line, and rounding noise", async () => {

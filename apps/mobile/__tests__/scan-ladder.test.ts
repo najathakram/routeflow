@@ -26,24 +26,31 @@ interface P {
   barcode?: string | null;
   sku?: string | null;
   unitSku?: string | null;
+  unitsPerBox?: number | null;
   name?: string;
   isActive?: boolean;
 }
 
 const CASE_CODE = "4000000000019";
 const PIECE_CODE = "2000000000012";
-const boxed: P = { id: "p1", name: "6-pack", barcode: CASE_CODE, unitSku: PIECE_CODE };
+const boxed: P = {
+  id: "p1",
+  name: "6-pack",
+  barcode: CASE_CODE,
+  unitSku: PIECE_CODE,
+  unitsPerBox: 6,
+};
 
 /** Records what the ladder did, standing in for the screen's cart + sheets. */
 function harness(over: Partial<Parameters<typeof makeScanHandler<P>>[0]> = {}) {
   const calls = {
-    accepted: [] as Array<{ id?: string | null; unit: "case" | "piece" }>,
+    accepted: [] as Array<{ id?: string | null; unit: "BOX" | "UNIT" }>,
     ambiguous: [] as string[],
     created: [] as string[],
   };
   const deps = {
     products: [boxed] as P[],
-    accept: (p: P, unit: "case" | "piece"): ScanOutcome => {
+    accept: (p: P, unit: "BOX" | "UNIT"): ScanOutcome => {
       calls.accepted.push({ id: p.id, unit });
       return { feedback: { kind: "added" as const, text: `Added ${p.name}` } };
     },
@@ -65,7 +72,7 @@ describe("makeScanHandler — local fast path", () => {
       },
     });
     const out = await scan(CASE_CODE);
-    expect(calls.accepted).toEqual([{ id: "p1", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p1", unit: "BOX" }]);
     expect(resolveCalls).toBe(0);
     expect(out).toMatchObject({ feedback: { kind: "added" } });
   });
@@ -73,7 +80,7 @@ describe("makeScanHandler — local fast path", () => {
   it("classifies the PIECE code as a loose piece, not a case", async () => {
     const { scan, calls } = harness();
     await scan(PIECE_CODE);
-    expect(calls.accepted).toEqual([{ id: "p1", unit: "piece" }]);
+    expect(calls.accepted).toEqual([{ id: "p1", unit: "UNIT" }]);
   });
 
   it("ignores blank input entirely", async () => {
@@ -128,7 +135,13 @@ describe("makeScanHandler — local fast path", () => {
   });
 
   it("REG-MSCAN-M5: an active row still adds locally when an inactive sibling shares its code — the archived exclusion never hides a legitimate match", async () => {
-    const active: P = { id: "pActive", name: "In stock", barcode: CASE_CODE, isActive: true };
+    const active: P = {
+      id: "pActive",
+      name: "In stock",
+      barcode: CASE_CODE,
+      unitsPerBox: 6,
+      isActive: true,
+    };
     const inactiveSibling: P = {
       id: "pGone",
       name: "Discontinued",
@@ -144,14 +157,14 @@ describe("makeScanHandler — local fast path", () => {
       },
     });
     await scan(CASE_CODE);
-    expect(calls.accepted).toEqual([{ id: "pActive", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "pActive", unit: "BOX" }]);
     expect(resolveCalls).toBe(0);
   });
 });
 
 describe("makeScanHandler — server fallback", () => {
   it("accepts a server-resolved product", async () => {
-    const server: P = { id: "p2", name: "Server hit", barcode: "999" };
+    const server: P = { id: "p2", name: "Server hit", barcode: "999", unitsPerBox: 6 };
     const { scan, calls } = harness({
       products: [],
       resolve: async (): Promise<BarcodeResolveResult<P>> => ({
@@ -160,7 +173,7 @@ describe("makeScanHandler — server fallback", () => {
       }),
     });
     await scan("999");
-    expect(calls.accepted).toEqual([{ id: "p2", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p2", unit: "BOX" }]);
   });
 
   it("offers a Choose pill on an ambiguous match instead of guessing matches[0]", async () => {
@@ -229,7 +242,7 @@ describe("makeScanHandler — products getter", () => {
     expect(calls.accepted).toHaveLength(0); // nothing loaded yet
     rows = [boxed];
     await scan(CASE_CODE);
-    expect(calls.accepted).toEqual([{ id: "p1", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p1", unit: "BOX" }]);
   });
 });
 
@@ -245,7 +258,7 @@ describe("makeScanHandler — products getter", () => {
 describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => {
   const CODE = "4000000000019";
   const OTHER_CODE = "2000000000012";
-  const remoteHit: P = { id: "p9", name: "Widget", barcode: CODE };
+  const remoteHit: P = { id: "p9", name: "Widget", barcode: CODE, unitsPerBox: 6 };
 
   /** A resolve the test controls the timing of, to model a real in-flight lookup. */
   function pendingResolve() {
@@ -289,11 +302,11 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
     const scanPromise = scan(CODE);
     // The settled-search effect fires while this same code's claim is still
     // open — it must park, never add directly.
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     expect(calls.accepted).toHaveLength(0);
     settle({ product: remoteHit, source: "barcode" });
     const outcome = await scanPromise;
-    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "BOX" }]);
     expect(outcome).toMatchObject({ feedback: { kind: "added" } });
   });
 
@@ -306,10 +319,10 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
       resolve: async () => promise,
     });
     const scanPromise = scan(CODE);
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     settle({ notFound: true });
     const outcome = fb(await scanPromise);
-    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "BOX" }]);
     expect(outcome.kind).toBe("added");
     expect(outcome.text).not.toMatch(/No product for/);
     expect(outcome.action).toBeUndefined();
@@ -317,7 +330,7 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
 
   it("REG-scanguard-e (anti-regression): a settled-effect offer for a DIFFERENT label while a claim is open is accepted immediately, and both eventually add", async () => {
     const guard = createScanAcceptGuard<P>();
-    const other: P = { id: "p10", name: "Other", barcode: OTHER_CODE };
+    const other: P = { id: "p10", name: "Other", barcode: OTHER_CODE, unitsPerBox: 6 };
     const { promise, settle } = pendingResolve();
     const { scan, calls, deps } = harness({
       products: [],
@@ -328,13 +341,13 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
     // A different physical label must never be blocked by CODE's open claim
     // — `true` tells the caller (the settled-search effect) to add it itself,
     // immediately, exactly as it does today.
-    expect(guard.offer(OTHER_CODE, other, "case")).toBe(true);
-    deps.accept(other, "case"); // the effect's own accept call, on the `true`
+    expect(guard.offer(OTHER_CODE, other, "BOX")).toBe(true);
+    deps.accept(other, "BOX"); // the effect's own accept call, on the `true`
     settle({ product: remoteHit, source: "barcode" }); // CODE also resolves
     await scanPromise;
     expect(calls.accepted).toEqual([
-      { id: "p10", unit: "case" },
-      { id: "p9", unit: "case" },
+      { id: "p10", unit: "BOX" },
+      { id: "p9", unit: "BOX" },
     ]);
   });
 
@@ -346,7 +359,7 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
    * These pin the word by its observable effect: does the parked match get
    * redeemed, and does its "Added …" outcome replace the ladder's own pill?
    */
-  const archivedRow: P = { id: "p9", name: "Widget" };
+  const archivedRow: P = { id: "p9", name: "Widget", unitsPerBox: 6 };
 
   it("REG-scanguard-i: an archived verdict DISCARDS the parked match — nothing is added and the archived pill stands", async () => {
     const guard = createScanAcceptGuard<P>();
@@ -357,7 +370,7 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
       resolve: async () => promise,
     });
     const scanPromise = scan(CODE);
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     settle({ archived: true, product: archivedRow, source: "barcode" });
     const outcome = fb(await scanPromise);
     // A definite "this product exists but is archived" must never be
@@ -376,7 +389,7 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
       resolve: async () => promise,
     });
     const scanPromise = scan(CODE);
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     settle({
       ambiguous: true,
       matches: [{ id: "a" }, { id: "b" }],
@@ -384,7 +397,7 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
       source: "search",
     });
     const outcome = fb(await scanPromise);
-    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "BOX" }]);
     expect(outcome.kind).toBe("added");
     expect(outcome.text).not.toMatch(/products match/);
     expect(outcome.action).toBeUndefined();
@@ -403,10 +416,10 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
         }),
     });
     const scanPromise = scan(CODE);
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     jest.advanceTimersByTime(SCAN_RESOLVE_TIMEOUT_MS);
     const outcome = fb(await scanPromise);
-    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "BOX" }]);
     expect(outcome.kind).toBe("added");
     expect(outcome.text).not.toMatch(/try again/);
   });
@@ -420,10 +433,10 @@ describe("makeScanHandler — acceptGuard interleavings (REG-scanguard)", () => 
       resolve: async () => promise,
     });
     const scanPromise = scan(CODE);
-    expect(guard.offer(CODE, remoteHit, "case")).toBe(false);
+    expect(guard.offer(CODE, remoteHit, "BOX")).toBe(false);
     reject({ response: { data: { message: "Gateway timeout" } } });
     const outcome = fb(await scanPromise);
-    expect(calls.accepted).toEqual([{ id: "p9", unit: "case" }]);
+    expect(calls.accepted).toEqual([{ id: "p9", unit: "BOX" }]);
     expect(outcome.kind).toBe("added");
     expect(outcome.text).not.toMatch(/Gateway timeout/);
   });

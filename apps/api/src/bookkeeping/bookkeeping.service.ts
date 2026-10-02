@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException, OnModuleInit } from "@nestjs/common";
+import { lockBillRows } from "../vendor-bills/bill-locks";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { isOverdue, overdueCutoff } from "../common/calendar-date";
+import { isOverdue, overdueCutoff, startOfCalendarDay } from "../common/calendar-date";
+import { computeDepositFields } from "../invoices/deposit-fields";
 import { tenantTimeZone } from "../common/tenant-time-zone";
 import {
   CheckStatus,
@@ -742,6 +744,9 @@ export class BookkeepingService implements OnModuleInit {
     paidAt: Date,
   ): Promise<{ ok: true; amount: number } | { ok: false; reason: string }> {
     return this.prisma.tenantTransaction(async (tx) => {
+      // B285: lock the bill before reading its payments (a concurrent payment/void otherwise
+      // leaves this write planning from a stale balance).
+      await lockBillRows(tx, this.prisma.getTenantId(), [billId]);
       const bill = await tx.vendorBill.findUnique({
         where: { id: billId },
         include: { payments: true },
@@ -1525,10 +1530,22 @@ export class BookkeepingService implements OnModuleInit {
     const buckets: Record<string, any[]> = {};
     for (const key of bucketKeys) buckets[key] = [];
 
+    // #1529 / SA-517: the deposit's "today" is the tenant's day (the same zone the buckets age in).
+    const todayIso = startOfCalendarDay(now, tz).toISOString().slice(0, 10);
+    const depositOverdue = { count: 0, outstanding: 0 };
+
     for (const inv of invoices) {
       const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
       const balance = Number(inv.total) - paid;
       if (balance <= 0) continue;
+      // #1529: the deposit rides each row (the invoice list's own read-time math); the buckets
+      // below still age by dueDate, so an overdue deposit on a not-yet-due invoice stays CURRENT
+      // and is surfaced by these fields and the top-level summary instead.
+      const deposit = computeDepositFields(inv, paid, todayIso);
+      if (deposit.depositOverdue) {
+        depositOverdue.count += 1;
+        depositOverdue.outstanding += roundMoney((deposit.depositAmount ?? 0) - paid);
+      }
       const entry = {
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
@@ -1537,6 +1554,9 @@ export class BookkeepingService implements OnModuleInit {
         balance,
         dueDate: inv.dueDate,
         status: inv.status,
+        depositAmount: deposit.depositAmount,
+        depositDueDate: inv.depositDueDate ?? null,
+        depositOverdue: deposit.depositOverdue,
       };
       if (!inv.dueDate || !isOverdue(inv.dueDate, now, tz)) {
         buckets[bucketKeys[0]].push(entry);
@@ -1556,8 +1576,11 @@ export class BookkeepingService implements OnModuleInit {
       grandTotal += totals[key];
     }
     totals.total = grandTotal;
+    depositOverdue.outstanding = roundMoney(depositOverdue.outstanding);
 
-    return { buckets, totals, intervalDays: interval };
+    // #1529: `depositOverdue` is its own top-level key, never a `totals` key (totals stay the AR
+    // buckets, agreeing with the finance dashboard).
+    return { buckets, totals, intervalDays: interval, depositOverdue };
   }
 
   async getSalesByCustomer(from?: string, to?: string) {

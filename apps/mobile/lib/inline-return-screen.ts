@@ -4,7 +4,10 @@
 // quote's chunks/totals render as returned (@routeflow/returns groupQuoteChunks/sumChunkTotals).
 import {
   buildCaptureRequest,
+  canOverrideReturnCredit,
+  creditOverrideProblem,
   DEFAULT_EXCESS_OPTION,
+  dropExcessAndRequote,
   extractRefusalMessage,
   hasAnyQtyEntered,
   type ExcessOption,
@@ -48,7 +51,12 @@ export type InlineReturnScreenState =
     }
   | { step: "success"; result: InlineReturnRecord }
   | { step: "queued" }
-  | { step: "refused"; message: string };
+  | {
+      step: "refused";
+      message: string;
+      /** #2647: the return already recorded under this capture key (a key-reused 409). */
+      recorded?: { returnId: string; returnNumber: string | null } | null;
+    };
 
 export type InlineReturnScreenEvent =
   | {
@@ -61,7 +69,11 @@ export type InlineReturnScreenEvent =
   | { type: "captureStarted" }
   | { type: "captured"; result: InlineReturnRecord }
   | { type: "queued" }
-  | { type: "refused"; message: string }
+  | {
+      type: "refused";
+      message: string;
+      recorded?: { returnId: string; returnNumber: string | null } | null;
+    }
   | { type: "edit" };
 
 export const initialInlineReturnScreen: InlineReturnScreenState = { step: "lines" };
@@ -91,7 +103,9 @@ export function inlineReturnScreenReducer(
     case "queued":
       return state.step === "success" ? state : { step: "queued" };
     case "refused":
-      return settled ? state : { step: "refused", message: event.message };
+      return settled
+        ? state
+        : { step: "refused", message: event.message, recorded: event.recorded ?? null };
     case "edit":
       return state.step === "capturing" ? state : initialInlineReturnScreen;
   }
@@ -125,9 +139,26 @@ export function captureFailureMessage(error: unknown): string {
   return "We couldn't confirm this return went through. Trying again sends the same request, so it won't be recorded twice.";
 }
 
-/** "Get quote" enables with a carrying order and any boxes/pieces entered. */
+/** "Get quote" enables with a carrying order and any boxes/pieces entered, and no credit price
+ *  override the server would refuse (#2695: a price without a reason, or a malformed price). */
 export function canGetInlineReturnQuote(lines: InlineReturnLineDraft[], orderId: string): boolean {
-  return !!orderId && hasAnyQtyEntered(lines);
+  return !!orderId && hasAnyQtyEntered(lines) && creditOverrideProblem(lines) === null;
+}
+
+/** #2695 (SA-557): the credit price input is offered only to the roles the server accepts it
+ *  from — the JWT role, never the dual-role "active" mode (an operator driving is still staff). */
+export function canOverrideInlineReturnCredit(user: { role?: string | null } | null): boolean {
+  return canOverrideReturnCredit(user?.role);
+}
+
+/** "Return only what was bought": re-quotes the covered pieces WITH the quoted snapshot's credit
+ *  price overrides, so the reduced quote and the capture (built from that snapshot) agree. */
+export function onlyPurchasedRequote(
+  customerId: string,
+  quote: InlineReturnQuoteResponse,
+  quotedLines: InlineReturnLineDraft[],
+) {
+  return dropExcessAndRequote(customerId, quote, undefined, quotedLines);
 }
 
 export function canConfirmInlineReturn(reason: ReturnReason | ""): boolean {

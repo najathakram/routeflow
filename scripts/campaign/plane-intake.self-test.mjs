@@ -26,7 +26,7 @@ import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { gitEnv } from "./plane-client.mjs";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 
 // B588: a hard 15s kill turned a merely-slow child (a loaded fleet host) into `code: null`, and every
 // check after it read as a product defect. One generous, env-tunable budget for every CLI child.
@@ -38,12 +38,12 @@ const SCRIPT_PATH = fileURLToPath(new URL("./plane-intake.mjs", import.meta.url)
 // it runs, and a spawned `git`/`node plane-intake.mjs` inherits them — the
 // same hazard .claude/hooks/stop.gate5.spec.mjs scrubs
 // (reference_git_worktreeconfig_bare_trap_2026-09-04; gates/push.log ~11716).
-// Scrub them here too (via the shared gitEnv() this file's own scripts under
+// Scrub them here too (via the shared scrubbedGitEnv() this file's own scripts under
 // test also use) so the throwaway repo below is never silently re-pointed at
 // the real repo, and additionally never leak a real key from the ambient
 // shell into a spawned fixture git call.
 function scrubbedEnv(extra = {}) {
-  const env = gitEnv();
+  const env = scrubbedGitEnv();
   delete env.PLANE_API_KEY;
   return { ...env, ...extra };
 }
@@ -413,7 +413,7 @@ async function main() {
   // exported into the environment, and a spawned `plane-intake.mjs --apply`
   // inherits them. Its own git preconditions (`git status --porcelain` /
   // `git merge-base --is-ancestor origin/master HEAD`) run with an explicit
-  // cwd (the temp intake repo) and gitEnv()-scrubbed env, so poisoning
+  // cwd (the temp intake repo) and scrubbedGitEnv()-scrubbed env, so poisoning
   // GIT_DIR/GIT_WORK_TREE with THIS WORKTREE's own real git dir/root — the
   // closest realistic stand-in for the hook's ambient env — must not
   // redirect the preconditions at the worktree; --apply must still see the

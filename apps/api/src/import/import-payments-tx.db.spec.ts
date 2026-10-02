@@ -13,12 +13,14 @@ import { randomUUID } from "crypto";
 import { Client } from "pg";
 import { InvoiceStatus } from "@prisma/client";
 import { ImportService } from "./import.service";
+import { ProductsService } from "../products/products.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { describeDb, requireLocalDatabaseUrl } from "../common/testing/db-spec";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -52,6 +54,24 @@ describeDb("#2262 import payments + Invoice row in one transaction (real Postgre
           useValue: {
             assertCustomerCapNotExceeded: jest.fn().mockResolvedValue(undefined),
             maybeStartCustomerGrace: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        // #2185 (B858/B859): ImportService routes product writes through ProductsService. This
+        // suite imports payments only, so it never calls it; the stub just satisfies DI.
+        {
+          provide: ProductsService,
+          useValue: {
+            create: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            update: jest.fn().mockResolvedValue({ id: "prod-1" }),
+            emitCatalogBulkChanged: jest.fn(),
+            assertCanFlagTobacco: jest.fn().mockResolvedValue(undefined),
+            assertMsrpAllowed: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
           },
         },
       ],

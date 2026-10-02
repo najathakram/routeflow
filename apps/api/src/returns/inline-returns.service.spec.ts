@@ -84,6 +84,8 @@ function priced(total = 30, subtotal = 28, taxAmount = 2, categoryTax = 0) {
   };
 }
 
+import { inlineReturnItemsFingerprint } from "./inline-return-fingerprint";
+
 const CAPTURE_DTO = {
   customerId: "cust-1",
   orderId: "ord-carrying",
@@ -520,6 +522,258 @@ describe("InlineReturnsService", () => {
 
   // ─── MED-7: P2002 returnKey collision outside the aborted transaction ───────
 
+  // #2424 (tier 1): a same-key, same-(customer, order) replay used to return the stored Return
+  // WITHOUT comparing items, so a second, different capture reusing the key was silently lost.
+  describe("#2424: a returnKey replay must carry the same items", () => {
+    const stored = (items: any[] | null, over: any = {}) => ({
+      id: "ret-first",
+      returnNumber: "RET-2026-0042",
+      returnKey: "nonce-1",
+      kind: "INLINE",
+      customerId: "cust-1",
+      orderId: "ord-carrying",
+      status: "REFUNDED",
+      creditNoteId: "cn-first",
+      holdReason: null,
+      capturePayload: items === null ? null : inlineReturnItemsFingerprint(items),
+      items: [],
+      ...over,
+    });
+    const DIFFERENT = { ...CAPTURE_DTO, items: [{ productId: "prod-1", qty: 9 }] };
+
+    it("the capture stores the request items' fingerprint on the Return", async () => {
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(prisma.return.create.mock.calls[0][0].data.capturePayload).toEqual(
+        inlineReturnItemsFingerprint(CAPTURE_DTO.items),
+      );
+    });
+
+    it("pre-read replay with the SAME items ⇒ the stored Return (no new write)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const res: any = await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(res.id).toBe("ret-first");
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("pre-read replay with DIFFERENT items ⇒ 409 KEY_REUSED_WITH_DIFFERENT_ITEMS, nothing written", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const p = service.capture(DIFFERENT as any, OPERATOR);
+      await expect(p).rejects.toThrow(ConflictException);
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      expect(await codeOf(service.capture(DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      // the lead's fold (2): the body says the earlier return WAS recorded, and names it
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      const body = await service
+        .capture(DIFFERENT as any, OPERATOR)
+        .catch((e: any) => e.getResponse());
+      expect(body).toMatchObject({ returnId: "ret-first", returnNumber: "RET-2026-0042" });
+      expect(body.message).toMatch(/RET-2026-0042 was already recorded/);
+    });
+
+    it("the same items in a different order are the same capture (replay)", async () => {
+      const two = [
+        { productId: "prod-1", qty: 6 },
+        { productId: "prod-2", qty: 2 },
+      ];
+      prisma.return.findFirst.mockResolvedValueOnce(stored(two));
+      const res: any = await service.capture(
+        { ...CAPTURE_DTO, items: [two[1], two[0]] } as any,
+        OPERATOR,
+      );
+      expect(res.id).toBe("ret-first");
+    });
+
+    it("a legacy row (captured before #2424, no fingerprint) still replays", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(null));
+      const res: any = await service.capture(DIFFERENT as any, OPERATOR);
+      expect(res.id).toBe("ret-first");
+    });
+
+    it("P2002 recovery with DIFFERENT items ⇒ 409 KEY_REUSED_WITH_DIFFERENT_ITEMS", async () => {
+      prisma.tenantTransaction.mockImplementationOnce(async () => {
+        const err: any = new Error("Unique constraint failed");
+        err.code = "P2002";
+        err.meta = { target: ["tenantId", "returnKey"] };
+        throw err;
+      });
+      prisma.return.findFirst.mockResolvedValueOnce(null); // pre-tx: nothing yet
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items)); // the racer's row
+      expect(await codeOf(service.capture(DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+    });
+
+    it("in-lock re-check (captureInTx, the order create/edit path) with DIFFERENT items ⇒ 409, no create", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      expect(await codeOf(service.captureInTx(prisma, DIFFERENT as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("the order-path pre-read (preflightCapture) with DIFFERENT items ⇒ 409; SAME items ⇒ null (a replay)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      await expect(
+        service.preflightCapture(DIFFERENT as any, OPERATOR, { routeRunId: null }),
+      ).rejects.toThrow(ConflictException);
+      prisma.return.findFirst.mockResolvedValueOnce(stored(CAPTURE_DTO.items));
+      await expect(
+        service.preflightCapture(CAPTURE_DTO as any, OPERATOR, { routeRunId: null }),
+      ).resolves.toBeNull();
+    });
+  });
+
+  describe("#2695 (SA-557): a staff credit-price override on capture", () => {
+    /** One matched chunk the engine lowered from $5.00 to $3.00 a piece (6 pieces). */
+    function pricedOverride() {
+      const base = priced(19.08, 18, 1.08, 0);
+      return {
+        ...base,
+        chunks: [
+          {
+            ...base.chunks[0],
+            priceSource: "MANUAL" as const,
+            unitPrice: 3,
+            originalPrice: 5,
+            overrideReason: "damaged in transit",
+            overriddenBy: "user-op-1",
+          },
+        ],
+      };
+    }
+    const OVERRIDE_DTO = {
+      ...CAPTURE_DTO,
+      items: [
+        { productId: "prod-1", qty: 6, creditUnitPrice: 3, overrideReason: "damaged in transit" },
+      ],
+    };
+
+    it("persists the MANUAL line with the DEFAULT replaced, and writes ONE in-tx price_override audit row", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(pricedOverride());
+      await service.capture(OVERRIDE_DTO as any, OPERATOR);
+
+      const item = prisma.return.create.mock.calls[0][0].data.items.create[0];
+      expect(item).toMatchObject({
+        priceSource: "MANUAL",
+        unitPrice: 3,
+        originalPrice: 5,
+        overrideReason: "damaged in transit",
+        overriddenBy: "user-op-1",
+      });
+      const rows = prisma.auditLog.create.mock.calls.filter(
+        ([a]: any[]) => a.data.action === "inline_return.price_override",
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0][0].data).toEqual({
+        userId: "user-op-1",
+        action: "inline_return.price_override",
+        entityType: "Return",
+        entityId: "ret-1",
+        meta: {
+          orderId: "ord-carrying",
+          customerId: "cust-1",
+          items: [
+            {
+              productId: "prod-1",
+              pieces: 6,
+              defaultUnitPrice: 5,
+              unitPrice: 3,
+              reason: "damaged in transit",
+            },
+          ],
+        },
+      });
+    });
+
+    it("writes NO price_override row when nothing was overridden (a no-op for every existing client)", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(priced());
+      await service.capture(CAPTURE_DTO as any, OPERATOR);
+      expect(
+        prisma.auditLog.create.mock.calls.filter(
+          ([a]: any[]) => a.data.action === "inline_return.price_override",
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("the audit row is written on the capture's OWN tx client, never the root prisma", async () => {
+      const tx = createMockPrisma();
+      tx.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 1000,
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      tx.return.findFirst.mockResolvedValue(null);
+      tx.return.findMany.mockResolvedValue([]);
+      tx.return.create.mockImplementation(async ({ data }: any) => ({
+        id: "ret-1",
+        ...data,
+        items: (data.items?.create ?? []).map((i: any, idx: number) => ({ id: `ri-${idx}`, ...i })),
+      }));
+      quoteService.priceInlineReturn.mockResolvedValue(pricedOverride());
+
+      await service.captureInTx(tx, OVERRIDE_DTO as any, OPERATOR);
+
+      const onTx = tx.auditLog.create.mock.calls.filter(
+        ([a]: any[]) => a.data.action === "inline_return.price_override",
+      );
+      expect(onTx).toHaveLength(1);
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it("the same key with the same price but a DIFFERENT reason is a 409 too (the reason is fingerprinted)", async () => {
+      prisma.return.findFirst.mockResolvedValueOnce({
+        id: "ret-existing",
+        returnNumber: "RET-2026-0009",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        capturePayload: inlineReturnItemsFingerprint(OVERRIDE_DTO.items as any),
+        items: [],
+      });
+      const reworded = {
+        ...OVERRIDE_DTO,
+        items: [{ ...OVERRIDE_DTO.items[0], overrideReason: "customer goodwill" }],
+      };
+      expect(await codeOf(service.capture(reworded as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+
+    it("the #2424 fingerprint carries the override, so the same key with another price is a 409, not a replay", async () => {
+      const stored = inlineReturnItemsFingerprint(OVERRIDE_DTO.items as any);
+      expect(stored.items[0]).toMatchObject({
+        creditUnitPrice: 3,
+        overrideReason: "damaged in transit",
+      });
+      prisma.return.findFirst.mockResolvedValueOnce({
+        id: "ret-existing",
+        returnNumber: "RET-2026-0009",
+        returnKey: "nonce-1",
+        kind: "INLINE",
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        capturePayload: stored,
+        items: [],
+      });
+      const cheaper = {
+        ...OVERRIDE_DTO,
+        items: [{ ...OVERRIDE_DTO.items[0], creditUnitPrice: 2 }],
+      };
+      expect(await codeOf(service.capture(cheaper as any, OPERATOR))).toBe(
+        INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
+      );
+      expect(prisma.return.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe("MED-7: returnKey P2002 collision", () => {
     it("catches the conflict OUTSIDE the aborted transaction and replays when the raced row matches this (customerId, orderId)", async () => {
       prisma.tenantTransaction.mockImplementationOnce(async () => {
@@ -817,6 +1071,224 @@ describe("InlineReturnsService", () => {
 
   // ─── approve / reject (N-5, Q-C, HIGH-2, HIGH-4) ─────────────────────────────
 
+  // ─── B961 / SA-071c: a chunk of goods the customer ALREADY returned or was credited for ──────────
+
+  describe("B961: an 'already returned or credited' chunk is staff-with-a-reason only; a driver capture is held", () => {
+    const alreadyReturnedQuote = () => {
+      const q = priced(30, 28, 2, 0);
+      q.chunks[0] = {
+        ...q.chunks[0],
+        sourceInvoiceItemId: null,
+        sourceOrderId: null,
+        sourceOrderItemId: null,
+        priceSource: "BASE" as const,
+        alreadyReturned: true,
+      } as any;
+      return q;
+    };
+    const withReason = (reason?: string) => ({
+      ...CAPTURE_DTO,
+      returnKey: "nonce-ar",
+      items: [
+        {
+          productId: "prod-1",
+          qty: 6,
+          ...(reason !== undefined ? { alreadyReturnedReason: reason } : {}),
+        },
+      ],
+    });
+
+    it("STAFF without a reason is a 400 INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED (readable) and NOTHING is written", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const err: any = await service.capture(withReason() as any, OPERATOR).catch((e) => e);
+      expect(err.getStatus()).toBe(400);
+      expect(err.getResponse()).toMatchObject({
+        code: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      });
+      expect(String(err.getResponse().message)).toMatch(/already returned or credited/i);
+      expect(prisma.return.create).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+    });
+
+    it("a blank / whitespace reason is the same refusal", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      expect(await codeOf(service.capture(withReason("   ") as any, OPERATOR))).toBe(
+        "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+      );
+    });
+
+    it("STAFF with a reason is credited, and an audit row records the ACTOR and the REASON", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      await service.capture(withReason("  customer kept the first credit slip  ") as any, OPERATOR);
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "inline_return.already_returned_credit",
+            userId: OPERATOR.sub,
+            meta: expect.objectContaining({
+              items: [
+                expect.objectContaining({
+                  productId: "prod-1",
+                  reason: "customer kept the first credit slip",
+                }),
+              ],
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("a DRIVER capture is HELD for the office: no restock, no ledger reversal, no credit note; audited; the response says why", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED", heldAmount: 30 }),
+        }),
+      );
+      expect(prisma.stockMovement.create).not.toHaveBeenCalled();
+      expect(ledger.reverseReturnEntries).not.toHaveBeenCalled();
+      expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      expect(prisma.auditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: "inline_return.already_returned_hold",
+            entityId: "ret-1",
+          }),
+        }),
+      );
+      expect(result.alreadyReturnedHold).toBe(true);
+      expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
+    it("when BOTH the driver cap and the flag apply, ALREADY_RETURNED wins (it needs a reason)", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-carrying",
+        customerId: "cust-1",
+        total: 5, // tiny gross: the $30 return is also over the driver cap
+        status: "PENDING",
+        routeRunId: "run-1",
+      });
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ holdReason: "ALREADY_RETURNED" }),
+        }),
+      );
+    });
+
+    it("a chunk that is NOT flagged is untouched: a staff capture needs no reason, a driver capture is not held", async () => {
+      await service.capture({ ...CAPTURE_DTO, returnKey: "nonce-plain" } as any, OPERATOR);
+      expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      prisma.return.create.mockClear();
+      await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(prisma.return.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.not.objectContaining({ holdReason: "DRIVER_CAP" }),
+        }),
+      );
+    });
+
+    it("the edit-path PREFLIGHT refuses a staff return without the reason BEFORE anything commits outside the tx", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const code = await codeOf(
+        service.preflightCapture(
+          { ...withReason(), customerId: "cust-1", orderId: "ord-carrying" } as any,
+          OPERATOR,
+          { routeRunId: null },
+        ),
+      );
+      expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
+    });
+
+    it("the NEW-order preflight refuses a staff return without the reason BEFORE a credit-note number is reserved", async () => {
+      quoteService.priceInlineReturn.mockResolvedValue(alreadyReturnedQuote());
+      const code = await codeOf(
+        service.preflightNewOrderReturn(
+          { items: [{ productId: "prod-1", qty: 6 }], returnKey: "k-new" } as any,
+          "cust-1",
+          OPERATOR,
+        ),
+      );
+      expect(code).toBe("INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED");
+    });
+
+    it("N4: a REPLAY of the held capture keeps the readable holdMessage", async () => {
+      const heldRow = {
+        id: "ret-held-replay",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: "ALREADY_RETURNED",
+        heldAmount: 30,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        returnKey: "nonce-driver",
+        capturePayload: null,
+        items: [{ productId: "prod-1", qty: 6 }],
+      };
+      prisma.return.findFirst.mockResolvedValue(heldRow); // no audit rows are read: the COLUMN carries the hold
+      const result: any = await service.capture(DRIVER_CAPTURE_DTO as any, DRIVER);
+      expect(result.alreadyReturnedHold).toBe(true);
+      expect(String(result.holdMessage)).toMatch(/already returned or credited/i);
+    });
+
+    describe("approving an already-returned hold", () => {
+      const HELD_AR: any = {
+        id: "ret-held",
+        kind: "INLINE",
+        status: "RECEIVED",
+        holdReason: "ALREADY_RETURNED",
+        heldAmount: 30,
+        creditNoteId: null,
+        customerId: "cust-1",
+        orderId: "ord-carrying",
+        creditSubtotal: 28,
+        creditTax: 2,
+        creditCategoryTax: 0,
+        returnNumber: "RET-1",
+        items: [{ productId: "prod-1", qty: 6, restock: true, sourceOrderId: null }],
+      };
+      beforeEach(() => {
+        prisma.return.findFirst.mockResolvedValue(HELD_AR);
+        prisma.return.updateMany.mockResolvedValue({ count: 1 });
+        // SA-071f N3: approve() reads the holdReason COLUMN; the audit rows are evidence only. None exist here (as if pruned).
+        prisma.auditLog.findFirst.mockResolvedValue(null);
+      });
+
+      it("without a reason is the same coded 400 and nothing is minted", async () => {
+        expect(await codeOf(service.approve("ret-held", OPERATOR))).toBe(
+          "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+        );
+        expect(creditNotes.mintStandaloneInTx).not.toHaveBeenCalled();
+      });
+
+      it("with a reason it mints and audits the actor + reason", async () => {
+        await service.approve("ret-held", OPERATOR, {
+          reason: " verified with the office ",
+        } as any);
+        expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+        expect(prisma.auditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              action: "inline_return.already_returned_credit",
+              userId: OPERATOR.sub,
+              meta: expect.objectContaining({ reason: "verified with the office" }),
+            }),
+          }),
+        );
+      });
+
+      it("a DRIVER_CAP-only hold approves exactly as before (no reason needed)", async () => {
+        prisma.return.findFirst.mockResolvedValue({ ...HELD_AR, holdReason: "DRIVER_CAP" });
+        await service.approve("ret-held", OPERATOR);
+        expect(creditNotes.mintStandaloneInTx).toHaveBeenCalled();
+      });
+    });
+  });
+
   describe("approve", () => {
     const HELD: any = {
       id: "ret-held",
@@ -1035,7 +1507,10 @@ describe("InlineReturnsService", () => {
       const result = await service.reject("ret-held", OPERATOR);
       expect(prisma.return.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ holdReason: "DRIVER_CAP" }),
+          // B961: an ALREADY_RETURNED hold is rejectable too (the same hold family)
+          where: expect.objectContaining({
+            holdReason: { in: ["DRIVER_CAP", "ALREADY_RETURNED"] },
+          }),
           data: expect.objectContaining({ status: "REJECTED" }),
         }),
       );
@@ -1190,12 +1665,14 @@ describe("InlineReturnsService", () => {
 // nonce. These pin the codes the server puts on each such refusal, and that the mobile client's
 // set is exactly this set (read from the mobile source, the enum-parity precedent).
 describe("InlineReturnsService — refusal codes (SA-204)", () => {
-  it("exports the four capture refusal codes", () => {
+  it("exports the six capture refusal codes", () => {
     expect(INLINE_RETURN_ERROR_CODES).toEqual({
       ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
       ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
       ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+      ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
       RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+      RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS", // #2424
     });
   });
 

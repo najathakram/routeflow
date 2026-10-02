@@ -1,5 +1,37 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
+import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+
+/** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
+ *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
+export interface ProductBarcodeView {
+  code: string;
+  level: PackagingLevel;
+  symbology: BarcodeSymbology;
+  origin: BarcodeOrigin | "LEGACY";
+  copiedFromLevel: PackagingLevel | null;
+  primaryFor: PackagingLevel | null;
+}
+
+/** #2717 M4a-1: which code a scan hit and the packaging levels that code has on the resolved product
+ *  (additive on the scan-lookup response; a shared code reports both levels). */
+export interface ScanMatchView {
+  code: string;
+  levels: PackagingLevel[];
+}
+
+/** #2717 M1: a product image as the product read model returns it (`origin: "LEGACY"` = synthesized from imageKeys). */
+export interface ProductImageView {
+  storageKey: string;
+  url: string | null;
+  focalX: number | null;
+  focalY: number | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  altText: string | null;
+  origin: "ROW" | "LEGACY";
+}
+
 export interface InventoryValuation {
   totalValue: number;
   productCount: number;
@@ -207,4 +239,26 @@ export interface ProductCategoryDto {
   id: string;
   name: string;
   archivedAt: string | null;
+}
+
+/** #2717 M2: one component line of a recipe version. */
+export interface RecipeComponentDto {
+  id: string;
+  componentProductId: string;
+  qty: number;
+  position: number;
+}
+
+/** #2717 M2: one recipe version as the recipes API returns it. Dates are ISO strings on the wire. */
+export interface RecipeDto {
+  id: string;
+  productId: string;
+  familyProductId: string;
+  version: number;
+  unitsPerPack: number;
+  status: RecipeStatus;
+  activeFor: string | null;
+  effectiveFrom: string | null;
+  retiredAt: string | null;
+  components: RecipeComponentDto[];
 }

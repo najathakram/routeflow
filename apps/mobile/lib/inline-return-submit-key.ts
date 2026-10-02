@@ -135,6 +135,11 @@ export const INLINE_RETURN_REFUSAL_CODES: readonly string[] = [
   "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
   "INLINE_RETURN_ORDER_CANCELLED",
   "INLINE_RETURN_KEY_CONFLICT",
+  // #2424: the same key with different items is refused, so the nonce settles and the next
+  // capture mints a new key (and re-quotes).
+  "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  // B961: nothing was written; the nonce settles and the next capture (with the reason) mints a new key.
+  "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
 ];
 
 /**

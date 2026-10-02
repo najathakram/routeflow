@@ -270,6 +270,38 @@ describe("GoogleOAuthService device info threading (Phase 0 T6)", () => {
     );
   });
 
+  it("#2159 S1: a Google sign-in stamps lastLoginAt; a failed stamp never blocks the sign-in", async () => {
+    const { service, prisma, refreshTokenUpsert } = buildService();
+    prisma.user.findFirst.mockResolvedValue({
+      id: "admin-1",
+      username: "admin",
+      role: "SUPER_ADMIN",
+      status: "ACTIVE",
+      googleId: "g1",
+      forcePasswordChange: false,
+      tenantId: null,
+      password: null,
+    });
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: "admin-1" },
+      data: { lastLoginAt: expect.any(Date) },
+    });
+
+    prisma.user.update.mockRejectedValueOnce(new Error("db down"));
+    refreshTokenUpsert.mockClear();
+    await service.findOrCreateUser({
+      type: "platform",
+      googleId: "g1",
+      email: "admin@example.com",
+    } as any);
+    expect(refreshTokenUpsert).toHaveBeenCalled(); // the session was still minted
+  });
+
   // #1534 fold (the lead's Opus on #2593): the staff socket re-check compares the token's
   // canActAsDriver claim with the user row, so the Google-issued staff token must carry it too.
   it("#1534: the Google-issued staff access token carries the user's canActAsDriver claim", async () => {
@@ -384,6 +416,7 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     } as any;
 

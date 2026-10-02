@@ -22,12 +22,13 @@ import { parseRegulatedAuthError, type BlockedCategory } from "./authorizations-
 export type AtStopResolveOutcome =
   | { action: "offline" }
   | { action: "regulated"; blocked: BlockedCategory[] }
-  | { action: "already-resolved" }
+  | { action: "already-resolved"; status?: string }
   | { action: "credit"; info: CreditLimitExceededInfo; reason: string }
   | { action: "decline"; reason: string };
 
 export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
-  if ((e as { isOfflineQueued?: boolean } | null)?.isOfflineQueued) {
+  const flags = e as { isOfflineQueued?: boolean; isOnlineRequired?: boolean } | null;
+  if (flags?.isOfflineQueued || flags?.isOnlineRequired) {
     return { action: "offline" };
   }
   const blocked = parseRegulatedAuthError(e);
@@ -37,7 +38,12 @@ export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
   const data = (e as { response?: { data?: { code?: string; message?: string } } } | null)?.response
     ?.data;
   if (data?.code === "CHANGE_REQUEST_ALREADY_RESOLVED") {
-    return { action: "already-resolved" };
+    // B795: carry the server's resolved status (e.g. DECLINED) when it sent one, so the
+    // screen can name an office decline distinctly; omitted (not undefined) otherwise.
+    const status = (data as { status?: unknown }).status;
+    return typeof status === "string" && status
+      ? { action: "already-resolved", status }
+      : { action: "already-resolved" };
   }
   const creditInfo = parseCreditLimitError(e);
   if (creditInfo) {

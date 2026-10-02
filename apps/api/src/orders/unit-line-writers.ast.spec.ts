@@ -229,7 +229,7 @@ const INVENTORY: Record<string, Row> = {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
-  "customers/customers.service.ts::CustomersService.deleteImportedCustomers": {
+  "customers/customers.service.ts::CustomersService.runImportedCustomersCleanup": {
     kind: "DELETE_ONLY",
     why: "customer purge",
   },
@@ -301,6 +301,14 @@ const INVENTORY: Record<string, Row> = {
   "vendor-bills/vendor-bills.service.ts::VendorBillsService.revertToDraft": {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "VendorBillItem",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.delete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.bulkDelete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
   },
 };
 

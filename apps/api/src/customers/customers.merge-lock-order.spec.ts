@@ -15,7 +15,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { StorageService } from "../storage/storage.service";
 import { MeterService } from "../billing/meter.service";
 import { PlanCatalogService } from "../billing/plan-catalog.service";
-import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { EmailService } from "../email/email.service";
@@ -47,7 +47,7 @@ describe("mergeCustomers — Order rows before Invoice rows (SA-218 (1), #2116)"
           StorageService,
           MeterService,
           PlanCatalogService,
-          EntitlementsService,
+          EntitlementAuthority,
           CommissionEngineService,
           RegulatedLedgerService,
           EmailService,

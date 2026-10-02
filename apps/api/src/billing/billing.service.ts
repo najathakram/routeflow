@@ -1,3 +1,4 @@
+import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
   Injectable,
   Logger,
@@ -44,6 +45,9 @@ import {
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
+/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease — cap it so a
+ *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
+const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
@@ -525,39 +529,67 @@ export class BillingService {
     planKey: string,
     sync: { synced: boolean; reason?: string },
   ): Promise<void> {
-    const sub = await this.prisma.tenantSubscription.findUnique({
-      where: { tenantId },
-      select: {
-        planKey: true,
-        basePriceSnapshot: true,
-        tenant: { select: { status: true, deletedAt: true, class: true } },
-      },
-    });
-    if (!sub || sub.planKey == null) return;
-
-    const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
     const newMonthly = roundMoney(resolvedMonthly);
-    if (oldMonthly === newMonthly) return;
+    // #2509: ONE transaction per attempt — read, compare-and-set the snapshot on the (planKey,
+    // basePriceSnapshot) just read, and emit in the same tx. A concurrent plan change or Pricing write
+    // that lands between the read and the write makes the CAS miss instead of being overwritten or
+    // double-booked. A miss re-reads: a plan change since the read ⇒ this resolved price is stale for
+    // the row, so stop (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry.
+    // SA-503a: each attempt's tx is retried on a lock conflict (40P01/40001) — this runs AFTER the fee
+    // and the Stripe push committed, so a conflict must never surface as a 500 over a stale snapshot.
+    for (let attempt = 0; attempt < TX_CONFLICT_MAX_ATTEMPTS; attempt++) {
+      const outcome = await retryOnTxConflict("billing.reconcilePriceLedger", () =>
+        this.prisma.$transaction(async (tx) => {
+          // SA-485b (ii): the house Tenant row lock, FIRST — lock → read → CAS → emit, so a plan change or
+          // Pricing write (every writer takes this lock before the subscription row, #2551) serializes
+          // with this reconcile. The CAS below stays as the guard against any write it cannot see.
+          await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
+          const sub = await tx.tenantSubscription.findUnique({
+            where: { tenantId },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              tenant: { select: { status: true, deletedAt: true, class: true } },
+            },
+          });
+          if (!sub || sub.planKey == null) return "done" as const;
+          if (normalizePlanKey(sub.planKey) !== normalizePlanKey(planKey)) {
+            this.logger.warn(
+              `#2509: tenant ${tenantId}'s plan changed during a price sync — the resolved price is stale; not reconciled`,
+            );
+            return "done" as const;
+          }
+          const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+          if (oldMonthly === newMonthly) return "done" as const;
 
-    await this.prisma.tenantSubscription.update({
-      where: { tenantId },
-      data: { basePriceSnapshot: newMonthly },
-    });
+          const { count } = await tx.tenantSubscription.updateMany({
+            where: { tenantId, planKey: sub.planKey, basePriceSnapshot: sub.basePriceSnapshot },
+            data: { basePriceSnapshot: newMonthly },
+          });
+          if (count === 0) return "retry" as const;
 
-    if (!isPayingRow(sub.tenant, sub.planKey)) return;
-
-    await this.events.emit(
-      tenantId,
-      BILLING_EVENTS.PLAN_CHANGED,
-      {
-        source: "platform_pricing_sync",
-        planKey,
-        oldMonthly,
-        newMonthly,
-        stripeSynced: sync.synced,
-        stripeReason: sync.reason ?? null,
-      },
-      { amountDelta: roundMoney(newMonthly - oldMonthly) },
+          if (isPayingRow(sub.tenant, sub.planKey)) {
+            await this.events.emit(
+              tenantId,
+              BILLING_EVENTS.PLAN_CHANGED,
+              {
+                source: "platform_pricing_sync",
+                planKey,
+                oldMonthly,
+                newMonthly,
+                stripeSynced: sync.synced,
+                stripeReason: sync.reason ?? null,
+              },
+              { amountDelta: roundMoney(newMonthly - oldMonthly), tx },
+            );
+          }
+          return "done" as const;
+        }),
+      );
+      if (outcome === "done") return;
+    }
+    this.logger.warn(
+      `#2509: tenant ${tenantId}'s price reconcile kept losing its compare-and-set — left for the next sync`,
     );
   }
 
@@ -566,6 +598,7 @@ export class BillingService {
   async createBillingPortalSession(
     tenantId: string,
     returnUrl?: string,
+    request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
@@ -578,10 +611,13 @@ export class BillingService {
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
 
-    const portalSession = await this.stripe.createBillingPortalSession({
-      customerId: sub.stripeCustomerId,
-      returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
-    });
+    const portalSession = await this.stripe.createBillingPortalSession(
+      {
+        customerId: sub.stripeCustomerId,
+        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+      },
+      request,
+    );
 
     return { portalUrl: portalSession.url };
   }
@@ -1184,39 +1220,51 @@ export class BillingService {
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // Send warning email to tenant admin
+    // #2476 / SA-472: the increment above IS the event's effect. Everything after it is best-effort
+    // and never throws — a throw here would record "error:" and make a redelivery re-run the increment.
+    try {
+      await this.sendPaymentFailedEmail(sub);
+    } catch (e) {
+      this.logger.warn(
+        `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
+      );
+    }
+  }
+
+  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
+  private async sendPaymentFailedEmail(sub: {
+    tenantId: string;
+    tenant: { slug: string; name: string | null };
+  }): Promise<void> {
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
       select: { email: true, username: true },
     });
-
-    if (adminUser?.email) {
-      // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
-      // safeLinkHref refuses) falls back to today's plain text.
-      const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
-      const updateLine = href
-        ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
-        : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
-      try {
-        await this.email.send({
-          to: adminUser.email,
-          subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
-          html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
+    if (!adminUser?.email) return;
+    // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
+    // safeLinkHref refuses) falls back to today's plain text.
+    const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+    const updateLine = href
+      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
+      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    await this.email.send({
+      to: adminUser.email,
+      subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
+      html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
 <p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
 ${updateLine}
 <p>RouteFlow Platform</p>`,
-        });
-      } catch {
-        /* best-effort */
-      }
-    }
+    });
   }
 
   /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
   private async portalUrlOrEmpty(tenantId: string): Promise<string> {
     try {
-      return (await this.createBillingPortalSession(tenantId)).portalUrl;
+      // #2476: capped — this runs inside the webhook's claim lease, and the link is best-effort.
+      return (
+        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
+      ).portalUrl;
     } catch (e) {
       this.logger.warn(
         `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,

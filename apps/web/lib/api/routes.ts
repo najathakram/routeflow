@@ -112,7 +112,9 @@ export interface RouteRunStop {
   id: string;
   stopNumber: number;
   customerId: string;
-  customer?: { id: string; businessName: string; contactName: string };
+  // `phone` is already selected server-side (RUN_STOP_INCLUDE) — added here for
+  // PHASE 1a's stop sheet "Call" action; every other consumer is unaffected.
+  customer?: { id: string; businessName: string; contactName: string; phone?: string | null };
   customerAddress?: { line1: string; city: string; state: string; lat?: number; lng?: number };
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "SKIPPED";
   completedAt?: string;
@@ -327,6 +329,43 @@ export function useRouteRun(id: string) {
     queryKey: ["route-runs", id],
     queryFn: () => apiClient.get(`/route-runs/${id}`).then((r) => r.data),
     enabled: !!id,
+  });
+}
+
+/**
+ * PHASE 1a (web driver mode): GET /route-runs/my-runs — DRIVER-role only,
+ * server-scoped to the authenticated driver's own SCHEDULED/IN_PROGRESS runs
+ * (no query params, unlike useRouteRuns' operator-facing `assignedToMe`).
+ * Same PaginatedResponse<RouteRun> shape as useRouteRuns.
+ */
+export function useMyRuns(options?: { refetchInterval?: number; enabled?: boolean }) {
+  return useQuery<PaginatedResponse<RouteRun>>({
+    queryKey: ["route-runs", "my-runs"],
+    queryFn: () => apiClient.get("/route-runs/my-runs").then((r) => r.data),
+    ...options,
+  });
+}
+
+/**
+ * PHASE 1a: PATCH /route-runs/:id/stops/:stopId — start ("IN_PROGRESS") or
+ * skip ("SKIPPED") a stop. OPERATOR- and DRIVER-role callable server-side.
+ */
+export function useUpdateStopStatus() {
+  const qc = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { runId: string; stopId: string; status: "IN_PROGRESS" | "SKIPPED"; driverNote?: string }
+  >({
+    mutationFn: ({ runId, stopId, status, driverNote }) =>
+      apiClient
+        .patch(`/route-runs/${runId}/stops/${stopId}`, { status, driverNote })
+        .then((r) => r.data),
+    onSuccess: (_, { runId }) => {
+      qc.invalidateQueries({ queryKey: ["route-runs", "my-runs"] });
+      qc.invalidateQueries({ queryKey: ["route-runs", runId] });
+      qc.invalidateQueries({ queryKey: ["route-runs"] });
+    },
   });
 }
 
@@ -706,7 +745,12 @@ export function useUpdateRouteSettings() {
   return useMutation<
     RouteSettings,
     Error,
-    Partial<Pick<RouteSettings, "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime">>
+    Partial<
+      Pick<
+        RouteSettings,
+        "averageSpeedKmh" | "serviceTimeMinutes" | "defaultStartTime" | "depotLat" | "depotLng"
+      >
+    >
   >({
     mutationFn: (dto) => apiClient.patch("/settings/route", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["route-settings"] }),

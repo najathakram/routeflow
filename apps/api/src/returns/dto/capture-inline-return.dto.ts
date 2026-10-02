@@ -1,4 +1,4 @@
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
@@ -6,6 +6,7 @@ import {
   IsIn,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Min,
@@ -63,6 +64,36 @@ export class CaptureInlineReturnItemDto {
   @IsOptional()
   @IsBoolean()
   restock?: boolean;
+
+  /**
+   * #2695 (SA-557): a staff (OPERATOR/TENANT_ADMIN) per-line CREDIT price, per SELLING unit (one
+   * box when the product is boxed), LOWER-ONLY — capped at the engine's own default for each
+   * chunk (`applyCreditOverride`). Requires `overrideReason`, on the quote AND the capture, so both
+   * price the same chunks; a DRIVER/CUSTOMER request carrying either field is a 400.
+   */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2, allowNaN: false, allowInfinity: false })
+  @Min(0)
+  creditUnitPrice?: number;
+
+  /** #2695: why the credit price was overridden — required with `creditUnitPrice`. Trimmed BEFORE
+   * the length check, so 200 real characters padded with spaces are not refused. */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  overrideReason?: string;
+
+  /**
+   * B961 / SA-071c: a staff (OPERATOR/TENANT_ADMIN) confirmation that this line's over-return chunk (goods the customer
+   * already returned or was credited for) really is being returned, WITH a reason (audited with the actor). Required on the
+   * capture when the quote flagged `alreadyReturned`; a DRIVER carrying it is a 400 (a driver's capture is held for the office).
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  alreadyReturnedReason?: string;
 }
 
 /**

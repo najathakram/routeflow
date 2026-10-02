@@ -32,6 +32,7 @@ import {
 import { computeLineSubtotal, normalizeBoxesPieces } from "@routeflow/pricing";
 import { describeChangeRequest, describeResolution } from "@/lib/change-requests";
 import { fmtCalendarDate } from "@/lib/formatting";
+import { ComponentSubLines } from "@/components/ComponentSubLines";
 import { DeliveryTrackingCard } from "./_components/DeliveryTrackingCard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -661,7 +662,7 @@ export default function BuyerOrderDetailPage() {
 
       <div className="flex items-center justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-navy">{order.orderNumber}</h1>
+          <h1 className="text-2xl font-bold text-navy">{order.orderNumber ?? ""}</h1>
           <p className="text-sm text-navy/70 mt-0.5">
             Placed {formatDate(order.createdAt)}
             {order.requestedDeliveryDate && (
@@ -928,6 +929,7 @@ export default function BuyerOrderDetailPage() {
                             {li.notes}
                           </p>
                         )}
+                        <ComponentSubLines components={li.components} />
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-navy">
                         <span>{Number(li.qty)}</span>
@@ -1057,7 +1059,7 @@ export default function BuyerOrderDetailPage() {
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
         title="Cancel Order?"
-        description={`Cancel order ${order.orderNumber}?`}
+        description={`Cancel order ${order.orderNumber ?? ""}?`}
         footer={
           <>
             <Button variant="secondary" onClick={() => setCancelOpen(false)}>
@@ -1070,8 +1072,8 @@ export default function BuyerOrderDetailPage() {
         }
       >
         <p className="text-sm text-navy/70">
-          This will cancel your order <strong>{order.orderNumber}</strong>. This action cannot be
-          undone.
+          This will cancel your order <strong>{order.orderNumber ?? ""}</strong>. This action cannot
+          be undone.
         </p>
       </Modal>
 

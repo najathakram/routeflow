@@ -50,6 +50,13 @@
 #      routine already used for schema-migration pushes (see
 #      docs/runbooks/deploy-visibility-flip.md) — just not run twice for free.
 #
+# ONE EXCEPTION to rule 2 (lead ruling 2026-10-01): apps/control has its OWN workflow,
+# .github/workflows/control.yml — its own job, installing only its own tree, started only by
+# PRs that touch apps/control or a file its specs read. Its Jest suite spawns real git, a server
+# and the CLI and was pushing this job toward the 20-minute cap; product PRs should neither run
+# nor wait on it. It is excluded from the Verify step below (VERIFY_EXCLUDE) and still gates the
+# PRs that touch it. Do not add a second exception without the same measurement.
+#
 # ═══ LOCAL GATE IS AUTHORITATIVE ════════════════════════════════════════════════
 # `.husky/pre-push` runs `npm run verify` — the SAME command this workflow runs —
 # on every push, and blocks direct trunk pushes. CI is the Linux confirmation of a
@@ -288,8 +295,18 @@ jobs:
       # `--coverage` was dropped on 2026-08-30: no coverageThreshold is configured
       # in any workspace, so it gated nothing, and the coverage artifact it fed
       # was never consumed by anything downstream.
+      #
+      # VERIFY_EXCLUDE (scripts/verify-turbo.mjs): apps/control is verified by its own job in
+      # .github/workflows/control.yml (path-filtered, installs only its tree), so it is taken out
+      # of THIS turbo scope — product PRs neither run nor wait on its Jest suite. It is still gated
+      # on every PR that touches it by that workflow, and locally by the pre-push scope (developers
+      # do not set this variable, so a local FULL_VERIFY still runs control).
+      # The script ACCEPTS ONLY that one name and exits 1 on any other (an allow-list, so a later edit
+      # here cannot silently exclude api/web); widening it means editing scripts/verify-turbo.mjs.
       - name: Verify (lockfile, bug-signature scan, types, lint, tests)
         run: npm run verify
+        env:
+          VERIFY_EXCLUDE: "@routeflow/control"
 
       # Registry state, not tree state — so this belongs in CI and not in the
       # local pre-push gate, where it would add network latency to every push.
@@ -789,6 +806,8 @@ jobs:
           PLAYWRIGHT_TENANT_SLUG: ${{ secrets.PLAYWRIGHT_TENANT_SLUG || 'e2e-routeflow' }}
           # Optional — see the job comment. Empty (secret absent) = seed skipped.
           E2E_SEED_DATABASE_URL: ${{ secrets.E2E_SEED_DATABASE_URL }}
+          # Optional — the seeded e2e_driver login; absent = the driver fixture is skipped.
+          E2E_DRIVER_PASSWORD: ${{ secrets.E2E_DRIVER_PASSWORD }}
           # Super-admin specs skip when these secrets are absent (never hardcoded).
           PLAYWRIGHT_SA_USERNAME: ${{ secrets.PLAYWRIGHT_SA_USERNAME }}
           PLAYWRIGHT_SA_PASSWORD: ${{ secrets.PLAYWRIGHT_SA_PASSWORD }}

@@ -1,4 +1,5 @@
 import {
+  Optional,
   BadRequestException,
   ForbiddenException,
   Injectable,
@@ -11,6 +12,8 @@ import { LeaderCron } from "../common/cron-lock";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { OrdersService } from "../orders/orders.service";
+import { syncOrderLineCompositions } from "../orders/order-composition";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import { isMergeContention } from "../orders/merge-contention";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -31,12 +34,7 @@ import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
-
-function startOfDay(date: Date): Date {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 
 /** F-05 (SA-247): the LEAST privileged author of a template — STAFF only when creator AND last items-editor are staff. */
 function leastPrivilegedAuthor(t: {
@@ -62,6 +60,8 @@ export class OrderTemplatesService {
     private readonly notifications: NotificationsService,
     private readonly systemConfig: SystemConfigService,
     private readonly sellingRestrictions: SellingRestrictionsService,
+    // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   // ─── CRUD ────────────────────────────────────────────────────────────────────
@@ -425,7 +425,7 @@ export class OrderTemplatesService {
   async generateDailyOrders() {
     const today = new Date();
     // ISO weekday: 1=Mon, 7=Sun
-    const dayOfWeek = today.getDay() === 0 ? 7 : today.getDay();
+    const dayOfWeek = isoWeekdayUtc(today);
 
     this.logger.log(`Running daily order generation for day ${dayOfWeek}`);
 
@@ -472,7 +472,7 @@ export class OrderTemplatesService {
           const existing = await this.prisma.forTenant().order.findFirst({
             where: {
               templateId: template.id,
-              createdAt: { gte: startOfDay(today) },
+              createdAt: { gte: startOfUtcDay(today) },
             },
           });
           if (existing) {
@@ -781,6 +781,7 @@ export class OrderTemplatesService {
           customer: { select: { id: true, businessName: true } },
         },
       });
+      await syncOrderLineCompositions(tx, order.id, this.prisma.getTenantId(), this.featureConfig);
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
       // #1208 review LOW-MED: the cron run and an operator's "Generate now" keep the
       // warn-and-oversell posture (isStaffRole=true, unconditionally, above); a buyer's

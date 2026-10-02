@@ -6,10 +6,17 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
-import { normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import {
+  familyPricesForNewVariant,
+  lockFamilyRow,
+  readFamilyPriceMode,
+} from "../products/family-price";
+import { linePack, normalizeBoxesPieces, roundMoney } from "@routeflow/pricing";
 import { fetchInvoicedSaleLines, roundQty } from "../common/invoiced-sales";
 import { poLineFromInput } from "./po-line-input";
 import { costDecimal, nextAverageCost, planLotConsumption, reverseAverageCost } from "./costing";
@@ -23,6 +30,7 @@ import {
   StartStockCountDto,
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
+import { buildMovementsWhere } from "./movements-where";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
@@ -32,6 +40,7 @@ import { SetCostBasisDto } from "./dto/set-cost-basis.dto";
 import { BulkSetCostBasisDto } from "./dto/bulk-set-cost-basis.dto";
 import { RecomputeCostsDto } from "./dto/recompute-costs.dto";
 import { VariantAssignDto } from "./dto/variant-assign.dto";
+import { retryOnTxConflict } from "../common/tx-retry";
 import { StockAlertService } from "../stock-alerts/stock-alert.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -77,6 +86,8 @@ export class InventoryService {
     private readonly stockAlerts: StockAlertService,
     // B562 PR-3: the recompute-costs apply path writes its own audit row (global AuditModule).
     @Optional() private readonly audit?: AuditService,
+    // #2717 M2 (SA-574 Q2): the `mixed_packs` mode read; absent = "off" (today's behavior).
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -179,20 +190,7 @@ export class InventoryService {
     const limit = Number(query.limit ?? 50);
     const skip = (page - 1) * limit;
 
-    const where: Prisma.StockMovementWhereInput = {};
-    if (query.productId) where.productId = query.productId;
-    if (query.type) where.type = query.type;
-    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
-    // movement carries); createdAt is write-once insertion time.
-    if (query.from || query.to) {
-      where.effectiveAt = {};
-      if (query.from) where.effectiveAt.gte = new Date(query.from);
-      if (query.to) {
-        const toDate = new Date(query.to);
-        toDate.setUTCHours(23, 59, 59, 999);
-        where.effectiveAt.lte = toDate;
-      }
-    }
+    const where = buildMovementsWhere(query);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().stockMovement.findMany({
@@ -456,7 +454,21 @@ export class InventoryService {
       regUomUnit: string | null;
     },
     variantName: string,
+    familyMode: "on" | "off" = "off",
   ) {
+    // #2717 M2: mode on -> the family's five columns, re-read under its row lock (the `parent` this
+    // tx read earlier may predate a family edit); off -> the parent row exactly as before.
+    const tenantId = this.prisma.getTenantId();
+    const priceColumns =
+      familyMode === "on" && tenantId
+        ? await familyPricesForNewVariant(tx, { tenantId, familyId: parent.id, dto: {} })
+        : {
+            pricePerUnit: parent.pricePerUnit,
+            priceTier2: parent.priceTier2,
+            priceTier3: parent.priceTier3,
+            priceTier4: parent.priceTier4,
+            priceTier5: parent.priceTier5,
+          };
     return tx.product.create({
       data: {
         name: `${parent.name} - ${variantName}`,
@@ -464,11 +476,7 @@ export class InventoryService {
         parentProductId: parent.id,
         sku: this.generateVariantSku(variantName),
         unit: parent.unit,
-        pricePerUnit: parent.pricePerUnit,
-        priceTier2: parent.priceTier2,
-        priceTier3: parent.priceTier3,
-        priceTier4: parent.priceTier4,
-        priceTier5: parent.priceTier5,
+        ...priceColumns,
         category: parent.category ?? undefined,
         isTobacco: parent.isTobacco ?? false,
         costingMethod: parent.costingMethod,
@@ -485,320 +493,336 @@ export class InventoryService {
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {
     const restockedProductIds: string[] = [];
+    const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 
-    const result = await this.prisma.tenantTransaction(
-      async (tx) => {
-        const parent = await tx.product.findUnique({ where: { id: dto.parentProductId } });
-        if (!parent) throw new NotFoundException("Product not found");
-        // One level only: a variant of a variant is impossible in this model
-        // (mirrors products.service.ts bulkAssignParent's same rejection).
-        if (parent.parentProductId != null) {
-          throw new BadRequestException("A variant cannot itself be split");
-        }
+    // SA-587e: the family-first lock order removes the deadlock, not a plain 40001/P2034 on the
+    // Serializable tx, so the WHOLE attempt is retried. The array is cleared at the start of each
+    // attempt (a rolled-back attempt must not leak ids); alerts fire once, after the commit.
+    const result = await retryOnTxConflict("inventory.assignToVariants", () =>
+      this.prisma.tenantTransaction(
+        async (tx) => {
+          restockedProductIds.length = 0;
+          // #2717 M2 (SA-584 B1, house lock order: family -> recipe product -> variant rows): with the
+          // family price authority on, take the FAMILY row before anything else. The target loop writes
+          // existing variants (row lock V) and a NEW variant reads the family under FOR UPDATE
+          // (`familyPricesForNewVariant`); a family price edit holds F and then writes V, so V -> F here
+          // against F -> V there is a 40P01. Taken before the parent read too (lock first, read after).
+          const lockTenantId = this.prisma.getTenantId();
+          if (familyMode === "on" && lockTenantId) {
+            await lockFamilyRow(tx, lockTenantId, dto.parentProductId);
+          }
+          const parent = await tx.product.findUnique({ where: { id: dto.parentProductId } });
+          if (!parent) throw new NotFoundException("Product not found");
+          // One level only: a variant of a variant is impossible in this model
+          // (mirrors products.service.ts bulkAssignParent's same rejection).
+          if (parent.parentProductId != null) {
+            throw new BadRequestException("A variant cannot itself be split");
+          }
 
-        // Resolve each assignment's qty. Boxes/pieces win over a raw qty —
-        // recomputed via normalizeBoxesPieces against the PARENT's
-        // unitsPerBox — so a boxed generic can never be assigned as loose
-        // pieces. Assignments resolving to 0 (or left blank) are dropped.
-        const resolved = dto.assignments
-          .map((a) => {
-            if (a.boxes != null || a.pieces != null) {
-              // A parent with no box packaging has no cases to convert:
-              // normalizeBoxesPieces takes its non-boxed branch and reads the
-              // (absent) `qty`, so the row would resolve to 0 and be dropped
-              // silently. Reject instead of losing the operator's units.
-              if (Number(parent.unitsPerBox ?? 0) <= 1) {
+          // Resolve each assignment's qty. Boxes/pieces win over a raw qty —
+          // recomputed via normalizeBoxesPieces against the PARENT's
+          // unitsPerBox — so a boxed generic can never be assigned as loose
+          // pieces. Assignments resolving to 0 (or left blank) are dropped.
+          const resolved = dto.assignments
+            .map((a) => {
+              if (a.boxes != null || a.pieces != null) {
+                // A parent with no box packaging has no cases to convert:
+                // normalizeBoxesPieces takes its non-boxed branch and reads the
+                // (absent) `qty`, so the row would resolve to 0 and be dropped
+                // silently. Reject instead of losing the operator's units.
+                if (Number(parent.unitsPerBox ?? 0) <= 1) {
+                  throw new BadRequestException(
+                    `"${parent.name}" is not sold in boxes — send qty in base units, not boxes/pieces`,
+                  );
+                }
+                return {
+                  input: a,
+                  qty: normalizeBoxesPieces({
+                    boxes: a.boxes,
+                    pieces: a.pieces,
+                    unitsPerBox: parent.unitsPerBox,
+                  }).qty,
+                };
+              }
+              return { input: a, qty: a.qty ?? 0 };
+            })
+            .filter((r) => r.qty > 0);
+
+          const totalQty = resolved.reduce((s, r) => s + r.qty, 0);
+
+          // Validate the pool INSIDE the transaction, against a freshly-read
+          // currentStock — re-validating here is what makes two concurrent
+          // assignments of the same generic safe. Never hoist this check out.
+          if (totalQty > Number(parent.currentStock)) {
+            throw new BadRequestException({
+              code: "INSUFFICIENT_UNASSIGNED",
+              message: `Only ${parent.currentStock} unassigned in stock; tried to assign ${totalQty}`,
+            });
+          }
+          if (resolved.length === 0) {
+            throw new BadRequestException("No assignment resolved to a positive quantity");
+          }
+
+          // Resolve every target BEFORE any write: an existing productId must
+          // be a child of THIS parent, and a new-variant name must not collide
+          // with a sibling — so a later assignment failing can never leave an
+          // earlier one's variant half-created (this only matters for the
+          // mocked unit tests; a real transaction rolls back regardless).
+          const targets: {
+            qty: number;
+            unitCostOverride?: number;
+            existing: {
+              id: string;
+              variantName: string | null;
+              currentStock: Prisma.Decimal;
+              averageCost: Prisma.Decimal | null;
+              costingMethod: CostingMethod;
+            } | null;
+            newVariantName: string | null;
+          }[] = [];
+
+          // Every target is written from the snapshot read here, so the same
+          // target twice would compute both its average cost and its stockAfter
+          // from the same pre-write stock — a corrupted average and a movement
+          // ledger that no longer reconciles with the product row. Reject the
+          // duplicate instead (no UI can produce one: both key rows by id).
+          const seenProductIds = new Set<string>();
+          const seenNewVariantNames = new Set<string>();
+
+          for (const r of resolved) {
+            const { input } = r;
+            if (input.productId) {
+              if (seenProductIds.has(input.productId)) {
                 throw new BadRequestException(
-                  `"${parent.name}" is not sold in boxes — send qty in base units, not boxes/pieces`,
+                  `Variant ${input.productId} appears more than once — combine those rows into one assignment`,
                 );
               }
-              return {
-                input: a,
-                qty: normalizeBoxesPieces({
-                  boxes: a.boxes,
-                  pieces: a.pieces,
-                  unitsPerBox: parent.unitsPerBox,
-                }).qty,
-              };
-            }
-            return { input: a, qty: a.qty ?? 0 };
-          })
-          .filter((r) => r.qty > 0);
-
-        const totalQty = resolved.reduce((s, r) => s + r.qty, 0);
-
-        // Validate the pool INSIDE the transaction, against a freshly-read
-        // currentStock — re-validating here is what makes two concurrent
-        // assignments of the same generic safe. Never hoist this check out.
-        if (totalQty > Number(parent.currentStock)) {
-          throw new BadRequestException({
-            code: "INSUFFICIENT_UNASSIGNED",
-            message: `Only ${parent.currentStock} unassigned in stock; tried to assign ${totalQty}`,
-          });
-        }
-        if (resolved.length === 0) {
-          throw new BadRequestException("No assignment resolved to a positive quantity");
-        }
-
-        // Resolve every target BEFORE any write: an existing productId must
-        // be a child of THIS parent, and a new-variant name must not collide
-        // with a sibling — so a later assignment failing can never leave an
-        // earlier one's variant half-created (this only matters for the
-        // mocked unit tests; a real transaction rolls back regardless).
-        const targets: {
-          qty: number;
-          unitCostOverride?: number;
-          existing: {
-            id: string;
-            variantName: string | null;
-            currentStock: Prisma.Decimal;
-            averageCost: Prisma.Decimal | null;
-            costingMethod: CostingMethod;
-          } | null;
-          newVariantName: string | null;
-        }[] = [];
-
-        // Every target is written from the snapshot read here, so the same
-        // target twice would compute both its average cost and its stockAfter
-        // from the same pre-write stock — a corrupted average and a movement
-        // ledger that no longer reconciles with the product row. Reject the
-        // duplicate instead (no UI can produce one: both key rows by id).
-        const seenProductIds = new Set<string>();
-        const seenNewVariantNames = new Set<string>();
-
-        for (const r of resolved) {
-          const { input } = r;
-          if (input.productId) {
-            if (seenProductIds.has(input.productId)) {
+              seenProductIds.add(input.productId);
+              // Stock can only ever move into an ACTIVE child of THIS parent —
+              // never into an unrelated product, and never onto a deactivated
+              // variant (which is filtered out of every sellable surface, so the
+              // units would read as gone).
+              const existing = await tx.product.findFirst({
+                where: { id: input.productId, parentProductId: parent.id, isActive: true },
+              });
+              if (!existing) {
+                throw new BadRequestException(
+                  `Product ${input.productId} is not an active variant of this parent`,
+                );
+              }
+              targets.push({
+                qty: r.qty,
+                unitCostOverride: input.unitCostOverride,
+                existing,
+                newVariantName: null,
+              });
+            } else if (input.newVariant) {
+              // Two rows asking for the same new name would both clear the
+              // collision check (nothing is created yet at check time) and land
+              // two identically-named siblings.
+              const nameKey = input.newVariant.name.trim().toLowerCase();
+              if (seenNewVariantNames.has(nameKey)) {
+                throw new BadRequestException(
+                  `A new variant named "${input.newVariant.name}" appears more than once`,
+                );
+              }
+              seenNewVariantNames.add(nameKey);
+              const composedName = `${parent.name} - ${input.newVariant.name}`;
+              const nameTaken = await tx.product.findFirst({
+                where: {
+                  parentProductId: parent.id,
+                  name: { equals: composedName, mode: "insensitive" },
+                },
+                select: { id: true },
+              });
+              if (nameTaken) {
+                throw new BadRequestException(
+                  `A variant named "${input.newVariant.name}" already exists for this product`,
+                );
+              }
+              targets.push({
+                qty: r.qty,
+                unitCostOverride: input.unitCostOverride,
+                existing: null,
+                newVariantName: input.newVariant.name,
+              });
+            } else {
               throw new BadRequestException(
-                `Variant ${input.productId} appears more than once — combine those rows into one assignment`,
+                "Each assignment must specify either productId or newVariant",
               );
             }
-            seenProductIds.add(input.productId);
-            // Stock can only ever move into an ACTIVE child of THIS parent —
-            // never into an unrelated product, and never onto a deactivated
-            // variant (which is filtered out of every sellable surface, so the
-            // units would read as gone).
-            const existing = await tx.product.findFirst({
-              where: { id: input.productId, parentProductId: parent.id, isActive: true },
-            });
-            if (!existing) {
-              throw new BadRequestException(
-                `Product ${input.productId} is not an active variant of this parent`,
-              );
-            }
-            targets.push({
-              qty: r.qty,
-              unitCostOverride: input.unitCostOverride,
-              existing,
-              newVariantName: null,
-            });
-          } else if (input.newVariant) {
-            // Two rows asking for the same new name would both clear the
-            // collision check (nothing is created yet at check time) and land
-            // two identically-named siblings.
-            const nameKey = input.newVariant.name.trim().toLowerCase();
-            if (seenNewVariantNames.has(nameKey)) {
-              throw new BadRequestException(
-                `A new variant named "${input.newVariant.name}" appears more than once`,
-              );
-            }
-            seenNewVariantNames.add(nameKey);
-            const composedName = `${parent.name} - ${input.newVariant.name}`;
-            const nameTaken = await tx.product.findFirst({
-              where: {
-                parentProductId: parent.id,
-                name: { equals: composedName, mode: "insensitive" },
-              },
-              select: { id: true },
-            });
-            if (nameTaken) {
-              throw new BadRequestException(
-                `A variant named "${input.newVariant.name}" already exists for this product`,
-              );
-            }
-            targets.push({
-              qty: r.qty,
-              unitCostOverride: input.unitCostOverride,
-              existing: null,
-              newVariantName: input.newVariant.name,
-            });
-          } else {
-            throw new BadRequestException(
-              "Each assignment must specify either productId or newVariant",
-            );
-          }
-        }
-
-        // The parent's effective unit cost, resolved by the SAME rule as
-        // effectiveValue() (getStockOverview / getValuation): STANDARD reads
-        // standardCost first, because recordPurchase deliberately never writes
-        // averageCost for a STANDARD product — its averageCost column is
-        // normally null forever. Reading the raw column alone would move a
-        // STANDARD generic's stock at $0 and silently destroy that value.
-        // Null when no cost is known anywhere (see the per-variant guard).
-        const parentEffectiveCost =
-          parent.costingMethod === CostingMethod.STANDARD
-            ? (parent.standardCost ?? parent.averageCost)
-            : parent.averageCost;
-
-        // Lots are conserved, not invented: this is a transfer, not a
-        // receipt. Draw the parent's lots down for the TOTAL qty being moved,
-        // mirroring recordSale's planLotConsumption usage exactly (same
-        // helper, same query shape, same post-consumption update). Unlike
-        // recordSale this always runs, never gated on costingMethod — a
-        // transfer must conserve lots for every costing label, not only the
-        // FIFO/LIFO methods recordSale itself draws down for.
-        const totalQtyDecimal = new Prisma.Decimal(totalQty);
-        const parentLots = await tx.stockLot.findMany({
-          where: { productId: parent.id, remainingQty: { gt: 0 } },
-          orderBy: { purchaseDate: "asc" },
-        });
-        const parentFallbackCost = costDecimal(parentEffectiveCost ?? 0);
-        const lotPlan = planLotConsumption(parentLots, totalQtyDecimal, parentFallbackCost);
-        for (const consumption of lotPlan.consumptions) {
-          await tx.stockLot.update({
-            where: { id: consumption.id },
-            data: { remainingQty: { decrement: consumption.take } },
-          });
-        }
-        // Only the quantity the parent's lots actually covered may be re-lotted
-        // on the variant side. `uncovered` is real: a catalog imported with
-        // opening stock writes currentStock with no StockLot at all, and
-        // opening variant lots for that share would invent lot quantity the
-        // parent never gave up. The uncovered remainder simply stays un-lotted,
-        // exactly as it was on the parent.
-        let lotCredit = totalQtyDecimal.sub(lotPlan.uncovered);
-
-        // One negative ADJUSTMENT on the parent for the TOTAL. The parent's
-        // average is NEVER changed by this transfer — removing units at the
-        // average cost does not move the average — so the snapshot simply
-        // carries the existing average forward.
-        const parentStockAfter = parent.currentStock.sub(totalQtyDecimal);
-        const reference = `VARIANT_ASSIGN-${crypto.randomUUID()}`;
-        const parentNotes = dto.notes
-          ? `${dto.notes} — Split into variants`
-          : "Split into variants";
-
-        const movementIds: string[] = [];
-        const parentMovement = await tx.stockMovement.create({
-          data: {
-            productId: parent.id,
-            type: MovementType.ADJUSTMENT,
-            quantity: totalQtyDecimal.neg(),
-            avgCostAfter: parent.averageCost ?? null,
-            stockAfter: parentStockAfter,
-            reference,
-            notes: parentNotes,
-            performedById,
-          },
-        });
-        movementIds.push(parentMovement.id);
-
-        const assignmentResults: {
-          productId: string;
-          variantName: string | null;
-          qty: number;
-          unitCost: number;
-          created: boolean;
-        }[] = [];
-
-        for (const target of targets) {
-          const qtyDecimal = new Prisma.Decimal(target.qty);
-          const variant = target.existing
-            ? target.existing
-            : await this.createVariantRowInTx(tx, parent, target.newVariantName!);
-
-          // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
-          // costed variants are valued from their own operator-set cost, so a
-          // transfer must never overwrite it — mirrors recordPurchase and the
-          // vendor-bill receive path's identical guard. When no cost is known
-          // anywhere the average is left alone too: stamping a fabricated 0
-          // would read as a real "$0 cost" in getValuation and drop the
-          // variant off the "no cost set" report.
-          const resolvedCost = target.unitCostOverride ?? parentEffectiveCost ?? null;
-          const unitCost = costDecimal(resolvedCost ?? 0);
-          const updatesAverage =
-            variant.costingMethod !== CostingMethod.STANDARD && resolvedCost != null;
-          const newAvgCost = nextAverageCost(
-            variant.currentStock,
-            variant.averageCost,
-            qtyDecimal,
-            unitCost,
-          );
-          const variantStockAfter = variant.currentStock.add(qtyDecimal);
-          const variantNotes = dto.notes
-            ? `${dto.notes} — Assigned from ${parent.name}`
-            : `Assigned from ${parent.name}`;
-
-          const lotQty = lotCredit.gt(qtyDecimal) ? qtyDecimal : lotCredit;
-          if (lotQty.gt(0)) {
-            await tx.stockLot.create({
-              data: {
-                productId: variant.id,
-                purchaseDate: new Date(),
-                qty: lotQty,
-                remainingQty: lotQty,
-                unitCost,
-                reference,
-                notes: variantNotes,
-              },
-            });
-            lotCredit = lotCredit.sub(lotQty);
           }
 
-          const variantMovement = await tx.stockMovement.create({
+          // The parent's effective unit cost, resolved by the SAME rule as
+          // effectiveValue() (getStockOverview / getValuation): STANDARD reads
+          // standardCost first, because recordPurchase deliberately never writes
+          // averageCost for a STANDARD product — its averageCost column is
+          // normally null forever. Reading the raw column alone would move a
+          // STANDARD generic's stock at $0 and silently destroy that value.
+          // Null when no cost is known anywhere (see the per-variant guard).
+          const parentEffectiveCost =
+            parent.costingMethod === CostingMethod.STANDARD
+              ? (parent.standardCost ?? parent.averageCost)
+              : parent.averageCost;
+
+          // Lots are conserved, not invented: this is a transfer, not a
+          // receipt. Draw the parent's lots down for the TOTAL qty being moved,
+          // mirroring recordSale's planLotConsumption usage exactly (same
+          // helper, same query shape, same post-consumption update). Unlike
+          // recordSale this always runs, never gated on costingMethod — a
+          // transfer must conserve lots for every costing label, not only the
+          // FIFO/LIFO methods recordSale itself draws down for.
+          const totalQtyDecimal = new Prisma.Decimal(totalQty);
+          const parentLots = await tx.stockLot.findMany({
+            where: { productId: parent.id, remainingQty: { gt: 0 } },
+            orderBy: { purchaseDate: "asc" },
+          });
+          const parentFallbackCost = costDecimal(parentEffectiveCost ?? 0);
+          const lotPlan = planLotConsumption(parentLots, totalQtyDecimal, parentFallbackCost);
+          for (const consumption of lotPlan.consumptions) {
+            await tx.stockLot.update({
+              where: { id: consumption.id },
+              data: { remainingQty: { decrement: consumption.take } },
+            });
+          }
+          // Only the quantity the parent's lots actually covered may be re-lotted
+          // on the variant side. `uncovered` is real: a catalog imported with
+          // opening stock writes currentStock with no StockLot at all, and
+          // opening variant lots for that share would invent lot quantity the
+          // parent never gave up. The uncovered remainder simply stays un-lotted,
+          // exactly as it was on the parent.
+          let lotCredit = totalQtyDecimal.sub(lotPlan.uncovered);
+
+          // One negative ADJUSTMENT on the parent for the TOTAL. The parent's
+          // average is NEVER changed by this transfer — removing units at the
+          // average cost does not move the average — so the snapshot simply
+          // carries the existing average forward.
+          const parentStockAfter = parent.currentStock.sub(totalQtyDecimal);
+          const reference = `VARIANT_ASSIGN-${crypto.randomUUID()}`;
+          const parentNotes = dto.notes
+            ? `${dto.notes} — Split into variants`
+            : "Split into variants";
+
+          const movementIds: string[] = [];
+          const parentMovement = await tx.stockMovement.create({
             data: {
-              productId: variant.id,
+              productId: parent.id,
               type: MovementType.ADJUSTMENT,
-              quantity: qtyDecimal,
-              unitCost,
-              avgCostAfter: updatesAverage ? newAvgCost : (variant.averageCost ?? null),
-              stockAfter: variantStockAfter,
+              quantity: totalQtyDecimal.neg(),
+              avgCostAfter: parent.averageCost ?? null,
+              stockAfter: parentStockAfter,
               reference,
-              notes: variantNotes,
+              notes: parentNotes,
               performedById,
             },
           });
-          movementIds.push(variantMovement.id);
+          movementIds.push(parentMovement.id);
+
+          const assignmentResults: {
+            productId: string;
+            variantName: string | null;
+            qty: number;
+            unitCost: number;
+            created: boolean;
+          }[] = [];
+
+          for (const target of targets) {
+            const qtyDecimal = new Prisma.Decimal(target.qty);
+            const variant = target.existing
+              ? target.existing
+              : await this.createVariantRowInTx(tx, parent, target.newVariantName!, familyMode);
+
+            // Cost: unitCostOverride ?? the parent's EFFECTIVE cost. STANDARD-
+            // costed variants are valued from their own operator-set cost, so a
+            // transfer must never overwrite it — mirrors recordPurchase and the
+            // vendor-bill receive path's identical guard. When no cost is known
+            // anywhere the average is left alone too: stamping a fabricated 0
+            // would read as a real "$0 cost" in getValuation and drop the
+            // variant off the "no cost set" report.
+            const resolvedCost = target.unitCostOverride ?? parentEffectiveCost ?? null;
+            const unitCost = costDecimal(resolvedCost ?? 0);
+            const updatesAverage =
+              variant.costingMethod !== CostingMethod.STANDARD && resolvedCost != null;
+            const newAvgCost = nextAverageCost(
+              variant.currentStock,
+              variant.averageCost,
+              qtyDecimal,
+              unitCost,
+            );
+            const variantStockAfter = variant.currentStock.add(qtyDecimal);
+            const variantNotes = dto.notes
+              ? `${dto.notes} — Assigned from ${parent.name}`
+              : `Assigned from ${parent.name}`;
+
+            const lotQty = lotCredit.gt(qtyDecimal) ? qtyDecimal : lotCredit;
+            if (lotQty.gt(0)) {
+              await tx.stockLot.create({
+                data: {
+                  productId: variant.id,
+                  purchaseDate: new Date(),
+                  qty: lotQty,
+                  remainingQty: lotQty,
+                  unitCost,
+                  reference,
+                  notes: variantNotes,
+                },
+              });
+              lotCredit = lotCredit.sub(lotQty);
+            }
+
+            const variantMovement = await tx.stockMovement.create({
+              data: {
+                productId: variant.id,
+                type: MovementType.ADJUSTMENT,
+                quantity: qtyDecimal,
+                unitCost,
+                avgCostAfter: updatesAverage ? newAvgCost : (variant.averageCost ?? null),
+                stockAfter: variantStockAfter,
+                reference,
+                notes: variantNotes,
+                performedById,
+              },
+            });
+            movementIds.push(variantMovement.id);
+
+            await tx.product.update({
+              where: { id: variant.id },
+              data: {
+                currentStock: { increment: qtyDecimal },
+                ...(updatesAverage ? { averageCost: newAvgCost } : {}),
+              },
+            });
+
+            restockedProductIds.push(variant.id);
+            assignmentResults.push({
+              productId: variant.id,
+              variantName: variant.variantName ?? null,
+              qty: target.qty,
+              unitCost: Number(unitCost),
+              created: !target.existing,
+            });
+          }
 
           await tx.product.update({
-            where: { id: variant.id },
-            data: {
-              currentStock: { increment: qtyDecimal },
-              ...(updatesAverage ? { averageCost: newAvgCost } : {}),
-            },
+            where: { id: parent.id },
+            data: { currentStock: { decrement: totalQtyDecimal } },
           });
 
-          restockedProductIds.push(variant.id);
-          assignmentResults.push({
-            productId: variant.id,
-            variantName: variant.variantName ?? null,
-            qty: target.qty,
-            unitCost: Number(unitCost),
-            created: !target.existing,
-          });
-        }
-
-        await tx.product.update({
-          where: { id: parent.id },
-          data: { currentStock: { decrement: totalQtyDecimal } },
-        });
-
-        return {
-          reference,
-          parentProductId: parent.id,
-          parentRemaining: Number(parentStockAfter),
-          assignments: assignmentResults,
-          movementIds,
-        };
-      },
-      // Serializable, not the Postgres default READ COMMITTED: the pool check
-      // is a read-then-write invariant, and at READ COMMITTED two operators
-      // splitting the same generic at once would both read the same
-      // `currentStock`, both pass, and both decrement — driving the parent
-      // negative. Same pattern as credit-notes/invoices/orders.
-      { isolationLevel: "Serializable", timeout: 60_000 },
+          return {
+            reference,
+            parentProductId: parent.id,
+            parentRemaining: Number(parentStockAfter),
+            assignments: assignmentResults,
+            movementIds,
+          };
+        },
+        // Serializable, not the Postgres default READ COMMITTED: the pool check
+        // is a read-then-write invariant, and at READ COMMITTED two operators
+        // splitting the same generic at once would both read the same
+        // `currentStock`, both pass, and both decrement — driving the parent
+        // negative. Same pattern as credit-notes/invoices/orders.
+        { isolationLevel: "Serializable", timeout: 60_000 },
+      ),
     );
 
     // Never inside the transaction — the same fire-and-forget rule as every
@@ -1215,10 +1239,90 @@ export class InventoryService {
         items: {
           include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
         },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
     });
     if (!po) throw new NotFoundException("Purchase order not found");
-    return po;
+
+    // The PO's receipts history. There is no movement -> PO foreign key, only `reference = poNumber`
+    // (operator-editable on manual purchases), so the join is narrowed to what can only be this PO's:
+    // tenant-scoped (forTenant), the PO's own products, nothing written before the PO existed, and
+    // for receipts the PO's own supplier. A reversal is a re-apply's compensating ADJUSTMENT
+    // ("PO edit reversal — reverses <movementId>"), flagged and pointed at the receipt it undoes.
+    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    const names = new Map(po.items.map((i) => [i.productId, i.product?.name ?? null]));
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
+      where: {
+        reference: po.poNumber,
+        type: { in: [MovementType.PURCHASE, MovementType.ADJUSTMENT] },
+        productId: { in: [...names.keys()] },
+        createdAt: { gte: po.createdAt },
+      },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+    });
+    // A receipt is this PO's when it carries the PO's supplier. A supplier-only edit of a received
+    // PO changes the header but leaves the receipts on the OLD supplier, so for a product whose net
+    // posted quantity (own-supplier receipts + corrections) does not match what the line says was
+    // received, widen to any supplier for that product rather than show "nothing received" while
+    // stock was posted.
+    const qtyReceivedByProduct = new Map<string, number>();
+    for (const i of po.items) {
+      qtyReceivedByProduct.set(
+        i.productId,
+        (qtyReceivedByProduct.get(i.productId) ?? 0) + Number(i.qtyReceived),
+      );
+    }
+    const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
+    // Receipts a re-apply has already compensated no longer count towards what is on hand.
+    const reversedIds = new Set(
+      movements
+        .filter((m) => m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix))
+        .map((m) => (m.notes as string).slice(prefix.length).trim()),
+    );
+    const ownSupplier = purchases.filter(
+      (m) => m.supplierId === po.supplierId && !reversedIds.has(m.id),
+    );
+    const widened = new Set<string>();
+    for (const [productId, want] of qtyReceivedByProduct) {
+      const net = ownSupplier
+        .filter((m) => m.productId === productId)
+        .reduce((t, m) => t + Number(m.quantity), 0);
+      if (want > 0 && Math.abs(net - want) > 0.0005) widened.add(productId);
+    }
+    const receiptRows = purchases.filter(
+      (m) => m.supplierId === po.supplierId || widened.has(m.productId),
+    );
+    const receiptIds = new Set(receiptRows.map((m) => m.id));
+    const receipts: PurchaseOrderReceipt[] = [];
+    for (const m of movements) {
+      if (m.type === MovementType.PURCHASE && receiptIds.has(m.id)) {
+        receipts.push({
+          id: m.id,
+          kind: "RECEIPT",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+        });
+      } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        // Free text is not trusted on its own (B608): a correction shows only when it points at one
+        // of this PO's own receipts.
+        const reversesId = m.notes.slice(prefix.length).trim();
+        if (!receiptIds.has(reversesId)) continue;
+        receipts.push({
+          id: m.id,
+          kind: "REVERSAL",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+          reversesId,
+        });
+      }
+    }
+    return { ...po, receipts };
   }
 
   async sendPurchaseOrder(id: string) {
@@ -1267,7 +1371,8 @@ export class InventoryService {
           ? normalizeBoxesPieces({
               boxes: recv.boxes,
               pieces: recv.pieces,
-              unitsPerBox: prod?.unitsPerBox,
+              // #2734: the line's stored pack wins; the live product pack is only the fallback.
+              unitsPerBox: linePack(item, Number(prod?.unitsPerBox ?? 0)),
             }).qty
           : (recv.receivedQty ?? recv.qtyReceived ?? 0);
 
@@ -1357,7 +1462,7 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
-  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+  async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const tenantId = this.prisma.getTenantId();
     for (const productId of [...new Set(productIds)].sort()) {
       await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;

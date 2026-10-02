@@ -38,7 +38,10 @@ Both scripts run through `node scripts/local-env.mjs --e2e -- "..."` (the `--e2e
 sets `PLAYWRIGHT_BASE_URL=http://localhost:3001`, `SMOKE_BASE_URL=http://localhost:3000`,
 `PLAYWRIGHT_TENANT_SLUG=e2e-routeflow`, `E2E_SEED_DATABASE_URL=<the compose Postgres URL>`,
 `PLAYWRIGHT_JSON_OUTPUT_FILE=<repo-root>/.campaign/runs/web-e2e-local.json` (an absolute path),
-and unsets `CI`. To run a subset by hand, use the same wrapper directly:
+and unsets `CI`. The seed creates the `e2e_driver` (DRIVER role) fixture only when
+`E2E_DRIVER_PASSWORD` is set in your shell (a local throwaway of your choosing; never commit a
+value) - unset, that one user is skipped and the rest of the seed runs. To run a subset by hand,
+use the same wrapper directly:
 
 ```bash
 node scripts/local-env.mjs --e2e -- "npm --prefix apps/web run test:e2e -- --project=setup --project=critical-paths"
@@ -54,6 +57,19 @@ is human-only: it runs only on GitHub Actions (`GITHUB_ACTIONS=true`, so post-de
 unchanged) or when a human sets `E2E_ALLOW_REMOTE_AUTH=1` for that run. **An agent never sets that
 variable and never targets a non-local host** — a refusal is the guard working, not a bug to route
 around.
+
+### The proof-stack guard (stale image, #2491)
+
+A proof is only as current as the images it hits. `npm run local:up` / `local:build` stamp both
+images with the commit they were built from (`org.routeflow.sha`, plus `org.routeflow.dirty`). Every
+stack-backed lane (`local:validate`, `local:validate:features`, `local:e2e`, `local:e2e:all`) first
+prints a `proof-stack:` line with both shas. It then refuses with **stale image** unless each image
+was built from a descendant of the commit under proof: `PROOF_STACK_REQUIRE=<PR merge or head sha>`,
+or this checkout's HEAD when that is unset. An unlabelled image (built outside `local:up`) is
+refused too, and so is an image built from a dirty tree when `PROOF_STACK_REQUIRE` is set (a PR
+proof needs committed code; the HEAD dev loop only warns). The fix is always `npm run local:up`; never prove on the old image. A lane that drives
+Playwright or curl by hand runs `npm run local:proof-stack` first and quotes its line in the proof.
+Every check is appended to `local-assets/proof-stack.jsonl`.
 
 ## The allow-list (`local:e2e`)
 
