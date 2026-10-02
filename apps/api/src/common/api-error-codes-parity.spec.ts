@@ -126,14 +126,12 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/finance/commissions/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
-  "apps/web/app/(dashboard)/settings/billing/page.tsx": ["READ_ONLY"],
-  "apps/web/components/ReadOnlyBanner.tsx": ["READ_ONLY"],
   "apps/web/lib/mutation-error-toast.ts": ["READ_ONLY"],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 22;
+const CONSUMER_ALLOWLIST_TOTAL = 20;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -146,6 +144,9 @@ const READ_ONLY_STATUS_FILES = [
   "apps/api/src/billing/mrr.service.ts",
   "apps/api/src/billing/subscription-mutation.service.ts",
   "apps/api/src/tenant/tenant-status.guard.ts",
+  // web: tenant STATUS checks (`status !== "READ_ONLY"`), not the error code
+  "apps/web/app/(dashboard)/settings/billing/page.tsx",
+  "apps/web/components/ReadOnlyBanner.tsx",
 ];
 
 const posix = (rel: string) => rel.split(path.sep).join("/");
@@ -181,6 +182,8 @@ describe("API error codes: no bare string literal in production source (#2163)",
     for (const rel of READ_ONLY_STATUS_FILES) {
       const src = sources.find((s) => posix(s.rel) === rel);
       expect(src?.text).toMatch(/["'`]READ_ONLY["'`]/);
+      // The exemption is for the STATUS word only: a bare `code: "READ_ONLY"` in an exempt file is an error-code literal.
+      expect(src?.text).not.toMatch(/\bcode:\s*["'`]READ_ONLY["'`]/);
     }
     const guard = sources.find(
       (s) => posix(s.rel) === "apps/api/src/tenant/tenant-status.guard.ts",
