@@ -5,7 +5,12 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
+import { syncOrderLineCompositions } from "../orders/order-composition";
+import { invoiceCompositionFields } from "./invoice-line-composition";
+import { applyComposedLineEdits } from "./invoice-composed-edit";
+import { FeatureConfigService } from "../billing/feature-config.service";
 import * as unitAware from "../orders/unit-aware-guard";
 import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
@@ -27,6 +32,8 @@ import {
   inferredGoodsFlatRate,
 } from "@routeflow/pricing";
 import { computeDepositFields } from "./deposit-fields";
+import { deriveInvoiceDetailFields } from "./invoice-detail-read";
+import { withComponentViews } from "../orders/component-view";
 import { orderLineShape, orderLineUnchanged } from "./order-backsync-lines";
 import {
   buildEditedLines,
@@ -50,7 +57,7 @@ import { packAtSaleByProduct, priorUnitsPerBoxMap, toSaleLedgerLines } from "./p
 import { assertIntegerPieces, billPackOf } from "./unit-line-bill-guard";
 import { clampLimit } from "../common/pagination";
 import { isInternalEmail } from "../common/internal-email";
-import { loadMsrpMap } from "../common/msrp";
+import { stampMsrpSnapshots } from "./msrp-snapshots";
 import { effectiveTaxRateFromTotals } from "../common/tax-rate";
 import {
   checkOrderCoverage,
@@ -66,6 +73,7 @@ import {
 import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item-provenance";
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { buildPaymentsCsv } from "./payments-csv";
 import {
   CheckStatus,
   CreditNoteStatus,
@@ -112,7 +120,10 @@ import {
 import { assertNsfLinesUntaxed } from "./nsf-line-tax-guard";
 import { AuthorizationGuardService } from "../authorizations/authorization-guard.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
-import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
+import {
+  assertNoUnspentSourcedCredits,
+  unlinkSourcedCredits,
+} from "../credit-notes/sourced-credit-guard";
 import { MessagingService } from "../messaging/messaging.service";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
@@ -129,6 +140,7 @@ import {
 } from "../common/calendar-date";
 import { calendarFieldStamp, dueDateStamps, dueStamp } from "./invoice-due-dates";
 import { lockRowsNoWait } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { NumberingService } from "../import/numbering.service";
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { requireRestrictionTenantId } from "../selling-restrictions/restriction-tenant";
@@ -203,26 +215,12 @@ export class InvoicesService {
     private readonly sellingRestrictions: SellingRestrictionsService,
     // #2198/SA-397: flag.msrp asks the same evaluation point as the route guard.
     private readonly authority: EntitlementAuthority,
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
-  /**
-   * Stamp each line's MSRP at creation time. Snapshot, not a live read: an issued invoice
-   * must never change because someone later edited the product's MSRP. No-ops (leaving
-   * msrp null) when the tenant does not have flag.msrp, so a tenant that turns the feature
-   * off simply stops emitting MSRP on NEW invoices while old ones keep what they printed.
-   */
-  private async applyMsrpSnapshots<
-    T extends { productId?: string | null; msrp?: number | null; unitLabel?: string | null },
-  >(db: any, customerId: string, itemsData: T[]): Promise<void> {
-    const tenantId = this.prisma.getTenantId();
-    if (!tenantId || !(await this.authority.can(tenantId, "flag.msrp"))) return;
-    const ids = [...new Set(itemsData.map((i) => i.productId).filter(Boolean))] as string[];
-    if (ids.length === 0) return;
-    const map = await loadMsrpMap(db, customerId, ids);
-    for (const it of itemsData) {
-      // units_v1: the MSRP map is per PACK, a unit line is priced per UNIT — never stamp it
-      if (it.productId && !it.unitLabel) it.msrp = map.get(it.productId) ?? null;
-    }
+  /** Extracted to msrp-snapshots.ts (size ratchet); stamps each line's MSRP at creation time. */
+  private applyMsrpSnapshots(db: any, customerId: string, itemsData: any[]): Promise<void> {
+    return stampMsrpSnapshots(this.prisma, this.authority, db, customerId, itemsData);
   }
 
   /**
@@ -530,6 +528,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -956,6 +955,8 @@ export class InvoicesService {
       categoryTaxRate: li.categoryTaxRate != null ? Number(li.categoryTaxRate) : null,
       categoryPriceIncludesTax: li.categoryPriceIncludesTax ?? null,
       ...(tenantId ? { tenantId } : {}),
+      // #2717 M3: FIXED provenance + frozen component rows for THIS bill; {} on a plain line.
+      ...invoiceCompositionFields(li, billQty, prior, subtotal, tenantId),
     };
   }
 
@@ -1433,6 +1434,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -1658,6 +1660,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -1751,6 +1754,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2067,6 +2071,7 @@ export class InvoicesService {
           lineItems: {
             where: { status: { not: "CANCELLED" } },
             include: {
+              components: { orderBy: { position: "asc" } },
               product: {
                 select: {
                   name: true,
@@ -2169,6 +2174,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2380,6 +2386,7 @@ export class InvoicesService {
       }
     }
 
+    await syncOrderLineCompositions(db, orderId, tenantId, this.featureConfig);
     // B667: cancelling an orphan and rewriting the order's totals — coverage was already
     // confirmed above, before this loop ran.
     return finalizeOrderRecompute({
@@ -2417,6 +2424,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2642,6 +2650,7 @@ export class InvoicesService {
         lineItems: {
           where: { status: { not: "CANCELLED" } },
           include: {
+            components: { orderBy: { position: "asc" } },
             product: {
               select: {
                 name: true,
@@ -2999,6 +3008,7 @@ export class InvoicesService {
         },
         items: {
           include: {
+            components: { orderBy: { position: "asc" } }, // #2717 M3: frozen sub-lines
             product: { select: { id: true, name: true, unit: true, unitsPerBox: true } },
             // RF-2-lite: surface the regulated category/subcategory NAME so clients can
             // label regulated lines (previously only the trackedCategoryId was returned).
@@ -3035,49 +3045,14 @@ export class InvoicesService {
       // A customer must never see an upsell's base price on their invoice.
       redactUpsellForCustomer(inv);
     }
-    // F03/R1: CONFIRMED (PAID) payments only. VOID payments (manually voided OR
-    // bounced checks) must not count toward the paid amount — and neither must an
-    // unconfirmed DRAFT one; every other paid-sum in this file matches.
-    //
-    // B421: paidAmount is CASH-ONLY; creditApplied/advanceApplied are separate
-    // — see findAll's matching comment for why balanceDue/deposit still use
-    // the full confirmed total.
-    const { cash: paidAmount, creditApplied, advanceApplied } = splitConfirmed(inv.payments);
-    const totalConfirmed = paidAmount + creditApplied + advanceApplied;
-    const isSettled =
-      inv.status === InvoiceStatus.PAID ||
-      inv.status === InvoiceStatus.VOID ||
-      inv.status === InvoiceStatus.WRITTEN_OFF;
-    // B421 (review F3): roundMoney before the > 0 comparison — see findAll's
-    // matching comment (totalConfirmed sums three floats; a sub-cent remnant
-    // would otherwise render a red "Balance Due $0.00" on a settled invoice).
-    const balanceDue = isSettled ? 0 : Math.max(0, roundMoney(Number(inv.total) - totalConfirmed));
-    // RF-202: date-string comparison — invoice due today is NOT overdue.
-    const dueDateIso = inv.dueDate
-      ? (inv.dueDate instanceof Date ? inv.dueDate : new Date(inv.dueDate))
-          .toISOString()
-          .slice(0, 10)
-      : null;
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const isOverdue = !isSettled && balanceDue > 0 && dueDateIso != null && dueDateIso < todayIso;
-    const { depositAmount, depositOverdue } = computeDepositFields(
-      inv as any,
-      totalConfirmed,
-      todayIso,
-    );
     // Rides the invoice payload (not /settings/invoice, which is operator-only)
     // so CUSTOMER viewers of this same document honor the tenant's
     // hide-original-price preference too.
     const hideOriginalPrice = (await this.systemConfig.get("invoice.hideOriginalPrice")) === "true";
     return {
       ...inv,
-      balanceDue,
-      paidAmount,
-      creditApplied,
-      advanceApplied,
-      isOverdue,
-      depositAmount,
-      depositOverdue,
+      ...deriveInvoiceDetailFields(inv),
+      items: withComponentViews(inv.items) as typeof inv.items, // #2717 M3: displayUnitPrice4 as a number
       hideOriginalPrice,
     };
   }
@@ -3179,6 +3154,7 @@ export class InvoicesService {
           const patch = row ? inPlacePatch(l, row) : null;
           if (patch) await tx.invoiceItem.update({ where: { id: l.rowId }, data: patch });
         }
+        await applyComposedLineEdits(tx, inv, editLines, storedRows); // #2717 M3: case 18
         // SA-189: history must tell an attested pack (the operator's explicit unitsPerBox) from a recovered one.
         const attested = editLines.flatMap((l) =>
           l.attestedPack ? [{ rowId: l.rowId, unitsPerBox: l.attestedPack }] : [],
@@ -5200,11 +5176,28 @@ export class InvoicesService {
 
   async deleteInvoice(id: string) {
     return withAfterCommit(this.prisma, async (tx, after) => {
+      // SA-608g (SA-214: Order -> Invoice -> CreditNote): read the invoice UNLOCKED only for its order,
+      // lock the order, then the invoice (never the invoice first: adjustInvoicedQtyForInvoice writes the
+      // order's items below, so Invoice -> Order would invert SA-214 against an order-edit sync), and
+      // RE-READ under the lock. Once the invoice is locked, a reissue's mint (KEY SHARE on it) waits, so
+      // the sourced-note reads below cannot miss a note that commits in between and be SET NULL orphaned.
+      const peek = await tx.invoice.findUnique({ where: { id }, select: { orderId: true } });
+      if (!peek) throw new NotFoundException("Invoice not found");
+      if (peek.orderId)
+        await tx.$executeRaw`SELECT id FROM "Order" WHERE id = ${peek.orderId} FOR UPDATE`;
+      await tx.$executeRaw`SELECT id FROM "Invoice" WHERE id = ${id} FOR UPDATE`;
       const inv = await tx.invoice.findUnique({
         where: { id },
         include: { payments: true },
       });
       if (!inv) throw new NotFoundException("Invoice not found");
+      // The order was locked from the PEEK. If the link moved since (no writer re-points it today:
+      // only A -> null), adjustInvoicedQtyForInvoice below would write an order we never locked.
+      if (inv.orderId !== peek.orderId)
+        throw new ConflictException({
+          code: API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY,
+          message: "The invoice changed while it was being deleted. Try again.",
+        });
 
       if (inv.payments.length > 0) {
         throw new BadRequestException(
@@ -5227,12 +5220,12 @@ export class InvoicesService {
       // items are deleted (the ledger keeps its own snapshot; append-only, no FK).
       await this.ledger.reverseInvoiceEntries({ invoiceId: id, db: tx });
 
-      // Unlink the remaining (closed: spent, VOID or expired) credit notes this invoice sourced;
-      // open ones were refused above.
-      await tx.creditNote.updateMany({
-        where: { invoiceId: id },
-        data: { invoiceId: null },
-      });
+      // Unlink the remaining (closed) credit notes this invoice sourced, marking each (#2848).
+      await unlinkSourcedCredits(
+        tx,
+        [{ id, invoiceNumber: inv.invoiceNumber }],
+        this.prisma.getTenantId(),
+      );
 
       // Delete line items
       await tx.invoiceItem.deleteMany({ where: { invoiceId: id } });
@@ -5748,31 +5741,7 @@ export class InvoicesService {
       },
     });
 
-    const escape = (v: any) => {
-      const s = v == null ? "" : String(v);
-      return s.includes(",") || s.includes('"') || s.includes("\n")
-        ? `"${s.replace(/"/g, '""')}"`
-        : s;
-    };
-
-    const header =
-      "Payment#,Date,Bank Date,Customer,Invoice#,Method,Reference,Bank Charges,Amount,Status";
-    const lines = rows.map((r: any) =>
-      [
-        escape(r.paymentNumber ?? ""),
-        escape(r.paidAt ? new Date(r.paidAt).toISOString().split("T")[0] : ""),
-        escape(r.settledAt ? new Date(r.settledAt).toISOString().split("T")[0] : ""),
-        escape(r.invoice?.customer?.businessName ?? ""),
-        escape(r.invoice?.invoiceNumber ?? ""),
-        escape(r.method ?? ""),
-        escape(r.reference ?? ""),
-        escape(r.bankCharges != null ? Number(r.bankCharges).toFixed(2) : ""),
-        escape(Number(r.amount).toFixed(2)),
-        escape(r.status ?? ""),
-      ].join(","),
-    );
-
-    return [header, ...lines].join("\n");
+    return buildPaymentsCsv(rows);
   }
 
   // ─── Cron ─────────────────────────────────────────────────────────────────

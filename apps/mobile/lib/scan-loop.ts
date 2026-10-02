@@ -8,7 +8,7 @@
  */
 import { gateScan as gateScanShared, SCAN_COOLDOWN_MS } from "@routeflow/scanning";
 import type { ScanGateState } from "@routeflow/scanning";
-import { normalizeScanCode } from "./barcode-normalize";
+import { normalizeScanCode } from "@routeflow/scanning";
 
 export { ABSENCE_GAP_MS, SCAN_COOLDOWN_MS, SCAN_SLOTS } from "@routeflow/scanning";
 export type {

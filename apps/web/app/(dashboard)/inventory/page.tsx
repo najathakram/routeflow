@@ -3,9 +3,8 @@
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { Plus, X, Info, Sparkles, Search, SlidersHorizontal, DollarSign } from "lucide-react";
-import { Badge, Button, Modal, PageHeader, cn, useToast } from "@routeflow/ui/web";
+import { Badge, Button, Modal, PageHeader, ScrollShadow, cn, useToast } from "@routeflow/ui/web";
 import { SearchableProductPicker } from "@/components/SearchableProductPicker";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { archivedMessage, resolveProductByCode } from "@/lib/barcode-resolve";
@@ -42,7 +41,8 @@ import { VariantSplitModal } from "@/components/VariantSplitModal";
 import { SupplierSelect } from "@/components/SupplierSelect";
 import { useSortableData } from "@/lib/use-sortable-data";
 import { SortableTh } from "@/components/SortableTh";
-import { PurchaseOrdersTab } from "./_components/PurchaseOrdersTab";
+import { INVENTORY_TABS } from "./_components/inventory-tabs";
+import { useInventoryTab } from "./_components/use-inventory-tab";
 import { CreatePOModal } from "./_components/PurchaseOrdersCreateModal";
 import type { Supplier } from "./_components/purchase-orders-shared";
 
@@ -273,7 +273,7 @@ function QuickRestockModal({
                 upgrade. */}
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/vendor-bills" className="text-brand-500 hover:underline">
-              Bills &amp; Purchasing
+              Supplier Bills
             </a>
           </p>
         </div>
@@ -1637,14 +1637,10 @@ export default function InventoryPage() {
     setTitle("Inventory");
   }, [setTitle]);
 
-  // Deep-linkable to the Stock Count tab — `?tab=count` (and `?amend=<id>`,
-  // which implies it) land on "count" instead of the default "stock". Read
-  // once on mount; StockCountTab strips `amend` from the URL itself once it's
-  // consumed the deep link, so this never needs to react to later changes.
-  const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = React.useState(() =>
-    searchParams.get("tab") === "count" || searchParams.get("amend") ? "count" : "stock",
-  );
+  // Every panel tab deep-links via `?tab=<value>` (and `?amend=<id>` implies "count"); an
+  // unknown value falls back to Stock and `?tab=purchase-orders` goes to its own route. Read
+  // once on mount; StockCountTab strips `amend` from the URL itself once it's consumed it.
+  const { activeTab, selectTab } = useInventoryTab();
 
   const { data: stockItems = [], isLoading: stockLoading } = useStockOverview();
   const { data: suppliers = [], isLoading: suppliersLoading } = useSuppliers();
@@ -1782,13 +1778,7 @@ export default function InventoryPage() {
   );
   const clearScrollTarget = React.useCallback(() => setScrollToProductId(null), []);
 
-  const tabs = [
-    { value: "stock", label: "Stock" },
-    { value: "count", label: "Stock Count" },
-    { value: "suppliers", label: "Suppliers" },
-    { value: "purchase-orders", label: "Purchase Orders" },
-    { value: "forecasting", label: "Forecasting" },
-  ];
+  const tabs = INVENTORY_TABS;
 
   return (
     <div className="space-y-5 p-6">
@@ -1821,7 +1811,7 @@ export default function InventoryPage() {
             </p>
             {totalInventoryValue === 0 && (
               <span
-                title="Value is calculated from average cost per unit. Record purchase receipts in the Vendor Bills tab to populate costs."
+                title="Value is calculated from average cost per unit. Record purchase receipts in the Supplier Bills tab to populate costs."
                 className="cursor-help"
               >
                 <Info className="h-3.5 w-3.5 text-navy/30" />
@@ -1891,21 +1881,31 @@ export default function InventoryPage() {
         </div>
       )}
 
-      <Tabs.Root value={activeTab} onValueChange={setActiveTab}>
-        <Tabs.List className="flex gap-1 border-b border-surface-border">
-          {tabs.map((tab) => (
-            <Tabs.Trigger
-              key={tab.value}
-              value={tab.value}
-              className={cn(
-                "-mb-px border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
-                "text-navy/70 hover:text-navy",
-                "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
-              )}
-            >
-              {tab.label}
-            </Tabs.Trigger>
-          ))}
+      <Tabs.Root value={activeTab} onValueChange={selectTab}>
+        <Tabs.List className="flex gap-1 overflow-x-auto border-b border-surface-border">
+          {tabs.map((tab) =>
+            tab.href ? (
+              <Link
+                key={tab.value}
+                href={tab.href}
+                className="-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium text-navy/70 transition-colors hover:text-navy"
+              >
+                {tab.label}
+              </Link>
+            ) : (
+              <Tabs.Trigger
+                key={tab.value}
+                value={tab.value}
+                className={cn(
+                  "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-4 py-2.5 text-sm font-medium transition-colors",
+                  "text-navy/70 hover:text-navy",
+                  "data-[state=active]:border-brand-500 data-[state=active]:text-navy",
+                )}
+              >
+                {tab.label}
+              </Tabs.Trigger>
+            ),
+          )}
         </Tabs.List>
 
         {/* ── Stock tab ── */}
@@ -2107,7 +2107,7 @@ export default function InventoryPage() {
                 return `${shown} of ${total}`;
               })()}
             </p>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {/* B562 (interim mitigation): the dedicated "Recompute" button and the
                   "Costs" button's recompute fallback (used when there were no missing
                   costs) were removed here. recompute-costs is blind to raw order
@@ -2164,7 +2164,7 @@ export default function InventoryPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
+          <ScrollShadow className="rounded-b-lg border border-t-0 border-surface-border bg-white shadow-card">
             {stockLoading ? (
               <div className="space-y-2 p-4">
                 {[...Array(5)].map((_, i) => (
@@ -2187,7 +2187,7 @@ export default function InventoryPage() {
                 onScrolled={clearScrollTarget}
               />
             )}
-          </div>
+          </ScrollShadow>
         </Tabs.Content>
 
         {/* ── Stock Count tab ── */}
@@ -2252,19 +2252,6 @@ export default function InventoryPage() {
               </table>
             </div>
           )}
-        </Tabs.Content>
-
-        {/* ── Purchase Orders tab ── */}
-        <Tabs.Content value="purchase-orders" className="pt-4">
-          <PurchaseOrdersTab
-            suppliers={suppliers as Supplier[]}
-            products={products.map((p: any) => ({
-              id: p.id,
-              name: p.name,
-              sku: p.sku,
-              unitsPerBox: p.unitsPerBox ?? null,
-            }))}
-          />
         </Tabs.Content>
 
         {/* ── Forecasting tab ── */}

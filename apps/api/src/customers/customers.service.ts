@@ -15,6 +15,7 @@ import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
 import { ConfigService } from "@nestjs/config";
 import * as bcrypt from "bcrypt";
 import { PrismaService } from "../prisma/prisma.service";
+import { isInternalEmail } from "../common/internal-email";
 import { assertCleanupImportedEnabled } from "./cleanup-imported-disabled";
 import {
   assertNoBlockingInvoices,
@@ -59,6 +60,7 @@ import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { customerUpdateData } from "./customer-update-data";
+import { assertSafeCustomerNames } from "./customer-name-guard";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -77,6 +79,7 @@ import * as compliance from "./customer-compliance-input";
 // gate applies it synchronously rather than waiting for the cron to run.
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
+import { buildCustomersCsv } from "./customers-csv";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -527,6 +530,7 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
+    assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
     await this.assertCustomerCapNotExceeded();
@@ -788,6 +792,7 @@ export class CustomersService {
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
@@ -1830,33 +1835,20 @@ export class CustomersService {
       orderBy: { createdAt: "desc" },
     });
 
-    const escCsv = (val: string | null | undefined) => {
-      if (!val) return "";
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
-
-    const header =
-      "Business Name,Contact Name,Email,Phone,Customer Type,Status,Receivables,Credits";
-    const rows = customers.map((c) => {
-      const receivables = c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0);
-      const credits = c.advancePayments.reduce((s, a) => s + Number(a.balance), 0);
-
-      return [
-        escCsv(c.businessName),
-        escCsv(c.contactName),
-        escCsv(c.email),
-        escCsv(c.phone),
-        escCsv(c.customerType),
-        escCsv(c.user?.status),
-        roundMoney(receivables).toFixed(2),
-        credits.toFixed(2),
-      ].join(",");
-    });
-
-    return [header, ...rows].join("\n");
+    // The money sums stay HERE (credit-exposure-coverage.spec: exportCustomers must call
+    // receivableBalance itself); the CSV builder only formats.
+    return buildCustomersCsv(
+      customers.map((c) => ({
+        businessName: c.businessName,
+        contactName: c.contactName,
+        email: c.email,
+        phone: c.phone,
+        customerType: c.customerType,
+        status: c.user?.status,
+        receivables: c.invoices.reduce((sum, inv) => sum + receivableBalance(inv), 0),
+        credits: c.advancePayments.reduce((s, a) => s + Number(a.balance), 0),
+      })),
+    );
   }
 
   // ─── Merge Customers ──────────────────────────────────────────────────────
@@ -2864,11 +2856,13 @@ export class CustomersService {
     if (!customer) throw new NotFoundException("Customer not found");
 
     // Use override email first, then customer's own email, then User's login email.
-    // Ignore internal placeholders minted for emailless customers (@placeholder.local).
-    const loginEmail = customer.user?.email?.endsWith("@placeholder.local")
-      ? null
-      : customer.user?.email;
-    const toEmail = dto.overrideEmail ?? customer.email ?? loginEmail ?? null;
+    // Import sentinels (`@imported.local` / `@placeholder.local`) are non-routable —
+    // filter them from ALL three sources (older clients echo the on-file address into
+    // the override), so a sentinel-only customer behaves exactly like "no email on file".
+    const requestedEmail = isInternalEmail(dto.overrideEmail) ? null : dto.overrideEmail;
+    const onFileEmail = isInternalEmail(customer.email) ? null : customer.email;
+    const loginEmail = isInternalEmail(customer.user?.email) ? null : customer.user?.email;
+    const toEmail = requestedEmail ?? onFileEmail ?? loginEmail ?? null;
     if (!toEmail) {
       throw new BadRequestException(
         "Customer has no email address. Add an email or provide an override.",

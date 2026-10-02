@@ -172,8 +172,8 @@ describe("gateScan — normalized dedupe + accept-only cooldown (F30 rework)", (
     // 14-digit code starting with "0"), so these two really are different
     // items to the resolver — and both are printed on the one carton face the
     // operator is holding. A single-slot gate sees a new item on every flip
-    // and accepts all six; scanUnitKind then routes the case code to
-    // incrementLine and the item code to incrementLinePiece, which is the
+    // and accepts all six; the shared level resolver then routes the case code to
+    // a BOX add and the item code to a UNIT add, which is the
     // "N cs + M loose" runaway B190 describes.
     const caseCode = "10012345678902";
     const itemCode = "0012345678905";

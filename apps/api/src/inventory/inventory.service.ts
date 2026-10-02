@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -29,6 +30,7 @@ import {
   StartStockCountDto,
   UpsertStockCountLineDto,
 } from "./dto/stock-count-session.dto";
+import { buildMovementsWhere } from "./movements-where";
 import { ListMovementsDto } from "./dto/list-movements.dto";
 import { ListPurchaseOrdersDto } from "./dto/list-purchase-orders.dto";
 import { UpdatePurchaseOrderDto } from "./dto/update-purchase-order.dto";
@@ -188,20 +190,7 @@ export class InventoryService {
     const limit = Number(query.limit ?? 50);
     const skip = (page - 1) * limit;
 
-    const where: Prisma.StockMovementWhereInput = {};
-    if (query.productId) where.productId = query.productId;
-    if (query.type) where.type = query.type;
-    // B562: the date filter and order are on effectiveAt (the accounting date a backdated
-    // movement carries); createdAt is write-once insertion time.
-    if (query.from || query.to) {
-      where.effectiveAt = {};
-      if (query.from) where.effectiveAt.gte = new Date(query.from);
-      if (query.to) {
-        const toDate = new Date(query.to);
-        toDate.setUTCHours(23, 59, 59, 999);
-        where.effectiveAt.lte = toDate;
-      }
-    }
+    const where = buildMovementsWhere(query);
 
     const [data, total] = await Promise.all([
       this.prisma.forTenant().stockMovement.findMany({
@@ -1250,10 +1239,90 @@ export class InventoryService {
         items: {
           include: { product: { select: { id: true, name: true, unit: true, unitsPerBox: true } } },
         },
+        vendorBill: { select: { id: true, billNumber: true, status: true } },
       },
     });
     if (!po) throw new NotFoundException("Purchase order not found");
-    return po;
+
+    // The PO's receipts history. There is no movement -> PO foreign key, only `reference = poNumber`
+    // (operator-editable on manual purchases), so the join is narrowed to what can only be this PO's:
+    // tenant-scoped (forTenant), the PO's own products, nothing written before the PO existed, and
+    // for receipts the PO's own supplier. A reversal is a re-apply's compensating ADJUSTMENT
+    // ("PO edit reversal — reverses <movementId>"), flagged and pointed at the receipt it undoes.
+    const prefix = InventoryService.PO_REVERSAL_NOTE;
+    const names = new Map(po.items.map((i) => [i.productId, i.product?.name ?? null]));
+    const movements = await this.prisma.forTenant().stockMovement.findMany({
+      where: {
+        reference: po.poNumber,
+        type: { in: [MovementType.PURCHASE, MovementType.ADJUSTMENT] },
+        productId: { in: [...names.keys()] },
+        createdAt: { gte: po.createdAt },
+      },
+      orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+    });
+    // A receipt is this PO's when it carries the PO's supplier. A supplier-only edit of a received
+    // PO changes the header but leaves the receipts on the OLD supplier, so for a product whose net
+    // posted quantity (own-supplier receipts + corrections) does not match what the line says was
+    // received, widen to any supplier for that product rather than show "nothing received" while
+    // stock was posted.
+    const qtyReceivedByProduct = new Map<string, number>();
+    for (const i of po.items) {
+      qtyReceivedByProduct.set(
+        i.productId,
+        (qtyReceivedByProduct.get(i.productId) ?? 0) + Number(i.qtyReceived),
+      );
+    }
+    const purchases = movements.filter((m) => m.type === MovementType.PURCHASE);
+    // Receipts a re-apply has already compensated no longer count towards what is on hand.
+    const reversedIds = new Set(
+      movements
+        .filter((m) => m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix))
+        .map((m) => (m.notes as string).slice(prefix.length).trim()),
+    );
+    const ownSupplier = purchases.filter(
+      (m) => m.supplierId === po.supplierId && !reversedIds.has(m.id),
+    );
+    const widened = new Set<string>();
+    for (const [productId, want] of qtyReceivedByProduct) {
+      const net = ownSupplier
+        .filter((m) => m.productId === productId)
+        .reduce((t, m) => t + Number(m.quantity), 0);
+      if (want > 0 && Math.abs(net - want) > 0.0005) widened.add(productId);
+    }
+    const receiptRows = purchases.filter(
+      (m) => m.supplierId === po.supplierId || widened.has(m.productId),
+    );
+    const receiptIds = new Set(receiptRows.map((m) => m.id));
+    const receipts: PurchaseOrderReceipt[] = [];
+    for (const m of movements) {
+      if (m.type === MovementType.PURCHASE && receiptIds.has(m.id)) {
+        receipts.push({
+          id: m.id,
+          kind: "RECEIPT",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+        });
+      } else if (m.type === MovementType.ADJUSTMENT && m.notes?.startsWith(prefix)) {
+        // Free text is not trusted on its own (B608): a correction shows only when it points at one
+        // of this PO's own receipts.
+        const reversesId = m.notes.slice(prefix.length).trim();
+        if (!receiptIds.has(reversesId)) continue;
+        receipts.push({
+          id: m.id,
+          kind: "REVERSAL",
+          productId: m.productId,
+          productName: names.get(m.productId) ?? null,
+          quantity: Number(m.quantity),
+          unitCost: m.unitCost == null ? null : Number(m.unitCost),
+          at: m.createdAt.toISOString(),
+          reversesId,
+        });
+      }
+    }
+    return { ...po, receipts };
   }
 
   async sendPurchaseOrder(id: string) {
@@ -1393,7 +1462,7 @@ export class InventoryService {
    * currentStock is written as an increment, but the average is derived from
    * the read - the lock is what keeps that read consistent with the write.
    */
-  private async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
+  async lockProducts(tx: Prisma.TransactionClient, productIds: Iterable<string>) {
     const tenantId = this.prisma.getTenantId();
     for (const productId of [...new Set(productIds)].sort()) {
       await tx.$executeRaw`SELECT id FROM "Product" WHERE id = ${productId} AND "tenantId" = ${tenantId} FOR UPDATE`;
