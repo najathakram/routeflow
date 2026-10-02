@@ -36,7 +36,7 @@
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/customers/[id]/page.tsx": {
-    "count": 10,
+    "count": 8,
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "app/(dashboard)/customers/_components/AuthorizationsTab.tsx": {
@@ -256,7 +256,7 @@
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/buyers/[id]/page.tsx": {
-    "count": 7,
+    "count": 6,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
   },
   "app/(platform-admin)/admin/buyers/merge-requests/[id]/page.tsx": {
@@ -312,10 +312,6 @@
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
   "app/buyer/portal/[seller]/invoices/page.tsx": {
-    "count": 1,
-    "why": "B986-4 buyer portal: per-surface raw message read, pending"
-  },
-  "app/buyer/portal/[seller]/licenses/page.tsx": {
     "count": 1,
     "why": "B986-4 buyer portal: per-surface raw message read, pending"
   },
