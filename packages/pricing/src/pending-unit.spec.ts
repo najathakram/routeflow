@@ -1,12 +1,14 @@
 import {
   isUnitPending,
   mayMergeResolved,
+  pendingResolveKey,
   pendingResolvePlan,
   pendingScanDecision,
   pendingStatus,
   pendingTapCount,
   refreshUnitsAnswer,
   refusesPendingEdit,
+  undoPendingTap,
 } from "./pending-unit";
 
 /**
@@ -183,5 +185,29 @@ describe("refreshUnitsAnswer ('Try again' refetches an unknown units answer)", (
     expect(await refreshUnitsAnswer(known, fail, "f")).toBe(known);
     const driver = { ...deps, isStaff: false };
     expect(await refreshUnitsAnswer(driver, fail, "f")).toBe(driver);
+  });
+});
+
+describe("undoPendingTap (N2: Undo on a PENDING line takes one TAP back, never settles a unit)", () => {
+  it("decrements the tap count; at the creating scan (1 tap) the line is REMOVED", () => {
+    expect(undoPendingTap(3)).toEqual({ remove: false, taps: 2 });
+    expect(undoPendingTap(2)).toEqual({ remove: false, taps: 1 });
+    expect(undoPendingTap(1)).toEqual({ remove: true });
+    expect(undoPendingTap(undefined)).toEqual({ remove: true });
+  });
+});
+
+describe("pendingResolveKey (N1: the resolver re-runs when a tap lands during the fetch)", () => {
+  it("changes with the tap count, so a tap during the fetch re-runs the resolver", () => {
+    const one = pendingResolveKey([{ id: "p1", count: 1 }]);
+    const two = pendingResolveKey([{ id: "p1", count: 2 }]);
+    expect(one).not.toBe(two);
+    expect(
+      pendingResolveKey([
+        { id: "a", count: 1 },
+        { id: "b", count: 2 },
+      ]),
+    ).toBe("a:1|b:2");
+    expect(pendingResolveKey([])).toBe("");
   });
 });

@@ -485,4 +485,32 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
     ]);
   });
+
+  it("SA-632 N2: 'Undo last scan' on a PENDING line takes one TAP back (3 scans, 2 undos -> exactly 1 Bottle); it never settles a case", async () => {
+    mockScanV2 = true;
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(0);
+    act(() => capturedOnOpenContinuous!());
+    await screen.findByRole("dialog", { name: "Scan items" });
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        // steady read: one deliberate scan = the same code held for three frames
+        for (let f = 0; f < 3; f++) cameraDetect!(`11${i}`);
+      });
+      await act(async () => new Promise((r) => setTimeout(r, 30)));
+    }
+    for (let i = 0; i < 2; i++) {
+      fireEvent.click(await screen.findByRole("button", { name: /undo last scan/i }));
+      await act(async () => undefined);
+    }
+    await act(async () => release([bottleLevel, caseLevel]));
+    fireEvent.click(screen.getByRole("button", { name: /^done$/i }));
+    await screen.findByRole("dialog", { name: "Create Order" });
+    await waitFor(() => expect(screen.queryByText(/loading units/)).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
+    ]);
+  });
 });

@@ -72,6 +72,13 @@ export function isPendingDefaultUnit(line: DefaultUnitLine): boolean {
  * The ONE writer of a chosen unit on an order's lines (the picker's onChange and the default start): switches the line,
  * CONSUMES the default-start flag, and folds into a twin line of the same product + unit.
  */
+/** One line folded into a twin of the same product + unit while resolving (the resolved line, before it disappeared). */
+export interface UnitFold<T> {
+  from: string;
+  into: string;
+  add: T;
+}
+
 export function applyUnitToLines<T extends DefaultUnitLine>(
   prev: T[],
   tempId: string,
@@ -79,8 +86,18 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
   refresh: boolean,
   tier: Tier,
 ): T[] {
+  return applyUnitToLinesDetailed(prev, tempId, option, refresh, tier).lines;
+}
+
+export function applyUnitToLinesDetailed<T extends DefaultUnitLine>(
+  prev: T[],
+  tempId: string,
+  option: UnitOption,
+  refresh: boolean,
+  tier: Tier,
+): { lines: T[]; fold?: UnitFold<T> } {
   const target = prev.find((li) => li.tempId === tempId);
-  if (!target) return prev;
+  if (!target) return { lines: prev };
   // startOnDefaultUnit is CONSUMED by any unit choice (incl. the pack): a remount can never re-apply the default over
   // the operator's choice (Opus #2865 B1).
   // Re-applying the unit the line ALREADY holds (a stale picker after the resolver ran) keeps its quantity (N2).
@@ -95,10 +112,13 @@ export function applyUnitToLines<T extends DefaultUnitLine>(
       : {}),
   };
   const twin = prev.find((li) => li.tempId !== tempId && sameProductUnit(li, next));
-  if (!twin) return prev.map((li) => (li.tempId === tempId ? next : li));
-  return prev
-    .filter((li) => li.tempId !== tempId)
-    .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li));
+  if (!twin) return { lines: prev.map((li) => (li.tempId === tempId ? next : li)) };
+  return {
+    lines: prev
+      .filter((li) => li.tempId !== tempId)
+      .map((li) => (li.tempId === twin.tempId ? mergeSameLine(li, next) : li)),
+    fold: { from: tempId, into: twin.tempId, add: next },
+  };
 }
 
 /** The default-unit option for this line's ladder, or undefined (stay on the pack). */
@@ -156,8 +176,14 @@ export const refreshUnitsAnswer: (
 export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
   lines: T[],
   deps: DefaultUnitDeps,
-): Promise<{ lines: T[]; blocked: string[]; reasons: Record<string, PendingBlockReason> }> {
+): Promise<{
+  lines: T[];
+  blocked: string[];
+  reasons: Record<string, PendingBlockReason>;
+  folds: UnitFold<T>[];
+}> {
   let out = lines;
+  const folds: UnitFold<T>[] = [];
   const blocked: string[] = [];
   const reasons: Record<string, PendingBlockReason> = {};
   const block = (id: string, reason: PendingBlockReason) => {
@@ -182,14 +208,20 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
       const units = await deps.getUnits(line.productId);
       const tier = deps.tierFor(line.productId);
       const option = defaultOptionFor(line, units, tier);
-      out = option
-        ? applyUnitToLines(out, line.tempId, option, false, tier)
-        : out.map((li) => (li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li));
+      if (option) {
+        const applied = applyUnitToLinesDetailed(out, line.tempId, option, false, tier);
+        out = applied.lines;
+        if (applied.fold) folds.push(applied.fold);
+      } else {
+        out = out.map((li) =>
+          li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
+        );
+      }
     } catch {
       block(line.tempId, "ladder-failed");
     }
   }
-  return { lines: out, blocked, reasons };
+  return { lines: out, blocked, reasons, folds };
 }
 
 const UNIT_FIELDS = [
@@ -221,8 +253,30 @@ export function mergeResolvedLines<T extends DefaultUnitLine>(
   cur: T[],
   before: T[],
   done: T[],
+  folds: ReadonlyArray<UnitFold<T>> = [],
 ): T[] {
   let out = cur;
+  // A pending line that FOLDED into a twin while resolving is gone from `done`: take it out of the current lines and add
+  // its resolved count to the twin, or it would sit on "loading" forever (and keep Create Order disabled).
+  for (const f of folds) {
+    const b = before.find((li) => li.tempId === f.from);
+    const c = out.find((li) => li.tempId === f.from);
+    const into = out.find((li) => li.tempId === f.into);
+    if (
+      !b ||
+      !into ||
+      !mayMergeResolved({
+        cur: c && { startOnDefaultUnit: c.startOnDefaultUnit, shaped: isShapedLine(c) },
+        curCount: c ? pendingCount(c) : 0,
+        beforeCount: pendingCount(b),
+        changed: true,
+      })
+    )
+      continue;
+    out = out
+      .filter((li) => li.tempId !== f.from)
+      .map((li) => (li.tempId === f.into ? mergeSameLine(li, f.add) : li));
+  }
   for (const d of done) {
     const b = before.find((li) => li.tempId === d.tempId);
     const c = out.find((li) => li.tempId === d.tempId);

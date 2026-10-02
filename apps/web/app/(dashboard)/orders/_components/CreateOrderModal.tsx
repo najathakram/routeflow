@@ -32,6 +32,7 @@ import {
   getTierPrice,
   computeLineSubtotal,
   pendingScanDecision,
+  undoPendingTap,
   type SellLevel,
 } from "@routeflow/pricing";
 import {
@@ -1167,7 +1168,7 @@ export function CreateOrderModal({
     if (resolvingRef.current) return; // a double click while the units load must not submit twice
     resolvingRef.current = true;
     void resolveDefaultUnits(lineItems)
-      .then(({ lines, blocked }) => {
+      .then(({ lines, blocked, folds }) => {
         if (blocked.length) {
           setMergePrompt(null);
           toast({
@@ -1176,7 +1177,7 @@ export function CreateOrderModal({
           });
           return;
         }
-        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines)); // keeps edits made while this waited
+        setLineItems((cur) => mergeResolvedLines(cur, lineItems, lines, folds)); // keeps edits made while this waited
         doSubmitOrder(data, options, lines);
       })
       .finally(() => {
@@ -1445,6 +1446,17 @@ export function CreateOrderModal({
   const undoScan = ({ productId, created }: ScanHistoryEntry) => {
     const line = lineItems.find((li) => sameProductUnit(li, { productId }));
     if (!line) return; // the operator already removed it by hand
+    // #2865 (SA-632 N2): Undo on a PENDING line takes one TAP back (the shared rule); at the creating scan the line is
+    // REMOVED. It never steps a quantity, so it can never settle the line as a case.
+    if (isPendingDefaultUnit(line)) {
+      const undone = undoPendingTap(pendingCount(line));
+      if (undone.remove) removeLineItem(line.tempId);
+      else
+        setLineItems((prev) =>
+          prev.map((li) => (li.tempId === line.tempId ? { ...li, pendingTaps: undone.taps } : li)),
+        );
+      return;
+    }
     const singleUnit = line.unitsPerBox
       ? (line.boxes ?? 0) <= 1 && (line.pieces ?? 0) === 0
       : line.qty <= 1;

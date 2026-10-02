@@ -368,7 +368,15 @@ describe("LOW: a twin-fold never leaves a line stuck pending; M1: reasons say lo
       [BOTTLE, CASE_LEVEL],
       1,
     ).find((o) => o.value === "Bottle")!;
-    const twin = line({ tempId: "t2", startOnDefaultUnit: false, unitLabel: "Bottle", qty: 3 });
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
     const folded = applyUnitToLines([line({ pendingTaps: 2 }), twin], "t1", bottleOpt, false, 1);
     expect(folded.some(isPendingDefaultUnit)).toBe(false);
     expect(folded).toHaveLength(1);
@@ -382,5 +390,45 @@ describe("LOW: a twin-fold never leaves a line stuck pending; M1: reasons say lo
     expect(unknown.reasons).toEqual({ t1: "units-unknown" });
     const failed = await resolvePendingDefaultUnits([line()], deps(new Error("offline")));
     expect(failed.reasons).toEqual({ t1: "ladder-failed" });
+  });
+});
+
+describe("TWIN-FOLD (SA-632): a pending line that folds into a settled twin leaves NO pending line after the merge", () => {
+  it("resolve + merge into the CURRENT lines removes the folded line and adds its taps to the twin (2 taps + 3 Bottles = 5)", async () => {
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
+    const before = [line({ pendingTaps: 2 }), twin];
+    const done = await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE_LEVEL]));
+    const merged = mergeResolvedLines(before, before, done.lines, done.folds);
+    expect(merged.some(isPendingDefaultUnit)).toBe(false);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ tempId: "t2", unitLabel: "Bottle", qty: 5 });
+  });
+
+  it("a tap that landed on the folded line while the ladder loaded is NOT lost: the merge skips, the resolver re-runs on the new count", async () => {
+    const twin = line({
+      tempId: "t2",
+      startOnDefaultUnit: false,
+      unitLabel: "Bottle",
+      qty: 3,
+      unitsPerBox: undefined,
+      boxes: undefined,
+      pieces: undefined,
+    }); // a unit-sold line: a plain count
+    const before = [line({ pendingTaps: 1 }), twin];
+    const done = await resolvePendingDefaultUnits(before, deps([BOTTLE, CASE_LEVEL]));
+    const cur = [line({ pendingTaps: 2 }), twin]; // a 2nd tap landed during the fetch
+    expect(mergeResolvedLines(cur, before, done.lines, done.folds)).toBe(cur); // stale: skipped
+    const again = await resolvePendingDefaultUnits(cur, deps([BOTTLE, CASE_LEVEL]));
+    const merged = mergeResolvedLines(cur, cur, again.lines, again.folds);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ unitLabel: "Bottle", qty: 5 });
   });
 });

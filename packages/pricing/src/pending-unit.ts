@@ -133,3 +133,23 @@ export async function refreshUnitsAnswer<
     return deps;
   }
 }
+
+/**
+ * Undo of one scan on a PENDING line takes one TAP back (it never steps a quantity or settles a unit). Undoing the
+ * creating scan (one tap left) REMOVES the line.
+ */
+export function undoPendingTap(
+  taps: number | null | undefined,
+): { remove: true } | { remove: false; taps: number } {
+  const n = pendingTapCount(taps, 1);
+  return n <= 1 ? { remove: true } : { remove: false, taps: n - 1 };
+}
+
+/**
+ * The key the resolver effect re-runs on: each pending line's id AND its tap count. Keyed on the count (not a quantity,
+ * which a tap no longer moves) so a tap that lands DURING the ladder fetch makes the stale merge skip AND the resolver
+ * run again, instead of leaving the line on "loading" forever.
+ */
+export function pendingResolveKey(entries: ReadonlyArray<{ id: string; count: number }>): string {
+  return entries.map((e) => `${e.id}:${e.count}`).join("|");
+}

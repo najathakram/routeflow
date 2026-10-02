@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
+import { pendingResolveKey, pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
 import { useSubscription } from "@/lib/api/billing";
 import { fetchProductUnits, productUnitsKey, UNITS_FLAG } from "@/lib/api/product-units";
 import {
@@ -51,19 +51,20 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   // Retry in flight (LOW): the Retry button shows it and a failed retry returns to the failed state.
   const [retrying, setRetrying] = useState(false);
 
-  const pendingKey = lines
-    .filter(isPendingDefaultUnit)
-    .map((l) => `${l.tempId}:${pendingCount(l)}`)
-    .join("|");
+  const pendingKey = pendingResolveKey(
+    lines.filter(isPendingDefaultUnit).map((l) => ({ id: l.tempId, count: pendingCount(l) })),
+  );
   useEffect(() => {
     if (!pendingKey) return;
     const before = linesRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done, reasons }) => {
-      if (!live) return;
-      setLines((cur) => mergeResolvedLines(cur, before, done));
-      setBlockedReasons(reasons);
-    });
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(
+      ({ lines: done, reasons, folds }) => {
+        if (!live) return;
+        setLines((cur) => mergeResolvedLines(cur, before, done, folds));
+        setBlockedReasons(reasons);
+      },
+    );
     return () => {
       live = false;
     };
@@ -88,8 +89,8 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     const before = linesRef.current;
     setRetrying(true);
     try {
-      const { lines: done, reasons } = await resolveBeforeSubmit(before);
-      setLines((cur) => mergeResolvedLines(cur, before, done));
+      const { lines: done, reasons, folds } = await resolveBeforeSubmit(before);
+      setLines((cur) => mergeResolvedLines(cur, before, done, folds));
       setBlockedReasons(reasons);
     } finally {
       setRetrying(false);
