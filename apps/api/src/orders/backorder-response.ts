@@ -1,4 +1,4 @@
-import { toPieces, type StockWriteResult } from "./order-stock";
+import { stockWriteOf, toPieces, type StockWriteResult } from "./order-stock";
 import { attributeBackorderToLines } from "./oversell-policy";
 
 /**
@@ -77,4 +77,27 @@ function build<T>(order: T, stockWrite: StockWriteResult | undefined): T | undef
     ...(order as object),
     lineItems: (lines as object[]).map((l, i) => ({ ...l, backorderPieces: figures[i] })),
   } as T;
+}
+
+/**
+ * Opus r1 on #3017: which order carries the figure after a buyer create's post-commit sweep.
+ * `mergeAllPendingForCustomer` returns, for <= 1 pending order, THAT row read with `lineItems` only
+ * (no product, no write), so the figure cannot be attributed onto it:
+ *  - nothing returned, or the SAME order (a plain checkout) -> attribute onto `created`;
+ *  - a DIFFERENT order and `created` was merge-eligible (`skipAutoMerge === false`) -> it was folded
+ *    into that order, attribute onto its lines;
+ *  - a different order and `created` was NOT (or is not known to be) eligible -> that order is
+ *    someone else's: return it untouched, never a number invented on its lines.
+ * Total: it never throws.
+ */
+export function buyerCreateResponse<C, M>(created: C, merged: M | null | undefined): C | M {
+  try {
+    const write = stockWriteOf(created);
+    const c = created as { id?: string; skipAutoMerge?: boolean } | null;
+    const m = merged as { id?: string } | null | undefined;
+    if (!m || m.id === c?.id) return withBackorderPieces(created, write);
+    return c?.skipAutoMerge === false ? withBackorderPieces(merged as M, write) : (merged as M);
+  } catch {
+    return (merged ?? created) as C | M;
+  }
 }

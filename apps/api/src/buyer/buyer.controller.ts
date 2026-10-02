@@ -59,7 +59,7 @@ import {
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
-import { withBackorderPieces } from "../orders/backorder-response";
+import { buyerCreateResponse, withBackorderPieces } from "../orders/backorder-response";
 import { stockWriteOf } from "../orders/order-stock";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
@@ -754,7 +754,7 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return withBackorderPieces(merged ?? created, stockWriteOf(created));
+    return buyerCreateResponse(created, merged); // SA-606o + Opus r1: which order carries the figure
   }
 
   @Patch("orders/:id/items")

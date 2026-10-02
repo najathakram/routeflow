@@ -170,7 +170,7 @@ export async function decrementStockForSale(
     if (!Number.isFinite(Number(li.qty)) || !Number.isFinite(pieces)) {
       throw new ConflictException({
         code: "INVENTORY_QUANTITY_INVALID",
-        message: `Cannot size the ${name} line: its quantity is not a valid number. Check the product's pack.`,
+        message: `Cannot size the ${name} line: its quantity is not a valid number.`,
         productId: li.productId,
         name,
       });
