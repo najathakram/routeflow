@@ -22,9 +22,9 @@ import { makeWorld, baseState, git } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
 import { runCli } from "./helpers/spawn-cli";
-import { expectMode } from "./helpers/platform";
+import { expectMode, scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 // built from parts so this file (scanned by the client-data guard) never holds a literal
 // `user:token@host` or `git@host` shape

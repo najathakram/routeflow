@@ -15,9 +15,9 @@ import * as net from "net";
 import * as path from "path";
 import { buildPrivateDist } from "./helpers/build-dist";
 import type { PrivateDist } from "./helpers/build-dist";
-import { expectRefusedExit } from "./helpers/platform";
+import { expectRefusedExit, scaled } from "./helpers/platform";
 
-jest.setTimeout(120_000);
+jest.setTimeout(scaled(120_000));
 
 // the once-per-run build from test/global-setup.ts (a private one when run outside it)
 let dist: PrivateDist;
