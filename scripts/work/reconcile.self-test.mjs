@@ -47,8 +47,14 @@ import {
   chunk,
   planWrites,
   ISSUE_FIELDS,
+  parseArgs,
+  RECONCILE_USAGE,
 } from "./reconcile.mjs";
-import { readFileSync as readPkgFile } from "node:fs";
+import { readFileSync as readPkgFile, existsSync, statSync, mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
 
 let failures = 0;
 function check(name, got, want) {
@@ -1196,6 +1202,107 @@ const pr = (overrides = {}) => ({
     "derivePRFields: the PR's own Worker: line wins",
     derivePRFields({ ...pr, body: "Closes #7\n\nWorker: Bo · Mac · Lane B" }, issue).Worker,
     "Bo · Mac · Lane B",
+  );
+}
+
+// ── CLI arguments (#2284): `--help` once ran a LIVE apply ─────────────────────
+{
+  const ok = (argv) => {
+    const r = parseArgs(argv);
+    return r.ok
+      ? { apply: r.apply, dryRun: r.dryRun, help: r.help, json: r.json, quiet: r.quiet }
+      : r;
+  };
+  check("#2284 parseArgs: a bare run is a DRY RUN", ok([]).dryRun, true);
+  check("#2284 parseArgs: --dry-run is a dry run", ok(["--dry-run"]).dryRun, true);
+  check("#2284 parseArgs: only --apply writes", ok(["--apply", "--quiet"]), {
+    apply: true,
+    dryRun: false,
+    help: false,
+    json: false,
+    quiet: true,
+  });
+  check(
+    "#2284 parseArgs: --help is help (and not an apply)",
+    ok(["--help"]).help && !ok(["--help"]).apply,
+    true,
+  );
+  check("#2284 parseArgs: -h is help", ok(["-h"]).help, true);
+  for (const bad of [["--dryrun"], ["--dry_run"], ["--Apply"], ["apply"], ["--quiet", "--typo"]])
+    check(`#2284 parseArgs: ${JSON.stringify(bad)} is refused`, parseArgs(bad).ok, false);
+  check(
+    "#2284 parseArgs: --apply with --dry-run is refused",
+    parseArgs(["--apply", "--dry-run"]).ok,
+    false,
+  );
+
+  // The CLI end to end: a refused or help run exits BEFORE the lock, the log, the state file or
+  // any gh call. PATH is an empty directory, so a gh call could not even start (it would fail
+  // loudly, exit 1); the three local files are compared byte-for-byte-by-stat before and after.
+  const SCRIPT = fileURLToPath(new URL("./reconcile.mjs", import.meta.url));
+  const WORK = fileURLToPath(new URL("../../local-assets/work/", import.meta.url));
+  const files = ["reconcile-state.json", "reconcile.log", "reconcile.lock"].map((f) =>
+    joinPath(WORK, f),
+  );
+  const snap = () =>
+    files.map((f) => (existsSync(f) ? `${statSync(f).size}:${statSync(f).mtimeMs}` : "absent"));
+  const emptyPath = mkdtempSync(joinPath(tmpdir(), "rf-2284-"));
+  const cli = (args) => {
+    const r = spawnSync(process.execPath, [SCRIPT, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, PATH: emptyPath, Path: emptyPath },
+      timeout: 30_000,
+    });
+    return { status: r.status, out: `${r.stdout}`, err: `${r.stderr}` };
+  };
+  try {
+    for (const bad of [["--dryrun"], ["--help-me"], ["--apply", "--dry-run"]]) {
+      const before = snap();
+      const r = cli(bad);
+      check(`#2284 CLI ${JSON.stringify(bad)}: exit 2`, r.status, 2);
+      check(
+        `#2284 CLI ${JSON.stringify(bad)}: usage on stderr`,
+        r.err.includes(RECONCILE_USAGE),
+        true,
+      );
+      check(
+        `#2284 CLI ${JSON.stringify(bad)}: never ran (no FAILED, no output)`,
+        [r.out, /FAILED/.test(r.err)],
+        ["", false],
+      );
+      check(`#2284 CLI ${JSON.stringify(bad)}: lock/log/state untouched`, snap(), before);
+    }
+    for (const help of [["--help"], ["-h"]]) {
+      const before = snap();
+      const r = cli(help);
+      check(
+        `#2284 CLI ${JSON.stringify(help)}: exit 0 with the usage`,
+        [r.status, r.out.trim()],
+        [0, RECONCILE_USAGE],
+      );
+      check(`#2284 CLI ${JSON.stringify(help)}: lock/log/state untouched`, snap(), before);
+    }
+  } finally {
+    rmSync(emptyPath, { recursive: true, force: true });
+  }
+
+  // The two automated callers must ask for the write explicitly, or the board silently stops
+  // updating (a bare run is now a dry run).
+  const src = (f) => readPkgFile(new URL(f, import.meta.url), "utf8");
+  check(
+    "#2284 run.mjs runs reconcile with --apply --quiet",
+    /\[RECONCILE_PATH, "--apply", "--quiet"\]/.test(src("./run.mjs")),
+    true,
+  );
+  check(
+    "#2284 trigger.mjs spawns reconcile with --apply --quiet",
+    /\[RECONCILE_PATH, "--apply", "--quiet"\]/.test(src("./trigger.mjs")),
+    true,
+  );
+  check(
+    "#2284 no caller runs reconcile without --apply",
+    /\[RECONCILE_PATH, "--quiet"\]/.test(src("./run.mjs") + src("./trigger.mjs")),
+    false,
   );
 }
 

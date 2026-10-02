@@ -231,44 +231,33 @@ describe("ReturnsService.processRefund → dispute creates a store credit (P5-13
     expect(result.creditNoteId).toBe("cn-12");
   });
 
-  it("skips credit creation for a $0 refund (no matching items) but still flips REFUNDED", async () => {
-    prisma.return.findUnique
-      .mockResolvedValueOnce({
-        id: "ret-3",
-        returnNumber: "RET-2026-003",
-        status: "RECEIVED",
-        customerId: "cust-1",
-        items: [{ productId: "p-not-on-order", qty: 3 }],
-        order: {
-          orderNumber: "ORD-003",
-          invoices: [
-            {
-              id: "inv-1",
-              status: "SENT",
-              total: 100,
-              items: [{ productId: "p1", qty: 10, subtotal: 100 }],
-            },
-          ],
-          lineItems: [{ productId: "p1", qty: 10, unitPrice: 15, subtotal: 100 }],
-        },
-      })
-      .mockResolvedValueOnce({ id: "ret-3", status: "REFUNDED" }); // refetch after the claim
-    prisma.return.updateMany.mockResolvedValue({ count: 1 });
-
-    const result = await service.processRefund("ret-3");
-
-    expect(creditNotesCreate).not.toHaveBeenCalled();
-    expect(prisma.return.updateMany).toHaveBeenCalledWith({
-      where: { id: "ret-3", status: "RECEIVED" },
-      data: {
-        status: "REFUNDED",
-        refundMethod: "CREDIT_NOTE",
-        refundAmount: 0,
-        refundedAt: expect.any(Date),
+  it("B959: a return of a product that NO creditable invoice billed is REFUSED 400 RETURN_NOTHING_BILLED before the claim (it used to price $0 and flip REFUNDED with no credit note)", async () => {
+    prisma.return.findUnique.mockResolvedValueOnce({
+      id: "ret-3",
+      returnNumber: "RET-2026-003",
+      status: "RECEIVED",
+      customerId: "cust-1",
+      items: [{ productId: "p-not-on-order", qty: 3 }],
+      order: {
+        orderNumber: "ORD-003",
+        invoices: [
+          {
+            id: "inv-1",
+            status: "SENT",
+            total: 100,
+            items: [{ productId: "p1", qty: 10, subtotal: 100 }],
+          },
+        ],
+        lineItems: [{ productId: "p1", qty: 10, unitPrice: 15, subtotal: 100 }],
       },
     });
-    expect(prisma.return.update).not.toHaveBeenCalled();
-    expect(result).toEqual({ id: "ret-3", status: "REFUNDED" });
+
+    await expect(service.processRefund("ret-3")).rejects.toMatchObject({
+      response: { code: "RETURN_NOTHING_BILLED" },
+    });
+
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+    expect(prisma.return.updateMany).not.toHaveBeenCalled(); // never claimed
   });
 
   it("rejects a non-RECEIVED return before any money math", async () => {

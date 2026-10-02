@@ -1187,8 +1187,8 @@ function InventoryPurchasesTab() {
   return (
     <div className="space-y-5">
       <div className="rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>,
-        stock is updated and product average costs are recalculated automatically.
+        Inventory purchases are recorded as supplier bills. When a bill is <strong>received</strong>
+        , stock is updated and product average costs are recalculated automatically.
       </div>
 
       {/* Actions row */}

@@ -1,3 +1,4 @@
+import { CREDIT_SOURCE_EXCLUDED } from "../invoices/invoice-status-sets";
 import {
   BadRequestException,
   ConflictException,
@@ -218,6 +219,26 @@ export class CreditNoteReissueService {
     });
     const tz = await tenantTimeZone(this.prisma);
 
+    // SA-608g: the SOURCE invoice and its order go into the void's own sorted lock sets (SA-214), so
+    // the mint's KEY SHARE on the invoice never comes after holding the note. Read here, outside the
+    // tx: an invoice's order link never changes, and a row deleted meanwhile locks as a no-op.
+    const sourceInvoice = old.invoiceId
+      ? await db.invoice.findFirst({ where: { id: old.invoiceId }, select: { orderId: true } })
+      : null;
+    // B947: the recap is pooled across the order's creditable invoices, so every one of them joins the void's sorted lock set.
+    const siblings = sourceInvoice?.orderId
+      ? await db.invoice.findMany({
+          where: { orderId: sourceInvoice.orderId, status: { notIn: CREDIT_SOURCE_EXCLUDED } },
+          select: { id: true },
+        })
+      : [];
+    const lockExtra = {
+      orderIds: sourceInvoice?.orderId ? [sourceInvoice.orderId] : [],
+      invoiceIds: [
+        ...new Set([...(old.invoiceId ? [old.invoiceId] : []), ...siblings.map((i: any) => i.id)]),
+      ],
+    };
+
     let outcome: { replayed: boolean; stored: StoredReissue };
     try {
       outcome = await retryOnTxConflict(`credit reissue cn=${id}`, () =>
@@ -231,7 +252,8 @@ export class CreditNoteReissueService {
             // blocks, CAS, ledger counter-entries, the VOIDED audit row. A refusal that only a
             // race can reach here is a 409 (the return case keeps the reissue wording).
             const { reopened } = await this.asConflict(
-              () => this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz),
+              () =>
+                this.creditNotes.voidWithReversalInTx(tx, id, actorId, tz, undefined, lockExtra),
               true,
             );
 

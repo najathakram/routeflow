@@ -5,14 +5,15 @@
 Money math flows through `apps/web/lib/pricing.ts` (`computeLineSubtotal` boxed proration, `normalizeBoxesPieces`, `roundMoney`, `getTierPrice`) — the web mirror of the API/mobile helpers. Every displayed amount is `$X.XX` via `lib/formatting.ts` `fmt`. Invoice **total = subtotal + tax** (±$0.01), locked by `e2e/06-critical-paths.spec.ts` CP-01/03/04/07.
 
 > **Routing note — six of the listed routes are thin redirects, not screens.** Documented here so the redesign doesn't build pages for them:
-> | Route | Redirects to |
-> |---|---|
-> | `/finance` | `/finance/dashboard` |
-> | `/finance/customers` | `/finance/reports?report=customer-balance` |
-> | `/invoices/create` | `/invoices/new` (the scan-to-add builder, documented in `04-op-orders.md`) |
-> | `/invoices/payments` | `/finance/payments` |
-> | `/bookkeeping` | `/finance/reports?report=ledger` |
-> | _(none else)_ | |
+>
+> | Route                | Redirects to                                                               |
+> | -------------------- | -------------------------------------------------------------------------- |
+> | `/finance`           | `/finance/dashboard`                                                       |
+> | `/finance/customers` | `/finance/reports?report=customer-balance`                                 |
+> | `/invoices/create`   | `/invoices/new` (the scan-to-add builder, documented in `04-op-orders.md`) |
+> | `/invoices/payments` | `/finance/payments`                                                        |
+> | `/bookkeeping`       | `/finance/reports?report=ledger`                                           |
+> | _(none else)_        |                                                                            |
 >
 > Real pages: `/finance/dashboard`, `/invoices` (list), `/invoices/[id]`, `/invoices/[id]/edit`, `/invoices/recurring` (+`/new`), `/credit-notes` (+`[id]`), `/estimates` (+`[id]`), `/finance/expenses` (+`/new`), `/finance/payments` (+`[id]`), `/finance/reports`, `/bookkeeping/[transactionId]`, `/shipments`.
 

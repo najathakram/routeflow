@@ -32,7 +32,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 
-const BUYER_CTX = { customerId: "cust-abc", tenantId: "tenant-xyz", tenantSlug: "acme", userId: null };
+const BUYER_CTX = {
+  customerId: "cust-abc",
+  tenantId: "tenant-xyz",
+  tenantSlug: "acme",
+  userId: null,
+};
 
 describe("BuyerController.scanProduct — shares findScanMatches, keeps the buyer's scope (M4a-1)", () => {
   let controller: BuyerController;
@@ -93,7 +98,15 @@ describe("BuyerController.scanProduct — shares findScanMatches, keeps the buye
 
   it("a ProductBarcode row code resolves for the buyer too, and goes through the buyer's getProductDetail gate", async () => {
     prisma.productBarcode.findMany.mockResolvedValue([
-      { productId: "p1", code: "X-ROWCODE", level: "UNIT", symbology: "CODE128", origin: "ENTERED", copiedFromLevel: null, primaryFor: null },
+      {
+        productId: "p1",
+        code: "X-ROWCODE",
+        level: "UNIT",
+        symbology: "CODE128",
+        origin: "ENTERED",
+        copiedFromLevel: null,
+        primaryFor: null,
+      },
     ] as any);
     prisma.product.findMany.mockResolvedValue([
       { id: "p1", barcode: "LEGACY-ONE", sku: null, unitSku: null, unitsPerBox: 6, barcodes: [] },
@@ -109,7 +122,15 @@ describe("BuyerController.scanProduct — shares findScanMatches, keeps the buye
 
   it("VISIBILITY PIN (SA-578 Q3): a row code on a product this buyer cannot see does NOT resolve — 404, nothing downstream runs", async () => {
     prisma.productBarcode.findMany.mockResolvedValue([
-      { productId: "hidden", code: "X-ROWCODE", level: "BOX", symbology: "CODE128", origin: "ENTERED", copiedFromLevel: null, primaryFor: null },
+      {
+        productId: "hidden",
+        code: "X-ROWCODE",
+        level: "BOX",
+        symbology: "CODE128",
+        origin: "ENTERED",
+        copiedFromLevel: null,
+        primaryFor: null,
+      },
     ] as any);
     prisma.product.findMany.mockResolvedValue([
       { id: "hidden", barcode: null, sku: null, unitSku: null, unitsPerBox: 6, barcodes: [] },
@@ -117,14 +138,18 @@ describe("BuyerController.scanProduct — shares findScanMatches, keeps the buye
     // the gate the buyer path applies today (inactive / regulated-category product)
     catalogService.getProductDetail.mockRejectedValue(new NotFoundException("Product not found"));
 
-    await expect(controller.scanProduct("X-ROWCODE", BUYER_CTX as any)).rejects.toThrow(NotFoundException);
+    await expect(controller.scanProduct("X-ROWCODE", BUYER_CTX as any)).rejects.toThrow(
+      NotFoundException,
+    );
     expect(stockAlertService.isSubscribed).not.toHaveBeenCalled();
   });
 
   it("the shared lookup receives the buyer path's tenant-scoped db (forTenant()), never the raw client", async () => {
     const spy = jest.spyOn(scanMatch, "findScanMatches");
     prisma.product.findMany.mockResolvedValue([] as any);
-    await expect(controller.scanProduct("NOPE", BUYER_CTX as any)).rejects.toThrow(NotFoundException);
+    await expect(controller.scanProduct("NOPE", BUYER_CTX as any)).rejects.toThrow(
+      NotFoundException,
+    );
     expect(spy).toHaveBeenCalledTimes(1);
     expect(prisma.forTenant).toHaveBeenCalled();
     // the db handle handed to the shared function is the tenant-scoped one
