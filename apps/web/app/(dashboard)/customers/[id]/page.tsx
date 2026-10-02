@@ -155,7 +155,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { BrandMark } from "@/components/brand";
-import { refusedTextField } from "@/lib/refused-text-field";
+import { focusRefusedContactField } from "@/lib/refused-text-field";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -826,24 +826,13 @@ function ContactPersonModal({
       mobile: form.mobile.trim() || undefined,
       isPrimary: form.isPrimary,
     };
-    // B984: a refused formula-led name keeps the modal open and puts the cursor in the offending input.
-    const focusRefused = (err: unknown) => {
-      const field = refusedTextField(err);
-      const id =
-        field === "firstName"
-          ? "contact-first-name"
-          : field === "lastName"
-            ? "contact-last-name"
-            : null;
-      if (id) requestAnimationFrame(() => document.getElementById(id)?.focus());
-    };
     if (editingContact) {
       updateContact.mutate(
         { ...payload, contactId: editingContact.id },
-        { onSuccess: () => onClose(), onError: focusRefused },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefused });
+      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
     }
   };
 

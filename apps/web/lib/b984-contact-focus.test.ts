@@ -8,11 +8,10 @@ describe("customers/[id] contact modal focuses a refused name", () => {
     "utf8",
   );
   it("both mutations pass onError: focusRefused and the inputs have the target ids", () => {
-    expect(src).toContain("refusedTextField(err)");
-    expect((src.match(/onError: focusRefused/g) ?? []).length).toBe(2);
+    expect((src.match(/onError: focusRefusedContactField/g) ?? []).length).toBe(2);
     expect(src).toContain('id="contact-first-name"');
     expect(src).toContain('id="contact-last-name"');
-    expect(src).toContain('"contact-first-name"');
-    expect(src).toContain('"contact-last-name"');
+    // the handler lives in lib/refused-text-field.ts (customers/[id]/page.tsx sits at its size ratchet)
+    expect(src).not.toContain("const focusRefused");
   });
 });
