@@ -4,7 +4,8 @@
  * N x the unit value with preview == mint, for the two single-unit boxed shapes:
  *   1. a BOX-SPLIT boxed line (boxes/pieces split stored, line qty already in PIECES): N pieces back = N x $5.
  *   2. a SELLING-UNIT boxed line (qty = boxes, no split, one box-unaware invoice item): N boxes back = N x $120.
- * NOT here: a box-unaware order line whose invoice item CARRIES a split (qty 24 for 2 boxes) under-refunds (B969, its own PR).
+ * 3. (B969) a BOX-UNAWARE order line (qty 2 boxes, no split) whose invoice item CARRIES a split (qty 24 pieces, 2 boxes): a
+ *    return of N boxes = N x $60, priced in PIECES on both sides (it refunded N x $5, 12x short, before B969).
  *
  * Runs only under `npm run local:test:db` (jest.db.config.js). Every tenant is a throwaway `qa-unit-<run>-<n>` slug approved by
  * `assertTestTenant`, deleted in FK order in afterAll.
@@ -106,6 +107,8 @@ describeDb(
         boxes: number | null;
         pieces: number | null;
       },
+      /** the stored shape of the INVOICE item when it differs from the order line's (B969: pieces vs boxes). */
+      invoiceLine: typeof line = line,
     ) {
       seq += 1;
       const slug = assertTestTenant(
@@ -158,9 +161,9 @@ describeDb(
           orderId: order.id,
           invoiceNumber: `INV-UNIT-${RUN}-${seq}`,
           status: "SENT",
-          subtotal: line.subtotal,
+          subtotal: invoiceLine.subtotal,
           taxAmount: 0,
-          total: line.subtotal,
+          total: invoiceLine.subtotal,
         },
       });
       const orderItem = await prisma.orderItem.findFirstOrThrow({ where: { orderId: order.id } });
@@ -172,7 +175,7 @@ describeDb(
           productId: product.id,
           description: "P",
           unitsPerBox: 12,
-          ...line,
+          ...invoiceLine,
         } as any,
       });
       return { tenantId, customerId: customer.id, orderId: order.id, productId: product.id };
@@ -262,6 +265,30 @@ describeDb(
       const r = await previewAndMint(s, 1);
       expect(r.preview).toBe(120);
       expect(r.mint).toBe(120);
+    });
+
+    // B969 shape: the order line counts BOXES (qty 2, no split), the invoice item counts PIECES (qty 24, boxes 2)
+    const boxUnawareLine = { qty: 2, unitPrice: 60, subtotal: 120, boxes: null, pieces: null };
+    const pieceInvoiceLine = { qty: 24, unitPrice: 5, subtotal: 120, boxes: 2, pieces: 0 };
+
+    it("4. B969: BOX-UNAWARE order line (2 boxes) billed as 24 pieces: a return of 1 box = $60.00, preview == mint (was $5.00)", async () => {
+      const s = await seed("b969", boxUnawareLine, pieceInvoiceLine);
+      const r = await previewAndMint(s, 1);
+      expect(r.preview).toBe(60);
+      expect(r.mint).toBe(60);
+    });
+
+    it("4b. B969: the whole line (2 boxes) = $120.00, preview == mint, and one more box is refused", async () => {
+      const s = await seed("b969-all", boxUnawareLine, pieceInvoiceLine);
+      const r = await previewAndMint(s, 2);
+      expect(r.preview).toBe(120);
+      expect(r.mint).toBe(120);
+      const more = await receivedReturn(s, 1);
+      await expect(
+        tenantCtx.run(s.tenantId, () => returns.processRefund(more.id)),
+      ).rejects.toMatchObject({
+        response: { code: "RETURN_REFUND_OVER_LINE_HEADROOM" },
+      });
     });
 
     it("3. SELLING-UNIT boxed line: a return of 2 boxes (the whole line) = $240.00, preview == mint", async () => {
