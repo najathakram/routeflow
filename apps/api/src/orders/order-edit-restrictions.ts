@@ -12,6 +12,7 @@ import {
 } from "../selling-restrictions/order-edit-lines";
 import { checkableProductIds } from "../selling-restrictions/selling-restrictions.core";
 import type { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Selling restrictions at `OrdersService.updateOrderItems` (lane R 2a-7). The service keeps the
@@ -109,7 +110,7 @@ export async function planOrderEditRestrictions(
     assertHeld(lockTimeRows) {
       if (checkableProductIds(linesFor(lockTimeRows)).some((id) => !judged.has(id)))
         throw new ConflictException({
-          code: "ORDER_CHANGED_DURING_EDIT",
+          code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
           message: "The order changed while your edit was being applied — review it and try again.",
         });
     },

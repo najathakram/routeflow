@@ -1,3 +1,4 @@
+import { assertSafeBuyerName } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -41,6 +42,7 @@ export class BuyerAuthService {
   // ─── Register ─────────────────────────────────────────────────────────────────
 
   async register(dto: BuyerRegisterDto, deviceInfo?: BuyerDeviceInfo) {
+    assertSafeBuyerName(dto.name); // B964: a buyer-typed name, refused before any read or write
     const existing = await this.prisma.buyerAccount.findUnique({
       where: { email: dto.email.toLowerCase() },
     });
@@ -657,6 +659,14 @@ export class BuyerAuthService {
     buyerAccountId: string,
     dto: { name?: string; phone?: string; mobile?: string },
   ) {
+    if (dto.name !== undefined) {
+      // B964: change-only: the stored name is read once, only when a name is being sent
+      const stored = await this.prisma.buyerAccount.findUnique({
+        where: { id: buyerAccountId },
+        select: { name: true },
+      });
+      assertSafeBuyerName(dto.name, stored?.name ?? null);
+    }
     return this.prisma.buyerAccount.update({
       where: { id: buyerAccountId },
       data: dto,

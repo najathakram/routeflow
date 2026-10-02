@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { liveBarcodeRows } from "../products/product-barcode-rules";
 import type { ComponentProductFacts, RecipeSnapshotPort } from "./line-composition";
 
 /**
@@ -53,7 +54,13 @@ export function recipeSnapshotPort(
           barcodes: { select: { code: true, symbology: true, level: true, primaryFor: true } },
         },
       });
-      return new Map(rows.map((p): [string, ComponentProductFacts] => [p.id, p]));
+      // SA-603a: a RELEASED barcode row (code NULL) is not a live code — the snapshot never carries one.
+      return new Map(
+        rows.map((p): [string, ComponentProductFacts] => [
+          p.id,
+          { ...p, barcodes: liveBarcodeRows(p.barcodes) },
+        ]),
+      );
     },
   };
 }
