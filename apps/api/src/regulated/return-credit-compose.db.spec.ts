@@ -20,8 +20,11 @@
  *        counts the credit note from one that does not)
  *   B — credit, then return, then an OVERSHOOTING closing credit
  *     credit $33.33 (qty 3, tax $3.33) -> -3 / -3 / -$33.33 / -$3.33            (remaining 7 / 7 / $66.67 / $6.67)
- *     return 4                   -> -4 / -4 / -$40.00 / -$4.00                   (remaining 3 / 3 / $26.67 / $2.67)
- *     credit $100 (qty 10, tax $10) -> CLAMPED to the remaining -3 / -3 / -$26.67 / -$2.67 (remaining 0)
+ *     return 4                   -> -4 / -4 / -$38.10 / -$3.81                   (remaining 3 / 3 / $28.57 / $2.86)
+ *       (SA-293 R-2: a NON-closing return chunk is its share of what the line STILL HOLDS, 4/7 of $66.67 / $6.67,
+ *        not 4/10 of the original $100 / $10 = $40.00 / $4.00; B and A differ here because only B has a credit note
+ *        ahead of the return)
+ *     credit $100 (qty 10, tax $10) -> CLAMPED to the remaining -3 / -3 / -$28.57 / -$2.86 (remaining 0)
  *
  * WHY THE DB LANE (B685): the ledger reads its own rows back between the two reversals
  * (`buildLineRemainingBalances` / `reverseCreditNoteEntries`' `lineRows`), so the composition is only
@@ -303,14 +306,16 @@ describeDb("B687 return + credit-note reversals compose on one order line — re
     });
     expect(await remaining(s)).toEqual({ qty: 7, basis: 7, net: 66.67, tax: 6.67 });
 
+    // SA-293 R-2: the non-closing return chunk is its share of what the line STILL HOLDS after the credit
+    // note (4 of the 7 remaining: 4/7 of $66.67 = $38.10, tax 4/7 of $6.67 = $3.81), not 4/10 of the original.
     const r1 = await bookReturn(s, 4, "b");
     expect(await reversalsOf(s, "returnId", r1.id)).toEqual({
       qty: -4,
       basis: -4,
-      net: -40,
-      tax: -4,
+      net: -38.1,
+      tax: -3.81,
     });
-    expect(await remaining(s)).toEqual({ qty: 3, basis: 3, net: 26.67, tax: 2.67 });
+    expect(await remaining(s)).toEqual({ qty: 3, basis: 3, net: 28.57, tax: 2.86 });
 
     // A credit for MORE than is left (the whole $100 line again) must book only the remainder:
     // the two earlier reversals of different kinds are already counted against the line.
@@ -318,8 +323,8 @@ describeDb("B687 return + credit-note reversals compose on one order line — re
     expect(await reversalsOf(s, "creditNoteId", cn2.id)).toEqual({
       qty: -3,
       basis: -3,
-      net: -26.67,
-      tax: -2.67,
+      net: -28.57,
+      tax: -2.86,
     });
     expect(await remaining(s)).toEqual({ qty: 0, basis: 0, net: 0, tax: 0 });
   });
