@@ -1,6 +1,11 @@
 import { ConflictException } from "@nestjs/common";
 import { Prisma, UserRole } from "@prisma/client";
-import { decrementStockForSale, settleStockForEdit, type OrderStockDeps } from "./order-stock";
+import {
+  decrementStockForSale,
+  settleStockForEdit,
+  type OrderStockDeps,
+  type StockWriteResult,
+} from "./order-stock";
 
 /**
  * WS9: the locked stock section receives ONLY a resolved boolean (SA-606c — never a policy read
@@ -97,7 +102,7 @@ describe("settleStockForEdit opts.allowOversell", () => {
     products: P[],
     user: any,
     opts?: { allowOversell?: boolean },
-  ): { p: Promise<void>; products: P[] } => {
+  ): { p: Promise<StockWriteResult>; products: P[] } => {
     const { tx } = fakeTx(products);
     return {
       p: settleStockForEdit(deps, tx, order, [line(1)], [line(9)], user, undefined, opts),

@@ -1,6 +1,8 @@
 // The harness FIRST: it jest.mock()s modules that orders.service also imports.
 import { buildOversellOrders, buyer, operator, stockTx, TENANT } from "./testing/oversell-harness";
 import { readEditedOrder } from "./order-edit-cancelled";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { stockWriteOf } from "./order-stock";
 
 /**
@@ -155,5 +157,31 @@ describe("readEditedOrder: the response read is deterministic and carries the pa
     const lineItems = findUnique.mock.calls[0][0].include.lineItems;
     expect(lineItems.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
     expect(lineItems.include.product.select.unitsPerBox).toBe(true);
+  });
+});
+
+describe("the other response reads the buyer figure is attributed over", () => {
+  it("findOne orders lines deterministically (position, createdAt, then id)", async () => {
+    const h = await buildOversellOrders("backorder");
+    h.prisma.order.findUnique.mockResolvedValue({
+      id: "ord-1",
+      tenantId: TENANT,
+      customerId: "cust-1",
+      status: "PENDING",
+      lineItems: [],
+    });
+    await h.service.findOne("ord-1", buyer as never).catch(() => undefined);
+    const include = (h.prisma.order.findUnique as jest.Mock).mock.calls[0][0].include;
+    expect(include.lineItems.orderBy).toEqual([
+      { position: "asc" },
+      { createdAt: "asc" },
+      { id: "asc" },
+    ]);
+    expect(include.lineItems.include.product.select.unitsPerBox).toBe(true);
+  });
+
+  it("create() and both merge-sweep survivor reads share RESPONSE_LINE_ITEMS (a fold response carries the pack and a stable order)", () => {
+    const text = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
+    expect(text.match(/lineItems: cancelledLines\.RESPONSE_LINE_ITEMS/g)).toHaveLength(3);
   });
 });

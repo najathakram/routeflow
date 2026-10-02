@@ -98,6 +98,10 @@ const NON_WRITERS = new Set([
   "products/product-units.service.ts",
   "products/line-units.ts",
   "orders/unit-line-build.ts", // copies unit/unitsPerBox into the ladder base; never derives a factor
+  // SA-606o: the buyer response's piece reader. Reads each RESPONSE line's product pack as the
+  // fallback of the decrement's own `toPieces`, only to attribute the committed write's figure; it
+  // derives no line factor, writes no line and omits the figure on any doubt.
+  "orders/backorder-response.ts",
   "regulated/tx-report.ts",
   // B661: packAtSaleByProduct's `p.unitsPerBox` read is a write-time SNAPSHOT for the ledger's
   // regulatedUnitBasis, not a line-factor decision — never re-read later to reclassify an old row.

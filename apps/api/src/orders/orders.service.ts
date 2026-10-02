@@ -125,6 +125,8 @@ import {
   type StockArgs,
   type StockLine,
   type StockLineUnits,
+  type StockWriteResult,
+  withStockWrite,
 } from "./order-stock";
 import { linePieceQty } from "./line-piece-qty";
 import { resolveOversellAllowed } from "./oversell-policy";
@@ -471,7 +473,7 @@ export class OrdersService implements OnApplicationBootstrap {
           // createdAt (tx clock), so createdAt alone can't order them — `position`
           // carries the scanned order. Legacy/appended lines have null position and
           // sort LAST (NULLS LAST), with createdAt as the final tiebreak.
-          orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+          orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
         transaction: true,
         invoices: {
@@ -925,9 +927,7 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: winner.id },
             include: {
               customer: { select: { id: true, businessName: true } },
-              lineItems: {
-                include: { product: { select: { id: true, name: true, unit: true } } },
-              },
+              lineItems: cancelledLines.RESPONSE_LINE_ITEMS,
             },
           });
         },
@@ -1172,9 +1172,7 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: winner.id },
             include: {
               customer: { select: { id: true, businessName: true } },
-              lineItems: {
-                include: { product: { select: { id: true, name: true, unit: true } } },
-              },
+              lineItems: cancelledLines.RESPONSE_LINE_ITEMS,
             },
           });
         },
@@ -2021,17 +2019,16 @@ export class OrdersService implements OnApplicationBootstrap {
             );
             // B562 PR-2: the id is minted here so the SALE rows can reference the order.
             const orderId = randomUUID();
-            if (!isDraft && stockLines.length > 0) {
-              // B283: extracted to `decrementStockForSale` — changeStatus()'s
-              // DRAFT→PENDING promotion is the SAME "becomes a real sale" moment
-              // as a non-draft create(), so it calls the identical helper (no
-              // second implementation of the lock/oversell-check/decrement).
-              await this.decrementStockForSale(tx, stockLines, allowOversell, {
-                orderId,
-                notes: "CREATE",
-                performedById: user.sub,
-              });
-            }
+            // B283: the SAME "becomes a real sale" helper changeStatus()'s promotion calls; SA-606m: its
+            // result rides back on the returned order (withStockWrite below) for the buyer controller.
+            const stockWrite =
+              !isDraft && stockLines.length > 0
+                ? await this.decrementStockForSale(tx, stockLines, allowOversell, {
+                    orderId,
+                    notes: "CREATE",
+                    performedById: user.sub,
+                  })
+                : undefined;
 
             const created = await tx.order.create({
               data: {
@@ -2071,9 +2068,7 @@ export class OrdersService implements OnApplicationBootstrap {
               },
               include: {
                 customer: { select: { id: true, businessName: true } },
-                lineItems: {
-                  include: { product: { select: { id: true, name: true, unit: true } } },
-                },
+                lineItems: cancelledLines.RESPONSE_LINE_ITEMS,
               },
             });
             await this.syncCompositions(tx, created.id);
@@ -2083,7 +2078,7 @@ export class OrdersService implements OnApplicationBootstrap {
               user,
               orderRouteRunId: resolvedRouteRunId ?? dto.routeRunId,
             });
-            return created;
+            return withStockWrite(created, stockWrite);
           },
           // B116 (REG-B116): bound the stock transaction instead of leaving it
           // uncapped — an unbounded interactive transaction can hold the
@@ -3125,6 +3120,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // totals/line set (not a pre-mutation simulation), so there is no second
     // pricing formula to drift. reconcileOrderDraftInvoice and
     // appendOrderRevision stay OUTSIDE (after commit), unchanged.
+    let sw: StockWriteResult | undefined; // SA-606m: the locked settle's result, returned with the order
     const { subtotal, tax, total, shouldRevert, shippingFee } = await inlineReturn.runEditTx(
       inlineRet,
       this.prisma,
@@ -4222,7 +4218,7 @@ export class OrdersService implements OnApplicationBootstrap {
         // create()'s decrement at order time.
         let creditGate: (() => Promise<void>) | null = null; // re-run after an inline return (SA-221)
         if (order.status !== "DRAFT") {
-          await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
+          sw = await this.settleStockForEdit(tx, order, heldItems, activeItems, user, undefined, {
             allowOversell,
           });
           creditGate = () =>
@@ -4358,7 +4354,7 @@ export class OrdersService implements OnApplicationBootstrap {
       dto.orderNotes ?? null,
     );
 
-    return cancelledLines.readEditedOrder(this.prisma, orderId);
+    return withStockWrite(await cancelledLines.readEditedOrder(this.prisma, orderId), sw);
   }
 
   /**

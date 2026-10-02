@@ -46,6 +46,26 @@ export interface StockWriteResult {
 export const backorderFromLockedStock = (requested: number, newStock: number): number =>
   Math.round(Math.min(requested, Math.max(0, -newStock)) * 1000) / 1000;
 
+const STOCK_WRITE = Symbol("stockWrite");
+/**
+ * SA-606m (4) / SA-606o Q-C: hand the locked write's result from `OrdersService.create` /
+ * `updateOrderItems` to the caller that maps it onto a response. A typed, NON-enumerable property:
+ * it is invisible to JSON and to a spread copy, so it can never reach the wire by accident (a staff
+ * response must not carry a backorder figure), and it is absent whenever nothing was written.
+ */
+export function withStockWrite<T>(order: T, write: StockWriteResult | undefined): T {
+  if (order && write) {
+    Object.defineProperty(order, STOCK_WRITE, {
+      value: write,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  return order;
+}
+export const stockWriteOf = (order: unknown): StockWriteResult | undefined =>
+  (order as { [STOCK_WRITE]?: StockWriteResult } | null | undefined)?.[STOCK_WRITE];
+
 /** A stock helper's parameters after `deps`: what OrdersService's thin delegators take. */
 export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
 
@@ -87,7 +107,7 @@ const needsLivePack = (li: StockLineUnits) =>
   !(typeof li.unitLabel === "string" && li.unitLabel.trim() !== "");
 
 /** `qty` (the line's own unit) in pieces, at the column's 3 decimals. */
-const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
+export const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number => {
   const pack = livePack != null ? Number(livePack) : undefined;
   return Math.round(linePieceQty({ ...li, boxes: li.boxes ?? null, qty }, pack) * 1000) / 1000;
 };

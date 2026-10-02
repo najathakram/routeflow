@@ -59,6 +59,8 @@ import {
 } from "../orders/merge-items";
 import { withAdvisoryLock } from "../common/db-locks";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
+import { withBackorderPieces } from "../orders/backorder-response";
+import { stockWriteOf } from "../orders/order-stock";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
@@ -555,6 +557,7 @@ export class BuyerController {
       // mirrors the staff controller, which likewise sweeps and re-reads after its lock
       // has been released.
       let mergedOrderId: string | null = null;
+      let mergeWrite: ReturnType<typeof stockWriteOf>; // SA-606o: the fold's locked write
       try {
         const lock = await withAdvisoryLock(
           // 10s, not the module default of 20s: the mobile api client aborts every request
@@ -630,10 +633,12 @@ export class BuyerController {
               );
             }
             const mergedItems = foldResult.items.filter((i) => i.productId);
-            await this.ordersService.updateOrderItems(
-              activeOrder.id,
-              { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
-              makePseudoUser(ctx),
+            mergeWrite = stockWriteOf(
+              await this.ordersService.updateOrderItems(
+                activeOrder.id,
+                { items: mergedItems, replaceAll: true } as UpdateOrderItemsDto,
+                makePseudoUser(ctx),
+              ),
             );
             // REG-B78: carry the buyer's header fields onto the merged order (append/OR/set
             // semantics) BEFORE the sibling-order sweep, so they land on the surviving order.
@@ -706,8 +711,10 @@ export class BuyerController {
           );
         }
 
-        // Return the updated order
-        return this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        // Return the updated order. SA-606o: the figure is added by a TOTAL helper after the commit
+        // (it omits the key on any doubt, never throws).
+        const merged = await this.ordersService.findOne(mergedOrderId, makePseudoUser(ctx));
+        return withBackorderPieces(merged, mergeWrite);
       }
     }
 
@@ -747,7 +754,7 @@ export class BuyerController {
         `post-commit consolidation deferred (merge in progress) tenant=${ctx.tenantId} customer=${ctx.customerId}`,
       );
     }
-    return merged ?? created;
+    return withBackorderPieces(merged ?? created, stockWriteOf(created));
   }
 
   @Patch("orders/:id/items")
@@ -755,12 +762,13 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Edit items on a DRAFT/PENDING order" })
-  updateOrderItems(
+  async updateOrderItems(
     @Param("id") id: string,
     @Body() dto: UpdateOrderItemsDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
-    return this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+    const updated = await this.ordersService.updateOrderItems(id, dto, makePseudoUser(ctx));
+    return withBackorderPieces(updated, stockWriteOf(updated)); // SA-606o: buyer responses only
   }
 
   @Post("orders/:id/change-requests")

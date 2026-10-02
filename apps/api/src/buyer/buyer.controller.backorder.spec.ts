@@ -58,7 +58,7 @@ import { TenantContextService } from "../tenant/tenant-context.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 
-import { ServiceUnavailableException } from "@nestjs/common";
+import { ConflictException } from "@nestjs/common";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { withStockWrite } from "../orders/order-stock";
@@ -229,7 +229,7 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
         withStockWrite(orderOf("o-new", [["c1", "p", 8]]), write([["p", 3]])),
       );
       orders.mergeAllPendingForCustomer.mockRejectedValue(
-        new ServiceUnavailableException({
+        new ConflictException({
           code: MERGE_IN_PROGRESS,
           message: MERGE_IN_PROGRESS_MESSAGE,
         }),
