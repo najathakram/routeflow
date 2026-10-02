@@ -261,7 +261,7 @@ describe("CreateOrderModal", () => {
         expect(mockToast).toHaveBeenCalledWith({
           variant: "error",
           title: "Couldn't look up the code",
-          description: "Network Error",
+          description: "Check the connection and rescan.",
         }),
       );
       expect(capturedInlineCreate?.isOpen).toBe(false);
