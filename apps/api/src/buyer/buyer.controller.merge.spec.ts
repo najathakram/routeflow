@@ -357,6 +357,8 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
       const createdOrder = { id: "order-fresh-1" };
       ordersService.create.mockResolvedValue(createdOrder);
       ordersService.mergeAllPendingForCustomer.mockResolvedValue(null);
+      // SA-631d: the response is the created order RE-READ fresh (the holder is decided by existence).
+      ordersService.findOne.mockResolvedValue(createdOrder);
 
       const dto = {
         items: [{ productId: "prod-z", qty: 4, boxes: 1, pieces: 0, notes: "case" }],

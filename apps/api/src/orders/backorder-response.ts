@@ -1,4 +1,8 @@
-import { stockWriteOf, toPieces, withStockWrite, type StockWriteResult } from "./order-stock";
+import { NotFoundException } from "@nestjs/common";
+import { stockWriteOf, toPieces, type StockWriteResult } from "./order-stock";
+
+const GONE = Symbol("gone");
+const UNKNOWN = Symbol("unknown");
 import { attributeBackorderToLines } from "./oversell-policy";
 
 /**
@@ -80,31 +84,48 @@ function build<T>(order: T, stockWrite: StockWriteResult | undefined): T | undef
 }
 
 /**
- * Which order a create's post-commit sweep result stands for, and where its stock write rides.
- * `mergeAllPendingForCustomer` returns, for <= 1 pending order, THAT row read with `lineItems` only
- * (no product, no write), so a figure cannot be attributed onto it (Opus r1 on #3017):
- *  - nothing returned, or the SAME order (a plain checkout) -> the CREATED order, carrying its write;
- *  - a DIFFERENT order and `created` was merge-eligible (`skipAutoMerge === false`) -> it was folded
- *    into that order: that order, carrying the write;
- *  - a different order and `created` was NOT (or is not known to be) eligible -> that order is
- *    someone else's: returned untouched, carrying NOTHING (a carrier must only ride on an order it
- *    describes, or a mapper would put a number on another order's lines).
- * One rule for the buyer create and the template Reorder. Total: it never throws.
+ * Which order a buyer create returns, and carries the figure on (SA-631d, Opus r1 + r2 on #3017):
+ * the POST-SWEEP state of the order that holds THIS request's lines, read fresh with the shared
+ * response include (the sweep's own return selects no pack, so it cannot be attributed). The holder
+ * is decided by row EXISTENCE, never by the `skipAutoMerge` flag or the shape of the sweep's return:
+ * only the sweep deletes an order between the commit and this response.
+ *  1. `created` still exists -> it holds the lines, untouched or as the fold winner (the older orders'
+ *     lines folded INTO it): return that fresh read with the figure;
+ *  2. it is gone and the sweep returned another order -> `created` was folded into it: re-read that
+ *     survivor and return it with the figure;
+ *  3. neither can be read -> the holder is unknown: `merged ?? created` untouched, key omitted.
+ * A concurrent edit between the sweep and the re-read is covered by `withBackorderPieces`' lost-write
+ * rule (it omits the key). The write has COMMITTED, so this is TOTAL: a reader that throws is "gone".
  */
-export function carryCreatedWrite<C, M>(created: C, merged: M | null | undefined): C | M {
+export async function buyerCreateResponse<C, M>(
+  created: C,
+  merged: M | null | undefined,
+  readOrder: (id: string) => Promise<unknown>,
+): Promise<unknown> {
+  // Only a null or a NotFound means the row is GONE (the sweep deleted it). Any other failure (a dropped
+  // connection, a timeout) leaves the holder UNKNOWN: the survivor must NOT be tried, or a transient error
+  // on `created` could return another order's lines as this request's response.
+  const read = async (id: unknown): Promise<unknown> => {
+    if (typeof id !== "string") return UNKNOWN;
+    try {
+      return (await readOrder(id)) ?? GONE;
+    } catch (e) {
+      return e instanceof NotFoundException ? GONE : UNKNOWN;
+    }
+  };
   try {
     const write = stockWriteOf(created);
-    const c = created as { id?: string; skipAutoMerge?: boolean } | null;
-    const m = merged as { id?: string } | null | undefined;
-    if (!m || m.id === c?.id) return withStockWrite(created, write);
-    return c?.skipAutoMerge === false ? withStockWrite(merged as M, write) : (merged as M);
+    const createdId = (created as { id?: unknown } | null)?.id;
+    const own = await read(createdId);
+    if (own === UNKNOWN) return merged ?? created;
+    if (own !== GONE) return withBackorderPieces(own, write);
+    const mergedId = (merged as { id?: unknown } | null | undefined)?.id;
+    if (mergedId && mergedId !== createdId) {
+      const survivor = await read(mergedId);
+      if (survivor !== GONE && survivor !== UNKNOWN) return withBackorderPieces(survivor, write);
+    }
   } catch {
-    return (merged ?? created) as C | M;
+    /* unknown holder: fall through */
   }
-}
-
-/** The buyer create's response: the order `carryCreatedWrite` picks, with the figure on its lines. */
-export function buyerCreateResponse<C, M>(created: C, merged: M | null | undefined): C | M {
-  const target = carryCreatedWrite(created, merged);
-  return withBackorderPieces(target, stockWriteOf(target));
+  return merged ?? created;
 }

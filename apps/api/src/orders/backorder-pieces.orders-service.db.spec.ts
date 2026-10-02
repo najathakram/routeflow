@@ -316,49 +316,92 @@ describeDb(
       expect(figures(withBackorderPieces(lowered, stockWriteOf(lowered)))).toEqual([0]);
     }, 120_000);
 
-    it("(single) a plain checkout with NO other pending order: the sweep returns the bare created row and the figure still lands", async () => {
-      await setPolicy("backorder");
-      const created: any = await createOrder(buyer(0), 8); // stock 5 -> -3, overshoot 3
-      const swept: any = await tenantCtx.run(tenantId, () =>
-        orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
+    /** The controller's re-read: the order as `findOne` returns it, or GONE (null) like a 404. */
+    const readOrder = (id: string) =>
+      tenantCtx.run(tenantId, () => orders.findOne(id, buyer(0))).catch(() => null);
+    const sweep = (customer = 0) =>
+      tenantCtx.run(tenantId, () =>
+        orders.mergeAllPendingForCustomer(customerIds[customer], { buyerInitiated: true }),
       );
+    /** A PLAIN create (no skipAutoMerge): the shared createOrder helper passes skipAutoMerge:true, which keeps
+     *  an order out of the sweep. */
+    const plainCreate = (qty: number, n: 0 | 1 = 0): Promise<any> =>
+      tenantCtx.run(tenantId, () => orders.create({ items: [{ productId, qty }] }, buyer(n)));
+    const liveCount = (customer = 0) =>
+      raw.order.count({
+        where: { tenantId, customerId: customerIds[customer], status: "PENDING" },
+      });
+
+    it("(single) a plain checkout with NO other pending order: the sweep returns the bare row, created is re-read and carries the figure", async () => {
+      await setPolicy("backorder");
+      const created = await plainCreate(8); // stock 5 -> -3, overshoot 3
+      const swept: any = await sweep();
       expect(swept?.id).toBe(created.id); // the real shape: that one order, read with lineItems only
-      const response: any = buyerCreateResponse(created, swept);
+      const response: any = await buyerCreateResponse(created, swept, readOrder);
       expect(response.id).toBe(created.id);
       expect(sum(figures(response))).toBe(3);
       expect(await overshootOf()).toBe(3);
     }, 120_000);
 
-    it("(fold) a second order folded into the first: the fold HAPPENED, and the merged lines sum to the overshoot", async () => {
+    it("(i) a plain create where the sweep folds an OLDER order INTO created: the response has the merged lines and total", async () => {
       await setPolicy("backorder");
-      const first: any = await tenantCtx.run(tenantId, () =>
-        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
-      ); // stock 5 -> 1, no overshoot
-      const second: any = await tenantCtx.run(tenantId, () =>
-        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
-      ); // 1 - 4 -> -3, overshoot 3
-      const swept: any = await tenantCtx.run(tenantId, () =>
-        orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
-      );
-      // The fold actually happened (a no-op sweep or a merge-at-create would also give sum 3):
-      // exactly ONE live PENDING order remains, it holds BOTH orders' 8 pieces, and the order that
-      // was folded away is gone or cancelled. With skipAutoMerge:true on both creates this is red.
-      const live = await raw.order.findMany({
-        where: { tenantId, customerId: customerIds[0], status: "PENDING" },
-        include: { lineItems: true },
-      });
-      expect(live).toHaveLength(1);
-      expect(live[0].id).toBe(swept.id);
-      expect(live[0].lineItems.reduce((n, l) => n + Number(l.qty), 0)).toBe(8);
-      const loserId = swept.id === first.id ? second.id : first.id;
-      const loser = await raw.order.findUnique({ where: { id: loserId } });
-      expect(loser === null || loser.status === "CANCELLED").toBe(true);
-      const response: any = buyerCreateResponse(second, swept);
+      await plainCreate(4); // stock 5 -> 1, no overshoot
+      const second = await plainCreate(4); // 1 - 4 -> -3, overshoot 3; the newest order wins the sweep
+      const swept: any = await sweep();
+      // The fold HAPPENED (a no-op sweep or a merge-at-create would also give sum 3): ONE live PENDING order
+      // remains and it holds both orders' 8 pieces. With skipAutoMerge:true on both creates this is red.
+      expect(await liveCount()).toBe(1);
+      expect(swept.id).toBe(second.id);
+      const response: any = await buyerCreateResponse(second, swept, readOrder);
+      const fresh: any = await readOrder(second.id);
+      expect(response.id).toBe(second.id);
+      expect(response.lineItems.reduce((n: number, l: any) => n + Number(l.qty), 0)).toBe(8);
+      expect(Number(response.total)).toBe(Number(fresh.total));
       expect(sum(figures(response))).toBe(3);
       expect(await overshootOf()).toBe(3);
     }, 120_000);
 
-    it("(lost write) a lowering edit between the write and the re-read omits the key on the whole order", async () => {
+    it("(ii) created is folded INTO another order (the older one wins): the survivor is returned with the figure", async () => {
+      await setPolicy("backorder");
+      const first = await plainCreate(4);
+      const second = await plainCreate(4); // overshoot 3
+      // make the OLDER order the sweep winner (the sweep orders by updatedAt desc)
+      await raw.order.update({
+        where: { id: first.id },
+        data: { updatedAt: new Date(Date.now() + 60_000) },
+      });
+      const swept: any = await sweep();
+      expect(swept.id).toBe(first.id);
+      expect(await readOrder(second.id)).toBeNull(); // created was folded away (hard-deleted)
+      const response: any = await buyerCreateResponse(second, swept, readOrder);
+      expect(response.id).toBe(first.id);
+      expect(sum(figures(response))).toBe(3);
+    }, 120_000);
+
+    it("(iii) a NON-eligible created while another pair is swept: the response is the created order, with the figure", async () => {
+      await setPolicy("backorder");
+      await plainCreate(1); // covered
+      await plainCreate(1); // covered; this pair is swept below
+      const created: any = await createOrder(buyer(0), 8); // skipAutoMerge:true, stock 3 -> -5, overshoot 5
+      const swept: any = await sweep();
+      expect(swept.id).not.toBe(created.id);
+      const response: any = await buyerCreateResponse(created, swept, readOrder);
+      expect(response.id).toBe(created.id);
+      expect(sum(figures(response))).toBe(5);
+    }, 120_000);
+
+    it("(iv) created deleted by a concurrent sweep before the re-read and the sweep returned null: key omitted, no throw", async () => {
+      await setPolicy("backorder");
+      const created: any = await plainCreate(8); // overshoot 3
+      await raw.stockMovement.deleteMany({ where: { productId } });
+      await raw.orderItem.deleteMany({ where: { orderId: created.id } });
+      await raw.order.delete({ where: { id: created.id } });
+      const response: any = await buyerCreateResponse(created, null, readOrder);
+      expect(response).toBe(created); // the stale created, untouched
+      expect(JSON.stringify(response)).not.toMatch(/backorder/i);
+    }, 120_000);
+
+    it("(v) a lowering edit between the sweep and the re-read (a lost write) omits the key on the whole order", async () => {
       await setPolicy("backorder");
       const created: any = await createOrder(buyer(0), 8); // overshoot 3
       const write = stockWriteOf(created)!;
