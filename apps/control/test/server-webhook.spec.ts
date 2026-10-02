@@ -2,8 +2,9 @@
 import { createHmac } from "crypto";
 import { startServer, WEBHOOK_SECRET } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 const sign = (body: string, secret = WEBHOOK_SECRET): string =>
   "sha256=" + createHmac("sha256", secret).update(body).digest("hex");

@@ -7,10 +7,10 @@ import * as path from "path";
 import { makeWorld, baseState, git, jl } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { runCli, makeWorkRepo, bytes, lineCount } from "./helpers/spawn-cli";
-import { IS_WIN } from "./helpers/platform";
+import { IS_WIN, scaled } from "./helpers/platform";
 import { installWinFailGit } from "./helpers/win-git-shim";
 
-jest.setTimeout(90_000);
+jest.setTimeout(scaled(90_000));
 
 let world: World;
 afterEach(() => world.cleanup());
@@ -305,7 +305,9 @@ describe("next --hook", () => {
     const ms = Date.now() - t0;
     fs.renameSync(world.originDir + ".gone", world.originDir);
     expect(r.code).toBe(0);
-    expect(ms).toBeLessThan(2000);
+    // the hook budget is 2 s on POSIX; a Windows process start (node + git) alone costs about 1 s, so there
+    // the same "never waits on the network" proof gets 8 s (an unreachable origin would take 25 s+)
+    expect(ms).toBeLessThan(IS_WIN ? 8000 : 2000);
     expect(r.stdout).toMatch(/lane lane-u/);
     expect(lineCount(r.stdout)).toBeLessThanOrEqual(30);
   });

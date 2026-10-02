@@ -13,11 +13,11 @@ import { startSmartHttp } from "./helpers/smart-http";
 import type { SmartHttp, SmartHttpOpts } from "./helpers/smart-http";
 import { runCli } from "./helpers/spawn-cli";
 import { baseState, makeWorld } from "./helpers/temp-repo";
-import { IS_WIN, realGitPath } from "./helpers/platform";
+import { IS_WIN, realGitPath, scaled } from "./helpers/platform";
 import { installWinFailGit } from "./helpers/win-git-shim";
 import type { World } from "./helpers/temp-repo";
 
-jest.setTimeout(90_000);
+jest.setTimeout(scaled(90_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const G = (): any => require("../src/sources/git");
 
