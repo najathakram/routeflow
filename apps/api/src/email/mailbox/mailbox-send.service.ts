@@ -9,6 +9,7 @@ import MailComposer from "nodemailer/lib/mail-composer";
 import { PrismaService } from "../../prisma/prisma.service";
 import { EncryptionService } from "../../common/encryption.service";
 import { withAdvisoryLock } from "../../common/db-locks";
+import { AddonAccessService } from "../../billing/addon-access";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send";
@@ -123,7 +124,11 @@ interface AccessGrant {
 }
 
 /** Why a send skipped the mailbox without calling the provider. */
-type MailboxSkipReason = "not_connected" | "revoked" | "throttled" | "reauth_required";
+type MailboxSkipReason =
+  "not_connected" | "revoked" | "throttled" | "reauth_required" | "addon_required";
+
+/** The add-on the mailbox HTTP routes are gated on (`@RequireAddon`); the send path honours it too. */
+const MAILBOX_ADDON_KEY = "email.connected_mailbox";
 
 /** The connection as read UNDER the advisory lock, with a live token — see `prepareSend`. */
 interface PreparedSend {
@@ -206,6 +211,7 @@ export class MailboxSendService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly config: ConfigService,
+    private readonly addonAccess: AddonAccessService,
   ) {}
 
   /**
@@ -453,6 +459,19 @@ export class MailboxSendService {
       if (!unlocked) return { delivered: false, transport: "mailbox", error: "not_connected" };
       const early = skipReason(unlocked);
       if (early) return { delivered: false, transport: "mailbox", error: early };
+
+      // Entitlement: the SAME decision the `@RequireAddon` HTTP guard makes. A downgrade can keep
+      // the connection row, so the send path must check it too. Dark => send + would-deny warning;
+      // enforced => `addon_required`, which EmailService treats like any other skip (falls through).
+      const access = await this.addonAccess.decide(tenantId, [MAILBOX_ADDON_KEY]);
+      if (access.outcome === "denied") {
+        return { delivered: false, transport: "mailbox", error: "addon_required" };
+      }
+      if (access.outcome === "dark") {
+        this.logger.warn(
+          `addon gate would deny (dark): keys=${MAILBOX_ADDON_KEY} tenant=${tenantId} route=mailbox send`,
+        );
+      }
 
       const prepared = await this.prepareSend(tenantId);
       if (typeof prepared === "string") {
