@@ -1,3 +1,4 @@
+import { assertSafeBuyerName } from "../common/text-cell-guards";
 import {
   Injectable,
   NotFoundException,
@@ -202,6 +203,7 @@ export class BuyerAdminService {
   ) {
     const buyer = await this.prisma.buyerAccount.findUnique({ where: { id } });
     if (!buyer) throw new NotFoundException("Buyer account not found");
+    if (dto.name !== undefined) assertSafeBuyerName(dto.name, buyer.name); // B964: staff-typed, change-only
 
     const emailChanging = dto.email !== undefined && dto.email !== buyer.email;
     if (emailChanging) {

@@ -513,6 +513,21 @@ export type BarcodeOrigin = (typeof BARCODE_ORIGIN_VALUES)[number];
 export const RECIPE_STATUS_VALUES = ["DRAFT", "ACTIVE", "RETIRED"] as const;
 export type RecipeStatus = (typeof RECIPE_STATUS_VALUES)[number];
 
+// SA-603: lifecycle of one outbound transactional email attempt (EmailDelivery.status).
+export const EMAIL_DELIVERY_STATUS_VALUES = [
+  "QUEUED",
+  "SENT",
+  "FAILED",
+  "BOUNCED",
+  "WOULD_SEND",
+  "OPTED_OUT",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUS_VALUES)[number];
+
+/** SA-138: the layer a tenant POLICY value applies to (PolicyValue.scopeType). */
+export const POLICY_SCOPE_TYPE_VALUES = ["TENANT", "CATEGORY", "CUSTOMER"] as const;
+export type PolicyScopeTypeValue = (typeof POLICY_SCOPE_TYPE_VALUES)[number];
+
 /** #2653 (SA-542b): which realm minted a sign-in handoff code (Prisma `HandoffRealm`). */
 export const HANDOFF_REALM_VALUES = ["STAFF", "BUYER"] as const;
 export type HandoffRealm = (typeof HANDOFF_REALM_VALUES)[number];

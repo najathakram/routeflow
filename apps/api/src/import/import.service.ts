@@ -10,6 +10,7 @@ import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
 import { customerNameViolation } from "../customers/customer-name-guard";
+import { addressViolation, licenseViolation } from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
@@ -69,7 +70,7 @@ function isEntitlementDenial(e: unknown): boolean {
   const body = e.getResponse();
   const code =
     typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
-  return code !== "PLAN_GATE_UNAVAILABLE";
+  return code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE;
 }
 
 export interface ImportRowPlan {
@@ -88,10 +89,12 @@ import {
   mapBarcodeUniqueViolation,
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
+import { claimCodes, codeClaims } from "../products/product-code-release";
 import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -368,6 +371,20 @@ export class ImportService {
     }
 
     return data;
+  }
+
+  /**
+   * B964: the readable refusal for a commercial TEXT cell of a contacts row (the tobacco license number), change-only against the
+   * existing customer. A method of its own: importContacts' raw writes must not name a commercial field (SA-284 binding pin).
+   */
+  private commercialTextViolation(
+    values: Record<string, unknown>,
+    existing: Record<string, unknown> | null | undefined,
+  ): string | null {
+    return licenseViolation(
+      { tobaccoLicenseNo: values.tobaccoLicenseNo as string | undefined },
+      existing ? { tobaccoLicenseNo: existing.tobaccoLicenseNo as string | null } : null,
+    );
   }
 
   /**
@@ -739,6 +756,36 @@ export class ImportService {
       );
       if (nameViolation) {
         skipContact(nameViolation);
+        continue;
+      }
+      // B964: the same rule for the row's billing/shipping address text and its tobacco license number (change-only for the
+      // license against an existing customer): reject THIS row before any write; the importer never reads or rewrites stored rows.
+      // Change-only (lead Opus on #3010): an address cell is checked only when the importer WILL write it: always for a new
+      // customer, and for an existing one only when that address type is missing AND the row has that address to write (shipping equal to billing writes no shipping row).
+      const hasStoredBilling = (existing?.addresses ?? []).some((a) => a.addressType === "BILLING");
+      const hasStoredShipping = (existing?.addresses ?? []).some(
+        (a) => a.addressType === "SHIPPING",
+      );
+      const textViolation =
+        (hasStoredBilling || !hasBilling
+          ? null
+          : addressViolation({
+              line1: billingLine1,
+              city: billingCity,
+              state: billingState,
+              zip: billingZip,
+            })) ??
+        (hasStoredShipping || !hasShipping
+          ? null
+          : addressViolation({
+              line1: shippingLine1,
+              city: shippingCity,
+              state: shippingState,
+              zip: shippingZip,
+            })) ??
+        this.commercialTextViolation(parsedCommercial.values, existing);
+      if (textViolation) {
+        skipContact(textViolation);
         continue;
       }
       const claimZohoId = zohoContactId ?? existing?.zohoContactId ?? null;
@@ -1205,6 +1252,18 @@ export class ImportService {
         if (nameViolation) {
           skipped++;
           errors.push(`${customerName}: ${nameViolation}`);
+          continue;
+        }
+        // B964: the auto-created customer's billing address text, same rule, before any user or customer write
+        const addressText = addressViolation({
+          line1: (first["Billing Address"] || first["Billing Street"] || "").trim(),
+          city: (first["Billing City"] || "").trim(),
+          state: (first["Billing State"] || "").trim(),
+          zip: (first["Billing Code"] || "").trim(),
+        });
+        if (addressText) {
+          skipped++;
+          errors.push(`${customerName}: ${addressText}`);
           continue;
         }
         const baseUsername = this.slugify(customerName);
@@ -2860,6 +2919,14 @@ export class ImportService {
             // products.service.ts create().
             if (zohoBarcode) {
               await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              // SA-603a: lock -> claim -> check -> create. A code an INACTIVE product still holds is released here
+              // (audited); an ACTIVE holder is a 409. (barcode and sku are the same code on this path.)
+              await claimCodes(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                actorId: null,
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+              });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
                 productId: null,

@@ -41,11 +41,11 @@ export function customerFormErrorCopy(err: unknown): string {
   // The shared gate parser (a plan gate only; PLAN_GATE_UNAVAILABLE means the gate service is down,
   // so it falls through to the status copy).
   const gate = parsePlanGate(err);
-  if (gate && gate.code !== "PLAN_GATE_UNAVAILABLE")
+  if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE)
     return gate.flag === "meter.customers" ? CUSTOMER_CAP_COPY : PLAN_COPY;
   if (data?.code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   // RO-1: a blocked write against a READ_ONLY tenant, worded like the read-only toast.
-  if (data?.code === "READ_ONLY") return READ_ONLY_COPY;
+  if (data?.code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   const message = data?.message;
   if (
     typeof message === "string" &&
