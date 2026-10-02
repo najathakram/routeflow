@@ -170,18 +170,20 @@ export function useCustomerRoutes(id: string) {
   });
 }
 
-export function useAddCustomerAddress() {
+export function useAddCustomerAddress(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.post(`/customers/${id}/addresses`, data).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["customers", vars.id] }),
   });
 }
 
-export function useUpdateCustomerAddress() {
+export function useUpdateCustomerAddress(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({
       id,
       addrId,

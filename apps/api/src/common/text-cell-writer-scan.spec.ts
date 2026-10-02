@@ -23,7 +23,14 @@ import { join } from "node:path";
 
 /** model accessor -> the guarded fields written under it. Extend for B964 (addresses, licenses…). */
 const GUARDED: Record<string, readonly string[]> = {
-  customer: ["businessName", "contactName", "displayName"],
+  customer: ["businessName", "contactName", "displayName", "tobaccoLicenseNo"],
+  // B964-1: addresses (printed on documents, route sheets, the tobacco filing header), license numbers, buyer names.
+  customerAddress: ["label", "line1", "line2", "city", "state", "zip"],
+  customerAuthorization: ["licenseNumber"],
+  buyerAccount: ["name"],
+  // B964-2: product names (invoices, order sheets, exports, regulated filings). #2881's family create/update writes the same
+  // columns: it fails this scan until it calls the guard.
+  product: ["name", "variantName"],
   // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
   tenant: ["name"],
   // Printed on buyer documents and on the tobacco filing header.
@@ -32,14 +39,29 @@ const GUARDED: Record<string, readonly string[]> = {
   tenantConfig: ["businessName"],
 };
 
-const GUARD_CALLS = ["assertSafeCustomerNames", "customerNameViolation", "assertSafeTextCell"];
+const GUARD_CALLS = [
+  "assertSafeCustomerNames",
+  "customerNameViolation",
+  "assertSafeTextCell",
+  // B964-1
+  "assertSafeAddress",
+  "addressViolation",
+  "assertSafeLicense",
+  "licenseViolation",
+  "assertSafeBuyerName",
+  "safeBuyerDisplayName",
+  "isFormulaLedText",
+  // B964-2
+  "assertSafeProductNames",
+  "productNameViolation",
+];
 
 /** file (relative to src/) -> why an unguarded write of the fields there is safe. */
 const EXEMPT: Record<string, string> = {
-  "platform-admin/tenant-mirror.service.ts":
-    "copies Tenant.name, which signup (tenants.service) and createTenant (platform-admin.service) guard; " +
-    "its contactName also falls back to the first tenant admin's USERNAME, which is NOT covered here " +
-    "(admin usernames have their own constraints; tracked for B964)",
+  // (B964-1 closed the tenant-mirror's admin-username path: it falls back to the guarded tenant name, so it calls the guard.)
+  "tracked-categories/tracked-categories.service.ts":
+    "its product.updateMany writes Product.category (a subcategory rename mirrored onto products), NOT Product.name: the scan " +
+    "matches the local variable `name`; the category mirror is its own LOW, tracked separately",
 };
 
 const SRC = join(__dirname, "..");
@@ -118,6 +140,38 @@ describe("text-cell writer scan (B956)", () => {
       return !GUARD_CALLS.some((g) => text.includes(g));
     });
     expect(unguarded).toEqual([]);
+  });
+
+  it("B964-1: the new doors are all found AND guarded (addresses, license numbers, buyer names)", () => {
+    const files = new Set(hits.map((h) => h.file));
+    for (const f of [
+      "customers/customers.service.ts",
+      "import/import.service.ts",
+      "authorizations/authorizations.service.ts",
+      "buyer/buyer-auth.service.ts",
+      "buyer/buyer-admin.service.ts",
+      "auth/google-oauth.service.ts",
+      "auth/apple-oauth.service.ts",
+    ]) {
+      expect(files).toContain(f);
+    }
+    expect(hits).toContainEqual({
+      file: "customers/customers.service.ts",
+      hit: "customerAddress.label",
+    });
+    expect(hits).toContainEqual({ file: "buyer/buyer-auth.service.ts", hit: "buyerAccount.name" });
+  });
+
+  it("B964-2: the product-name writers are found and guarded (a NEW unguarded writer, e.g. #2881's family create, turns the scan red)", () => {
+    const files = new Set(hits.map((h) => h.file));
+    for (const f of [
+      "products/products.service.ts",
+      "import/import.service.ts",
+      "inventory/inventory.service.ts",
+    ]) {
+      expect(files).toContain(f);
+    }
+    expect(hits).toContainEqual({ file: "products/products.service.ts", hit: "product.name" });
   });
 
   it("every EXEMPT entry still names a real writer (no stale exemptions)", () => {

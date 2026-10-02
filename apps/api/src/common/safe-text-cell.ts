@@ -18,9 +18,34 @@ export function isFormulaLedText(value: string): boolean {
   return FORMULA_LEAD.test(value) && !PLAIN_DECIMAL.test(value);
 }
 
+/**
+ * B964: human labels for the fields B964 guards (addresses, license numbers, buyer names), so the 400 and an import row's skip reason
+ * read "City can't start with ..." instead of a camelCase key. B956's customer name fields (businessName, contactName,
+ * displayName, tenant name) are deliberately NOT here: their message text is pinned by existing specs and stays as it was.
+ * Web and mobile carry the same labels in their fixed copy (`safe-text-error-copy.ts`, pinned equal by a parity spec).
+ */
+export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
+  label: "Address label",
+  line1: "Address line 1",
+  line2: "Address line 2",
+  city: "City",
+  state: "State",
+  zip: "ZIP code",
+  tobaccoLicenseNo: "Tobacco license number",
+  licenseNumber: "License number",
+  buyerName: "Name",
+  productName: "Product name",
+  variantName: "Variant name",
+};
+
 /** Readable text for the 400 (and for an import row's skip reason). */
 export function formulaLeadMessage(field: string): string {
-  return `${field} must not start with = + - @ or a tab/line break`;
+  const label = Object.prototype.hasOwnProperty.call(TEXT_CELL_FIELD_LABELS, field)
+    ? TEXT_CELL_FIELD_LABELS[field]
+    : null;
+  return label
+    ? `${label} can't start with =, +, -, @ or a tab/line break`
+    : `${field} must not start with = + - @ or a tab/line break`;
 }
 
 /**

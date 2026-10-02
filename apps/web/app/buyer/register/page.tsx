@@ -1,5 +1,6 @@
 "use client";
 
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -106,6 +107,8 @@ function BuyerRegisterInner() {
       router.push(redirect ?? "/buyer/portal");
     } catch (err: unknown) {
       const msg =
+        // B964: a refused formula-led name is fixed copy ("Name can't start with ..."), never the server text
+        safeTextErrorCopy(err) ??
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         "Registration failed. Please try again.";
       setApiError(typeof msg === "string" ? msg : "Registration failed.");

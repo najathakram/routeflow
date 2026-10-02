@@ -2,8 +2,9 @@
  * B988: the clone is renamed into place right after git exits. Windows transiently refuses that
  * rename (EPERM/EBUSY/EACCES) while a scanner or indexer holds a handle in the fresh clone, which
  * surfaced as `ctl: EPERM: operation not permitted, rename ...clone-a.ctl-tmp-...` in roughly one
- * parallel CLI spec in thirty. `renameDirRetrying` retries those codes with a short back-off and
- * throws everything else unchanged. Pure: the rename and the sleep are injected.
+ * parallel CLI spec in thirty. On Windows only, `renameDirRetrying` retries those codes with a short back-off and
+ * throws everything else unchanged; on POSIX it renames directly (no retry, no thread-blocking sleep).
+ * Pure: the rename, the sleep and the platform are injected.
  */
 import { renameDirRetrying } from "../src/sources/state-branch";
 
@@ -14,7 +15,7 @@ describe("renameDirRetrying", () => {
   it("renames at once when nothing is refused (no sleep)", () => {
     const rename = jest.fn();
     const sleep = jest.fn();
-    renameDirRetrying("a", "b", rename, sleep);
+    renameDirRetrying("a", "b", rename, sleep, true);
     expect(rename).toHaveBeenCalledTimes(1);
     expect(rename).toHaveBeenCalledWith("a", "b");
     expect(sleep).not.toHaveBeenCalled();
@@ -31,7 +32,7 @@ describe("renameDirRetrying", () => {
       })
       .mockImplementation(() => undefined);
     const sleep = jest.fn();
-    renameDirRetrying("a", "b", rename, sleep);
+    renameDirRetrying("a", "b", rename, sleep, true);
     expect(rename).toHaveBeenCalledTimes(3);
     expect(sleep.mock.calls.map((c) => c[0])).toEqual([50, 100]); // growing back-off
   });
@@ -42,7 +43,7 @@ describe("renameDirRetrying", () => {
         throw err(code);
       });
       const sleep = jest.fn();
-      expect(() => renameDirRetrying("a", "b", rename, sleep)).toThrow(code);
+      expect(() => renameDirRetrying("a", "b", rename, sleep, true)).toThrow(code);
       expect(rename).toHaveBeenCalledTimes(1);
       expect(sleep).not.toHaveBeenCalled();
     }
@@ -53,9 +54,47 @@ describe("renameDirRetrying", () => {
       throw err("EPERM");
     });
     const sleep = jest.fn();
-    expect(() => renameDirRetrying("a", "b", rename, sleep)).toThrow("EPERM");
+    expect(() => renameDirRetrying("a", "b", rename, sleep, true)).toThrow("EPERM");
     expect(rename).toHaveBeenCalledTimes(9); // the first try plus 8 retries
     expect(sleep).toHaveBeenCalledTimes(8);
+  });
+
+  it.each(["EPERM", "EBUSY", "EACCES"])(
+    "POSIX (win=false) never retries a %s: one rename call, no sleep, thrown unchanged",
+    (code) => {
+      const rename = jest.fn(() => {
+        throw err(code);
+      });
+      const sleep = jest.fn();
+      expect(() => renameDirRetrying("a", "b", rename, sleep, false)).toThrow(code);
+      expect(rename).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled(); // the back-off blocks the thread; Linux must not pay it
+    },
+  );
+
+  it("POSIX (win=false) renames directly", () => {
+    const rename = jest.fn();
+    const sleep = jest.fn();
+    renameDirRetrying("a", "b", rename, sleep, false);
+    expect(rename).toHaveBeenCalledWith("a", "b");
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("the platform default is Windows-only: retries exactly when process.platform is win32", () => {
+    const rename = jest
+      .fn()
+      .mockImplementationOnce(() => {
+        throw err("EPERM");
+      })
+      .mockImplementation(() => undefined);
+    const sleep = jest.fn();
+    if (process.platform === "win32") {
+      renameDirRetrying("a", "b", rename, sleep);
+      expect(rename).toHaveBeenCalledTimes(2);
+    } else {
+      expect(() => renameDirRetrying("a", "b", rename, sleep)).toThrow("EPERM");
+      expect(rename).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("really renames a directory with the default seams", () => {
