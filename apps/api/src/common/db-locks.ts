@@ -95,6 +95,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 export type LockMode = "wait" | "try";
 /**
@@ -407,7 +408,7 @@ export async function lockRowsNoWait(
       /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
     if (!lockUnavailable) throw err;
     throw new ConflictException({
-      code: "CONCURRENT_UPDATE",
+      code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
       retryable: true,
       message: "Another update to this record is in progress. Try again in a moment.",

@@ -77,15 +77,15 @@ const INLINE_RETURNS_ADDON_KEY = "orders_inline_returns";
  * mobile copy by inline-returns.service.spec.ts.
  */
 export const INLINE_RETURN_ERROR_CODES = {
-  ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
-  ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
-  ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
-  RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  ORDER_NOT_FOUND: API_ERROR_CODES.INLINE_RETURN_ORDER_NOT_FOUND,
+  ORDER_CUSTOMER_MISMATCH: API_ERROR_CODES.INLINE_RETURN_ORDER_CUSTOMER_MISMATCH,
+  ORDER_CANCELLED: API_ERROR_CODES.INLINE_RETURN_ORDER_CANCELLED,
+  RETURN_KEY_CONFLICT: API_ERROR_CODES.INLINE_RETURN_KEY_CONFLICT,
   // #2424: the same key, the same customer/order, but DIFFERENT items: not a replay. The client
   // treats it as a definite refusal (settles its nonce), so its next capture mints a new key.
   RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS,
   // B961 / SA-071c: staff confirming goods the customer already returned or was credited for must give a reason.
-  ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+  ALREADY_RETURNED_REASON_REQUIRED: API_ERROR_CODES.INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED,
 } as const;
 
 /** B961 (SA-071f N3): the hold reasons of an INLINE return awaiting staff approval. ALREADY_RETURNED wins over DRIVER_CAP (it needs a reason). */
@@ -101,7 +101,7 @@ export const ALREADY_RETURNED_REASON_MESSAGE =
   "Some of these goods were already returned or credited for this customer. Enter a reason to credit them again.";
 
 /** The 409 code of a returnKey already held (create's preflight: a replay, or a real collision). */
-export const INLINE_RETURN_KEY_TAKEN = "INLINE_RETURN_KEY_TAKEN";
+export const INLINE_RETURN_KEY_TAKEN = API_ERROR_CODES.INLINE_RETURN_KEY_TAKEN;
 
 @Injectable()
 export class InlineReturnsService {

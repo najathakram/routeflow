@@ -61,7 +61,7 @@ import { standardRestockResolver, type ProductPackBasis } from "./returns-restoc
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
-const INLINE_RETURN_USE_INLINE_ENDPOINTS = "INLINE_RETURN_USE_INLINE_ENDPOINTS";
+const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
 
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
