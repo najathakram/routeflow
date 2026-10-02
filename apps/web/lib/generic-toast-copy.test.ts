@@ -172,13 +172,35 @@ describe("genericToastCopy: codes users rely on", () => {
       );
     });
 
-    it("PACK_SIZE_UNKNOWN and DUPLICATE_VENDOR_BILL", () => {
+    it("PACK_SIZE_UNKNOWN keeps the 'confirm as loose pieces' option", () => {
       expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PACK_SIZE_UNKNOWN }))).toBe(
-        "Some lines don't have a pack size yet. Set each line's pack size, then try again.",
+        "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
       );
-      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL }))).toBe(
-        "A bill with this supplier invoice number already exists. Open that bill, or change the invoice number.",
-      );
+    });
+
+    describe("DUPLICATE_VENDOR_BILL: points at the existing bill, never teaches a bypass", () => {
+      const dup = (duplicate: unknown) =>
+        err(409, { code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL, duplicate });
+      it("names the existing bill from the STRUCTURED field", () => {
+        expect(genericToastCopy(dup({ billNumber: "BILL-0012", status: "RECEIVED" }))).toBe(
+          "This bill is already recorded as BILL-0012. Open it instead.",
+        );
+      });
+      it("a DRAFT match says to finish receiving it", () => {
+        expect(genericToastCopy(dup({ billNumber: "BILL-0013", status: "DRAFT" }))).toBe(
+          "This bill is already saved as draft BILL-0013. Open it to finish receiving instead of creating a second bill.",
+        );
+      });
+      it("without a usable bill number it still says to open the existing bill", () => {
+        for (const d of [undefined, {}, { billNumber: 12 }, { billNumber: "<b>x</b> " + RAW }])
+          expect(genericToastCopy(dup(d))).toBe(
+            "This bill is already recorded. Open the existing bill instead.",
+          );
+      });
+      it("never suggests changing the invoice number (it would defeat the duplicate guard)", () => {
+        for (const d of [undefined, { billNumber: "B1", status: "DRAFT" }, { billNumber: "B1" }])
+          expect(genericToastCopy(dup(d))).not.toMatch(/change the invoice number/i);
+      });
     });
 
     it.each([

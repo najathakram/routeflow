@@ -40,10 +40,8 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
-  [API_ERROR_CODES.DUPLICATE_VENDOR_BILL]:
-    "A bill with this supplier invoice number already exists. Open that bill, or change the invoice number.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
-    "Some lines don't have a pack size yet. Set each line's pack size, then try again.",
+    "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
@@ -94,6 +92,21 @@ function allocationsCopy(data: Record<string, unknown>): string {
       ? `The allocations add up to ${allocated}, more than the ${total} payment.`
       : "The allocations add up to more than the payment.";
   return `${lead} Lower an allocation or raise the payment amount.`;
+}
+
+/**
+ * A duplicate vendor bill (document identity: same supplier invoice number, or the same scanned lines): points at the EXISTING
+ * bill from the structured `duplicate` payload. It never suggests changing the invoice number, which would defeat the guard.
+ */
+const BILL_NUMBER = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,39}$/;
+function duplicateBillCopy(data: Record<string, unknown>): string {
+  const dup = (data.duplicate ?? {}) as { billNumber?: unknown; status?: unknown };
+  const number =
+    typeof dup.billNumber === "string" && BILL_NUMBER.test(dup.billNumber) ? dup.billNumber : null;
+  if (!number) return "This bill is already recorded. Open the existing bill instead.";
+  return dup.status === "DRAFT"
+    ? `This bill is already saved as draft ${number}. Open it to finish receiving instead of creating a second bill.`
+    : `This bill is already recorded as ${number}. Open it instead.`;
 }
 
 /** Receiving a bill with unlinked lines (or no lines): says what to do next. The line list is the caller's dialog, not toast text. */
@@ -148,6 +161,7 @@ export function genericToastCopy(err: unknown): string {
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === "ALLOCATIONS_EXCEED_PAYMENT") return allocationsCopy(data); // B987 moves this code into API_ERROR_CODES
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
+  if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

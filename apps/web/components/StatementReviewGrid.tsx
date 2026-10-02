@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import Link from "next/link";
 import {
   CheckCircle2,
@@ -454,11 +453,8 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
       });
       onApplied(res, summary, impliedPaidArmed ? impliedPaidBills : null);
     } catch (err: unknown) {
-      toast({
-        title: "Couldn't apply the statement",
-        description: genericToastCopy(err),
-        variant: "error",
-      });
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast({ title: msg ?? "Couldn't apply the statement", variant: "error" });
     }
   };
 
@@ -503,7 +499,7 @@ export function StatementReviewGrid({ result, onApplied }: Props) {
           const err = e as { response?: { data?: { message?: string } }; message?: string };
           toast({
             title: "Couldn't create the bill",
-            description: genericToastCopy(err),
+            description: err?.response?.data?.message ?? err?.message,
             variant: "error",
           });
         },

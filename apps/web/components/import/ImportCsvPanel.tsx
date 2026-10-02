@@ -235,9 +235,9 @@ export function ImportCsvPanel({
       }
     } catch (err: any) {
       if (err?.response?.status === 403) {
-        setGateError(
-          "A column in this file needs an add-on or plan upgrade. Remove the column or enable it.",
-        );
+        // Today's behaviour, deliberately: the server names WHICH add-on or flag is needed (and a role 403 reads differently).
+        // Moving this to fixed copy needs codes + structured fields first (B991).
+        setGateError(err?.response?.data?.message ?? "This column needs an add-on to import");
         setPreview(null);
       } else {
         toast({
