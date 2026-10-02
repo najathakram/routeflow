@@ -60,7 +60,7 @@ import {
 import { withAdvisoryLock } from "../common/db-locks";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { buyerCreateResponse, withBackorderPieces } from "../orders/backorder-response";
-import { stockWriteOf } from "../orders/order-stock";
+import { stockWriteOf, withStockWrite } from "../orders/order-stock";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import {
   LOCK_UNAVAILABLE,
@@ -997,7 +997,15 @@ export class BuyerController {
       customerId: ctx.customerId,
     });
     const order = await this.templatesService.generateOrder(id, false, allowOversell);
-    return withBackorderPieces(order, stockWriteOf(order)); // B975: the same figure as checkout
+    // B975 + SA-631d: the same figure and the same holder rule as checkout. The template service returns the
+    // sweep's order carrying the CREATED order's write and id; the holder of this request's lines is decided by
+    // existence (created is re-read first, then the survivor). No write or no id behind the order: unknown,
+    // returned untouched with the key omitted (never 0).
+    const write = stockWriteOf(order);
+    if (!write?.orderId) return order;
+    return buyerCreateResponse(withStockWrite({ id: write.orderId }, write), order, (orderId) =>
+      this.ordersService.findOne(orderId, makePseudoUser(ctx)),
+    );
   }
 
   @Patch("templates/:id")

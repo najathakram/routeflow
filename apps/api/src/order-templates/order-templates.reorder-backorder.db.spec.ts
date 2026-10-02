@@ -33,8 +33,8 @@ import { PolicyService } from "../policy/policy.service";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { OrdersService } from "../orders/orders.service";
 import { OrderTemplatesService } from "./order-templates.service";
-import { stockWriteOf } from "../orders/order-stock";
-import { withBackorderPieces } from "../orders/backorder-response";
+import { stockWriteOf, withStockWrite } from "../orders/order-stock";
+import { buyerCreateResponse } from "../orders/backorder-response";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -296,32 +296,74 @@ describeDb(
       }
     }, 120_000);
 
+    /** The controller's re-read: the order as `findOne` returns it, or GONE (null) like a 404. */
+    const readOrder = (id: string) =>
+      tenantCtx.run(tenantId, () => orders.findOne(id, buyer(0))).catch(() => null);
+    /** What BuyerController.reorderFromTemplate does with the template service's result (B975, SA-631d). */
+    const respond = (order: any): Promise<any> => {
+      const write = stockWriteOf(order);
+      if (!write?.orderId) return Promise.resolve(order);
+      return buyerCreateResponse(
+        withStockWrite({ id: write.orderId }, write),
+        order,
+        readOrder,
+      ) as Promise<any>;
+    };
+    /** A PLAIN create (no skipAutoMerge): the shared createOrder helper passes skipAutoMerge:true, which keeps an
+     *  order out of the sweep, so it could never be folded into by the Reorder. */
+    const plainCreate = (qty: number): Promise<any> =>
+      tenantCtx.run(tenantId, () => orders.create({ items: [{ productId, qty }] }, buyer(0)));
+    const liveCount = () =>
+      raw.order.count({ where: { tenantId, customerId: customerIds[0], status: "PENDING" } });
+
     it("(R1) the Reorder's write == the TEMPLATE movement's overshoot, and the lines sum to it", async () => {
       await setPolicy("backorder");
       const tpl = await makeTemplate(0, 8); // stock 5 -> -3
       const order: any = await reorder(tpl.id, true);
       const write = stockWriteOf(order)!;
       expect(write.backorderByProduct.get(productId)).toBe(3);
+      expect(write.orderId).toBeDefined(); // the CREATED order
       expect(await stockNow()).toBe(-3);
       expect(await overshootOf()).toBe(3);
-      expect(sum(figures(withBackorderPieces(order, write)))).toBe(3);
+      expect(sum(figures(await respond(order)))).toBe(3);
     }, 120_000);
 
     it("(R2) a covered Reorder with the policy off reports 0 on its line (present)", async () => {
       const tpl = await makeTemplate(0, 3);
       const order: any = await reorder(tpl.id, false);
       expect(stockWriteOf(order)!.backorderByProduct.get(productId)).toBe(0);
-      expect(figures(withBackorderPieces(order, stockWriteOf(order)))).toEqual([0]);
+      expect(figures(await respond(order))).toEqual([0]);
     }, 120_000);
 
-    it("(R3) a Reorder folded into a pre-existing PENDING order: the merged lines sum to the overshoot", async () => {
+    it("(R3) an OLDER pending order is folded INTO the Reorder's order: the fold HAPPENED and the response is the merged holder", async () => {
       await setPolicy("backorder");
-      await createOrder(buyer(0), 4); // stock 5 -> 1, a PENDING order the Reorder will fold into
-      const tpl = await makeTemplate(0, 4); // 1 - 4 -> -3, overshoot 3
+      await plainCreate(4); // stock 5 -> 1, a PENDING order the Reorder will fold
+      const tpl = await makeTemplate(0, 4); // 1 - 4 -> -3, overshoot 3; the newest order wins the sweep
       const order: any = await reorder(tpl.id, true);
-      const response: any = withBackorderPieces(order, stockWriteOf(order));
+      // The fold HAPPENED (a no-op sweep would also give sum 3): ONE live PENDING order remains and it
+      // holds both orders' 8 pieces. With the plain create above made skipAutoMerge:true this is red.
+      expect(await liveCount()).toBe(1);
+      const response: any = await respond(order);
+      expect(response.lineItems.reduce((n: number, l: any) => n + Number(l.qty), 0)).toBe(8);
       expect(sum(figures(response))).toBe(3);
       expect(await overshootOf()).toBe(3);
+    }, 120_000);
+
+    it("(R4) the Reorder's order is folded INTO an older one (the older order wins the sweep): the survivor is returned with the figure", async () => {
+      await setPolicy("backorder");
+      const first = await plainCreate(4);
+      const tpl = await makeTemplate(0, 4); // overshoot 3
+      // make the OLDER order win the sweep (it orders by updatedAt desc) before the Reorder runs
+      await raw.order.update({
+        where: { id: first.id },
+        data: { updatedAt: new Date(Date.now() + 60_000) },
+      });
+      const order: any = await reorder(tpl.id, true);
+      expect(order.id).toBe(first.id); // the sweep's survivor
+      expect(await readOrder(stockWriteOf(order)!.orderId!)).toBeNull(); // the created order was folded away
+      const response: any = await respond(order);
+      expect(response.id).toBe(first.id);
+      expect(sum(figures(response))).toBe(3);
     }, 120_000);
   },
 );

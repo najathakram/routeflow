@@ -36,6 +36,12 @@ export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
  */
 export interface StockWriteResult {
   backorderByProduct: Map<string, number>;
+  /**
+   * The order this write was made on, set by a caller that returns a DIFFERENT order than the one it
+   * created (the template Reorder returns the sweep's order): the buyer controller re-reads THIS id to
+   * decide which order holds the request's lines (B975, SA-631d).
+   */
+  orderId?: string;
 }
 
 /**

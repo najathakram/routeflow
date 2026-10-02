@@ -862,7 +862,10 @@ export class OrderTemplatesService {
         `post-commit consolidation deferred (merge in progress) tenant=${tenantId} customer=${template.customerId}`,
       );
     }
-    return withStockWrite(merged ?? created, stockWriteOf(created));
+    // B975: the sweep's order comes back exactly as on master (staff and cron are unchanged), carrying the
+    // CREATED order's write and its id; only the buyer controller maps it, after re-reading by existence.
+    const write = stockWriteOf(created);
+    return withStockWrite(merged ?? created, write && { ...write, orderId: created.id });
   }
 
   /**

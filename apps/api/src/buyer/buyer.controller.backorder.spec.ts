@@ -347,6 +347,19 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
       expect(figures(res)).toEqual([0, 3]);
     });
 
+    it("(iii) the created order still EXISTS while the sweep returned a DIFFERENT order: the response is the created order, never the swept one", async () => {
+      // the carried id (o-new), not the swept order's id (o-other), decides which row is read first
+      templates.generateOrder.mockResolvedValue(swept("o-other", [["m1", "p", 9]]));
+      rowsOf({
+        "o-new": orderOf("o-new", [["c1", "p", 8]]),
+        "o-other": orderOf("o-other", [["m1", "p", 9]]),
+      });
+      const res: any = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(res.id).toBe("o-new");
+      expect(figures(res)).toEqual([3]);
+      expect(orders.findOne).toHaveBeenCalledTimes(1); // o-other was never read
+    });
+
     it("(iv) neither row can be read: the order comes back untouched, key omitted, no throw", async () => {
       const order = swept("o-old");
       templates.generateOrder.mockResolvedValue(order);
