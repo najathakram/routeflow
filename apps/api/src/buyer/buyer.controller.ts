@@ -732,7 +732,12 @@ export class BuyerController {
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
     };
-    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
+    // B985 / SA-631: the buyer's "create a separate order" choice PERSISTS (staff passes the same
+    // `{ skipAutoMerge: choice === "separate" }`). Without it the new row was a merge candidate and BOTH the
+    // post-commit and the hourly sweep folded it into another order, hard-deleting the loser.
+    const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx), {
+      skipAutoMerge: !!dto.forceNew,
+    });
     // Newly-created order may share a customer with pre-existing PENDINGs —
     // consolidate them so the customer ends up with a single PENDING (buyer-driven,
     // so the merged quantity earns its own BUY_N_GET_M free units).
@@ -740,14 +745,18 @@ export class BuyerController {
     // POST-COMMIT (see ../orders/merge-contention.ts): `created` exists already, so contention
     // must not become the response — the buyer would be told their order failed and would place
     // a second one. Return the unconsolidated order; the hourly sweep folds it later.
+    // forceNew has nothing to consolidate, and sweeping the customer's OTHER pending orders is a side effect
+    // the buyer did not ask for (the hourly sweep owns those): it is not swept (B985).
     let merged: Awaited<ReturnType<OrdersService["mergeAllPendingForCustomer"]>> | null = null;
     try {
-      merged = await this.ordersService.mergeAllPendingForCustomer(
-        ctx.customerId,
-        { buyerInitiated: true },
-        // POST-COMMIT: never wait — see the sibling sweep above.
-        { lockMode: "try" },
-      );
+      if (!dto.forceNew) {
+        merged = await this.ordersService.mergeAllPendingForCustomer(
+          ctx.customerId,
+          { buyerInitiated: true },
+          // POST-COMMIT: never wait — see the sibling sweep above.
+          { lockMode: "try" },
+        );
+      }
     } catch (e) {
       if (!isMergeContention(e)) throw e;
       this.logger.warn(
