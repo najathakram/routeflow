@@ -132,9 +132,10 @@ describe("CustomerFormModal — refused name (B956)", () => {
     expect(updateOpts).toHaveBeenCalledWith({ localErrorToast: true });
   });
 
-  it("any other error keeps the existing banner text", () => {
+  it("any other error shows the fixed ordinary-failure copy (B979), not the raw message", () => {
     createError = new Error("Email or username already taken");
     renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);
-    expect(screen.getByText("Email or username already taken")).toBeInTheDocument();
+    expect(screen.queryByText("Email or username already taken")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("We couldn't reach the server");
   });
 });
