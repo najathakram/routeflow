@@ -762,19 +762,29 @@ export class ImportService {
       }
       // B964: the same rule for the row's billing/shipping address text and its tobacco license number (change-only for the
       // license against an existing customer): reject THIS row before any write; the importer never reads or rewrites stored rows.
+      // Change-only (lead Opus on #3010): an address cell is checked only when the importer WILL write it: always for a new
+      // customer, and for an existing one only when that address type is missing (a stored address is never rewritten here).
+      const hasStoredBilling = (existing?.addresses ?? []).some((a) => a.addressType === "BILLING");
+      const hasStoredShipping = (existing?.addresses ?? []).some(
+        (a) => a.addressType === "SHIPPING",
+      );
       const textViolation =
-        addressViolation({
-          line1: billingLine1,
-          city: billingCity,
-          state: billingState,
-          zip: billingZip,
-        }) ??
-        addressViolation({
-          line1: shippingLine1,
-          city: shippingCity,
-          state: shippingState,
-          zip: shippingZip,
-        }) ??
+        (hasStoredBilling
+          ? null
+          : addressViolation({
+              line1: billingLine1,
+              city: billingCity,
+              state: billingState,
+              zip: billingZip,
+            })) ??
+        (hasStoredShipping
+          ? null
+          : addressViolation({
+              line1: shippingLine1,
+              city: shippingCity,
+              state: shippingState,
+              zip: shippingZip,
+            })) ??
         this.commercialTextViolation(parsedCommercial.values, existing);
       if (textViolation) {
         skipContact(textViolation);

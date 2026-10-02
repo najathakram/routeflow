@@ -128,6 +128,58 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     expect(res.errors).toEqual([]);
   });
 
+  const existingCustomer = (addresses: unknown[]) => ({
+    id: "cust-1",
+    businessName: "Acme",
+    contactName: "Acme",
+    displayName: null,
+    zohoContactId: null,
+    tobaccoLicenseNo: null,
+    addresses,
+    contactPersons: [],
+  });
+
+  it("(lead Opus 1) change-only: an EXISTING customer that already HAS a billing address is not refused for a formula-led billing cell the importer would never write", async () => {
+    prisma.customer.findMany.mockResolvedValue([
+      existingCustomer([
+        { addressType: "BILLING", line1: "=LEGACY", city: "=LEGACY", state: "TX", zip: "78701" },
+      ]),
+    ]);
+    const res = await service.importContacts(
+      Buffer.from("Customer Name,Billing Address,Billing City\nAcme,=LEGACY,=LEGACY\n"),
+      "user-1",
+    );
+    expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+    expect(res.skipped).toBe(0);
+  });
+
+  it("(lead Opus 1) the same existing customer WITHOUT a billing address IS refused: that cell WOULD be written", async () => {
+    prisma.customer.findMany.mockResolvedValue([existingCustomer([])]);
+    const res = await service.importContacts(
+      Buffer.from("Customer Name,Billing Address,Billing City\nAcme,@x,Austin\n"),
+      "user-1",
+    );
+    expect(
+      res.errors.some((e: string) =>
+        e.endsWith("Address line 1 can't start with =, +, -, @ or a tab/line break"),
+      ),
+    ).toBe(true);
+  });
+
+  it("(lead Opus 1) a formula-led SHIPPING cell is ignored when the customer already has a shipping address", async () => {
+    prisma.customer.findMany.mockResolvedValue([
+      existingCustomer([
+        { addressType: "BILLING", line1: "1 Main", city: "Austin", state: "TX", zip: "78701" },
+        { addressType: "SHIPPING", line1: "=LEGACY", city: "Dallas", state: "TX", zip: "75001" },
+      ]),
+    ]);
+    const res = await service.importContacts(
+      Buffer.from("Customer Name,Shipping Address,Shipping City\nAcme,=LEGACY,Dallas\n"),
+      "user-1",
+    );
+    expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+  });
+
   it("a formula-led Tobacco Licence No rejects the row with the readable label", async () => {
     const res = await service.importContacts(
       Buffer.from("Customer Name,Tobacco Licence No\nBad Co,=1+1\n"),
