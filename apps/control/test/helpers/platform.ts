@@ -61,3 +61,11 @@ export function realGitPath(): string {
   if (IS_WIN) return require("./win-git-shim").realGitWin() as string;
   return execFileSync("which", ["git"], { encoding: "utf8" }).trim();
 }
+
+/**
+ * Windows starts a node or git process several times slower than POSIX (and a verify runs these specs
+ * beside every other workspace's tests), so a budget that is generous on Linux/macOS starves there.
+ * Every spec timeout and every bounded "nothing happened" wait goes through this; POSIX is x1.
+ */
+export const TIME_SCALE = IS_WIN ? 4 : 1;
+export const scaled = (ms: number): number => ms * TIME_SCALE;
