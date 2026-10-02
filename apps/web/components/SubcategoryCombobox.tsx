@@ -1,11 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { cn, useToast } from "@routeflow/ui/web";
 import { useTrackedSubcategories, useCreateSubcategory } from "@/lib/api/tracked-categories";
 import { subcategoryPickerOptions } from "@/lib/regulated-format";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 interface SubcategoryComboboxProps {
   /** Parent regulated type — null/"" disables the field ("Pick a regulated type first"). */
@@ -50,7 +51,12 @@ export function SubcategoryCombobox({
   const { toast } = useToast();
 
   const { data: subs = [], refetch: refetchSubs } = useTrackedSubcategories(sectionId || undefined);
-  const createSub = useCreateSubcategory();
+  // Opts out for a formula-lead refusal and for the 409 name race (handled below): every other error reaches the global toast once.
+  const createSub = useCreateSubcategory({
+    localErrorToast: (e) =>
+      localToastForSafeTextRefusal(e) ||
+      (e as { response?: { status?: number } })?.response?.status === 409,
+  });
 
   // Options include the currently-selected subcategory even if it was since
   // deactivated (labelled inactive) — same drift-proofing as the old selects.
@@ -110,11 +116,14 @@ export function SubcategoryCombobox({
           return;
         }
       }
-      toast({
-        title: "Failed to create category",
-        description: genericToastCopy(err),
-        variant: "error",
-      });
+      const copy = safeTextErrorCopy(err);
+      if (copy) toast({ title: "Failed to create category", description: copy, variant: "error" });
+      else if (err?.response?.status === 409)
+        toast({
+          title: "Failed to create category",
+          description: "A category with that name already exists. Choose a different name.",
+          variant: "error",
+        });
     }
   };
 

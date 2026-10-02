@@ -13,6 +13,8 @@ import { customerNameViolation } from "../customers/customer-name-guard";
 import {
   addressViolation,
   licenseViolation,
+  productCategoryViolation,
+  personNameViolation,
   productNameViolation,
 } from "../common/text-cell-guards";
 import { NumberingService } from "./numbering.service";
@@ -787,7 +789,16 @@ export class ImportService {
               state: shippingState,
               zip: shippingZip,
             })) ??
-        this.commercialTextViolation(parsedCommercial.values, existing);
+        this.commercialTextViolation(parsedCommercial.values, existing) ??
+        // B984: the row's person name (salutation / first / last name). A ContactPerson is created only for a row with a first or last
+        // name, for a new customer or an existing one with none: that write is verbatim, so it is checked WITHOUT a stored row.
+        // Otherwise only a CHANGED value is checked, against the customer's own copy.
+        personNameViolation(
+          { salutation, firstName, lastName },
+          (firstName || lastName) && (!existing || (existing.contactPersons?.length ?? 0) === 0)
+            ? null
+            : (existing as never),
+        );
       if (textViolation) {
         skipContact(textViolation);
         continue;
@@ -2710,11 +2721,21 @@ export class ImportService {
 
         // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
         // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
-        if (typeof changes.name === "string") {
-          const renameViolation = productNameViolation(
-            { name: changes.name },
-            { name: existing.name as string | null },
-          );
+        if (typeof changes.name === "string" || typeof changes.category === "string") {
+          const renameViolation =
+            (typeof changes.name === "string"
+              ? productNameViolation(
+                  { name: changes.name },
+                  { name: existing.name as string | null },
+                )
+              : null) ??
+            // B990: a changed category cell is a DIFFERING value already; refused change-only against the stored text
+            (typeof changes.category === "string"
+              ? productCategoryViolation(
+                  changes.category,
+                  (existing.category as string | null) ?? null,
+                )
+              : null);
           if (renameViolation) {
             skipRow(renameViolation);
             continue;
@@ -2772,7 +2793,9 @@ export class ImportService {
       }
       // B964-2: a formula-led NEW name is a skip in BOTH modes, decided before the dry-run split: create() would refuse it in a
       // real run, so a preview that says "create" would disagree with what the import then does.
-      const nameViolation = productNameViolation({ name });
+      const nameViolation =
+        productNameViolation({ name }) ??
+        productCategoryViolation(parsed.values.category as string | undefined); // B990: the category cell too
       if (nameViolation) {
         skipRow(nameViolation);
         continue;

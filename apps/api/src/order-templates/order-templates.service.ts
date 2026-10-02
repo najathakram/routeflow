@@ -33,6 +33,7 @@ import {
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale } from "../orders/order-stock";
+import { assertSellableLines } from "../products/sellable-lines";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
 import { isoWeekdayUtc, startOfUtcDay } from "../common/utc-day";
 
@@ -167,6 +168,7 @@ export class OrderTemplatesService {
     if (products.length !== productIds.length) {
       throw new BadRequestException("One or more products not found");
     }
+    assertSellableLines(products); // WS8: a standing order never lists a FAMILY
 
     return this.prisma.forTenant().orderTemplate.create({
       data: {
@@ -228,12 +230,14 @@ export class OrderTemplatesService {
     // with no items.
     const items = dto.items;
     const productIds = [...new Set(items.map((i) => i.productId))];
-    const products = await this.prisma
-      .forTenant()
-      .product.findMany({ where: { id: { in: productIds } }, select: { id: true } });
+    const products = await this.prisma.forTenant().product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, kind: true },
+    });
     if (products.length !== productIds.length) {
       throw new BadRequestException("One or more products not found");
     }
+    assertSellableLines(products); // WS8
     const tenantId = this.prisma.getTenantId();
     // F-05: a suspension survives an edit of the template unless THAT line's product or qty changed
     // (a notes edit, or an edit of another line, must not launder a banned line back into the order).
@@ -343,6 +347,7 @@ export class OrderTemplatesService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new BadRequestException("Product not found");
+    assertSellableLines([product]); // WS8
 
     await this.markItemsEdited(templateId, editor);
     return this.prisma.forTenant().orderTemplateItem.create({
@@ -591,6 +596,7 @@ export class OrderTemplatesService {
     const products = await this.prisma.forTenant().product.findMany({
       where: { id: { in: productIds } },
     });
+    assertSellableLines(products); // WS8: a FAMILY line would become a SALE StockMovement
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     // B658: the SAME regulated per-category levy the interactive create path computes

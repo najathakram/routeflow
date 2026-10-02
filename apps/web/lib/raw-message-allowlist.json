@@ -120,8 +120,8 @@
     "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
-    "count": 1,
-    "why": "B986-7 orders + customers: folds an unexpected scan-resolver rejection (a JS Error, not a server body) into the scan error message; reviewed, pending a code for the lookup failure (B987-E)"
+    "count": 2,
+    "why": "B986-7 orders + customers: two reads, both pending a code (B991 / B987-E): one folds an unexpected scan-resolver rejection (a JS Error, not a server body); the other is #2865's `res.message` for a refused scan lookup (a server sentence)"
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
     "count": 2,
@@ -129,7 +129,7 @@
     "why": "comparison: e.message is matched against 'Network Error' / timeout to classify a transient failure, never rendered"
   },
   "app/(dashboard)/products/[id]/page.tsx": {
-    "count": 2,
+    "count": 1,
     "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "app/(dashboard)/products/page.tsx": {
@@ -174,10 +174,6 @@
   },
   "app/(dashboard)/settings/_components/MailboxCard.tsx": {
     "count": 10,
-    "why": "B986-3 settings + auth: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/settings/_components/RegulatedSettingsTab.tsx": {
-    "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
   "app/(dashboard)/settings/_components/SendingDomainCard.tsx": {

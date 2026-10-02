@@ -15,6 +15,7 @@ import type {
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { STEPS, SIGN_OFF_STEP_KEY, catalogStep, stageIndex } from "./onboarding-catalog";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 type CaseRow = Prisma.OnboardingCaseGetPayload<{ include: { steps: true } }>;
 type StepRow = CaseRow["steps"][number];
@@ -90,7 +91,7 @@ export class OnboardingTenantService {
       if (!step || !signOffAvailable(c, step)) {
         throw new ConflictException({
           statusCode: 409,
-          code: "ONBOARDING_SIGN_OFF_NOT_AVAILABLE",
+          code: API_ERROR_CODES.ONBOARDING_SIGN_OFF_NOT_AVAILABLE,
           message: "Sign-off isn't open yet — your onboarding lead will let you know when it is",
         });
       }

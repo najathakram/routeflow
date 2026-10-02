@@ -23,14 +23,31 @@ import { join } from "node:path";
 
 /** model accessor -> the guarded fields written under it. Extend for B964 (addresses, licenses…). */
 const GUARDED: Record<string, readonly string[]> = {
-  customer: ["businessName", "contactName", "displayName", "tobaccoLicenseNo"],
+  customer: [
+    "businessName",
+    "contactName",
+    "displayName",
+    "tobaccoLicenseNo",
+    // B984: the Customer's own copy of the person name
+    "salutation",
+    "firstName",
+    "lastName",
+  ],
+  // B984: a contact person's name (printed on statements, route sheets, exports). Email / phone / mobile are not guarded.
+  contactPerson: ["salutation", "firstName", "lastName"],
   // B964-1: addresses (printed on documents, route sheets, the tobacco filing header), license numbers, buyer names.
   customerAddress: ["label", "line1", "line2", "city", "state", "zip"],
   customerAuthorization: ["licenseNumber"],
   buyerAccount: ["name"],
   // B964-2: product names (invoices, order sheets, exports, regulated filings). #2881's family create/update writes the same
   // columns: it fails this scan until it calls the guard.
-  product: ["name", "variantName"],
+  // B990: the free-text Product.category too (printed on exports, buyer facets, filings).
+  product: ["name", "variantName", "category"],
+  // B983: category / subcategory names (regulated filings, invoices, exports). ProductCategory's rename writes through a variable
+  // `data` + updateMany (a scan blind spot): product-categories.name-guards.spec.ts pins that write.
+  productCategory: ["name"],
+  trackedCategory: ["name"],
+  trackedSubcategory: ["name"],
   // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
   tenant: ["name"],
   // Printed on buyer documents and on the tobacco filing header.
@@ -51,17 +68,24 @@ const GUARD_CALLS = [
   "assertSafeBuyerName",
   "safeBuyerDisplayName",
   "isFormulaLedText",
+  // B983
+  "assertSafeCategoryName",
+  "assertSafeSubcategoryName",
+  // B984
+  "assertSafePersonName",
+  "personNameViolation",
   // B964-2
   "assertSafeProductNames",
   "productNameViolation",
+  // B990
+  "assertSafeProductCategory",
+  "productCategoryViolation",
 ];
 
 /** file (relative to src/) -> why an unguarded write of the fields there is safe. */
 const EXEMPT: Record<string, string> = {
   // (B964-1 closed the tenant-mirror's admin-username path: it falls back to the guarded tenant name, so it calls the guard.)
-  "tracked-categories/tracked-categories.service.ts":
-    "its product.updateMany writes Product.category (a subcategory rename mirrored onto products), NOT Product.name: the scan " +
-    "matches the local variable `name`; the category mirror is its own LOW, tracked separately",
+  // (B983: tracked-categories.service now calls the guard itself, so its old exemption is gone.)
 };
 
 const SRC = join(__dirname, "..");

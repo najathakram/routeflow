@@ -100,3 +100,72 @@ export function productNameViolation(
   const field = firstFormulaLedField(pickProduct(next), stored ? pickProduct(stored) : null);
   return field === null ? null : formulaLeadMessage(field);
 }
+
+/** A category name (ProductCategory label category, TrackedCategory section): printed on filings, invoices, exports (B983). Change-only. */
+export function assertSafeCategoryName(
+  name: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell(
+    { categoryName: name },
+    stored === undefined ? null : { categoryName: stored },
+  );
+}
+
+/** A TrackedSubcategory name (B983). Change-only. */
+export function assertSafeSubcategoryName(
+  name: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell(
+    { subcategoryName: name },
+    stored === undefined ? null : { subcategoryName: stored },
+  );
+}
+
+/** The free-text Product.category column (B990): printed on exports, buyer facets and the regulated filings. Change-only. */
+export function assertSafeProductCategory(
+  category: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell({ category }, stored === undefined ? null : { category: stored });
+}
+
+/** Non-throwing form for importers, which reject the ROW (not the batch) with this text. */
+export function productCategoryViolation(
+  category: string | null | undefined,
+  stored?: string | null,
+): string | null {
+  const field = firstFormulaLedField(
+    { category },
+    stored === undefined ? null : { category: stored },
+  );
+  return field === null ? null : formulaLeadMessage(field);
+}
+
+type PersonNameInput = {
+  salutation?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+function pickPerson(src: PersonNameInput) {
+  return { salutation: src.salutation, firstName: src.firstName, lastName: src.lastName };
+}
+
+/**
+ * A person's name (B984): ContactPerson.salutation / firstName / lastName and the Customer's own copy of the same three
+ * columns. Printed on statements, route sheets and exports. Change-only. Email, phone and mobile stay unguarded.
+ */
+export function assertSafePersonName(next: PersonNameInput, stored?: PersonNameInput | null): void {
+  assertSafeTextCell(pickPerson(next), stored ? pickPerson(stored) : null);
+}
+
+/** Non-throwing form for importers, which reject the ROW (not the batch) with this text. */
+export function personNameViolation(
+  next: PersonNameInput,
+  stored?: PersonNameInput | null,
+): string | null {
+  const field = firstFormulaLedField(pickPerson(next), stored ? pickPerson(stored) : null);
+  return field === null ? null : formulaLeadMessage(field);
+}

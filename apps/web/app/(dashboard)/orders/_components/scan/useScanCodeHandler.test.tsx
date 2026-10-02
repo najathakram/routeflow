@@ -38,6 +38,32 @@ describe("useScanCodeHandler", () => {
     expect(d.toast).not.toHaveBeenCalled();
   });
 
+  it("#2784: a SHARED code (box + unit) tells addLineItem the new line may start on the default selling unit; a box-only or unit-only code never does", async () => {
+    const shared = { id: "p1", name: "Widget", barcode: "012345678905", unitsPerBox: 6 };
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product: shared });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    result.current.current("012345678905");
+    await waitFor(() =>
+      expect(d.addLineItem).toHaveBeenCalledWith(shared, "BOX", { startOnDefaultUnit: true }),
+    );
+
+    // The CODE decides: a sku (box-only) and a unitSku (unit-only) keep their level and pass no third argument.
+    const boxOnly = { id: "p2", name: "Crate", sku: "CRATE-1", unitsPerBox: 6 };
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product: boxOnly });
+    const d2 = deps();
+    const r2 = renderHook(() => useScanCodeHandler(d2));
+    r2.result.current.current("CRATE-1");
+    await waitFor(() => expect(d2.addLineItem).toHaveBeenCalledWith(boxOnly, "BOX"));
+
+    const unitOnly = { id: "p3", name: "Single", unitSku: "SINGLE-1", unitsPerBox: 6 };
+    mockResolve.mockResolvedValue({ notFound: false, archived: false, product: unitOnly });
+    const d3 = deps();
+    const r3 = renderHook(() => useScanCodeHandler(d3));
+    r3.result.current.current("SINGLE-1");
+    await waitFor(() => expect(d3.addLineItem).toHaveBeenCalledWith(unitOnly, "UNIT"));
+  });
+
   it("uses the LATEST render's deps, so a callback that captured the ref once never goes stale", async () => {
     mockResolve.mockResolvedValue({ notFound: false, archived: false, product });
     const first = deps();

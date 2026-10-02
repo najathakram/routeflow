@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -13,6 +12,8 @@ import {
   type InvoiceTreatment,
   type ReportCadence,
 } from "@/lib/api/tracked-categories";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 const TAX_TYPES: { value: TrackedCategoryTaxType; label: string }[] = [
   { value: "NONE", label: "None (track only, no auto tax)" },
@@ -42,8 +43,8 @@ interface Props {
 
 export function CategoryFormModal({ isOpen, onClose, category }: Props) {
   const { toast } = useToast();
-  const create = useCreateTrackedCategory();
-  const update = useUpdateTrackedCategory();
+  const create = useCreateTrackedCategory({ localErrorToast: localToastForSafeTextRefusal });
+  const update = useUpdateTrackedCategory({ localErrorToast: localToastForSafeTextRefusal });
   const editing = !!category;
 
   const [form, setForm] = React.useState({
@@ -132,12 +133,16 @@ export function CategoryFormModal({ isOpen, onClose, category }: Props) {
       toast({ title: `Category ${verb}`, description: name, variant: "success" });
       onClose();
     };
-    const onErr = (err: any) =>
-      toast({
-        title: `Failed to ${editing ? "update" : "create"} category`,
-        description: genericToastCopy(err),
-        variant: "error",
-      });
+    // Only the formula-led refusal is rendered here (fixed labelled copy); any other error already reached the global toast.
+    const onErr = (err: unknown) => {
+      const copy = safeTextErrorCopy(err);
+      if (copy)
+        toast({
+          title: `Failed to ${editing ? "update" : "create"} category`,
+          description: copy,
+          variant: "error",
+        });
+    };
 
     if (editing && category) {
       update.mutate(

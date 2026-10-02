@@ -11,6 +11,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
 import { withAfterCommit } from "../common/after-commit";
@@ -47,7 +48,11 @@ import {
 import { lockRowsNoWait, withAdvisoryLock, type LockMode } from "../common/db-locks";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
-import { atStopConflict } from "./at-stop-conflicts";
+import {
+  atStopConflict,
+  CHANGE_WINDOW_ORDER_STATUS,
+  CHANGE_WINDOW_RUN_NOT_ACTIVE,
+} from "./at-stop-conflicts";
 import { sourceLineFor, type SourceLines } from "./source-line";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
@@ -1604,6 +1609,7 @@ export class OrdersService implements OnApplicationBootstrap {
         : [];
 
     const productMap = new Map(products.map((p) => [p.id, p]));
+    assertSellableLines(products); // WS8: a FAMILY is never a line
 
     // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
     const unitsByProduct = await unitLines.prepareUnitLadders(items, {
@@ -3176,6 +3182,7 @@ export class OrdersService implements OnApplicationBootstrap {
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
           const products = await tx.product.findMany({ where: { id: { in: productIds } } });
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+          assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
           // (which only covers unit-aware `unitCtx.products`) — its own scoped load.
           const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
@@ -3457,6 +3464,7 @@ export class OrdersService implements OnApplicationBootstrap {
             const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
             const products = await tx.product.findMany({ where: { id: { in: productIds } } });
             const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
+            assertSellableLines(products); // WS8
             // B297 (SA-098a): a superset of `uctx.categoryMap` (unit-aware products only) —
             // this pack-line create() below needs every product this replaceAll touches.
             const operatorReplaceCategoryMap = await loadCategoryMapForProducts(tx, productMap);
@@ -3585,6 +3593,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
                 : [];
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
+            assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
             // a diff-add's own pack-line create() below needs its own scoped load.
             const addCategoryMap = await loadCategoryMapForProducts(tx, addProductMap);
@@ -3774,6 +3783,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const product = await tx.product.findUniqueOrThrow({
                   where: { id: item.substituteProductId },
                 });
+                assertSellableLines([product]); // WS8: a FAMILY is never a substitute line
                 const unitRow = unitRows.get(item);
                 if (unitRow && unitLines.isUnitAware(unitRow)) {
                   // updateUnitLine re-stamps from uctx.categoryMap itself (isSubstitute flag) —
@@ -4601,10 +4611,10 @@ export class OrdersService implements OnApplicationBootstrap {
     });
     if (!order) throw new NotFoundException("Order not found");
     if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(order.status)) {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+      throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
     }
     if (order.routeRun == null || order.routeRun.status !== "IN_PROGRESS") {
-      throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+      throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
     }
     if (
       order.routeRunStop != null &&
@@ -4739,10 +4749,10 @@ export class OrdersService implements OnApplicationBootstrap {
         });
         if (!live) throw new NotFoundException("Order not found");
         if (!["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"].includes(live.status)) {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:ORDER_STATUS");
+          throw atStopConflict(CHANGE_WINDOW_ORDER_STATUS);
         }
         if (live.routeRun == null || live.routeRun.status !== "IN_PROGRESS") {
-          throw atStopConflict("CHANGE_WINDOW_CLOSED:RUN_NOT_ACTIVE");
+          throw atStopConflict(CHANGE_WINDOW_RUN_NOT_ACTIVE);
         }
         if (
           live.routeRunStop != null &&
@@ -4920,6 +4930,7 @@ export class OrdersService implements OnApplicationBootstrap {
             where: { id: (cr.productId ?? payload.productId) as string },
           });
           if (!product) throw new BadRequestException("Product no longer exists");
+          assertSellableLines([product]); // WS8: a door ADD_ITEM never lands a FAMILY line
           // B297 (SA-098a): only reached below when this is a genuinely NEW line —
           // an existing-line quantity bump preserves its stored trio untouched.
           const addItemCategoryMap = await loadCategoryMapForProducts(tx, [product]);

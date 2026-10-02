@@ -250,7 +250,7 @@ describe("NewOrderScreen catalog row prices/labels a unit-sold line correctly (S
  */
 describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () => {
   it("gates a piece-kind accept on the line's unitLabel before calling addOne, via the confirm dialog", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
     expect(fn).toBeTruthy();
     // The gate is now the shared predicate (piece kind + the line's unitLabel + a real case size).
     expect(fn).toMatch(/!needsUnitLabelConfirm\(level, product, label\)\) return finishAccept/);
@@ -263,8 +263,8 @@ describe("NewOrderScreen piece-scan-on-a-unit-line confirm (SA-085h LOW)", () =>
   });
 
   it("a non-unit line's piece scan is unaffected — no confirm, straight to finishAccept", () => {
-    const fn = (screen.match(/const acceptScannedProduct = \([\s\S]*?\n  \};/) ?? [""])[0];
-    expect(fn).toMatch(/return finishAccept\(product, level\);/);
+    const fn = (screen.match(/const acceptScannedProduct\b[\s\S]*?\n  \};/) ?? [""])[0];
+    expect(fn).toMatch(/return finishAccept\(product, level, ao\);/);
   });
 });
 

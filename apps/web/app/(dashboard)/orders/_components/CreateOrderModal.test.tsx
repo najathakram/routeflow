@@ -1188,6 +1188,8 @@ describe("CreateOrderModal", () => {
     it("(b) a plain line's qty is tap-to-type; below 1 clamps to 1", async () => {
       await setup(plain);
       const qty = (await screen.findByLabelText("Quantity")) as HTMLInputElement;
+      // #2865 case c: a freshly added line is PENDING (qty locked) until its default unit resolves.
+      await waitFor(() => expect(qty).toBeEnabled());
       fireEvent.change(qty, { target: { value: "7" } });
       expect(qty.value).toBe("7");
       fireEvent.change(qty, { target: { value: "0" } });

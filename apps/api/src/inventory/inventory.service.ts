@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Optional,
 } from "@nestjs/common";
+import { assertSellableLines } from "../products/sellable-lines";
 import type { PurchaseOrderReceipt } from "@routeflow/types";
 import * as crypto from "crypto";
 import { CostingMethod, MovementType, Prisma } from "@prisma/client";
@@ -217,6 +218,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     if (dto.supplierId) {
       const supplier = await this.prisma
@@ -330,6 +332,7 @@ export class InventoryService {
       .forTenant()
       .product.findUnique({ where: { id: dto.productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY is never stocked (no StockLot / StockMovement)
 
     const qty = new Prisma.Decimal(dto.quantity);
     const effectiveDate = effectiveDateOf(dto.effectiveDate);
@@ -574,7 +577,7 @@ export class InventoryService {
           // assignments of the same generic safe. Never hoist this check out.
           if (totalQty > Number(parent.currentStock)) {
             throw new BadRequestException({
-              code: "INSUFFICIENT_UNASSIGNED",
+              code: API_ERROR_CODES.INSUFFICIENT_UNASSIGNED,
               message: `Only ${parent.currentStock} unassigned in stock; tried to assign ${totalQty}`,
             });
           }
@@ -866,6 +869,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8: a counted FAMILY would drain phantom stock into its variants
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${dto.sessionId}`;
@@ -1138,8 +1142,9 @@ export class InventoryService {
     }
     const products = await tx.product.findMany({
       where: { id: { in: [...new Set(input.lines.map((l) => l.productId))] } },
-      select: { id: true },
+      select: { id: true, name: true, kind: true },
     });
+    assertSellableLines(products); // WS8
     const known = new Set(products.map((p) => p.id));
     for (const l of input.lines) {
       if (!known.has(l.productId)) throw new NotFoundException(`Product ${l.productId} not found`);
@@ -1185,6 +1190,7 @@ export class InventoryService {
       where: { id: { in: dto.items.map((i: any) => i.productId) } },
     });
     const productMap = new Map(products.map((p) => [p.id, p]));
+    assertSellableLines(products); // WS8
     let totalAmount = 0;
     const itemsData = dto.items.map((item: any) => {
       const prod = productMap.get(item.productId);
@@ -1650,7 +1656,7 @@ export class InventoryService {
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
       throw new ConflictException({
-        code: "PO_LOT_PARTIALLY_CONSUMED",
+        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
         message:
           `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
           "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
@@ -1838,7 +1844,7 @@ export class InventoryService {
         });
         if (liveBill) {
           throw new ConflictException({
-            code: "PO_HAS_LINKED_BILL",
+            code: API_ERROR_CODES.PO_HAS_LINKED_BILL,
             message:
               `${po.poNumber} has already been billed (${liveBill.billNumber}), so its lines and supplier ` +
               "are locked — the bill was checked against them. Void the bill to change them, or edit " +
@@ -1911,6 +1917,7 @@ export class InventoryService {
       const products = await tx.product.findMany({
         where: { id: { in: [...new Set(items.map((l) => l.productId))] } },
       });
+      assertSellableLines(products); // WS8
       const productIds = new Set(products.map((p) => p.id));
       for (const line of items) {
         if (!productIds.has(line.productId))
@@ -2171,6 +2178,7 @@ export class InventoryService {
   async setCostBasis(productId: string, dto: SetCostBasisDto, performedById: string) {
     const product = await this.prisma.forTenant().product.findUnique({ where: { id: productId } });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a FAMILY has no cost basis (no stock)
 
     return this.prisma.tenantTransaction((tx) =>
       this.setCostBasisInTx(tx, product, dto, performedById),
@@ -2190,6 +2198,7 @@ export class InventoryService {
         missingProductIds: missing,
       });
     }
+    assertSellableLines(products); // WS8
 
     return this.prisma.tenantTransaction(async (tx) => {
       const movementIds: string[] = [];
@@ -2458,9 +2467,10 @@ export class InventoryService {
 
     const product = await this.prisma.forTenant().product.findFirst({
       where: { id: dto.productId },
-      select: { id: true, currentStock: true, unitsPerBox: true },
+      select: { id: true, name: true, kind: true, currentStock: true, unitsPerBox: true },
     });
     if (!product) throw new NotFoundException("Product not found");
+    assertSellableLines([product]); // WS8: a counted FAMILY must not reach assignToVariants
 
     // Boxes/pieces win when present — the server recomputes qty from the split
     // exactly like the order builders, so a boxed product is never miscounted
@@ -2580,6 +2590,7 @@ export class InventoryService {
         missingProductIds,
       });
     }
+    assertSellableLines(products); // WS8
 
     const effectiveDate = dto.effectiveDate ? new Date(dto.effectiveDate) : new Date();
     const reference = `STOCK_COUNT-${id}`;
@@ -2898,7 +2909,7 @@ export class InventoryService {
         // UNLINKED_ITEMS/DUPLICATE_VENDOR_BILL structured-conflict shape used
         // elsewhere in this codebase.
         throw new ConflictException({
-          code: "INVENTORY_LEDGER_GAP",
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
           message:
             `"${product.name}" can't be updated right now — its stock records don't fully ` +
             "explain the quantity currently on hand (this usually happens after past sales). " +
