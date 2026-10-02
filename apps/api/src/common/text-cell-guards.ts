@@ -76,3 +76,27 @@ export function safeBuyerDisplayName(
   if (local && !isFormulaLedText(local)) return local;
   return FALLBACK_DISPLAY_NAME;
 }
+
+type ProductNameInput = { name?: string | null; variantName?: string | null };
+
+// Product.name is reported under the field key `productName`: the generic `name` key stays B956's tenant name.
+function pickProduct(src: ProductNameInput) {
+  return { productName: src.name, variantName: src.variantName };
+}
+
+/** Product.name / variantName (B964-2): printed on invoices, order sheets, exports and the regulated filings. Change-only. */
+export function assertSafeProductNames(
+  next: ProductNameInput,
+  stored?: ProductNameInput | null,
+): void {
+  assertSafeTextCell(pickProduct(next), stored ? pickProduct(stored) : null);
+}
+
+/** Non-throwing form for importers, which reject the ROW (not the batch) with this text. */
+export function productNameViolation(
+  next: ProductNameInput,
+  stored?: ProductNameInput | null,
+): string | null {
+  const field = firstFormulaLedField(pickProduct(next), stored ? pickProduct(stored) : null);
+  return field === null ? null : formulaLeadMessage(field);
+}
