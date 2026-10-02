@@ -67,14 +67,42 @@ describe("genericToastCopy: codes users rely on", () => {
     );
   });
 
+  it("INSUFFICIENT_STOCK in #2871's shape: lines[0].available wins, the legacy top-level fields mirror it", () => {
+    expect(
+      genericToastCopy(
+        err(409, {
+          code: "INSUFFICIENT_STOCK",
+          lines: [{ productId: "p", name: "Mango 5ct", unit: "bag", available: 4, requested: 9 }],
+          productId: "p",
+          available: 4,
+          requested: 9,
+        }),
+      ),
+    ).toBe("Not enough stock. Only 4 left.");
+    expect(
+      genericToastCopy(
+        err(409, {
+          code: "INSUFFICIENT_STOCK",
+          lines: [{ productId: "p", available: 0, requested: 2 }],
+        }),
+      ),
+    ).toBe("Not enough stock. Only 0 left.");
+  });
+
+  it("an uncoded stock refusal (order create today, until #2871 lands) falls to the fixed status copy", () => {
+    expect(
+      genericToastCopy(err(409, { message: "Insufficient stock: X (available: 7, requested: 9)" })),
+    ).toBe("This changed while you were working on it. Refresh and try again.");
+  });
+
   it("INSUFFICIENT_STOCK over several lines gives the plural line", () => {
     expect(
       genericToastCopy(
         err(409, {
           code: "INSUFFICIENT_STOCK",
           available: 1,
-          items: [
-            { productId: "a", available: 1, requested: 3 },
+          lines: [
+            { productId: "a", name: "A", available: 1, requested: 3 },
             { productId: "b", available: 0, requested: 2 },
           ],
         }),

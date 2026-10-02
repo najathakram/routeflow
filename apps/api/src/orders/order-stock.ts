@@ -117,16 +117,9 @@ export async function decrementStockForSale(
   }));
 
   const oosItems: string[] = [];
-  // B980: the same shortages as structured numbers, so a client can say "Only N left" without parsing the message.
-  const oosData: Array<{ productId: string; available: number; requested: number }> = [];
   for (const li of pieceLines) {
     const p = lockedProducts.find((lp: any) => lp.id === li.productId);
     if (p && Number(p.currentStock) < li.pieces) {
-      oosData.push({
-        productId: li.productId,
-        available: Number(p.currentStock),
-        requested: li.pieces,
-      });
       oosItems.push(
         `${p.name ?? li.productId} (available: ${Number(p.currentStock)}, requested: ${li.pieces})`,
       );
@@ -136,14 +129,7 @@ export async function decrementStockForSale(
     if (isStaffRole) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
-      throw new ConflictException({
-        code: "INSUFFICIENT_STOCK",
-        message: `Insufficient stock: ${oosItems.join("; ")}`,
-        productId: oosData[0].productId,
-        available: oosData[0].available,
-        requested: oosData[0].requested,
-        items: oosData,
-      });
+      throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
     }
   }
 

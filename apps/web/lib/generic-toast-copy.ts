@@ -72,13 +72,21 @@ function statusCopy(status: number): string {
 const finiteCount = (n: unknown): n is number =>
   typeof n === "number" && Number.isFinite(n) && n >= 0;
 
-/** "Only N left" from the body's structured numbers; several short lines give the plural line. */
+/**
+ * "Only N left" from the body's STRUCTURED numbers, never parsed from the message. Reads the shape
+ * the readable-insufficient-stock work (#2871) gives order create/edit: `lines[]` of
+ * `{ productId, name?, unit?, available, requested }`, with `available`/`requested` mirroring
+ * `lines[0]` (the order-edit refusal already sends only those legacy fields). Several short lines
+ * give the plural line; no usable number gives the numberless line.
+ */
 function stockCopy(data: Record<string, unknown>): string {
-  const items = Array.isArray(data.items) ? data.items : [];
-  if (items.length > 1)
+  const lines = Array.isArray(data.lines) ? data.lines : [];
+  if (lines.length > 1)
     return "Some items don't have enough stock. Lower the quantities and try again.";
-  return finiteCount(data.available)
-    ? `Not enough stock. Only ${Math.floor(data.available)} left.`
+  const first = (lines[0] ?? {}) as { available?: unknown };
+  const available = finiteCount(first.available) ? first.available : data.available;
+  return finiteCount(available)
+    ? `Not enough stock. Only ${Math.floor(available)} left.`
     : "Not enough stock for this item.";
 }
 

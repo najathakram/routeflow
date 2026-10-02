@@ -145,25 +145,6 @@ describe("B703 — decrementStockForSale moves the counter and books the row in 
     ).rejects.toThrow(/requested: 108/);
     expect(tx.$queryRaw).not.toHaveBeenCalled();
   });
-
-  it("B980: the refusal carries code INSUFFICIENT_STOCK and STRUCTURED numbers, with the message unchanged", async () => {
-    const { tx } = fakeTx([pack12()]);
-    const err: any = await decrementStockForSale(
-      deps,
-      tx,
-      [{ productId: "p12", qty: 9 }],
-      false,
-      event,
-    ).catch((e) => e);
-    expect(err.getResponse()).toMatchObject({
-      code: "INSUFFICIENT_STOCK",
-      message: expect.stringMatching(/^Insufficient stock: .*requested: 108/),
-      productId: "p12",
-      available: 100,
-      requested: 108,
-      items: [{ productId: "p12", available: 100, requested: 108 }],
-    });
-  });
 });
 
 describe("B703 — settleStockForEdit settles the delta and the undelivered cap in PIECES", () => {
