@@ -42,7 +42,7 @@ export const UNCONFIRMED_COPY =
   "We couldn't confirm whether this went through. Refresh and check before trying again.";
 
 /** A request that left but got no HTTP response (timeout / network error): the server may have committed. */
-function noResponse(err: unknown): boolean {
+export function noResponse(err: unknown): boolean {
   const e = err as {
     response?: unknown;
     request?: unknown;
