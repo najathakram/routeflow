@@ -240,6 +240,7 @@ const MODEL_DOMAIN = {
   StripeBillingEvent: "platform",
   RfInvoice: "platform",
   SystemConfig: "platform",
+  PolicyValue: "platform",
   Message: "platform",
   MessageThread: "platform",
   MessageTemplate: "platform",
@@ -267,6 +268,7 @@ const MODEL_DOMAIN = {
   IntakeFile: "platform",
   IntakeAccessToken: "platform",
   OrderAcceptance: "platform",
+  EmailDelivery: "platform",
 
   // ─── compliance ────────────────────────────────────────────────────────────
   TobaccoReport: "compliance",

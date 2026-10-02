@@ -2,8 +2,9 @@
 import { startServer } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
 import { git, NOW, STATE_BRANCH } from "./helpers/temp-repo";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const FILE = "derived/prs.jsonl";
 let h: Harness;

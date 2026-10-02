@@ -85,6 +85,7 @@ import * as compliance from "./customer-compliance-input";
 import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
+import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -714,7 +715,7 @@ export class CustomersService {
 
     // Grace window expired and still over cap — block only this NEW create.
     const upgrade = await this.customerPackUpgrade();
-    throw new ForbiddenException(buildPlanGateBody("meter.customers", upgrade));
+    throw new ForbiddenException(buildPlanGateBody(PLAN_GATE_FLAG_KEYS.METER_CUSTOMERS, upgrade));
   }
 
   /**
@@ -1463,7 +1464,7 @@ export class CustomersService {
       // never returns `{ acquired: false }`. Narrowed so `lock.value` type-checks.
       if (!lock.acquired) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }
@@ -1478,7 +1479,7 @@ export class CustomersService {
       }
       if (e instanceof LockUnavailableError) {
         throw new ServiceUnavailableException({
-          code: "LOCK_UNAVAILABLE",
+          code: API_ERROR_CODES.LOCK_UNAVAILABLE,
           message: "Wallet lock unavailable — retry shortly.",
         });
       }

@@ -13,6 +13,7 @@ import { liveLines } from "./order-edit-cancelled";
 import { writeLineUpdate } from "./order-line-removal";
 import type { UpdateOrderItemsDto } from "./dto/update-order-items.dto";
 import type { OrdersService } from "./orders.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1 (A1) — everything `updateOrderItems` needs to touch a unit-aware line, kept out of
@@ -120,7 +121,7 @@ export function assertUnitLabelNamed(
     item.substituteProductId != null;
   if (li?.unitLabel != null && item.unitLabel === undefined && isSubstantiveEdit) {
     throw new ConflictException({
-      code: "UNIT_AWARE_LINE",
+      code: API_ERROR_CODES.UNIT_AWARE_LINE,
       message: `This line is sold by the ${li.unitLabel} — name the unit to edit it (never interpreted as pieces).`,
     });
   }
@@ -142,7 +143,7 @@ export function assertNoPackRedenomination(
   if (item.substituteProductId != null || item.action === "CANCEL" || item.action === "DELETE")
     return;
   throw new ConflictException({
-    code: "UNIT_AWARE_LINE",
+    code: API_ERROR_CODES.UNIT_AWARE_LINE,
     message: `This line is sold by the ${li.unitLabel} — switching it back to the pack isn't supported yet. Remove the line and re-add it.`,
   });
 }

@@ -38,9 +38,9 @@ describe("B796 — at-stop refusals carry a human message (REG-B796)", () => {
   it("orders.service.ts throws no bare CHANGE_WINDOW_CLOSED / STOP_ALREADY_COMPLETED (all six via atStopConflict)", () => {
     const src = readFileSync(join(__dirname, "orders.service.ts"), "utf8");
     expect(src).not.toMatch(
-      /new ConflictException\(\{\s*code: "(CHANGE_WINDOW_CLOSED|STOP_ALREADY_COMPLETED)"/,
+      /new ConflictException\(\{\s*code: (?:"|API_ERROR_CODES\.)(CHANGE_WINDOW_CLOSED|STOP_ALREADY_COMPLETED)/,
     );
-    expect(src.match(/throw atStopConflict\("/g)).toHaveLength(6);
+    expect(src.match(/throw atStopConflict\((?:"|API_ERROR_CODES\.)/g)).toHaveLength(6);
   });
 
   describe("approveChangeRequestAtStop surfaces the message (snapshot-side refusals)", () => {

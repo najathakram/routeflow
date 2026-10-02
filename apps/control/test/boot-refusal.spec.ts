@@ -15,8 +15,9 @@ import * as net from "net";
 import * as path from "path";
 import { buildPrivateDist } from "./helpers/build-dist";
 import type { PrivateDist } from "./helpers/build-dist";
+import { expectRefusedExit, scaled } from "./helpers/platform";
 
-jest.setTimeout(120_000);
+jest.setTimeout(scaled(120_000));
 
 // the once-per-run build from test/global-setup.ts (a private one when run outside it)
 let dist: PrivateDist;
@@ -144,7 +145,7 @@ describe("the process refuses a token that can write, or one it cannot verify", 
   it("product repo answers 200: exit 1, the write-access message, never listens", async () => {
     f = await fake({ [PRODUCT]: [200], [STATE]: [403] });
     const r = await boot(f);
-    expect(r.code).toBe(1);
+    expectRefusedExit(r.code);
     expect(r.stderr).toMatch(/the token has write access to acme\/acme; refusing to start/);
     expect(r.stdout).not.toMatch(/listening on/);
     expect(probes(f)).toEqual([`/${PRODUCT}.git/info/refs?service=git-receive-pack`]);
@@ -154,7 +155,7 @@ describe("the process refuses a token that can write, or one it cannot verify", 
   it("state repo answers 200 (product 403): exit 1 naming the state repo, never listens", async () => {
     f = await fake({ [PRODUCT]: [403], [STATE]: [200] });
     const r = await boot(f);
-    expect(r.code).toBe(1);
+    expectRefusedExit(r.code);
     expect(r.stderr).toMatch(/the token has write access to acme\/acme-control-state/);
     expect(r.stdout).not.toMatch(/listening on/);
     expect(probes(f)).toHaveLength(2);
@@ -164,7 +165,7 @@ describe("the process refuses a token that can write, or one it cannot verify", 
   it("500 on every try (3 tries): exit 1 'could not verify', never listens", async () => {
     f = await fake({ [PRODUCT]: [500], [STATE]: [403] });
     const r = await boot(f);
-    expect(r.code).toBe(1);
+    expectRefusedExit(r.code);
     expect(r.stderr).toMatch(/could not verify the token is read-only on acme\/acme \(500\)/);
     expect(r.stdout).not.toMatch(/listening on/);
     expect(probes(f)).toHaveLength(3);
@@ -205,7 +206,7 @@ describe("a rejected boot step leaves no half-booted process", () => {
     const port = (blocker.address() as net.AddressInfo).port;
     try {
       const r = await boot(f, { CONTROL_PORT: String(port) }, undefined, 15_000);
-      expect(r.code).toBe(1);
+      expectRefusedExit(r.code);
       expect(r.stderr).toMatch(/EADDRINUSE|address already in use/);
       expect(r.stdout).not.toMatch(/listening on/);
       noSecrets(r);

@@ -10,6 +10,7 @@ import {
   isNotOrdered,
   lineRemaining,
 } from "./delivered-so-far";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * SA-151 review: `stop.status === "COMPLETED"` is checked BEFORE the caller's transaction in
@@ -64,7 +65,7 @@ export async function claimStopStatusChange(
   });
   if (current?.status === "COMPLETED") {
     throw new ConflictException({
-      code: "STOP_ALREADY_COMPLETED",
+      code: API_ERROR_CODES.STOP_ALREADY_COMPLETED,
       message:
         "This stop was just completed. Reopen it instead — that reverses the delivery correctly.",
     });
@@ -155,7 +156,7 @@ export const COMPLETABLE_STOP_STATUSES = ["PENDING", "IN_PROGRESS"];
 export function assertStopNotSkipped(status: string | null | undefined): void {
   if (status === "SKIPPED") {
     throw new ConflictException({
-      code: "STOP_SKIPPED",
+      code: API_ERROR_CODES.STOP_SKIPPED,
       message:
         "This stop was skipped by dispatch, so it can't be completed. Ask dispatch to reopen it.",
     });

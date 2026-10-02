@@ -51,6 +51,19 @@ import {
   syncProductBarcodesFromLegacy,
   syncProductImagesFromLegacy,
 } from "./product-catalog-sync";
+import {
+  claimCodes,
+  codeClaims,
+  lockCodesOfProducts,
+  peekProductCodes,
+  releaseProductCodes,
+  restoreProductCodes,
+} from "./product-code-release";
+import { assertNameFree, mapNameUniqueViolation } from "./product-name-rules";
+import {
+  reactivationLockCodes,
+  resolveReactivationConflicts,
+} from "./product-reactivation-holders";
 import { recipeReferenceGroupers } from "./recipe-references";
 import { lockAndAssertRecipeGuards } from "./recipe-update-guard";
 import {
@@ -62,6 +75,7 @@ import {
 } from "./family-price";
 import {
   barcodeRowsToView,
+  liveBarcodeRows,
   mirrorableImageKeys,
   parseFocalFromKey,
   synthesizeLegacyBarcodes,
@@ -429,7 +443,7 @@ export class ProductsService {
     // The presigned-url map below reuses the SAME imageKeys/imageUrls pairing above (never a second
     // presign of the same key).
     const urlByKey = new Map(imageKeys.map((k, i) => [k, imageUrls[i] ?? null]));
-    const barcodeRows = product.barcodes ?? [];
+    const barcodeRows = liveBarcodeRows(product.barcodes);
     const imageRows = product.images ?? [];
     const barcodes =
       barcodeRows.length > 0
@@ -594,6 +608,8 @@ export class ProductsService {
       const nameTaken = await db.findFirst({
         where: {
           name: { equals: p.name, mode: "insensitive" },
+          // SA-603a: an INACTIVE product never holds a name or a code (released in the write tx).
+          isActive: true,
           ...notSelf,
           parentProductId: p.parentProductId ?? null,
         },
@@ -609,13 +625,17 @@ export class ProductsService {
     }
     if (p.sku) {
       const clash = await db.findFirst({
-        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], ...notSelf },
+        where: { OR: [{ sku: p.sku }, { unitSku: p.sku }], isActive: true, ...notSelf },
       });
       if (clash) throw new BadRequestException("SKU already exists");
     }
     if (p.barcode) {
       const clash = await db.findFirst({
-        where: { OR: [{ barcode: p.barcode }, { unitSku: p.barcode }], ...notSelf },
+        where: {
+          OR: [{ barcode: p.barcode }, { unitSku: p.barcode }],
+          isActive: true,
+          ...notSelf,
+        },
       });
       if (clash) throw new BadRequestException("Barcode already exists");
     }
@@ -623,6 +643,7 @@ export class ProductsService {
       const clash = await db.findFirst({
         where: {
           OR: [{ unitSku: p.unitSku }, { sku: p.unitSku }, { barcode: p.unitSku }],
+          isActive: true,
           ...notSelf,
         },
         select: { id: true },
@@ -635,7 +656,10 @@ export class ProductsService {
     }
   }
 
-  async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
+  async create(
+    dto: CreateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null },
+  ) {
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
@@ -781,6 +805,19 @@ export class ProductsService {
     const created = await this.prisma.tenantTransaction(async (tx: any) => {
       // SA-572b Q4/SA-572c: lock the code BEFORE the create — otherwise a concurrent create of the
       // same code races on the legacy unique index and surfaces a raw P2002 instead of a 409.
+      await claimCodes(tx, {
+        tenantId,
+        productId: null,
+        actorId: options?.actorId ?? null,
+        codes: codeClaims(dto, null),
+      });
+      // SA-603a (a): the active-only name check again, under the name lock (code locks first, house order).
+      await assertNameFree(tx, {
+        tenantId,
+        parentProductId: dto.parentProductId ?? null,
+        name: dto.name,
+        excludeId: null,
+      });
       if (dto.barcode) {
         await lockBarcodeCodes(tx, tenantId, [dto.barcode]);
         await assertBarcodeAvailable(tx, { tenantId, productId: null, code: dto.barcode });
@@ -841,7 +878,11 @@ export class ProductsService {
           include: { variants: true, parent: true },
         });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, dto.barcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name, dto.parentProductId != null);
+        }
       }
       await syncProductBarcodesFromLegacy(tx, {
         tenantId,
@@ -855,13 +896,25 @@ export class ProductsService {
     return created;
   }
 
-  async update(id: string, dto: UpdateProductDto, options?: { suppressEmit?: boolean }) {
+  async update(
+    id: string,
+    dto: UpdateProductDto,
+    options?: { suppressEmit?: boolean; actorId?: string | null },
+  ) {
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    if (
+      dto.deactivateHolderIds?.length &&
+      !(existing.isActive === false && dto.isActive === true)
+    ) {
+      throw new BadRequestException(
+        "deactivateHolderIds only applies when reactivating an inactive product",
+      );
+    }
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
@@ -989,6 +1042,8 @@ export class ProductsService {
     // `where: any` Prisma clauses elsewhere in this file.
     const data: any =
       dto.name !== undefined && effectiveParentId ? { ...dto, variantName: dto.name } : { ...dto };
+    // Not a column: the one-tx reactivation door reads it from `dto` (see deactivateReactivationHolders).
+    delete data.deactivateHolderIds;
     // Force the (possibly auto-cleared) subcategory into the write when the section
     // was cleared but the client didn't also clear the subcategory.
     if (effectiveCategoryId == null && existing.trackedSubcategoryId != null) {
@@ -1082,9 +1137,77 @@ export class ProductsService {
         ? await readFamilyPriceMode(this.featureConfig, tenantId)
         : "off";
     let propagatedRows = 0;
+    let doorDeactivated: string[] = [];
     const updated = await this.prisma.tenantTransaction(async (tx: any) => {
-      // Source-order pin: lock [new, old] before the update's own product.findFirst-style reads.
-      await lockBarcodeCodes(tx, tenantId, [effectiveBarcode, existing.barcode]);
+      // SA-603a: reactivate restores the retired codes still free; a code this PATCH sets is claimed (an inactive
+      // holder is released + audited, an active one is a 409); deactivate releases BEFORE the isActive write.
+      const claims = codeClaims(dto, existing);
+      const reactivating = existing.isActive === false && data.isActive === true;
+      const deactivating = existing.isActive !== false && data.isActive === false;
+      const effectiveParent =
+        dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId;
+      // ONE sorted lockBarcodeCodes call for EVERY code this write can touch, taken before the first write or row lock
+      // (SA-572c / Opus #2860 B2): the new and old barcode, this product's own live and retired codes (level rows
+      // too), the claims and, for the one-tx door, the blocking holders' live codes (their codes are released below).
+      // Every later lock in this tx is a subset of it, so it acquires nothing new and cannot invert the order.
+      const lockList = [
+        effectiveBarcode,
+        existing.barcode,
+        ...claims.map((c) => c.value),
+        ...(await peekProductCodes(tx, tenantId, id)),
+        ...(reactivating
+          ? await reactivationLockCodes(tx, {
+              tenantId,
+              productId: id,
+              name: dto.name ?? existing.name,
+              parentProductId: effectiveParent,
+              skip: claims.map((c) => c.field),
+              withHolders: !!dto.deactivateHolderIds?.length,
+            })
+          : []),
+      ].filter((c): c is string => typeof c === "string" && c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, lockList);
+      if (reactivating) {
+        // SA-603i: any ACTIVE holder of a retired code / the name is a 409 listing ALL of them; with
+        // `deactivateHolderIds` exactly that set is deactivated in this tx (codes -> name -> rows sorted).
+        const res = await resolveReactivationConflicts(tx, {
+          tenantId,
+          productId: id,
+          name: dto.name ?? existing.name,
+          parentProductId: effectiveParent,
+          skip: claims.map((c) => c.field),
+          holderIds: dto.deactivateHolderIds,
+          actorId: options?.actorId ?? null,
+          lockedCodes: new Set(lockList),
+        });
+        doorDeactivated = res.deactivatedIds;
+      }
+      if (reactivating) {
+        await restoreProductCodes(tx, {
+          tenantId,
+          productId: id,
+          actorId: options?.actorId ?? null,
+          skip: claims.map((c) => c.field),
+        });
+      }
+      await claimCodes(tx, {
+        tenantId,
+        productId: id,
+        actorId: options?.actorId ?? null,
+        codes: claims,
+      });
+      // SA-603a (a): a name or parent change, or a reactivation, re-checks the active-only name under its lock;
+      // reactivating against an ACTIVE same-name holder is a 409 naming it.
+      if (dto.name || dto.parentProductId !== undefined || reactivating) {
+        await assertNameFree(tx, {
+          tenantId,
+          parentProductId:
+            dto.parentProductId !== undefined ? dto.parentProductId : existing.parentProductId,
+          name: dto.name ?? existing.name,
+          excludeId: id,
+          reactivating,
+        });
+      }
       if (effectiveBarcode) {
         await assertBarcodeAvailable(tx, { tenantId, productId: id, code: effectiveBarcode });
       }
@@ -1105,11 +1228,20 @@ export class ProductsService {
         familyMode === "on"
           ? await applyFamilyPriceBeforeUpdate(tx, { tenantId, id, existing, dto, data })
           : { propagate: false };
+      // Codes + row lock BEFORE the isActive write (Opus #2860 B1): the release takes this product's code locks, then
+      // its row lock; the UPDATE below must never be the first thing to lock the row.
+      if (deactivating) {
+        await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(lockList) });
+      }
       let row;
       try {
         row = await tx.product.update({ where: { id }, data });
       } catch (e) {
-        mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        try {
+          mapBarcodeUniqueViolation(e, effectiveBarcode ?? "");
+        } catch (mapped) {
+          mapNameUniqueViolation(mapped, dto.name ?? existing.name, !!existing.parentProductId);
+        }
       }
       // Sync from the row the UPDATE returned (the post-write values, under its row lock), not from
       // `existing`: a concurrent image upload between the read and this write would otherwise be
@@ -1135,6 +1267,8 @@ export class ProductsService {
     // suppressEmit lets a caller that loops this method (bulkAssignParent) emit
     // ONE coalesced event after the loop instead of one per row.
     if (!options?.suppressEmit) this.emitProductChanged(id, "updated");
+    // The one-tx door deactivated blocking products too: buyer/driver caches must not keep them visible (SA-603j LOW, N4).
+    if (doorDeactivated.length > 0) this.emitProductChanged(null, "bulk");
     // The family edit moved its children's prices: ONE coalesced event, after the commit (L-237).
     if (propagatedRows > 0) this.emitProductChanged(null, "bulk");
     return updated;
@@ -1347,9 +1481,17 @@ export class ProductsService {
     if (activeItems > 0) {
       throw new BadRequestException("Cannot delete product with active order items");
     }
-    const archived = await this.prisma
-      .forTenant()
-      .product.update({ where: { id }, data: { isActive: false } });
+    const tenantId = this.prisma.getTenantId();
+    if (!tenantId) throw new BadRequestException("No tenant context");
+    const archived = await this.prisma.tenantTransaction(async (tx: any) => {
+      // SA-603a: archiving releases the codes, so a new product can reuse them. Codes + row lock FIRST, the isActive
+      // write after (house order, Opus #2860 B1).
+      // ONE sorted lock call for every code of the product (Opus #2860 R1), then the release, then the write.
+      const codes = (await peekProductCodes(tx, tenantId, id)).filter((c) => c.trim().length > 0);
+      await lockBarcodeCodes(tx, tenantId, codes);
+      await releaseProductCodes(tx, { tenantId, productId: id, lockedCodes: new Set(codes) });
+      return tx.product.update({ where: { id }, data: { isActive: false } });
+    });
     this.emitProductChanged(id, "archived");
     return archived;
   }
@@ -1474,9 +1616,23 @@ export class ProductsService {
     const hardDeleteIds = remaining.filter((id) => !referencedIds.has(id));
 
     if (softDeleteIds.length > 0) {
-      await this.prisma
-        .forTenant()
-        .product.updateMany({ where: { id: { in: softDeleteIds } }, data: { isActive: false } });
+      const clearTenantId = this.prisma.getTenantId();
+      if (!clearTenantId) throw new BadRequestException("No tenant context");
+      await this.prisma.tenantTransaction(async (tx: any) => {
+        // SA-603a: an archived product releases its codes (same rule as remove()), codes + row lock FIRST in sorted id
+        // order, THEN the isActive write (Opus #2860 B1).
+        // ONE sorted lock call over EVERY soft-deleted product's codes BEFORE the loop (Opus #2860 r2): per-product
+        // lock-then-row would deadlock against a concurrent PATCH B {sku: <A's code>} (codes A -> row A -> codes B).
+        const lockedCodes = await lockCodesOfProducts(tx, clearTenantId, softDeleteIds);
+        for (const productId of [...softDeleteIds].sort()) {
+          // eslint-disable-next-line no-await-in-loop
+          await releaseProductCodes(tx, { tenantId: clearTenantId, productId, lockedCodes });
+        }
+        await tx.product.updateMany({
+          where: { id: { in: softDeleteIds } },
+          data: { isActive: false },
+        });
+      });
     }
 
     if (hardDeleteIds.length > 0) {
@@ -1552,7 +1708,7 @@ export class ProductsService {
       try {
         // Check for duplicate name
         const nameTaken = await this.prisma.forTenant().product.findFirst({
-          where: { name: { equals: item.name, mode: "insensitive" } },
+          where: { name: { equals: item.name, mode: "insensitive" }, isActive: true },
           select: { id: true },
         });
         if (nameTaken) {
@@ -1564,7 +1720,7 @@ export class ProductsService {
         if (item.sku) {
           const existing = await this.prisma
             .forTenant()
-            .product.findFirst({ where: { sku: item.sku } });
+            .product.findFirst({ where: { sku: item.sku, isActive: true } });
           if (existing) {
             skipped++;
             continue;
@@ -1574,7 +1730,7 @@ export class ProductsService {
         // Check for duplicate barcode
         if (item.barcode) {
           const existing = await this.prisma.forTenant().product.findFirst({
-            where: { barcode: item.barcode },
+            where: { barcode: item.barcode, isActive: true },
           });
           if (existing) {
             // If no SKU collision but barcode exists, skip
@@ -1606,6 +1762,12 @@ export class ProductsService {
         if (!tenantIdForBulk) throw new BadRequestException("No tenant context");
         await this.prisma.tenantTransaction(async (tx: any) => {
           // #2717 M1 (SA-572b Q4/Q6): lock+check BEFORE the create, same as the single-row create().
+          await claimCodes(tx, {
+            tenantId: tenantIdForBulk,
+            productId: null,
+            actorId: null,
+            codes: codeClaims(item, null),
+          });
           if (item.barcode) {
             await lockBarcodeCodes(tx, tenantIdForBulk, [item.barcode]);
             await assertBarcodeAvailable(tx, {
