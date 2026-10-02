@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -492,6 +494,23 @@ export class InventoryService {
   }
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {
+    // B964-2: a NEW variant's name becomes Product.name / variantName: refuse a formula-led one with a coded 400 that names the
+    // row, before any lock, transaction or write.
+    dto.assignments.forEach((a, index) => {
+      const violation = a.newVariant
+        ? productNameViolation({ variantName: a.newVariant.name })
+        : null;
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const restockedProductIds: string[] = [];
     const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 

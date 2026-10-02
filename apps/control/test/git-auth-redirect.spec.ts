@@ -10,8 +10,9 @@ import * as os from "os";
 import * as path from "path";
 import { startSmartHttp } from "./helpers/smart-http";
 import type { SmartHttp, SmartHttpOpts } from "./helpers/smart-http";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(60_000);
+jest.setTimeout(scaled(60_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const G = (): any => require("../src/sources/git");
 

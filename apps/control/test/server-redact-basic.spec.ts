@@ -7,8 +7,9 @@
  */
 import { startServer } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 const TOKEN = "tok-FAKE-redact-0123456789-abcdef";
 const B64 = Buffer.from("x-access-token:" + TOKEN).toString("base64");

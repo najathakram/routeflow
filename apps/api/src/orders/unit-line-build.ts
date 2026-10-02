@@ -19,6 +19,7 @@ import {
 } from "@routeflow/pricing";
 import { assertUnitLineSplit } from "./unit-line-split";
 import { lineUnitsPerBoxSnapshot, type ResolvedLineUnits } from "../products/line-units";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * units_v1, step 4b-2 — building ONE order line that is sold by a non-pack unit (a Case, a Pallet,
@@ -318,7 +319,7 @@ export function buildUnitLine(input: {
     // with a remedy, never an UnknownUnitError escaping as a 500.
     if (e instanceof UnknownUnitError) {
       throw new BadRequestException({
-        code: "UNIT_NOT_OFFERED",
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
         message: `The ${e.unitLabel} is no longer offered for this product — choose another unit, or ask an admin to add it back.`,
       });
     }

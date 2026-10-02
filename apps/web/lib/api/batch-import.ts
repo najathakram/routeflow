@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export type ImportFileStatus =
   "QUEUED" | "PROCESSING" | "CLEAN" | "NEEDS_REVIEW" | "DUPLICATE" | "FAILED" | "POSTED";
@@ -110,9 +111,10 @@ export function useScanFile() {
   });
 }
 
-export function useResolveItem() {
+export function useResolveItem(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<ImportQueueItem, Error, { batchId: string; itemId: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ itemId }) =>
       apiClient.post(`/import/batch/items/${itemId}/resolve`).then((r) => r.data),
     onSuccess: (_d, { batchId }) => qc.invalidateQueries({ queryKey: [...KEY, batchId] }),
@@ -126,13 +128,14 @@ export interface UpdateBatchItemLinePatch {
 }
 
 /** Review UI: remap lines to products, keep some as custom, and/or link a supplier. */
-export function useUpdateBatchItem() {
+export function useUpdateBatchItem(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     ImportQueueItem,
     Error,
     { batchId: string; itemId: string; supplierId?: string; lines?: UpdateBatchItemLinePatch[] }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ itemId, supplierId, lines }) =>
       apiClient.patch(`/import/batch/items/${itemId}`, { supplierId, lines }).then((r) => r.data),
     onSuccess: (_d, { batchId }) => qc.invalidateQueries({ queryKey: [...KEY, batchId] }),
