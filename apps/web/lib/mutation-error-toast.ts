@@ -1,4 +1,5 @@
 import type { ToastData } from "@routeflow/ui/web";
+import { safeTextBodyCopy } from "./safe-text-error-copy";
 
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
@@ -62,6 +63,12 @@ export function handleMutationError(
   // read-only tenant still gets "Choose a plan" from any mutation.
   if (mutation?.meta?.localErrorToast) return;
   if (data?.code && HANDLED_CODES.includes(data.code)) return;
+  // B956: a refused formula-led name is fixed copy with a human field label, never the raw message.
+  const refusedName = safeTextBodyCopy(data);
+  if (refusedName) {
+    toast({ title: refusedName, variant: "error" });
+    return;
+  }
   const message = data?.message || (error as Error)?.message || "Something went wrong";
   toast({ title: message, variant: "error" });
 }
