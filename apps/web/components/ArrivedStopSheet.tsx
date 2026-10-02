@@ -12,7 +12,7 @@ import { useAuth } from "@/lib/auth-context";
 // it does not reimplement any flow, it links to the EXISTING order/payment
 // screens and closes on selection. No new API calls, no new endpoints.
 
-export interface ArrivedStopSheetOrder {
+interface ArrivedStopSheetOrder {
   id: string;
   orderNumber?: string | null;
 }

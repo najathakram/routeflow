@@ -21,7 +21,7 @@ export interface GoHighLevelPollOptions {
   budgetMs?: number;
 }
 
-export interface ImportPreviewSample {
+interface ImportPreviewSample {
   opportunityName: string;
   contactName?: string;
   email?: string;
