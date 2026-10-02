@@ -1240,17 +1240,27 @@ const pr = (overrides = {}) => ({
   // any gh call. PATH is an empty directory, so a gh call could not even start (it would fail
   // loudly, exit 1); the three local files are compared byte-for-byte-by-stat before and after.
   const SCRIPT = fileURLToPath(new URL("./reconcile.mjs", import.meta.url));
-  const WORK = fileURLToPath(new URL("../../local-assets/work/", import.meta.url));
+  // B973: the CLI runs against a TEMP work dir (RECONCILE_WORK_DIR), never the real local-assets/work, so a real reconcile
+  // (or `work:reconcile:apply`) running during verify can no longer flip a before/after stat.
+  const WORK = mkdtempSync(joinPath(tmpdir(), "rf-973-work-"));
+  const REAL_WORK = fileURLToPath(new URL("../../local-assets/work/", import.meta.url));
+  const realFiles = ["reconcile-state.json", "reconcile.log", "reconcile.lock"].map((f) =>
+    joinPath(REAL_WORK, f),
+  );
+  const statOf = (fs) =>
+    fs.map((f) => (existsSync(f) ? `${statSync(f).size}:${statSync(f).mtimeMs}` : "absent"));
+  const realBefore = statOf(realFiles);
   const files = ["reconcile-state.json", "reconcile.log", "reconcile.lock"].map((f) =>
     joinPath(WORK, f),
   );
-  const snap = () =>
-    files.map((f) => (existsSync(f) ? `${statSync(f).size}:${statSync(f).mtimeMs}` : "absent"));
+  const snap = () => statOf(files);
   const emptyPath = mkdtempSync(joinPath(tmpdir(), "rf-2284-"));
-  const cli = (args) => {
+  const cli = (args, extraEnv = { RECONCILE_WORK_DIR: WORK }) => {
+    const env = { ...process.env, PATH: emptyPath, Path: emptyPath, ...extraEnv };
+    if (extraEnv.RECONCILE_WORK_DIR === undefined) delete env.RECONCILE_WORK_DIR;
     const r = spawnSync(process.execPath, [SCRIPT, ...args], {
       encoding: "utf8",
-      env: { ...process.env, PATH: emptyPath, Path: emptyPath },
+      env,
       timeout: 30_000,
     });
     return { status: r.status, out: `${r.stdout}`, err: `${r.stderr}` };
@@ -1282,8 +1292,129 @@ const pr = (overrides = {}) => ({
       );
       check(`#2284 CLI ${JSON.stringify(help)}: lock/log/state untouched`, snap(), before);
     }
+
+    // B973: `--help --apply` is HELP (exit 0, usage, nothing written, no gh call), never an apply.
+    {
+      const before = snap();
+      const r = cli(["--help", "--apply"]);
+      check(
+        `B973 CLI ["--help","--apply"]: exit 0 with the usage (help wins, never an apply)`,
+        [r.status, r.out.trim()],
+        [0, RECONCILE_USAGE],
+      );
+      check(`B973 CLI ["--help","--apply"]: lock/log/state untouched`, snap(), before);
+      const p = parseArgs(["--help", "--apply"]);
+      check("B973 parseArgs --help --apply: help is set", p.ok && p.help, true);
+    }
+    // B973: `--apply=1` (a value form) is not a flag: refused like any unknown argument, nothing written.
+    {
+      const before = snap();
+      check("B973 parseArgs --apply=1 is refused", parseArgs(["--apply=1"]).ok, false);
+      const r = cli(["--apply=1"]);
+      check(
+        `B973 CLI ["--apply=1"]: exit 2 with the usage`,
+        [r.status, r.err.includes(RECONCILE_USAGE)],
+        [2, true],
+      );
+      check(`B973 CLI ["--apply=1"]: lock/log/state untouched`, snap(), before);
+    }
+    // B973: the relocation hook is documented in the usage text and VISIBLE when it is in effect (a stray export shows up).
+    check(
+      "B973 usage documents RECONCILE_WORK_DIR",
+      RECONCILE_USAGE.includes("RECONCILE_WORK_DIR"),
+      true,
+    );
+    check(
+      "B973 usage says the dir must be ABSOLUTE",
+      /RECONCILE_WORK_DIR=<absolute dir>/.test(RECONCILE_USAGE),
+      true,
+    );
+    {
+      const r = cli(["--help"]);
+      check(
+        "B973 a run with RECONCILE_WORK_DIR set prints the resolved dir on stderr",
+        r.err.includes(`RECONCILE_WORK_DIR in effect: ${WORK}`),
+        true,
+      );
+      const d = cli(["--help"], { RECONCILE_WORK_DIR: undefined });
+      check(
+        "B973 a run WITHOUT it prints no relocation notice",
+        d.err.includes("RECONCILE_WORK_DIR in effect"),
+        false,
+      );
+    }
+    // B973 (lead Opus): `--apply` with a RELOCATED work dir is REFUSED (exit 2, nothing written, no gh call). A stray export would
+    // otherwise move the real scheduler's lock/state/log (run.mjs swallows stderr; trigger.mjs is stdio:ignore) and risk a double apply.
+    {
+      const before = snap();
+      const r = cli(["--apply"]);
+      check("B973 CLI --apply with RECONCILE_WORK_DIR set: exit 2", r.status, 2);
+      check(
+        "B973 CLI --apply with RECONCILE_WORK_DIR set: says why on stderr",
+        /refus/i.test(r.err) && r.err.includes("RECONCILE_WORK_DIR"),
+        true,
+      );
+      check(
+        "B973 CLI --apply with RECONCILE_WORK_DIR set: lock/log/state untouched",
+        snap(),
+        before,
+      );
+      const q = cli(["--apply", "--quiet"]);
+      check("B973 CLI --apply --quiet with RECONCILE_WORK_DIR set: still refused", q.status, 2);
+      // a dry run (bare) and --help stay allowed with the override: the refusal is for the write only
+      const h = cli(["--help"]);
+      check("B973 CLI --help with RECONCILE_WORK_DIR set: still help (exit 0)", h.status, 0);
+    }
+    // B973 (lead Opus): mutation-proof isolation: the lock, state and log (and the scratch body file) are ALL built from WORK_DIR,
+    // and the real path appears ONCE in the code (the default), in any form. A path built another way would fail one of these.
+    {
+      const code = readPkgFile(new URL("./reconcile.mjs", import.meta.url), "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join("\n");
+      for (const name of ["STATE_FILE", "LOG_FILE", "RECONCILE_LOCK_FILE"]) {
+        check(
+          `B973 reconcile.mjs builds ${name} from WORK_DIR`,
+          new RegExp(`const ${name} = join\\(WORK_DIR, "`).test(code),
+          true,
+        );
+      }
+      check(
+        "B973 reconcile.mjs builds the scratch body file from WORK_DIR",
+        /join\(WORK_DIR, "\.work-status-body\.md"\)/.test(code),
+        true,
+      );
+      check(
+        "B973 reconcile.mjs mentions local-assets once in code (the default dir), in any form",
+        code.split("local-assets").length - 1,
+        1,
+      );
+    }
+    // B973: isolation proof: none of the CLI runs above touched the REAL local-assets/work files (read-only stat).
+    check(
+      "B973 the real local-assets/work files are untouched by the self-test",
+      statOf(realFiles),
+      realBefore,
+    );
+    // B973: a real-root guard: this self-test must not build a path to the real work dir again (the strings are assembled so the
+    // pin does not match itself).
+    {
+      const me = readPkgFile(new URL(import.meta.url), "utf8")
+        .split("\n")
+        .filter((l) => !/^\s*\/\//.test(l))
+        .join("\n");
+      // a PATH built to the real dir (a URL or join), as opposed to a word in a message: exactly the one read-only stat above
+      const real = ["..", "..", "local-assets", "work"].join("/");
+      const occurrences = me.split(`new URL("${real}`).length - 1;
+      check(
+        "B973 the self-test builds exactly ONE path to the real work dir (the read-only stat above)",
+        occurrences,
+        1,
+      );
+    }
   } finally {
     rmSync(emptyPath, { recursive: true, force: true });
+    rmSync(WORK, { recursive: true, force: true });
   }
 
   // The two automated callers must ask for the write explicitly, or the board silently stops

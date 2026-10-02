@@ -9,6 +9,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { calendarStampFromInput } from "../common/calendar-date";
 import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { CustomersService } from "../customers/customers.service";
+import { customerNameViolation } from "../customers/customer-name-guard";
 import { NumberingService } from "./numbering.service";
 import { ExternalRefService } from "./external-ref.service";
 import { ProductsService } from "../products/products.service";
@@ -731,6 +732,16 @@ export class ImportService {
         skipContact(`duplicate of row ${claimedCustomerIds.get(existing.id)}`);
         continue;
       }
+      // B956: a formula-led name rejects THIS row (never the batch, never a half-write); only a
+      // CHANGED name is checked, so a legacy value re-imported unchanged still updates its row.
+      const nameViolation = customerNameViolation(
+        { businessName: name, contactName, displayName },
+        existing,
+      );
+      if (nameViolation) {
+        skipContact(nameViolation);
+        continue;
+      }
       const claimZohoId = zohoContactId ?? existing?.zohoContactId ?? null;
       if (existing) claimedCustomerIds.set(existing.id, rowNumber);
       if (claimZohoId) claimedZohoIds.set(claimZohoId, rowNumber);
@@ -1187,6 +1198,16 @@ export class ImportService {
 
       // Auto-create customer if not found
       if (!customer) {
+        // B956: same rule as the contact importer: reject this invoice group, never half-write.
+        const nameViolation = customerNameViolation({
+          businessName: customerName,
+          contactName: customerName,
+        });
+        if (nameViolation) {
+          skipped++;
+          errors.push(`${customerName}: ${nameViolation}`);
+          continue;
+        }
         const baseUsername = this.slugify(customerName);
         let username = baseUsername;
         let usernameSeq = 1;

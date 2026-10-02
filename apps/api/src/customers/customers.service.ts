@@ -60,6 +60,7 @@ import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { customerUpdateData } from "./customer-update-data";
+import { assertSafeCustomerNames } from "./customer-name-guard";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -530,6 +531,7 @@ export class CustomersService {
   }
 
   async create(dto: CreateCustomerDto) {
+    assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
     await this.assertCustomerCapNotExceeded();
@@ -791,6 +793,7 @@ export class CustomersService {
     if (existing.deletedAt) {
       throw new ConflictException("Restore the customer first");
     }
+    assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
     return this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),

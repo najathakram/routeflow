@@ -5,14 +5,14 @@ export const CSV_BOM = "﻿";
  * A leading character a spreadsheet may run as a formula: `=`, `+`, `-`, `@`, tab, CR, LF, and
  * their full-width forms (＝ ＋ － ＠), which some spreadsheet locales normalize to ASCII.
  */
-const FORMULA_LEAD = /^[=+\-@\t\r\n＝＋－＠]/;
+export const FORMULA_LEAD = /^[=+\-@\t\r\n＝＋－＠]/;
 
 /**
  * Numeric-only text a spreadsheet reads as a number or a phone, never a formula (SA-629c): one
  * optional leading sign, then only digits, spaces, `(` `)` `.` `-`, with at least one digit. No
  * letters (so not `1e5`) and none of `= @ | ! : ; % ,`, quotes, TAB or CR.
  */
-const PLAIN_DECIMAL = /^[+-]?(?=[^0-9]*[0-9])[0-9 ().-]+$/;
+export const PLAIN_DECIMAL = /^[+-]?(?=[^0-9]*[0-9])[0-9 ().-]+$/;
 
 export interface CsvCellOptions {
   /**

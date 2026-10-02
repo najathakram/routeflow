@@ -58,6 +58,10 @@
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
 //   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
 //                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
+//   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
+//                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
+//                    field (businessName, contactName, displayName). Clients show FIXED copy with a
+//                    human field label and never the server message.
 //   B982 — codes the API threw as hand-typed literals, now named here. Each is `body.code` of the refusal
 //                    its throw site names (value == key, byte-identical to what was sent):
 //                    PLAN_GATE / PLAN_GATE_UNAVAILABLE (billing/plan-gate.ts, plan-flag-denial.ts), READ_ONLY
@@ -113,6 +117,7 @@ export const API_ERROR_CODES = {
   BILL_VOID: "BILL_VOID",
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
   PLAN_GATE: "PLAN_GATE",
   PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
   READ_ONLY: "READ_ONLY",

@@ -149,6 +149,9 @@ const READ_ONLY_STATUS_FILES = [
   "apps/web/components/ReadOnlyBanner.tsx",
 ];
 
+/** A READ_ONLY literal used as an error CODE: a property (`code: "READ_ONLY"`) or a comparison (`code === "READ_ONLY"`, `!==`, `==`). */
+const READ_ONLY_CODE_LITERAL = /\bcode\b\s*(?::|[!=]==?)\s*["'`]READ_ONLY/;
+
 const posix = (rel: string) => rel.split(path.sep).join("/");
 
 describe("API error codes: no bare string literal in production source (#2163)", () => {
@@ -178,12 +181,30 @@ describe("API error codes: no bare string literal in production source (#2163)",
     expect(total).toBe(CONSUMER_ALLOWLIST_TOTAL);
   });
 
+  it("mutation-proof: the READ_ONLY code-literal pattern catches a property and every comparison form, not the status word", () => {
+    for (const planted of [
+      'code: "READ_ONLY"',
+      "code:'READ_ONLY'",
+      'data?.code === "READ_ONLY"',
+      "body.code !== 'READ_ONLY'",
+      'err.code == "READ_ONLY"',
+    ])
+      expect(planted).toMatch(READ_ONLY_CODE_LITERAL);
+    for (const status of [
+      'status === "READ_ONLY"',
+      's.status !== "READ_ONLY"',
+      'where: { status: "READ_ONLY" }',
+    ])
+      expect(status).not.toMatch(READ_ONLY_CODE_LITERAL);
+  });
+
   it("READ_ONLY: the status files really spell the status, and the guard's 403 body goes through the constant", () => {
     for (const rel of READ_ONLY_STATUS_FILES) {
       const src = sources.find((s) => posix(s.rel) === rel);
       expect(src?.text).toMatch(/["'`]READ_ONLY["'`]/);
-      // The exemption is for the STATUS word only: a bare `code: "READ_ONLY"` in an exempt file is an error-code literal.
-      expect(src?.text).not.toMatch(/\bcode:\s*["'`]READ_ONLY["'`]/);
+      // The exemption is for the STATUS word only: a `code: "READ_ONLY"` or a `code === "READ_ONLY"` comparison in an exempt
+      // file is an error-code literal.
+      expect(src?.text).not.toMatch(READ_ONLY_CODE_LITERAL);
     }
     const guard = sources.find(
       (s) => posix(s.rel) === "apps/api/src/tenant/tenant-status.guard.ts",
