@@ -26,6 +26,7 @@ import type { JwtPayload } from "../auth/jwt-payload.interface";
  * to assert the exact call, so the money assertions are arithmetic, not mirrors of a stub.
  */
 jest.mock("../orders/order-stock", () => ({
+  ...jest.requireActual("../orders/order-stock"),
   decrementStockForSale: jest.fn().mockResolvedValue(undefined),
 }));
 const mockDecrementStockForSale = decrementStockForSale as jest.Mock;

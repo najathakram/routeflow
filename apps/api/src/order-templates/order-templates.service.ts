@@ -32,7 +32,8 @@ import {
 } from "@routeflow/pricing";
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
-import { decrementStockForSale } from "../orders/order-stock";
+import { decrementStockForSale, stockWriteOf, withStockWrite } from "../orders/order-stock";
+import { RESPONSE_LINE_ITEMS } from "../orders/order-edit-cancelled";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
@@ -813,7 +814,7 @@ export class OrderTemplatesService {
           lineItems: { create: lineItemsData },
         },
         include: {
-          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
+          lineItems: RESPONSE_LINE_ITEMS, // B975: the pack + a stable order, so the buyer Reorder can attribute
           customer: { select: { id: true, businessName: true } },
         },
       });
@@ -821,7 +822,7 @@ export class OrderTemplatesService {
       const stockLines = lineItemsData.map((li) => ({ productId: li.productId, qty: li.qty }));
       // WS9: `allowOversell` is the resolved boolean (cron: template_cron = true; staff manual run
       // = true; a buyer's Reorder = their checkout's policy). Never a policy read in this section.
-      await decrementStockForSale(
+      const stockWrite = await decrementStockForSale(
         { logger: this.logger, tenantId: this.prisma.getTenantId() },
         tx,
         stockLines,
@@ -829,7 +830,7 @@ export class OrderTemplatesService {
         // B562 PR-2: the standing order's SALE rows; the cron run has no acting user.
         { orderId: order.id, notes: `TEMPLATE:${template.id}`, performedById: null },
       );
-      return order;
+      return withStockWrite(order, stockWrite); // B975: the buyer Reorder maps it; staff and cron never do
     });
 
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
@@ -861,7 +862,7 @@ export class OrderTemplatesService {
         `post-commit consolidation deferred (merge in progress) tenant=${tenantId} customer=${template.customerId}`,
       );
     }
-    return merged ?? created;
+    return withStockWrite(merged ?? created, stockWriteOf(created)); // survives a fold
   }
 
   /**

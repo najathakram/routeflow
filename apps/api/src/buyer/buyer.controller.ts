@@ -993,7 +993,8 @@ export class BuyerController {
       source: "buyer",
       customerId: ctx.customerId,
     });
-    return this.templatesService.generateOrder(id, false, allowOversell);
+    const order = await this.templatesService.generateOrder(id, false, allowOversell);
+    return withBackorderPieces(order, stockWriteOf(order)); // B975: the same figure as checkout
   }
 
   @Patch("templates/:id")

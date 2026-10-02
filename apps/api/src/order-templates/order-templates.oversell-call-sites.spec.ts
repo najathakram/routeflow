@@ -1,4 +1,5 @@
 jest.mock("../orders/order-stock", () => ({
+  ...jest.requireActual("../orders/order-stock"),
   decrementStockForSale: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../orders/oversell-policy", () => {
