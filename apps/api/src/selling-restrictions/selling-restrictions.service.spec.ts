@@ -1208,7 +1208,11 @@ describe("SellingRestrictionsService.evaluate", () => {
             if (e.isDirectory()) {
               if (e.name !== "node_modules") walk(full);
             } else if (/\.ts$/.test(e.name) && !/\.(spec|test)\.ts$/.test(e.name)) {
-              if (/code:\s*["']SELLING_RESTRICTED["']/.test(fs.readFileSync(full, "utf8"))) {
+              if (
+                /code:\s*(?:["']SELLING_RESTRICTED["']|API_ERROR_CODES\.SELLING_RESTRICTED\b)/.test(
+                  fs.readFileSync(full, "utf8"),
+                )
+              ) {
                 offenders.push(path.relative(root, full).split(path.sep).join("/"));
               }
             }
