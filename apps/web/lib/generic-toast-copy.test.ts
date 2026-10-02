@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import { handleMutationError } from "./mutation-error-toast";
 import { API_ERROR_CODES } from "@routeflow/types";
 import { codedToastCopy, genericToastCopy } from "./generic-toast-copy";
@@ -430,11 +432,7 @@ describe("handleMutationError with a predicate localErrorToast (B986-7)", () => 
 });
 
 describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODES, never as bare keys or literals", () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const src = (require("fs") as typeof import("fs")).readFileSync(
-    (require("path") as typeof import("path")).join(__dirname, "generic-toast-copy.ts"),
-    "utf8",
-  );
+  const src = readFileSync(join(__dirname, "generic-toast-copy.ts"), "utf8");
   const REGISTERED = [
     "UNIT_NOT_OFFERED",
     "INVALID_LINE_SPLIT",
