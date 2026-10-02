@@ -238,4 +238,105 @@ describe("ReturnsService — a STANDARD return is priced in PIECES on both sides
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
+
+  // review folds (PR #3004): the singleUnit legacy axis, the external refund door, and the 2+ invoice preview
+  const mixedReturn = () => {
+    const loose = orderLine({
+      id: "l2",
+      qty: 12,
+      boxes: 0,
+      pieces: 12,
+      position: 1,
+      unitPrice: 5,
+      subtotal: 60,
+    });
+    withReturn(
+      [
+        invoice("inv-1", [
+          invItem("i1", {}),
+          invItem("i2", { qty: 12, subtotal: 60, boxes: 0, pieces: 12 }),
+        ]),
+      ],
+      [orderLine({}), loose],
+      [{ productId: "pp", qty: 1 }],
+    );
+  };
+
+  it("F1: a legacy line (2 boxes, no split) billed on ONE invoice as two {qty 12, boxes 1} items has a SPLIT on the billed side: never priced raw ($5), refused in the mint and $0 WITH a reason in the preview", async () => {
+    // two live invoice items for the one line: the pack is not provable (a line billed across several items parks)
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      { orderItemId: "l1", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+      { orderItemId: "l1", qty: 12, boxes: 1, pieces: 0, unitsPerBox: 12 },
+    ]);
+    withReturn(
+      [
+        invoice("inv-1", [
+          invItem("i1", { qty: 12, subtotal: 60, boxes: 1 }),
+          invItem("i2", { qty: 12, subtotal: 60, boxes: 1 }),
+        ]),
+      ],
+      [orderLine({})],
+      [{ productId: "pp", qty: 1 }],
+    );
+    const one: any = await service.findOne("ret-1");
+    expect(one.refundEstimate).toBe(0);
+    expect(one.refundEstimateReason).toBe("UNIT_UNRESOLVED");
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_MIXED_UNIT_PRODUCT" },
+    });
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+  });
+
+  it("F1: legacy billed items whose pieces-per-qty differ (one box-counted, one piece-split) are refused too", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([]);
+    withReturn(
+      [
+        invoice("inv-1", [
+          invItem("i1", { qty: 1, subtotal: 60, boxes: null, pieces: null }),
+          invItem("i2", { qty: 12, subtotal: 60, boxes: 1, pieces: 0 }),
+        ]),
+      ],
+      [orderLine({})],
+      [{ productId: "pp", qty: 1 }],
+    );
+    const one: any = await service.findOne("ret-1");
+    expect(one.refundEstimate).toBe(0);
+    expect(one.refundEstimateReason).toBe("UNIT_UNRESOLVED");
+  });
+
+  it("F2: EXTERNAL_REFUND on a mixed-unit return is refused 409 RETURN_MIXED_UNIT_PRODUCT, never recorded as a silent $0 refund", async () => {
+    mixedReturn();
+    const err = await service
+      .processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({ code: "RETURN_MIXED_UNIT_PRODUCT" });
+    expect(err.getResponse().message).toMatch(/inline return|manually/);
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("F3: 2+ creditable invoices with NO pack evidence: the preview is $0 WITH a reason (the mint refuses), preview == mint", async () => {
+    prisma.invoiceItem.findMany.mockResolvedValue([]); // no proof: the box-unaware line's pack is unknown
+    const invoices = [
+      invoice("inv-1", [invItem("i1", BOX_UNAWARE_BOX)]),
+      invoice("inv-2", [invItem("i2", BOX_UNAWARE_BOX)], {
+        createdAt: new Date("2026-02-01"),
+        total: 400,
+      }),
+    ];
+    prisma.invoice.findMany.mockResolvedValue(invoices.map((i) => ({ id: i.id, items: i.items })));
+    withReturn(invoices, [orderLine({})], [{ productId: "pp", qty: 1 }]);
+    const one: any = await service.findOne("ret-1");
+    const all: any = await service.findAll({ kind: "ALL" } as any);
+    expect(one.refundEstimate).toBe(0);
+    expect(one.refundEstimateReason).toBe("UNIT_UNRESOLVED");
+    expect(all.data[0].refundEstimate).toBe(0);
+    expect(all.data[0].refundEstimateReason).toBe("UNIT_UNRESOLVED");
+    await expect(service.processRefund("ret-1")).rejects.toMatchObject({
+      response: { code: "RETURN_MIXED_UNIT_PRODUCT" },
+    });
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
+    expect(creditNotesCreate).not.toHaveBeenCalled();
+  });
 });
