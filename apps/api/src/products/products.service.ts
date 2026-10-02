@@ -642,9 +642,9 @@ export class ProductsService {
 
   async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
-    // B990: the typed free-text category too, unless a structured subcategory is chosen (its name wins; the typed text is not written)
-    if (dto.category !== undefined && !dto.trackedSubcategoryId)
-      assertSafeProductCategory(dto.category);
+    // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
+    // the written value can still be the typed text, and checking at the top is before any read or write.
+    if (dto.category !== undefined) assertSafeProductCategory(dto.category);
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -871,6 +871,9 @@ export class ProductsService {
     }
     const existing = await this.findOne(id);
     assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
+    // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
+    if (dto.category !== undefined)
+      assertSafeProductCategory(dto.category, existing.category ?? null);
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     // The product's effective parent is the dto value if provided (could be null to promote a
@@ -1051,10 +1054,6 @@ export class ProductsService {
       // the free-text field is hidden by the form for regulated items, so
       // force it back to the synced name rather than letting it desync.
       data.category = existing.trackedSubcategory?.name ?? null;
-    }
-    // B990: change-only, and only for text that will actually be WRITTEN (a structured category above overrides the typed one)
-    if (dto.category !== undefined && data.category === dto.category) {
-      assertSafeProductCategory(dto.category, existing.category ?? null);
     }
     // MSRP: normalize 0/negative to null even though the spread already carries
     // dto.msrp through — a bare "0" decimal string must never persist.

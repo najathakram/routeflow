@@ -117,18 +117,21 @@ describe("ProductsService name guards (B964-2)", () => {
       expect(prisma.tenantTransaction).not.toHaveBeenCalled();
     });
 
-    it("create ignores a typed category when a structured subcategory is chosen (it would not be written)", async () => {
-      prisma.product.findFirst.mockResolvedValue(null);
-      const err: any = await service
-        .create({
-          name: "Cola",
-          unit: "each",
-          pricePerUnit: "1.00",
-          category: "=cmd",
-          trackedSubcategoryId: "sub-1",
-        } as any)
-        .catch((e) => e);
-      expect(err?.getResponse?.()?.code).not.toBe("TEXT_CELL_FORMULA_LEAD");
+    it("create refuses a formula-led typed category EVEN when a structured subcategory is chosen, or the parent has none (the written value can still be the typed one)", async () => {
+      for (const extra of [{ trackedSubcategoryId: "sub-1" }, { parentProductId: "parent-1" }]) {
+        prisma.tenantTransaction.mockClear();
+        await refused(
+          service.create({
+            name: "Cola",
+            unit: "each",
+            pricePerUnit: "1.00",
+            category: "=cmd",
+            ...extra,
+          } as any),
+          "category",
+        );
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      }
     });
 
     const stored = (over: Record<string, unknown> = {}) => ({
@@ -158,19 +161,17 @@ describe("ProductsService name guards (B964-2)", () => {
       ).resolves.toBeDefined();
     });
 
-    it("update never refuses text it will not write: a structured-subcategory product forces its own category back", async () => {
-      prisma.product.findUnique.mockResolvedValue(
-        stored({
-          trackedSubcategoryId: "sub-1",
-          trackedSubcategory: { name: "Cigars" },
-          category: "Cigars",
-        }),
+    it("update refuses a changed formula-led category BEFORE any Tobacco section is resolved or created (no orphan type)", async () => {
+      addonService.hasAddon.mockResolvedValue(true); // the tobacco add-on is granted: the flag path would otherwise create the type
+      prisma.product.findUnique.mockResolvedValue(stored());
+      const created = jest.spyOn(service as any, "resolveOrCreateTobaccoCategory");
+      await refused(
+        service.update("prod-1", { category: "=evil", isTobacco: true } as any),
+        "category",
       );
-      prisma.product.findFirst.mockResolvedValue(null);
-      prisma.product.update.mockResolvedValue(stored());
-      await expect(
-        service.update("prod-1", { category: "=ignored" } as any),
-      ).resolves.toBeDefined();
+      expect(created).not.toHaveBeenCalled();
+      expect(prisma.trackedCategory.create).not.toHaveBeenCalled();
+      expect(prisma.product.update).not.toHaveBeenCalled();
     });
   });
 

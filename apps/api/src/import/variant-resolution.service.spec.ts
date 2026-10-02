@@ -60,6 +60,29 @@ describe("VariantResolutionService", () => {
       );
     });
 
+    it("B990: a LEGACY formula-led parent category is NEUTRALISED (not inherited, not refused): the variant is still created", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: "p1",
+        unit: "case",
+        pricePerUnit: "10.00",
+        priceTier2: "9.50",
+        priceTier3: "9.00",
+        priceTier4: "8.50",
+        priceTier5: "8.00",
+        category: "=LEGACY",
+        unitsPerBox: 12,
+        costingMethod: "FIFO",
+        standardCost: null,
+        isTobacco: false,
+      });
+      await expect(
+        service.createVariant({ parentProductId: "p1", variantName: "Jalapeño" }),
+      ).resolves.toBeDefined();
+      const dto = products.create.mock.calls[0][0];
+      expect(dto.category).toBeUndefined();
+      expect(dto.name).toBe("Jalapeño");
+    });
+
     it("throws when the parent does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(

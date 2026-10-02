@@ -4,6 +4,7 @@ import { ProductsService } from "../products/products.service";
 import { ProductAliasService } from "./product-alias.service";
 import { roundMoney } from "@routeflow/pricing";
 import { assertSafeProductCategory } from "../common/text-cell-guards";
+import { isFormulaLedText } from "../common/safe-text-cell";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
@@ -47,7 +48,8 @@ export class VariantResolutionService {
       priceTier3: parent.priceTier3.toString(),
       priceTier4: parent.priceTier4.toString(),
       priceTier5: parent.priceTier5.toString(),
-      category: parent.category ?? undefined,
+      // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
+      category: parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
       unitsPerBox: parent.unitsPerBox ?? undefined,
       costingMethod: parent.costingMethod,
       standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,

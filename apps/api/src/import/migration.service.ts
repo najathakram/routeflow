@@ -7,7 +7,7 @@ import {
 import { ImportEntityType, MigrationSource, Prisma, StagingRecordStatus } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
-import { productNameViolation } from "../common/text-cell-guards";
+import { productCategoryViolation, productNameViolation } from "../common/text-cell-guards";
 import { ExternalRefService } from "./external-ref.service";
 import { DuplicateMatchService } from "./duplicate-match.service";
 import { StagedRow } from "./connectors/source-connectors";
@@ -17,6 +17,15 @@ const UNDO_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Safely coerce an unknown JSON value to a string (objects/arrays → ""). */
 /** The staging flag on a record whose product name starts with a spreadsheet formula character (B964-2). */
 const UNSAFE_NAME_FLAG = "unsafe-name";
+/** The staging flag on a record whose free-text product category starts with a spreadsheet formula character (B990). */
+const UNSAFE_CATEGORY_FLAG = "unsafe-category";
+
+/** The flag a staged PRODUCT payload earns (name first, then category), or null when it is safe to commit. */
+function unsafeProductFlag(payload: Record<string, unknown>): string | null {
+  if (productNameViolation({ name: str(payload.name) })) return UNSAFE_NAME_FLAG;
+  if (productCategoryViolation(optStr(payload.category))) return UNSAFE_CATEGORY_FLAG;
+  return null;
+}
 
 function str(v: unknown): string {
   if (typeof v === "string") return v;
@@ -107,13 +116,13 @@ export class MigrationService {
 
       // B964-2: a formula-led product name can never be committed (products.create refuses it), so it is staged SKIPPED
       // now: the preview shows it as skipped, and confirmJob never meets it.
-      if (
-        status === "PENDING" &&
-        entityType === "PRODUCT" &&
-        productNameViolation({ name: str((row.payload as Record<string, unknown>).name) })
-      ) {
+      const unsafe =
+        status === "PENDING" && entityType === "PRODUCT"
+          ? unsafeProductFlag(row.payload as Record<string, unknown>)
+          : null;
+      if (unsafe) {
         status = "SKIPPED";
-        flags.push(UNSAFE_NAME_FLAG);
+        flags.push(unsafe);
       }
 
       await this.prisma.forTenant().migrationStagingRecord.create({
@@ -177,14 +186,15 @@ export class MigrationService {
       // B964-2: a record staged before the stage-time check (or edited since) must not reach products.create, which has
       // no per-record catch here: one formula-led name would throw midway and leave the job STAGED forever (undo needs
       // CONFIRMED). It is skipped like any other uncommittable record.
-      if (
-        rec.entityType === "PRODUCT" &&
-        productNameViolation({ name: str((rec.rawPayload as Record<string, unknown>).name) })
-      ) {
+      const unsafe =
+        rec.entityType === "PRODUCT"
+          ? unsafeProductFlag(rec.rawPayload as Record<string, unknown>)
+          : null;
+      if (unsafe) {
         const prior = Array.isArray(rec.flags) ? (rec.flags as string[]) : [];
         await this.prisma.forTenant().migrationStagingRecord.update({
           where: { id: rec.id },
-          data: { status: "SKIPPED", flags: [...prior, UNSAFE_NAME_FLAG] },
+          data: { status: "SKIPPED", flags: [...prior, unsafe] },
         });
         skipped++;
         continue;
