@@ -340,21 +340,22 @@ export interface FamilyRowConflict {
   row: number | "family";
   field: "name" | "sku" | "barcode" | "unitSku";
   value: string;
-  reason: "CODE_TAKEN" | "NAME_TAKEN" | "DUPLICATE_IN_REQUEST";
+  reason:
+    typeof API_ERROR_CODES.CODE_TAKEN | typeof API_ERROR_CODES.NAME_TAKEN | "DUPLICATE_IN_REQUEST";
   /** The ACTIVE holder in the same tenant (absent for DUPLICATE_IN_REQUEST). */
   conflictProductId?: string;
 }
 
 /** 409 FAMILY_ROWS_CONFLICT: EVERY conflict, all-or-nothing (nothing was written). */
 export interface FamilyRowsConflictError {
-  code: "FAMILY_ROWS_CONFLICT";
+  code: typeof API_ERROR_CODES.FAMILY_ROWS_CONFLICT;
   message: string;
   rows: FamilyRowConflict[];
 }
 
 /** 400 FAMILY_NOT_SELLABLE: a FAMILY container named on a sellable line. */
 export interface FamilyNotSellableError {
-  code: "FAMILY_NOT_SELLABLE";
+  code: typeof API_ERROR_CODES.FAMILY_NOT_SELLABLE;
   message: string;
   productIds: string[];
 }
