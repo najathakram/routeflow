@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { Paperclip, Wallet } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -200,8 +201,11 @@ export function CustomerRecordPaymentModal({
       onSuccess?.();
       onClose();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast({ title: msg ?? "Failed to record payment", variant: "error" });
+      toast({
+        title: "Failed to record payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
