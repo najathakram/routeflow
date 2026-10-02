@@ -218,6 +218,7 @@ const cust = { id: "c1", businessName: "Acme Foods", pricingTier: 1 };
 describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockScanV2 = false;
     mockCustomers = [cust];
     mockUnitsEnabled = true;
     mockProductUnits = [];
@@ -401,6 +402,7 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
   });
 
   it("SA-632 M2: taps on a pending line never show N cases: the row and the total stay as ONE case until the load, then exactly N Bottles", async () => {
+    mockScanV2 = true; // scan_v2 steps a whole case per repeat scan (the old box increment this pins away)
     let release!: (u: unknown[]) => void;
     mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
     await open(3);
@@ -463,7 +465,13 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
     await open(2);
     await screen.findByRole("alert", {}, { timeout: 3000 });
 
+    // the retry takes a moment and fails again: while in flight the button says so and cannot be pressed twice
+    mockFetchProductUnits.mockImplementation(
+      () => new Promise((_r, rej) => setTimeout(() => rej(new Error("offline")), 150)),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    const inFlight = await screen.findByRole("button", { name: "Retrying…" });
+    expect(inFlight).toBeDisabled();
     // in flight the button says so; a failed retry returns to the failed state (not stuck "Retrying…")
     const retry = await screen.findByRole("button", { name: "Retry" }, { timeout: 3000 });
     expect(retry).toBeEnabled();
