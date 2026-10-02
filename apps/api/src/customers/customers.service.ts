@@ -1466,7 +1466,7 @@ export class CustomersService {
     } catch (e) {
       if (e instanceof LockTimeoutError) {
         throw new ConflictException({
-          code: "WALLET_LOCK_BUSY",
+          code: API_ERROR_CODES.WALLET_LOCK_BUSY,
           message:
             "Another payment against this customer's wallet is in progress. Try again in a moment.",
         });

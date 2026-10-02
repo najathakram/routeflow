@@ -131,6 +131,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "AI_PARSE_FAILED",
   ],
   "apps/mobile/lib/at-stop-cr-outcome.ts": ["CHANGE_REQUEST_ALREADY_RESOLVED"],
+  "apps/mobile/lib/authorizations-logic.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/mobile/lib/credit-limit-error.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/mobile/lib/inline-return-submit-key.ts": [
     "INLINE_RETURN_ORDER_NOT_FOUND",
@@ -156,6 +157,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "PO_LOT_PARTIALLY_CONSUMED",
   ],
   "apps/web/app/(dashboard)/invoices/[id]/page.tsx": ["EMAIL_NOT_CONFIGURED", "EMAIL_SEND_FAILED"],
+  "apps/web/app/(dashboard)/invoices/new/page.tsx": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": [
     "CHANGE_REQUEST_ALREADY_RESOLVED",
     "CHANGE_WINDOW_CLOSED",
@@ -165,11 +167,14 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/orders/_components/CreateOrderModal.tsx": ["MERGE_CHOICE_REQUIRED"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/buyer/portal/[seller]/cart/page.tsx": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/app/buyer/portal/[seller]/orders/[id]/page.tsx": [
     "CHANGE_WINDOW_CLOSED",
     "EDIT_WINDOW_OPEN",
+    "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
+  "apps/web/lib/api/authorizations.ts": ["REGULATED_AUTH_REQUIRED"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
@@ -190,12 +195,13 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "STOP_ALREADY_COMPLETED",
     "SELLING_RESTRICTED",
     "SELLING_RESTRICTIONS_NOT_READY",
+    "REGULATED_AUTH_REQUIRED",
   ],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 67;
+const CONSUMER_ALLOWLIST_TOTAL = 73;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error

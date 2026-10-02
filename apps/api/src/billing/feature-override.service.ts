@@ -12,6 +12,7 @@ import {
   FEATURE_OVERRIDE_AUDIT_ENTITY_TYPE,
   FEATURE_OVERRIDE_EXPIRED_REVIEW_ACTION,
 } from "./feature-override-audit.constants";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export type FeatureOverrideEffect = "GRANT" | "DENY";
 export type { FeatureOverrideKind };
@@ -183,7 +184,7 @@ export class FeatureOverrideService {
     if (!isRegisteredFeatureKey(params.featureKey)) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "FEATURE_KEY_UNKNOWN",
+        code: API_ERROR_CODES.FEATURE_KEY_UNKNOWN,
         message: `"${params.featureKey}" is not a registered feature key.`,
       });
     }
@@ -192,7 +193,7 @@ export class FeatureOverrideService {
     if (params.expiresAt && params.expiresAt.getTime() <= Date.now()) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "EXPIRES_AT_MUST_BE_FUTURE",
+        code: API_ERROR_CODES.EXPIRES_AT_MUST_BE_FUTURE,
         message: "expiresAt must be in the future.",
       });
     }
