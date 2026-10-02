@@ -79,8 +79,10 @@ const toPieces = (li: StockLineUnits, qty: unknown, livePack: unknown): number =
 /**
  * B283: the ONE stock-decrement code path for turning a set of order lines
  * into a real (non-draft) sale — locks the touched product rows FOR UPDATE,
- * blocks (customer/driver) or warns (staff) on insufficient stock, then
- * applies ONE aggregated UPDATE. Extracted out of create()'s non-draft
+ * blocks or warns on insufficient stock per `allowOversell`, then
+ * applies ONE aggregated UPDATE. SA-606c: `allowOversell` is an already-resolved boolean — the
+ * caller resolves any oversell policy BEFORE the transaction; nothing here ever reads a policy
+ * (this section holds product row locks). Extracted out of create()'s non-draft
  * branch so changeStatus()'s DRAFT→PENDING promotion (the same "becomes a
  * real sale" moment) calls the IDENTICAL logic instead of a second
  * implementation — see REG-B283. Must be called from inside the caller's
@@ -90,7 +92,7 @@ export async function decrementStockForSale(
   deps: OrderStockDeps,
   tx: any,
   stockLines: StockLine[],
-  isStaffRole: boolean,
+  allowOversell: boolean,
   event: OrderStockEvent,
 ): Promise<void> {
   if (stockLines.length === 0) return;
@@ -127,7 +129,7 @@ export async function decrementStockForSale(
     }
   }
   if (oosItems.length > 0) {
-    if (isStaffRole) {
+    if (allowOversell) {
       deps.logger.warn(`Operator-initiated order will go below stock: ${oosItems.join("; ")}`);
     } else {
       throw new ConflictException(`Insufficient stock: ${oosItems.join("; ")}`);
@@ -263,6 +265,11 @@ export async function settleStockForEdit(
   user?: JwtPayload,
   /** B562 PR-2: the event the SALE rows record (default EDIT); the acting user wins over `performedById`. */
   event: { notes: string; performedById?: string | null } = { notes: "EDIT" },
+  /**
+   * WS9: when provided, `allowOversell` REPLACES the role test below (a resolved boolean — never a
+   * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
+   */
+  opts?: { allowOversell?: boolean },
 ): Promise<void> {
   if (order.status === "DRAFT") return;
 
@@ -381,7 +388,9 @@ export async function settleStockForEdit(
       }
     }
     if (violations.length > 0) {
-      if (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER) {
+      const mayOversell =
+        opts?.allowOversell ?? (user?.role !== UserRole.CUSTOMER && user?.role !== UserRole.DRIVER);
+      if (mayOversell) {
         // Operators/admins may oversell — matches create()'s warn-only path.
         // Unlike the old validate-only guard, this does NOT return: the
         // write below still applies so the oversell lands in currentStock,
