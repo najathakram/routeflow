@@ -16,6 +16,7 @@ const D = "app/(dashboard)";
 describe("no raw server message on the orders + customers surfaces", () => {
   it.each([
     `${D}/orders/[id]/page.tsx`,
+    `${D}/orders/page.tsx`,
     `${D}/orders/_components/CreateOrderModal.tsx`,
     `${D}/orders/_components/CreditNotePicker.tsx`,
     `${D}/orders/_components/LicenseGuardModal.tsx`,
@@ -36,6 +37,7 @@ describe("no raw server message on the orders + customers surfaces", () => {
         /can't be deleted in its current state/,
         /fulfillment path couldn't be changed/,
       ],
+      [`${D}/orders/page.tsx`]: [/orders export couldn't be created/],
       [`${D}/orders/_components/CreateOrderModal.tsx`]: [/order couldn't be created/],
       [`${D}/orders/_components/CreditNotePicker.tsx`]: [/credit note couldn't be created/],
       [`${D}/orders/_components/LicenseGuardModal.tsx`]: [

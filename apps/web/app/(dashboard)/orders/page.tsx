@@ -36,6 +36,7 @@ import { useDeliveryAccess } from "@/lib/api/addons";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { CreateOrderModal } from "./_components/CreateOrderModal";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Saved view definitions ───────────────────────────────────────────────────
 
@@ -555,7 +556,14 @@ export default function OrdersPage() {
         });
       }
     } catch (err) {
-      toast({ title: "Export failed", description: (err as Error).message, variant: "error" });
+      toast({
+        title: "Export failed",
+        description: genericToastCopy(
+          err,
+          "The orders export couldn't be created. Check the filters, then try again.",
+        ),
+        variant: "error",
+      });
     } finally {
       setIsExporting(false);
     }
