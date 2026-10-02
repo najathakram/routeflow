@@ -8,7 +8,7 @@ three hand-built stores (see [`.claude/skills/bug-registry/SKILL.md`](../../../.
 "three stores" model) onto GitHub Issues as the single record. Nothing here is reversible-by-default
 except Step 5 — every earlier step is additive to GitHub and leaves the legacy stores untouched, so
 stopping partway costs nothing beyond the time spent. See [DATA-MODEL.md](DATA-MODEL.md) for the
-target shape being migrated *to*, [PLANNING.md](PLANNING.md) for the waves algorithm being ported, and
+target shape being migrated _to_, [PLANNING.md](PLANNING.md) for the waves algorithm being ported, and
 [CLI.md](CLI.md) for every command named below.
 
 ## Step 0 — land PR #597 — DONE
@@ -37,7 +37,7 @@ One command bootstraps everything this step used to be a manual checklist for (s
 - **Labels** (see the brief's Labels section for the full set — `status:*`, `class:*`, `tier:*`,
   `severity:*`, `area:*`, `wave:N`, `harness:*`, `source:*`, plus markers `approved:owner`,
   `needs:human`, `resolution:wontfix|duplicate|cannot-reproduce`) — `gh label create <name> --color
-  <hex> --description "<desc>" --force` in a loop, the same primitive `scripts/team/team.mjs`'s
+<hex> --description "<desc>" --force` in a loop, the same primitive `scripts/team/team.mjs`'s
   `cmds.setup` already uses for its own smaller label set.
 - **Issue types** `Bug` and `Batch` (GitHub issue types, GA per the brief's GitHub-facts section).
   `VERIFY:` exact `gh api`/settings-UI call for org-level issue-type creation — not covered by any
@@ -66,18 +66,18 @@ Read directly from a live shard row's actual fields (`.claude/campaign/status/F#
 the catalogue's `bugs.jsonl` (`sensitive`, `sensitiveFor` — already exactly `classify()`'s own
 output per row, which makes the `class:` mapping below the highest-confidence part of this import).
 
-| Legacy ledger `state`             | bugflow `status:`             | Why |
-| ---------------------------------- | ------------------------------ | --- |
-| *(catalogue row, no ledger row)*   | `status:triage`                 | `bugs.mjs triage` already finds these as "invisible to everything" today; bugflow's `triage` state is the same idea, GitHub-native |
-| `queued`, not sensitive             | `status:ready`                  | direct |
-| `queued`, sensitive                 | `status:parked`                 | the carve-out; `class:money\|tenancy\|migration` comes straight from `sensitiveFor` |
-| `in-flight`                         | `status:claimed`                | legacy doesn't split "claimed" from "actively being worked" as sharply as bugflow does; the next `bugflow sync` promotes to `in_progress` once it observes a branch/PR |
-| `proven`                            | `status:verifying`              | **the mapping worth double-checking** — legacy `proven` = merged with a passing test, not yet post-deploy-confirmed; that is bugflow's `verifying`, not `done` |
-| `proven-pending-deploy`             | `status:verifying`              | same target — the `tier:t2`-only pre-merge carve-out collapses into the same state; `bugflow verify` resolves it later |
-| `done`                              | `status:done`                   | direct — stays `done` |
-| `already-fixed`                     | `status:done` + `resolution:cannot-reproduce` | discovery classification: the defect no longer reproduces |
-| `refuted`                           | `status:done` + `resolution:cannot-reproduce` | discovery classification: the suspected defect was never real. `VERIFY:` the legacy `state` field doesn't distinguish "never reproduced" from "behavior is correct as designed" — the latter arguably belongs under `resolution:wontfix` instead; that distinction lives only in each row's prose `evidence`, so a human pass over the diff (Step 3) should decide it per-row, not by a blanket rule |
-| `regressed`                         | `status:regressed`              | direct — legacy already carries the identical evidence-citation contract `bugflow verify --result red` enforces |
+| Legacy ledger `state`            | bugflow `status:`                             | Why                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(catalogue row, no ledger row)_ | `status:triage`                               | `bugs.mjs triage` already finds these as "invisible to everything" today; bugflow's `triage` state is the same idea, GitHub-native                                                                                                                                                                                                                                                                   |
+| `queued`, not sensitive          | `status:ready`                                | direct                                                                                                                                                                                                                                                                                                                                                                                               |
+| `queued`, sensitive              | `status:parked`                               | the carve-out; `class:money\|tenancy\|migration` comes straight from `sensitiveFor`                                                                                                                                                                                                                                                                                                                  |
+| `in-flight`                      | `status:claimed`                              | legacy doesn't split "claimed" from "actively being worked" as sharply as bugflow does; the next `bugflow sync` promotes to `in_progress` once it observes a branch/PR                                                                                                                                                                                                                               |
+| `proven`                         | `status:verifying`                            | **the mapping worth double-checking** — legacy `proven` = merged with a passing test, not yet post-deploy-confirmed; that is bugflow's `verifying`, not `done`                                                                                                                                                                                                                                       |
+| `proven-pending-deploy`          | `status:verifying`                            | same target — the `tier:t2`-only pre-merge carve-out collapses into the same state; `bugflow verify` resolves it later                                                                                                                                                                                                                                                                               |
+| `done`                           | `status:done`                                 | direct — stays `done`                                                                                                                                                                                                                                                                                                                                                                                |
+| `already-fixed`                  | `status:done` + `resolution:cannot-reproduce` | discovery classification: the defect no longer reproduces                                                                                                                                                                                                                                                                                                                                            |
+| `refuted`                        | `status:done` + `resolution:cannot-reproduce` | discovery classification: the suspected defect was never real. `VERIFY:` the legacy `state` field doesn't distinguish "never reproduced" from "behavior is correct as designed" — the latter arguably belongs under `resolution:wontfix` instead; that distinction lives only in each row's prose `evidence`, so a human pass over the diff (Step 3) should decide it per-row, not by a blanket rule |
+| `regressed`                      | `status:regressed`                            | direct — legacy already carries the identical evidence-citation contract `bugflow verify --result red` enforces                                                                                                                                                                                                                                                                                      |
 
 ### Field and body mapping
 
@@ -139,50 +139,50 @@ recognize each other. Legacy claims are an `<!--rf:agent-->`-marked comment matc
 `^claim:\s*id=(\S+)\s+lease-until=(\S+)` (`team.mjs`'s `parseClaim`, read directly from its source);
 bugflow's claim comment is `<!--bugflow:claim id=<login>/<host>/<worktree> exp=<ISO>-->` — a
 different marker and a different body grammar entirely. Neither reader parses the other's comment.
-**If both systems' *workers* ran live against the same issues at once, two workers could claim the
+**If both systems' _workers_ ran live against the same issues at once, two workers could claim the
 same bug simultaneously — one via `team.mjs claim`, one via `bugflow claim` — with neither lease
 visible to the other's compare-and-swap.** The mitigation is structural, not procedural: throughout
 Step 3, `bugflow claim`/`bugflow next` are **never invoked by a real worker** — only `import
 --dry-run --diff` runs on the bugflow side. `scripts/campaign/bugs.mjs` and `scripts/team/team.mjs`
-remain the sole *live* claim system until Step 4 actually flips the switch.
+remain the sole _live_ claim system until Step 4 actually flips the switch.
 
 **Rollback:** nothing to roll back — this step, by construction, writes nothing anywhere.
 
 ## Step 4 — cutover
 
 **Answering [GUARDRAILS.md](GUARDRAILS.md)'s (now-resolved) open question: bugflow's stop-hook
-integration *follows* Gate 4, it does not supersede the hook itself.** Gate 4 (a non-blocking
+integration _follows_ Gate 4, it does not supersede the hook itself.** Gate 4 (a non-blocking
 `bugs.mjs sync` report, "Gate 4: bug-registry sync (reports, never blocks)") landed on `master` with
 PR #597 (`10ddc3fa`, 2026-09-05) — `stop.mjs` carries Gates 1–4 today, confirmed by reading it
 directly. Step 4 is where that already-existing Gate 4's call target flips from `bugs.mjs sync` to
 `bugflow sync --quiet`; no new gate is added and none is removed, only what it shells out to changes.
 
-| Legacy                                          | bugflow equivalent                         |
-| ------------------------------------------------ | ------------------------------------------ |
-| `node scripts/campaign-check.mjs` (CI gate)       | `bugflow check`                             |
-| Gate 4 of `.claude/hooks/stop.mjs` (`bugs.mjs sync`) | `bugflow sync --quiet`                   |
-| `team.mjs board`                                  | `bugflow board`                             |
-| `team.mjs claim <issue#>`                         | `bugflow claim #<N>`                        |
-| `team.mjs done <issue#> "[note]"`                 | `bugflow prove #<N> --pr <num>` (`sync` derives the rest) |
-| `team.mjs release <issue#>`                       | `bugflow release #<N>`                      |
-| `team.mjs reap`                                   | `bugflow reap`                              |
-| `bugs.mjs next` / `waves`                         | `bugflow next` / `bugflow plan`             |
-| `bugs.mjs brief`                                  | `bugflow brief`                             |
-| `bugs.mjs file`                                   | `bugflow file`                              |
-| `bugs.mjs prove` / `discharge`                    | `bugflow prove` + `bugflow verify --result green` |
-| `bugs.mjs reopen`                                 | `bugflow verify --result red`               |
-| `bugs.mjs render`                                 | `bugflow render`                            |
-| `bugs.mjs self-test`                              | `bugflow self-test`                         |
-| `team.mjs note` / `ask` / `answered`              | **no 1:1 verb yet** — `VERIFY`, closest today is a plain `gh issue comment` plus `needs:human` |
-| `team.mjs setup` (label bootstrap)                | **no 1:1 verb yet** — `VERIFY`, see Step 1 |
-| `bugs.mjs move` / `tier`                          | **no 1:1 verb yet** — `VERIFY`, today a direct `gh issue edit` (re-parent / relabel) |
+| Legacy                                               | bugflow equivalent                                                                             |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `node scripts/campaign-check.mjs` (CI gate)          | `bugflow check`                                                                                |
+| Gate 4 of `.claude/hooks/stop.mjs` (`bugs.mjs sync`) | `bugflow sync --quiet`                                                                         |
+| `team.mjs board`                                     | `bugflow board`                                                                                |
+| `team.mjs claim <issue#>`                            | `bugflow claim #<N>`                                                                           |
+| `team.mjs done <issue#> "[note]"`                    | `bugflow prove #<N> --pr <num>` (`sync` derives the rest)                                      |
+| `team.mjs release <issue#>`                          | `bugflow release #<N>`                                                                         |
+| `team.mjs reap`                                      | `bugflow reap`                                                                                 |
+| `bugs.mjs next` / `waves`                            | `bugflow next` / `bugflow plan`                                                                |
+| `bugs.mjs brief`                                     | `bugflow brief`                                                                                |
+| `bugs.mjs file`                                      | `bugflow file`                                                                                 |
+| `bugs.mjs prove` / `discharge`                       | `bugflow prove` + `bugflow verify --result green`                                              |
+| `bugs.mjs reopen`                                    | `bugflow verify --result red`                                                                  |
+| `bugs.mjs render`                                    | `bugflow render`                                                                               |
+| `bugs.mjs self-test`                                 | `bugflow self-test`                                                                            |
+| `team.mjs note` / `ask` / `answered`                 | **no 1:1 verb yet** — `VERIFY`, closest today is a plain `gh issue comment` plus `needs:human` |
+| `team.mjs setup` (label bootstrap)                   | **no 1:1 verb yet** — `VERIFY`, see Step 1                                                     |
+| `bugs.mjs move` / `tier`                             | **no 1:1 verb yet** — `VERIFY`, today a direct `gh issue edit` (re-parent / relabel)           |
 
 `.claude/skills/bug-registry/SKILL.md` is rewritten as a thin pointer: strip the three-stores
 explanation, the lock-directory mechanics, and the campaign-specific command reference; keep only
 "bugs live in GitHub Issues; `bugflow brief #N` before starting; `bugflow next` to find work; see
 `tools/bugflow/docs/` for everything else."
 
-**Rollback:** cutover only changes which command a hook/CI-step/skill *calls*. `campaign-check.mjs`,
+**Rollback:** cutover only changes which command a hook/CI-step/skill _calls_. `campaign-check.mjs`,
 `bugs.mjs`, and `team.mjs` are not deleted until Step 5, so reverting Step 4 is reverting that one
 call-site edit — nothing destructive yet.
 
@@ -224,15 +224,15 @@ commit is the rollback, and staying isolated is what keeps that revert clean.
 
 ## Risks and how each is checked
 
-| Risk | Check |
-| --- | --- |
-| `bugflow import` silently mis-maps a legacy state | `--dry-run --diff` reviewed by a human (Step 3) before any real import; spot-check a sample per `state` value against the mapping table above |
-| Dual-run split-brain (see Step 3) | Bugflow's claim path stays unexercised by any real worker throughout Step 3 — read-only comparison only |
-| `REG-B###` (legacy) vs `REG-#N` (new) token continuity | `proof.tokenFormat` accepts both formats through the transition (config key, per the brief); `bugflow check` and `campaign-check.mjs` both run in CI until Step 4 confirms parity |
-| Private-repo CI / merge-queue plan tier blocks cutover entirely | Resolve before Step 4 — the brief names this a stage-1 prerequisite; the Team/Enterprise merge-queue-on-private-repos question is still `VERIFY` |
-| A worktree stash mixes up work mid-migration (several sessions touching `rf-registry` and `rf-bugflow` at once) | Never bare `git stash pop` with multiple worktrees live — `git stash list` first, always |
-| A stale cached "green" masks a real parity failure between old and new | Project lesson L-034: force a fresh, uncached run of anything comparing legacy vs. new state; never trust a replayed CI summary for this specific comparison |
-| Step 5 deletes something Step 2 silently failed to import | Land Step 5 as its own isolated commit, only after Step 3's window has run clean, never bundled with Step 2 or Step 4 |
+| Risk                                                                                                            | Check                                                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bugflow import` silently mis-maps a legacy state                                                               | `--dry-run --diff` reviewed by a human (Step 3) before any real import; spot-check a sample per `state` value against the mapping table above                                     |
+| Dual-run split-brain (see Step 3)                                                                               | Bugflow's claim path stays unexercised by any real worker throughout Step 3 — read-only comparison only                                                                           |
+| `REG-B###` (legacy) vs `REG-#N` (new) token continuity                                                          | `proof.tokenFormat` accepts both formats through the transition (config key, per the brief); `bugflow check` and `campaign-check.mjs` both run in CI until Step 4 confirms parity |
+| Private-repo CI / merge-queue plan tier blocks cutover entirely                                                 | Resolve before Step 4 — the brief names this a stage-1 prerequisite; the Team/Enterprise merge-queue-on-private-repos question is still `VERIFY`                                  |
+| A worktree stash mixes up work mid-migration (several sessions touching `rf-registry` and `rf-bugflow` at once) | Never bare `git stash pop` with multiple worktrees live — `git stash list` first, always                                                                                          |
+| A stale cached "green" masks a real parity failure between old and new                                          | Project lesson L-034: force a fresh, uncached run of anything comparing legacy vs. new state; never trust a replayed CI summary for this specific comparison                      |
+| Step 5 deletes something Step 2 silently failed to import                                                       | Land Step 5 as its own isolated commit, only after Step 3's window has run clean, never bundled with Step 2 or Step 4                                                             |
 
 ## Open questions
 

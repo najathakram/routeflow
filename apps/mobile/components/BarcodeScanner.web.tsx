@@ -26,6 +26,8 @@ interface Props {
    * of tearing the camera down. Defaults `true`.
    */
   active?: boolean;
+  /** Native-only opt-in (aim box + steady-read on the expo-camera path); accepted and ignored on web. */
+  aimAssist?: boolean;
 }
 
 /** Full-screen scanning overlay: viewfinder chrome and feedback pill around a

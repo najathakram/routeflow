@@ -2,11 +2,12 @@ import * as React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ScanOrderScreen } from "./ScanOrderScreen";
 import type { ScanResolution } from "./useScanCodeHandler";
+import type { ScanFrame } from "./useContinuousScanCamera";
 
 // Barcode events are injected through the camera hook (spec §9.1): the real hook needs
 // getUserMedia + zxing, but everything this screen owns — the gate, the buffer, the cue, the
 // list, undo, totals — sits on the far side of `onDetect`.
-let detect: (code: string) => void = () => undefined;
+let detect: (code: string, frame?: ScanFrame) => void = () => undefined;
 let cameraEnabled = false;
 let cameraState: {
   error: string | null;
@@ -21,7 +22,7 @@ jest.mock("./useContinuousScanCamera", () => ({
     onDetect,
   }: {
     enabled: boolean;
-    onDetect: (c: string) => void;
+    onDetect: (c: string, frame?: ScanFrame) => void;
   }) => {
     detect = onDetect;
     cameraEnabled = enabled;
@@ -93,15 +94,20 @@ function setup(
   return { ...utils, props };
 }
 
-const scan = async (code: string) => {
+// Steady-read is DEFAULT ON (owner ruling 2026-09-24): a code counts once the SAME value is held for several frames,
+// so one deliberate scan in these tests is three consecutive frames of the same code.
+const scan = async (code: string, frame?: ScanFrame) => {
   await act(async () => {
-    detect(code);
+    detect(code, frame);
+    detect(code, frame);
+    detect(code, frame);
   });
 };
 
 describe("ScanOrderScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.clear(); // the scan mode is a per-device setting
     cameraState = { error: null, torchAvailable: false, torchOn: false };
   });
 
@@ -964,6 +970,267 @@ describe("ScanOrderScreen", () => {
     it("shows no banner once a customer is chosen — scans take the customer's price immediately", () => {
       setup({ hasCustomer: true });
       expect(screen.queryByText(/No customer selected/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("aim box + steady-read (owner ruling 2026-09-24, default ON)", () => {
+    const AIM = { x: 100, y: 120, width: 1000, height: 360 };
+    const inBox = {
+      bounds: { origin: { x: 550, y: 290 }, size: { width: 100, height: 20 } },
+      aimBox: AIM,
+    };
+    const offBox = {
+      bounds: { origin: { x: 20, y: 20 }, size: { width: 100, height: 20 } },
+      aimBox: AIM,
+    };
+
+    it("a single frame (a passing glance) is NOT a scan", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => detect("111", inBox));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("a held in-box code resolves exactly once", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111", inBox);
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+      expect(resolve.mock.calls[0][0]).toBe("111");
+    });
+
+    it("an OFF-CENTRE code never resolves, however long it is held", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111", offBox);
+      await scan("111", offBox);
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("no geometry (frame omitted) fails OPEN: a steady code still resolves", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+  });
+
+  describe("Hold to scan (owner ruling 2026-09-24: OPTIONAL per-device mode, default Continuous)", () => {
+    const useHoldMode = () => localStorage.setItem("routeflow.scanMode", "hold");
+    const holdButton = () => screen.getByRole("button", { name: "Hold to scan" });
+
+    it("default Continuous: no hold button, and a steady scan resolves as before", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      expect(screen.queryByRole("button", { name: "Hold to scan" })).not.toBeInTheDocument();
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+
+    it("the scan screen carries a Scan mode control: choosing Hold persists it and shows the round button", async () => {
+      setup();
+      fireEvent.click(screen.getByRole("button", { name: "Hold to scan mode" }));
+      expect(localStorage.getItem("routeflow.scanMode")).toBe("hold");
+      expect(holdButton()).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Continuous mode" }));
+      expect(localStorage.getItem("routeflow.scanMode")).toBe("continuous");
+      expect(screen.queryByRole("button", { name: "Hold to scan" })).not.toBeInTheDocument();
+    });
+
+    it("hold mode, NOT holding: frames are ignored (nothing resolves, however long)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await scan("111");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("hold mode, WHILE holding (pointer): a steady code resolves; after release frames are ignored again", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      await scan("111");
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+      fireEvent.pointerUp(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("222");
+      expect(resolve).toHaveBeenCalledTimes(1);
+    });
+
+    it("a RELEASE clears the streak: 2 frames, release, re-grab, 1 frame is NOT a scan", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.pointerUp(holdButton());
+      fireEvent.pointerDown(holdButton());
+      await act(async () => detect("111"));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("pointer cancel / leave, window blur and a hidden tab all release the hold", async () => {
+      useHoldMode();
+      setup();
+      for (const release of [
+        () => fireEvent.pointerCancel(holdButton()),
+        () => fireEvent.pointerLeave(holdButton()),
+        () => fireEvent.blur(window),
+        () => {
+          Object.defineProperty(document, "visibilityState", {
+            value: "hidden",
+            configurable: true,
+          });
+          fireEvent(document, new Event("visibilitychange"));
+          Object.defineProperty(document, "visibilityState", {
+            value: "visible",
+            configurable: true,
+          });
+        },
+      ]) {
+        fireEvent.pointerDown(holdButton());
+        expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+        release();
+        expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      }
+    });
+
+    it("keyboard: Space / Enter hold while down and release on keyup", () => {
+      useHoldMode();
+      setup();
+      for (const key of [" ", "Enter"]) {
+        fireEvent.keyDown(holdButton(), { key });
+        expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+        fireEvent.keyUp(holdButton(), { key });
+        expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      }
+    });
+
+    it("a hold does NOT survive closing the scanner: reopen starts released and ignores frames until held again", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      const { rerender, props } = setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      rerender(<ScanOrderScreen {...props} open={false} />);
+      rerender(<ScanOrderScreen {...props} open />);
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("a camera error while held releases the hold (the button unmounts, pointerup would never arrive)", () => {
+      useHoldMode();
+      const { rerender, props } = setup();
+      fireEvent.pointerDown(holdButton());
+      cameraState = { ...cameraState, error: "Camera blocked" };
+      rerender(<ScanOrderScreen {...props} />);
+      cameraState = { ...cameraState, error: null };
+      rerender(<ScanOrderScreen {...props} />);
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("keyboard hold: focus leaving the button (Tab) releases it, since keyup lands elsewhere", () => {
+      useHoldMode();
+      setup();
+      fireEvent.keyDown(holdButton(), { key: " " });
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.blur(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+    });
+
+    it("Continuous mode is unchanged: a window blur mid-streak does NOT restart the steady read", async () => {
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.blur(window);
+      await act(async () => detect("111"));
+      await waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    });
+
+    it("the mode chips and the hold button are real touch targets (chips >= 44px)", () => {
+      setup();
+      expect(screen.getByRole("button", { name: "Continuous mode" }).className).toMatch(
+        /min-h-\[44px\]/,
+      );
+      expect(screen.getByRole("button", { name: "Hold to scan mode" }).className).toMatch(
+        /min-h-\[44px\]/,
+      );
+    });
+
+    it("the hold button straddles the strip's bottom edge so it never covers the aim box", () => {
+      useHoldMode();
+      setup();
+      expect(holdButton().className).toMatch(/-bottom-7/);
+    });
+
+    it("2 UN-HELD frames never count: then hold + 1 frame is NOT a scan (the streak does not advance while un-held)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      await act(async () => {
+        detect("111");
+        detect("111");
+      });
+      fireEvent.pointerDown(holdButton());
+      await act(async () => detect("111"));
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("switching mode MID-HOLD releases it: back in Hold mode the button is up and frames are ignored", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.pointerDown(holdButton());
+      expect(holdButton()).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "Continuous mode" }));
+      fireEvent.click(screen.getByRole("button", { name: "Hold to scan mode" }));
+      expect(holdButton()).toHaveAttribute("aria-pressed", "false");
+      await scan("111");
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
+    it("the hold button is DESCRIBED by a visible hint, and blocks the iOS long-press callout", () => {
+      useHoldMode();
+      setup();
+      const btn = holdButton();
+      const id = btn.getAttribute("aria-describedby");
+      expect(id).toBeTruthy();
+      const hint = document.getElementById(id as string);
+      expect(hint).toBeInTheDocument();
+      expect(hint).toBeVisible();
+      expect(hint).toHaveTextContent(/hold the button while the barcode is in the box/i);
+      expect(btn.className).toMatch(/\[-webkit-touch-callout:none\]/);
+    });
+
+    it("the hold button is a real round target (>= 56px) at the bottom centre of the camera strip", () => {
+      useHoldMode();
+      setup();
+      const btn = holdButton();
+      expect(btn.className).toMatch(/h-14/);
+      expect(btn.className).toMatch(/w-14/);
+      expect(btn.className).toMatch(/rounded-full/);
+      expect(btn.className).toMatch(/left-1\/2/);
+      expect(btn.className).toMatch(/bottom-/);
+    });
+
+    it("manual entry is unaffected by the mode (a deliberate typed code always works)", async () => {
+      useHoldMode();
+      const resolve = jest.fn().mockResolvedValue(added("p1", "Widget"));
+      setup({ resolveCode: resolve });
+      fireEvent.click(screen.getByRole("button", { name: /Enter code manually/ }));
+      const input = await screen.findByRole("textbox");
+      fireEvent.change(input, { target: { value: "999" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(resolve).toHaveBeenCalledWith("999", expect.anything()));
     });
   });
 });

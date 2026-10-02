@@ -23,6 +23,7 @@ import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 import { PolicyService, type PolicyActor } from "./policy.service";
 import { POLICY_REGISTRY, policyJsonSchema, type PolicyEntry } from "./policy-registry";
 import { ClearPolicyDto, ClearPolicyQueryDto, SetPolicyDto } from "./dto/policy.dto";
@@ -131,7 +132,7 @@ export class PolicyController {
     if (!user?.tenantId) {
       throw new ForbiddenException({
         statusCode: 403,
-        code: "TENANT_CONTEXT_REQUIRED",
+        code: API_ERROR_CODES.TENANT_CONTEXT_REQUIRED,
         message: "Policies are per tenant — no tenant context on this token.",
       });
     }

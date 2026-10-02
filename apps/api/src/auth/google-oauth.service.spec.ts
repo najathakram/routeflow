@@ -416,6 +416,7 @@ describe("GoogleOAuthService.linkGoogleAccount (B421 pinning)", () => {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
         update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     } as any;
 

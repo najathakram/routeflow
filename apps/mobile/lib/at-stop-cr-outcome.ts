@@ -27,7 +27,8 @@ export type AtStopResolveOutcome =
   | { action: "decline"; reason: string };
 
 export function classifyAtStopResolveError(e: unknown): AtStopResolveOutcome {
-  if ((e as { isOfflineQueued?: boolean } | null)?.isOfflineQueued) {
+  const flags = e as { isOfflineQueued?: boolean; isOnlineRequired?: boolean } | null;
+  if (flags?.isOfflineQueued || flags?.isOnlineRequired) {
     return { action: "offline" };
   }
   const blocked = parseRegulatedAuthError(e);

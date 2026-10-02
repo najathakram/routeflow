@@ -39,7 +39,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { startFakePlane } from "./plane-fake-server.mjs";
-import { gitEnv } from "./plane-client.mjs";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 
 const REAL_DOCTOR = readFileSync(fileURLToPath(new URL("./plane-doctor.mjs", import.meta.url)));
 const REAL_CLIENT = readFileSync(fileURLToPath(new URL("./plane-client.mjs", import.meta.url)));
@@ -190,6 +190,7 @@ function makeFixtureRepo({
 
   const campaignDir = join(dir, "scripts", "campaign");
   mkdirSync(campaignDir, { recursive: true });
+  copyScrubHelper(campaignDir);
   writeFileSync(join(campaignDir, "plane-doctor.mjs"), REAL_DOCTOR);
   writeFileSync(join(campaignDir, "plane-client.mjs"), REAL_CLIENT);
   writeFileSync(join(campaignDir, "plane-denylist.json"), REAL_DENYLIST);
@@ -214,11 +215,22 @@ function makeFakeHome({ withScheduledTask = true } = {}) {
   return dir;
 }
 
-// A clean env: gitEnv() (scrubs GIT_*) minus every PLANE_* var this family
+// A clean env: scrubbedGitEnv() (scrubs GIT_*) minus every PLANE_* var this family
 // gates on, so the ambient shell's real key/overrides can never leak into a
 // fixture run — each case below adds back only what it needs.
+// plane-client.mjs requires ../lib/scrubbed-git-env.cjs (the one shared GIT_* scrub), so every
+// fixture repo that carries a copy of it must carry the helper at the same relative path.
+function copyScrubHelper(clientDir) {
+  const dest = join(clientDir, "..", "lib");
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(
+    join(dest, "scrubbed-git-env.cjs"),
+    readFileSync(fileURLToPath(new URL("../lib/scrubbed-git-env.cjs", import.meta.url))),
+  );
+}
+
 function baseEnv() {
-  const env = gitEnv();
+  const env = scrubbedGitEnv();
   for (const key of Object.keys(env)) {
     if (key.startsWith("PLANE_")) delete env[key];
   }

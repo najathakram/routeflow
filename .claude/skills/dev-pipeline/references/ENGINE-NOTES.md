@@ -39,7 +39,7 @@ generated client (ORM, API or other codegen). Regenerate it there (e.g. `npx pri
 **before** launching: otherwise typecheck and test fail at Baseline, are excluded as broken
 commands rather than read as defects, and the run proceeds with no real gate at all.
 
-⚠️ **A worktree without its own `node_modules` cannot see NESTED dependencies — give it its own install before trusting any check on the package that nests them.** Resolution from `<worktree>/apps/<pkg>` walks the *worktree's* ancestors up to the main checkout's **root** `node_modules`; it never traverses the main checkout's `apps/<pkg>/node_modules`. So whatever the package manager nested there is **structurally invisible** to every worktree: its typecheck and suites fail with "cannot find module" — and a build cache can hide that for days, replaying a green nobody ever ran (a green check-types in a fresh worktree is evidence of a cache hit, not of correctness). **Run the package manager's clean install INSIDE the worktree** (it creates the worktree's own `node_modules` and does not touch the shared checkout) before launching a run that touches that package; a workdir with its own install also makes codegen (e.g. `prisma generate`) local rather than shared. Treat such suites as authoritative only from an installed tree or CI, and **check `<main>/apps/<pkg>/node_modules` before concluding a package is missing** — a bare "absent" is meaningless without the path it was read from. (Nesting is sometimes a version-conflict symptom that realigning the shared tree happens to dissolve, but never rely on that: the per-worktree install fixes it.
+⚠️ **A worktree without its own `node_modules` cannot see NESTED dependencies — give it its own install before trusting any check on the package that nests them.** Resolution from `<worktree>/apps/<pkg>` walks the _worktree's_ ancestors up to the main checkout's **root** `node_modules`; it never traverses the main checkout's `apps/<pkg>/node_modules`. So whatever the package manager nested there is **structurally invisible** to every worktree: its typecheck and suites fail with "cannot find module" — and a build cache can hide that for days, replaying a green nobody ever ran (a green check-types in a fresh worktree is evidence of a cache hit, not of correctness). **Run the package manager's clean install INSIDE the worktree** (it creates the worktree's own `node_modules` and does not touch the shared checkout) before launching a run that touches that package; a workdir with its own install also makes codegen (e.g. `prisma generate`) local rather than shared. Treat such suites as authoritative only from an installed tree or CI, and **check `<main>/apps/<pkg>/node_modules` before concluding a package is missing** — a bare "absent" is meaningless without the path it was read from. (Nesting is sometimes a version-conflict symptom that realigning the shared tree happens to dissolve, but never rely on that: the per-worktree install fixes it.
 
 ## The ten phases, and what each proves (long form)
 
@@ -51,7 +51,7 @@ commands rather than read as defects, and the run proceeds with no real gate at 
 ### The ten phases, and what each proves
 
 1. **`Baseline`** — three Haiku agents concurrently, before any agent has written anything.
-   - **baseline gate** runs the union of `perRound` and `final`. A command failing *here* is a **broken COMMAND, not a
+   - **baseline gate** runs the union of `perRound` and `final`. A command failing _here_ is a **broken COMMAND, not a
      defect**: excluded from the pass/fail decision (it can never make `clean` false), still run every round so a
      behavior change stays visible, and raising one `(gate-command)` major finding saying to fix it **in the plan**,
      not in the code. **Honest caveat: the baseline is the tree exactly as the caller left it, uncommitted work
@@ -61,15 +61,15 @@ commands rather than read as defects, and the run proceeds with no real gate at 
      commands, manifest scripts, config keys, exported symbols — against the repo. Missing path/script/key = `major`,
      unresolvable symbol = `minor`, filed under `(artifact)`; a blocker is downgraded to major, since an existence
      check must never open the run with one. It ignores wording and design, and never flags what the artifacts say the
-     change *will create*. *Kills confabulation.*
+     change _will create_. _Kills confabulation._
    - **context manifest** — facts only: every changed/untracked file plus every file the plan intends to touch, each
      with status, `changedLines` and a **HIGH/LOW risk class**; which supplied commands could statically run; which
      artifact paths exist. Pasted into every later prompt, capped at 80 files. It carries **no interpretation of the
      change** — one shared reading would give every lens the same blind spot.
 2. **`Author tests`** (on `testPackages`) — Sonnet writes tests only; implementation is forbidden.
-3. **`Red gate`** (on `redGate`) — Haiku runs, Opus audits: every new test must fail on an *assertion*, not a
+3. **`Red gate`** (on `redGate`) — Haiku runs, Opus audits: every new test must fail on an _assertion_, not a
    syntax/import/config error, and none may pass. One remediation round; a dead auditor is not a pass.
-   A red must also be *behavioral*: a gate where every test fails identically on a stub's `undefined`
+   A red must also be _behavioral_: a gate where every test fails identically on a stub's `undefined`
    has proven the wiring, not the oracles — each test must fail on its own expected value from the test
    plan. If the one allowed remediation round still leaves `properlyRed` false, the `(red-gate)` blocker
    stands and `clean` stays false; where a mutation probe is declared (major scale) the engine then
@@ -179,13 +179,13 @@ lenses' LOW-risk partition onto `CFG.cascadeModel` — the trade `cascadeAudit.m
 `clean` is `findings.length === 0 && gateOk && !lensDied && redOk && mutationOk && restoredVerifiedOk && implOk &&
 testsOk` — `gateOk` is **baseline-filtered** (a command broken at baseline cannot fail the run; a dead gate agent
 still can), and `implOk`/`testsOk` read package status from the phase results, so dropping a blocked package's
-finding never clears it. A skipped phase is neutral; an *unverified* one is not. Non-empty `remainingFindings` ⇒
+finding never clears it. A skipped phase is neutral; an _unverified_ one is not. Non-empty `remainingFindings` ⇒
 fix, resume or surface — never silently call it done. Report the one-shot oracles separately: `redGate.properlyRed`,
 `mutationProbe.allCaught` / `.restoredVerified` / `.skippedTargets`, `uiVerify.ran` / `.reVerify`,
 `finalPass.ran` / `.completed` / `.findings` (the Fable last read; `completed: false` means it died and the run is
 dirty by construction), `baseline.badCommands`, `manifest.completed`, `riskSummary`, `fixRouting`. `cascadeAudit` and `escalation` are `null`
 when their flag is off — null means the trade was **not taken**, never that it was taken and found harmless.
-**Resuming:** the Workflow *tool result* (not the return value) carries the `runId` and persisted script
+**Resuming:** the Workflow _tool result_ (not the return value) carries the `runId` and persisted script
 path; call `Workflow({ scriptPath, resumeFromRunId, args })` with the same args (they are not stored) — unchanged
 agent calls replay from cache.
 **Session-limit resilience:** the `runId`, the persisted `scriptPath` and the exact `args` object are
@@ -193,7 +193,7 @@ the whole resume key, and **args are not stored** — write all three down the m
 returns, because a killed session cannot be asked for them later. Put them in a **RESUME card inside
 the worktree** (`.claude/pipeline/<run>/RESUME.md`), not a session-scoped scratchpad: there it
 survives the session and ships with the PR, so whoever picks the work up inherits it. The card
-records the resume key, the transcript dir, what completed *per the run's own result*, what died and
+records the resume key, the transcript dir, what completed _per the run's own result_, what died and
 must re-run, the still-open findings, and — the part that earns its keep — **which oracles have NO
 result at all**. On resume, trust the resumed run's own `phaseReport`; never reconstruct progress
 from WIP diffs in the tree, since Baseline treats whatever is there as the baseline and a
@@ -210,7 +210,7 @@ whether the tests bite, which is the entire reason the probe exists. Say so in t
 ## S8 — Close out
 
 1. **Walk the coverage matrix out loud** — every `R#` → its `T#`s → the actual result; a requirement whose proof is
-   missing is *unproven*, not done. Quote the gate, red-gate and mutation-probe results: a cached replay is not
+   missing is _unproven_, not done. Quote the gate, red-gate and mutation-probe results: a cached replay is not
    evidence a test ran.
 2. **Report `phaseReport`** — per phase `{ phase, ran, agents, rawFindings, tokens, model }`, where `tokens: null`
    means the reading was unavailable and an unknown cost is never reported as free — plus `confirmedByPhase`, how many
@@ -400,6 +400,7 @@ Refinements own the design; task lists A1-A17/A10b and B1-B21 implement it). Old
 `pipeline.js.bak-2026-09-12`.
 
 Rulings (D1-D6):
+
 - **D1 success test** — a ledger head-to-head over the next 10 small runs: true $/run, wall-clock,
   confirmed-finding rate vs the previous 10 (the engine's own ten-run rule).
 - **D2 target shape** — rebuild `pipeline.js` on the superpowers shape (not trim-in-place, not

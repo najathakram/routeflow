@@ -1,0 +1,38 @@
+[
+  {
+    "name": "feat/RF-2-invoice-dates",
+    "oid": "eca1a6c879d71c2057ea1e74f6053e62a4e1a4bc",
+    "committedDate": "2026-01-11T09:00:00Z",
+    "ahead": 3
+  },
+  {
+    "name": "spike/old-idea",
+    "oid": "19ee6211fc0b353e4b0eff48711e61fedac5d2c1",
+    "committedDate": "2026-01-04T08:00:00Z",
+    "ahead": 2
+  },
+  {
+    "name": "feat/orphan-x",
+    "oid": "eb75170e90da95d2371d3bf843fea7765cc89df0",
+    "committedDate": "2026-01-09T10:00:00Z",
+    "ahead": 1
+  },
+  {
+    "name": "fresh/just-pushed",
+    "oid": "4b4271b5d2b926de31b04b4a74a09fea57fe9812",
+    "committedDate": "2026-01-12T09:00:00Z",
+    "ahead": 1
+  },
+  {
+    "name": "feat/F-05-route-export",
+    "oid": "960682d66b0964a1178e591b028ed4bc8c29912d",
+    "committedDate": "2026-01-07T09:00:00Z",
+    "ahead": 0
+  },
+  {
+    "name": "ctl/state",
+    "oid": "d07b61884c97df5c1c7cb4b06639031ba7437aa7",
+    "committedDate": "2026-01-12T09:30:00Z",
+    "ahead": 412
+  }
+]
