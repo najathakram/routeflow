@@ -234,6 +234,27 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   }, [isOpen, initialData]);
 
   const apiError = (createCustomer.error || updateCustomer.error) as Error | null;
+  // B956: the form scrolls inside the modal, so a banner at the top is out of view after the address
+  // is filled. A refused name scrolls the banner into view and focuses the refused field.
+  // State (not a ref): the modal body mounts after this component, so the effect must wait for it.
+  const [bannerEl, setBannerEl] = React.useState<HTMLDivElement | null>(null);
+  const refusal = apiError ? safeTextErrorCopy(apiError) : null;
+  const refusedField = (apiError as { response?: { data?: { field?: string } } } | null)?.response
+    ?.data?.field;
+  React.useEffect(() => {
+    if (!refusal || !bannerEl) return;
+    bannerEl.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    // An INDIVIDUAL customer has no business-name field: its names come from first/last name.
+    const target: "firstName" | "contactName" | "businessName" = !isBusiness
+      ? "firstName"
+      : refusedField === "contactName"
+        ? "contactName"
+        : "businessName";
+    // Found in the DOM next to the banner (the Input wrapper does not expose RHF's field ref).
+    const root: ParentNode = bannerEl.closest('[role="dialog"]') ?? document;
+    root.querySelector<HTMLElement>(`[name="${target}"]`)?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiError, bannerEl]);
   const isPending = createCustomer.isPending || updateCustomer.isPending;
 
   const onSubmit = (data: CustomerFormValues) => {
@@ -377,10 +398,13 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
         <div className="space-y-5">
           {/* API error banner */}
           {apiError && (
-            <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200">
-              {safeTextErrorCopy(apiError) ??
-                apiError.message ??
-                "Something went wrong. Please try again."}
+            <div
+              ref={setBannerEl}
+              role="alert"
+              aria-live="assertive"
+              className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700 ring-1 ring-red-200"
+            >
+              {refusal ?? apiError.message ?? "Something went wrong. Please try again."}
             </div>
           )}
 
