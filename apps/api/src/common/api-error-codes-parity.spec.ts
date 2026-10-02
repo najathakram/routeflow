@@ -126,12 +126,11 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/finance/commissions/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/sales-agents/page.tsx": ["PLAN_GATE"],
-  "apps/web/lib/mutation-error-toast.ts": ["READ_ONLY"],
   "apps/web/lib/plan-gate.ts": ["PLAN_GATE", "PLAN_GATE_UNAVAILABLE"],
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 20;
+const CONSUMER_ALLOWLIST_TOTAL = 19;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error

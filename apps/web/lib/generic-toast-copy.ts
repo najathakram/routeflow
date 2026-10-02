@@ -103,11 +103,11 @@ export function genericToastCopy(err: unknown): string {
     unknown
   >;
   const gate = parsePlanGate(err);
-  if (gate && gate.code !== "PLAN_GATE_UNAVAILABLE") return PLAN_COPY;
+  if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE) return PLAN_COPY;
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
-  if (code === "READ_ONLY") return READ_ONLY_COPY;
-  if (code === "INSUFFICIENT_STOCK") return STOCK_COPY;
+  if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];
