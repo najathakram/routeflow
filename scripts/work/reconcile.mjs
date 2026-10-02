@@ -40,7 +40,7 @@ import {
   appendFileSync,
   unlinkSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -67,7 +67,12 @@ const RATE_LIMIT_FLOOR = 200;
 const DIGEST_MAX_STALE_HOURS = 6;
 const MUTATION_CHUNK = 20;
 
-const WORK_DIR = join(ROOT, "local-assets", "work");
+const DEFAULT_WORK_DIR = join(ROOT, "local-assets", "work");
+// B973: `RECONCILE_WORK_DIR` relocates the lock/state/log (the self-test runs against a temp dir, never the real board's files).
+// It is announced on stderr whenever it is in effect (see main), so a stray export cannot silently move the state.
+const WORK_DIR = process.env.RECONCILE_WORK_DIR
+  ? resolve(process.env.RECONCILE_WORK_DIR)
+  : DEFAULT_WORK_DIR;
 const STATE_FILE = join(WORK_DIR, "reconcile-state.json");
 const LOG_FILE = join(WORK_DIR, "reconcile.log");
 const RECONCILE_LOCK_FILE = join(WORK_DIR, "reconcile.lock");
@@ -798,7 +803,8 @@ export function decideWorkStatusIssue({
 // `--apply`, and the verdict is decided before the lock, the log or any gh call.
 export const RECONCILE_USAGE =
   "usage: node scripts/work/reconcile.mjs [--apply] [--dry-run] [--json] [--quiet] [--help]\n" +
-  "  a bare run is a dry run; only --apply writes to the board";
+  "  a bare run is a dry run; only --apply writes to the board\n" +
+  "  RECONCILE_WORK_DIR=<dir> relocates the lock/state/log (default local-assets/work); announced on stderr when set";
 const RECONCILE_FLAGS = new Set(["--apply", "--dry-run", "--json", "--quiet", "--help", "-h"]);
 
 /**
@@ -1353,6 +1359,10 @@ function postProjectStatusUpdate(projectId, status, body, dryRun) {
 // ════════════════════════════════════════════════════════════════════════
 
 async function main() {
+  // B973: a relocated work dir is always announced (stderr, before any verdict), so a stray export is visible.
+  if (WORK_DIR !== DEFAULT_WORK_DIR) {
+    console.error(`work reconcile: RECONCILE_WORK_DIR in effect: ${WORK_DIR}`);
+  }
   const args = parseArgs(process.argv.slice(2));
   // #2284: decided before the lock, the log or any gh call, so a bad argument writes nothing.
   if (!args.ok) {
