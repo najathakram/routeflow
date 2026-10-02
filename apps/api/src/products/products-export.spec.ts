@@ -6,6 +6,7 @@ import { Reflector } from "@nestjs/core";
 import { UserRole } from "@prisma/client";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { ROLES_KEY } from "../auth/decorators/roles.decorator";
+import { INSIGHT_MAX_WINDOW_MONTHS } from "../analytics/demand-range";
 import { SalesFactsService } from "../sales-facts/sales-facts.service";
 import { CSV_BOM } from "../common/csv";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -545,6 +546,33 @@ describe("products export.csv", () => {
     ).rejects.toMatchObject({
       status: 400,
     });
+  });
+});
+
+describe("B987-E (d): the export's window refusals carry a code and a reason (status and message unchanged)", () => {
+  const window = (q: { from?: string; to?: string }) => {
+    const { svc } = build({ products: [] });
+    return svc.prepare(q, { userId: "u1" }).catch((e) => e);
+  };
+
+  it.each([
+    [{ from: "2026-09-01", to: "2026-9-29" }, "TO_NOT_A_DAY", {}],
+    [{ from: "2026-13-40", to: "2026-09-29" }, "FROM_NOT_A_DAY", {}],
+    [{ from: "2026-09-29", to: "2026-09-01" }, "TO_BEFORE_FROM", {}],
+    [
+      { from: "2020-01-01", to: "2026-09-29" },
+      "WINDOW_TOO_LONG",
+      { maxMonths: INSIGHT_MAX_WINDOW_MONTHS },
+    ],
+  ])("%j -> INSIGHT_WINDOW_INVALID / %s", async (q, reason, extra) => {
+    const err: any = await window(q);
+    expect(err.getStatus()).toBe(400);
+    const body = err.getResponse();
+    expect(body).toMatchObject({ code: "INSIGHT_WINDOW_INVALID", reason, ...extra });
+    expect(typeof body.message).toBe("string"); // unchanged server sentence
+    expect(Object.keys(body).sort()).toEqual(
+      ["code", "message", "reason", ...Object.keys(extra)].sort(),
+    );
   });
 });
 

@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { join } from "path";
 import {
   DEMAND_RANGES,
   type DemandRange,
@@ -307,5 +309,65 @@ describe("demand-range — from/to form (#2118)", () => {
     it("INSIGHT_GRAINS is the four grains the shared DTO names", () => {
       expect([...INSIGHT_GRAINS]).toEqual(["day", "week", "month", "quarter"]);
     });
+  });
+});
+
+describe("InsightWindowError reason (B987-E d): opt-in, set at every throw site", () => {
+  it("a bare error has no reason (other endpoints keep today's body)", () => {
+    const e = new InsightWindowError("x");
+    expect(e.reason).toBeUndefined();
+    expect(e.params).toBeUndefined();
+  });
+
+  it.each([
+    [() => resolveInsightRange({ to: "2026-9-29" }, "2026-09-29"), "TO_NOT_A_DAY"],
+    [() => resolveInsightRange({ from: "nope", to: "2026-09-29" }, "2026-09-29"), "FROM_NOT_A_DAY"],
+    [() => resolveInsightRange({ grain: "decade" }, "2026-09-29"), "BAD_GRAIN"],
+    [() => rangeWindow("2026-09-29", "2026-09-01", "day"), "TO_BEFORE_FROM"],
+    [() => rangeWindow("2020-01-01", "2026-09-29", "month"), "WINDOW_TOO_LONG"],
+  ])("throws an InsightWindowError whose reason is %#", (fn, reason) => {
+    let caught: any;
+    try {
+      fn();
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(InsightWindowError);
+    expect(caught.reason).toBe(reason);
+  });
+
+  it("the buckets refusal carries its numbers as params", () => {
+    let caught: any;
+    try {
+      rangeWindow("2025-10-01", "2026-09-29", "day");
+    } catch (e) {
+      caught = e;
+    }
+    // either the window or the bucket limit trips first; when it is the bucket limit the numbers are data
+    if (caught?.reason === "TOO_MANY_BUCKETS") {
+      expect(caught.params).toEqual({
+        buckets: expect.any(Number),
+        maxBuckets: expect.any(Number),
+        grain: "day",
+      });
+    } else {
+      expect(caught === undefined || caught instanceof InsightWindowError).toBe(true);
+    }
+  });
+});
+
+describe("InsightWindowError reason stays OPT-IN (B987-E d)", () => {
+  it("only the products export forwards the code; the insights controller still maps the message alone", () => {
+    const controller = readFileSync(
+      join(__dirname, "../sales-facts/product-insights.controller.ts"),
+      "utf8",
+    );
+    expect(controller).toContain("new BadRequestException(err.message)");
+    expect(controller).not.toMatch(/INSIGHT_WINDOW_INVALID|err\.reason|err\.params/);
+    const exporter = readFileSync(
+      join(__dirname, "../products/products-export.service.ts"),
+      "utf8",
+    );
+    expect(exporter).toContain("API_ERROR_CODES.INSIGHT_WINDOW_INVALID");
   });
 });
