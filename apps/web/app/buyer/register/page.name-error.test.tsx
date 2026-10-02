@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import BuyerRegisterPage from "./page";
 
 /**
- * B964: a refused formula-led buyer name (400 `text_cell_formula_lead`, field `buyerName`) on buyer registration shows FIXED copy
+ * B964: a refused formula-led buyer name (400 `TEXT_CELL_FORMULA_LEAD`, field `buyerName`) on buyer registration shows FIXED copy
  * ("Name can't start with ..."), never the server message or the camelCase key. Any other failure keeps its message.
  */
 const registerMock = jest.fn();
@@ -42,7 +42,7 @@ describe("BuyerRegisterPage: refused name (B964)", () => {
     registerMock.mockRejectedValue(
       refusal({
         statusCode: 400,
-        code: "text_cell_formula_lead",
+        code: "TEXT_CELL_FORMULA_LEAD",
         field: "buyerName",
         message: "Name can't start with =, +, -, @ or a tab/line break",
       }),

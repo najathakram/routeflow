@@ -90,7 +90,7 @@ describe("CustomersService address + license guards (B964-1)", () => {
         };
         const err = await service.create(dto as never).catch((e) => e);
         expect(err).toBeInstanceOf(BadRequestException);
-        expect(err.getResponse()).toMatchObject({ code: "text_cell_formula_lead", field });
+        expect(err.getResponse()).toMatchObject({ code: "TEXT_CELL_FORMULA_LEAD", field });
         expect(prisma.user.findFirst).not.toHaveBeenCalled();
         expect(prisma.tenantTransaction).not.toHaveBeenCalled();
       },

@@ -59,7 +59,7 @@ describe("AuthorizationsService license-number guard (B964-1)", () => {
     const err: any = await p.catch((e) => e);
     expect(err).toBeInstanceOf(BadRequestException);
     expect(err.getResponse()).toMatchObject({
-      code: "text_cell_formula_lead",
+      code: "TEXT_CELL_FORMULA_LEAD",
       field: "licenseNumber",
       message: MSG,
     });

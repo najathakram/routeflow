@@ -21,7 +21,7 @@ const expectRefused = async (p: Promise<unknown>) => {
   const err: any = await p.catch((e) => e);
   expect(err).toBeInstanceOf(BadRequestException);
   expect(err.getResponse()).toMatchObject({
-    code: "text_cell_formula_lead",
+    code: "TEXT_CELL_FORMULA_LEAD",
     field: "buyerName",
     message: MSG,
   });

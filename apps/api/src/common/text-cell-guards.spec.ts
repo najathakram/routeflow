@@ -46,7 +46,7 @@ describe("assertSafeAddress", () => {
         err = e as BadRequestException;
       }
       expect(err).toBeInstanceOf(BadRequestException);
-      expect(err?.getResponse()).toMatchObject({ code: "text_cell_formula_lead", field });
+      expect(err?.getResponse()).toMatchObject({ code: "TEXT_CELL_FORMULA_LEAD", field });
     },
   );
 
@@ -108,7 +108,7 @@ describe("assertSafeBuyerName (user- or staff-typed buyer names)", () => {
       err = e as BadRequestException;
     }
     expect(err?.getResponse()).toMatchObject({
-      code: "text_cell_formula_lead",
+      code: "TEXT_CELL_FORMULA_LEAD",
       field: "buyerName",
     });
   });
