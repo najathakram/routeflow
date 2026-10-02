@@ -97,7 +97,7 @@ before provisioning one — the only piece of this that isn't already decided.
    draws down its subscription usage (WORKERS.md's Identity section). The owner's own account is the
    simplest choice for both, since neither writes code or opens PRs.
 6. Save, let the first run of each complete once, and read what it actually did (`gh issue list
-   --label status:triage`, `bugflow board`) before trusting it unattended.
+--label status:triage`, `bugflow board`) before trusting it unattended.
 7. Rotating either Routine's fire token: see §13.
 
 ## 4. File a bug

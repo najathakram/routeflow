@@ -23,7 +23,15 @@ export function showToast(message: string) {
       fontFamily: "system-ui, sans-serif",
       zIndex: "999999",
       pointerEvents: "none",
-      whiteSpace: "nowrap",
+      // B962: wrap inside the viewport (16px gutter each side) instead of clipping on both sides.
+      // `left: 50%` leaves only the right half as shrink-to-fit room, so size to the content and
+      // let maxWidth be the only cap.
+      width: "max-content",
+      maxWidth: "calc(100vw - 32px)",
+      boxSizing: "border-box",
+      whiteSpace: "normal",
+      overflowWrap: "anywhere",
+      textAlign: "center",
       transition: "opacity 0.3s",
     });
     document.body.appendChild(el);

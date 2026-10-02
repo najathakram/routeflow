@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { Button, Card, Modal, cn, useToast, Badge } from "@routeflow/ui/web";
 import { usePageTitle } from "@/lib/page-title-context";
+import { refundSuccessToast } from "@/lib/refund-toast";
+import { refundErrorMessage } from "@/lib/credit-note-error-copy";
 import {
   useReturn,
   useApproveReturn,
@@ -88,6 +90,8 @@ function fmtMoney(n: number | null | undefined): string {
 // line rather than leaking SCREAMING_SNAKE at the operator.
 const REFUND_ESTIMATE_REASON_LABELS: Record<string, string> = {
   NOTHING_CREDITABLE: "Nothing billed on this order can be refunded.",
+  NOTHING_BILLED:
+    "None of the returned items were billed on this order, so there is nothing to refund.",
 };
 
 function refundEstimateReasonText(reason: string): string {
@@ -475,16 +479,9 @@ export default function ReturnDetailPage() {
     processRefund.mutate(
       { id: ret.id, method },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           setIsRefundOpen(false);
-          toast({
-            title: method === "CREDIT_NOTE" ? "Store credit issued" : "Refund recorded",
-            description:
-              method === "CREDIT_NOTE"
-                ? "A credit note has been minted for the customer."
-                : "The return has been marked as refunded outside RouteFlow.",
-            variant: "success",
-          });
+          toast({ ...refundSuccessToast(method, res), variant: "success" });
         },
         // The refund path can refuse permanently (nothing billed is refundable, no
         // headroom left on the order's invoices, or a named invoice is out of room).
@@ -496,7 +493,7 @@ export default function ReturnDetailPage() {
             ?.message;
           toast({
             title: "Failed to resolve return",
-            description: message ?? "Please try again.",
+            description: refundErrorMessage(err, message) ?? "Please try again.",
             variant: "error",
           });
         },

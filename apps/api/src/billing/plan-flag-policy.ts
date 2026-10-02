@@ -7,7 +7,7 @@ import { gateVia } from "./feature-registry";
  * PLAN_FLAG_ENFORCEMENT kill switch for a tenant that is NOT on an always-enforced
  * plan (see {@link isAlwaysEnforcedPlan}). Any gate not listed here was already live
  * before the switch existed (flag.msrp, shipped in #411) and must keep enforcing
- * regardless of the env. REMOVE this set along with the switch by 2026-10-01.
+ * regardless of the env. REMOVE this set along with the switch (review by 2027-01-31).
  */
 export const DARK_PLAN_FLAGS: ReadonlySet<string> = new Set([
   "flag.analytics",
