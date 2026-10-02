@@ -341,6 +341,16 @@ test/implementation id space; a task authors its own tests and its own implement
   // them runs the command from the workdir root (measured: suites fail to LOAD, 0 tests). Never swap
   // '&&' for ';' (masks the first command's failure). If '&&' arrives entity-escaped ('&amp;&amp;'),
   // the defect is upstream: pass this args object as a real OBJECT, never a JSON string.
+  //
+  // P1c (retro 2026-09-16, Group G): default every full-suite Jest command this way, in this order —
+  // `--maxWorkers=2` (a load-sensitive spec must never be the reason a gate reads "broken"),
+  // then any custom flags, then `--reporters=default` LAST (a reporter flag before other args can
+  // make Jest resolve the reporter as a module path and fail outright), and add `--passWithNoTests`
+  // to a `final` command whose only targets are specs this SAME plan is about to create (a real
+  // "0 tests" run on a not-yet-existing spec file is not a broken command). A Baseline-failing
+  // `final`/redGate command is now a BLOCKER, never a silent exclusion, UNLESS its failure is
+  // "no files/tests match" against a path this plan creates — that one case defers to a single
+  // re-check right after Implement wave 1. Write commands so neither trap fires by accident.
 
   // The exact formatter command for THIS repo, run by every agent that edits files.
   // Omit it and each agent looks up the repo's own formatter (and skips when there is none).

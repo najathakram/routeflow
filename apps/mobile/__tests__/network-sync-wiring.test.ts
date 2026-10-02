@@ -18,6 +18,9 @@ jest.mock("react", () => ({
     fn();
   },
   useRef: <T>(v: T) => ({ current: v }),
+  // #2389: the hook now imports onlineManager from @tanstack/react-query, whose module init calls
+  // React.createContext — a stub keeps that import loadable under this renderer-less mock.
+  createContext: () => ({ Provider: () => null }),
 }));
 
 let netListener: ((state: any) => void) | null = null;
@@ -78,6 +81,12 @@ jest.mock("../lib/tenant-store", () => ({
 }));
 
 const request = jest.fn();
+// #2410: the hook refreshes route queries through the shared client (lib/query-client imports
+// react-native, which this lane cannot load) — stubbed at the module boundary.
+const mockInvalidate = jest.fn();
+jest.mock("../lib/query-client", () => ({
+  queryClient: { invalidateQueries: (...a: any[]) => mockInvalidate(...a) },
+}));
 jest.mock("../lib/api-client", () => ({
   apiClient: { get: jest.fn(), request: (...args: any[]) => request(...args) },
 }));
@@ -87,6 +96,16 @@ jest.mock("../lib/toast", () => ({ showToast: (...a: any[]) => showToast(...a) }
 
 const alertInfo = jest.fn();
 jest.mock("../lib/confirm", () => ({ alertInfo: (...a: any[]) => alertInfo(...a) }));
+
+// SA-091b: the hook now also reads settleAfterDrain off this store. Stubbed for the same reason
+// as auth-store/tenant-store above — this store's real chain (user-scoped-storage → auth) drags
+// in react-native, which this spec's react mock/jest config can't parse. This spec's queued
+// action targets /orders, not /returns/inline/capture, so the settle call is a no-op either way
+// — the settle wiring itself is pinned separately (inline-returns-drain-settle-wiring.test.ts).
+const settleAfterDrain = jest.fn();
+jest.mock("../store/inlineReturnSubmissionStore", () => ({
+  useInlineReturnSubmissionStore: (selector: (s: any) => unknown) => selector({ settleAfterDrain }),
+}));
 
 // lib/queue-drain is deliberately REAL — the pin is that the hook feeds it.
 

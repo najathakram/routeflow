@@ -33,6 +33,9 @@ const FIXTURE_TABLE_NAMES = [
   "TIER_PRICE_FIXTURES",
   "CASCADE_TIER_PRICE_FIXTURES",
   "NORMALIZE_BOXES_PIECES_FIXTURES",
+  "ROUND4_FIXTURES",
+  "COMPONENT_UNIT_PRICE4_FIXTURES",
+  "LARGEST_REMAINDER_FIXTURES",
 ] as const;
 
 /** Call a named export defensively: `undefined` (never a thrown TypeError) when the
@@ -136,6 +139,24 @@ describe("T2 — golden money table (R2, R7)", () => {
   describe("normalizeBoxesPieces — NORMALIZE_BOXES_PIECES_FIXTURES", () => {
     itEachFixture("NORMALIZE_BOXES_PIECES_FIXTURES", "golden: $label", (row: AnyRow) => {
       expect(callFn("normalizeBoxesPieces", row.input)).toEqual(row.expected);
+    });
+  });
+
+  describe("round4 — ROUND4_FIXTURES (#2717)", () => {
+    itEachFixture("ROUND4_FIXTURES", "golden: $label", (row: AnyRow) => {
+      expect(callFn("round4", row.input)).toBe(row.expected);
+    });
+  });
+
+  describe("componentUnitPrice4 — COMPONENT_UNIT_PRICE4_FIXTURES (#2717)", () => {
+    itEachFixture("COMPONENT_UNIT_PRICE4_FIXTURES", "golden: $label", (row: AnyRow) => {
+      expect(callFn("componentUnitPrice4", row.subtotal, row.pieces)).toBe(row.expected);
+    });
+  });
+
+  describe("allocateCentsLargestRemainder — LARGEST_REMAINDER_FIXTURES (#2717)", () => {
+    itEachFixture("LARGEST_REMAINDER_FIXTURES", "golden: $label", (row: AnyRow) => {
+      expect(callFn("allocateCentsLargestRemainder", row.total, row.weights)).toEqual(row.expected);
     });
   });
 

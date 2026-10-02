@@ -18,12 +18,37 @@ const TRANSPORT =
 const NUMBER = "a number: renders as digits, cannot carry markup";
 /** SA-127: an href not built by safeLinkHref — the server's own URL, never tenant input. */
 const ENV_LINK = "env base + server token";
-const ALLOWED: Record<string, Record<string, string>> = {
+/**
+ * B821: an entry is a reason (the key may appear ONCE) or `{ reason, count }` (exactly `count`
+ * times). The count is exact both ways, so a third identical site in the same function is a new
+ * hit, never silently covered by the entry for the first two.
+ */
+type Allowed = string | { reason: string; count: number };
+const allowedCount = (v: Allowed | undefined) =>
+  v === undefined ? 0 : typeof v === "string" ? 1 : v.count;
+/** Keys seen more often than their entry allows, as `key | xN, allowed xM`. */
+function overAllowed(keys: readonly string[], entries: Record<string, Allowed> = {}): string[] {
+  const tally = new Map<string, number>();
+  for (const key of keys) tally.set(key, (tally.get(key) ?? 0) + 1);
+  return [...tally]
+    .filter(([key, n]) => n > allowedCount(entries[key]))
+    .map(([key, n]) => `${key} | x${n}, allowed x${allowedCount(entries[key])}`);
+}
+/** Entries seen LESS often than they allow (a site was fixed: lower or drop the entry). */
+function underAllowed(keys: readonly string[], entries: Record<string, Allowed> = {}): string[] {
+  return Object.entries(entries)
+    .map(([key, v]) => [key, keys.filter((k) => k === key).length, allowedCount(v)] as const)
+    .filter(([, n, allowed]) => n < allowed)
+    .map(([key, n, allowed]) => `${key} | x${n}, allowed x${allowed}`);
+}
+const ALLOWED: Record<string, Record<string, Allowed>> = {
   "email/email.service.ts": {
-    "send :: params.html": TRANSPORT,
-    "sendPlatform :: params.html": TRANSPORT,
+    "send :: params.html": { reason: TRANSPORT, count: 5 },
+    "sendPlatform :: params.html": { reason: TRANSPORT, count: 2 },
     "buildInvoiceEmail :: freeUnits": NUMBER,
     "sendSetPasswordEmail :: params.expiryHours": NUMBER,
+    "sendTenantWelcomeEmail :: params.expiryHours": NUMBER,
+    "sendTenantWelcomeEmail :: params.trialDays": NUMBER,
     "buildLowStockDigestEmail :: it.currentStock": NUMBER,
     "buildLowStockDigestEmail :: it.reorderPoint": NUMBER,
     "buildLowStockDigestEmail :: overflow": NUMBER,
@@ -49,7 +74,7 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "requestPasswordReset :: href escapeHtml(resetUrl)": ENV_LINK,
   },
   "customers/portal-invite-email.ts": {
-    "portalInviteEmailHtml :: href url": ENV_LINK,
+    "portalInviteEmailHtml :: href url": { reason: ENV_LINK, count: 2 },
   },
   "demo-booking/demo-booking.service.ts": {
     "buildBookingEmail :: href escapeHtml(booking.meetUrl)":
@@ -58,16 +83,12 @@ const ALLOWED: Record<string, Record<string, string>> = {
     "buildBookingEmail :: href escapeHtml(manageUrl)": ENV_LINK,
   },
   "tenants/tenants.service.ts": {
-    "register :: href escapeHtml(verifyUrl)": ENV_LINK,
+    "register :: href escapeHtml(verifyUrl)": { reason: ENV_LINK, count: 2 },
     "resendVerification :: href escapeHtml(verifyUrl)": ENV_LINK,
   },
   "customers/customers.service.ts": {
     "sendPortalInvite :: portalInviteEmailHtml(sellerName, inviteUrl)":
       "built in customers/portal-invite-email.ts, which this guard scans (0 hits)",
-  },
-  "platform-admin/platform-admin.service.ts": {
-    "createTenant :: trialDays": NUMBER,
-    "createTenant :: href escapeHtml(checkoutUrl)": "the Stripe checkout URL the API created",
   },
 };
 
@@ -179,6 +200,132 @@ describe("B809 — the HTML interpolation scanner (never passes vacuously)", () 
     expect(keys('function f() { let v = escapeHtml("ok"); return `<p>${v}</p>`; }')).toEqual([]);
   });
 
+  // ─── B821: the gaps Opus found in the first version ─────────────────────────────────────────
+
+  it("B821: the href rule holds for string concatenation and a prefix held in a const", () => {
+    expect(
+      keys("function f(u: string) { send({ html: '<a href=\"' + u + '\">x</a>' }); }"),
+    ).toEqual(["f :: u", "f :: href u"]);
+    const prefixed = `function f(u: string) {
+      const open = '<a href="';
+      return \`\${open}\${u}">x</a>\`;
+    }`;
+    expect(keys(prefixed)).toEqual(["f :: u", "f :: href u"]);
+  });
+
+  it.each([
+    ['href=" ${u}"', "leading space inside the quote"],
+    ["href='${u}'", "single quotes"],
+    ['HREF="${u}"', "upper case"],
+    ['href = "${u}"', "spaces around ="],
+    ["href=${u}", "unquoted"],
+    ['xlink:href="${u}"', "xlink:href"],
+  ])("B821: %s (%s) is an href", (attr) => {
+    const code = `function f(u: string) { return \`<a ${attr}>x</a>\`; }`;
+    expect(keys(code)).toContain("f :: href u");
+  });
+
+  it("B821: an href from a safeLinkHref let that is reassigned is flagged", () => {
+    const code = `function f(u: string) {
+      let h = safeLinkHref(u, "f");
+      h = u;
+      return \`<a href="\${escapeHtml(h)}">x</a>\`;
+    }`;
+    expect(keys(code)).toContain("f :: href escapeHtml(h)");
+  });
+
+  it.each([
+    ["({ v } = o);", "object destructuring"],
+    ["[v] = arr;", "array destructuring"],
+    ["for (v of arr) {}", "for...of"],
+    ["for (v in o) {}", "for...in"],
+    ["(v) = raw;", "a parenthesized left side"],
+  ])("B821: a let rewritten by %s (%s) is never safe", (stmt) => {
+    const code = `function f(raw: string, o: any, arr: string[]) {
+      let v = escapeHtml("ok");
+      ${stmt}
+      return \`<p>\${v}</p>\`;
+    }`;
+    expect(keys(code)).toEqual(["f :: v"]);
+  });
+
+  it("B821: a var declared again in the same function is never safe", () => {
+    const code = `function f(raw: string) {
+      var v = escapeHtml("ok");
+      var v = raw;
+      return \`<p>\${v}</p>\`;
+    }`;
+    expect(keys(code)).toContain("f :: v");
+  });
+
+  it("B821: two identical raw values count as two hits (keyed by position, not line)", () => {
+    expect(keys("function f(n: string) { return `<p>${n}${n}</p>`; }")).toEqual([
+      "f :: n",
+      "f :: n",
+    ]);
+  });
+
+  it("B821: an allow-list entry covers exactly its count, so a third identical site is caught", () => {
+    const entries: Record<string, Allowed> = { "f :: n": { reason: "r", count: 2 } };
+    expect(overAllowed(["f :: n", "f :: n"], entries)).toEqual([]);
+    expect(overAllowed(["f :: n", "f :: n", "f :: n"], entries)).toEqual([
+      "f :: n | x3, allowed x2",
+    ]);
+    expect(overAllowed(["f :: n", "f :: n"], { "f :: n": "r" })).toEqual([
+      "f :: n | x2, allowed x1",
+    ]);
+  });
+
+  // ─── B821 round 2 (Opus, #1327 at 96c23c45) ───────────────────────────────────────────────
+
+  it("B821r2: a concat href held in a const, or returned from a function, is flagged", () => {
+    const heldInConst = `function f(u: string) {
+      const a = '<a href="' + escapeHtml(u) + '">x</a>';
+      return \`<p>\${a}</p>\`;
+    }`;
+    expect(keys(heldInConst)).toContain("f :: href escapeHtml(u)");
+    const returned = `function link(u: string) { return '<a href="' + escapeHtml(u) + '">x</a>'; }
+      function g(u: string) { send({ html: link(u) }); }`;
+    expect(keys(returned)).toContain("link :: href escapeHtml(u)");
+  });
+
+  it.each(["&#32;", "&#x20;", "&Tab;", "&NewLine;", "&#9;", "&#10;", "&#13;", "&#0032;"])(
+    "B821r2: entity-encoded whitespace %s after the quote is still an href",
+    (entity) => {
+      const code = `function f(u: string) { return \`<a href="${entity}\${escapeHtml(u)}">x</a>\`; }`;
+      expect(keys(code)).toContain("f :: href escapeHtml(u)");
+    },
+  );
+
+  it.each([
+    ["v++;", "postfix ++"],
+    ["--v;", "prefix --"],
+    ['[v = "d"] = arr;', "a destructuring default"],
+  ])("B821r2: a let rewritten by %s (%s) is never safe", (stmt) => {
+    const code = `function f(raw: string, arr: any[]) {
+      let v: any = escapeHtml("ok");
+      ${stmt}
+      return \`<p>\${v}</p>\`;
+    }`;
+    expect(keys(code)).toEqual(["f :: v"]);
+  });
+
+  it("B821r2: a reassigned prefix opens an href when ANY value it is given does", () => {
+    const code = `function f(u: string) {
+      let open = "<b>";
+      open = '<a href="';
+      return \`\${open}\${escapeHtml(u)}">x</a>\`;
+    }`;
+    expect(keys(code)).toContain("f :: href escapeHtml(u)");
+  });
+
+  it("B821r2: an entry seen LESS often than its count is stale (the list may only shrink)", () => {
+    const entries: Record<string, Allowed> = { "f :: n": { reason: "r", count: 2 }, "g :: m": "r" };
+    expect(underAllowed(["f :: n", "f :: n", "g :: m"], entries)).toEqual([]);
+    expect(underAllowed(["f :: n", "g :: m"], entries)).toEqual(["f :: n | x1, allowed x2"]);
+    expect(underAllowed(["f :: n", "f :: n"], entries)).toEqual(["g :: m | x0, allowed x1"]);
+  });
+
   it("keys two uses of the same text in different functions separately", () => {
     const code =
       "function a(n: string) { return `<p>${n}</p>`; } function b(n: string) { return `<p>${n}</p>`; }";
@@ -190,8 +337,7 @@ describe("B809 — no unescaped value reaches email HTML in any api file (REG-B8
   it("every hit in every file is on that file's reasoned allow-list", () => {
     const offenders: string[] = [];
     for (const [file, keys] of hitsByFile) {
-      for (const key of keys)
-        if (!(key in (ALLOWED[file] ?? {}))) offenders.push(`${file} | ${key}`);
+      for (const o of overAllowed(keys, ALLOWED[file])) offenders.push(`${file} | ${o}`);
     }
     expect(offenders).toEqual([]);
   });
@@ -199,8 +345,8 @@ describe("B809 — no unescaped value reaches email HTML in any api file (REG-B8
   it("every allow-list entry still matches a hit (each list may only shrink)", () => {
     const stale: string[] = [];
     for (const [file, entries] of Object.entries(ALLOWED)) {
-      const keys = new Set(hitsByFile.get(file) ?? []);
-      for (const key of Object.keys(entries)) if (!keys.has(key)) stale.push(`${file} | ${key}`);
+      for (const u of underAllowed(hitsByFile.get(file) ?? [], entries))
+        stale.push(`${file} | ${u}`);
     }
     expect(stale).toEqual([]);
   });

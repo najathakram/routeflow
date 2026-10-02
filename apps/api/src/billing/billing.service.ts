@@ -1,3 +1,4 @@
+import { TX_CONFLICT_MAX_ATTEMPTS } from "../common/tx-retry";
 import {
   Injectable,
   Logger,
@@ -15,6 +16,7 @@ import { roundMoney } from "@routeflow/pricing";
 import { StripeService } from "./stripe.service";
 import { BillingEventService } from "./billing-event.service";
 import { PlatformPricingService } from "./platform-pricing.service";
+import { isPayingRow } from "./mrr.service";
 import {
   BILLING_EVENTS,
   BillingEventType,
@@ -24,6 +26,8 @@ import {
 } from "./plan-catalog.constants";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
+import { lockTenantForLedger } from "./addon-ledger";
+import { retryOnTxConflict } from "../common/tx-retry";
 import {
   STRIPE_CHECKOUT_APPLIED_ACTION,
   STRIPE_CHECKOUT_ENTITY,
@@ -31,10 +35,19 @@ import {
   STRIPE_CHECKOUT_REFUSED_ACTION,
   STRIPE_CHECKOUT_STALE_ACTION,
 } from "./config-snapshot-audit.constants";
-import { escapeHtml } from "../common/html-escape";
+import { escapeHtml, safeLinkHref } from "../common/html-escape";
+import {
+  stripeBaseItem,
+  stripeInvoiceSubscriptionId,
+  stripeRefId,
+  stripeSubscriptionPeriod,
+} from "./stripe-period";
 
 /** Grace period (in days) after a payment failure before suspending the tenant. */
 const PAYMENT_GRACE_DAYS = 3;
+/** #2476: the payment-failed email's portal call runs inside the webhook's claim lease — cap it so a
+ *  slow Stripe can never hold the claim for minutes; on timeout the email falls back to plain text. */
+const PAYMENT_FAILED_PORTAL_REQUEST = { timeoutMs: 10_000, maxNetworkRetries: 0 };
 
 /** Returned by the checkout transaction when the session was already applied (a redelivery). */
 const ALREADY_APPLIED = Symbol("checkout-session-already-applied");
@@ -121,9 +134,14 @@ export class BillingService {
    * (−1) the paying set, so the append-only BillingEvent ledger (and `ledgerMrr`/`momDelta`)
    * tracks the snapshot MRR across legacy-Stripe churn/reactivation.
    *
-   * Mirrors MrrService's paying predicate: NO-OP when `planKey == null` (legacy Stripe-only
-   * tenants never contribute to snapshot MRR, so there is no run-rate to move). Contribution =
-   * `roundMoney(base + Σ active add-ons − discount)`.
+   * SA-140: gates on `deletedAt`/`class`/`planKey` — the 3 STABLE `isPayingRow` conditions never
+   * touched by a Stripe webhook path — via the shared predicate (never re-derived separately).
+   * `status` is deliberately NOT one of them here: it's exactly what's transitioning (`toStatus`,
+   * fetched by `transitionAndEmit`'s caller), and `direction` (+1 entering / −1 leaving) already
+   * encodes which side of the boundary this call is on — re-checking `status === "ACTIVE"` would
+   * wrongly gate out every LEAVING transition (`toStatus` is CANCELLED/SUSPENDED there), so this
+   * calls `isPayingRow` with `status` forced to `"ACTIVE"` to isolate just the other 3
+   * conditions. Contribution = `roundMoney(base + Σ active add-ons − discount)`.
    *
    * Unlike the plans-as-data cron, add-on rows are intentionally NOT toggled: the snapshot
    * includes/excludes add-ons via `tenant.status`, Stripe suspend↔reactivate is reversible, and
@@ -138,12 +156,13 @@ export class BillingService {
       basePriceSnapshot: Prisma.Decimal | null;
       discount: Prisma.Decimal | null;
     },
+    tenant: { deletedAt: Date | null; class: string },
     direction: 1 | -1,
     event: BillingEventType,
     payload: Prisma.InputJsonValue,
     tx: Prisma.TransactionClient,
   ): Promise<void> {
-    if (sub.planKey == null) return; // wasn't in the paying set → no run-rate to move
+    if (!isPayingRow({ ...tenant, status: "ACTIVE" }, sub.planKey)) return;
     const addons = await tx.tenantAddon.findMany({
       where: { tenantId, active: true },
       select: { priceSnapshot: true, quantity: true },
@@ -198,7 +217,13 @@ export class BillingService {
         data: { status: toStatus, ...(toStatus === "ACTIVE" ? { readOnlyReason: null } : {}) },
       });
       if (count !== 1) return false;
-      await this.emitPayingDelta(tenantId, sub, direction, event, payload, tx);
+      // SA-140: emitPayingDelta's gate needs the tenant's deletedAt/class (status/toStatus is
+      // deliberately not part of its gate — see the function's own doc comment).
+      const tenant = await tx.tenant.findUniqueOrThrow({
+        where: { id: tenantId },
+        select: { deletedAt: true, class: true },
+      });
+      await this.emitPayingDelta(tenantId, sub, tenant, direction, event, payload, tx);
       return true;
     });
   }
@@ -411,9 +436,17 @@ export class BillingService {
       return { synced: false, reason: `subscription_not_active_${stripeSub.status}` };
     }
 
-    const item = stripeSub.items?.data?.[0];
+    // #2440: the base-plan item — never an add-on item Stripe happened to list first, which
+    // this sync would otherwise overwrite with the plan price.
+    const addonIds = await this.addonItemIds(tenantId);
+    const item = stripeBaseItem(stripeSub, addonIds);
     if (!item) {
       return { synced: false, reason: "no_subscription_item" };
+    }
+    // SA-461: stripeBaseItem falls back to the first item (right for the period read); here that
+    // fallback would be an add-on, so there is no base-plan item to reprice.
+    if (addonIds.has(item.id)) {
+      return { synced: false, reason: "no_base_item" };
     }
 
     const itemInterval = item.price?.recurring?.interval;
@@ -481,9 +514,14 @@ export class BillingService {
    * append-only BillingEvent ledger reconciles against Σ `amountDelta`. Without this
    * an admin price change moves the money Stripe collects but neither MRR source.
    *
-   * NO-OP when the tenant isn't in the paying set (`planKey == null` — MrrService's own
-   * predicate) or when the run-rate is unchanged, so the ledger never drifts from the
-   * snapshot total.
+   * NO-OP entirely when there's no subscription row or it has no resolved `planKey`, or when
+   * the run-rate is unchanged. SA-140: the snapshot write below is otherwise UNCONDITIONAL —
+   * it always stays current regardless of `isPayingRow` — but the ledger EMIT is gated on it.
+   * A non-paying tenant (suspended, or non-PRODUCTION) still gets its snapshot updated so a
+   * later re-entry (e.g. reactivation) books the correct price rather than a stale one; booking
+   * a delta HERE for a tenant `mrr` never counted would drift `ledgerMrr` above `mrr` — the
+   * exact gap B557's mrr.service.ts doc comment names (only `planKey != null` was checked
+   * before, never status/deletedAt/class).
    */
   private async reconcilePriceLedger(
     tenantId: string,
@@ -491,32 +529,67 @@ export class BillingService {
     planKey: string,
     sync: { synced: boolean; reason?: string },
   ): Promise<void> {
-    const sub = await this.prisma.tenantSubscription.findUnique({
-      where: { tenantId },
-      select: { planKey: true, basePriceSnapshot: true },
-    });
-    if (!sub || sub.planKey == null) return;
-
-    const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
     const newMonthly = roundMoney(resolvedMonthly);
-    if (oldMonthly === newMonthly) return;
+    // #2509: ONE transaction per attempt — read, compare-and-set the snapshot on the (planKey,
+    // basePriceSnapshot) just read, and emit in the same tx. A concurrent plan change or Pricing write
+    // that lands between the read and the write makes the CAS miss instead of being overwritten or
+    // double-booked. A miss re-reads: a plan change since the read ⇒ this resolved price is stale for
+    // the row, so stop (the plan path wrote its own snapshot); only the snapshot moved ⇒ retry.
+    // SA-503a: each attempt's tx is retried on a lock conflict (40P01/40001) — this runs AFTER the fee
+    // and the Stripe push committed, so a conflict must never surface as a 500 over a stale snapshot.
+    for (let attempt = 0; attempt < TX_CONFLICT_MAX_ATTEMPTS; attempt++) {
+      const outcome = await retryOnTxConflict("billing.reconcilePriceLedger", () =>
+        this.prisma.$transaction(async (tx) => {
+          // SA-485b (ii): the house Tenant row lock, FIRST — lock → read → CAS → emit, so a plan change or
+          // Pricing write (every writer takes this lock before the subscription row, #2551) serializes
+          // with this reconcile. The CAS below stays as the guard against any write it cannot see.
+          await tx.$queryRaw`SELECT id FROM "Tenant" WHERE id = ${tenantId} FOR UPDATE`;
+          const sub = await tx.tenantSubscription.findUnique({
+            where: { tenantId },
+            select: {
+              planKey: true,
+              basePriceSnapshot: true,
+              tenant: { select: { status: true, deletedAt: true, class: true } },
+            },
+          });
+          if (!sub || sub.planKey == null) return "done" as const;
+          if (normalizePlanKey(sub.planKey) !== normalizePlanKey(planKey)) {
+            this.logger.warn(
+              `#2509: tenant ${tenantId}'s plan changed during a price sync — the resolved price is stale; not reconciled`,
+            );
+            return "done" as const;
+          }
+          const oldMonthly = sub.basePriceSnapshot != null ? Number(sub.basePriceSnapshot) : 0;
+          if (oldMonthly === newMonthly) return "done" as const;
 
-    await this.prisma.tenantSubscription.update({
-      where: { tenantId },
-      data: { basePriceSnapshot: newMonthly },
-    });
-    await this.events.emit(
-      tenantId,
-      BILLING_EVENTS.PLAN_CHANGED,
-      {
-        source: "platform_pricing_sync",
-        planKey,
-        oldMonthly,
-        newMonthly,
-        stripeSynced: sync.synced,
-        stripeReason: sync.reason ?? null,
-      },
-      { amountDelta: roundMoney(newMonthly - oldMonthly) },
+          const { count } = await tx.tenantSubscription.updateMany({
+            where: { tenantId, planKey: sub.planKey, basePriceSnapshot: sub.basePriceSnapshot },
+            data: { basePriceSnapshot: newMonthly },
+          });
+          if (count === 0) return "retry" as const;
+
+          if (isPayingRow(sub.tenant, sub.planKey)) {
+            await this.events.emit(
+              tenantId,
+              BILLING_EVENTS.PLAN_CHANGED,
+              {
+                source: "platform_pricing_sync",
+                planKey,
+                oldMonthly,
+                newMonthly,
+                stripeSynced: sync.synced,
+                stripeReason: sync.reason ?? null,
+              },
+              { amountDelta: roundMoney(newMonthly - oldMonthly), tx },
+            );
+          }
+          return "done" as const;
+        }),
+      );
+      if (outcome === "done") return;
+    }
+    this.logger.warn(
+      `#2509: tenant ${tenantId}'s price reconcile kept losing its compare-and-set — left for the next sync`,
     );
   }
 
@@ -525,6 +598,7 @@ export class BillingService {
   async createBillingPortalSession(
     tenantId: string,
     returnUrl?: string,
+    request?: { timeoutMs: number; maxNetworkRetries: number },
   ): Promise<{ portalUrl: string }> {
     const sub = await this.prisma.tenantSubscription.findUnique({
       where: { tenantId },
@@ -537,10 +611,13 @@ export class BillingService {
 
     const baseUrl = process.env.FRONTEND_URL ?? "http://localhost:3001";
 
-    const portalSession = await this.stripe.createBillingPortalSession({
-      customerId: sub.stripeCustomerId,
-      returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
-    });
+    const portalSession = await this.stripe.createBillingPortalSession(
+      {
+        customerId: sub.stripeCustomerId,
+        returnUrl: returnUrl ?? `${baseUrl}/settings/billing`,
+      },
+      request,
+    );
 
     return { portalUrl: portalSession.url };
   }
@@ -599,6 +676,8 @@ export class BillingService {
 
     // Fetch the full subscription to get period dates
     const stripeSub = await this.stripe.getSubscription(subscriptionId);
+    // #2436: under API dahlia the period lives on the items; null ⇒ write no period, never NaN.
+    const period = await this.subscriptionPeriod(stripeSub, tenantId, "checkout.session.completed");
     // Platform billing: which interval the tenant checked out with (set in
     // BillingService.createCheckoutSession metadata), stamped for sync/resume use.
     const billingInterval: string | undefined =
@@ -804,15 +883,13 @@ export class BillingService {
           : ((session.metadata?.plan as TenantPlan) ?? "STARTER"),
         planKey: planKeyForCheckout,
         basePriceSnapshot: resolvedBasePrice,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(period ?? {}),
         billingInterval,
       },
       update: {
         stripeSubId: subscriptionId,
         stripeCustomerId: session.customer as string,
-        periodStart: new Date(stripeSub.current_period_start * 1000),
-        periodEnd: new Date(stripeSub.current_period_end * 1000),
+        ...(period ?? {}),
         ...(billingInterval ? { billingInterval } : {}),
         ...(planKeyForCheckout ? { planKey: planKeyForCheckout } : {}),
         ...(planKeyForCheckout && resolvedBasePrice != null && !hasNegotiatedOverride
@@ -826,56 +903,66 @@ export class BillingService {
     let upserted: any;
     if (transition && preparedTransition?.enabled) {
       try {
-        upserted = await this.prisma.$transaction(
-          async (tx) => {
-            // One processor per checkout session at a time (the audit row below has no unique
-            // index, and adding one is a migration): a concurrent redelivery waits here, then sees
-            // the winner's committed row and does nothing.
-            if (session.id) {
-              await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
-              const done = await tx.auditLog.findFirst({
-                where: {
-                  tenantId,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                },
-                select: { id: true },
-              });
-              if (done) return ALREADY_APPLIED;
-            }
-            // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
-            // so a downgrade is never applied without its snapshot (fail closed).
-            await this.planTransition.onPlanChange(tx, transition, preparedTransition);
-            // Compare-and-swap on the plan we judged the transition from (the same shape as
-            // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
-            // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
-            // instead of silently reversing the newer change.
-            if (existingOverride) {
-              const held = await tx.tenantSubscription.updateMany({
-                where: { tenantId, planKey: existingOverride.planKey ?? null },
-                data: { stripeSubId: subscriptionId },
-              });
-              if (held.count === 0) {
-                throw new ConflictException("Plan changed concurrently — the checkout is retried.");
+        // #2560 / SA-508: a lock conflict (40P01/40001) is retried in-process — the advisory lock
+        // and the in-tx "already applied" check make a re-run idempotent; one that persists past the
+        // budget still rethrows below and Stripe redelivers.
+        upserted = await retryOnTxConflict("billing.onCheckoutCompleted", () =>
+          this.prisma.$transaction(
+            async (tx) => {
+              // One processor per checkout session at a time (the audit row below has no unique
+              // index, and adding one is a migration): a concurrent redelivery waits here, then sees
+              // the winner's committed row and does nothing.
+              if (session.id) {
+                await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"stripe-checkout"}), hashtext(${session.id}))`;
+                const done = await tx.auditLog.findFirst({
+                  where: {
+                    tenantId,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                  },
+                  select: { id: true },
+                });
+                if (done) return ALREADY_APPLIED;
               }
-            }
-            const row = await tx.tenantSubscription.upsert(upsertArgs);
-            if (session.id) {
-              await tx.auditLog.create({
-                data: {
-                  tenantId,
-                  action: STRIPE_CHECKOUT_APPLIED_ACTION,
-                  entityType: STRIPE_CHECKOUT_ENTITY,
-                  entityId: session.id,
-                  meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
-                },
-              });
-            }
-            return row;
-          },
-          // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
-          CHECKOUT_TX_OPTIONS,
+              // A snapshot failure (a DOWNGRADE) throws -> the handler fails -> Stripe redelivers,
+              // so a downgrade is never applied without its snapshot (fail closed).
+              await this.planTransition.onPlanChange(tx, transition, preparedTransition);
+              // #2560 / SA-508: the house order — the Tenant row lock right after the hook, before the
+              // subscription writes and the AuditLog insert (its Tenant FK takes KEY SHARE).
+              await lockTenantForLedger(tx, tenantId);
+              // Compare-and-swap on the plan we judged the transition from (the same shape as
+              // upgrade()'s guard): if an in-app change moved it since we read it, this checkout is
+              // stale — throw so the tx (hook writes included) rolls back and Stripe redelivers,
+              // instead of silently reversing the newer change.
+              if (existingOverride) {
+                const held = await tx.tenantSubscription.updateMany({
+                  where: { tenantId, planKey: existingOverride.planKey ?? null },
+                  data: { stripeSubId: subscriptionId },
+                });
+                if (held.count === 0) {
+                  throw new ConflictException(
+                    "Plan changed concurrently — the checkout is retried.",
+                  );
+                }
+              }
+              const row = await tx.tenantSubscription.upsert(upsertArgs);
+              if (session.id) {
+                await tx.auditLog.create({
+                  data: {
+                    tenantId,
+                    action: STRIPE_CHECKOUT_APPLIED_ACTION,
+                    entityType: STRIPE_CHECKOUT_ENTITY,
+                    entityId: session.id,
+                    meta: { fromPlanKey: transition.fromPlanKey, toPlanKey: transition.toPlanKey },
+                  },
+                });
+              }
+              return row;
+            },
+            // Explicit, bounded budget — see CHECKOUT_TX_OPTIONS for why these numbers.
+            CHECKOUT_TX_OPTIONS,
+          ),
         );
       } catch (err) {
         if (!(err instanceof ConflictException) && !isDeadlockOrSerialization(err)) {
@@ -951,6 +1038,35 @@ export class BillingService {
     this.logger.log(`Tenant ${tenantId} activated via checkout (sub: ${subscriptionId})`);
   }
 
+  /** #2440: the Stripe subscription item ids of the tenant's add-ons (never the base plan). */
+  private async addonItemIds(tenantId: string): Promise<Set<string>> {
+    const addons = await this.prisma.tenantAddon.findMany({
+      where: { tenantId, stripeItemId: { not: null } },
+      select: { stripeItemId: true },
+    });
+    return new Set(addons.map((a) => a.stripeItemId).filter((id): id is string => id != null));
+  }
+
+  /**
+   * #2436/#2440: a Stripe subscription's current period, read from its base-plan item (never one
+   * of the tenant's known add-on items — N2). A null period writes nothing, but is logged (N1): a
+   * null periodEnd silently hides the tenant from suspendOverdueTenants.
+   */
+  private async subscriptionPeriod(
+    stripeSub: any,
+    tenantId: string,
+    event: string,
+  ): Promise<{ periodStart: Date; periodEnd: Date } | null> {
+    const period = stripeSubscriptionPeriod(stripeSub, await this.addonItemIds(tenantId));
+    if (!period) {
+      this.logger.warn(
+        `${event}: Stripe subscription ${stripeSub?.id ?? "(unknown)"} for tenant ${tenantId} ` +
+          `has no billing period — period not written`,
+      );
+    }
+    return period;
+  }
+
   private async onPaymentSucceeded(invoice: any): Promise<void> {
     const customerId =
       typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
@@ -970,17 +1086,30 @@ export class BillingService {
       return;
     }
 
+    // #2440: a paid invoice ends the dunning run — reset the count onPaymentFailed raises. Only a
+    // row that actually failed is written (a free pilot's count is 0, so it is never touched).
+    if (sub.failedPaymentCount > 0) {
+      await this.prisma.tenantSubscription.update({
+        where: { tenantId: sub.tenantId },
+        data: { failedPaymentCount: 0 },
+      });
+    }
+
     // Fetch the subscription to update period dates
     if (sub.stripeSubId) {
       try {
         const stripeSub = await this.stripe.getSubscription(sub.stripeSubId);
-        await this.prisma.tenantSubscription.update({
-          where: { tenantId: sub.tenantId },
-          data: {
-            periodStart: new Date(stripeSub.current_period_start * 1000),
-            periodEnd: new Date(stripeSub.current_period_end * 1000),
-          },
-        });
+        const period = await this.subscriptionPeriod(
+          stripeSub,
+          sub.tenantId,
+          "invoice.payment_succeeded",
+        );
+        if (period) {
+          await this.prisma.tenantSubscription.update({
+            where: { tenantId: sub.tenantId },
+            data: period,
+          });
+        }
       } catch {
         // Best-effort period update
       }
@@ -1039,58 +1168,137 @@ export class BillingService {
     this.logger.log(`Payment succeeded for tenant ${sub.tenantId} (customer ${customerId})`);
   }
 
-  private async onPaymentFailed(invoice: any): Promise<void> {
-    const customerId =
-      typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
-
-    if (!customerId) return;
-
+  /**
+   * #2440 (SA-450): the local subscription row a Stripe subscription or invoice event belongs to,
+   * matched by the subscription id AND its customer — never customer-wide. A missing id, no row, or
+   * a row whose customer differs is logged and returns null, and the caller writes nothing. Free
+   * pilots have no stripeSubId, so they never match.
+   */
+  private async matchStripeSubscription(
+    subscriptionId: string | null,
+    customer: unknown,
+    event: string,
+  ) {
+    if (!subscriptionId) return null;
     const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
+      where: { stripeSubId: subscriptionId },
       include: { tenant: { select: { id: true, slug: true, name: true } } },
     });
+    const customerId = stripeRefId(customer);
+    if (
+      !sub ||
+      sub.stripeSubId !== subscriptionId ||
+      !customerId ||
+      sub.stripeCustomerId !== customerId
+    ) {
+      this.logger.warn(
+        `#2440: ${event} for subscription ${subscriptionId} (customer ${customerId ?? "none"}) ` +
+          `matched no tenant subscription — ignored`,
+      );
+      return null;
+    }
+    return sub;
+  }
+
+  private async onPaymentFailed(invoice: any): Promise<void> {
+    const sub = await this.matchStripeSubscription(
+      stripeInvoiceSubscriptionId(invoice),
+      invoice?.customer,
+      "invoice.payment_failed",
+    );
     if (!sub) return;
+
+    // Dunning is counted, not enforced here: no status change. Grace and suspension stay with
+    // suspendOverdueTenants (which re-checks Stripe); reinstatement stays with payment_succeeded,
+    // which resets this count.
+    await this.prisma.tenantSubscription.update({
+      where: { tenantId: sub.tenantId },
+      data: { failedPaymentCount: { increment: 1 } },
+    });
 
     this.logger.warn(
       `Payment failed for tenant ${sub.tenantId} (${sub.tenant.slug}). Grace period: ${PAYMENT_GRACE_DAYS} days.`,
     );
 
-    // Send warning email to tenant admin
+    // #2476 / SA-472: the increment above IS the event's effect. Everything after it is best-effort
+    // and never throws — a throw here would record "error:" and make a redelivery re-run the increment.
+    try {
+      await this.sendPaymentFailedEmail(sub);
+    } catch (e) {
+      this.logger.warn(
+        `payment-failed email for tenant ${sub.tenantId} not sent: ${(e as Error)?.message}`,
+      );
+    }
+  }
+
+  /** The admin warning for a failed payment (#2440): portal link best-effort, plain-text fallback. */
+  private async sendPaymentFailedEmail(sub: {
+    tenantId: string;
+    tenant: { slug: string; name: string | null };
+  }): Promise<void> {
     const adminUser = await this.prisma.user.findFirst({
       where: { tenantId: sub.tenantId, role: "TENANT_ADMIN", deletedAt: null },
       select: { email: true, username: true },
     });
-
-    if (adminUser?.email) {
-      try {
-        await this.email.send({
-          to: adminUser.email,
-          subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
-          html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
+    if (!adminUser?.email) return;
+    // Best-effort billing-portal link; any portal error (or a non-http(s) URL, which
+    // safeLinkHref refuses) falls back to today's plain text.
+    const href = safeLinkHref(await this.portalUrlOrEmpty(sub.tenantId), "onPaymentFailed");
+    const updateLine = href
+      ? `<p><a href="${escapeHtml(href)}">Update your payment method in the billing portal</a>.</p>`
+      : `<p>You can update your payment details by contacting support or visiting your billing portal.</p>`;
+    await this.email.send({
+      to: adminUser.email,
+      subject: `Payment failed — ${sub.tenant.name ?? sub.tenant.slug}`,
+      html: `<p>Hello ${escapeHtml(adminUser.username)},</p>
 <p>We were unable to process your subscription payment for <strong>${escapeHtml(sub.tenant.name ?? sub.tenant.slug)}</strong>.</p>
 <p>Please update your payment method within <strong>${PAYMENT_GRACE_DAYS} days</strong> to avoid service interruption.</p>
-<p>You can update your payment details by contacting support or visiting your billing portal.</p>
+${updateLine}
 <p>RouteFlow Platform</p>`,
-        });
-      } catch {
-        /* best-effort */
-      }
+    });
+  }
+
+  /** #2440: the tenant's billing-portal URL, or "" on any portal error (logged, never thrown). */
+  private async portalUrlOrEmpty(tenantId: string): Promise<string> {
+    try {
+      // #2476: capped — this runs inside the webhook's claim lease, and the link is best-effort.
+      return (
+        await this.createBillingPortalSession(tenantId, undefined, PAYMENT_FAILED_PORTAL_REQUEST)
+      ).portalUrl;
+    } catch (e) {
+      this.logger.warn(
+        `Billing portal link unavailable for tenant ${tenantId}: ${(e as Error).message}`,
+      );
+      return "";
     }
   }
 
   private async onSubscriptionDeleted(subscription: any): Promise<void> {
-    const customerId =
-      typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
-
-    if (!customerId) return;
-
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
-    });
+    const sub = await this.matchStripeSubscription(
+      stripeRefId(subscription?.id),
+      subscription?.customer,
+      "customer.subscription.deleted",
+    );
     if (!sub) return;
+    await this.cancelFromStripe(sub, "subscription_deleted");
+  }
 
-    // Atomic ACTIVE→CANCELLED: emits the −MRR delta exactly once, even across duplicate webhooks
-    // or a race with the plans-as-data cron (both leave a non-ACTIVE status → count 0 here).
+  /**
+   * #2440 (SA-450): Stripe ended the subscription (deleted, or updated to `canceled`).
+   * ACTIVE → CANCELLED books the −MRR churn delta once (transitionAndEmit's CAS). SUSPENDED →
+   * CANCELLED is a plain CAS with NO delta: the suspension (overdue cron or platform admin)
+   * already removed the run-rate. TRIAL and READ_ONLY are never forced to CANCELLED, and a
+   * repeat webhook finds CANCELLED, loses both CASes and writes nothing.
+   */
+  private async cancelFromStripe(
+    sub: {
+      tenantId: string;
+      planKey: string | null;
+      basePriceSnapshot: Prisma.Decimal | null;
+      discount: Prisma.Decimal | null;
+    },
+    reason: string,
+  ): Promise<void> {
     const churned = await this.transitionAndEmit(
       sub.tenantId,
       sub,
@@ -1098,15 +1306,21 @@ export class BillingService {
       "CANCELLED",
       -1,
       BILLING_EVENTS.SUBSCRIPTION_CANCELED,
-      { source: "stripe", reason: "subscription_deleted" },
+      { source: "stripe", reason },
     );
-    // Not a paying→churn transition (already non-ACTIVE) — still land the Stripe-deleted tenant in
-    // CANCELLED (a terminal hard-block), without a duplicate ledger delta.
-    if (!churned) {
-      await this.prisma.tenant.update({
-        where: { id: sub.tenantId },
-        data: { status: "CANCELLED" },
-      });
+    const cancelled =
+      churned ||
+      (
+        await this.prisma.tenant.updateMany({
+          where: { id: sub.tenantId, status: "SUSPENDED" },
+          data: { status: "CANCELLED" },
+        })
+      ).count === 1;
+    if (!cancelled) {
+      this.logger.log(
+        `Stripe ${reason} for tenant ${sub.tenantId}: status is not ACTIVE/SUSPENDED — left as is`,
+      );
+      return;
     }
     this.tenantStatusGuard.invalidate(sub.tenantId);
 
@@ -1118,7 +1332,7 @@ export class BillingService {
       data: { cancelAtPeriodEnd: true, ...disarmedDowngrade() },
     });
 
-    this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (customer ${customerId})`);
+    this.logger.log(`Subscription cancelled for tenant ${sub.tenantId} (${reason})`);
 
     // N3: best-effort admin notification, never blocks the cancellation above (a Stripe
     // webhook retry is deduped by BillingNotificationService's own idempotency claim).
@@ -1135,25 +1349,27 @@ export class BillingService {
   }
 
   private async onSubscriptionUpdated(subscription: any): Promise<void> {
-    const customerId =
-      typeof subscription.customer === "string" ? subscription.customer : subscription.customer?.id;
-
-    if (!customerId) return;
-
-    const sub = await this.prisma.tenantSubscription.findFirst({
-      where: { stripeCustomerId: customerId },
-    });
+    const sub = await this.matchStripeSubscription(
+      stripeRefId(subscription?.id),
+      subscription?.customer,
+      "customer.subscription.updated",
+    );
     if (!sub) return;
 
     // Update period dates and cancellation flag. The downgrade markers are cleared ONLY when
     // this event ARMS a cancellation (a cancellation supersedes a scheduled downgrade, as
     // cancel() rules): clearing them on every update would let an unrelated Stripe write (a
     // cycle roll, a price sync, an add-on item) silently drop a schedule the tenant made here.
+    const period = await this.subscriptionPeriod(
+      subscription,
+      sub.tenantId,
+      "customer.subscription.updated",
+    );
     await this.prisma.tenantSubscription.update({
       where: { tenantId: sub.tenantId },
       data: {
-        periodStart: new Date(subscription.current_period_start * 1000),
-        periodEnd: new Date(subscription.current_period_end * 1000),
+        // #2436: items under dahlia, the top level for an older endpoint version; none ⇒ no write.
+        ...(period ?? {}),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
         ...(subscription.cancel_at_period_end === true ? disarmedDowngrade() : {}),
       },
@@ -1162,6 +1378,12 @@ export class BillingService {
     this.logger.debug(
       `Subscription updated for tenant ${sub.tenantId} — cancel_at_period_end: ${subscription.cancel_at_period_end}`,
     );
+
+    // #2440 (SA-450): only `canceled` maps to a status (as deleted). past_due / unpaid write none —
+    // grace stays with suspendOverdueTenants, reinstatement with invoice.payment_succeeded.
+    if (subscription.status === "canceled") {
+      await this.cancelFromStripe(sub, "subscription_canceled");
+    }
   }
 
   // ─── Cron: suspend tenants with expired trials / overdue payments ─────────

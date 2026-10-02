@@ -42,3 +42,35 @@ export const UNIT_LABEL_PIECE = "Piece" as const;
 export interface UnitAwareLineInput {
   unitLabel?: string | null;
 }
+
+// ─── Draft/park line price provenance (B755) ────────────────────────────────────
+// Draft-only — never sent on the actual order-create/update payload. Distinct name
+// from `ReturnPriceSource` (inline-returns.ts) on purpose: a different feature's
+// "where did this price come from," and reusing the name would blur the two.
+
+/**
+ * Where a parked draft line's `unitPrice` came from: a remembered price-history
+ * pre-fill, or an operator-typed override. A MISSING value on a legacy draft means
+ * "operator" (today's behaviour, unchanged) — only an explicit "history" tag is
+ * ever treated as non-authoritative on resume.
+ */
+export type DraftLinePriceSource = "history" | "operator";
+
+/**
+ * #2717 M3 (SA-572 A1, SA-589): one frozen component of a FIXED (mixed-pack) order or invoice line,
+ * as clients read it. `qty` is whole pieces of that component on THIS line. `displayUnitPrice4` is
+ * the stored 4-dp unit price (display only, never summed, taxed or credited: I5) or null; clients
+ * print it through the shared `componentSubLineText` from `@routeflow/pricing`. A plain line has no
+ * components (the array is absent or empty).
+ */
+export interface LineComponentView {
+  id?: string;
+  componentProductId: string;
+  name: string;
+  qty: number;
+  unitSku: string | null;
+  unitBarcode: string | null;
+  barcodeSymbology: string | null;
+  displayUnitPrice4: number | null;
+  position: number;
+}

@@ -53,7 +53,9 @@ import { useCustomerRouteAssignments } from "@/lib/api/routes";
 import { useUrlFilters } from "@/lib/hooks/useUrlFilters";
 import { useUrlSearch } from "@/lib/hooks/useUrlSearch";
 import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useUrlPage";
-import { fmt, isInternalEmail } from "@/lib/formatting";
+import { fmt, displayEmail, NO_EMAIL_COPY } from "@/lib/formatting";
+import { ImportCsvPanel } from "@/components/import/ImportCsvPanel";
+import { CUSTOMER_IMPORT_COLUMNS } from "@routeflow/types";
 
 // ─── Local type ───────────────────────────────────────────────────────────────
 
@@ -77,58 +79,21 @@ interface Customer {
 
 // ─── Import Modal ─────────────────────────────────────────────────────────────
 
-function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
-  const { toast } = useToast();
-  const [file, setFile] = React.useState<File | null>(null);
-  const [loading, setLoading] = React.useState(false);
-  const [result, setResult] = React.useState<{
-    created: number;
-    updated: number;
-    skipped: number;
-    errors: string[];
-  } | null>(null);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const f = e.dataTransfer.files?.[0];
-    if (f && f.name.endsWith(".csv")) {
-      setFile(f);
-      setResult(null);
-    }
-  };
-
-  const handleImport = async () => {
-    if (!file) return;
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await apiClient.post("/import/contacts", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 300_000,
-      });
-      setResult(res.data);
-      toast({
-        title: "Customers imported",
-        description: `${res.data.created} created, ${res.data.updated} updated, ${res.data.skipped} skipped`,
-        variant: "success",
-      });
-      onDone();
-    } catch (err: any) {
-      toast({
-        title: "Import failed",
-        description: err?.response?.data?.message ?? "Please check your file format and try again",
-        variant: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+function ImportCustomersModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  /** M7: fired once after a successful (non-dry-run) import — refetches the list, does NOT
+   *  close the modal, so the result table (row plan, skip reasons, warnings) stays visible
+   *  until the user closes it themselves. */
+  onImported: () => void;
+}) {
+  const [imported, setImported] = React.useState(false);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <h2 className="text-base font-semibold text-navy">Import Customers</h2>
@@ -150,60 +115,18 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             </span>
           </div>
 
-          {/* Drop zone */}
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
-            onClick={() => inputRef.current?.click()}
-            className={cn(
-              "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 transition-colors",
-              file
-                ? "border-brand-300 bg-brand-50"
-                : "border-surface-border hover:border-brand-300 hover:bg-brand-50/30",
-            )}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) {
-                  setFile(f);
-                  setResult(null);
-                }
-              }}
-            />
-            <Upload className={cn("h-6 w-6", file ? "text-brand-500" : "text-navy/30")} />
-            {file ? (
-              <div className="text-center">
-                <p className="text-sm font-medium text-brand-600">{file.name}</p>
-                <p className="text-xs text-navy/70">
-                  {(file.size / 1024).toFixed(1)} KB · Click to change
-                </p>
-              </div>
-            ) : (
-              <div className="text-center">
-                <p className="text-sm text-navy/70">
-                  Drop CSV file here or <span className="text-brand-500">browse</span>
-                </p>
-                <p className="text-xs text-navy/70 mt-0.5">Zoho Contacts CSV format</p>
-              </div>
-            )}
-          </div>
-
-          {/* Result */}
-          {result && (
-            <div className="rounded-lg border border-success/30 bg-success-bg/50 px-3 py-2.5 text-sm">
-              <p className="font-medium text-success">Import complete</p>
-              <p className="text-xs text-navy/70 mt-0.5">
-                {result.created} created · {result.updated} updated · {result.skipped} skipped
-                {result.errors.length > 0 &&
-                  ` · ${result.errors.length} error${result.errors.length !== 1 ? "s" : ""}`}
-              </p>
-            </div>
-          )}
+          {/* B858/B859 (FIX5): same preview-then-import panel as settings/import — one renderer
+           *  for one result shape, so the modal shows the same plan/diff before writing. */}
+          <ImportCsvPanel
+            endpoint="/import/contacts"
+            title="Customers"
+            columns={CUSTOMER_IMPORT_COLUMNS}
+            testIdPrefix="import-customers-modal"
+            onImported={() => {
+              setImported(true);
+              onImported();
+            }}
+          />
         </div>
 
         {/* Footer */}
@@ -212,21 +135,7 @@ function ImportCustomersModal({ onClose, onDone }: { onClose: () => void; onDone
             onClick={onClose}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised transition-colors"
           >
-            {result ? "Close" : "Cancel"}
-          </button>
-          <button
-            onClick={handleImport}
-            disabled={!file || loading}
-            className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-40 transition-colors"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                Importing…
-              </span>
-            ) : (
-              "Import Customers"
-            )}
+            {imported ? "Close" : "Cancel"}
           </button>
         </div>
       </div>
@@ -566,10 +475,9 @@ export default function CustomersPage() {
         enableSorting: false,
         cell: ({ row }) => (
           <span className="text-navy/70 text-xs">
-            {row.original.email ??
-              (row.original.user?.email && !isInternalEmail(row.original.user.email)
-                ? row.original.user.email
-                : "—")}
+            {displayEmail(row.original.email) ??
+              displayEmail(row.original.user?.email) ??
+              NO_EMAIL_COPY}
           </span>
         ),
       },
@@ -750,7 +658,11 @@ export default function CustomersPage() {
             : "Your current filters are saved in the page link — copy the URL to share this view."
         }
         action={
-          <div className="flex items-center gap-2">
+          // B749: overflowed at 390px because PageHeader's own action wrapper (shrink-0, no
+          // max-w-full) never actually shrank enough for THIS flex-wrap to trigger — fixed at
+          // the PageHeader level too (packages/ui/src/web/PageHeader.tsx), this row's own
+          // wrap is still needed so the content itself has somewhere to go once it can.
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="secondary"
               leftIcon={<Upload className="h-4 w-4" />}
@@ -866,7 +778,9 @@ export default function CustomersPage() {
                       <p className="text-xs text-navy/70 truncate">
                         Buyer account:{" "}
                         <span className="font-medium text-navy/80">
-                          {item.buyerAccount?.email ?? item.customer.email ?? "—"}
+                          {displayEmail(item.buyerAccount?.email) ??
+                            displayEmail(item.customer.email) ??
+                            NO_EMAIL_COPY}
                         </span>
                         {item.buyerAccount?.name && (
                           <span className="ml-1 text-navy/70">({item.buyerAccount.name})</span>
@@ -1235,10 +1149,7 @@ export default function CustomersPage() {
       {isImportOpen && (
         <ImportCustomersModal
           onClose={() => setIsImportOpen(false)}
-          onDone={() => {
-            setIsImportOpen(false);
-            refetch?.();
-          }}
+          onImported={() => refetch?.()}
         />
       )}
 

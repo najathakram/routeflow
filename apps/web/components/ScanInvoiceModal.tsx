@@ -40,6 +40,7 @@ import {
   useReceiveVendorBill,
   useSaveProductMapping,
   getDuplicateVendorBillError,
+  getPackSizeUnknownError,
   type CreateVendorBillItem,
   type DuplicateVendorBillInfo,
   type PriorScanSummary,
@@ -52,10 +53,14 @@ import { ProductCreateModal } from "./ProductCreateModal";
 import { displayProductName } from "@/lib/product-display";
 import { fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { roundMoney } from "@routeflow/pricing";
-import { RAISED_PO_NOTE, raisePoBlocker } from "@/lib/raise-po";
+import { RAISED_PO_NOTE, poIntentRefusal, raisePoBlocker } from "@/lib/raise-po";
+import { SCAN_LOCK_BODY, SCAN_LOCK_TITLE, isScanPlanLock } from "@/lib/scan-po-lock";
 import { buildVendorBillPayload } from "@/lib/scan-bill-payload";
 import { RaisePoToggle } from "./RaisePoToggle";
 import { apiClient } from "@/lib/api-client";
+import { RECORDS_FAILED_COPY, SCAN_FAILED_COPY } from "@/lib/reason-copy";
+import { ScanCreateModeSelector } from "@/components/ScanCreateModeSelector";
+import { scanCreateLabel } from "@/lib/scan-create-label";
 import { SELECTABLE_PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/payment-methods";
 
 const fmt = (n: number | null | undefined) =>
@@ -212,7 +217,7 @@ const emptyReviewItem = (): ReviewItem => ({
   confidence: "none",
 });
 
-const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
+const makeInvoice = (kind: "pdf" | "images", files: File[], raisePo = false): InvoiceGroup => ({
   id: crypto.randomUUID(),
   kind,
   files,
@@ -232,7 +237,7 @@ const makeInvoice = (kind: "pdf" | "images", files: File[]): InvoiceGroup => ({
   billDate: new Date().toISOString().slice(0, 10),
   dueDate: "",
   createMode: "bill",
-  raisePo: false,
+  raisePo,
   expenseCategoryId: "",
   expenseDescription: "",
   expenseDate: new Date().toISOString().slice(0, 10),
@@ -367,9 +372,19 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onCreated?: () => void;
+  /** "bill" (default) records a vendor bill; "purchase-order" starts every invoice with
+   *  "raise a purchase order" on and reports each raised PO through `onPurchaseOrderCreated`. */
+  intent?: "bill" | "purchase-order";
+  onPurchaseOrderCreated?: (po: { id: string; poNumber?: string }) => void;
 }
 
-export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
+export function ScanInvoiceModal({
+  open,
+  onClose,
+  onCreated,
+  intent = "bill",
+  onPurchaseOrderCreated,
+}: Props) {
   const { toast } = useToast();
   const [step, setStep] = React.useState<"upload" | "processing" | "review">("upload");
   // Row index a "Create product from this line" quick-create is open for.
@@ -713,21 +728,32 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
       const msg: string = err?.response?.data?.message ?? "";
       const code: string | undefined = err?.response?.data?.code;
       const isApiKeyError = code === "AI_KEY_INVALID" || /api key|anthropic/i.test(msg);
+      // A plan gate that closed after the page loaded answers 403: show the friendly lock copy,
+      // never the server's raw message.
+      const planLocked = intent === "purchase-order" && isScanPlanLock(err);
       if (singleFlow) {
         toast({
-          title: isApiKeyError ? "Anthropic API key not configured" : "Failed to scan invoice",
-          description: isApiKeyError
-            ? "Go to Settings → AI & Integrations to add your Claude API key."
-            : msg || "Please check the file and try again.",
+          title: planLocked
+            ? SCAN_LOCK_TITLE
+            : isApiKeyError
+              ? "Anthropic API key not configured"
+              : "Failed to scan invoice",
+          description: planLocked
+            ? SCAN_LOCK_BODY
+            : isApiKeyError
+              ? "Go to Settings → AI & Integrations to add your Claude API key."
+              : SCAN_FAILED_COPY,
           variant: "error",
         });
         setStep("upload");
       } else {
         patchInvoiceById(inv.id, {
           status: "failed",
-          error: isApiKeyError
-            ? "Anthropic API key not configured — see Settings → AI & Integrations."
-            : msg || "Scan failed. Retry, or check the file.",
+          error: planLocked
+            ? SCAN_LOCK_BODY
+            : isApiKeyError
+              ? "Anthropic API key not configured — see Settings → AI & Integrations."
+              : SCAN_FAILED_COPY,
         });
       }
     } finally {
@@ -814,7 +840,9 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     // Drop any previous session (aborts stale scans, revokes object URLs).
     discardSession();
     const runId = runIdRef.current;
-    const newInvoices = groups.map((g) => makeInvoice(g.kind, g.files));
+    const newInvoices = groups.map((g) =>
+      makeInvoice(g.kind, g.files, intent === "purchase-order"),
+    );
     setInvoices(newInvoices);
 
     if (newInvoices.length === 1) {
@@ -1242,7 +1270,7 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     const wantsExpense = inv.createMode === "expense" || inv.createMode === "both";
     if (wantsBill && !inv.supplierId) return "Please select a supplier before creating the bill.";
     if (wantsBill && validItemsOf(inv).length === 0)
-      return "Add at least one valid line item for the vendor bill";
+      return "Add at least one valid line item for the supplier bill";
     if (wantsExpense && !inv.expenseCategoryId) return "Select an expense category";
     return null;
   };
@@ -1310,6 +1338,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         // Blocked (not just "off") gets its own note below — the switch was ON but couldn't fire.
         const poBlockReason = inv.raisePo ? raisePoBlocker(inv.supplierId, billItems) : null;
         const raisesPo = inv.raisePo && !poBlockReason;
+        const refusal = poIntentRefusal(intent, inv.raisePo, poBlockReason, inv.createMode);
+        if (refusal) {
+          // Nothing is posted: the scan was asked for a PO, and a bare received bill is not that.
+          patchInvoiceById(invoiceId, { error: refusal });
+          return { ok: false, duplicate: false, notes };
+        }
         const bill = await createBill.mutateAsync(
           buildVendorBillPayload(
             {
@@ -1322,6 +1356,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
           ),
         );
         billId = (bill as { id?: string })?.id ?? null;
+        const raisedPo = (bill as { purchaseOrder?: { id?: string; poNumber?: string } | null })
+          ?.purchaseOrder;
+        if (raisesPo && raisedPo?.id) {
+          onPurchaseOrderCreated?.({ id: raisedPo.id, poNumber: raisedPo.poNumber });
+        }
         patchInvoiceById(invoiceId, { createdBillId: billId });
         // Auto-receive: transitions DRAFT → RECEIVED, which triggers stock movements
         // and recalculates average cost for every product-linked line item.
@@ -1333,23 +1372,33 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             await receiveBill.mutateAsync({ id: billId, acknowledgeUnlinked: true });
             notes.push(
               raisesPo
-                ? `Vendor bill received. ${RAISED_PO_NOTE}`
+                ? `Supplier bill received. ${RAISED_PO_NOTE}`
                 : poBlockReason
-                  ? `Vendor bill received — no purchase order raised (${poBlockReason})`
+                  ? `Supplier bill received — no purchase order raised (${poBlockReason})`
                   : matchedItems > 0
-                    ? `Vendor bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
-                    : "Vendor bill received",
+                    ? `Supplier bill received — inventory updated for ${matchedItems} item${matchedItems === 1 ? "" : "s"}`
+                    : "Supplier bill received",
             );
           } catch (receiveErr: unknown) {
-            // Bill was created but receive failed — surface the issue but don't lose the bill
-            const rmsg =
-              (receiveErr as { response?: { data?: { message?: string } } })?.response?.data
-                ?.message ??
-              "created in Draft (could not auto-receive — open the bill and click Receive to update stock)";
-            notes.push(`Vendor bill ${rmsg}`);
+            // B743: NEVER auto-acknowledge a missing case size (acknowledgeUnlinked above is a
+            // different, up-front confirmation). The bill stays in Draft, and its own page asks
+            // the operator to fix the case sizes or knowingly receive as loose pieces.
+            const packUnknown = getPackSizeUnknownError(receiveErr);
+            if (packUnknown) {
+              const n = packUnknown.packSizeUnknownItems.length;
+              notes.push(
+                `Supplier bill created in Draft — ${n} line${n === 1 ? "" : "s"} don't state units per case. Open the bill to set case sizes (or receive them as loose pieces) before stock updates.`,
+              );
+            } else {
+              // Bill was created but receive failed — surface the issue but don't lose the bill
+              console.error(receiveErr);
+              notes.push(
+                "Supplier bill created in Draft (could not auto-receive, open the bill and click Receive to update stock)",
+              );
+            }
           }
         } else {
-          notes.push("Vendor bill created");
+          notes.push("Supplier bill created");
         }
       }
 
@@ -1387,12 +1436,12 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         });
         return { ok: false, duplicate: true, notes };
       }
-      const msg =
-        err?.response?.data?.message ||
-        err?.message ||
-        "Failed to create records. Please try again.";
-      // Keep status "scanned" so the invoice stays editable + creatable.
-      patchInvoiceById(invoiceId, { error: msg });
+      console.error(err);
+      // Keep status "scanned" so the invoice stays editable + creatable. The server text is never
+      // shown (#1965): the invoice carries the closed sentence only. A plan gate that closed after
+      // the page loaded reads as the lock copy.
+      const planLocked = intent === "purchase-order" && isScanPlanLock(err);
+      patchInvoiceById(invoiceId, { error: planLocked ? SCAN_LOCK_BODY : RECORDS_FAILED_COPY });
       return { ok: false, duplicate: false, notes };
     }
   };
@@ -1585,22 +1634,18 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
     (inv) => inv.createMode === "expense" || inv.createMode === "both",
   ).length;
   const batchTotal = roundMoney(creatable.reduce((s, inv) => s + invoiceTotalOf(inv), 0));
-  const createLabel =
-    invoices.length <= 1
-      ? createMode === "bill"
-        ? "Create Vendor Bill"
-        : createMode === "expense"
-          ? "Record Expense"
-          : "Create Bill & Expense"
-      : "Create " +
-        ([
-          creatableBills > 0 ? `${creatableBills} bill${creatableBills === 1 ? "" : "s"}` : "",
-          creatableExpenses > 0
-            ? `${creatableExpenses} expense${creatableExpenses === 1 ? "" : "s"}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" + ") || "bills");
+  // Only invoices that will actually raise a PO (raise on, nothing blocking it) count in PO intent.
+  const creatablePos = creatable.filter(
+    (inv) => inv.raisePo && !raisePoBlocker(inv.supplierId, buildBillItems(inv)),
+  ).length;
+  const createLabel = scanCreateLabel({
+    intent,
+    invoiceCount: invoices.length,
+    createMode,
+    creatableBills,
+    creatableExpenses,
+    creatablePos,
+  });
 
   const handleScanAgain = () => {
     const hasWork = invoices.some((inv) => inv.status === "scanned" || inv.status === "created");
@@ -1625,7 +1670,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
         <div className="flex items-center justify-between border-b border-surface-border px-6 py-4">
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-brand-500" />
-            <h2 className="text-lg font-semibold text-navy">AI Invoice Scanner</h2>
+            <h2 className="text-lg font-semibold text-navy">
+              {intent === "purchase-order"
+                ? "Create a PO from a supplier invoice"
+                : "AI Invoice Scanner"}
+            </h2>
           </div>
           <button
             onClick={onClose}
@@ -1642,8 +1691,8 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
             <div className="p-6">
               <p className="mb-4 text-sm text-navy/70">
                 Upload vendor invoices — drop several PDFs to scan <b>each as its own invoice</b>{" "}
-                (one vendor bill per PDF), or photograph the pages of one invoice as images. Claude
-                will extract every line item and match them to your catalog.
+                (one supplier bill per PDF), or photograph the pages of one invoice as images.
+                Claude will extract every line item and match them to your catalog.
               </p>
               <div
                 onDragOver={(e) => {
@@ -1911,53 +1960,11 @@ export function ScanInvoiceModal({ open, onClose, onCreated }: Props) {
                         </div>
                       )}
 
-                      {/* Create mode selector */}
-                      <div>
-                        <p className="mb-2 text-sm font-semibold text-navy">
-                          What would you like to create?
-                        </p>
-                        <div className="grid grid-cols-3 gap-3">
-                          {(
-                            [
-                              {
-                                value: "bill",
-                                label: "Vendor Bill",
-                                sub: "Adds to inventory and updates costs",
-                                icon: ShoppingCart,
-                              },
-                              {
-                                value: "expense",
-                                label: "Expense",
-                                sub: "Bookkeeping only — no stock change",
-                                icon: Receipt,
-                              },
-                              {
-                                value: "both",
-                                label: "Both",
-                                sub: "Inventory + bookkeeping in one go",
-                                icon: Sparkles,
-                              },
-                            ] as const
-                          ).map(({ value, label, sub, icon: Icon }) => (
-                            <button
-                              key={value}
-                              onClick={() => setCreateMode(value)}
-                              className={cn(
-                                "flex flex-col items-start gap-1.5 rounded-xl border-2 px-4 py-3 text-left transition-all",
-                                createMode === value
-                                  ? "border-brand-500 bg-brand-50 text-brand-700 shadow-sm"
-                                  : "border-surface-border bg-white text-navy hover:border-brand-200 hover:bg-brand-50/30",
-                              )}
-                            >
-                              <div className="flex items-center gap-2">
-                                <Icon className="h-4 w-4" />
-                                <span className="text-sm font-semibold">{label}</span>
-                              </div>
-                              <span className="text-xs leading-snug text-current/70">{sub}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      <ScanCreateModeSelector
+                        intent={intent}
+                        createMode={createMode}
+                        onChange={setCreateMode}
+                      />
 
                       {/* Shared header: supplier + dates */}
                       <div className="grid grid-cols-2 gap-4 rounded-xl border border-surface-border bg-surface-raised p-4">
@@ -2828,7 +2835,7 @@ function PriorScanBanner({
           {recorded ? (
             <>
               <span className="font-semibold">
-                You already scanned this — recorded as {prior.billNumber ?? "a vendor bill"}
+                You already scanned this — recorded as {prior.billNumber ?? "a supplier bill"}
                 {when ? ` on ${when}` : ""}
                 {prior.total != null ? `, ${fmt(prior.total)}` : ""}.
               </span>{" "}

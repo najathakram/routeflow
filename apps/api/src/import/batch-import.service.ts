@@ -11,6 +11,7 @@ import { VendorBillsService } from "../vendor-bills/vendor-bills.service";
 import { DuplicateMatchService, formatSupplierInvoiceNote } from "./duplicate-match.service";
 import { matchSupplier } from "./supplier-match";
 import type { UpdateBatchItemDto } from "./dto/update-batch-item.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** The actual shape vendor-bills.scanInvoice returns (see its prompt schema + line matcher). */
 type ScanConfidence = "high" | "medium" | "low" | "none";
@@ -67,7 +68,8 @@ interface DuplicateVendorBill {
 function duplicateVendorBillConflict(err: unknown): DuplicateVendorBill | null {
   if (!(err instanceof ConflictException)) return null;
   const response = err.getResponse() as { code?: string; duplicate?: DuplicateVendorBill };
-  if (response?.code !== "DUPLICATE_VENDOR_BILL" || !response.duplicate?.billId) return null;
+  if (response?.code !== API_ERROR_CODES.DUPLICATE_VENDOR_BILL || !response.duplicate?.billId)
+    return null;
   return response.duplicate;
 }
 

@@ -22,7 +22,11 @@ import type { CartItem } from "../store/cartStore";
 export type TileCta = "stepper" | "notify" | "add";
 
 /** In-cart → stepper (even if now OOS); OOS → notify; else → add. */
-export function tileCta(product: Pick<BuyerProduct, "stockStatus">, inCartUnits: number): TileCta {
+// Partial: a missing stockStatus reads as IN_STOCK (cart/cached rows), though the catalog always sends it.
+export function tileCta(
+  product: Partial<Pick<BuyerProduct, "stockStatus">>,
+  inCartUnits: number,
+): TileCta {
   if (inCartUnits > 0) return "stepper";
   if ((product.stockStatus ?? "IN_STOCK") === "OUT_OF_STOCK") return "notify";
   return "add";
@@ -37,14 +41,11 @@ export function alertIdSet(alerts: BuyerStockAlerts | undefined): Set<string> {
  * to the cent (same inputs as buyer-cart-pricing.priceCart).
  */
 export function deriveTilePrice(
-  product: Pick<
-    BuyerProduct,
-    "id" | "buyerPrice" | "basePrice" | "price" | "category" | "unitsPerBox"
-  >,
+  product: Pick<BuyerProduct, "id" | "buyerPrice" | "category" | "unitsPerBox">,
   promoRules: PromotionRule[],
   cartItem: CartItem | undefined,
 ): PromoResult {
-  const base = Number(product.buyerPrice ?? product.basePrice ?? product.price) || 0;
+  const base = product.buyerPrice;
   const upb = Number(product.unitsPerBox ?? 0);
   const unitsPerBox = cartItem?.unitsPerBox ?? product.unitsPerBox ?? null;
   const qtyPieces = normalizeBoxesPieces({
@@ -141,7 +142,9 @@ export interface StockLabelResult {
   tone: StockTone;
 }
 
-export function stockLabel(p: Pick<BuyerProduct, "stockStatus" | "stockLeft">): StockLabelResult {
+export function stockLabel(
+  p: Partial<Pick<BuyerProduct, "stockStatus" | "stockLeft">>,
+): StockLabelResult {
   const status = p.stockStatus ?? "IN_STOCK";
   if (status === "OUT_OF_STOCK") return { label: "Out of stock", tone: "danger" };
   if (status === "LOW")

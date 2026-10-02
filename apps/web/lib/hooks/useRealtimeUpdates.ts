@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@routeflow/ui/web";
 import { connectSocket, disconnectSocket } from "../socket";
 import { OP_KEYS } from "../auth-keys";
+import { describeReturnReason } from "@/lib/reason-copy";
 
 export function useRealtimeUpdates() {
   const qc = useQueryClient();
@@ -71,21 +72,11 @@ export function useRealtimeUpdates() {
       });
     });
 
-    socket.on("inventory.low.stock", (data: { productName: string; stockLevel: number }) => {
-      void qc.invalidateQueries({ queryKey: ["products"] });
-      void qc.invalidateQueries({ queryKey: ["inventory"] });
-      toast({
-        title: "Low stock alert",
-        description: `${data.productName} — only ${data.stockLevel} units remaining`,
-        variant: "error",
-      });
-    });
-
     socket.on("return.created", (data: { customerName: string; reason: string }) => {
       void qc.invalidateQueries({ queryKey: ["returns"] });
       toast({
         title: "New return submitted",
-        description: `${data.customerName} — reason: ${data.reason}`,
+        description: `${data.customerName} — reason: ${describeReturnReason(data.reason)}`,
       });
     });
 
@@ -142,7 +133,6 @@ export function useRealtimeUpdates() {
       socket.off("order.urgent.placed");
       socket.off("order.statusChanged");
       socket.off("driver.status.updated");
-      socket.off("inventory.low.stock");
       socket.off("return.created");
       socket.off("invoice.updated");
       socket.off("buyer.payment.requested");

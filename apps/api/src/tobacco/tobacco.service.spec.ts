@@ -71,7 +71,9 @@ describe("TobaccoService", () => {
       prisma.stockMovement.findMany.mockResolvedValue([
         {
           id: "m1",
-          createdAt: new Date("2026-06-05"),
+          // B562: a bill backdated to 06-05 but entered later reports under its own date.
+          effectiveAt: new Date("2026-06-05"),
+          createdAt: new Date("2026-06-20"),
           quantity: D(20),
           unitCost: D(5.5),
           reference: "BILL-1",
@@ -85,6 +87,9 @@ describe("TobaccoService", () => {
       const where = prisma.stockMovement.findMany.mock.calls[0][0].where;
       expect(where.type).toBe("PURCHASE");
       expect(where.product).toEqual({ isTobacco: true });
+      expect(where.effectiveAt).toEqual({ gte: expect.any(Date), lte: expect.any(Date) });
+      expect(where).not.toHaveProperty("createdAt");
+      expect(result[0].date).toEqual(new Date("2026-06-05"));
       expect(result[0].value).toBe(110); // 20 × 5.50
       expect(result[0].supplier.tobaccoLicenseNo).toBe("WH-99");
     });

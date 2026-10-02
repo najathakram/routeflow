@@ -41,7 +41,6 @@ export default function LoginScreen() {
   const tenantSlug = useTenantStore((s) => s.slug);
   const tenantBranding = useTenantStore((s) => s.branding);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(true);
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const {
@@ -108,6 +107,10 @@ export default function LoginScreen() {
         // user dismissed — no banner
       } else if (code === "unauthorized" || code === "google_email_is_staff") {
         setApiError("This Google account is not authorised for this company.");
+      } else if (code === "google_account_mismatch") {
+        setApiError(
+          "This Google account doesn't match the one already linked to this email. Sign in with your linked Google account or your password.",
+        );
       } else if (code === "google_unavailable") {
         setApiError("Google sign-in is not available for this company.");
       } else {
@@ -186,17 +189,9 @@ export default function LoginScreen() {
             ) : null}
           </View>
 
+          {/* #1508 (B01): the stay-signed-in checkbox is gone — it changed nothing. The
+              session is always kept (tokens in SecureStore, restored on launch), as on web. */}
           <View style={styles.optionsRow}>
-            <TouchableOpacity
-              style={styles.rememberRow}
-              onPress={() => setRememberMe((v) => !v)}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.checkbox, rememberMe && styles.checkboxOn]}>
-                {rememberMe ? <Text style={styles.checkmark}>✓</Text> : null}
-              </View>
-              <Text style={styles.rememberText}>Remember me</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => router.push("/(auth)/forgot-password")}
               activeOpacity={0.7}
@@ -331,39 +326,10 @@ const styles = StyleSheet.create({
   },
   optionsRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "flex-end",
     alignItems: "center",
     paddingHorizontal: 2,
     marginTop: 2,
-  },
-  rememberRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 6,
-    borderWidth: 1.5,
-    borderColor: ios.gray[3],
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxOn: {
-    backgroundColor: ios.brand,
-    borderColor: ios.brand,
-  },
-  checkmark: {
-    color: "#ffffff",
-    fontSize: 11,
-    fontFamily: "Inter_700Bold",
-    lineHeight: 14,
-  },
-  rememberText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    color: ios.label,
   },
   forgotText: {
     fontSize: 14,

@@ -83,19 +83,10 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
       status: "ACTIVE",
       deletedAt: null,
     } as any);
-    // The service reassigns `buyer` to this update's returned row (needed so the
-    // squat-neutralization branches reflect the fresh passwordSet/emailVerified in
-    // the token/response) — resolve a well-formed row here too, so this unaffected
-    // branch's downstream `buyer.passwordSet`/`hasPassword` still reflect the
-    // untouched account instead of an empty mock object.
-    prisma.buyerAccount.update.mockResolvedValue({
-      id: "buyer-1",
-      email: "existing@example.com",
-      name: "Existing",
-      passwordSet: true,
-      googleId: "google-1",
-      status: "ACTIVE",
-    } as any);
+    // #2495 LOW: the link write is now a CAS (updateMany scoped to googleId:null)
+    // and the service merges `data` onto the row it already read rather than
+    // reading back a fresh row — count:1 means this request won the race.
+    prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
 
@@ -105,8 +96,8 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     // googleId gets linked, but passwordHash/passwordSet are untouched — and
     // emailVerified is NOT set: Google attested new-buyer@example.com, not this
     // account's own (different) email.
-    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-      where: { id: "buyer-1" },
+    expect(prisma.buyerAccount.updateMany).toHaveBeenCalledWith({
+      where: { id: "buyer-1", googleId: null },
       data: { googleId: "google-1" },
     });
     expect(result.buyer).toMatchObject({ hasPassword: true });
@@ -132,16 +123,8 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     } as any);
     // SECURITY: an unproven password (passwordSet && !emailVerified) is a squat —
     // Google verifying the mailbox now must neutralize the credential, not just flip
-    // emailVerified.
-    prisma.buyerAccount.update.mockResolvedValue({
-      id: "buyer-1",
-      email: "new-buyer@example.com",
-      name: "Existing",
-      passwordSet: false,
-      emailVerified: true,
-      googleId: "google-1",
-      status: "ACTIVE",
-    } as any);
+    // emailVerified. #2495 LOW: the link write is now a CAS (updateMany).
+    prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.buyerRefreshToken.deleteMany.mockResolvedValue({ count: 0 } as any);
     prisma.customerLink.count.mockResolvedValue(1);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
@@ -149,8 +132,8 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     const { service } = buildService(prisma);
     await service.findOrCreateUser(profile as any);
 
-    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-      where: { id: "buyer-1" },
+    expect(prisma.buyerAccount.updateMany).toHaveBeenCalledWith({
+      where: { id: "buyer-1", googleId: null },
       data: expect.objectContaining({
         googleId: "google-1",
         emailVerified: true,
@@ -242,15 +225,8 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
       status: "ACTIVE",
       deletedAt: null,
     } as any);
-    prisma.buyerAccount.update.mockResolvedValue({
-      id: "buyer-1",
-      email: "victim@corp.com",
-      name: "Victim",
-      passwordSet: false,
-      emailVerified: true,
-      googleId: "google-1",
-      status: "ACTIVE",
-    } as any);
+    // #2495 LOW: the link write is now a CAS (updateMany scoped to googleId:null).
+    prisma.buyerAccount.updateMany.mockResolvedValue({ count: 1 } as any);
     prisma.buyerRefreshToken.deleteMany.mockResolvedValue({ count: 2 } as any);
     prisma.customerLink.count.mockResolvedValue(0);
     prisma.buyerRefreshToken.upsert.mockResolvedValue({} as any);
@@ -259,8 +235,8 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
     const { service } = buildService(prisma);
     await service.findOrCreateUser(victimProfile as any);
 
-    expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-      where: { id: "buyer-1" },
+    expect(prisma.buyerAccount.updateMany).toHaveBeenCalledWith({
+      where: { id: "buyer-1", googleId: null },
       data: expect.objectContaining({
         googleId: "google-1",
         emailVerified: true,
@@ -268,7 +244,7 @@ describe("GoogleOAuthService — buyer auto-create passwordSet", () => {
         passwordHash: expect.any(String),
       }),
     });
-    const call = prisma.buyerAccount.update.mock.calls[0][0];
+    const call = prisma.buyerAccount.updateMany.mock.calls[0][0];
     expect(call.data.passwordHash).not.toBe(priorHash);
     expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
       where: { buyerAccountId: "buyer-1" },

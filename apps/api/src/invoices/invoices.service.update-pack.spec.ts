@@ -41,8 +41,10 @@ import { AuthorizationGuardService } from "../authorizations/authorization-guard
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { MessagingService } from "../messaging/messaging.service";
 import { EntitlementsService } from "../billing/entitlements.service";
+import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { CommissionEngineService } from "../sales-agents/commission-engine.service";
 import { InvoiceStatus } from "@prisma/client";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 
 describe("InvoicesService.update() — SA-068 pack comes from the payload, never the live product", () => {
   let service: InvoicesService;
@@ -60,6 +62,10 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InvoicesService,
+        {
+          provide: SellingRestrictionsService,
+          useValue: { assertLinesSellable: jest.fn().mockResolvedValue(undefined) },
+        },
         { provide: PrismaService, useValue: prisma },
         { provide: RouteFlowGateway, useValue: { emitInvoiceUpdated: jest.fn() } },
         {
@@ -93,6 +99,13 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
         {
           provide: StorageService,
           useValue: { upload: jest.fn(), presignedUrl: jest.fn(), delete: jest.fn() },
+        },
+        {
+          provide: EntitlementAuthority,
+          inject: [EntitlementsService],
+          useFactory: (e: { hasFlag?: (t: string, k: string) => Promise<boolean> }) => ({
+            can: (t: string, k: string) => e.hasFlag?.(t, k) ?? Promise.resolve(false),
+          }),
         },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn().mockResolvedValue(false) } },
         {
@@ -287,21 +300,49 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     warn.mockRestore();
   });
 
-  it("(h) B717/SA-077b: two stored lines that AGREE carry their pack (unanimous is not a guess)", async () => {
+  it("(h) SA-184: a NEW line never inherits a SIBLING's pack (two stored lines at 12 do not carry onto it): live pack applies, the siblings are untouched", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
-    prisma.invoiceItem.findMany.mockResolvedValue([
-      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
-      { id: "item-2", productId: "prod-box", unitsPerBox: 12 },
-    ]);
+    const sibling = (id: string) => ({
+      id,
+      productId: "prod-box",
+      description: "Boxed chips",
+      qty: 24,
+      boxes: 2,
+      pieces: 0,
+      unitPrice: 11,
+      discount: 0,
+      subtotal: 22,
+      unitsPerBox: 12,
+    });
+    prisma.invoiceItem.findMany.mockResolvedValue([sibling("item-1"), sibling("item-2")]);
     prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 6 }]); // live differs
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.invoice.update.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.update.mockResolvedValue({});
 
     await service.update("inv-box", {
       items: [
         {
+          id: "item-1",
           productId: "prod-box",
           description: "Boxed chips",
+          qty: 24,
+          unitPrice: 11,
+          boxes: 2,
+          pieces: 0,
+        },
+        {
+          id: "item-2",
+          productId: "prod-box",
+          description: "Boxed chips",
+          qty: 24,
+          unitPrice: 11,
+          boxes: 2,
+          pieces: 0,
+        },
+        {
+          productId: "prod-box",
+          description: "New line",
           qty: 3,
           unitPrice: 11,
           boxes: 0,
@@ -310,9 +351,11 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
       ],
     });
 
-    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
-    expect(created.unitsPerBox).toBe(12); // the unanimous stored pack, not the live 6
-    expect(created.subtotal).toBeCloseTo(2.75, 2); // 11 * 3/12
+    const created = prisma.invoice.update.mock.calls[0][0].data.items.create;
+    expect(created).toHaveLength(1); // only the new line is created; the two siblings stay in place
+    expect(created[0].unitsPerBox).toBe(6); // live (new-line semantics), NOT the siblings' 12
+    expect(created[0].subtotal).toBeCloseTo(5.5, 2); // 11 * 3/6
+    expect(prisma.invoiceItem.update).not.toHaveBeenCalled(); // siblings preserved verbatim
   });
 
   it("(h2) B717/SA-077b: stored lines that DISAGREE carry nothing; the live pack applies, with a warn", async () => {
@@ -346,34 +389,71 @@ describe("InvoicesService.update() — SA-068 pack comes from the payload, never
     warn.mockRestore();
   });
 
-  it("(g) B717: a save that carries no split must PRESERVE the line's stored pack snapshot, never null it", async () => {
+  it("(g) B717/SA-184: a save that changes no money leaves the stored line verbatim, pack snapshot included", async () => {
     prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
     // A box-unaware line that nonetheless carries a sale-time snapshot (order-derived).
     prisma.invoiceItem.findMany.mockResolvedValue([
-      { id: "item-1", productId: "prod-box", unitsPerBox: 12 },
+      {
+        id: "item-1",
+        productId: "prod-box",
+        description: "Boxed chips",
+        qty: 5,
+        boxes: null,
+        pieces: null,
+        unitPrice: 11,
+        discount: 0,
+        subtotal: 55,
+        unitsPerBox: 12,
+      },
     ]);
     prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 24 }]); // repacked since
     prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
     prisma.invoice.update.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.update.mockResolvedValue({});
 
-    // The edit page sends no boxes/pieces for a box-unaware line (a notes-only save).
     await service.update("inv-box", {
       items: [
-        {
-          productId: "prod-box",
-          description: "Boxed chips",
-          qty: 5,
-          unitPrice: 11,
-        },
+        { id: "item-1", productId: "prod-box", description: "Boxed chips", qty: 5, unitPrice: 11 },
       ],
     });
 
-    const created = prisma.invoice.update.mock.calls[0][0].data.items.create[0];
-    // The snapshot survives the delete-and-recreate at its SALE-time value, so
-    // pack-at-sale (B700) still has a real snapshot to prefer over today's pack.
-    expect(created.unitsPerBox).toBe(12); // not null, and not the live 24
-    // Money is unchanged for a line with no split: unitPrice * qty.
-    expect(created.subtotal).toBeCloseTo(55, 2);
+    const data = prisma.invoice.update.mock.calls[0][0].data;
+    expect(data.items.create).toEqual([]); // matched, kept in place
+    expect(prisma.invoiceItem.update).not.toHaveBeenCalled(); // nothing to write
+    expect(data.subtotal).toBeCloseTo(55, 2); // the stored money, untouched
+  });
+
+  it("(g2) B717/SA-184: a CHANGED no-split line keeps its OWN stored pack (12), never the live 24 or a sibling's", async () => {
+    prisma.invoice.findUnique.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.findMany.mockResolvedValue([
+      {
+        id: "item-1",
+        productId: "prod-box",
+        description: "Boxed chips",
+        qty: 5,
+        boxes: null,
+        pieces: null,
+        unitPrice: 11,
+        discount: 0,
+        subtotal: 55,
+        unitsPerBox: 12,
+      },
+    ]);
+    prisma.product.findMany.mockResolvedValue([{ id: "prod-box", unitsPerBox: 24 }]);
+    prisma.customer.findUnique.mockResolvedValue({ isTaxExempt: false });
+    prisma.invoice.update.mockResolvedValue(draftInvoice);
+    prisma.invoiceItem.update.mockResolvedValue({});
+
+    await service.update("inv-box", {
+      items: [
+        { id: "item-1", productId: "prod-box", description: "Boxed chips", qty: 6, unitPrice: 11 },
+      ],
+    });
+
+    expect(prisma.invoiceItem.update).toHaveBeenCalledWith({
+      where: { id: "item-1" },
+      data: expect.objectContaining({ qty: 6, unitsPerBox: 12, subtotal: 66 }),
+    });
   });
 
   // packFromOwnSplit returns null THREE ways, and all three left the pack undefined and priced

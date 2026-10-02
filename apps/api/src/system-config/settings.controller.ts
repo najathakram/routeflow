@@ -488,6 +488,9 @@ export class SettingsController {
   @Patch("route")
   @UsePipes(new ValidationPipe({ whitelist: true }))
   async updateRouteSettings(@Body() dto: UpdateRouteSettingsDto) {
+    if ((dto.depotLat === undefined) !== (dto.depotLng === undefined)) {
+      throw new BadRequestException("depotLat and depotLng must be provided together");
+    }
     if (dto.averageSpeedKmh !== undefined) {
       await this.svc.set("route.averageSpeedKmh", String(dto.averageSpeedKmh));
     }
@@ -496,6 +499,10 @@ export class SettingsController {
     }
     if (dto.defaultStartTime !== undefined) {
       await this.svc.set("route.defaultStartTime", dto.defaultStartTime);
+    }
+    if (dto.depotLat !== undefined && dto.depotLng !== undefined) {
+      await this.svc.set("route.defaultDepotLat", String(dto.depotLat));
+      await this.svc.set("route.defaultDepotLng", String(dto.depotLng));
     }
     return this.getRouteSettings();
   }
@@ -508,6 +515,14 @@ export class SettingsController {
     const hideOriginalPriceRaw = await this.svc.get("invoice.hideOriginalPrice");
     const depositDefaultPercentRaw = await this.svc.get("invoice.depositDefaultPercent");
     const depositCollectAtOrderRaw = await this.svc.get("invoice.depositCollectAtOrder");
+    // SA-436 (#2401): lives on TenantConfig (the send tx reads it there); no row reads as OFF.
+    const tenantId = this.prisma.getTenantId();
+    const cfg = tenantId
+      ? await this.prisma.tenantConfig.findUnique({
+          where: { tenantId },
+          select: { creditAutoApplyOnSend: true },
+        })
+      : null;
     return {
       defaultTerms: defaultTerms ?? "Net 30",
       hideOriginalPrice: hideOriginalPriceRaw === "true",
@@ -518,6 +533,7 @@ export class SettingsController {
           ? Number(depositDefaultPercentRaw)
           : null,
       depositCollectAtOrder: depositCollectAtOrderRaw === "true",
+      creditAutoApplyOnSend: cfg?.creditAutoApplyOnSend ?? false,
     };
   }
 
@@ -538,6 +554,14 @@ export class SettingsController {
     }
     if (dto.depositCollectAtOrder !== undefined) {
       await this.svc.set("invoice.depositCollectAtOrder", String(dto.depositCollectAtOrder));
+    }
+    const tenantId = this.prisma.getTenantId();
+    if (dto.creditAutoApplyOnSend !== undefined && tenantId) {
+      await this.prisma.tenantConfig.upsert({
+        where: { tenantId },
+        create: { tenantId, creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+        update: { creditAutoApplyOnSend: dto.creditAutoApplyOnSend },
+      });
     }
     return this.getInvoiceSettings();
   }

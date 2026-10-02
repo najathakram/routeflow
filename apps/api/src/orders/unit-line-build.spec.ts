@@ -139,6 +139,18 @@ describe("buildUnitLine — an order line sold by a non-pack unit", () => {
     ).toThrow(/unit-aware/);
   });
 
+  // B682/SA-145: this is the EDIT-path wrong-money shape — Math.trunc used to
+  // silently bill 1 Case for a typed 1.5. CREATE's own DTO is already @IsInt,
+  // so it never reached here fractional; unit-line-edit.ts's looser DTO
+  // (@IsNumber @Min(1)) does. Now refused, with buildLine's error mapped to
+  // this endpoint's own wording — the SAME wording invoice-unit-line.ts uses.
+  it("B682: a fractional unit count is refused, never truncated (the EDIT-path wrong-money shape)", () => {
+    expect(() => build({ qty: 1.5 })).toThrow(
+      "A line sold by the Case needs a whole number of Case.",
+    );
+    expect(() => build({ qty: 2.9 })).toThrow(BadRequestException);
+  });
+
   it("hands the regulated-tax callback the BASE piece count and the line subtotal, and carries the snapshots", () => {
     const l = build({});
     expect(taxFor).toHaveBeenCalledWith(864, 1440);
@@ -290,5 +302,61 @@ describe("categoryTaxForLine — B297 amount + snapshot, one call, never indepen
       categoryTaxRate: 1.25,
       categoryPriceIncludesTax: false,
     });
+  });
+});
+
+/**
+ * #2277 — a line HELD in a unit the product no longer offers (the Case was removed from the product
+ * after the order was placed). resolveLineUnits keeps the held unit through its snapshot factor, and
+ * the price step then asked the ladder for a "Case" it no longer has: UnknownUnitError escaped as a
+ * 500. It is a 400 with a code and a readable remedy instead.
+ */
+describe("buildUnitLine — a held unit the product no longer offers (#2277)", () => {
+  const withoutCase = units.filter((u) => u.label !== "Case");
+  const heldCase = () =>
+    buildUnitLine({
+      product,
+      units: withoutCase,
+      resolved: resolveLineUnits(
+        product,
+        withoutCase,
+        { unitLabel: "Case" },
+        { unitLabel: "Case", unitsPerBox: 288 },
+      ),
+      item: { productId: "p1", qty: 3, unitLabel: "Case" },
+      tier: 1,
+      taxFor,
+      position: 4,
+      tenantId: "t1",
+    });
+
+  it("#2277: is a 400 UNIT_NOT_OFFERED naming the unit, never a 500", () => {
+    let caught: unknown;
+    try {
+      heldCase();
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(BadRequestException);
+    const body = (caught as BadRequestException).getResponse() as {
+      code?: string;
+      message?: string;
+    };
+    expect(body.code).toBe("UNIT_NOT_OFFERED");
+    expect(body.message).toMatch(/Case/);
+    expect(body.message).toMatch(/no longer offered/);
+  });
+
+  it("#2277: a NEW line asking for a unit the product never had is the same 400 code", () => {
+    let caught: unknown;
+    try {
+      resolveLineUnits(product, units, { unitLabel: "Crate" });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(BadRequestException);
+    expect(((caught as BadRequestException).getResponse() as { code?: string }).code).toBe(
+      "UNIT_NOT_OFFERED",
+    );
   });
 });

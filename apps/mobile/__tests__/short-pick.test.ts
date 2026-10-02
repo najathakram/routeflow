@@ -3,6 +3,9 @@ import {
   buildDeliveries,
   reconciledTotal,
   isFullyDelivered,
+  isUnitAwareLine,
+  normalizeDeliveryPlan,
+  planPendingButLinesNotLoaded,
   buildStopDeliveries,
   shortPickLinesFromOrder,
   fallbackShortPickLines,
@@ -90,6 +93,157 @@ describe("isFullyDelivered", () => {
   });
 });
 
+// B648/SA-094a: a units_v1 line whose OWN unitsPerBox > 1 ("Case", "Pallet"…)
+// gets a WHOLE-CASE stepper — `orderedQty` there is base PIECES (count ×
+// the line's unitsPerBox snapshot), and a delivered qty other than a whole
+// multiple of the case size has no physical meaning. The driver picks
+// n in {0..count}; the plan sends deliveredQty = n x unitsPerBox.
+// `effectiveDeliveredQty` snaps any raw entry DOWN to the nearest whole
+// multiple, so a stray/leftover value (e.g. 300 on a 288-piece Case) can
+// never leak a fractional Case into the money math. A factor-1 unit line
+// ("Piece", unitsPerBox 1) is excluded — its pieces ARE individually
+// countable, so it keeps the ordinary piece stepper/clamp.
+describe("B648/SA-094a: a unit-aware line (unitsPerBox > 1) gets a whole-Case stepper", () => {
+  const caseLine = {
+    orderItemId: "li-case",
+    productId: "p-case",
+    orderedQty: 864, // 3 Cases of 288
+    subtotal: 300,
+    unitLabel: "Case",
+    unitsPerBox: 288,
+    boxes: 3,
+  };
+
+  it("isUnitAwareLine requires BOTH unitLabel and unitsPerBox > 1", () => {
+    expect(isUnitAwareLine(caseLine)).toBe(true);
+    // SA-094: a factor-1 unit line ("Piece") is NOT unit-aware.
+    expect(isUnitAwareLine({ unitLabel: "Piece", unitsPerBox: 1 })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: "Piece", unitsPerBox: null })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: "Piece", unitsPerBox: undefined })).toBe(false);
+    // No unitLabel at all -> a plain pack line, regardless of unitsPerBox.
+    expect(isUnitAwareLine({ unitLabel: null, unitsPerBox: 288 })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: undefined, unitsPerBox: 288 })).toBe(false);
+    expect(isUnitAwareLine({ unitLabel: "", unitsPerBox: 288 })).toBe(false);
+  });
+
+  it("untouched (no entry) defaults to n = count (3 of 3), DELIVERED — same default as every other line", () => {
+    expect(buildDeliveries([caseLine], {})).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+    ]);
+    expect(reconciledTotal([caseLine], {})).toBe(300);
+    expect(isFullyDelivered([caseLine], {})).toBe(true);
+  });
+
+  it("n = 0 gives REFUSED at qty 0, and the reconciled total excludes the line", () => {
+    expect(buildDeliveries([caseLine], { "li-case": 0 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "REFUSED", qty: 0 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 0 })).toBe(0);
+    expect(isFullyDelivered([caseLine], { "li-case": 0 })).toBe(false);
+  });
+
+  it("n = count (864 = 3 x 288) gives DELIVERED at the full amount", () => {
+    expect(buildDeliveries([caseLine], { "li-case": 864 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "DELIVERED", qty: 864 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 864 })).toBe(300);
+  });
+
+  it("n = 2 of 3 Cases (576 pieces) gives PARTIAL at two-thirds of the subtotal", () => {
+    expect(buildDeliveries([caseLine], { "li-case": 576 })).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "PARTIAL", qty: 576 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 576 })).toBe(200); // 300 x 576/864
+  });
+
+  it("a stray non-multiple entry (300) snaps DOWN to the nearest whole Case (288, n=1) — never a fractional Case", () => {
+    // Today's (pre-fix, binary-choice) bug this class replaces pinned 288
+    // resolving to the full amount; SA-094a's whole-Case stepper instead
+    // snaps a stray entry DOWN to the nearest whole Case it represents.
+    const out = buildDeliveries([caseLine], { "li-case": 300 });
+    expect(out).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "PARTIAL", qty: 288 },
+    ]);
+    expect(reconciledTotal([caseLine], { "li-case": 300 })).toBe(100); // 300 x 288/864 — ONE whole Case
+    expect(reconciledTotal([caseLine], { "li-case": 300 })).not.toBe(300); // never the old force-full bug
+  });
+
+  it("SA-094: a factor-1 unit line ('Piece', unitsPerBox 1) is not unit-aware — keeps the ordinary piece stepper/clamp", () => {
+    const pieceLine = {
+      orderItemId: "li-piece",
+      productId: "p-piece",
+      orderedQty: 10,
+      subtotal: 100,
+      unitLabel: "Piece",
+      unitsPerBox: 1,
+      boxes: null,
+    };
+    expect(isUnitAwareLine(pieceLine)).toBe(false);
+    expect(buildDeliveries([pieceLine], { "li-piece": 6 })).toEqual([
+      { orderItemId: "li-piece", productId: "p-piece", type: "PARTIAL", qty: 6 },
+    ]);
+    expect(reconciledTotal([pieceLine], { "li-piece": 6 })).toBe(60);
+  });
+
+  it("a mix of a unit-aware line and a plain line: only the plain one is short-pickable to a partial", () => {
+    const plain = { orderItemId: "li-plain", productId: "p-plain", orderedQty: 10, subtotal: 100 };
+    const qtyById = { "li-case": 0, "li-plain": 5 };
+    expect(buildDeliveries([caseLine, plain], qtyById)).toEqual([
+      { orderItemId: "li-case", productId: "p-case", type: "REFUSED", qty: 0 },
+      { orderItemId: "li-plain", productId: "p-plain", type: "PARTIAL", qty: 5 },
+    ]);
+    // 0 (case line refused) + 50 (100 * 5/10) = 50.
+    expect(reconciledTotal([caseLine, plain], qtyById)).toBe(50);
+  });
+
+  // SA-094b: ONE exported normalizer must feed BOTH money halves (run-money.ts's
+  // deliveredCategoryTax/shortPickCategoryTax have no unit-awareness of their
+  // own) AND the review row's displayed qty/badge — reading the raw plan in
+  // only one of those places is exactly how a stray 288-of-864 entry used to
+  // bill the full subtotal while charging a third of the category tax and
+  // showing "Short" next to a "Delivered" total.
+  describe("normalizeDeliveryPlan (SA-094b)", () => {
+    it("snaps a unit-aware line's stray entry THE SAME WAY buildDeliveries/reconciledTotal do", () => {
+      expect(normalizeDeliveryPlan([caseLine], { "li-case": 300 })).toEqual({ "li-case": 288 });
+    });
+
+    it("defaults an untouched line to its full ordered qty", () => {
+      expect(normalizeDeliveryPlan([caseLine], {})).toEqual({ "li-case": 864 });
+    });
+
+    it("clamps a plain line to [0, orderedQty]", () => {
+      const plain = {
+        orderItemId: "li-plain",
+        productId: "p-plain",
+        orderedQty: 10,
+        subtotal: 100,
+      };
+      expect(normalizeDeliveryPlan([plain], { "li-plain": 999 })).toEqual({ "li-plain": 10 });
+      expect(normalizeDeliveryPlan([plain], { "li-plain": -5 })).toEqual({ "li-plain": 0 });
+    });
+  });
+});
+
+// SA-094a review (5): payment.tsx must refuse to close a stop rather than
+// silently discard a driver's already-recorded short-pick plan while the
+// order's richer data (shortPickLines) hasn't loaded yet.
+// B762: the signature became per-order — (deliveredQtyById, orderItemIds,
+// landed) — so a multi-order stop can ask the question for each order's
+// own fetch state instead of a single shared shortPickLines array.
+describe("planPendingButLinesNotLoaded (SA-094a review 5 / B762 per-order signature)", () => {
+  it("true: the driver recorded a plan, but this order's fetch hasn't landed", () => {
+    expect(planPendingButLinesNotLoaded({ "li-1": 0 }, ["li-1"], false)).toBe(true);
+  });
+
+  it("false: no recorded plan yet (nothing to lose by closing)", () => {
+    expect(planPendingButLinesNotLoaded({}, ["li-1"], false)).toBe(false);
+  });
+
+  it("false: the order has landed, so the recorded plan will be honored", () => {
+    expect(planPendingButLinesNotLoaded({ "li-plain": 5 }, ["li-plain"], true)).toBe(false);
+  });
+});
+
 describe("shortPickLinesFromOrder (B762: the shared derivation both driver screens now use)", () => {
   it("maps an order's lines to ShortPickLine, carrying freeUnits/freeUnitSize", () => {
     const order = {
@@ -107,7 +261,8 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         },
       ],
     };
-    expect(shortPickLinesFromOrder(order)).toEqual([
+    // SA-367a: a first visit is served remaining == qty.
+    expect(shortPickLinesFromOrder(order, { "li-1": 10 })).toEqual([
       {
         orderItemId: "li-1",
         productId: "p-1",
@@ -115,6 +270,10 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         subtotal: 100,
         freeUnits: 1,
         freeUnitSize: 5,
+        unitLabel: null,
+        unitsPerBox: 5,
+        boxes: 1,
+        pieces: 5, // FIX 6 (SA-175): qty(10) − boxes(1)×unitsPerBox(5)
       },
     ]);
   });
@@ -126,7 +285,12 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         { id: "li-2", productId: "p-2", status: "PENDING", qty: 5, subtotal: 50 },
       ],
     };
-    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+    // The server serves a cancelled line remaining 0 (SA-366).
+    expect(
+      shortPickLinesFromOrder(order, { "li-1": 0, "li-2": 5 }).map((l) => l.orderItemId),
+    ).toEqual(["li-2"]);
+    // And the status filter holds even where no remaining was served.
+    expect(shortPickLinesFromOrder(order, {}).map((l) => l.orderItemId)).toEqual(["li-2"]);
   });
 
   it("excludes a line already delivered (a reopened, partially-completed stop doesn't re-offer a settled line)", () => {
@@ -143,13 +307,20 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
         { id: "li-2", productId: "p-2", status: "PENDING", deliveredQty: 0, qty: 5, subtotal: 50 },
       ],
     };
-    expect(shortPickLinesFromOrder(order).map((l) => l.orderItemId)).toEqual(["li-2"]);
+    // Served: the settled line has remaining 0.
+    expect(
+      shortPickLinesFromOrder(order, { "li-1": 0, "li-2": 5 }).map((l) => l.orderItemId),
+    ).toEqual(["li-2"]);
+    // Older api (no remaining): the pre-B785 rule, and the surviving line awaits entry.
+    const legacy = shortPickLinesFromOrder(order, {});
+    expect(legacy.map((l) => l.orderItemId)).toEqual(["li-2"]);
+    expect(legacy[0]!.needsEntry).toBe(true);
   });
 
   it("null/undefined order or missing lineItems -> empty array, never throws", () => {
-    expect(shortPickLinesFromOrder(null)).toEqual([]);
-    expect(shortPickLinesFromOrder(undefined)).toEqual([]);
-    expect(shortPickLinesFromOrder({})).toEqual([]);
+    expect(shortPickLinesFromOrder(null, {})).toEqual([]);
+    expect(shortPickLinesFromOrder(undefined, {})).toEqual([]);
+    expect(shortPickLinesFromOrder({}, {})).toEqual([]);
   });
 
   it("feeds buildStopDeliveries directly for a real multi-order flow — no adapter needed", () => {
@@ -160,8 +331,12 @@ describe("shortPickLinesFromOrder (B762: the shared derivation both driver scree
       lineItems: [{ id: "li-2", productId: "p-2", status: "PENDING", qty: 6, subtotal: 60 }],
     };
     const out = buildStopDeliveries([
-      { orderId: "A", lines: shortPickLinesFromOrder(orderA), deliveredQtyById: {} },
-      { orderId: "B", lines: shortPickLinesFromOrder(orderB), deliveredQtyById: { "li-2": 0 } },
+      { orderId: "A", lines: shortPickLinesFromOrder(orderA, { "li-1": 4 }), deliveredQtyById: {} },
+      {
+        orderId: "B",
+        lines: shortPickLinesFromOrder(orderB, { "li-2": 6 }),
+        deliveredQtyById: { "li-2": 0 },
+      },
     ]);
     expect(out).toEqual([
       { orderItemId: "li-1", productId: "p-1", type: "DELIVERED", quantityDelivered: 4 },
@@ -183,7 +358,9 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
 
   it("a surviving (non-CANCELLED) line resolves to DELIVERED at full qty through deliveryTypeForQty — no BOGO netting", () => {
     const order = {
-      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 8, subtotal: 80 }],
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "PENDING", qty: 8, subtotal: 80, remaining: 8 },
+      ],
     };
     const [line] = fallbackShortPickLines(order);
     expect(line).toEqual({
@@ -193,6 +370,10 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
       subtotal: 80,
       freeUnits: 0,
       freeUnitSize: 1,
+      unitLabel: null,
+      unitsPerBox: null,
+      boxes: null,
+      pieces: null,
     });
     expect(deliveryTypeForQty(line!.orderedQty, line!.orderedQty)).toBe("DELIVERED");
   });
@@ -205,7 +386,9 @@ describe("fallbackShortPickLines (SA-115: the un-landed-order fallback)", () => 
 
   it("SA-115 required (2), the composition an un-landed vs. a landed order must produce: an un-landed order's fallback lines contribute their full-qty snapshot to buildStopDeliveries; a LANDED order with nothing adjustable (empty rich lines) contributes NO entries at all — never a re-claimed full delivery", () => {
     const unlandedSnapshot = {
-      lineItems: [{ id: "li-1", productId: "p-1", status: "PENDING", qty: 6, subtotal: 60 }],
+      lineItems: [
+        { id: "li-1", productId: "p-1", status: "PENDING", qty: 6, subtotal: 60, remaining: 6 },
+      ],
     };
     // A landed order whose shortPickLinesFromOrder came back empty (e.g.
     // every line already delivered on an earlier visit) — the caller must

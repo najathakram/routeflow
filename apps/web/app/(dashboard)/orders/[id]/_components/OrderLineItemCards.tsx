@@ -32,6 +32,8 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
     boxes: li.boxes ?? null,
     pieces: li.pieces ?? null,
+    // A unit-aware line (units_v1) names its own box level: "3 Cases", never "3 boxes".
+    boxLabel: li.unitLabel ?? null,
     subtotal: li.subtotal ?? null,
     freeUnits: li.promoFreeUnits ?? null,
     priceType: li.priceType ?? null,
@@ -41,6 +43,7 @@ export function lineRowProps(li: OrderItem, orderStatus: string): LineItemRowRea
     showDeliveryProgress: DELIVERY_PROGRESS_STATUSES.has(orderStatus),
     note: li.notes ?? null,
     custom: !li.productId,
+    components: li.components ?? null,
   };
 }
 

@@ -1,4 +1,5 @@
 import {
+  linePack,
   computeLineSubtotal,
   computeLineSubtotalStrict,
   lineAmbiguity,
@@ -6,6 +7,7 @@ import {
   roundMoney,
   normalizeBoxesPieces,
   packFromOwnSplit,
+  splitMatchesQty,
   perUnitPrice,
   costPerSellingUnit,
   computeMarginFraction,
@@ -27,6 +29,7 @@ import {
   invoiceLineQtyText,
   type PromotionRule,
   type PromoScopeProduct,
+  type TrackedCategoryRow,
 } from "./pricing";
 
 /**
@@ -367,6 +370,31 @@ describe("pricing — money discipline", () => {
   // split alone is enough to recover the pack, per the invariant normalizeBoxesPieces
   // enforces (qty === boxes * pack + pieces). NEVER read the live product for this —
   // it may have been repacked since the line was written.
+  describe("splitMatchesQty (SA-257) - does boxes x pack + pieces === qty", () => {
+    it("true when the split adds up at a known pack > 1", () => {
+      expect(splitMatchesQty({ qty: 26, boxes: 2, pieces: 2, unitsPerBox: 12 })).toBe(true);
+      expect(splitMatchesQty({ qty: 26, boxes: 1, pieces: 14, unitsPerBox: 12 })).toBe(true); // non-normalized is fine
+      expect(splitMatchesQty({ qty: 24, boxes: 2, pieces: 0, unitsPerBox: 12 })).toBe(true);
+    });
+
+    it("false when it does not add up", () => {
+      expect(splitMatchesQty({ qty: 26, boxes: 1, pieces: 14, unitsPerBox: 24 })).toBe(false); // 38 pcs
+      expect(splitMatchesQty({ qty: 24, boxes: 1, pieces: 0, unitsPerBox: 12 })).toBe(false); // 12 pcs
+    });
+
+    it("false with no usable pack (null, 0, 1, undefined): it cannot be checked", () => {
+      for (const unitsPerBox of [null, 0, 1, undefined])
+        expect(splitMatchesQty({ qty: 5, boxes: 0, pieces: 5, unitsPerBox })).toBe(false);
+    });
+
+    it("null boxes/pieces count as 0; a 1e-6 qty tolerance absorbs float noise, 1e-3 does not", () => {
+      expect(splitMatchesQty({ qty: 12, boxes: 1, pieces: null, unitsPerBox: 12 })).toBe(true);
+      expect(splitMatchesQty({ qty: 5, boxes: null, pieces: 5, unitsPerBox: 12 })).toBe(true);
+      expect(splitMatchesQty({ qty: 12.0000001, boxes: 1, pieces: 0, unitsPerBox: 12 })).toBe(true);
+      expect(splitMatchesQty({ qty: 12.001, boxes: 1, pieces: 0, unitsPerBox: 12 })).toBe(false);
+    });
+  });
+
   describe("packFromOwnSplit — recovering a legacy line's pack from its own split", () => {
     it("derives the pack from a whole-box line (6 boxes, 0 pieces, qty 72 -> 12)", () => {
       expect(packFromOwnSplit({ qty: 72, boxes: 6, pieces: 0 })).toBe(12);
@@ -672,7 +700,14 @@ describe("categoryTaxSnapshotOf — B297 sale-time trio (SA-088 D1)", () => {
   });
 
   it("coerces a numeric-string rate to a number and a missing priceIncludesTax to false", () => {
-    expect(categoryTaxSnapshotOf({ taxType: "PERCENT_OF_SALE", rate: "0.0525" })).toEqual({
+    // TrackedCategoryRow.priceIncludesTax is non-optional (the live column is NOT NULL) — this
+    // cast simulates a malformed/legacy row reaching the runtime coercion (`!!category.priceIncludesTax`)
+    // despite the type, which is exactly the defensive path this test exists to cover.
+    const malformedRow = {
+      taxType: "PERCENT_OF_SALE",
+      rate: "0.0525",
+    } as unknown as TrackedCategoryRow;
+    expect(categoryTaxSnapshotOf(malformedRow)).toEqual({
       categoryTaxType: "PERCENT_OF_SALE",
       categoryTaxRate: 0.0525,
       categoryPriceIncludesTax: false,
@@ -1427,6 +1462,21 @@ describe("pricing — upsell direction & sticky effective price", () => {
       expect(effectiveBuyerPrice(8, 10, null)).toBe(8);
       expect(effectiveBuyerPrice(8, 10, undefined)).toBe(8);
     });
+  });
+});
+
+describe("linePack (B699/B722, #2066): the line's stored pack wins over the live catalog pack", () => {
+  it("a stored pack > 1 wins, even after the product is repacked or un-boxed", () => {
+    expect(linePack({ packSize: 12 }, 6)).toBe(12);
+    expect(linePack({ packSize: 12 }, 0)).toBe(12);
+  });
+
+  it("no usable stored pack (absent, null, 0 or 1) falls back to the live pack", () => {
+    expect(linePack({}, 6)).toBe(6);
+    expect(linePack({ packSize: null }, 6)).toBe(6);
+    expect(linePack({ packSize: 0 }, 6)).toBe(6);
+    expect(linePack({ packSize: 1 }, 6)).toBe(6);
+    expect(linePack({ packSize: null }, 0)).toBe(0);
   });
 });
 

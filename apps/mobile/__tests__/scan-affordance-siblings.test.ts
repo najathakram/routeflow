@@ -116,7 +116,7 @@ describe("invoices/[id]/edit.tsx scan affordance (REG-B265)", () => {
     ) ?? [""])[0];
     expect(onScannedBody).toMatch(/resolveProductByCode<AdminProduct>\(/);
     expect(onScannedBody).toMatch(/if \(result\.archived\)/);
-    expect(onScannedBody).toMatch(/addCatalogLine\(result\.product\)/);
+    expect(onScannedBody).toMatch(/addCatalogLine\(\s*result\.product,/);
     // The picker's own onSelect is the pre-existing addCatalogLine reference
     // (unchanged) — never a second, parallel line-adding function.
     expect(source).toMatch(/onSelect=\{addCatalogLine\}/);

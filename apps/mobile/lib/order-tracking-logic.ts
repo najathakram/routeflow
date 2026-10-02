@@ -15,16 +15,29 @@ export interface ReorderItem {
 
 /** Non-cancelled, catalog-backed (productId present), positive-qty lines
  *  only. Operator-added "unlisted" lines (no productId) can exist on an
- *  order but can never be reordered through the buyer create path. */
+ *  order but can never be reordered through the buyer create path.
+ *
+ *  B651: `ReorderItem` has no `unitLabel` field, so a unit-sold line (Case/Pallet/Piece)
+ *  copied through here would silently re-split at the LIVE pack and reprice as a pack
+ *  line — or, for a factor-1 Piece line, have its bare qty read as SELLING UNITS
+ *  (~unitsPerBox x over). Refuses the WHOLE reorder when any live line is unit-aware,
+ *  same fail-closed posture as the staff merge's refusal (B649) — a partial reorder
+ *  that quietly drops a Case is its own kind of surprise. Carrying `unitLabel` through
+ *  properly is a bigger lift (the create path would need to build a real unit-aware
+ *  line, not just forward a field) and isn't done here. */
 export function buildReorderItems(order: Pick<BuyerOrder, "lineItems">): ReorderItem[] {
-  return order.lineItems
-    .filter((li) => li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0)
-    .map((li) => ({
-      productId: li.productId,
-      qty: Number(li.qty),
-      ...(li.boxes != null ? { boxes: li.boxes } : {}),
-      ...(li.pieces != null ? { pieces: li.pieces } : {}),
-    }));
+  // A custom (unlisted) line has productId null — never reorderable; the predicate narrows it out.
+  const live = order.lineItems.filter(
+    (li): li is (typeof order.lineItems)[number] & { productId: string } =>
+      li.status !== "CANCELLED" && !!li.productId && Number(li.qty) > 0,
+  );
+  if (live.some((li) => li.unitLabel != null && li.unitLabel !== "")) return [];
+  return live.map((li) => ({
+    productId: li.productId,
+    qty: Number(li.qty),
+    ...(li.boxes != null ? { boxes: li.boxes } : {}),
+    ...(li.pieces != null ? { pieces: li.pieces } : {}),
+  }));
 }
 
 /** Reorder only makes sense once an order has actually been placed — DRAFT/

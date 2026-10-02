@@ -1,6 +1,7 @@
 import {
   PIECE_LABEL,
   computeLineSubtotal,
+  defaultSellingLabel,
   resolveLadderLevel,
   resolveUnitPrice,
   roundMoney,
@@ -150,6 +151,23 @@ function formatMoney(value: number): string {
 function formatQty(value: number): string {
   if (!Number.isFinite(value)) return "0";
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
+}
+
+/**
+ * The unit a new line starts on (#2784): the level flagged `isDefaultSelling` — only if the picker actually offers it —
+ * else the pack (`""`). Mirrors web's `defaultUnitValue`; both call `@routeflow/pricing`'s `defaultSellingLabel`.
+ */
+export function defaultUnitValue(
+  product: LadderProduct,
+  units: readonly ProductUnitLevel[],
+  tier: number | string = 1,
+): string {
+  const flagged = defaultSellingLabel(product, units.map(toLadderUnit));
+  if (!flagged) return "";
+  const offered = buildUnitOptions(product, units, tier).find(
+    (o) => o.kind !== "pack" && norm(o.value) === norm(flagged),
+  );
+  return offered?.value ?? "";
 }
 
 /** The picker row's detail line, e.g. "240 pcs · $220.00" — everything `unitOptionText` shows

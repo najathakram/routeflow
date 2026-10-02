@@ -3,7 +3,7 @@
     "name": "RouteFlow",
     "slug": "routeflow-mobile",
     "scheme": "routeflow",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -56,6 +56,7 @@
         {
           "locationWhenInUsePermission": "RouteFlow shares your location with dispatch while you run a delivery route.",
           "locationAlwaysAndWhenInUsePermission": "RouteFlow shares your location with dispatch while you deliver, including when the app is in the background.",
+          "isIosBackgroundLocationEnabled": true,
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true
         }

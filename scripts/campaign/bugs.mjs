@@ -87,7 +87,6 @@ import {
   statSync,
   openSync,
   closeSync,
-  chmodSync,
   realpathSync,
   symlinkSync,
 } from "node:fs";
@@ -96,6 +95,7 @@ import { tmpdir, uptime } from "node:os";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { scrubbedGitEnv } from "../lib/check-git-hooks.mjs";
 import { normalizeEvidence } from "./normalize-evidence.mjs";
 import {
   hasRegToken,
@@ -1524,7 +1524,8 @@ const SYNC_STATE = () =>
   (process.env.BUGS_ROOT ? join(rootDir(), "sync-state.json") : ".campaign/bugs-sync-state.json");
 const FIRST_RUN_WINDOW = 400;
 
-const git = (cmd) => execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const git = (cmd) =>
+  execSync(cmd, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: scrubbedGitEnv() });
 
 function readSyncState() {
   const p = SYNC_STATE();
@@ -3258,19 +3259,8 @@ cmds["self-test"] = () => {
   // here — every check below (the real-repo ones included) discovers the
   // repository from the process cwd, which is what they meant all along.
   // Deliberately not restored: `self-test` is a terminal command.
-  for (const k of [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_QUARANTINE_PATH",
-    "GIT_PREFIX",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-  ])
-    delete process.env[k];
+  const cleanGit = scrubbedGitEnv();
+  for (const k of Object.keys(process.env)) if (!(k in cleanGit)) delete process.env[k];
 
   let failures = 0;
   const check = (name, got, want) => {
@@ -4645,12 +4635,15 @@ cmds["self-test"] = () => {
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = campaignRoot;
     try {
-      execSync("git init -q", { cwd: tmp });
-      execSync('git config user.email "self-test@routeflow.local"', { cwd: tmp });
-      execSync('git config user.name "Self Test"', { cwd: tmp });
+      execSync("git init -q", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git config user.email "self-test@routeflow.local"', {
+        cwd: tmp,
+        env: scrubbedGitEnv(),
+      });
+      execSync('git config user.name "Self Test"', { cwd: tmp, env: scrubbedGitEnv() });
       writeFileSync(join(tmp, "seed.txt"), "seed\n");
-      execSync("git add seed.txt", { cwd: tmp });
-      execSync('git commit -q -m "initial"', { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
+      execSync('git commit -q -m "initial"', { cwd: tmp, env: scrubbedGitEnv() });
 
       writeCatalogue([
         {
@@ -4694,9 +4687,10 @@ cmds["self-test"] = () => {
       // A new commit lands mentioning B2 — the event that must survive a
       // crash later in the SAME sync run.
       writeFileSync(join(tmp, "seed.txt"), "seed 2\n");
-      execSync("git add seed.txt", { cwd: tmp });
+      execSync("git add seed.txt", { cwd: tmp, env: scrubbedGitEnv() });
       execSync('git commit -q -m "fix(routes): B2 gamma event that must not be lost"', {
         cwd: tmp,
+        env: scrubbedGitEnv(),
       });
 
       // Corrupt B1's record so the per-bug loop dies while processing it —
@@ -5222,16 +5216,27 @@ cmds["self-test"] = () => {
   // discharge's rollback used to restore the SHARD only — a record already
   // written before a mid-batch failure kept `state: done`/`closed: yes` and a
   // permanent History line for a discharge that never happened, while the
-  // shard (and the CLI's own message) claimed a full rollback. A read-only
-  // record forces writeRecord to throw on the SECOND row, after the first
-  // row's record has already been written — exactly the ordering that used
-  // to leave one record correctly rolled back (never touched) and the other
-  // permanently wrong (touched, then abandoned).
+  // shard (and the CLI's own message) claimed a full rollback. Replacing the
+  // SECOND row's record with a DIRECTORY forces the loop to throw on that
+  // row, after the first row's record has already been written — exactly the
+  // ordering that used to leave one record correctly rolled back (never
+  // touched) and the other permanently wrong (touched, then abandoned).
+  //
+  // B2065 — why a directory and not `chmod 0o444`: permission bits are
+  // advisory for uid 0, which bypasses them, so the read-only fixture made
+  // the write SUCCEED under root, the discharge complete, and all six
+  // assertions below fail. CI containers and this repo's cloud lanes run as
+  // root, so the one fixture that proved the rollback was also the one
+  // fixture that could not run there. EISDIR is enforced by the kernel for
+  // every uid — root included — so the failure this drives is now the same
+  // failure for everyone, and nothing here is skipped or softened under root.
+  // It is also the exact IO failure discharge's own rollback comment names
+  // ("a record path replaced by a directory").
   {
     const tmp = mkdtempSync(join(tmpdir(), "bugs-self-test-"));
     const prevRoot = process.env.BUGS_ROOT;
     process.env.BUGS_ROOT = tmp;
-    let lockedRecordPath = null;
+    let blockedRecordPath = null;
     try {
       for (const title of ["rollback fixture A", "rollback fixture B", "rollback fixture C"])
         cmds.file([
@@ -5255,44 +5260,62 @@ cmds["self-test"] = () => {
       );
 
       const shardBefore = readFileSync(shardPath("F01"), "utf8");
+      // B2's own bytes are deliberately NOT captured: it becomes a directory
+      // below, so its assertion is structural (see the check for it).
       const recordsBefore = new Map(
-        ["B1", "B2", "B3"].map((id) => [id, readFileSync(recordPath(id), "utf8")]),
+        ["B1", "B3"].map((id) => [id, readFileSync(recordPath(id), "utf8")]),
       );
 
       // `ready` (built from readShard's row order, which is FILE order —
-      // append order here) processes B1 before B2 — make B2's record
-      // read-only so the failure lands strictly AFTER B1's record has
-      // already been written, and strictly BEFORE B3's ever is.
-      lockedRecordPath = recordPath("B2");
-      chmodSync(lockedRecordPath, 0o444);
+      // append order here) processes B1 before B2 — replace B2's record with
+      // a directory so the failure lands strictly AFTER B1's record has
+      // already been written, and strictly BEFORE B3's ever is. The throw
+      // comes from the loop's own pre-write `readFileSync` of B2's path
+      // (EISDIR), which is inside the same try/catch as the write, on the
+      // same row, after B2's ledger row has already been mutated — so the
+      // shard restore and the B1 record restore are both still exercised.
+      blockedRecordPath = recordPath("B2");
+      rmSync(blockedRecordPath, { force: true });
+      mkdirSync(blockedRecordPath, { recursive: true });
 
       const result = runCli(
         ["discharge", "F01", "--evidence", "rolled-back discharge fixture run, well over 40 chars"],
         tmp,
       );
-      check("rollback: discharge fails loudly on the read-only record", result.code !== 0, true);
+      check("rollback: discharge fails loudly on the unwritable record", result.code !== 0, true);
+      check(
+        "rollback: it fails for the IO reason, not a validation refusal",
+        /rolled back to its pre-discharge state/.test(result.out),
+        true,
+      );
 
       const shardAfter = readFileSync(shardPath("F01"), "utf8");
       check("rollback: the shard is byte-identical to before the attempt", shardAfter, shardBefore);
-      for (const id of ["B1", "B2", "B3"])
+      // B1 was WRITTEN before the failure, B3 never was — the pair is the
+      // whole point: the first proves the record restore ran, the second
+      // proves the abandoned rows were left alone.
+      for (const id of ["B1", "B3"])
         check(
           `rollback: ${id}'s record is byte-identical to before the attempt`,
           readFileSync(recordPath(id), "utf8"),
           recordsBefore.get(id),
         );
+      // B2's path is the blocker itself. It cannot be compared by bytes, so
+      // assert the equivalent: still a directory, and still empty — nothing
+      // was written into or through it, and the rollback did not replace it.
+      check(
+        "rollback: B2's blocked record path is still an empty directory",
+        statSync(blockedRecordPath).isDirectory() && readdirSync(blockedRecordPath).length === 0,
+        true,
+      );
       check(
         "rollback: every row is still `proven`, none stuck at `done` from the abandoned attempt",
         readShard("F01").rows.map((r) => r.state),
         ["proven", "proven", "proven"],
       );
     } finally {
-      if (lockedRecordPath) {
-        try {
-          chmodSync(lockedRecordPath, 0o644);
-        } catch {
-          /* best effort — the rmSync below still cleans up the whole tmp tree */
-        }
-      }
+      // No permission bits to restore any more — the blocker is an ordinary
+      // empty directory, which the recursive rmSync below removes outright.
       if (prevRoot === undefined) delete process.env.BUGS_ROOT;
       else process.env.BUGS_ROOT = prevRoot;
       rmSync(tmp, { recursive: true, force: true });
@@ -6572,7 +6595,11 @@ cmds["self-test"] = () => {
   {
     const checkIgnore = (relPath) => {
       try {
-        execFileSync("git", ["check-ignore", relPath], { cwd: REPO_ROOT, encoding: "utf8" });
+        execFileSync("git", ["check-ignore", relPath], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: scrubbedGitEnv(),
+        });
         return true;
       } catch (e) {
         return e.status === 1 ? false : null; // 1 = genuinely not ignored; anything else is a real error

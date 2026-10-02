@@ -183,19 +183,19 @@ Notes for the implementer:
 email:"new-buyer@example.com" }` (matches `profile.email`). It is now a squat → assert
      neutralization instead of a bare verify:
      `ts
-     expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
-       where: { id: "buyer-1" },
-       data: expect.objectContaining({
-         googleId: "google-1",
-         emailVerified: true,
-         passwordSet: false,
-         passwordHash: expect.any(String),
-       }),
-     });
-     expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
-       where: { buyerAccountId: "buyer-1" },
-     });
-     `
+expect(prisma.buyerAccount.update).toHaveBeenCalledWith({
+  where: { id: "buyer-1" },
+  data: expect.objectContaining({
+    googleId: "google-1",
+    emailVerified: true,
+    passwordSet: false,
+    passwordHash: expect.any(String),
+  }),
+});
+expect(prisma.buyerRefreshToken.deleteMany).toHaveBeenCalledWith({
+  where: { buyerAccountId: "buyer-1" },
+});
+`
      Have `prisma.buyerAccount.update.mockResolvedValue({ id:"buyer-1", email:"new-buyer@example.com",
 name:"Existing", passwordSet:false, emailVerified:true, googleId:"google-1", status:"ACTIVE" })`
      so the reassigned `buyer` is well-formed, and mock `prisma.buyerRefreshToken.deleteMany`.

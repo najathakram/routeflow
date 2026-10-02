@@ -1,10 +1,12 @@
 import {
   buildPOLine,
   derivedCaseCost,
+  linePack,
   normalizeBoxesPieces,
   roundMoney,
   type POLineAmounts,
 } from "@routeflow/pricing";
+import type { PurchaseOrderBillLink, PurchaseOrderReceipt } from "@routeflow/types";
 
 // Shared purchase-order types + pure line helpers, extracted verbatim from
 // inventory/page.tsx (LANE-U step 3 prefactor — behaviour identical).
@@ -47,10 +49,18 @@ export interface PurchaseOrder {
   supplier: Supplier;
   status: POStatus;
   items: POItem[];
-  total: number;
+  /**
+   * The server-stored document total: the raw Prisma `PurchaseOrder.totalAmount` (`Decimal(10,2)`), so a
+   * numeric STRING. B719 (#1485): this type used to declare a `total` the API never sends, so the list's
+   * Total column read `undefined` and showed $0.00 on every row. Read it through `poDisplayTotal` (@routeflow/pricing).
+   */
+  totalAmount?: number | string | null;
   expectedDate: string;
   notes?: string;
   createdAt: string;
+  /** Detail read only (`GET /inventory/purchase-orders/:id`): the receipts history and the linked bill. */
+  receipts?: PurchaseOrderReceipt[];
+  vendorBill?: PurchaseOrderBillLink | null;
 }
 
 export interface POLineItem {
@@ -130,10 +140,17 @@ export function resolvePOLineAmounts(line: POLineItem, unitsPerBox: number): POL
  * it (or an unusable one) is rebuilt through the one `@routeflow/pricing` builder from the case cost
  * `derivedCaseCost` reads back, which shows an OLD drifted row honestly rather than masking it.
  */
+// B699/B722: `linePack` moved to `@routeflow/pricing` (mobile's PO detail screen
+// needed the identical stored-wins rule and had none — #2066 review round);
+// re-exported under this file's original name so every existing
+// `from "./purchase-orders-shared"` import of it keeps working unchanged.
+export { linePack };
+
 export function resolveStoredPOLineAmounts(
-  item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost">,
-  unitsPerBox: number,
+  item: Pick<POItem, "qtyOrdered" | "unitCost" | "totalCost" | "packSize">,
+  livePack: number,
 ): POLineResolved {
+  const unitsPerBox = linePack(item, livePack);
   const qtyOrdered = Math.max(0, Number(item.qtyOrdered) || 0);
   const unitCost = Math.max(0, Number(item.unitCost) || 0);
   const stored = item.totalCost != null ? Number(item.totalCost) : NaN;
