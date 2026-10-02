@@ -67,6 +67,9 @@ export interface CaptureInlineReturnItem {
    *  override its quote priced, or the two price different chunks. */
   creditUnitPrice?: number;
   overrideReason?: string;
+  /** B961 / SA-071c: OPERATOR/TENANT_ADMIN only — why goods the customer already returned or was credited for are credited
+   *  again; REQUIRED when the quote flagged the line's over-return chunk `alreadyReturned` (400 coded otherwise). */
+  alreadyReturnedReason?: string;
 }
 
 export interface CaptureInlineReturnRequest {
@@ -107,6 +110,9 @@ export type InlineReturnLinesRequest = Omit<CaptureInlineReturnRequest, "custome
 export interface ApproveInlineReturnRequest {
   /** >= 0.01 when present; omitted approves the full held amount. */
   amount?: number;
+  /** B961: REQUIRED to approve a hold the capture marked "already returned or credited" (400
+   *  `INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED` otherwise); trimmed, <= 200 characters. */
+  reason?: string;
 }
 
 // ─── Response: what POST /returns/inline/quote actually returns ────────────────────
@@ -134,6 +140,10 @@ export interface InlineReturnQuoteChunk {
   originalPrice?: number | null;
   overrideReason?: string | null;
   overriddenBy?: string | null;
+  /** B961 / SA-071c: set on an over-return chunk of a product this customer DID buy (a candidate invoice line exists, all of it
+   *  already returned or credited). Shown as "already returned or credited", NOT "not on any invoice"; only staff may credit it,
+   *  with a reason; a driver capture holds it for the office. Absent on every other chunk. */
+  alreadyReturned?: boolean;
 }
 
 export interface InlineReturnQuoteBreakdown {
@@ -211,10 +221,15 @@ export interface InlineReturnRecord {
   refundedAt?: string | null;
   kind: "INLINE";
   returnKey?: string | null;
-  /** "DRIVER_CAP" while a driver-captured return awaits approval above the driver cap —
+  /** "DRIVER_CAP" while a driver-captured return awaits approval above the driver cap, or "ALREADY_RETURNED" (B961, wins over
+   *  DRIVER_CAP) while it awaits staff approval WITH a reason because its chunk is goods already returned or credited —
    *  an OFFICE capture never sets this (PR 1 asserts it stays null/absent). */
   holdReason?: string | null;
   heldAmount?: number | null;
+  /** B961: true on a capture/replay response whose return is HELD because its chunk is "already returned or credited"
+   *  (not persisted: derived from `holdReason === "ALREADY_RETURNED"`), with the readable sentence for the driver. */
+  alreadyReturnedHold?: boolean;
+  holdMessage?: string;
   /** B735: non-null iff this return has an unresolved regulated-ledger park (the B681 park
    *  guard could not safely reverse a legacy/unknown box-axis SALE row). `null` = checked and clean; ABSENT =
    *  not checked (the post-commit read failed, or no tenant context) — never assume clean. */

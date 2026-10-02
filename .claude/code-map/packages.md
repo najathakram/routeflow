@@ -403,3 +403,41 @@ TS config presets (JSON inheritance): `base.json` (es2022, strict, nodeNext), `n
 - **Modified `packages/types/`:** `api/products.ts` (unit prices `string|null`; `PutProductUnitsPayload` -> `CreateProductUnitPayload`/`UpdateProductUnitPayload`, #947); `api/us-states.ts` (comment only: AA/AE/AP/FM/MH/PW/UM out of scope); `index.ts` (+4 re-exports).
 - **Modified `packages/pricing/src/unit-levels.ts`:** `resolveUnitPrice` now delegates to new `resolveLevelPrice(input: ResolveLevelPriceInput)`; new `Numeric` type accepts Decimal/string; explicit price = positive number only; zero packPrice guard (#943/#947).
 - **Modified `packages/ui/src/web/`:** `Badge.tsx` (`children` now rendered, #946); `Modal.tsx` (+`scroll` 92vh cap, `onOpenAutoFocus`, `onCloseAutoFocus`, #1062/#1115). ui + eslint-config `package.json`: dep bumps (#972).
+
+## Landed 2026-10-01 (w12-w27)
+
+> Drift `e23a8b035` -> HEAD, packages side only; each entry checked against the file at HEAD. Mobile consumers: [`mobile/landing-2026-10-01-w12-w27.md`](mobile/landing-2026-10-01-w12-w27.md).
+
+### `@routeflow/scanning` (`packages/scanning`) — scan level, aim box, steady-read, Hold mode
+
+- `src/scan-level.ts` (#2764 M4a-1) — the ONE pure scan-level resolver: the CODE decides the level (unit-only code -> UNIT, box-only -> BOX, shared code -> `defaultSellLevel({unitsPerBox})`). Exports `ScanBarcodeRow{code,level}`, `ScanLevelProduct`, `resolveScanSellLevel(product, levels)`, `levelsForScannedCode(code, product): SellLevel[]`, `scanMatchIsForCode(code, matchCode)`. Imports `@routeflow/pricing` (new `dependencies` entry; `@routeflow/types` added to devDependencies in `package.json`).
+- `src/barcode-symbology.ts` (#2764) — `inferBarcodeSymbology(code): BarcodeSymbology`. Specs `barcode-symbology.spec.ts`, `scan-level.spec.ts`, `no-second-scan-normaliser.spec.ts` (guards a second scan normaliser), `package-shape.spec.ts`.
+- `src/aim-box.ts` (#2899) — `AimBoxRect`, `BarcodeBoundsLike`, `isWithinAimBox(bounds, aimBox)`: centre of the decoded bounds inside the box; missing/zero-size geometry is allowed (fail open). Bounds are view pixels, no scaling.
+- `src/steady-read.ts` (#2899) — N-consecutive-frame confirmation: `STEADY_READ_MIN_FRAMES=3`, `STEADY_READ_MAX_GAP_MS=700`, `STEADY_READ_SLOTS=4`, `SteadyReadSlot/State/Result`, `createSteadyReadState()`, `trackSteadyRead(state, code, now, absent)`, `clearAfterAbsence(state, code, candidatesOf?)`.
+- `src/scan-mode.ts` (#2913) — `ScanMode = "continuous" | "hold"`, `SCAN_MODE_STORAGE_KEY="routeflow.scanMode"`, `parseScanMode(raw)` (only exact `"hold"` opts in), `shouldDecode(mode, holding)` (first gate a frame passes).
+- `src/scan-loop.ts` (#2899) — adds `NEVER_ACCEPTED`, `STEADY_ABSENCE_GAP_MS=800`, `touchSeen(state, code, now, candidatesOf?)`, `isTrackedByGate`, `isAbsentFromGate`; `gateScan` gains `afterAbsence` and `absenceGapMs` params (defaults keep old behaviour).
+- `src/scan-engine.ts` (#2899/#2913) — adds `ContinuousScanState{...ScanEngineState, steady}`, `createContinuousScanState()`, `ContinuousFrameOptions{bounds?, aimBox?, candidatesOf?}`, `continuousFrameScanned(state, code, now, opts)` (aim box -> steady-read -> gate -> buffer; out-of-box frames only `touchSeen`), `resetSteadyRead(state)`. Specs `scan-engine.continuous.spec.ts`, `scan-mode.spec.ts`, `scan-loop.spec.ts`, `aim-box.spec.ts`, `steady-read.spec.ts`.
+- `src/index.ts` — barrel now also `export *` from barcode-symbology, scan-level, aim-box, steady-read, scan-mode.
+
+### `@routeflow/pricing`
+
+- `src/sell-level.ts` (#2764) — `SELL_LEVEL_VALUES=["BOX","UNIT"]`, `SellLevel`, `defaultSellLevel({unitsPerBox})` (upb > 1 -> BOX else UNIT; scan-level resolution only). Spec `sell-level.spec.ts`.
+- `src/unit-levels.ts` (#2853 #2784 PR-1) — `defaultSellingLabel(product: LadderProduct, units: readonly LadderUnit[]): string | null`, the ONE "default selling unit" resolver (first valid level flagged `isDefaultSelling` that the ladder really sells at its own factor; web `defaultUnitValue` and `resolveLineUnits` delegate). Spec `unit-levels.spec.ts`.
+- `src/component-pieces.ts` (#2857) — prettier only.
+
+### `@routeflow/types`
+
+- `api/credit-notes.ts` (#2801, #2864) — NEW: `CreditNoteVoidPreview{refusal, refusalCode: CreditNoteErrorCode|null, restoresTotal, invoices[]}`, `ReissueCreditNoteInput{amount, items?, reason?, expiresAt?}`, `ReissueCreditNoteResult<T>{voided, creditNote, unapplied[]}`.
+- `api/error-codes.ts` (#2864, #2878, #2876, #2920) — +13 `CREDIT_NOTE_*` codes and `CREDIT_NOTE_ERROR_CODES`/`CreditNoteErrorCode` (closed set; UI maps to fixed copy), `RETURN_REFUND_OVER_LINE_HEADROOM`, `CUSTOMER_NOT_LINKED`, `BILL_STATE_CHANGED`, `BILL_VOID`.
+- `api/preferences.ts` (#2792, #2866) — NEW: `PREF` const, `PREFERENCE_KEYS`, `PreferenceKey`, `PreferencePatch` (the one allow-list for `PATCH /users/me/preferences`; +`staffOrderEmail`, `staffBuyerChangeEmail`).
+- `api/settings-registry.ts` (#2866) — NEW: `SettingHome/Kind/Status`, `SettingRow`, `SETTINGS_REGISTRY`, `LEGACY_SYSTEM_CONFIG_BEHAVIOUR(_KEYS)`, `CREDIT_LIMIT_MOVING_KEYS`, `OFF_HUB_SCREENS`, `isRegisteredSettingKey`, `validateSettingsRegistry`.
+- `api/purchase-orders.ts` (#2898) — +`PurchaseOrderReceipt{kind: "RECEIPT"|"REVERSAL", ...}`, `PurchaseOrderBillLink` (PO detail page).
+- `api/products.ts` (#2764) — +`ScanMatchView{code, levels: PackagingLevel[]}` (additive on the scan-lookup response). `api/enums.ts` (#2765) — +`HANDOFF_REALM_VALUES`/`HandoffRealm`.
+- `internal-email.ts` (#2873) — NEW: `isInternalEmail` (unwraps `Name <x@y>` recipients), `NO_EMAIL_COPY`, `displayEmail`; web `lib/formatting.ts` and mobile `lib/internal-email.ts` re-export it.
+- `index.ts` — +re-exports of internal-email, purchase-orders, credit-notes, preferences, settings-registry.
+
+### `@routeflow/ui`
+
+- `src/shell-handoff.ts` (#2765, #2653) — NEW, exported as `@routeflow/ui/shell-handoff`: `HANDOFF_ENTRY_PATH="/handoff"`, `HandoffWebRealm`, `HANDOFF_MINT_PATH`, `HANDOFF_EXCHANGE_PATH`, `HANDOFF_DEVICE_ID`, `buildHandoffFragment({code, realm, seller?})`, `parseHandoffLocation(hash, search)` -> `ParsedHandoff` (code only in the URL fragment).
+- `src/shell-bridge.ts` (#2793) — +`SHELL_UA_PATTERN` (regex source shared with the web pre-paint head script); `isShellUserAgent` uses it.
+- `src/web/ScrollShadow.tsx` (#2876) — NEW `ScrollShadow({...}: ScrollShadowProps)`; `Table.tsx` now wraps its scroller in it; both exported from `web/index.ts`.

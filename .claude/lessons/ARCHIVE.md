@@ -3324,3 +3324,42 @@ citations, closed-out with its own post-init assertion guard).
 - **Guard:** `scripts/lib/local-db-target.cjs` and its bypass-list spec (`local-db-target.spec.ts`).
   (Archived 2026-09-30 whole and verbatim to make room at cap for L-249: zero outside citations and a
   shipped guard named in the entry; landing-coordinator bookkeeping, lead-directed.)
+
+## Archived 2026-10-01 — headroom for L-251..L-253 (lessons PR)
+
+### L-238 · 2026-09-28 · domain · an undefined key in a Prisma `where` is dropped, widening the match (#2573)
+
+- **Symptom:** a per-line CANCEL/DELETE edit with no line id built `{ id: undefined, orderId }`;
+  Prisma dropped `id`, so the write matched every line of the order.
+- **Root cause:** Prisma treats an `undefined` filter value as "no condition", not "match
+  nothing", so a missing value silently widens a narrowing `where`.
+- **Lesson:** **Never build a narrowing `where` from an optional value. Refuse the missing value
+  before the query (a 400/404), and scope every targeted write by the key AND its parent
+  (`{ id, orderId }`), so a hole in the scope can only fail loudly, never widen.**
+- **Guard:** `orders/order-line-removal.ts` (`writeLineRemoval`, `assertRemovalsNameALine`),
+  `order-line-removal.spec.ts`, `order-line-removal.db.spec.ts`.
+
+### L-221 · 2026-09-26 · domain · retry a whole idempotent tx on a conflict through ONE shared predicate (SA-269)
+
+- **Symptom:** none observed in production: a design rule set by SA-269/SA-340 when #2152 added a transaction retry, so callers would not each invent their own conflict test.
+- **Root cause (of the risk):** the conflict shapes differ across Prisma and pg (40001, 40P01 in every Prisma/pg shape, P2034, TransactionWriteConflict), so a per-caller classifier matches a subset or retries a business error.
+- **Lesson:** **Retry the WHOLE transaction (each attempt re-takes its first lock) on a write conflict, classified by one shared predicate (`common/tx-retry` `txConflictState`). An HttpException is never a conflict.**
+- **Guard:** `REG-SA269-1/2/3` in the tx-retry specs.
+
+### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
+
+- **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
+  green; once #1315 finally compiled the api specs, ~7,000 spec type errors surfaced, 6,328 of
+  them masked by one wrongly typed mock factory (`createMockPrisma`).
+- **Root cause:** `apps/api/tsconfig.json` excluded `*.spec.ts` from `check-types`, and ts-jest
+  (`isolatedModules`, transpile-only) read the same config, so neither gate type-checked a spec —
+  each assumed the other did.
+- **Lesson:** **When a type-check config excludes tests, find which gate type-checks them instead;
+  a transpile-only test runner (`isolatedModules`, SWC, babel) checks nothing. If no gate does,
+  add one — ratchet an existing error count down (shrink-only baseline) rather than wait for
+  zero.**
+- **Guard:** api `check-types` runs `scripts/check-types-ratchet.mjs` over src + specs (src
+  zero-tolerance, per-spec counts in `check-types.spec-baseline.json`, which only
+  `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
+  `// @ts-nocheck` spec (`isNoCheckFile`).
+  (Archived 2026-10-01 whole and verbatim to make room at cap: L-238 has one outside citation that still resolves and its guard specs; L-221 is guarded by REG-SA269-1/2/3; L-235 is guarded by check-types-ratchet.mjs; landing-coordinator bookkeeping, lead-directed.)

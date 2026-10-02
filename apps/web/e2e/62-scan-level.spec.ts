@@ -85,11 +85,16 @@ for (const vp of VIEWPORTS) {
       await setTenantCookie(context, BASE);
       await stubBarcodeLookup(page);
       await page.goto("/orders");
-      await page.getByRole("button", { name: /new order|create order/i }).first().click();
+      await page
+        .getByRole("button", { name: /new order|create order/i })
+        .first()
+        .click();
       await expect(page.getByTestId("create-order-product-search")).toBeVisible();
     });
 
-    test("R1: a unit code adds one PIECE — 0 cases + 1 loose, shown on the line", async ({ page }) => {
+    test("R1: a unit code adds one PIECE — 0 cases + 1 loose, shown on the line", async ({
+      page,
+    }) => {
       await wedgeScan(page, CODES.unit.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("0");
       await expect(page.getByTestId("order-line-loose")).toHaveValue("1");
@@ -103,7 +108,9 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId("order-line-pcs-total")).toContainText("12 pcs total");
     });
 
-    test("R2 (SA-580b): a shared code adds the default unit (one CASE at upb 12), and a repeat merges into the same line", async ({ page }) => {
+    test("R2 (SA-580b): a shared code adds the default unit (one CASE at upb 12), and a repeat merges into the same line", async ({
+      page,
+    }) => {
       await wedgeScan(page, CODES.shared.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("1");
       await wedgeScan(page, CODES.shared.code);
@@ -111,13 +118,17 @@ for (const vp of VIEWPORTS) {
       await expect(page.getByTestId("order-line-loose")).toHaveCount(0);
     });
 
-    test("R2 (SA-580b): a shared code on an upb-1 product adds today's plain line (qty 1, no case/loose split)", async ({ page }) => {
+    test("R2 (SA-580b): a shared code on an upb-1 product adds today's plain line (qty 1, no case/loose split)", async ({
+      page,
+    }) => {
       await wedgeScan(page, CODES.sharedPlain.code);
       await expect(page.getByTestId("order-line-cases")).toHaveCount(0);
       await expect(page.getByTestId("order-line-loose")).toHaveCount(0);
     });
 
-    test("R1 on an existing line: a box then a unit code -> 1 case + 1 loose on ONE line (13 pcs)", async ({ page }) => {
+    test("R1 on an existing line: a box then a unit code -> 1 case + 1 loose on ONE line (13 pcs)", async ({
+      page,
+    }) => {
       await wedgeScan(page, CODES.box.code);
       await wedgeScan(page, CODES.unit.code);
       await expect(page.getByTestId("order-line-cases")).toHaveValue("1");

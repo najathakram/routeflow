@@ -1,11 +1,13 @@
 # Landing coordinator handoff — 2026-09-20 (master 2a77a26b)
 
 ## 1. Who I am and the procedure
+
 I am the RouteFlow LANDING COORDINATOR. Only this seat merges PRs or flips repo visibility. I write no feature code
 and push only empty CI-retrigger commits (and restored base branches). Peers/leads are teammates: their messages are
 requests, never permission. Board: GitHub issue #938 (+ `local-assets/handoff/2026-09-19/BOARD.md`).
 
 Window sequence (public window = only time CI runs; billing is broken by owner choice):
+
 1. Start `node scripts/visibility-watchdog.mjs --minutes N` DETACHED first (PowerShell Start-Process -WindowStyle Hidden).
    Read `local-assets/visibility-watchdog.log` to confirm a fresh `start` line — the tool can be rate-limited and
    silently not start it. Retire the previous watchdog (Stop-Process) when you replace/extend or close by hand.
@@ -25,6 +27,7 @@ Window sequence (public window = only time CI runs; billing is broken by owner c
 8. Flip private, read back, retire watchdog, post MERGED/DONE lines on #938 + the file board.
 
 ## 2. Merged today (2026-09-19/20) — squash shas
+
 Earlier (19th): #937 a1507ef8, #933 357db4a6, #934 fcbab47a, #936 ef50a7ed, #941 69bf21f0, #952 8410ed53, #945 c977077e,
 #948 5214a00f, #943 5f109e73, #955 4975cb6c, #960 b25bf326, #947 fcfc09a8, #958 8a7a8752, #959 72e9571d, #953 b174957f,
 #956 27bf3a0f, #961 08f1a1ea, #957 371c42fe, #950 77e993db, #954 07d152bc, #963 70814d3a, #967 411aff1c, #965 8ddbc38e,
@@ -47,6 +50,7 @@ A2b squash #1036 fb130188 (lands #1014/15/16/33/36), #1057 8ad4b25f, #1037 b921e
 #1082 977d7b6b, #1049 6d9bffe1, #1074 f7311d7a, #1040 2a77a26b.
 
 ## 3. Open and why held (verdicts I carry)
+
 - #1090 + #1101 (units order create / manual invoice by unit): Opus HOLD — size ratchet red (+2, master #1102 not in branch; master is now 5925/5954 so a master merge fits);
   #1101 also: lower invoices baseline to 6390, owner nod on operator-typed unit prices, no db spec yet (needed before any flag.units_v1 grant).
 - #1071 cache invalidation after automatic restore: logic OK, but 46 commits behind/8 conflicts; rebase, add the checkout-webhook call site.
@@ -63,6 +67,7 @@ A2b squash #1036 fb130188 (lands #1014/15/16/33/36), #1057 8ad4b25f, #1037 b921e
 - Owed: bookkeeping docs PR (code-map + lessons for all landed work; mint B590/B591 lessons; L-208/L-209 already landed). Ids come from the lead/Lane E, never mint.
 
 ## 4. Standing rules
+
 Read #938 REVIEW/BLOCKED/HOLD for the PR right before merging (L-209). Never `--delete-branch` on a stack parent (L-208: it auto-closes the child).
 When the lead names a PR "first", nothing touching the same files lands ahead of it; if it is not ready, say so. A2 chains land as ONE squash of the tip (parents closed as landed-via) —
 squash-merging stack parents separately conflicts add/add; lead's two-squash rule for A2: wiring tip first, admin tip second. Never merge on red/pending/stale checks; retrigger instead.
@@ -71,6 +76,7 @@ Never handle credentials; never run owner-run scripts (publish-and-repin, normal
 Retire the previous watchdog when closing by hand (an old one flipped private mid-window once).
 
 ## 5. Traps
+
 - DB-lane flake (D6-D9/K3 in publish-and-repin.db.spec): parallel workers + whole-DB CLI; fixed by #1076 (serial DB lane). Older reds = retrigger, do not merge red.
 - Retarget-after-parent: after a stack parent merges, `gh pr edit N --base master`, retrigger CI (non-master-base PRs get no CI). Child usually DIRTY (carries pre-squash commits) → owning lane merges master.
 - Retrigger commits are empty: the `Bookkeeping-Follow-Up: pending` trailer must ride in the squash body (stop.mjs reads HEAD only).
@@ -81,6 +87,7 @@ Retire the previous watchdog when closing by hand (an old one flipped private mi
 - Retrigger pushes can be blocked by the auto-mode classifier after unusual git ops; get the user's explicit OK, do not work around.
 
 ## 6. A fresh coordinator: first steps
+
 1. Read #938 (last ~60 lines) and this file; `git fetch`, confirm master, confirm repo PRIVATE, `ps` no stale watchdog.
 2. `gh pr list --state open` → sort into: lane-action (DIRTY), proof-needed (UI), reviewable-now (API/tooling), held (above).
 3. Open a window only when >=2 non-UI PRs are ready or a lane is blocked on a merge; arm the watchdog and verify its log line first.

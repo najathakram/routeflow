@@ -1083,6 +1083,215 @@ describe("InlineReturnsQuoteService — #2695 (SA-557): a staff per-line credit 
     ).toBe(RETURN_CREDIT_OVERRIDE_ERROR_CODES.OVER_CAP);
   });
 
+  // B961 / SA-071c: an over-return chunk of a product the customer DID buy (a candidate invoice line exists, all of it already
+  // returned) is flagged "already returned or credited"; a never-invoiced product's chunk stays "not on any invoice".
+  it("B961 (Opus B1): buy 10, return 12 with NOTHING returned before: the 2 extra are the ordinary over-return, NOT flagged", async () => {
+    const result = await quote({ pieces: 12 }); // 10 sold on a candidate line, 2 over, no prior return
+    const [matched, over] = result.chunks;
+    expect(matched).not.toHaveProperty("alreadyReturned");
+    expect(over).toMatchObject({ priceSource: "BASE", pieces: 2 });
+    expect(over).not.toHaveProperty("alreadyReturned");
+  });
+
+  it("B961 (SA-071h): the in-window line carries a PRIOR return (4 of 10 back) and an unreferenced chunk remains (6 matched + 2 over): the over-return IS flagged", async () => {
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 4 }]);
+    const result = await quote({ pieces: 8 });
+    const [matched, over] = result.chunks;
+    expect(matched).toMatchObject({ pieces: 6 });
+    expect(matched).not.toHaveProperty("alreadyReturned");
+    expect(over).toMatchObject({ pieces: 2, sourceInvoiceItemId: null, alreadyReturned: true });
+  });
+
+  describe("SA-071f: the flag uses LIFETIME exhaustion (the 90-day window is for PRICING only)", () => {
+    const oldLine = {
+      orderId: "order-old",
+      subtotal: 50,
+      discount: 0,
+      taxAmount: 0,
+      items: [
+        {
+          id: "invitem-old",
+          orderItemId: "oi-old",
+          productId: "prod-1",
+          qty: 10,
+          unitPrice: 5,
+          subtotal: 50,
+          boxes: null,
+          pieces: null,
+          unitsPerBox: null,
+          promoFreeUnits: null,
+          taxRate: 0,
+          categoryTaxAmount: null,
+        },
+      ],
+    };
+    /** the standard-return read (kind STANDARD) and the inline read share db.returnItem: answer each with its own rows */
+    const returnRows = (rows: unknown[], standard: unknown[] = []) =>
+      (db.returnItem.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        if (args?.where?.return?.kind === "STANDARD") return standard;
+        // honour the order filter (eq or in), like the database: an order must see ONLY its own returns
+        const so = args?.where?.sourceOrderId;
+        const wanted: string[] | null =
+          so == null ? null : typeof so === "string" ? [so] : (so.in ?? null);
+        return wanted
+          ? (rows as Array<{ sourceOrderId?: string }>).filter(
+              (r) => r.sourceOrderId != null && wanted.includes(r.sourceOrderId),
+            )
+          : rows;
+      });
+    // inside the 90-day window: nothing; the lifetime read (a window far wider) sees the 120-day-old sale
+    const soldLongAgo = () =>
+      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        // the PRICING read has an issueDate window (90 days: sees nothing); the lifetime flag read has none
+        return args?.where?.issueDate ? [] : [oldLine];
+      });
+
+    it("a sale 120 days ago FULLY returned, then an inline return today: the unreferenced chunk is flagged", async () => {
+      soldLongAgo();
+      returnRows([{ productId: "prod-1", qty: 10, sourceOrderId: "order-old" }]);
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks).toEqual([
+        expect.objectContaining({ sourceInvoiceItemId: null, pieces: 2, alreadyReturned: true }),
+      ]);
+    });
+
+    it("lead N-a: the lifetime check costs a CONSTANT number of reads however many invoices (orders) the customer has", async () => {
+      const manyOld = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({
+          ...oldLine,
+          orderId: `order-old-${i}`,
+          items: [{ ...oldLine.items[0], id: `invitem-old-${i}` }],
+        }));
+      const reads = async (n: number) => {
+        (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
+          const since: Date | undefined = args?.where?.issueDate?.gte;
+          const days = since ? (Date.now() - since.getTime()) / 86_400_000 : 0;
+          return days > 200 || !since ? manyOld(n) : [];
+        });
+        for (const m of [
+          db.invoice.findMany,
+          db.return.findMany,
+          db.returnItem.findMany,
+          db.creditNoteItem.findMany,
+        ])
+          (m as jest.Mock).mockClear();
+        returnRows([]);
+        await quote({ pieces: 2 });
+        return [
+          db.invoice.findMany,
+          db.return.findMany,
+          db.returnItem.findMany,
+          db.creditNoteItem.findMany,
+        ].map((m) => (m as jest.Mock).mock.calls.length);
+      };
+      expect(await reads(25)).toEqual(await reads(1));
+    });
+
+    it("SA-071h repeat buyer: A (200 days, NEVER returned) + B (30 days, fully refunded), then an inline return of 10: FLAGGED", async () => {
+      const lineB = {
+        ...oldLine,
+        orderId: "order-b",
+        items: [{ ...oldLine.items[0], id: "invitem-b" }],
+      };
+      const lineA = {
+        ...oldLine,
+        orderId: "order-a",
+        items: [{ ...oldLine.items[0], id: "invitem-a" }],
+      };
+      // the 90-day pricing read sees only B; any wider (lifetime) read, dated or undated, sees A and B
+      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) => {
+        const since: Date | undefined = args?.where?.issueDate?.gte;
+        const days = since ? (Date.now() - since.getTime()) / 86_400_000 : Infinity;
+        return days > 200 ? [lineA, lineB] : [lineB];
+      });
+      returnRows([{ productId: "prod-1", qty: 10, sourceOrderId: "order-b" }]); // B fully returned
+      const result = await quote({ pieces: 10 });
+      expect(result.chunks).toEqual([
+        expect.objectContaining({ sourceInvoiceItemId: null, pieces: 10, alreadyReturned: true }),
+      ]);
+    });
+
+    it("a STANDARD return of the old order counts in pieces through the order's own line factor (a 2-pack x 5 sold = 10 pieces, 5 units returned)", async () => {
+      (db.invoice.findMany as jest.Mock).mockImplementation(async (args: any) =>
+        args?.where?.issueDate
+          ? []
+          : [
+              {
+                ...oldLine,
+                items: [{ ...oldLine.items[0], qty: 5, unitsPerBox: 2, boxes: null }],
+              },
+            ],
+      );
+      returnRows([], [{ qty: 5, return: { orderId: "order-old" } }]);
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks[0]).toMatchObject({ alreadyReturned: true });
+    });
+
+    it("a sale 120 days ago NOT returned: a legitimate old-purchase return, unflagged", async () => {
+      soldLongAgo();
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks).toHaveLength(1);
+      expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+    });
+
+    it("returned + CREDIT-NOTE-credited together reaching the sold qty flags it (4 returned + 6 credited of 10)", async () => {
+      soldLongAgo();
+      returnRows([{ productId: "prod-1", qty: 4, sourceOrderId: "order-old" }]);
+      (db.creditNoteItem.findMany as jest.Mock).mockResolvedValue([
+        { invoiceItemId: "invitem-old", qty: 6, creditNoteId: "cn-manual" },
+      ]);
+      (db.return.findMany as jest.Mock).mockResolvedValue([]); // cn-manual backs no return
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks[0]).toMatchObject({ alreadyReturned: true });
+    });
+
+    it("a credit note that IS a return's refund is not counted twice (6 returned + a 6-pc refund note of those same returns: 6 of 10 is not exhausted)", async () => {
+      soldLongAgo();
+      returnRows([{ productId: "prod-1", qty: 6, sourceOrderId: "order-old" }]);
+      (db.creditNoteItem.findMany as jest.Mock).mockResolvedValue([
+        { invoiceItemId: "invitem-old", qty: 6, creditNoteId: "cn-refund" },
+      ]);
+      (db.return.findMany as jest.Mock).mockImplementation(async (args: any) =>
+        args?.where?.creditNoteId ? [{ creditNoteId: "cn-refund" }] : [],
+      );
+      const result = await quote({ pieces: 2 });
+      expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+    });
+  });
+
+  it("B961: a product that was FULLY returned before (nothing left on its candidate line) flags the whole quantity", async () => {
+    // the prior-returned reader counts earlier returns of the product off this source order (here as inline rows)
+    (db.returnItem.findMany as jest.Mock).mockResolvedValue([{ productId: "prod-1", qty: 10 }]);
+    const result = await quote({ pieces: 2 });
+    expect(result.chunks).toEqual([
+      expect.objectContaining({ pieces: 2, sourceInvoiceItemId: null, alreadyReturned: true }),
+    ]);
+  });
+
+  it("B961: a NEVER-invoiced product stays 'not on any invoice' (no flag): today's SA-071(2) behaviour", async () => {
+    (db.invoice.findMany as jest.Mock).mockResolvedValue([]);
+    const result = await quote({ pieces: 3 });
+    expect(result.chunks).toHaveLength(1);
+    expect(result.chunks[0]).not.toHaveProperty("alreadyReturned");
+  });
+
+  it("B961: a DRIVER carrying alreadyReturnedReason ⇒ 400 FORBIDDEN, before any read (staff only)", async () => {
+    const r = await refusal(
+      service.quote(
+        {
+          customerId: "cust-1",
+          routeRunStopId: "stop-1",
+          items: [
+            { productId: "prod-1", boxes: 0, pieces: 4, alreadyReturnedReason: "customer says so" },
+          ] as any,
+        },
+        DRIVER,
+      ),
+    );
+    expect(r).toMatchObject({ status: 400, code: RETURN_CREDIT_OVERRIDE_ERROR_CODES.FORBIDDEN });
+    expect(db.customer.findFirst).not.toHaveBeenCalled();
+  });
+
   it("a DRIVER carrying either field ⇒ 400, before any read (never silently dropped)", async () => {
     for (const item of [
       { creditUnitPrice: 1, overrideReason: "x" },

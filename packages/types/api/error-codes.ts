@@ -21,6 +21,18 @@
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
 //                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
 //                    carries `barcode` and the holder's `productId`.
+//   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
+//                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
+//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
+//                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
+//   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
+//                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
+//   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
+//                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
+//                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
+//   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
+//                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -46,8 +58,11 @@
 //                    by anything other than whole boxes or a price (#2717 M3).
 //   INVENTORY_SETTING_INVALID — `body.code` of the 400 when PATCH /settings/inventory gets a
 //                    `buyerOversell` that is not exactly "off" or "backorder"; `details.field` names it.
-//   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 when a tenant-scoped endpoint is called with no
-//                    tenant context (a SUPER_ADMIN not impersonating, a job): forTenant() would be unscoped.
+//   TENANT_CONTEXT_REQUIRED — `body.code` of the 403 the messaging delivery-log / health / staff-email-settings
+//                    endpoints answer when the caller has no tenant context (SUPER_ADMIN without an
+//                    impersonated tenant): their unscoped client would read or write another tenant's rows.
+//   STAFF_CC_INVALID — `body.code` of the 400 a PUT /messaging/staff-email-settings answers for a
+//                    bad "Also send to" list; `body.details` is `{ index, reason }` (WS4, SA-606).
 //   CREDIT_NOTE_*  — `body.code` of the credit-note edit / reissue / void refusals (#2648, #2848; the
 //                    SA-608 closed set). The client maps each to FIXED copy and never renders the
 //                    server message. 409: VOID_NOT_EDITABLE (the note is void), RETURN_BACKED (edit the
@@ -60,6 +75,35 @@
 //                    Idempotency-Key), EXPIRY_PAST (the expiry is, or already was, in the past),
 //                    EXPIRY_NOT_EDITABLE (only an ISSUED note's expiry can change), LINES_REQUIRED (a
 //                    line-linked note must restate its lines), LINE_INVALID (a malformed credit line).
+//   CUSTOMER_NOT_LINKED — `body.code` of the 403 a CUSTOMER login gets from /orders when no live
+//                    Customer record is linked to that user (B917, REG-B131 refusal, status unchanged).
+//   TEXT_CELL_FORMULA_LEAD — `body.code` of the 400 a customer / tenant NAME write answers when the name
+//                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
+//                    field (businessName, contactName, displayName). Clients show FIXED copy with a
+//                    human field label and never the server message.
+//   B982 — codes the API threw as hand-typed literals, now named here. Each is `body.code` of the refusal
+//                    its throw site names (value == key, byte-identical to what was sent):
+//                    PLAN_GATE / PLAN_GATE_UNAVAILABLE (billing/plan-gate.ts, plan-flag-denial.ts), READ_ONLY
+//                    (tenant-status.guard.ts: a blocked write on a READ_ONLY tenant; the same word is also a
+//                    tenant STATUS value, which is not an error code), INSUFFICIENT_STOCK (the order-edit
+//                    oversell 409), the INLINE_RETURN_* family (returns/inline-returns*.ts, returns.service.ts),
+//                    UNIT_AWARE_LINE, MERGE_PACK_MISMATCH, ORDER_CHANGED_DURING_EDIT, CONCURRENT_UPDATE,
+//                    MERGE_IN_PROGRESS, LOCK_UNAVAILABLE (order/customer contention), PO_ALREADY_BILLED,
+//                    BILL_EXCEEDS_PO (vendor bills), INVOICE_HAS_UNSPENT_CREDIT (credit notes),
+//                    HANDOFF_CODE_INVALID (auth handoff).
+//   B987-A — orders / routes / products / selling-restrictions refusals, now named here (value == key, byte-identical to what
+//                    was sent): the change-request family (CHANGE_REQUEST_*, CHANGE_WINDOW_CLOSED, EDIT_WINDOW_OPEN, INVALID_*),
+//                    order line and credit guards (LINE_ALREADY_DELIVERED, ORDER_BELOW_RETURN_CREDIT, CREDIT_LIMIT_EXCEEDED,
+//                    MERGE_CHOICE_REQUIRED, SOURCE_LINE_*, UNIT_AWARE_LINE_UNVERIFIABLE, UNIT_NOT_OFFERED), route dispatch
+//                    (FEATURE_MODE, RUN_ALREADY_SETTLED, STOP_ALREADY_COMPLETED, STOP_SKIPPED) and the selling-restrictions
+//                    409s (SELLING_RESTRICTED, SELLING_RESTRICTIONS_NOT_READY). SELLING_RESTRICTED is also a suspension REASON
+//                    value in recurring invoices / order templates, which is data, not an error code.
+//   B987-B — vendor-bill / supplier-statement / inventory / invoice refusals, now named here (value == key, byte-identical to what
+//                    was sent): PO_LINK_CONFLICT, PO_LINK_BROKEN, SCAN_ALREADY_POSTED (vendor-bill scan and PO link), the AI_* scan
+//                    failures (AI_KEY_INVALID, AI_SCAN_REJECTED, AI_UNAVAILABLE, AI_PARSE_FAILED: vendor-bill and statement scans),
+//                    INSUFFICIENT_UNASSIGNED, PO_LOT_PARTIALLY_CONSUMED, PO_HAS_LINKED_BILL, INVENTORY_LEDGER_GAP (inventory),
+//                    ALLOCATIONS_EXCEED_PAYMENT, INVOICE_CHANGED_DURING_EDIT (invoices) and EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED
+//                    (invoice send, buyer merge verification email).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -72,6 +116,11 @@ export const API_ERROR_CODES = {
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
+  CODE_TAKEN: "CODE_TAKEN",
+  NAME_TAKEN: "NAME_TAKEN",
+  HOLDERS_CHANGED: "HOLDERS_CHANGED",
+  CODES_CHANGED: "CODES_CHANGED",
+  CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",
@@ -86,11 +135,14 @@ export const API_ERROR_CODES = {
   COMPOSITION_CORRUPT: "COMPOSITION_CORRUPT",
   COMPOSED_LINE_EDIT: "COMPOSED_LINE_EDIT",
   INVENTORY_SETTING_INVALID: "INVENTORY_SETTING_INVALID",
+  STAFF_CC_INVALID: "STAFF_CC_INVALID",
   TENANT_CONTEXT_REQUIRED: "TENANT_CONTEXT_REQUIRED",
   CREDIT_NOTE_VOID_NOT_EDITABLE: "CREDIT_NOTE_VOID_NOT_EDITABLE",
   CREDIT_NOTE_RETURN_BACKED: "CREDIT_NOTE_RETURN_BACKED",
   CREDIT_NOTE_CREDIT_CONSUMED: "CREDIT_NOTE_CREDIT_CONSUMED",
   CREDIT_NOTE_OVER_HEADROOM: "CREDIT_NOTE_OVER_HEADROOM",
+  RETURN_REFUND_OVER_LINE_HEADROOM: "RETURN_REFUND_OVER_LINE_HEADROOM",
+  RETURN_MIXED_UNIT_PRODUCT: "RETURN_MIXED_UNIT_PRODUCT",
   CREDIT_NOTE_SOURCE_GONE: "CREDIT_NOTE_SOURCE_GONE",
   CREDIT_NOTE_NO_SOURCE_CAP: "CREDIT_NOTE_NO_SOURCE_CAP",
   CREDIT_NOTE_CHANGED_CONCURRENTLY: "CREDIT_NOTE_CHANGED_CONCURRENTLY",
@@ -100,8 +152,78 @@ export const API_ERROR_CODES = {
   CREDIT_NOTE_EXPIRY_NOT_EDITABLE: "CREDIT_NOTE_EXPIRY_NOT_EDITABLE",
   CREDIT_NOTE_LINES_REQUIRED: "CREDIT_NOTE_LINES_REQUIRED",
   CREDIT_NOTE_LINE_INVALID: "CREDIT_NOTE_LINE_INVALID",
+  CUSTOMER_NOT_LINKED: "CUSTOMER_NOT_LINKED",
   BILL_STATE_CHANGED: "BILL_STATE_CHANGED",
   BILL_VOID: "BILL_VOID",
+  RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
+  INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+  TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
+  PLAN_GATE: "PLAN_GATE",
+  PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
+  READ_ONLY: "READ_ONLY",
+  INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
+  INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+  INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  INLINE_RETURN_ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+  INLINE_RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  INLINE_RETURN_KEY_TAKEN: "INLINE_RETURN_KEY_TAKEN",
+  INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+  INLINE_RETURN_PRIOR_BASIS_UNKNOWN: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+  INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
+  INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
+  INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
+  MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
+  ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
+  MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
+  LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
+  BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
+  INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
+  CHANGE_REQUEST_ALREADY_RESOLVED: "CHANGE_REQUEST_ALREADY_RESOLVED",
+  CHANGE_REQUEST_PACK_CHANGED: "CHANGE_REQUEST_PACK_CHANGED",
+  CHANGE_WINDOW_CLOSED: "CHANGE_WINDOW_CLOSED",
+  EDIT_WINDOW_OPEN: "EDIT_WINDOW_OPEN",
+  INVALID_LINE_SPLIT: "INVALID_LINE_SPLIT",
+  INVALID_RESOLUTION_FOR_TYPE: "INVALID_RESOLUTION_FOR_TYPE",
+  LINE_PACK_UNDERIVABLE: "LINE_PACK_UNDERIVABLE",
+  LINE_ALREADY_DELIVERED: "LINE_ALREADY_DELIVERED",
+  ORDER_BELOW_RETURN_CREDIT: "ORDER_BELOW_RETURN_CREDIT",
+  CREDIT_LIMIT_EXCEEDED: "CREDIT_LIMIT_EXCEEDED",
+  MERGE_CHOICE_REQUIRED: "MERGE_CHOICE_REQUIRED",
+  SOURCE_LINE_AMBIGUOUS: "SOURCE_LINE_AMBIGUOUS",
+  SOURCE_LINE_INVALID: "SOURCE_LINE_INVALID",
+  UNIT_AWARE_LINE_UNVERIFIABLE: "UNIT_AWARE_LINE_UNVERIFIABLE",
+  UNIT_NOT_OFFERED: "UNIT_NOT_OFFERED",
+  FEATURE_MODE: "FEATURE_MODE",
+  RUN_ALREADY_SETTLED: "RUN_ALREADY_SETTLED",
+  STOP_ALREADY_COMPLETED: "STOP_ALREADY_COMPLETED",
+  STOP_SKIPPED: "STOP_SKIPPED",
+  SELLING_RESTRICTED: "SELLING_RESTRICTED",
+  SELLING_RESTRICTIONS_NOT_READY: "SELLING_RESTRICTIONS_NOT_READY",
+  PO_LINK_CONFLICT: "PO_LINK_CONFLICT",
+  SCAN_ALREADY_POSTED: "SCAN_ALREADY_POSTED",
+  PO_LINK_BROKEN: "PO_LINK_BROKEN",
+  AI_KEY_INVALID: "AI_KEY_INVALID",
+  AI_SCAN_REJECTED: "AI_SCAN_REJECTED",
+  AI_UNAVAILABLE: "AI_UNAVAILABLE",
+  AI_PARSE_FAILED: "AI_PARSE_FAILED",
+  INSUFFICIENT_UNASSIGNED: "INSUFFICIENT_UNASSIGNED",
+  PO_LOT_PARTIALLY_CONSUMED: "PO_LOT_PARTIALLY_CONSUMED",
+  PO_HAS_LINKED_BILL: "PO_HAS_LINKED_BILL",
+  INVENTORY_LEDGER_GAP: "INVENTORY_LEDGER_GAP",
+  ALLOCATIONS_EXCEED_PAYMENT: "ALLOCATIONS_EXCEED_PAYMENT",
+  INVOICE_CHANGED_DURING_EDIT: "INVOICE_CHANGED_DURING_EDIT",
+  EMAIL_NOT_CONFIGURED: "EMAIL_NOT_CONFIGURED",
+  EMAIL_SEND_FAILED: "EMAIL_SEND_FAILED",
+} as const;
+
+/** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
+export const PLAN_GATE_FLAG_KEYS = {
+  METER_CUSTOMERS: "meter.customers",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

@@ -64,6 +64,7 @@ export const ROUTE_PARITY: Readonly<Record<string, ParityRow>> = {
   "(dashboard)/inventory/stock-counts": { mobile: ["(operator)/products/stock-counts"] },
   "(dashboard)/inventory": { mobile: ["(operator)/(tabs)/warehouse"] },
   "(dashboard)/purchase-orders": { mobile: ["(operator)/purchase-orders/index"] },
+  "(dashboard)/purchase-orders/[id]": { mobile: ["(operator)/purchase-orders/[id]"] },
   "(dashboard)/products/[id]": { mobile: ["(operator)/products/[id]"] },
   "(dashboard)/products/create": { mobile: ["(operator)/products/create"] },
   "(dashboard)/products": { mobile: ["(operator)/products/index"] },

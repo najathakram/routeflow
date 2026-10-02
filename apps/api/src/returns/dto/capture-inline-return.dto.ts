@@ -83,6 +83,17 @@ export class CaptureInlineReturnItemDto {
   @IsString()
   @MaxLength(200)
   overrideReason?: string;
+
+  /**
+   * B961 / SA-071c: a staff (OPERATOR/TENANT_ADMIN) confirmation that this line's over-return chunk (goods the customer
+   * already returned or was credited for) really is being returned, WITH a reason (audited with the actor). Required on the
+   * capture when the quote flagged `alreadyReturned`; a DRIVER carrying it is a 400 (a driver's capture is held for the office).
+   */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === "string" ? value.trim() : value))
+  @IsString()
+  @MaxLength(200)
+  alreadyReturnedReason?: string;
 }
 
 /**

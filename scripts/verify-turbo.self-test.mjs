@@ -20,12 +20,12 @@
  */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { scrubbedGitEnv } from "./lib/check-git-hooks.mjs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path, { dirname, join } from "node:path";
 import {
   changedFilesSince,
-  cleanGitEnv,
   computeScope,
   decideScope,
   loadWorkspaces,
@@ -39,8 +39,12 @@ import {
   buildArgv,
   buildTurboFlags,
   chooseVerifyDefaults,
+  excludedLine,
   jestPassthrough,
   LOW_MEM_THRESHOLD_BYTES,
+  VERIFY_EXCLUDE_ALLOWED,
+  parseVerifyExclude,
+  planTurboCalls,
 } from "./verify-turbo.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -132,7 +136,7 @@ function isUnder(root, p, pathImpl = path) {
 }
 
 const fixtureEnv = () => ({
-  ...cleanGitEnv(),
+  ...scrubbedGitEnv(),
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
 });
@@ -539,6 +543,499 @@ check(
     "--maxWorkers=2",
   ],
 );
+
+// VX: VERIFY_EXCLUDE — workspaces CI verifies in their OWN job (apps/control, lead ruling
+// 2026-10-01), taken out of the shared Verify's turbo scope. Pure builders first, then the real
+// `main()` against a stub `npx` so the env var is proven to reach the argv end to end.
+const CONTROL = "@routeflow/control";
+const KNOWN = workspaces.map((w) => w.name);
+check(
+  "VX0 the real graph has @routeflow/control (the name ci.yml's VERIFY_EXCLUDE uses)",
+  KNOWN.includes(CONTROL),
+  true,
+);
+
+// parseVerifyExclude: comma list, trimmed, de-duplicated, empties dropped. ONLY the allow-list
+// (exactly @routeflow/control) is accepted: anything else is refused LOUDLY, so a later ci.yml edit
+// can never silently exclude api/web (lead ruling 2026-10-01).
+const thrown = (f) => {
+  try {
+    f();
+    return null;
+  } catch (e) {
+    return String(e && e.message);
+  }
+};
+check("VX1a the allow-list is EXACTLY @routeflow/control", [...VERIFY_EXCLUDE_ALLOWED], [CONTROL]);
+check(
+  "VX1 unset / empty / whitespace / only commas parse to []",
+  [
+    parseVerifyExclude(undefined, KNOWN),
+    parseVerifyExclude("", KNOWN),
+    parseVerifyExclude("   ", KNOWN),
+    parseVerifyExclude(" , ,,", KNOWN),
+  ],
+  [[], [], [], []],
+);
+check(
+  "VX2 a non-string (null / number / object) parses to []",
+  [parseVerifyExclude(null, KNOWN), parseVerifyExclude(5, KNOWN), parseVerifyExclude({}, KNOWN)],
+  [[], [], []],
+);
+check(
+  "VX3 one name, and the same name with surrounding whitespace, parse to that name",
+  [parseVerifyExclude(CONTROL, KNOWN), parseVerifyExclude(`  ${CONTROL}\t`, KNOWN)],
+  [[CONTROL], [CONTROL]],
+);
+check(
+  "VX4 duplicates collapse and empties between names are dropped",
+  parseVerifyExclude(` ${CONTROL} ,, ${CONTROL}, `, KNOWN),
+  [CONTROL],
+);
+const REFUSED = [
+  "@routeflow/api",
+  "@routeflow/web",
+  "@routeflow/mobile",
+  "@routeflow/pricing",
+  "@routeflow/nope",
+  "@routeflow/control-x",
+  "@routeflow/Control",
+  "@ROUTEFLOW/control",
+  "control",
+  "!@routeflow/control",
+  "--force",
+  "--filter=!@routeflow/api",
+  "@routeflow/*",
+  "*",
+  "a b",
+  "$(x)",
+  ";ls",
+  `${CONTROL}\n--force`,
+  `${CONTROL} @routeflow/web`,
+];
+for (const bad of REFUSED) {
+  const msg = thrown(() => parseVerifyExclude(bad, KNOWN));
+  check(
+    `VX5 ${JSON.stringify(bad)} is refused loudly, naming the allow-list`,
+    [typeof msg === "string", /may only name @routeflow\/control/.test(msg ?? "")],
+    [true, true],
+  );
+}
+check(
+  "VX6 a refused name next to the allowed one still refuses (no partial exclusion), with or without " +
+    "a known list",
+  [
+    typeof thrown(() => parseVerifyExclude(`${CONTROL},@routeflow/api`, KNOWN)),
+    typeof thrown(() => parseVerifyExclude(`@routeflow/api,${CONTROL}`, undefined)),
+    typeof thrown(() => parseVerifyExclude(`--help,${CONTROL}`, undefined)),
+  ],
+  ["string", "string", "string"],
+);
+check(
+  "VX6b the refusal message shows the offending name JSON-quoted and truncated (no raw control chars)",
+  [
+    /"\\u0007|\\u0007/.test(thrown(() => parseVerifyExclude("x\u0007y", KNOWN)) ?? ""),
+    (thrown(() => parseVerifyExclude("z".repeat(500), KNOWN)) ?? "").length < 400,
+  ],
+  [true, true],
+);
+check(
+  "VX6c an allow-listed name that is absent from the graph is dropped (nothing to exclude)",
+  parseVerifyExclude(CONTROL, ["@routeflow/api"]),
+  [],
+);
+
+const FLAGS = buildTurboFlags("");
+const run = (plan, passthrough = []) =>
+  plan.calls.map((c) =>
+    buildArgv(c.args, FLAGS, c.jest ? passthrough : []).filter((a) => a !== "turbo" && a !== "run"),
+  );
+const FULL = { mode: "full", reason: "CI" };
+const NEG = `--filter=!${CONTROL}`;
+
+// FULL scope: nothing excluded is byte-identical to the pre-change argv.
+check(
+  "VX7 FULL, nothing excluded, unsplit: the ONE bundled call, byte-identical to before",
+  run(planTurboCalls({ scope: FULL, excluded: [], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "test:repo-truth",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX8 FULL, nothing excluded, split (JEST_MAX_WORKERS): ct+lint, then jest tasks with the passthrough",
+  run(planTurboCalls({ scope: FULL, excluded: [], splitJest: true }), ["--", "--maxWorkers=2"]),
+  [
+    ["check-types", "lint", "--concurrency=2", "--continue=dependencies-successful"],
+    [
+      "test",
+      "test:repo-truth",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX9 FULL unsplit: the negative filter rides on the one bundled call",
+  run(planTurboCalls({ scope: FULL, excluded: [CONTROL], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "test:repo-truth",
+      NEG,
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX10 FULL split: the negative filter rides on BOTH calls, and --maxWorkers only on the jest one",
+  run(planTurboCalls({ scope: FULL, excluded: [CONTROL], splitJest: true }), [
+    "--",
+    "--maxWorkers=2",
+  ]),
+  [
+    ["check-types", "lint", NEG, "--concurrency=2", "--continue=dependencies-successful"],
+    [
+      "test",
+      "test:repo-truth",
+      NEG,
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX11 FULL with two exclusions: one negative filter each, in the given order, no positive filter",
+  planTurboCalls({ scope: FULL, excluded: [CONTROL, "@routeflow/web"], splitJest: false }).calls[0]
+    .args,
+  ["check-types", "lint", "test", "test:repo-truth", NEG, "--filter=!@routeflow/web"],
+);
+
+// AFFECTED scope.
+const AFF = (workspacesList) => ({ mode: "scoped", workspaces: workspacesList, changed: [] });
+const A = ["@routeflow/api", "@routeflow/pricing"];
+check(
+  "VX12 AFFECTED, nothing excluded, unsplit: the old two calls (positive filters + api repo-truth)",
+  run(planTurboCalls({ scope: AFF(A), excluded: [], splitJest: false })),
+  [
+    [
+      "check-types",
+      "lint",
+      "test",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+  ],
+);
+check(
+  "VX13 AFFECTED, nothing excluded, split: the old three calls, passthrough on the two jest ones",
+  run(planTurboCalls({ scope: AFF(A), excluded: [], splitJest: true }), ["--", "--maxWorkers=2"]),
+  [
+    [
+      "check-types",
+      "lint",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+    ],
+    [
+      "test",
+      "--filter=@routeflow/api",
+      "--filter=@routeflow/pricing",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+    [
+      "test:repo-truth",
+      "--filter=@routeflow/api",
+      "--concurrency=2",
+      "--continue=dependencies-successful",
+      "--",
+      "--maxWorkers=2",
+    ],
+  ],
+);
+check(
+  "VX14 AFFECTED: an excluded workspace is dropped from the positive filters (both paths); others stay",
+  [
+    planTurboCalls({
+      scope: AFF([...A, CONTROL]),
+      excluded: [CONTROL],
+      splitJest: false,
+    }).calls.map((c) => c.args),
+    planTurboCalls({ scope: AFF([...A, CONTROL]), excluded: [CONTROL], splitJest: true }).calls.map(
+      (c) => c.args,
+    ),
+  ],
+  [
+    [
+      ["check-types", "lint", "test", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test:repo-truth", "--filter=@routeflow/api"],
+    ],
+    [
+      ["check-types", "lint", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test", "--filter=@routeflow/api", "--filter=@routeflow/pricing"],
+      ["test:repo-truth", "--filter=@routeflow/api"],
+    ],
+  ],
+);
+check(
+  "VX15 AFFECTED: no negative filter is ever added (they would WIDEN a positive-filtered run)",
+  planTurboCalls({ scope: AFF([...A, CONTROL]), excluded: [CONTROL], splitJest: false })
+    .calls.flatMap((c) => c.args)
+    .some((a) => a.startsWith("--filter=!")),
+  false,
+);
+check(
+  "VX16 AFFECTED: nothing left after the exclusion (and api repo-truth excluded too) = no calls + a note",
+  (() => {
+    const plan = planTurboCalls({
+      scope: AFF([CONTROL]),
+      excluded: [CONTROL, "@routeflow/api"],
+      splitJest: false,
+    });
+    return [plan.calls, /nothing left to verify/i.test(plan.note ?? "")];
+  })(),
+  [[], true],
+);
+check(
+  "VX17 AFFECTED: only the control workspace in scope, control excluded: no workspace call, " +
+    "but the always-run api repo-truth tripwire still runs",
+  planTurboCalls({ scope: AFF([CONTROL]), excluded: [CONTROL], splitJest: false }).calls.map(
+    (c) => c.args,
+  ),
+  [["test:repo-truth", "--filter=@routeflow/api"]],
+);
+check(
+  "VX18 excludedLine: silent when nothing is excluded, one explanatory line otherwise",
+  [excludedLine([]), excludedLine([CONTROL]), excludedLine([CONTROL, "@routeflow/web"])],
+  [
+    null,
+    "EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control",
+    "EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control, @routeflow/web",
+  ],
+);
+
+// End to end: the REAL main() with a stub `npx` first on PATH that records its argv. CI=1 makes
+// the scope FULL without touching git; JEST_MAX_WORKERS selects the split path. POSIX only (the
+// stub is a shell script; Windows' npx is a .cmd and `shell: true`).
+if (process.platform !== "win32") {
+  const stubDir = mkdtempSync(join(tmpdir(), "verify-turbo-stub-"));
+  try {
+    const log = join(stubDir, "calls.log");
+    const counter = join(stubDir, "count");
+    // The stub records its argv, then exits with the Nth status of STUB_EXIT_SEQ ("0,3,5": call 1
+    // exits 0, call 2 exits 3, call 3 exits 5; calls past the list, or no list, exit 0).
+    writeFileSync(
+      join(stubDir, "npx"),
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$*" >> "${log}"`,
+        `n=$(cat "${counter}" 2>/dev/null || echo 0)`,
+        "n=$((n + 1))",
+        `echo "$n" > "${counter}"`,
+        "IFS=,",
+        "set -- $STUB_EXIT_SEQ",
+        'eval "code=\\${$n:-0}"',
+        'exit "$code"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    // `opts.script` / `opts.cwd` aim the real main() at a fixture repo (the AFFECTED cases below);
+    // `opts.ci === false` leaves CI unset so decideScope reads the fixture's git diff.
+    const runMain = (extraEnv, opts = {}) => {
+      writeFileSync(log, "");
+      writeFileSync(counter, "0");
+      const env = {
+        ...scrubbedGitEnv(),
+        PATH: `${stubDir}:${process.env.PATH}`,
+        CI: "1",
+        ...extraEnv,
+      };
+      delete env.FULL_VERIFY;
+      if (opts.ci === false) delete env.CI;
+      if (!("JEST_MAX_WORKERS" in extraEnv)) delete env.JEST_MAX_WORKERS;
+      if (!("VERIFY_EXCLUDE" in extraEnv)) delete env.VERIFY_EXCLUDE;
+      if (!("STUB_EXIT_SEQ" in extraEnv)) delete env.STUB_EXIT_SEQ;
+      const r = spawnSync(
+        process.execPath,
+        [opts.script ?? join(ROOT, "scripts", "verify-turbo.mjs")],
+        {
+          cwd: opts.cwd ?? ROOT,
+          encoding: "utf8",
+          env,
+        },
+      );
+      return {
+        status: r.status,
+        out: r.stdout,
+        err: r.stderr,
+        calls: readFileSync(log, "utf8").split("\n").filter(Boolean),
+      };
+    };
+    const off = runMain({});
+    check(
+      "VX19 main(): VERIFY_EXCLUDE unset = one turbo call, no negative filter, no banner",
+      [off.status, off.calls, /EXCLUDED FROM THIS RUN/.test(off.out)],
+      [
+        0,
+        [
+          "turbo run check-types lint test test:repo-truth --concurrency=2 --continue=dependencies-successful",
+        ],
+        false,
+      ],
+    );
+    const on = runMain({ VERIFY_EXCLUDE: ` ${CONTROL} ` });
+    check(
+      "VX20 main(): VERIFY_EXCLUDE reaches the FULL argv and prints the one-line banner",
+      [
+        on.status,
+        on.calls,
+        on.out.split("\n").filter((l) => l.startsWith("EXCLUDED FROM THIS RUN")),
+      ],
+      [
+        0,
+        [
+          `turbo run check-types lint test test:repo-truth ${NEG} --concurrency=2 --continue=dependencies-successful`,
+        ],
+        ["EXCLUDED FROM THIS RUN (separate CI job): @routeflow/control"],
+      ],
+    );
+    const split = runMain({ VERIFY_EXCLUDE: CONTROL, JEST_MAX_WORKERS: "2" });
+    check(
+      "VX21 main(): on the split (JEST_MAX_WORKERS) path BOTH calls carry the negative filter",
+      [split.status, split.calls],
+      [
+        0,
+        [
+          `turbo run check-types lint ${NEG} --concurrency=2 --continue=dependencies-successful`,
+          `turbo run test test:repo-truth ${NEG} --concurrency=2 --continue=dependencies-successful -- --maxWorkers=2`,
+        ],
+      ],
+    );
+    for (const bad of [
+      "nope,--help",
+      "@routeflow/api",
+      `${CONTROL},@routeflow/web`,
+      "@routeflow/*",
+    ]) {
+      const junk = runMain({ VERIFY_EXCLUDE: bad });
+      check(
+        `VX22 main(): VERIFY_EXCLUDE=${JSON.stringify(bad)} is refused loudly: exit 1, the allow-list message on stderr, NO turbo call, no banner`,
+        [
+          junk.status,
+          /VERIFY_EXCLUDE may only name @routeflow\/control/.test(junk.err),
+          junk.calls,
+          /EXCLUDED FROM THIS RUN/.test(junk.out),
+        ],
+        [1, true, [], false],
+      );
+    }
+
+    // VX23-26: the exit status is the FIRST non-zero one AND every planned call still runs. The stub
+    // above used to exit 0 always, so "exit with the last non-zero status" and "stop after the
+    // first failure" both survived this file.
+    const fullUnsplit = runMain({ STUB_EXIT_SEQ: "7" });
+    check(
+      "VX23 main() FULL unsplit: the single call's non-zero status is the exit status",
+      [fullUnsplit.status, fullUnsplit.calls.length],
+      [7, 1],
+    );
+    const fullSplit = runMain({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "2" });
+    check(
+      "VX24 main() FULL split: first non-zero (3, not the last 5) wins and both calls ran",
+      [fullSplit.status, fullSplit.calls.length],
+      [3, 2],
+    );
+
+    // AFFECTED needs a real scoped decision, so main() runs from a scratch repo that holds a copy of
+    // the script and its lib, a feature branch one apps/api file ahead of origin/master, and no
+    // campaign-check (staleWorkspaces fails open to []). Same B420 discipline as runMoveFixture:
+    // GIT_*-free env, identity as -c flags, and nothing is written before the toplevel is proven.
+    const fixDir = realpathSync(mkdtempSync(join(tmpdir(), "verify-affected-")));
+    try {
+      const fgit = (...args) =>
+        spawnSync("git", [...IDENT, ...args], { cwd: fixDir, encoding: "utf8", env: fixtureEnv() });
+      const init = fgit("init", "-q", "-b", "master");
+      const top = fgit("rev-parse", "--show-toplevel").stdout.trim();
+      if (init.status !== 0 || realpathSync(top) !== fixDir) {
+        check("VX25 fixture repo resolves to the scratch dir (refusing to write)", top, fixDir);
+      } else {
+        const put = (rel, text) => {
+          mkdirSync(dirname(join(fixDir, rel)), { recursive: true });
+          writeFileSync(join(fixDir, rel), text);
+        };
+        for (const f of ["verify-turbo.mjs"]) {
+          put(`scripts/${f}`, readFileSync(join(ROOT, "scripts", f), "utf8"));
+        }
+        for (const f of ["verify-scope.mjs", "check-git-hooks.mjs", "scrubbed-git-env.cjs"]) {
+          put(`scripts/lib/${f}`, readFileSync(join(ROOT, "scripts", "lib", f), "utf8"));
+        }
+        for (const [dir, name] of [
+          ["apps/api", "@routeflow/api"],
+          ["apps/control", "@routeflow/control"],
+          ["packages/pricing", "@routeflow/pricing"],
+        ]) {
+          put(`${dir}/package.json`, JSON.stringify({ name }));
+        }
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "base");
+        fgit("update-ref", "refs/remotes/origin/master", "HEAD");
+        fgit("checkout", "-q", "-b", "feat/x");
+        put("apps/api/src/x.ts", "export const x = 1;\n");
+        fgit("add", "-A");
+        fgit("commit", "-q", "-m", "change");
+        const aff = (extraEnv) =>
+          runMain(extraEnv, {
+            ci: false,
+            cwd: fixDir,
+            script: join(fixDir, "scripts", "verify-turbo.mjs"),
+          });
+        const affUnsplit = aff({ STUB_EXIT_SEQ: "3,5", JEST_MAX_WORKERS: "" });
+        check(
+          "VX25 main() AFFECTED unsplit: the scope is really AFFECTED, 2 calls ran, first non-zero (3) wins",
+          [/AFFECTED SCOPE/.test(affUnsplit.out), affUnsplit.calls.length, affUnsplit.status],
+          [true, 2, 3],
+        );
+        const affSplit = aff({ STUB_EXIT_SEQ: "0,3,5", JEST_MAX_WORKERS: "2" });
+        check(
+          "VX26 main() AFFECTED split: all 3 calls ran, first non-zero (3, not the last 5) wins",
+          [/AFFECTED SCOPE/.test(affSplit.out), affSplit.calls.length, affSplit.status],
+          [true, 3, 3],
+        );
+      }
+    } finally {
+      rmSync(fixDir, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(stubDir, { recursive: true, force: true });
+  }
+}
 
 // S10: portable containment — the POSIX-only startsWith(`${root}/`) threw on every Windows push.
 const W = path.win32;

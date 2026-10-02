@@ -69,6 +69,7 @@ export const RETURN_HOLD_REASON_VALUES = [
   "CAPTURE_FAILED",
   "OVER_RETURN",
   "DRIVER_CAP",
+  "ALREADY_RETURNED",
   "UNREFERENCED",
 ] as const;
 export type ReturnHoldReason = (typeof RETURN_HOLD_REASON_VALUES)[number];

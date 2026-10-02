@@ -653,9 +653,10 @@ export function useBuyerAuthorizations() {
 }
 
 /** Submit or renew a license for the active seller's review (→ PENDING_REVIEW). */
-export function useSubmitBuyerAuthorization() {
+export function useSubmitBuyerAuthorization(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation<unknown, Error, SubmitBuyerAuthorizationInput>({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (dto) => buyerApiClient.post("/buyer/authorizations", dto).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buyer", "authorizations"] }),
   });

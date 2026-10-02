@@ -21,7 +21,7 @@ description: >
 Produce copy that does two things at once:
 
 1. **Sells.** Every persuasive asset follows the sales doctrine distilled from Grant Cardone's
-   *Sell or Be Sold*, which is the golden reference for this skill. Copy that informs but never
+   _Sell or Be Sold_, which is the golden reference for this skill. Copy that informs but never
    closes is failed copy.
 2. **Reads human.** No AI-recognizable patterns, no synthetic rhythm, no empty abstraction,
    no fabricated proof. The anti-pattern library in this skill is mandatory, not advisory.
@@ -34,11 +34,11 @@ invented number.
 
 ## Reference Files (read in this order)
 
-| File | When to read it |
-|---|---|
-| `references/sales-doctrine.md` | Before writing ANY persuasive copy. This is the law. Contains the conviction gate, the price myth, agreement formula, proof rules, give-give-give, closing rules, follow-up rules, and the five-step page architecture. |
-| `references/ai-style-avoidance.md` | Before drafting AND again before delivering. Root causes of AI smell, the rewrite protocol, the full pattern library, sales-specific tells, and the three-pass audit. |
-| `references/channel-playbooks.md` | When the asset type is known. Per-channel structure and rules for homepages, landing pages, pricing, sales pages, emails, sequences, ads, social, proposals, reviews, and wedding or creative-services copy. |
+| File                               | When to read it                                                                                                                                                                                                         |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `references/sales-doctrine.md`     | Before writing ANY persuasive copy. This is the law. Contains the conviction gate, the price myth, agreement formula, proof rules, give-give-give, closing rules, follow-up rules, and the five-step page architecture. |
+| `references/ai-style-avoidance.md` | Before drafting AND again before delivering. Root causes of AI smell, the rewrite protocol, the full pattern library, sales-specific tells, and the three-pass audit.                                                   |
+| `references/channel-playbooks.md`  | When the asset type is known. Per-channel structure and rules for homepages, landing pages, pricing, sales pages, emails, sequences, ads, social, proposals, reviews, and wedding or creative-services copy.            |
 
 Do not skip the reference files because the task looks small. A three-line Instagram caption
 and a ten-word CTA are still governed by the doctrine and the pattern library.
@@ -72,25 +72,31 @@ Write as a professional closer who:
 Collect or confirm before writing:
 
 **Page purpose**
+
 - Asset type and the ONE primary action (CTA). Secondary action only if truly needed.
 
 **Audience**
+
 - Who they are, the problem they are trying to solve, what they have tried, their main
   objections, and the exact language they use for the problem.
 - Awareness level: unaware, problem-aware, solution-aware, or product-aware.
 
 **Offer**
+
 - What is being sold, the real differentiator, the outcome it produces, and the price context.
 
 **Proof inventory**
+
 - What proof actually exists: numbers, testimonials, case studies, credentials, third-party
   data, portfolio pieces. Only real proof enters the copy.
 
 **Context**
+
 - Traffic source, what the reader already knows, and what happens after the CTA.
 
 **The conviction gate** (from the doctrine). Confirm the brief can answer these six questions.
 If it cannot, the copy will leak doubt, so get the answers first:
+
 1. Why should someone buy this at all?
 2. Why buy it instead of any alternative?
 3. Why buy it right now instead of waiting?
@@ -119,6 +125,7 @@ writing, obey the non-negotiables below and the pattern library.
 ### Phase 4: Audit
 
 Run the three-pass audit from `references/ai-style-avoidance.md`:
+
 1. **Skeleton pass**: structure follows the information, one goal, a real proposal, a real close.
 2. **Claims pass**: every claim proven, shown, or cut; no invented precision; advertisability.
 3. **Language pass**: scan the pattern library, check cadence, check density of flagged words,

@@ -462,4 +462,30 @@ describe("InventoryService.assignToVariants", () => {
     expect(drawdown.toString()).toBe("10");
     expect(opened.toString()).toBe("10");
   });
+
+  // ── B964-2: a NEW variant's name is user-typed text that becomes Product.name / variantName ──
+
+  it("refuses a formula-led newVariant.name with a coded 400 naming the row, before any transaction or write", async () => {
+    const err: any = await service
+      .assignToVariants(
+        {
+          parentProductId: "parent-1",
+          assignments: [
+            { newVariant: { name: "Cherry" }, qty: 1 },
+            { newVariant: { name: "=HYPERLINK(1)" }, qty: 2 },
+          ],
+        } as any,
+        "user-1",
+      )
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "TEXT_CELL_FORMULA_LEAD",
+      field: "variantName",
+      index: 1,
+      message: "Variant name can't start with =, +, -, @ or a tab/line break",
+    });
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    expect(prisma.product.create).not.toHaveBeenCalled();
+  });
 });

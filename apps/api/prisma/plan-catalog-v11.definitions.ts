@@ -14,8 +14,8 @@
  */
 import type { AddonSkuCode, PlanKey } from "../src/billing/plan-catalog.constants";
 
-export type Unit = "FLAT" | "PER_USER" | "PER_ROUTE";
-export type Meter = "SEATS" | "ROUTES" | "SCANS" | "MSGS" | "CUSTOMERS";
+type Unit = "FLAT" | "PER_USER" | "PER_ROUTE";
+type Meter = "SEATS" | "ROUTES" | "SCANS" | "MSGS" | "CUSTOMERS";
 
 export interface DefinitionSeed {
   planKey: PlanKey;
