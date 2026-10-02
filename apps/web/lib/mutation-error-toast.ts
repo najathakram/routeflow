@@ -1,5 +1,6 @@
 import type { ToastData } from "@routeflow/ui/web";
 import { insufficientStockSentence, parseInsufficientStock } from "@routeflow/types";
+import { safeTextBodyCopy } from "./safe-text-error-copy";
 
 /**
  * The app-wide MutationCache error handler (extracted from `app/providers.tsx`, #1965 so it is
@@ -63,6 +64,12 @@ export function handleMutationError(
   // read-only tenant still gets "Choose a plan" from any mutation.
   if (mutation?.meta?.localErrorToast) return;
   if (data?.code && HANDLED_CODES.includes(data.code)) return;
+  // B956: a refused formula-led name is fixed copy with a human field label, never the raw message.
+  const refusedName = safeTextBodyCopy(data);
+  if (refusedName) {
+    toast({ title: refusedName, variant: "error" });
+    return;
+  }
   // A stock shortfall reads as a sentence ("Only 4 pieces of Mango left."), never the server text.
   const short = parseInsufficientStock(error);
   if (short) {

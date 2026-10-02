@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -184,6 +186,19 @@ function freshStore() {
 }
 `;
 
+const TEST_LOG_DIR = mkdtempSync(path.join(os.tmpdir(), "repair-f03-log-"));
+afterAll(() => rmSync(TEST_LOG_DIR, { recursive: true, force: true }));
+
+const repoRepairLogs = (): string[] => {
+  try {
+    return readdirSync(path.join(REPO_ROOT, "local-assets")).filter((f) =>
+      f.startsWith("repair-f03-"),
+    );
+  } catch {
+    return []; // no local-assets/ at all: nothing was written there
+  }
+};
+
 /**
  * Runs `body` (plain JS, `await`-capable) in a fresh Node ESM child process with
  * identifyRepairs/applyRepairs/parseFlags and freshStore() already imported/declared, and returns
@@ -197,16 +212,21 @@ function runRepairDriver(body: string): any {
   const driver = `
 import {
   identifyRepairs,
-  applyRepairs,
+  applyRepairs as applyRepairsRaw,
   parseFlags,
   assertRepairTarget,
 } from ${JSON.stringify(moduleUrl)};
+// B831: every apply in this suite journals into a throwaway temp dir, never the repo's
+// local-assets/ (156 stray repair-f03-*.jsonl files had piled up across worktrees).
+const applyRepairs = (store, proposals, flags, opts = {}) =>
+  applyRepairsRaw(store, proposals, flags, { logDir: process.env.REPAIR_F03_TEST_LOG_DIR, ...opts });
 ${SEED_STORE_SRC}
 ${body}
 `;
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", driver], {
     encoding: "utf8",
     cwd: REPO_ROOT,
+    env: { ...process.env, REPAIR_F03_TEST_LOG_DIR: TEST_LOG_DIR },
   });
   const marker = res.stdout.indexOf("__RESULT__");
   if (res.status !== 0 || marker === -1) {
@@ -441,11 +461,13 @@ describe("scripts/repair-f03.mjs — F03 repair lane (T-R10 / R10)", () => {
       const orderItem = result.orderItems.find((o: any) => o.id === "oi-qty-drift");
       expect(orderItem.invoicedQty).toBe(10);
 
-      // R10's audit half: every applied repair is journalled (JSONL, with the before-state)
-      // under local-assets/ — that log is what a rollback is reconstructed from, and the
+      // R10's audit half: every applied repair is journalled (JSONL, with the before-state) —
+      // under local-assets/ on a real run — that log is what a rollback is reconstructed from, and the
       // path has to come back to the caller or the operator can't file it on the board.
       expect(typeof result.applied.logPath).toBe("string");
-      expect(result.applied.logPath.replace(/\\/g, "/")).toContain("local-assets/");
+      // Under test the journal goes to the injected dir (B831); a real run's default location
+      // (local-assets/) is pinned separately below.
+      expect(result.applied.logPath.startsWith(TEST_LOG_DIR)).toBe(true);
     });
 
     it("re-reads a row before writing and skips it if it drifted since the dry run, while still applying the untouched rows", () => {
@@ -486,5 +508,46 @@ describe("scripts/repair-f03.mjs — F03 repair lane (T-R10 / R10)", () => {
       const invoice = result.invoices.find((i: any) => i.id === "inv-status-drift");
       expect(invoice.status).toBe("VOID");
     });
+  });
+});
+
+describe("scripts/repair-f03.mjs — audit log location (B831)", () => {
+  it("REG-B831: an apply under test journals into the injected dir and writes NOTHING into the repo's local-assets/", () => {
+    const before = repoRepairLogs();
+    const result = runRepairDriver(`
+      const store = freshStore();
+      const dry = await identifyRepairs(store);
+      const applied = await applyRepairs(store, dry.proposals, parseFlags(["--execute", "--i-have-a-fresh-backup"]));
+      console.log("__RESULT__" + JSON.stringify({ logPath: applied.logPath, n: applied.applied.length }));
+    `);
+    expect(result.n).toBeGreaterThan(0);
+    expect(result.logPath.startsWith(TEST_LOG_DIR)).toBe(true);
+    expect(repoRepairLogs()).toEqual(before);
+  });
+
+  it("REG-B831: with no logDir, applyRepairs itself targets the repo's local-assets/ (checked with an empty apply that writes nothing)", () => {
+    const before = repoRepairLogs();
+    const result = runRepairDriver(`
+      const applied = await applyRepairsRaw(freshStore(), [], parseFlags(["--execute", "--i-have-a-fresh-backup"]));
+      console.log("__RESULT__" + JSON.stringify({ logPath: applied.logPath, n: applied.applied.length }));
+    `);
+    expect(result.n).toBe(0);
+    expect(path.dirname(result.logPath)).toBe(path.join(REPO_ROOT, "local-assets"));
+    expect(repoRepairLogs()).toEqual(before); // nothing applied, so nothing journalled
+  });
+
+  it("a real run (no logDir) still journals under the repo's local-assets/ — the rollback trail's home", () => {
+    const moduleUrl = pathToFileURL(SCRIPT).href;
+    const res = spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { defaultLogDir } from ${JSON.stringify(moduleUrl)}; console.log(defaultLogDir());`,
+      ],
+      { encoding: "utf8", cwd: REPO_ROOT },
+    );
+    expect(res.status).toBe(0);
+    expect(res.stdout.trim()).toBe(path.join(REPO_ROOT, "local-assets"));
   });
 });

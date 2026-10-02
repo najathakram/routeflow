@@ -919,5 +919,19 @@ export default defineConfig({
         storageState: path.join(AUTH_DIR, "operator.json"),
       },
     },
+
+    // Orders list mobile card layout + dock clearance (B823, spec 56). Read-only:
+    // the "parked draft" scenario mocks GET /drafts rather than creating one, so
+    // this never writes to the tenant and needs no cleanup. WITHOUT THIS ENTRY THE
+    // SPEC NEVER RUNS — see 08-create-order-escape's header for the precedent.
+    {
+      name: "orders-mobile-card-list",
+      testMatch: /56-orders-mobile-card-list\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: path.join(AUTH_DIR, "operator.json"),
+      },
+    },
   ],
 });
