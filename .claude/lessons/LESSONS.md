@@ -199,6 +199,13 @@
 - **Lesson:** **The window owner starts the watchdog FIRST and closes on state: flip PRIVATE when the deploys are SUCCESS, or about five minutes before the deadline even if a deploy is still building (Railway keeps deploying privately), read the visibility back, then report. A lead outage neither extends nor blocks the close.**
 - **Guard:** `scripts/visibility-watchdog.mjs` (flips private at its deadline with verified retries); the lead's 2026-10-01 rule (flip at about deadline minus five minutes and keep watching the deploy).
 
+### L-257 · 2026-10-02 · process · a stacked branch's master merge is a per-file three-way merge, never "take master's side"
+
+- **Symptom:** #3017's base was a stack branch (the WS9 settings-inventory PR), not master. Its master merge resolved all 10 conflicted files to master's side (the policy controller, the api and types error-code registries and `packages/types/index.ts`, the mobile types mock, `package.json` and the lock, four policy files). The parent owned lines in five of them, including `INVENTORY_SETTING_INVALID` and the policy-controller change; landing in stack order would have dropped them silently.
+- **Root cause:** the author reasoned "the child has no own lines in these files" and took master's side wholesale, but the conflicts came from the stack BASE, and master's side does not contain the parent's not-yet-landed lines.
+- **Lesson:** **Where a branch sits on a stack parent, never resolve conflicts by taking either side wholesale. Re-merge bottom-up, each child onto its parent's new head, with a true three-way merge per file, and have the review compute the child's own-line set against the parent's head before the push. Cf. [[L-190]].**
+- **Guard:** none automatic; caught at lead review before the push (the lane's flag plus the docs session's own-set computation), never pushed.
+
 ## tooling
 
 ### L-206 · 2026-09-18 · tooling · a test that pins a literal from another workspace's prose is an invisible cross-workspace coupling
@@ -300,6 +307,7 @@
   ordinary-merge a stacked branch through someone else's squash.**
 - **Guard:** none automatic yet — a landing coordinator diffs `origin/master...HEAD` on the
   rebuilt branch and confirms zero changes under the schema-owning PR's files before pushing.
+- **Recurred 2026-10-02 (landing windows D to I):** squashing a stacked parent made each child conflict add/add on the parent's own files (#3025 to #3046 to #3050; #3044 to #3045), and a merge-tree against the then-current master missed it. Before opening a window simulate the whole order: for each PR in order run `git merge-tree --write-tree <cur> <head>`, then `git commit-tree <tree> -p <cur>` as the next base; a conflict at step N means that PR is carried (master merged in, new pin) after its parent lands, never in the same window.
 
 ### L-180 · 2026-09-16/22 · tooling · npm/dir junctions across worktrees are unsafe near git worktree ops (recurred: 2026-09-22)
 
@@ -376,6 +384,27 @@
   `packages/*/dist` mtimes against `src`, or a verify-chain step that refuses to run tests when
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
+
+### L-254 · 2026-10-02 · tooling · a fresh worktree runs the fleet hook shim, never `npx husky`, and hooks fail fast when the worktree has no install
+
+- **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
+- **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
+- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link the main checkout's `node_modules` for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
+- **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
+
+### L-255 · 2026-10-02 · tooling · a file on the size ratchet is checked by the api ratchet spec before every push that grows it, in any workspace
+
+- **Symptom:** #2865's first Verify went red in a public window: `size-ratchet.spec.ts` reported `apps/mobile/components/NewOrderScreen.tsx` at 2637 lines (baseline 2560 + 25 headroom = 2585, +52 over). The window landed nothing; the extraction shipped as a re-pin (2535 lines).
+- **Root cause:** the ratchet lives in the API workspace but caps web and mobile files too, so a mobile- or web-only local check never runs it.
+- **Lesson:** **Before pushing a change that grows a ratcheted file, run `npx jest src/common/size-ratchet.spec.ts` in `apps/api` (or the full `npm run verify`) and extract the new code into its own module in the same PR; never raise a baseline without the owner. Cf. [[L-215]], [[L-227]].**
+- **Guard:** `apps/api/src/common/size-ratchet.spec.ts` (CI Verify).
+
+### L-256 · 2026-10-02 · tooling · a master merge commit goes through lint-staged and reformats master's own files
+
+- **Symptom:** finishing a conflicted merge of master into a PR branch with a plain `git commit` ran `prettier --write` over the staged files that came from master, so about 30 files that are not the PR's (handoff notes, `LEAD-LOG.md`, a data file) landed in the PR; the author compared two file lists of 57 and never compared 57 to the PR's own 27.
+- **Root cause:** lint-staged formats every staged file, and in a merge commit master's files are staged too.
+- **Lesson:** **Finish a conflicted merge by `git add`-ing ONLY the conflicted files, and after any master merge compare `git diff --name-only <master-parent> HEAD | wc -l` with the PR's own count (own set = `git diff --name-only <old-base> <pre-merge-tip>`). Restoring from the master parent is the repair, and a plain commit re-runs prettier and undoes it. Hand-kept notes are listed in `.prettierignore` (#3055).**
+- **Guard:** `.prettierignore` (#3055, hand-kept notes and generated files); the file-count comparison.
 
 ## testing
 
@@ -471,6 +500,13 @@
 - **Root cause:** both asserted an observation the host controls: V8 caches the process timezone at first Date use, so setting `process.env.TZ` inside a Jest worker is unreliable; whether a client reads a response from a socket the server closed first is OS- and timing-dependent.
 - **Lesson:** **Run the host-dependent code in a CHILD process with the environment set (`TZ`) and keep a vacuity guard that proves the condition. For network security and resource properties assert on the SERVER (status sent, handler work run, bytes read) and count a client reset after an early response as a rejection; never require a client to read a response from a connection the server closed first. A spy keyed on `socket.localPort` misses responses on destroyed sockets; key on `server.address().port`.**
 - **Guard:** `common/pdf-date.spec.ts` (child process, `TZ=America/Los_Angeles`, vacuity guard); `apps/control/test/wp7-security.spec.ts` (server-side spy, forced-reset test, over-cap test, mutation-proven).
+
+### L-258 · 2026-10-02 · testing · a harness locator is chosen by test id or role, never by position (a `.last()` produced a false repro)
+
+- **Symptom:** the Expo 390 Playwright repro of "three same-code scans through the scan sheet's manual-entry field give one bottle" used `input.last()` for the manual field. After the first scan the cart row's quantity input became the last input, so scans two and three typed into the quantity field and the capture claimed the fix was missing. A runtime probe targeting the field by test id or role showed three submits giving three bottles ($6.00 in the DB) at both 1500 ms and 350 ms.
+- **Root cause:** a positional locator is correct only while the page keeps the same element order; the first interaction reordered it.
+- **Lesson:** **Target a field by `data-testid` or accessible role, never by `.first()`, `.last()` or `nth()`, and before filing a bug from a capture re-run the failing step with the stable locator and read the persisted value. Cf. [[L-202]], [[L-212]].**
+- **Guard:** none automated; the cost was one wrong-diagnosis cycle and a static re-trace by the lane.
 
 ## domain
 
@@ -618,19 +654,6 @@
 - **Lesson:** **Before declaring one writer for a ledger or event stream, grep the whole tree for every emit of those events and every `amountDelta:` site, not only the call sites the brief named. Route each one through the writer or exempt it explicitly.**
 - **Guard:** #2186: `subscribe()` (`subscription-mutation.service.ts` :395-421 at review) was the writer the sweep missed and now calls `emitAddonDelta`. On master, `ADDON_ENABLED/DISABLED` is emitted only in `billing/addon-ledger.ts`. No structural pin yet; propose one beside `mrr-paying-predicate.parity.spec.ts`.
 
-### L-237 · 2026-09-28 · domain · a side effect fired inside a transaction still fires when it rolls back (#2526)
-
-- **Symptom:** invoice realtime events told operators and buyers about changes whose transaction
-  later rolled back, or was retried.
-- **Root cause:** gateway emits are fire-and-forget; helpers called from a transaction body
-  emitted directly, so nothing tied the send to the commit.
-- **Lesson:** **A side effect that cannot be rolled back (socket emit, email, webhook, queue push)
-  is queued inside the transaction and flushed only after it commits: a rejected transaction
-  flushes nothing, and a retried attempt resets the queue first. Pass the queue into every helper
-  the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
-- **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
-  `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
-
 ### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
 
 - **Symptom:** mobile buyer edit-items keyed its draft by `productId`. The seller's custom lines
@@ -643,33 +666,6 @@
   definition (`isUnlisted = !productId`).**
 - **Guard:** #2709's pins in `apps/mobile/__tests__/buyer-edit-items-custom-lines.test.ts`
   (`isCustomLine` skips seller custom lines in `hydrateBuyerDraft`).
-
-### L-248 · 2026-09-29 · domain · one rounding body per precision; never inline a Math.round nudge (#2717, SA-574 H1)
-
-- **Symptom:** an inlined `Math.round(n * 1e4) / 1e4` (or a `+ Number.EPSILON` nudge) rounds a
-  half-at-the-last-decimal value DOWN, so the same number lands a unit apart on two paths (the
-  REG-B122 class, now at 4 dp).
-- **Root cause:** scaling by 1e4 puts the half-way case within EPSILON of a float boundary; a nudge
-  cannot be right for every magnitude, and a second copy of the body drifts from the first.
-- **Lesson:** **`round4` in `packages/pricing` is the only 4-decimal rounding body (and `roundMoney`
-  the only cents body); every 4-dp value goes through it, never through a re-inlined expression.**
-- **Guard:** `round4` (half away from zero via the decimal-string path) with `roundUnitCost` delegating
-  to it; pinned by `golden.spec.ts` (ROUND4_FIXTURES) and `component-price.spec.ts`.
-
-### L-249 · 2026-09-30 · domain · a blank money cell may default; a present-but-unparseable one must reject the row (#2190)
-
-- **Symptom:** an invoice import with a cell like `12abc` wrote a $0.00 invoice (or line) and reported
-  success; `1e5` imported as 100000.
-- **Root cause:** the invoice importer read money as `parseImportMoney(cell || "0") || 0`, so "absent"
-  and "present but invalid" shared one path and the trailing `|| 0` turned NaN into $0. The
-  products/customers importer already had the strict check; the invoice path kept a second, lenient
-  parser (the L-167 second-copy shape).
-- **Lesson:** **On a bulk/CSV money or quantity write, a blank cell may take its documented default, but
-  a present-but-unparseable cell must skip the row or group with a reason BEFORE any write, never
-  coerce with `|| 0` / `?? 0`; every importer reads money through the one strict parser
-  (`parseStrictMoneyCell`).**
-- **Guard:** `import-invoice-money-2190.spec.ts` (each money column, a later-line skip, overflow, blank
-  defaults) and its `.db.spec.ts`; cf. [[L-167]].
 
 ### L-251 · 2026-10-01 · domain · dropping a double-counted term means re-proving every remaining bound covers DERIVED inputs (B960, #2986)
 
@@ -691,23 +687,6 @@
   or a POST body for a server-side one.**
 - **Guard:** none yet — propose a lint/review checklist item flagging `token`/`code`/`secret`-
   named query params on any new route.
-
-### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
-
-- **Symptom:** a tenant could plant another tenant's object key in its own product row (`PATCH
-  /products/:id` `imageKeys`) and have the server presign or delete it; separately, a POD key
-  `tenants/<own>/pod/../../<other>/…` passed a `startsWith` ownership check.
-- **Root cause:** a key persisted on a tenant-owned row was trusted once written, and ownership
-  was tested as a string prefix, which cannot see `..` segments.
-- **Lesson:** **Validate a storage/object key by parsing it into segments — exact segment count,
-  every segment from a safe-character allowlist, no `.`/`..`/empty segment, the owner id in its
-  fixed position — never with `startsWith`. Check it at write AND again at every sign/read/delete,
-  so a row poisoned before the write guard existed still leaks and deletes nothing.**
-- **Guard:** `products/product-image-keys.ts` (`isOwnProductImageKey`, `assertImageKeysReorder`) +
-  `image-key-signing.tripwire.spec.ts`, `products.image-keys-2533.spec.ts`;
-  `routes/pod-artifacts.util.ts` (`isPodStorageKey`, `podCaptureValueRefusal`) +
-  `routes.pod-key-traversal-2542.spec.ts`; `scripts/report-2533-product-image-keys.mjs` finds
-  rows poisoned before the fix.
 
 ## deploy
 
@@ -774,14 +753,3 @@
 - **Guard:** #1133 (b8765689) added `data-testid="line-total"`; spec 13's `readLineTotal` reads it
   via `getByTestId`.
 
-### L-245 · 2026-09-29 · deploy · SET LOCAL in a Prisma migration is a no-op without an explicit BEGIN/COMMIT (SA-582)
-
-- **Symptom:** a migration used `SET LOCAL` to scope a setting to its own statements; the setting
-  never applied, and nothing failed.
-- **Root cause:** Prisma applies a migration file non-atomically here, statement by statement outside
-  a transaction, and `SET LOCAL` only lasts until the end of a transaction, so with no enclosing
-  transaction it changes nothing. Squawk did not flag it.
-- **Lesson:** **A migration that relies on `SET LOCAL` (or any transaction-scoped setting) must open
-  its own explicit `BEGIN` and end with `COMMIT`; otherwise the statement is a silent no-op.**
-- **Guard:** `scripts/lint-migrations.mjs` (`npm run lint:migrations`) refuses `SET LOCAL` with no
-  enclosing BEGIN/COMMIT (B896, #2746); pinned by `lint-migrations-script.spec.ts`.

@@ -367,6 +367,18 @@ apps/<ws> && npx jest --maxWorkers=2`) before push — a cache-hit never reruns 
   `psql`, never a raw client.**
 - **Guard:** volume + PGDATA subdir + 2-hourly R2 dumps with an empty-dump guard.
 
+### L-245 · 2026-09-29 · deploy · SET LOCAL in a Prisma migration is a no-op without an explicit BEGIN/COMMIT (SA-582)
+
+- **Symptom:** a migration used `SET LOCAL` to scope a setting to its own statements; the setting
+  never applied, and nothing failed.
+- **Root cause:** Prisma applies a migration file non-atomically here, statement by statement outside
+  a transaction, and `SET LOCAL` only lasts until the end of a transaction, so with no enclosing
+  transaction it changes nothing. Squawk did not flag it.
+- **Lesson:** **A migration that relies on `SET LOCAL` (or any transaction-scoped setting) must open
+  its own explicit `BEGIN` and end with `COMMIT`; otherwise the statement is a silent no-op.**
+- **Guard:** `scripts/lint-migrations.mjs` (`npm run lint:migrations`) refuses `SET LOCAL` with no
+  enclosing BEGIN/COMMIT (B896, #2746); pinned by `lint-migrations-script.spec.ts`.
+
 ## domain
 
 > archived 2026-09-06 for headroom (L-082 added) — guard automated (db-locks specs, orders.merge-lock spec).
@@ -545,6 +557,46 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
   Pinned by `estimates.service.spec.ts` and `estimates.issue-date.db.spec.ts` (real Postgres) —
   landed 2026-09-13. `CreateEstimateDto` now declares `issueDate?: string`, no more `as any` cast.
 
+### L-249 · 2026-09-30 · domain · a blank money cell may default; a present-but-unparseable one must reject the row (#2190)
+
+- **Symptom:** an invoice import with a cell like `12abc` wrote a $0.00 invoice (or line) and reported
+  success; `1e5` imported as 100000.
+- **Root cause:** the invoice importer read money as `parseImportMoney(cell || "0") || 0`, so "absent"
+  and "present but invalid" shared one path and the trailing `|| 0` turned NaN into $0. The
+  products/customers importer already had the strict check; the invoice path kept a second, lenient
+  parser (the L-167 second-copy shape).
+- **Lesson:** **On a bulk/CSV money or quantity write, a blank cell may take its documented default, but
+  a present-but-unparseable cell must skip the row or group with a reason BEFORE any write, never
+  coerce with `|| 0` / `?? 0`; every importer reads money through the one strict parser
+  (`parseStrictMoneyCell`).**
+- **Guard:** `import-invoice-money-2190.spec.ts` (each money column, a later-line skip, overflow, blank
+  defaults) and its `.db.spec.ts`; cf. [[L-167]].
+
+### L-248 · 2026-09-29 · domain · one rounding body per precision; never inline a Math.round nudge (#2717, SA-574 H1)
+
+- **Symptom:** an inlined `Math.round(n * 1e4) / 1e4` (or a `+ Number.EPSILON` nudge) rounds a
+  half-at-the-last-decimal value DOWN, so the same number lands a unit apart on two paths (the
+  REG-B122 class, now at 4 dp).
+- **Root cause:** scaling by 1e4 puts the half-way case within EPSILON of a float boundary; a nudge
+  cannot be right for every magnitude, and a second copy of the body drifts from the first.
+- **Lesson:** **`round4` in `packages/pricing` is the only 4-decimal rounding body (and `roundMoney`
+  the only cents body); every 4-dp value goes through it, never through a re-inlined expression.**
+- **Guard:** `round4` (half away from zero via the decimal-string path) with `roundUnitCost` delegating
+  to it; pinned by `golden.spec.ts` (ROUND4_FIXTURES) and `component-price.spec.ts`.
+
+### L-237 · 2026-09-28 · domain · a side effect fired inside a transaction still fires when it rolls back (#2526)
+
+- **Symptom:** invoice realtime events told operators and buyers about changes whose transaction
+  later rolled back, or was retried.
+- **Root cause:** gateway emits are fire-and-forget; helpers called from a transaction body
+  emitted directly, so nothing tied the send to the commit.
+- **Lesson:** **A side effect that cannot be rolled back (socket emit, email, webhook, queue push)
+  is queued inside the transaction and flushed only after it commits: a rejected transaction
+  flushes nothing, and a retried attempt resets the queue first. Pass the queue into every helper
+  the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
+- **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
+  `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
+
 ## security
 
 ### L-023 · 2026-07 · security
@@ -576,6 +628,23 @@ col + delta)` has no read-modify-write window at all. And such a fix is regressi
   so `req.user` is never set there).**
 - **Guard:** `REG-B132` (the inverted test) and `REG-B165` (`impersonation.guard.spec.ts` header
   case with `req.user` undefined); mutation probes in the F14 PR body.
+
+### L-236 · 2026-09-28 · security · a stored storage key is trusted only after an exact own-prefix segment match (#2538, #2547)
+
+- **Symptom:** a tenant could plant another tenant's object key in its own product row (`PATCH
+  /products/:id` `imageKeys`) and have the server presign or delete it; separately, a POD key
+  `tenants/<own>/pod/../../<other>/…` passed a `startsWith` ownership check.
+- **Root cause:** a key persisted on a tenant-owned row was trusted once written, and ownership
+  was tested as a string prefix, which cannot see `..` segments.
+- **Lesson:** **Validate a storage/object key by parsing it into segments — exact segment count,
+  every segment from a safe-character allowlist, no `.`/`..`/empty segment, the owner id in its
+  fixed position — never with `startsWith`. Check it at write AND again at every sign/read/delete,
+  so a row poisoned before the write guard existed still leaks and deletes nothing.**
+- **Guard:** `products/product-image-keys.ts` (`isOwnProductImageKey`, `assertImageKeysReorder`) +
+  `image-key-signing.tripwire.spec.ts`, `products.image-keys-2533.spec.ts`;
+  `routes/pod-artifacts.util.ts` (`isPodStorageKey`, `podCaptureValueRefusal`) +
+  `routes.pod-key-traversal-2542.spec.ts`; `scripts/report-2533-product-image-keys.mjs` finds
+  rows poisoned before the fix.
 
 ## Archived 2026-09-04 — compaction before PR-4 + B′ landing
 
@@ -3363,3 +3432,5 @@ citations, closed-out with its own post-init assertion guard).
   `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
   `// @ts-nocheck` spec (`isNoCheckFile`).
   (Archived 2026-10-01 whole and verbatim to make room at cap: L-238 has one outside citation that still resolves and its guard specs; L-221 is guarded by REG-SA269-1/2/3; L-235 is guarded by check-types-ratchet.mjs; landing-coordinator bookkeeping, lead-directed.)
+  (Archived 2026-10-02 whole and verbatim to make room at cap: L-236 is guarded by products/product-image-keys.ts and its spec, L-245 by scripts/lint-migrations.mjs, L-249 by import-invoice-money-2190.spec.ts; all three had zero outside citations; landing-coordinator bookkeeping, lead-directed.)
+  (Archived 2026-10-02 whole and verbatim to make room at cap: L-248 is guarded by round4 in packages/pricing with golden.spec.ts and component-price.spec.ts, L-237 by common/after-commit.ts, after-commit.spec.ts and the emit-after-commit tripwire; one and two outside citations that still resolve; landing-coordinator bookkeeping, lead-directed.)
