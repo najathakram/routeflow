@@ -10,6 +10,7 @@ import {
   Query,
   Req,
   Res,
+  ServiceUnavailableException,
   UnauthorizedException,
   UseGuards,
 } from "@nestjs/common";
@@ -23,6 +24,11 @@ import { JwtAuthGuard } from "./guards/jwt-auth.guard";
 import { CurrentUser } from "./decorators/current-user.decorator";
 import { TenantGoogleOAuthService } from "../tenants/tenant-google-oauth.service";
 import { GoogleOAuthService } from "./google-oauth.service";
+import { AppleOAuthService } from "./apple-oauth.service";
+import { AppleNonceDto } from "./dto/apple-nonce.dto";
+import { AppleSignInDto } from "./dto/apple-sign-in.dto";
+import { AppleLinkDto } from "./dto/apple-link.dto";
+import { AppleNotificationDto } from "./dto/apple-notification.dto";
 import { LoginDto } from "./dto/login.dto";
 import { RefreshDto } from "./dto/refresh.dto";
 import { ChangePasswordDto } from "./dto/change-password.dto";
@@ -62,6 +68,7 @@ export class AuthController {
     private readonly tenantGoogleOAuth: TenantGoogleOAuthService,
     private readonly googleOAuth: GoogleOAuthService,
     private readonly staffHandoff: StaffHandoffService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {
     this.webUrl = AuthController.normalizeOrigin(
       configService.get<string>("WEB_URL") || "http://localhost:3001",
@@ -560,6 +567,80 @@ export class AuthController {
     } catch {
       return undefined;
     }
+  }
+
+  // ─── Sign in with Apple (#2309, SA-418 — native iOS only) ─────────────────
+  //
+  // ENV VARS required in Railway:
+  //   APPLE_BUNDLE_ID     — the app's bundle identifier (exact `aud` match)
+  //   APPLE_TEAM_ID       — Apple Developer Team ID
+  //   APPLE_KEY_ID        — Sign in with Apple private key's Key ID
+  //   APPLE_PRIVATE_KEY   — the .p8 private key contents, verbatim
+  //
+  // No redirect flow — the native client (expo-apple-authentication) does the
+  // consent UI itself and posts identityToken/authorizationCode directly.
+
+  @Post("apple/nonce")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @ApiOperation({ summary: "Mint a server-side nonce for a Sign in with Apple request" })
+  async appleNonce(@Body() dto: AppleNonceDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.mintNonce(dto.tenantSlug, dto.context);
+  }
+
+  @Post("apple")
+  @HttpCode(HttpStatus.OK)
+  // SA-418 §1: the SAME throttle as /auth/login.
+  @Throttle({
+    default: {
+      limit: () => resolveLoginThrottle().limit,
+      ttl: () => resolveLoginThrottle().ttl,
+    },
+  })
+  @ApiOperation({ summary: "Sign in with Apple (native iOS only)" })
+  async appleSignIn(@Body() dto: AppleSignInDto, @Req() req: Request) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    return this.appleOAuth.signIn(dto, extractDeviceInfo(req));
+  }
+
+  @Post("apple/link")
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Link an Apple account to the current user" })
+  async appleLink(@CurrentUser() user: { sub: string }, @Body() dto: AppleLinkDto) {
+    if (!this.appleOAuth.isConfigured()) {
+      throw new ServiceUnavailableException(
+        "Sign in with Apple is not configured for this environment.",
+      );
+    }
+    await this.appleOAuth.linkAppleAccount(user.sub, dto.identityToken, dto.nonce);
+    return { message: "Apple account linked" };
+  }
+
+  @Post("apple/notifications")
+  // Unauthenticated and does a JWKS lookup + a Redis write per call: its own tight limit.
+  @Throttle({ default: { ttl: 60_000, limit: 30 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: "Apple server-to-server notifications (consent-revoked, account-delete)",
+  })
+  async appleNotifications(@Body() dto: AppleNotificationDto) {
+    // Unconfigured ⇒ refuse: with no bundle id there is no audience to verify against.
+    if (!this.appleOAuth.isNotificationConfigured()) {
+      throw new ServiceUnavailableException("Sign in with Apple is not configured");
+    }
+    await this.appleOAuth.handleNotification((dto.payload ?? dto.signedPayload) as string);
+    return { received: true };
   }
 
   // ─── Per-tenant Google OAuth (legacy path-param variant) ──────────────────

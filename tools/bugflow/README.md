@@ -78,31 +78,31 @@ first (see [ROADMAP](docs/ROADMAP.md) for when that changes):
 
 ## Documents in this set
 
-| Document | Owns |
-| -------- | ---- |
-| [`docs/adr/0003-bugflow-github-native-bug-tracking.md`](../../docs/adr/0003-bugflow-github-native-bug-tracking.md) | Why GitHub Issues over the alternatives — the decision record |
-| `README.md` (this file) | Orientation, non-negotiables, quick starts |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Components, boundaries, data flow, one bug's life, failure modes |
-| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | Every term used anywhere in this set, defined once |
-| [`docs/CLI.md`](docs/CLI.md) | The command reference — the implementation contract |
-| [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md) | Issue/label/field schema |
-| [`docs/LIFECYCLE.md`](docs/LIFECYCLE.md) | The status state machine, transition by transition |
-| [`docs/CLAIMS-AND-LEASES.md`](docs/CLAIMS-AND-LEASES.md) | Claim CAS, lease, heartbeat, reap mechanics |
-| [`docs/PLANNING.md`](docs/PLANNING.md) | The attach-or-wave batching/waving algorithm |
-| [`docs/DASHBOARD.md`](docs/DASHBOARD.md) | GitHub Projects v2 field mapping |
-| [`templates/ISSUE_TEMPLATE.bug.yml`](templates/ISSUE_TEMPLATE.bug.yml) | The GitHub issue form |
-| [`bugflow.config.example.json`](bugflow.config.example.json) | Every config key, annotated |
-| [`docs/WORKERS.md`](docs/WORKERS.md) | Desktop tasks, cloud Routines, `/loop`, `/goal` — in depth |
-| [`docs/HARNESS.md`](docs/HARNESS.md) | Ralph tier vs. full tier routing and execution |
-| [`docs/GUARDRAILS.md`](docs/GUARDRAILS.md) | Usage caps and safety limits, and what enforces each |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Staged rollout toward fleet seats |
-| [`templates/scheduled-task.SKILL.md`](templates/scheduled-task.SKILL.md) | Desktop task prompt template |
-| [`templates/loop.md`](templates/loop.md) | `.claude/loop.md` default prompt |
-| [`templates/routine-housekeeping.md`](templates/routine-housekeeping.md) | Cloud Routine prompt — sync/reap/plan |
-| [`templates/routine-triage.md`](templates/routine-triage.md) | Cloud Routine prompt — classify new bugs |
-| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | Day-to-day operator runbook |
-| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Contributing to bugflow itself |
-| [`docs/MIGRATION.md`](docs/MIGRATION.md) | Moving off the legacy in-repo registry / PR #597 |
+| Document                                                                                                           | Owns                                                             |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| [`docs/adr/0003-bugflow-github-native-bug-tracking.md`](../../docs/adr/0003-bugflow-github-native-bug-tracking.md) | Why GitHub Issues over the alternatives — the decision record    |
+| `README.md` (this file)                                                                                            | Orientation, non-negotiables, quick starts                       |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)                                                                     | Components, boundaries, data flow, one bug's life, failure modes |
+| [`docs/GLOSSARY.md`](docs/GLOSSARY.md)                                                                             | Every term used anywhere in this set, defined once               |
+| [`docs/CLI.md`](docs/CLI.md)                                                                                       | The command reference — the implementation contract              |
+| [`docs/DATA-MODEL.md`](docs/DATA-MODEL.md)                                                                         | Issue/label/field schema                                         |
+| [`docs/LIFECYCLE.md`](docs/LIFECYCLE.md)                                                                           | The status state machine, transition by transition               |
+| [`docs/CLAIMS-AND-LEASES.md`](docs/CLAIMS-AND-LEASES.md)                                                           | Claim CAS, lease, heartbeat, reap mechanics                      |
+| [`docs/PLANNING.md`](docs/PLANNING.md)                                                                             | The attach-or-wave batching/waving algorithm                     |
+| [`docs/DASHBOARD.md`](docs/DASHBOARD.md)                                                                           | GitHub Projects v2 field mapping                                 |
+| [`templates/ISSUE_TEMPLATE.bug.yml`](templates/ISSUE_TEMPLATE.bug.yml)                                             | The GitHub issue form                                            |
+| [`bugflow.config.example.json`](bugflow.config.example.json)                                                       | Every config key, annotated                                      |
+| [`docs/WORKERS.md`](docs/WORKERS.md)                                                                               | Desktop tasks, cloud Routines, `/loop`, `/goal` — in depth       |
+| [`docs/HARNESS.md`](docs/HARNESS.md)                                                                               | Ralph tier vs. full tier routing and execution                   |
+| [`docs/GUARDRAILS.md`](docs/GUARDRAILS.md)                                                                         | Usage caps and safety limits, and what enforces each             |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md)                                                                               | Staged rollout toward fleet seats                                |
+| [`templates/scheduled-task.SKILL.md`](templates/scheduled-task.SKILL.md)                                           | Desktop task prompt template                                     |
+| [`templates/loop.md`](templates/loop.md)                                                                           | `.claude/loop.md` default prompt                                 |
+| [`templates/routine-housekeeping.md`](templates/routine-housekeeping.md)                                           | Cloud Routine prompt — sync/reap/plan                            |
+| [`templates/routine-triage.md`](templates/routine-triage.md)                                                       | Cloud Routine prompt — classify new bugs                         |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md)                                                                               | Day-to-day operator runbook                                      |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)                                                                       | Contributing to bugflow itself                                   |
+| [`docs/MIGRATION.md`](docs/MIGRATION.md)                                                                           | Moving off the legacy in-repo registry / PR #597                 |
 
 ## Open questions
 

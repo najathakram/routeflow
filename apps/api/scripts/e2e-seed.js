@@ -31,10 +31,13 @@
  *     Pool/PrismaClient connection — run this first to confirm where a real reseed would land.)
  */
 
-const { PrismaClient } = require("../../../node_modules/@prisma/client");
-const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
-const { Pool } = require("../../../node_modules/pg");
-const bcrypt = require("../../../node_modules/bcrypt");
+// #2146: these four are loaded LAZILY in bootstrap(), after the --print-target early exit —
+// requiring them here cost ~2.3s of pure module loading per `--print-target` child (three
+// spawns in e2e-seed-script.spec.ts) that never opens a connection or hashes anything.
+let PrismaClient;
+let PrismaPg;
+let Pool;
+let bcrypt;
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { isLocalDbTarget, localConnectionConfig } = require("./lib/local-db-target.cjs");
 const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
@@ -75,6 +78,10 @@ async function bootstrap() {
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
+  ({ PrismaClient } = require("../../../node_modules/@prisma/client"));
+  ({ PrismaPg } = require("../../../node_modules/@prisma/adapter-pg"));
+  ({ Pool } = require("../../../node_modules/pg"));
+  bcrypt = require("../../../node_modules/bcrypt");
   // A provably-local target dials the vetted explicit fields (a `?host=` on the raw string could redirect it).
   pool = new Pool(localConnectionConfig(dbUrl) ?? { connectionString: dbUrl });
   adapter = new PrismaPg(pool);
@@ -282,6 +289,22 @@ async function ensureFixtureUser(tenantId, c) {
     user = await prisma.user.update({ where: { id: user.id }, data: { deletedAt: null } });
   }
   return user;
+}
+
+// B917: the e2e customer LOGIN (harbor_cafe) must be linked to a Customer row, or GET /orders answers it
+// 403 CUSTOMER_NOT_LINKED and the customer dashboard cannot load. userId is @unique -> a safe upsert;
+// `update` un-deletes a soft-deleted row so a re-seed repairs it. Never overwrites the business name.
+async function ensureCustomerRecordFor(tenantId, userId) {
+  return prisma.customer.upsert({
+    where: { userId },
+    create: {
+      userId,
+      businessName: "E2E Harbor Cafe",
+      contactName: "E2E Customer",
+      tenantId,
+    },
+    update: { deletedAt: null },
+  });
 }
 
 async function ensureCommerceFixtures(tenantId) {
@@ -617,6 +640,13 @@ async function main() {
     } else {
       console.log(`  ✓ Customer "${CUSTOMER_USERNAME}" exists`);
     }
+    // B917: link the customer login to a Customer record (idempotent).
+    {
+      const loginUser = await prisma.user.findFirst({
+        where: { tenantId: existing.id, username: CUSTOMER_USERNAME },
+      });
+      if (loginUser) await ensureCustomerRecordFor(existing.id, loginUser.id);
+    }
 
     // ── TENANT_ADMIN (B138 e2e precondition) ────────────────────────────────────
     // platform-admin impersonate() requires an ACTIVE TENANT_ADMIN; without one the
@@ -789,7 +819,7 @@ async function main() {
   console.log(`  ✓ Operator created: ${OPERATOR_USERNAME} / ${OPERATOR_PASSWORD}`);
 
   // ── Customer user ────────────────────────────────────────────────────────────
-  await prisma.user.create({
+  const customerLogin = await prisma.user.create({
     data: {
       email: "harbor_cafe@e2e-routeflow.test",
       username: CUSTOMER_USERNAME,
@@ -800,6 +830,8 @@ async function main() {
       tenantId: tenant.id,
     },
   });
+  // B917: link the customer login to a Customer record (idempotent).
+  await ensureCustomerRecordFor(tenant.id, customerLogin.id);
   console.log(`  ✓ Customer created: ${CUSTOMER_USERNAME} / ${CUSTOMER_PASSWORD}`);
 
   // ── Tenant admin user (B138 e2e precondition) ────────────────────────────────

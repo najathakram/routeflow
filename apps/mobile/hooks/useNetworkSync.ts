@@ -1,3 +1,4 @@
+import { countLegacyNonAllowlisted } from "../lib/offline-allowlist";
 import { useEffect, useRef } from "react";
 import NetInfo from "@react-native-community/netinfo";
 import { onlineManager } from "@tanstack/react-query";
@@ -17,6 +18,9 @@ import { isLiveOnline } from "../lib/live-online";
 import { resolveQueueIdentity, settleQueueOwnership } from "../lib/queue-identity";
 import { inlineReturnDrainSettleRecords } from "../lib/inline-return-submit-key";
 import { useInlineReturnSubmissionStore } from "../store/inlineReturnSubmissionStore";
+
+/** B923: the legacy-replay count is logged once per app session. */
+let legacyReplayLogged = false;
 
 // RF-170: matches /route-runs/{runId}/stops/{stopId}/complete
 const STOP_COMPLETE_RE = /\/route-runs\/([^/]+)\/stops\/[^/]+\/complete/;
@@ -106,6 +110,18 @@ export function useNetworkSync() {
       // Shared, pure classification (lib/queue-drain.ts) — the ONLY place that
       // decides delivered vs retry vs never-silent-failure, so this hook and
       // its jest specs can never drift out of sync.
+      // B923 ruling 5: entries persisted under the OLD "queue everything" default still replay. Count the
+      // ones the allow-list no longer admits, once per app session, so we can see when it reaches zero.
+      // Counts only (method + normalized path): never an id or a body.
+      if (!legacyReplayLogged && remaining.length > 0) {
+        legacyReplayLogged = true;
+        const legacy = countLegacyNonAllowlisted(remaining);
+        console.info(
+          `[offline-queue] legacy non-allow-listed entries replayed this session: ${legacy.total}`,
+          legacy.byEndpoint,
+        );
+      }
+
       const result = await drainQueue(remaining, {
         request: (action) => apiClient.request(buildReplayRequestConfig(action)),
         // REG-B143 / REG-B111: a 4xx or a retry-exhausted entry must never just

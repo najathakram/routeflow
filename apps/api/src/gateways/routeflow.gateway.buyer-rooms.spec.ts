@@ -1105,6 +1105,7 @@ describe("RouteFlowGateway on a live Socket.IO server", () => {
         payments: [],
       };
       const tx = {
+        $executeRaw: jest.fn(async () => 0), // SA-608g: deleteInvoice takes the invoice row lock
         invoice: { findUnique: jest.fn(async () => inv), delete: jest.fn(async () => inv) },
         creditNote: {
           findMany: jest.fn(async () => []),

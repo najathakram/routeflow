@@ -456,6 +456,7 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
         { id: "credit-1", balance: D(500), receivedAt: new Date("2026-01-01") },
       ]);
       prisma.vendorBill.update
+        .mockResolvedValueOnce({ id: "bill-1" } as any) // the parent-scoped line delete
         .mockResolvedValueOnce({
           id: "bill-1",
           supplierId: "sup-1",
@@ -474,7 +475,10 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
         where: { id: "credit-1" },
         data: { balance: 500 },
       });
-      expect(prisma.vendorBill.update.mock.calls[0][0].data).toEqual(
+      expect(prisma.vendorBill.update.mock.calls[0][0].data).toEqual({
+        items: { deleteMany: {} },
+      });
+      expect(prisma.vendorBill.update.mock.calls[1][0].data).toEqual(
         expect.objectContaining({ totalOwed: 50, totalPaid: 0 }),
       );
       // ...then only the $50 the bill now owes comes back out of it, leaving
@@ -485,7 +489,7 @@ describe("VendorBillsService — supplier payment allocation (WP2)", () => {
         where: { id: "credit-1" },
         data: { balance: 450 },
       });
-      expect(prisma.vendorBill.update.mock.calls[1][0].data).toEqual({ totalPaid: 50 });
+      expect(prisma.vendorBill.update.mock.calls[2][0].data).toEqual({ totalPaid: 50 });
       expect(result.totalPaid).toBe(50);
     });
 

@@ -37,13 +37,13 @@ proceed with best effort, and suggest reinstalling.
 
 ## The suite
 
-| Skill | Path | Input it expects | Output it produces |
-|---|---|---|---|
-| copywriting | `/mnt/skills/user/copywriting/SKILL.md` | Brief (or enough context to build one) | Persuasive text: pages, emails, sequences, ads, captions, proposals, plus headline and CTA alternatives |
-| higgsfield-seedance-prompt | `/mnt/skills/user/higgsfield-seedance-prompt/SKILL.md` | An idea, script beat, or scene plus any reference assets | ONE standalone Seedance 2.0 prompt in a code block |
-| maznah-vlog-script | `/mnt/skills/user/maznah-vlog-script/SKILL.md` | Rough notes, a draft, or a destination plus context | Final narration text only, 9.5/10 gated, nothing else |
-| higgsfield-content-factory | `/mnt/skills/user/higgsfield-content-factory/SKILL.md` | Product image or URL plus onboarding answers | 5-stage campaign: research, HTML plan, video batches plus image pack, Meta scheduling, cost report |
-| motion-design | `/mnt/skills/user/motion-design/SKILL.md` | Logo, product image, or nothing (it can generate a base visual) | One motion design video via Higgsfield (storyboard then animation) |
+| Skill                      | Path                                                   | Input it expects                                                | Output it produces                                                                                      |
+| -------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| copywriting                | `/mnt/skills/user/copywriting/SKILL.md`                | Brief (or enough context to build one)                          | Persuasive text: pages, emails, sequences, ads, captions, proposals, plus headline and CTA alternatives |
+| higgsfield-seedance-prompt | `/mnt/skills/user/higgsfield-seedance-prompt/SKILL.md` | An idea, script beat, or scene plus any reference assets        | ONE standalone Seedance 2.0 prompt in a code block                                                      |
+| maznah-vlog-script         | `/mnt/skills/user/maznah-vlog-script/SKILL.md`         | Rough notes, a draft, or a destination plus context             | Final narration text only, 9.5/10 gated, nothing else                                                   |
+| higgsfield-content-factory | `/mnt/skills/user/higgsfield-content-factory/SKILL.md` | Product image or URL plus onboarding answers                    | 5-stage campaign: research, HTML plan, video batches plus image pack, Meta scheduling, cost report      |
+| motion-design              | `/mnt/skills/user/motion-design/SKILL.md`              | Logo, product image, or nothing (it can generate a base visual) | One motion design video via Higgsfield (storyboard then animation)                                      |
 
 ## Routing rules
 
@@ -56,7 +56,7 @@ Route by the deliverable, not by the words used.
      (output is a prompt, not a rendered video; say so if the user expects a render).
    - Logo reveal, brand promo, animate this image or product into a single polished clip:
      **motion-design** (it renders end to end via Higgsfield).
-   - A volume of product content (UGC batches, multi-format, scheduling): 
+   - A volume of product content (UGC batches, multi-format, scheduling):
      **higgsfield-content-factory**.
    - Never stack seedance-prompt on top of motion-design; motion-design owns its own
      prompting internally.
@@ -74,7 +74,9 @@ Each stage names the leading skill and the artifact it hands forward. Confirm at
 boundaries unless the user asked for end to end.
 
 ### Pipeline A: Product campaign end to end
+
 For: "run a full campaign for [product]", Aeshal or Filamour drops, client products.
+
 1. **copywriting** builds the brief: audience, offer, proof inventory, the six conviction
    questions. Artifact: the locked brief.
 2. **higgsfield-content-factory** runs its five stages using the brief as product context
@@ -85,7 +87,9 @@ For: "run a full campaign for [product]", Aeshal or Filamour drops, client produ
 4. Optional: **motion-design** for a brand sting or logo piece to cap the campaign.
 
 ### Pipeline B: Maznah episode kit
+
 For: "everything for the [destination] video."
+
 1. **maznah-vlog-script** produces the narration. Artifact: final narration text.
 2. **higgsfield-seedance-prompt** turns specific beats the couple could not film into
    b-roll prompts, one prompt per shot, on request. Artifact: prompt set.
@@ -94,12 +98,15 @@ For: "everything for the [destination] video."
    narration. Artifact: publish pack.
 
 ### Pipeline C: Brand launch
+
 For: new brand or service going live.
+
 1. **copywriting**: positioning, homepage or landing page, launch emails.
 2. **motion-design**: logo reveal or launch promo.
 3. **higgsfield-content-factory**: the social content batch, scheduled.
 
 ### Pipeline D: Single asset, fast
+
 Any request that fits one skill cleanly: route directly, no ceremony, no pipeline talk.
 
 ## Cross-cutting rules (apply in every pipeline)

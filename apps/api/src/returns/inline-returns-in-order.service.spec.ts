@@ -398,7 +398,7 @@ describe("InlineReturnsService in-transaction core (#2094)", () => {
     });
 
     it("returns the dry-run total so the caller reserves a number only for a return above $0", async () => {
-      quote.priceInlineReturn.mockResolvedValue({ total: 42 });
+      quote.priceInlineReturn.mockResolvedValue({ total: 42, chunks: [] });
       await expect(
         (service as any).preflightCapture(INPUT, OPERATOR, { routeRunId: null }),
       ).resolves.toBe(42);

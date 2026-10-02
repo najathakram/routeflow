@@ -11,18 +11,18 @@
 //     entry was not lowered in the same diff.
 // Pinned in both directions by src/common/check-types-ratchet-script.spec.ts.
 
-export const SPEC_FILE = /\.spec\.ts$/;
+const SPEC_FILE = /\.spec\.ts$/;
 // 6144, not 4096: the api program (src + specs, ~1715 files) peaked at 4394 MB RSS under the old
 // 4096 cap and now OOMs on the Mac mini (#2717 M3; CI runners have the headroom). Raise again only
 // with the same evidence.
 export const HEAP_MB = 6144;
-export const OOM_HINT =
+const OOM_HINT =
   `the type-check ran out of memory at the ${HEAP_MB} MB heap this script already sets ` +
   `(--max-old-space-size=${HEAP_MB}, also exported in NODE_OPTIONS to the compile worker). ` +
   `Free memory first (on an 8 GB machine: no other verify, push or Jest run at the same time); ` +
   `if the program has genuinely outgrown it, raise HEAP_MB in scripts/lib/check-types-ratchet-core.mjs`;
 // `// @ts-nocheck`, `/// @ts-nocheck`, any case — the text fallback for isNoCheckFile().
-export const NOCHECK = /^\s*\/{2,3}\s*@ts-nocheck\b/im;
+const NOCHECK = /^\s*\/{2,3}\s*@ts-nocheck\b/im;
 
 /**
  * A source file the compiler will skip entirely. TypeScript records the pragma itself as

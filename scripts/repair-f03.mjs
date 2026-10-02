@@ -325,14 +325,18 @@ const CLASS_HANDLERS = {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..");
 
-/** A fresh gitignored JSONL path per run — the audit trail a rollback is rebuilt from. */
-function newLogPath() {
+/** Where a real run journals: the repo's gitignored local-assets/ (the rollback trail's home). */
+export function defaultLogDir() {
+  return path.join(repoRoot, "local-assets");
+}
+
+/**
+ * A fresh JSONL path per run — the audit trail a rollback is rebuilt from. B831: `logDir` is
+ * injectable so the spec journals into a temp dir instead of leaving a file in the repo per run.
+ */
+function newLogPath(logDir = defaultLogDir()) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return path.join(
-    repoRoot,
-    "local-assets",
-    `repair-f03-${stamp}-${randomUUID().slice(0, 8)}.jsonl`,
-  );
+  return path.join(logDir, `repair-f03-${stamp}-${randomUUID().slice(0, 8)}.jsonl`);
 }
 
 function appendLog(logPath, entry) {
@@ -348,9 +352,10 @@ function appendLog(logPath, entry) {
  * @param {unknown} store
  * @param {unknown[]} proposals
  * @param {{ execute?: boolean, backupAttested?: boolean }} flags
+ * @param {{ logDir?: string }} [opts] where to journal (default: defaultLogDir(), the repo's local-assets/)
  * @returns {Promise<{ applied: Array<{ id: string }>, skipped: Array<{ id: string }>, logPath: string }>}
  */
-export async function applyRepairs(store, proposals, flags) {
+export async function applyRepairs(store, proposals, flags, { logDir } = {}) {
   if (!flags?.execute) {
     throw new Error(
       "Refusing to write: this script is read-only unless --execute is passed " +
@@ -364,7 +369,7 @@ export async function applyRepairs(store, proposals, flags) {
     );
   }
 
-  const logPath = newLogPath();
+  const logPath = newLogPath(logDir ?? defaultLogDir());
   const applied = [];
   const skipped = [];
 

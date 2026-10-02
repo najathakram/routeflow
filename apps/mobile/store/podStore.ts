@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { userScopedStorage } from "../lib/user-scoped-storage";
 
-export interface PodEntry {
+interface PodEntry {
   photoUrls?: string[];
   signatureUri?: string;
   note?: string;

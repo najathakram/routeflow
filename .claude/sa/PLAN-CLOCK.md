@@ -5,12 +5,12 @@
 > Re-derive each brief; never relay. Clock source: EVALUATION-remaining-work.html §5 + git.
 > Day 0 = night 09-18→19 CDT (#933 00:03, #934 00:45, #936 01:52 CDT 09-19). Day N = 2026-09-(18+N). Day 1 = Sat 09-19. Day 7 = Fri 09-25. (SA-001; the FINAL prompt says Day 0 = Sat 09-19 — see RULINGS.)
 
-| Days | U units + POs | S scanner + order UI | R labels + restrictions | B backoffice + tooling |
-| --- | --- | --- | --- | --- |
-| 1–2 | ladder + specs → unit API + editor | W2, W3 · B564/B565 · buyer table | service (3 outcomes) · choke point + meta-spec · normalization script | A1 · T2 · T3 · Vigil audit |
-| 3–4 | unit-aware write paths (CRITICAL, Opus) | W4 · W5 | labels API/UI + opt-out · OWNER runs normalization on prod | A3 fixes · A2 (OWNER applies snapshot migration) |
-| 5–6 | unit picker · PO edit/re-apply · PO from scan | T6 card list + T7 · typeahead + line merge | restrictions admin + buyer hiding · tenant settings | T6 NOT NULL · PR-0 deletion · B462 |
-| 7 | mobile mirrors, integration proofs (F), two landing windows, bookkeeping | | | |
+| Days | U units + POs                                                            | S scanner + order UI                       | R labels + restrictions                                               | B backoffice + tooling                           |
+| ---- | ------------------------------------------------------------------------ | ------------------------------------------ | --------------------------------------------------------------------- | ------------------------------------------------ |
+| 1–2  | ladder + specs → unit API + editor                                       | W2, W3 · B564/B565 · buyer table           | service (3 outcomes) · choke point + meta-spec · normalization script | A1 · T2 · T3 · Vigil audit                       |
+| 3–4  | unit-aware write paths (CRITICAL, Opus)                                  | W4 · W5                                    | labels API/UI + opt-out · OWNER runs normalization on prod            | A3 fixes · A2 (OWNER applies snapshot migration) |
+| 5–6  | unit picker · PO edit/re-apply · PO from scan                            | T6 card list + T7 · typeahead + line merge | restrictions admin + buyer hiding · tenant settings                   | T6 NOT NULL · PR-0 deletion · B462               |
+| 7    | mobile mirrors, integration proofs (F), two landing windows, bookkeeping |                                            |                                                                       |                                                  |
 
 ## Baseline @ origin/master 5c0239e6 (2026-09-20 16:36 CDT), measured 17:30 CDT = end of Day 2
 
@@ -90,4 +90,3 @@
 - Reds otherwise: #1119 @3463bf40, #1120 @c90cce41. Clean: #1131, #1129, #1135, #982, #1121, #951 @5378feef, #1045, #984, #1127, #1132, #989, #1130, #1134, #1137 (deps bump).
 - updateOrderItems = master lines 3081–4767 (1,687 lines); guard call at 3103; transaction opens ~3268; CUSTOMER/DRIVER replace branch ~3285–3485; isStaffEdit ~3515; replaceAll create ~3672–3705. create()'s unit pattern: gate+ladders 5 lines (1832–1836), per-line site ~17 lines (1944–1961).
 - 5ea35f04 (lead: U-units 4c-1) is not a ref tip on origin at 02:45Z: unchecked.
-

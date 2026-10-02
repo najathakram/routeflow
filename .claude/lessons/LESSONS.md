@@ -69,6 +69,7 @@
   fresh, then check the actual landing commit, never either alone.
 - Attribution: the second incident is the fleet lead's own mistake, logged at the lead's own
   request.
+- **Recurrence (2026-10-01, worktree cleanup):** a squash-merged branch is never an ancestor of master, so `merge-base --is-ancestor <branch tip>` reads "not merged" for fully landed work; resolve the landing commit via its `(#N)` tag (half 2) before treating a branch as unsaved work or force-removing it.
 
 ### L-201 · 2026-09-18 · process · five registry-id collisions in one session, all from allocating off an incomplete view
 
@@ -190,6 +191,13 @@
 - **Guard:** Bookkeeping Option B (the code PR carries `Bookkeeping-Follow-Up: pending`; the follow-up
   cites the merged sha). No script yet: propose `git merge-base --is-ancestor <sha> origin/master`
   before any stamp.
+
+### L-253 · 2026-10-01 · process · a public CI window closes on state, never on a reply (a lead restart stranded one)
+
+- **Symptom:** the lead session restarted mid-window (17:22Z to 17:50Z) and the repo stayed public until the coordinator flipped it about five minutes before the watchdog's deadline, because the close routine was waiting for the lead's go.
+- **Root cause:** closing a window was gated on a reply instead of on the watchdog deadline and the deploy state.
+- **Lesson:** **The window owner starts the watchdog FIRST and closes on state: flip PRIVATE when the deploys are SUCCESS, or about five minutes before the deadline even if a deploy is still building (Railway keeps deploying privately), read the visibility back, then report. A lead outage neither extends nor blocks the close.**
+- **Guard:** `scripts/visibility-watchdog.mjs` (flips private at its deadline with verified retries); the lead's 2026-10-01 rule (flip at about deadline minus five minutes and keep watching the deploy).
 
 ## tooling
 
@@ -369,23 +377,6 @@
   `dist` is older than `src` for any workspace package; the third recurrence's specific gap (which
   consumers lack a `moduleNameMapper` for which package) would need the same kind of check.
 
-### L-235 · 2026-09-27 · tooling · a tsconfig that excludes specs also switches off the test runner's type-check (#1315, B806)
-
-- **Symptom:** a spec fixture built with the wrong shape (#1286's `taxNone = () => 0`) reached CI
-  green; once #1315 finally compiled the api specs, ~7,000 spec type errors surfaced, 6,328 of
-  them masked by one wrongly typed mock factory (`createMockPrisma`).
-- **Root cause:** `apps/api/tsconfig.json` excluded `*.spec.ts` from `check-types`, and ts-jest
-  (`isolatedModules`, transpile-only) read the same config, so neither gate type-checked a spec —
-  each assumed the other did.
-- **Lesson:** **When a type-check config excludes tests, find which gate type-checks them instead;
-  a transpile-only test runner (`isolatedModules`, SWC, babel) checks nothing. If no gate does,
-  add one — ratchet an existing error count down (shrink-only baseline) rather than wait for
-  zero.**
-- **Guard:** api `check-types` runs `scripts/check-types-ratchet.mjs` over src + specs (src
-  zero-tolerance, per-spec counts in `check-types.spec-baseline.json`, which only
-  `--lower-baseline` moves); `scripts/lib/check-types-ratchet-core.mjs` refuses a
-  `// @ts-nocheck` spec (`isNoCheckFile`).
-
 ## testing
 
 ### L-205 · 2026-09-18 · testing · regression tests pinned literal source text, not behavior
@@ -473,6 +464,13 @@
   the same PR; then boot the real container.**
 - **Guard:** the compose boot gate (`local:up`) proves the real DI graph; no automated
   construction-site scan yet.
+
+### L-252 · 2026-10-01 · testing · a test of host-dependent behaviour proves the host condition and asserts what the host cannot change (B954, B950)
+
+- **Symptom:** a PDF date spec was red on the UTC CI runner but green on a west-of-UTC dev host (its own vacuity guard "the host is west of UTC" caught it); a webhook flood spec asserted every client read a 401 and failed deterministically on macOS, where some clients saw EPIPE or ECONNRESET.
+- **Root cause:** both asserted an observation the host controls: V8 caches the process timezone at first Date use, so setting `process.env.TZ` inside a Jest worker is unreliable; whether a client reads a response from a socket the server closed first is OS- and timing-dependent.
+- **Lesson:** **Run the host-dependent code in a CHILD process with the environment set (`TZ`) and keep a vacuity guard that proves the condition. For network security and resource properties assert on the SERVER (status sent, handler work run, bytes read) and count a client reset after an early response as a rejection; never require a client to read a response from a connection the server closed first. A spy keyed on `socket.localPort` misses responses on destroyed sockets; key on `server.address().port`.**
+- **Guard:** `common/pdf-date.spec.ts` (child process, `TZ=America/Los_Angeles`, vacuity guard); `apps/control/test/wp7-security.spec.ts` (server-side spy, forced-reset test, over-cap test, mutation-proven).
 
 ## domain
 
@@ -603,13 +601,6 @@
   web mirror both gate on one field's presence; each has a red-first regression test pinning
   the double-subtraction case.
 
-### L-221 · 2026-09-26 · domain · retry a whole idempotent tx on a conflict through ONE shared predicate (SA-269)
-
-- **Symptom:** none observed in production: a design rule set by SA-269/SA-340 when #2152 added a transaction retry, so callers would not each invent their own conflict test.
-- **Root cause (of the risk):** the conflict shapes differ across Prisma and pg (40001, 40P01 in every Prisma/pg shape, P2034, TransactionWriteConflict), so a per-caller classifier matches a subset or retries a business error.
-- **Lesson:** **Retry the WHOLE transaction (each attempt re-takes its first lock) on a write conflict, classified by one shared predicate (`common/tx-retry` `txConflictState`). An HttpException is never a conflict.**
-- **Guard:** `REG-SA269-1/2/3` in the tx-retry specs.
-
 ### L-222 · 2026-09-26 · domain · a line's unitPrice and unitsPerBox are ONE denomination (SA-330)
 
 - **Symptom:** a rolled-over next-delivery line was split and priced at the LIVE product pack, so after a repack it was re-split and re-priced from the source line.
@@ -618,6 +609,7 @@
 - **Guard:** `next-delivery-pack.db.spec.ts` (a repack with a price change, plus an AT_STOP vs NEXT_DELIVERY parity pin).
 - **Recurrence (2026-09-30, #2781):** the PO receive path read the LIVE product pack while the detail
   screen used `linePack`; web modal, mobile form and API now all resolve the stored pack through `linePack`.
+- **Recurrence (2026-10-01, B965/B967/B969, #2988):** every quantity crossing a money door carries its unit axis (boxes, pieces, or the order line's own unit); mixed pack factors are converted ONCE at the boundary with one shared helper (`standardReturnPieces` / `poolPieces` / `toPiecesPool`) or refused (`RETURN_MIXED_UNIT_PRODUCT`), never summed raw (30 pieces on a 2-box x 12 plus a 12-piece line refunded $300 instead of $250; a box-unaware line under-refunds by the pack).
 
 ### L-223 · 2026-09-26 · domain · "one ledger writer" needs a sweep of every emit site, not the named ones (B863–B866)
 
@@ -638,18 +630,6 @@
   the transaction body calls, and pin it with a tripwire that fails on a direct emit.**
 - **Guard:** `common/after-commit.ts` (`AfterCommit`, `withAfterCommit`), `after-commit.spec.ts`,
   `invoices/emit-after-commit.tripwire.spec.ts`. Cf. [[L-221]].
-
-### L-238 · 2026-09-28 · domain · an undefined key in a Prisma `where` is dropped, widening the match (#2573)
-
-- **Symptom:** a per-line CANCEL/DELETE edit with no line id built `{ id: undefined, orderId }`;
-  Prisma dropped `id`, so the write matched every line of the order.
-- **Root cause:** Prisma treats an `undefined` filter value as "no condition", not "match
-  nothing", so a missing value silently widens a narrowing `where`.
-- **Lesson:** **Never build a narrowing `where` from an optional value. Refuse the missing value
-  before the query (a 400/404), and scope every targeted write by the key AND its parent
-  (`{ id, orderId }`), so a hole in the scope can only fail loudly, never widen.**
-- **Guard:** `orders/order-line-removal.ts` (`writeLineRemoval`, `assertRemovalsNameALine`),
-  `order-line-removal.spec.ts`, `order-line-removal.db.spec.ts`.
 
 ### L-242 · 2026-09-28 · domain · never key a UI draft or map by a nullable id (B889, #2709)
 
@@ -690,6 +670,13 @@
   (`parseStrictMoneyCell`).**
 - **Guard:** `import-invoice-money-2190.spec.ts` (each money column, a later-line skip, overflow, blank
   defaults) and its `.db.spec.ts`; cf. [[L-167]].
+
+### L-251 · 2026-10-01 · domain · dropping a double-counted term means re-proving every remaining bound covers DERIVED inputs (B960, #2986)
+
+- **Symptom:** once the order pool became the one source for itemless refund lumps, `create()`'s own-invoice line check still ran the per-invoice legacy term and over-refused; skipping it exposed that the qty bound applied only to rows where the operator TYPED a qty, so an amount-only credit row (derived qty) escaped the product's pieces cap when lines of one product carried different prices.
+- **Root cause:** the removed term had been covering the derived-qty case implicitly; the bound that remained keyed on "explicit qty".
+- **Lesson:** **When you remove one term to stop a double-count, list every input the old term bounded and re-prove that each remaining bound covers DERIVED inputs too (amount-only rows, defaults, unit conversions), not just typed ones; bind qty always, on the one unit axis.**
+- **Guard:** `credit-notes/own-line-pool-b960.spec.ts` (skip-legacy with the pool active, derived qty binds in pieces); cf. [[L-167]], [[L-222]].
 
 ## security
 
