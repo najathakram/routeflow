@@ -24,6 +24,7 @@ import { EntitlementAuthority } from "./entitlement-authority.service";
 import { BillingEventService } from "./billing-event.service";
 import { emitAddonDelta, lockTenantForLedger } from "./addon-ledger";
 import { addonCodeOf, findAddonRow } from "./addon-row";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * A Stripe `resource_missing` / 404 error means the item we tried to act on is
@@ -475,7 +476,7 @@ export class AddonService {
     if (DEFAULT_GRANTED_ADDON_FEATURES.some((f) => f.key === addonKey)) {
       throw new BadRequestException({
         statusCode: 400,
-        code: "ADDON_DEFAULT_GRANTED",
+        code: API_ERROR_CODES.ADDON_DEFAULT_GRANTED,
         addonKey,
         message:
           `"${addonKey}" is granted to every eligible tenant by default, so disabling its add-on ` +

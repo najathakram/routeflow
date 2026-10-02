@@ -24,6 +24,7 @@ import {
   UserRole,
   UserStatus,
 } from "@prisma/client";
+import { assertSellableLines } from "../products/sellable-lines";
 import { CreateChangeRequestDto } from "./dto/create-change-request.dto";
 import {
   ChangeRequestResolveAction,
@@ -173,10 +174,12 @@ export class ChangeRequestsService {
         if (!dto.productId || !dto.qty) {
           throw new BadRequestException("ADD_ITEM requires productId and qty");
         }
-        const product = await this.prisma
-          .forTenant()
-          .product.findFirst({ where: { id: dto.productId }, select: { id: true, name: true } });
+        const product = await this.prisma.forTenant().product.findFirst({
+          where: { id: dto.productId },
+          select: { id: true, name: true, kind: true },
+        });
         if (!product) throw new BadRequestException("Product not found");
+        assertSellableLines([product]); // WS8: refuse at filing time, not only at approval
         productId = product.id;
         payload = {
           productId: product.id,

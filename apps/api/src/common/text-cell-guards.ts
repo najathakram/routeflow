@@ -123,6 +123,26 @@ export function assertSafeSubcategoryName(
   );
 }
 
+/** The free-text Product.category column (B990): printed on exports, buyer facets and the regulated filings. Change-only. */
+export function assertSafeProductCategory(
+  category: string | null | undefined,
+  stored?: string | null,
+): void {
+  assertSafeTextCell({ category }, stored === undefined ? null : { category: stored });
+}
+
+/** Non-throwing form for importers, which reject the ROW (not the batch) with this text. */
+export function productCategoryViolation(
+  category: string | null | undefined,
+  stored?: string | null,
+): string | null {
+  const field = firstFormulaLedField(
+    { category },
+    stored === undefined ? null : { category: stored },
+  );
+  return field === null ? null : formulaLeadMessage(field);
+}
+
 type PersonNameInput = {
   salutation?: string | null;
   firstName?: string | null;

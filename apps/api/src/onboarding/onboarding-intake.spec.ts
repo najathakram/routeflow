@@ -202,7 +202,9 @@ describe("public intake controller (L-188 / L-178)", () => {
     const src =
       fs.readFileSync(path.join(__dirname, "onboarding-intake.service.ts"), "utf8") +
       fs.readFileSync(path.join(__dirname, "dto", "intake-sections.dto.ts"), "utf8");
-    const thrown = new Set([...src.matchAll(/code: "(INTAKE_[A-Z_]+)"/g)].map((m) => m[1]));
+    const thrown = new Set(
+      [...src.matchAll(/code: (?:"|API_ERROR_CODES\.)(INTAKE_[A-Z_]+)\b/g)].map((m) => m[1]),
+    );
     expect([...thrown].sort()).toEqual([...INTAKE_ERROR_CODES].sort());
   });
 });
