@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { ios } from "@routeflow/ui/tokens";
 import { perUnitPrice } from "@routeflow/pricing";
 import { QtyStepper } from "./QtyStepper";
+import { PendingUnitNotice, type PendingUnit } from "./PendingUnitNotice";
 
 export interface ProductRowProps {
   id: string;
@@ -30,6 +31,8 @@ export interface ProductRowProps {
    * ("$220.00 / Case", never "$220.00 / each") — a unit-sold line's price is per THAT unit.
    */
   unitLabel?: string | null;
+  /** #2865 case c: the line is waiting on its default unit; the stepper locks and the notice shows. */
+  pendingUnit?: PendingUnit;
 }
 
 /**
@@ -52,6 +55,7 @@ export const ProductRow = React.memo(function ProductRow({
   onDecrement,
   children,
   unitLabel,
+  pendingUnit,
 }: ProductRowProps) {
   const upb = Number(unitsPerBox ?? 0);
   const isBoxed = upb > 1 && !unitLabel;
@@ -87,6 +91,7 @@ export const ProductRow = React.memo(function ProductRow({
                   : ""}
             {perUnitHint != null ? ` · ≈ $${perUnitHint.toFixed(2)}/unit` : ""}
           </Text>
+          {pendingUnit ? <PendingUnitNotice pendingUnit={pendingUnit} /> : null}
         </View>
         {qty === 0 ? (
           <Pressable
@@ -103,6 +108,7 @@ export const ProductRow = React.memo(function ProductRow({
             onChangeQty={(n) => onChangeQty(id, n)}
             onIncrement={() => onIncrement(id)}
             onDecrement={() => onDecrement(id)}
+            locked={!!pendingUnit}
           />
         ) : null}
       </View>

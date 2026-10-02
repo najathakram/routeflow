@@ -16,6 +16,7 @@ export function CartStepperRow({
   onDecrement,
   max,
   hint,
+  locked = false,
 }: {
   label: string;
   value: number;
@@ -24,6 +25,8 @@ export function CartStepperRow({
   onDecrement?: () => void;
   max?: number;
   hint?: string;
+  /** #2865 case c: default unit still loading; controls disabled. */
+  locked?: boolean;
 }) {
   // Local string state so the user can clear the input mid-edit without it
   // snapping back to "0". Synced to `value` whenever the parent updates it
@@ -60,7 +63,15 @@ export function CartStepperRow({
         ) : null}
       </View>
       <View style={styles.stepper}>
-        <Pressable style={styles.stepBtn} onPress={dec} hitSlop={6}>
+        <Pressable
+          style={styles.stepBtn}
+          onPress={dec}
+          hitSlop={6}
+          disabled={locked}
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${label}`}
+          accessibilityState={{ disabled: locked, busy: locked }}
+        >
           <Text style={styles.stepBtnText}>−</Text>
         </Pressable>
         <TextInput
@@ -87,8 +98,18 @@ export function CartStepperRow({
           returnKeyType="done"
           maxLength={5}
           selectTextOnFocus
+          editable={!locked}
+          accessibilityState={{ disabled: locked, busy: locked }}
         />
-        <Pressable style={styles.stepBtn} onPress={inc} hitSlop={6}>
+        <Pressable
+          style={styles.stepBtn}
+          onPress={inc}
+          hitSlop={6}
+          disabled={locked}
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${label}`}
+          accessibilityState={{ disabled: locked, busy: locked }}
+        >
           <Text style={styles.stepBtnText}>+</Text>
         </Pressable>
       </View>

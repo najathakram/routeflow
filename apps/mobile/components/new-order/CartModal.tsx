@@ -6,6 +6,7 @@ import { ios } from "@routeflow/ui/tokens";
 import { type UnitOption } from "../../lib/unit-options";
 import { type LineState, type Product } from "../../lib/cart-line-state";
 import { CartRow } from "../CartRow";
+import type { PendingUnit } from "../PendingUnitNotice";
 import { CartStepperRow } from "../CartStepperRow";
 import { type CustomerPriceHistory } from "../../lib/api/orders";
 import { computeLineSubtotal } from "@routeflow/pricing";
@@ -267,6 +268,7 @@ export function CartModal({
   onIncrement,
   onDecrement,
   onRemove,
+  pendingUnitFor,
   onChangeUnlistedQty,
   onChangeUnlistedPrice,
   onChangeUnlistedNote,
@@ -315,6 +317,8 @@ export function CartModal({
   onIncrement: (id: string) => void;
   onDecrement: (id: string) => void;
   onRemove: (id: string) => void;
+  /** #2865 case c: a line's pending-unit state (loading/failed + tap count + Retry), undefined once settled. */
+  pendingUnitFor?: (id: string, line: LineState) => PendingUnit | undefined;
   onChangeUnlistedQty: (id: string, n: number) => void;
   onChangeUnlistedPrice: (id: string, value: number | null) => void;
   onChangeUnlistedNote: (id: string, text: string) => void;
@@ -393,6 +397,7 @@ export function CartModal({
                     onIncrement={() => onIncrement(id)}
                     onDecrement={() => onDecrement(id)}
                     onRemove={() => onRemove(id)}
+                    pendingUnit={pendingUnitFor?.(id, line)}
                   />
                 ))}
                 {unlisted.map((u) => (

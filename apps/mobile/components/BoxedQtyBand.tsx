@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { ios } from "@routeflow/ui/tokens";
 import { QtyStepper } from "./QtyStepper";
+import { PendingUnitNotice, type PendingUnit } from "./PendingUnitNotice";
 import { boxedLineSummary, type BoxedSummaryLine } from "../lib/boxed-line-summary";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../lib/loose-units";
 
@@ -31,6 +32,8 @@ export interface BoxedQtyBandProps {
    * rendered at all, rather than sitting there doing nothing when tapped.
    */
   onEdit?: () => void;
+  /** #2865 case c: the line is waiting on its default unit; steppers lock and the notice shows. */
+  pendingUnit?: PendingUnit;
 }
 
 /**
@@ -55,6 +58,7 @@ export function BoxedQtyBand({
   onChangeBoxes,
   onChangePieces,
   onEdit,
+  pendingUnit,
 }: BoxedQtyBandProps) {
   // #2698 (SA-564): one unit sold — loose units are opt-in, the same rule as CartRow.
   const [looseUnitsOpen, setLooseUnitsOpen] = useState(false);
@@ -65,7 +69,12 @@ export function BoxedQtyBand({
         <Text style={styles.label} numberOfLines={1}>
           Cases
         </Text>
-        <QtyStepper size="mini" value={line.boxes ?? 0} onChangeQty={onChangeBoxes} />
+        <QtyStepper
+          size="mini"
+          value={line.boxes ?? 0}
+          onChangeQty={onChangeBoxes}
+          locked={!!pendingUnit}
+        />
       </View>
       {showLoose ? (
         <View style={styles.control}>
@@ -96,10 +105,12 @@ export function BoxedQtyBand({
             // Mirror the Review sheet's clamp (setLinePieces itself doesn't):
             // a full case's worth of loose belongs in the Cases stepper.
             max={unitsPerBox - 1}
+            locked={!!pendingUnit}
           />
         </View>
       ) : (
         <Pressable
+          disabled={!!pendingUnit}
           onPress={() => setLooseUnitsOpen(true)}
           hitSlop={8}
           style={styles.looseAdd}
@@ -109,6 +120,7 @@ export function BoxedQtyBand({
           <Text style={styles.looseAddText}>+ units</Text>
         </Pressable>
       )}
+      {pendingUnit ? <PendingUnitNotice pendingUnit={pendingUnit} /> : null}
       <View style={styles.summaryRow}>
         <Text style={styles.summary} numberOfLines={1}>
           {boxedLineSummary(line, unitsPerBox, unitPrice)}

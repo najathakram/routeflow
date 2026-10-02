@@ -20,6 +20,7 @@ import { SellByToggle } from "./SellByToggle";
 import { CostHistorySheet } from "./CostHistorySheet";
 import { UnitPickerRow } from "./UnitPickerRow";
 import { CartStepperRow } from "./CartStepperRow";
+import { PendingUnitNotice, type PendingUnit } from "./PendingUnitNotice";
 import { canRemoveLooseUnits, looseUnitsVisible } from "../lib/loose-units";
 
 /**
@@ -49,6 +50,7 @@ export function CartRow({
   onIncrement,
   onDecrement,
   onRemove,
+  pendingUnit,
 }: {
   product: Product;
   line: LineState;
@@ -80,6 +82,8 @@ export function CartRow({
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
+  /** #2865 case c: waiting on the default unit; every qty control locks and the notice shows. */
+  pendingUnit?: PendingUnit;
 }) {
   const upb = Number(product.unitsPerBox ?? 0);
   // units_v1: a unit-sold line is never boxed UI — its qty is a plain count and unitPrice is
@@ -256,10 +260,16 @@ export function CartRow({
               value={qty}
               onChange={onChangeUnits}
               hint={`${upb} per case`}
+              locked={!!pendingUnit}
             />
           ) : (
             <>
-              <CartStepperRow label="Cases" value={line.boxes ?? 0} onChange={onChangeBoxes} />
+              <CartStepperRow
+                label="Cases"
+                value={line.boxes ?? 0}
+                onChange={onChangeBoxes}
+                locked={!!pendingUnit}
+              />
               {showLooseUnits ? (
                 <View style={styles.looseRow}>
                   <View style={{ flex: 1 }}>
@@ -268,6 +278,7 @@ export function CartRow({
                       value={line.pieces ?? 0}
                       onChange={onChangePieces}
                       max={upb - 1}
+                      locked={!!pendingUnit}
                       hint={`${product.unit ?? "units"} · ${upb} per case`}
                     />
                   </View>
@@ -307,8 +318,10 @@ export function CartRow({
           onChange={onChangeQty}
           onIncrement={onIncrement}
           onDecrement={onDecrement}
+          locked={!!pendingUnit}
         />
       )}
+      {pendingUnit ? <PendingUnitNotice pendingUnit={pendingUnit} /> : null}
 
       {/* Cost eye — OFF by default; reveals the selling-unit cost + margin.
           Once visible, the cost text itself is tappable → cost history sheet. */}

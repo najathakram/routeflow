@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { LineState } from "../lib/cart-line-state";
 import {
@@ -46,6 +46,10 @@ export function useDefaultUnitResolver(
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
+  // #2865 case c (SA-632): the lines whose units ladder FAILED to load (line ids). A pending line not in this set is
+  // still loading. The controls stay locked either way; a failed line shows the error and a Retry.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+
   const pendingKey = Object.entries(items)
     .filter(([, l]) => isPendingDefaultUnit(l))
     .map(([id, l]) => `${id}:${l.qty}`)
@@ -54,8 +58,10 @@ export function useDefaultUnitResolver(
     if (!pendingKey) return;
     const before = itemsRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ items: done }) => {
-      if (live) setItems((cur) => mergeResolvedDefaults(cur, before, done));
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ items: done, blocked }) => {
+      if (!live) return;
+      setItems((cur) => mergeResolvedDefaults(cur, before, done));
+      setFailed(new Set(blocked));
     });
     return () => {
       live = false;
@@ -64,7 +70,7 @@ export function useDefaultUnitResolver(
   }, [pendingKey, unitsEnabled, unitsKnown]);
 
   // "Try again" after a blocked submit refetches the units answer first (N10).
-  return useCallback(async (cur: Items) => {
+  const resolveBeforeSubmit = useCallback(async (cur: Items) => {
     const fresh = await refreshUnitsAnswer(
       depsRef.current!,
       async () => {
@@ -75,4 +81,21 @@ export function useDefaultUnitResolver(
     );
     return resolvePendingDefaultUnits(cur, fresh);
   }, []);
+
+  /** Retry from a failed line's own button: the same refetch + resolve path, merged back like the effect does. */
+  const retry = useCallback(async () => {
+    const before = itemsRef.current;
+    const { items: done, blocked } = await resolveBeforeSubmit(before);
+    setItems((cur) => mergeResolvedDefaults(cur, before, done));
+    setFailed(new Set(blocked));
+  }, [resolveBeforeSubmit, setItems]);
+
+  /** `loading` while the ladder is being fetched, `failed` once it could not be; undefined for a settled line. */
+  const statusFor = useCallback(
+    (id: string, line: LineState | undefined): "loading" | "failed" | undefined =>
+      isPendingDefaultUnit(line) ? (failed.has(id) ? "failed" : "loading") : undefined,
+    [failed],
+  );
+
+  return { resolveBeforeSubmit, retry, statusFor };
 }

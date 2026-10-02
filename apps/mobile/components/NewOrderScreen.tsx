@@ -45,6 +45,8 @@ import {
   applyUnitOption,
   isStaffRole,
   keepsDefaultStart,
+  pendingTapCount,
+  refusesPendingEdit,
   mergeResolvedDefaults,
 } from "../lib/default-unit-line";
 import { useDefaultUnitResolver } from "../hooks/useDefaultUnitResolver";
@@ -76,6 +78,7 @@ import {
 import { InlineCreateProductSheet } from "./InlineCreateProductSheet";
 import { ProductPickerSheet } from "./ProductPickerSheet";
 import { BoxedQtyBand } from "./BoxedQtyBand";
+import type { PendingUnit } from "./PendingUnitNotice";
 import type { CreatedProduct } from "../lib/api/products";
 import { useAuthStore } from "../lib/auth-store";
 // chooseAction + alertInfo render the same dialogs cross-platform — RN's
@@ -788,6 +791,9 @@ function ProductPickView({
       isSpecialTier(effectiveTierFor(id)),
     );
     setItems((m) => {
+      // #2865 case c (SA-632): a PENDING line (default unit not resolved) refuses every add that is not a default-start
+      // pick (the stepper "+" before the ladder loads), IN THE LOGIC: its quantity must never depend on load timing.
+      if (refusesPendingEdit(m[id], dflt, userRole)) return m;
       const isNew = !m[id];
       const prev: LineState = m[id] ?? { qty: 0 };
       // Spread prev inside incrementLine so a repeat scan / +1 keeps the operator's
@@ -797,7 +803,11 @@ function ProductPickView({
       // a PACK's own barcode split (SA-085f BLOCKER: box math on a unit line). upb <= 1 has no
       // box/unit distinction (R4): today's plain +1.
       const line = addScannedLevelToLine(prev, level, isBoxed, upb);
-      if (keepsDefaultStart(m[id], dflt, userRole)) line.startOnDefaultUnit = line.qty;
+      if (keepsDefaultStart(m[id], dflt, userRole)) {
+        line.startOnDefaultUnit = line.qty;
+        // N taps before the ladder loads = N of the default unit, recorded as a COUNT (never a guessed-unit qty)
+        line.pendingTaps = isNew ? 1 : pendingTapCount(prev, upb) + 1;
+      }
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
         // B755: tag this as a HISTORY pre-fill, not an operator override — resuming this
@@ -830,6 +840,7 @@ function ProductPickView({
     setItems((m) => {
       const prev = m[id];
       if (!prev) return m;
+      if (refusesPendingEdit(prev, false, userRole)) return m; // #2865 case c: refused in the logic
       const line = stepLineQty(prev, -1, isBoxed, upb);
       if (!line) {
         const next = { ...m };
@@ -845,6 +856,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
+      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
       const line = setLineBoxes(prev, boxes, upb);
       if (!line) {
         const next = { ...m };
@@ -859,6 +871,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
+      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
       const line = setLinePieces(prev, pieces, upb);
       if (!line) {
         const next = { ...m };
@@ -876,6 +889,7 @@ function ProductPickView({
       const p = productById.get(id);
       const upb = Number(p?.unitsPerBox ?? 0);
       const prev = m[id] ?? { qty: 0 };
+      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
       const line = setLineUnits(prev, units, upb);
       if (!line) {
         const next = { ...m };
@@ -886,7 +900,11 @@ function ProductPickView({
     });
 
   const setSellBy = (id: string, sellBy: "case" | "unit") =>
-    setItems((m) => (m[id] ? { ...m, [id]: { ...m[id], sellBy } } : m));
+    setItems((m) =>
+      m[id] && !refusesPendingEdit(m[id], false, userRole)
+        ? { ...m, [id]: { ...m[id], sellBy } }
+        : m,
+    );
 
   /**
    * units_v1: apply a `UnitPickerRow` choice. `qty` resets to 1 (a fresh unit assignment, never
@@ -901,17 +919,36 @@ function ProductPickView({
   const setUnitLabel = (id: string, option: UnitOption) =>
     setItems((m) => (m[id] ? { ...m, [id]: applyUnitOption(m[id], option, upbOf(id)) } : m));
   // SA-626c: a flagged line holds its default unit from the moment it is added, never only once a sheet mounts.
-  const resolveDefaultUnits = useDefaultUnitResolver(
+  const {
+    resolveBeforeSubmit: resolveDefaultUnits,
+    retry: retryUnits,
+    statusFor: unitStatusFor,
+  } = useDefaultUnitResolver(
     items,
     setItems,
     isStaff,
     (id) => productById.get(id),
     effectiveTierFor,
   );
+  /** #2865 case c: loading/failed + the recorded tap count for a pending line; undefined once it settled. */
+  const pendingUnitFor = useCallback(
+    (id: string, line: LineState | undefined): PendingUnit | undefined => {
+      const status = unitStatusFor(id, line);
+      return status && line
+        ? {
+            status,
+            taps: pendingTapCount(line, productById.get(id)?.unitsPerBox),
+            onRetry: () => void retryUnits(),
+          }
+        : undefined;
+    },
+    [unitStatusFor, retryUnits, productById],
+  );
 
   const setQty = (id: string, qty: number) =>
     setItems((m) => {
       const prev = m[id] ?? { qty: 0 };
+      if (refusesPendingEdit(m[id], false, userRole)) return m; // #2865 case c: refused in the logic
       // Plain qty path — setLineQty clears boxes/pieces so server doesn't try to recompute
       const line = setLineQty(prev, qty);
       if (!line) {
@@ -1420,6 +1457,7 @@ function ProductPickView({
             onChangeBoxes={(n) => onRowChangeBoxes(p.id, n)}
             onChangePieces={(n) => onRowChangePieces(p.id, n)}
             onEdit={openCart}
+            pendingUnit={pendingUnitFor(p.id, line)}
           />
         ) : null;
 
@@ -1438,6 +1476,7 @@ function ProductPickView({
           onIncrement={onRowIncrement}
           onDecrement={onRowDecrement}
           unitLabel={line?.unitLabel}
+          pendingUnit={pendingUnitFor(p.id, line)}
         >
           {band}
         </ProductRow>
@@ -1455,6 +1494,7 @@ function ProductPickView({
       onRowChangeBoxes,
       onRowChangePieces,
       openCart,
+      pendingUnitFor,
     ],
   );
 
@@ -2513,6 +2553,7 @@ function ProductPickView({
         onIncrement={addOne}
         onDecrement={removeOne}
         onRemove={removeLine}
+        pendingUnitFor={pendingUnitFor}
         onChangeUnlistedQty={updateUnlistedQty}
         onChangeUnlistedPrice={updateUnlistedPrice}
         onChangeUnlistedNote={updateUnlistedNote}

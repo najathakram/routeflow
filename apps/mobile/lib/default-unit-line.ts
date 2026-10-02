@@ -1,6 +1,6 @@
 import type { ProductUnitLevel } from "@routeflow/types";
 import type { LineState } from "./cart-line-state";
-import type { LadderProduct } from "@routeflow/pricing";
+import { isUnitPending, type LadderProduct } from "@routeflow/pricing";
 import { defaultStartOption, type UnitOption } from "./unit-options";
 
 /**
@@ -29,12 +29,13 @@ export function applyUnitOption(
     unitFactor: isPack ? undefined : option.factorToBase,
     // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
     startOnDefaultUnit: undefined,
+    pendingTaps: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); re-applying the unit the line ALREADY holds (a
     // stale sheet/picker after the resolver ran) keeps its quantity; any other choice resets to 1, as always.
     qty: sameUnit
       ? prev.qty
       : !isPack && isPendingDefaultUnit(prev)
-        ? pendingCount(prev, unitsPerBox)
+        ? pendingTapCount(prev, unitsPerBox)
         : 1,
     boxes: undefined,
     pieces: undefined,
@@ -45,7 +46,9 @@ export function applyUnitOption(
 }
 
 /** Fast adds before the ladder loaded: N adds = N of the default unit. A boxed product's qty is total pieces. */
-function pendingCount(line: LineState, unitsPerBox?: number | string | null): number {
+export function pendingTapCount(line: LineState, unitsPerBox?: number | string | null): number {
+  // #2865 case c: the PENDING TAP COUNT is recorded explicitly, never inferred from a quantity in a guessed unit.
+  if (line.pendingTaps != null && line.pendingTaps >= 1) return line.pendingTaps;
   const upb = Number(unitsPerBox ?? 0);
   return Math.max(1, upb > 1 ? Math.round(line.qty / upb) : line.qty);
 }
@@ -56,12 +59,31 @@ function pendingCount(line: LineState, unitsPerBox?: number | string | null): nu
  * the unit (owner ruling SA-626d).
  */
 export function isPendingDefaultUnit(line: LineState | undefined): boolean {
-  return (
-    line?.startOnDefaultUnit != null &&
-    line.startOnDefaultUnit === line.qty &&
-    line.priceSource !== "operator" &&
-    (line.unitPrice == null || line.priceSource === "history")
-  );
+  if (!line) return false;
+  // #2865 case c (SA-632): the shared definition (one predicate for web and mobile, @routeflow/pricing). On mobile the
+  // flag holds only while it equals the line's qty, and a typed operator price shapes the line (a remembered "history"
+  // price is the system's pre-fill, not a shape: SA-626d).
+  return isUnitPending({
+    startOnDefaultUnit: line.startOnDefaultUnit,
+    qty: line.qty,
+    operatorPrice:
+      line.priceSource === "operator" || (line.unitPrice != null && line.priceSource !== "history"),
+  });
+}
+
+/**
+ * #2865 case c (SA-632): a quantity edit on a PENDING line is refused IN THE LOGIC (not only by a disabled control). The
+ * ONLY thing allowed to add to a pending line is a STAFF default-start pick (a picker tap / shared scan), which records
+ * one more TAP (N taps = N of the default unit on resolve). Every other edit (the stepper +/-, a typed qty, boxes,
+ * pieces, a units total) returns the line unchanged. A line that does not exist yet, or is settled, is never refused.
+ */
+export function refusesPendingEdit(
+  prev: LineState | undefined,
+  defaultStart?: boolean,
+  role?: string | null,
+): boolean {
+  if (!isPendingDefaultUnit(prev)) return false;
+  return !(defaultStart && isStaffRole(role));
 }
 
 /**
@@ -167,6 +189,7 @@ export async function resolvePendingDefaultUnits(
 }
 
 const UNIT_FIELDS = [
+  "pendingTaps",
   "unitLabel",
   "unitBasePrice",
   "unitFactor",

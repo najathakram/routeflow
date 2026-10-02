@@ -21,8 +21,9 @@ describe("mobile default selling unit wiring (#2784)", () => {
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
     expect(screen).toMatch(/dflt\?: boolean/);
     expect(screen).toMatch(
-      /if \(keepsDefaultStart\(m\[id\], dflt, userRole\)\) line\.startOnDefaultUnit = line\.qty;/,
+      /if \(keepsDefaultStart\(m\[id\], dflt, userRole\)\) \{\s*line\.startOnDefaultUnit = line\.qty;/,
     );
+    expect(screen).toMatch(/line\.pendingTaps = isNew \? 1 : pendingTapCount\(prev, upb\) \+ 1/); // #2865 case c
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true\)/);
     // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
     // box-only / unit-only code: finishAccept forwards `opts?.startOnDefault`, which the ladder sets for shared codes.
@@ -48,15 +49,18 @@ describe("mobile default selling unit wiring (#2784)", () => {
 
   it("Opus #2865 B2/r2: CartRow hands the flag on only while the price is the operator's own AND untouched; it never guards on qty (a boxed qty is total pieces)", () => {
     expect(cartRow).toMatch(/startOnDefaultUnit=\{isPendingDefaultUnit\(line\)\}/);
-    expect(defaultUnitLine).toMatch(/line\.priceSource !== "operator"/);
-    expect(defaultUnitLine).toMatch(/line\.unitPrice == null/);
+    // #2865 case c: the one shared predicate decides (operator price shapes the line; a history pre-fill does not)
+    expect(defaultUnitLine).toMatch(/isUnitPending\(/);
+    expect(defaultUnitLine).toMatch(/line\.priceSource !== "history"/);
     expect(defaultUnitLine).not.toMatch(/line\.qty \?\? 0\) <= 1/);
   });
 
   it("Opus #2865 r2: the flag is the line's creation qty, and CartRow applies the default only while qty still equals it (no handler edits, no qty<=1 guard)", () => {
     expect(state).toMatch(/startOnDefaultUnit\?: number/);
     expect(screen).toMatch(/line\.startOnDefaultUnit = line\.qty/);
-    expect(defaultUnitLine).toMatch(/line\.startOnDefaultUnit === line\.qty/);
+    expect(defaultUnitLine).toMatch(
+      /startOnDefaultUnit: line\.startOnDefaultUnit,\s*qty: line\.qty/,
+    );
   });
 });
 
