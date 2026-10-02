@@ -88,6 +88,7 @@ import {
   mapBarcodeUniqueViolation,
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
+import { claimCodes, codeClaims } from "../products/product-code-release";
 import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
@@ -2860,6 +2861,14 @@ export class ImportService {
             // products.service.ts create().
             if (zohoBarcode) {
               await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              // SA-603a: lock -> claim -> check -> create. A code an INACTIVE product still holds is released here
+              // (audited); an ACTIVE holder is a 409. (barcode and sku are the same code on this path.)
+              await claimCodes(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                actorId: null,
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+              });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
                 productId: null,

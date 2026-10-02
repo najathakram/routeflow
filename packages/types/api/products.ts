@@ -262,3 +262,44 @@ export interface RecipeDto {
   retiredAt: string | null;
   components: RecipeComponentDto[];
 }
+
+// ─── Reuse API 409 bodies (SA-603a/603i; flat keys, one shape for codes and names) ───────────────────
+/** One ACTIVE product blocking a reactivation, for one code or the name. */
+export interface ProductReactivationHolder {
+  /** BARCODE_TAKEN for a barcode (SA-572b keeps its code); CODE_TAKEN for sku / unitSku; NAME_TAKEN for the name. */
+  code: "CODE_TAKEN" | "BARCODE_TAKEN" | "NAME_TAKEN";
+  field: "sku" | "barcode" | "unitSku" | "name";
+  value: string;
+  productId: string;
+  productName: string;
+  /** Present when this holder can NOT be deactivated in the one call (a FAMILY, or it has ACTIVE variants). */
+  blocked?: "HAS_ACTIVE_VARIANTS";
+}
+
+/**
+ * 409 when reactivating (or creating / renaming) hits an ACTIVE holder. The top-level keys repeat `holders[0]` (the fixed
+ * copy maps from them); `holders` is the COMPLETE set the server derived, which is exactly what `deactivateHolderIds`
+ * must equal on the one-call resolution. A barcode conflict also carries SA-572b's `barcode` key.
+ */
+export interface ProductCodeTakenError extends ProductReactivationHolder {
+  message: string;
+  barcode?: string;
+  holders?: ProductReactivationHolder[];
+}
+/**
+ * The name-taken 409. `productId` / `productName` name the holder, but the DB-unique backstop (a P2002 on an active-name
+ * index) cannot know who holds it, so on that path they are absent.
+ */
+export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "productName"> & {
+  code: "NAME_TAKEN";
+  field: "name";
+  productId?: string;
+  productName?: string;
+};
+
+/** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
+export interface ProductHoldersChangedError {
+  code: "HOLDERS_CHANGED";
+  message: string;
+  holders: [];
+}

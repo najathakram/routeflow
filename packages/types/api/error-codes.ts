@@ -21,6 +21,18 @@
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
 //                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
 //                    carries `barcode` and the holder's `productId`.
+//   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
+//                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
+//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
+//                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
+//   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
+//                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
+//   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
+//                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
+//                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
+//   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
+//                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -74,6 +86,11 @@ export const API_ERROR_CODES = {
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
+  CODE_TAKEN: "CODE_TAKEN",
+  NAME_TAKEN: "NAME_TAKEN",
+  HOLDERS_CHANGED: "HOLDERS_CHANGED",
+  CODES_CHANGED: "CODES_CHANGED",
+  CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",
