@@ -5,6 +5,7 @@ import {
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
+import { creditLimitSentence } from "./credit-limit-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
@@ -153,6 +154,7 @@ export function genericToastCopy(err: unknown, surfaceRefusal?: string): string 
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === "ALLOCATIONS_EXCEED_PAYMENT") return allocationsCopy(data); // B987 moves this code into API_ERROR_CODES
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
+  if (code === "CREDIT_LIMIT_EXCEEDED") return creditLimitSentence(data.limit, data.exposure);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

@@ -1,4 +1,5 @@
 import * as fs from "fs";
+import { rawMessageReads } from "./raw-message-scan";
 import * as path from "path";
 import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,9 +24,7 @@ describe("no raw server message on the orders + customers surfaces", () => {
     "lib/api/credit-limit.ts",
     "lib/api/selling-restricted.ts",
   ])("%s", (f) => {
-    const src = read(f);
-    expect(src).not.toMatch(/response\??\.data\??\.message/);
-    expect(src).not.toMatch(/\b(?:err|e|error)\??\.message\b/);
+    expect(rawMessageReads(read(f))).toEqual([]);
   });
 
   it("each surface passes its OWN actionable sentence for an uncoded refusal", () => {
