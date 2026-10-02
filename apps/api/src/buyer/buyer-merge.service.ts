@@ -11,6 +11,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @Injectable()
 export class BuyerMergeService {
@@ -98,7 +99,10 @@ export class BuyerMergeService {
         .delete({ where: { id: mergeRequest.id } })
         .catch(() => {});
       throw new BadRequestException({
-        code: sendResult.transport === "none" ? "EMAIL_NOT_CONFIGURED" : "EMAIL_SEND_FAILED",
+        code:
+          sendResult.transport === "none"
+            ? API_ERROR_CODES.EMAIL_NOT_CONFIGURED
+            : API_ERROR_CODES.EMAIL_SEND_FAILED,
         message:
           sendResult.transport === "none"
             ? "Email isn't set up, so the verification email couldn't be sent. Ask the seller to configure email under Settings → Email, then try again."
