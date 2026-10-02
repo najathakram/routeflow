@@ -1490,7 +1490,14 @@ export function CreateOrderModal({
             >
               Save as Draft
             </Button>
-            <Button type="submit" form="create-order-form" loading={createOrder.isPending}>
+            <Button
+              type="submit"
+              form="create-order-form"
+              loading={createOrder.isPending}
+              // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
+              disabled={lineItems.some(isPendingDefaultUnit)}
+              aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
+            >
               Create Order
             </Button>
           </div>

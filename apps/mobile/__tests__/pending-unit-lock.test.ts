@@ -106,4 +106,16 @@ describe("pending tap count (case c)", () => {
     const retried = await resolvePendingDefaultUnits(failed.items, deps([BOTTLE, CASE]));
     expect(retried.items.p1).toMatchObject({ unitLabel: "Bottle", qty: 3 });
   });
+
+  it("refusesPendingEdit tracks the line's lifecycle: pending refuses, a FAILED load keeps refusing, a successful retry allows", async () => {
+    const line = pending({ pendingTaps: 2, qty: 24, boxes: 2, startOnDefaultUnit: 24 });
+    expect(refusesPendingEdit(line, false, "OPERATOR")).toBe(true); // pending
+    const failed = await resolvePendingDefaultUnits({ p1: line }, deps(new Error("offline")));
+    expect(failed.blocked).toEqual(["p1"]);
+    expect(refusesPendingEdit(failed.items.p1, false, "OPERATOR")).toBe(true); // failed: still refuses
+    const retried = await resolvePendingDefaultUnits(failed.items, deps([BOTTLE, CASE]));
+    expect(retried.blocked).toEqual([]);
+    expect(refusesPendingEdit(retried.items.p1, false, "OPERATOR")).toBe(false); // settled: allows
+    expect(retried.items.p1).toMatchObject({ unitLabel: "Bottle", qty: 2 });
+  });
 });

@@ -339,4 +339,33 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
     ]);
   });
+
+  it("case d (SA-632): the ladder NEVER resolves -> Create Order is disabled + aria-busy and no order is created, even if clicked", async () => {
+    mockFetchProductUnits.mockReturnValue(new Promise(() => undefined)); // never settles
+    await open(1);
+
+    const create = screen.getByRole("button", { name: /create order/i });
+    expect(create).toBeDisabled();
+    expect(create).toHaveAttribute("aria-busy", "true");
+    fireEvent.click(create);
+    await act(async () => undefined);
+    expect(createOrderMutate).not.toHaveBeenCalled();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it("case d (SA-632): once the ladder resolves Create Order is enabled again and submits exactly the default unit", async () => {
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(2);
+    expect(screen.getByRole("button", { name: /create order/i })).toBeDisabled();
+
+    await act(async () => release([bottleLevel, caseLevel]));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /create order/i })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: /create order/i })).not.toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
 });
