@@ -763,13 +763,13 @@ export class ImportService {
       // B964: the same rule for the row's billing/shipping address text and its tobacco license number (change-only for the
       // license against an existing customer): reject THIS row before any write; the importer never reads or rewrites stored rows.
       // Change-only (lead Opus on #3010): an address cell is checked only when the importer WILL write it: always for a new
-      // customer, and for an existing one only when that address type is missing (a stored address is never rewritten here).
+      // customer, and for an existing one only when that address type is missing AND the row has that address to write (shipping equal to billing writes no shipping row).
       const hasStoredBilling = (existing?.addresses ?? []).some((a) => a.addressType === "BILLING");
       const hasStoredShipping = (existing?.addresses ?? []).some(
         (a) => a.addressType === "SHIPPING",
       );
       const textViolation =
-        (hasStoredBilling
+        (hasStoredBilling || !hasBilling
           ? null
           : addressViolation({
               line1: billingLine1,
@@ -777,7 +777,7 @@ export class ImportService {
               state: billingState,
               zip: billingZip,
             })) ??
-        (hasStoredShipping
+        (hasStoredShipping || !hasShipping
           ? null
           : addressViolation({
               line1: shippingLine1,
