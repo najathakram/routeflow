@@ -3,6 +3,7 @@ import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
   UNCONFIRMED_COPY,
+  noResponse,
 } from "./credit-note-error-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { parsePlanGate } from "./plan-gate";
@@ -33,7 +34,7 @@ const CODE_COPY: Record<string, string> = {
   MERGE_PACK_MISMATCH:
     "The pack size on this order no longer matches the product. Refresh and review the line.",
   ORDER_CHANGED_DURING_EDIT: "This order changed while you were editing it. Refresh and try again.",
-  ORDER_LINE_CHANGED:
+  [API_ERROR_CODES.ORDER_LINE_CHANGED]:
     "A line on this order changed while it was being billed. Nothing was billed. Try again.",
   CONCURRENT_UPDATE: "Someone else is updating this record. Try again in a moment.",
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
@@ -63,31 +64,30 @@ function statusCopy(status: number): string {
   if (status === 401) return "Your session expired. Sign in again.";
   if (status === 403) return "You don't have permission to do that.";
   if (status === 404) return "That item no longer exists. Refresh and try again.";
-  if (status === 409) return "This changed while you were working on it. Refresh and try again.";
+  // Most uncoded 409s are "already exists / in use": say that, not "stale data".
+  if (status === 409)
+    return "That conflicts with something that already exists or is in use. Check it and try again.";
   if (status === 429) return "Too many requests. Wait a moment and try again.";
   if (status >= 500) return "Something went wrong on our side. Please try again.";
   return GENERIC_COPY;
 }
 
-const finiteCount = (n: unknown): n is number =>
-  typeof n === "number" && Number.isFinite(n) && n >= 0;
-
 /**
- * "Only N left" from the body's STRUCTURED numbers, never parsed from the message. Reads the shape
- * the readable-insufficient-stock work (#2871) gives order create/edit: `lines[]` of
- * `{ productId, name?, unit?, available, requested }`, with `available`/`requested` mirroring
- * `lines[0]` (the order-edit refusal already sends only those legacy fields). Several short lines
- * give the plural line; no usable number gives the numberless line.
+ * ONE numberless sentence for every INSUFFICIENT_STOCK body shape. `available`/`requested` count
+ * PIECES with no unit noun, so "Only N left" would overstate stock to a box buyer; #2871's builder
+ * (which knows the unit and the product name) replaces this when it lands.
  */
-function stockCopy(data: Record<string, unknown>): string {
-  const lines = Array.isArray(data.lines) ? data.lines : [];
-  if (lines.length > 1)
-    return "Some items don't have enough stock. Lower the quantities and try again.";
-  const first = (lines[0] ?? {}) as { available?: unknown };
-  const available = finiteCount(first.available) ? first.available : data.available;
-  return finiteCount(available)
-    ? `Not enough stock. Only ${Math.floor(available)} left.`
-    : "Not enough stock for this item.";
+const STOCK_COPY = "Some items aren't available in that quantity.";
+
+/** A server sentence that is already product text, matched WHOLE against the two closed tables. */
+function sentenceForMessage(data: Record<string, unknown>): string | null {
+  const message = data.message;
+  if (typeof message !== "string") return null;
+  if (Object.prototype.hasOwnProperty.call(KNOWN_SERVER_SENTENCES, message))
+    return KNOWN_SERVER_SENTENCES[message];
+  if (Object.prototype.hasOwnProperty.call(KNOWN_REFUSAL_SENTENCES, message))
+    return KNOWN_REFUSAL_SENTENCES[message];
+  return null;
 }
 
 /** The fixed sentence a generic mutation toast shows for `err`. */
@@ -96,8 +96,8 @@ export function genericToastCopy(err: unknown): string {
   if (refusal) return refusal;
   if (!err || typeof err !== "object") return GENERIC_COPY;
   const response = (err as { response?: { status?: number; data?: unknown } }).response;
-  // No HTTP response (a timeout or dropped connection): the write may have gone through.
-  if (!response) return UNCONFIRMED_COPY;
+  // No HTTP response: a timeout or dropped connection may have committed; a plain client Error did not.
+  if (!response) return noResponse(err) ? UNCONFIRMED_COPY : GENERIC_COPY;
   const data = (response.data && typeof response.data === "object" ? response.data : {}) as Record<
     string,
     unknown
@@ -107,20 +107,11 @@ export function genericToastCopy(err: unknown): string {
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === "READ_ONLY") return READ_ONLY_COPY;
-  if (code === "INSUFFICIENT_STOCK") return stockCopy(data);
+  if (code === "INSUFFICIENT_STOCK") return STOCK_COPY;
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];
-  const message = data.message;
-  if (
-    typeof message === "string" &&
-    Object.prototype.hasOwnProperty.call(KNOWN_SERVER_SENTENCES, message)
-  )
-    return KNOWN_SERVER_SENTENCES[message];
-  if (
-    typeof message === "string" &&
-    Object.prototype.hasOwnProperty.call(KNOWN_REFUSAL_SENTENCES, message)
-  )
-    return KNOWN_REFUSAL_SENTENCES[message];
+  const known = sentenceForMessage(data);
+  if (known) return known;
   return typeof response.status === "number" ? statusCopy(response.status) : GENERIC_COPY;
 }

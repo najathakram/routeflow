@@ -25,6 +25,7 @@ export const VALID_RETURN_REASONS = [
 // default; the rest go back into stock unless the caller says otherwise.
 export const NO_RESTOCK_REASONS = new Set(["DAMAGED", "QUALITY_ISSUE"]);
 import { Prisma } from "@prisma/client";
+import type { UnbilledReturnItem } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { RouteFlowGateway } from "../gateways/routeflow.gateway";
@@ -35,7 +36,10 @@ import {
   planProductRefund,
   toHeadroomLine,
   loadLineCredits,
+  loadOrderPool,
+  pooledRefundRefusal,
   type HeadroomLine,
+  type OrderPool,
   type RefundItem,
 } from "../credit-notes/line-credit-headroom";
 import { API_ERROR_CODES } from "../common/api-error-codes";
@@ -53,7 +57,7 @@ import {
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
-import { standardRestockResolver } from "./returns-restock-pieces";
+import { standardRestockResolver, type ProductPackBasis } from "./returns-restock-pieces";
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
@@ -617,14 +621,86 @@ export class ReturnsService {
   private async billedBasisFor(
     items: any[],
     order?: any,
-  ): Promise<{ amount: number; invoiceId?: string; items?: RefundItem[] }> {
+  ): Promise<{
+    amount: number;
+    invoiceId?: string;
+    items?: RefundItem[];
+    pooledRefund?: Array<{ productId: string; qty: number }>;
+    unbilledItems?: UnbilledReturnItem[];
+  }> {
     const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException("Nothing billed on this order can be refunded");
     }
+    // B965 (SA-628l): a STANDARD return's qty is in its order line's OWN unit, so a product sold on lines with different pack
+    // factors (2 boxes of 12 on one line, 12 loose pieces on another) has no single piece count: every line-unit sum below
+    // would add boxes to pieces. create() already refuses to record one (SA-158); this is the refund door's safety net for
+    // legacy RECEIVED rows, refused BEFORE the claim and BEFORE the never-invoiced shortcut (its order-line pricing adds boxes to
+    // pieces and mints with no cap). EXTERNAL_REFUND (priceReturn only) stays the escape hatch.
+    const returnedByProduct = new Map<string, number>();
+    for (const it of items)
+      returnedByProduct.set(
+        it.productId,
+        (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
+      );
+    const packBases =
+      order?.id && (order.lineItems?.length ?? 0) > 0
+        ? await standardPackBases(this.prisma.forTenant(), order.id, order.lineItems)
+        : new Map<string, ProductPackBasis>();
+    for (const productId of returnedByProduct.keys()) {
+      const basis = packBases.get(productId);
+      if (basis && ("mixed" in basis || ("unknown" in basis && !basis.singleUnit)))
+        throw new ConflictException({
+          code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
+          message:
+            "This product was sold in different units on this order (for example boxes and loose pieces), so the return " +
+            "cannot be priced as one quantity. Credit it per line via an inline return, or manually.",
+          productId,
+        });
+    }
+
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
     if (creditable.length === 0) return { amount, invoiceId };
+
+    // B959: which returned products have NO billed line (qty > 0) on any creditable invoice. A billed $0 (free) line IS billed.
+    // Nothing billed at all => refuse (a $0 REFUNDED return with no credit note was a silent under-credit); a MIXED return refunds
+    // the billed part and reports the rest as readable "not billed, no refund" lines.
+    const billedProducts = new Set<string>();
+    for (const inv of creditable)
+      for (const it of inv.items ?? []) if (Number(it.qty) > 0) billedProducts.add(it.productId);
+    const unbilledQty = new Map<string, number>();
+    for (const it of items)
+      if (Number(it.qty) > 0 && !billedProducts.has(it.productId))
+        unbilledQty.set(it.productId, (unbilledQty.get(it.productId) ?? 0) + Number(it.qty));
+    const returnedProducts = new Set(
+      items.filter((it: any) => Number(it.qty) > 0).map((it: any) => it.productId),
+    );
+    if (returnedProducts.size > 0 && unbilledQty.size === returnedProducts.size)
+      throw new BadRequestException({
+        code: API_ERROR_CODES.RETURN_NOTHING_BILLED,
+        message:
+          "None of the returned items were billed on this order, so there is nothing to refund. " +
+          "Cancel the return, or credit it manually if a refund is owed.",
+      });
+    let unbilledItems: UnbilledReturnItem[] | undefined;
+    if (unbilledQty.size > 0) {
+      const names: Array<{ id: string; name: string | null }> =
+        (await this.prisma.forTenant().product.findMany({
+          where: { id: { in: [...unbilledQty.keys()] } },
+          select: { id: true, name: true },
+        })) ?? [];
+      const nameById = new Map(names.map((p) => [p.id, p.name]));
+      unbilledItems = [...unbilledQty].map(([productId, qty]) => {
+        const name = nameById.get(productId) ?? "This item";
+        return {
+          productId,
+          name,
+          qty,
+          message: `${name} was not billed on this order, so no refund was given for it.`,
+        };
+      });
+    }
 
     // The credit is always minted against ONE invoice — the only creditable one, or
     // the LATEST of 2+ (picked by priceReturn) — because a standalone (invoiceId:
@@ -673,7 +749,7 @@ export class ReturnsService {
     // SA-628 (B946): a single-invoice refund is ITEMISED against that invoice's lines under the SAME per-line headroom
     // credit notes use, so a credit note and a return refund can never together exceed a line's value. 2+ creditable
     // invoices keep the lump-sum credit minted against the latest one (v1: a refund is one credit note, and a credit
-    // note's items must belong to its one invoice; the older invoices' lines are NOT counted: a known residual).
+    // note's items must belong to its one invoice). B947: the refund is still CHECKED against the older invoices' lines too (pooled).
     // Done BEFORE the invoice-room check so that check reads the amount that will actually be minted.
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
@@ -683,6 +759,35 @@ export class ReturnsService {
         refundItems = itemised;
         effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
       }
+    }
+
+    // B947: 2+ creditable invoices keep the lump sum minted on the latest invoice, but the refund is checked against the SAME
+    // per-line headroom, POOLED per product across ALL the creditable invoices (a line on an older invoice was invisible to
+    // it). REFUSES (409), never clips, before the claim; create() re-checks it under the locks at the mint (`pooledRefund`).
+    let pooledRefund: Array<{ productId: string; qty: number }> | undefined;
+    if (creditable.length >= 2 && order?.id) {
+      const pool = await loadOrderPool(this.prisma.forTenant(), order.id);
+      // B967: the pool and the mint count in PIECES; a standard qty is in the line's unit, so it is converted here, once.
+      const returnedPieces = new Map<string, number>();
+      for (const [productId, qty] of returnedByProduct)
+        returnedPieces.set(productId, this.poolPieces(packBases, pool, productId, qty));
+      for (const [productId, qty] of returnedPieces) {
+        const refused = pooledRefundRefusal(pool, productId, qty);
+        if (refused)
+          throw new ConflictException({
+            code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
+            message:
+              "This refund would credit more than the order's invoice lines are worth: part of it was already credited " +
+              "(by a credit note or an earlier refund). Refund it outside RouteFlow or issue the credit note manually.",
+            productId,
+            requested: refused.requestedAmount,
+            remaining: refused.remainingAmount,
+            requestedQty: refused.requestedQty,
+            remainingQty: refused.remainingQty,
+            qtyUnit: refused.qtyUnit,
+          });
+      }
+      pooledRefund = [...returnedPieces].map(([productId, qty]) => ({ productId, qty }));
     }
 
     const latestAgg = await this.prisma.forTenant().creditNote.aggregate({
@@ -700,7 +805,47 @@ export class ReturnsService {
           `${latest?.invoiceNumber ?? invoiceId}; refund it outside RouteFlow or issue the credit note manually`,
       );
     }
-    return { amount: effectiveAmount, invoiceId, ...(refundItems ? { items: refundItems } : {}) };
+    return {
+      amount: effectiveAmount,
+      invoiceId,
+      ...(refundItems ? { items: refundItems } : {}),
+      ...(pooledRefund ? { pooledRefund } : {}),
+      ...(unbilledItems ? { unbilledItems } : {}),
+    };
+  }
+
+  /**
+   * A STANDARD return's qty (the order line's own unit) in PIECES for the order pool (B967). One factor: the order lines'
+   * (`standardReturnPieces`). Anything else is REFUSED fail-closed (409 RETURN_MIXED_UNIT_PRODUCT), never converted: an unknown
+   * basis (a box-unaware line with no pack proof, or billed across several invoice items) has an order-line unit the pool's own
+   * factor cannot vouch for, so a box-unaware line on 2+ invoices is refused; so are invoice lines with different factors. Only
+   * a product with no live order line at all (the pre-line / fixture shape) takes the pool's single factor.
+   */
+  private poolPieces(
+    bases: Map<string, ProductPackBasis>,
+    pool: OrderPool,
+    productId: string,
+    qty: number,
+  ): number {
+    const basis = bases.get(productId);
+    if (basis && "factor" in basis) return standardReturnPieces(bases, productId, qty).pieces;
+    // An UNKNOWN basis (a boxed line with no pack proof, or billed across several invoice items) has an order-line unit the
+    // pool's own factor cannot vouch for: refused, never converted. Only a product with no live order line at all (the
+    // fixture / pre-line shape) takes the pool's own single factor.
+    const factors = new Set(
+      pool.lines
+        .filter((l) => l.productId === productId && l.qty > 0)
+        .map((l) => l.piecesPerQty ?? 1),
+    );
+    if ((basis && "unknown" in basis) || factors.size > 1)
+      throw new ConflictException({
+        code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
+        message:
+          "This product's quantity cannot be priced as one unit across this order's invoices. " +
+          "Credit it per line via an inline return, or manually.",
+        productId,
+      });
+    return qty * ([...factors][0] ?? 1);
   }
 
   /**
@@ -740,6 +885,7 @@ export class ReturnsService {
           remaining: refusal.remainingAmount,
           requestedQty: refusal.requestedQty,
           remainingQty: refusal.remainingQty,
+          qtyUnit: refusal.qtyUnit,
         });
       }
       out.push(...items);
@@ -762,7 +908,7 @@ export class ReturnsService {
     amount: number;
     invoiceId?: string;
     creditable: any[];
-    refusal?: "NOTHING_CREDITABLE";
+    refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED";
   } {
     const allInvoices = order?.invoices ?? [];
 
@@ -839,8 +985,15 @@ export class ReturnsService {
     }
     amount = roundMoney(amount);
 
+    // B959: nothing the customer returned was billed on any creditable invoice (a billed $0 line is billed): the preview says
+    // so (amount 0 WITH a reason) and billedBasisFor refuses it, instead of a plain $0.
+    const nothingBilled =
+      [...returned].length > 0 &&
+      [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
+    const why = nothingBilled ? { refusal: "NOTHING_BILLED" as const } : {};
+
     if (creditable.length === 1) {
-      return { amount, invoiceId: creditable[0].id, creditable };
+      return { amount, invoiceId: creditable[0].id, creditable, ...why };
     }
 
     // 2+ creditable invoices: the source is the LATEST one (by createdAt) so
@@ -850,7 +1003,7 @@ export class ReturnsService {
       const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
       return bt - at;
     })[0];
-    return { amount, invoiceId: latest.id, creditable };
+    return { amount, invoiceId: latest.id, creditable, ...why };
   }
 
   async processRefund(id: string, dto?: ProcessRefundDto) {
@@ -898,11 +1051,9 @@ export class ReturnsService {
             },
             lineItems: {
               select: {
-                productId: true,
-                qty: true,
+                ...PACK_LINE_SELECT, // B965: the pack evidence the mixed-unit gate reads (id, split, unit label, product pack)
                 unitPrice: true,
                 subtotal: true,
-                status: true,
               },
             },
           },
@@ -919,11 +1070,26 @@ export class ReturnsService {
     // EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the
     // mint-time gates: a RECEIVED return on a VOID-only (or fully credited) order must
     // still be resolvable by "refunded outside RouteFlow", or it is stuck forever.
-    const basis: { amount: number; invoiceId?: string; items?: RefundItem[] } =
+    const basis: {
+      amount: number;
+      invoiceId?: string;
+      items?: RefundItem[];
+      pooledRefund?: Array<{ productId: string; qty: number }>;
+      unbilledItems?: UnbilledReturnItem[];
+    } =
       method === "EXTERNAL_REFUND"
         ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
-    const { amount: refundAmount, invoiceId: sourceInvoiceId, items: refundItems } = basis;
+    const {
+      amount: refundAmount,
+      invoiceId: sourceInvoiceId,
+      items: refundItems,
+      pooledRefund,
+      unbilledItems,
+    } = basis;
+    // B959: a mixed return says WHICH item got no refund, in the same response (never a silent $0)
+    const withUnbilled = <T>(r: T): T | (T & { unbilledItems: UnbilledReturnItem[] }) =>
+      unbilledItems && unbilledItems.length > 0 && r ? { ...r, unbilledItems } : r;
 
     // Concurrency guard: atomically CLAIM the RECEIVED→REFUNDED transition — and persist
     // the resolution snapshot (method/amount/timestamp) in that SAME write — before
@@ -948,7 +1114,7 @@ export class ReturnsService {
     // EXTERNAL_REFUND: the money was returned outside RouteFlow. Record it, mint nothing.
     if (method === "EXTERNAL_REFUND") return updated;
 
-    if (refundAmount <= 0.001) return updated;
+    if (refundAmount <= 0.001) return withUnbilled(updated);
 
     // Sequential, NOT nested: create() opens its own Serializable tx and books NO
     // regulated reversal for a lump-sum credit (no items) — the returned regulated
@@ -976,7 +1142,10 @@ export class ReturnsService {
             : {}),
         },
         // receive() already reversed the returned regulated goods in the ledger: the refund rows must not reverse them again
-        { ledgerReversedByReturn: true },
+        {
+          ledgerReversedByReturn: true,
+          ...(pooledRefund ? { pooledRefund, returnId: id } : {}),
+        },
       );
     } catch (err) {
       // F08 B68: the RECEIVED→REFUNDED claim above already committed. A failed mint
@@ -1004,10 +1173,13 @@ export class ReturnsService {
       // SA-628: a racing credit note / refund that took the line's headroom between the pre-check and the mint is the SAME
       // refusal (409 RETURN_REFUND_OVER_LINE_HEADROOM), never the credit note's own over-headroom 400.
       const code = (err as { getResponse?: () => { code?: string } })?.getResponse?.()?.code;
+      const pooledRefusal =
+        (err as { getResponse?: () => { pooled?: boolean } })?.getResponse?.()?.pooled === true;
       if (
-        refundItems &&
-        (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
-          code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)
+        (refundItems &&
+          (code === API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM ||
+            code === API_ERROR_CODES.CREDIT_NOTE_LINE_INVALID)) ||
+        (pooledRefund && pooledRefusal) // B947: the pool's own refusal; the invoice-total cap keeps its own wording
       ) {
         throw new ConflictException({
           code: API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM,
@@ -1020,7 +1192,7 @@ export class ReturnsService {
     }
     await this.prisma.forTenant().return.update({ where: { id }, data: { creditNoteId: cn.id } });
 
-    return { ...updated, creditNoteId: cn.id };
+    return withUnbilled({ ...updated, creditNoteId: cn.id });
   }
 
   async cancel(id: string, user: JwtPayload) {

@@ -16,8 +16,10 @@ export const CREDIT_NOTE_ERROR_COPY: Record<CreditNoteErrorCode, string> = {
     "Part of this credit has been used somewhere it can't be taken back from here. Nothing was changed.",
   [API_ERROR_CODES.CREDIT_NOTE_OVER_HEADROOM]:
     "That amount is more than the source invoice still allows to be credited.",
+  // On the CREDIT-NOTE screens this code means editing a note whose invoice was deleted (B949 / #2848); the invoice and order
+  // screens, where a restore is refused, show the server's staff message ("Void that credit note first, then try again").
   [API_ERROR_CODES.CREDIT_NOTE_SOURCE_GONE]:
-    "The invoice this credit came from is gone or can no longer be credited.",
+    "This credit note came from a deleted invoice, so it can't be changed. Void it instead.",
   [API_ERROR_CODES.CREDIT_NOTE_NO_SOURCE_CAP]:
     "A credit without a source invoice can't be increased. Issue a separate credit instead.",
   [API_ERROR_CODES.CREDIT_NOTE_CHANGED_CONCURRENTLY]:
@@ -40,7 +42,7 @@ export const UNCONFIRMED_COPY =
   "We couldn't confirm whether this went through. Refresh and check before trying again.";
 
 /** A request that left but got no HTTP response (timeout / network error): the server may have committed. */
-function noResponse(err: unknown): boolean {
+export function noResponse(err: unknown): boolean {
   const e = err as {
     response?: unknown;
     request?: unknown;
@@ -78,10 +80,20 @@ export function refusalCopy(code: string | null | undefined): string {
 export const RETURN_REFUND_OVER_LINE_HEADROOM_COPY =
   "This refund would credit more than the invoice line is worth, because part of it was already credited (by a credit note or an earlier refund). Refund it outside RouteFlow, or issue the credit note manually.";
 
-/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM (by `response.data.code`), else the caller's own text. */
+/** B965: a standard return of a product that was sold on lines with different pack sizes has no single piece count to refund. */
+export const RETURN_MIXED_UNIT_PRODUCT_COPY =
+  "This product was sold in different units on this order (for example boxes and loose pieces), so RouteFlow can't price this return as one quantity. Credit it per line with an inline return, or refund it manually.";
+
+/** B959: nothing the customer returned was billed on the order. */
+export const RETURN_NOTHING_BILLED_COPY =
+  "None of the returned items were billed on this order, so there is nothing to refund. Cancel the return, or credit it manually if a refund is owed.";
+
+/** The refund toast text: the fixed copy for RETURN_REFUND_OVER_LINE_HEADROOM, RETURN_NOTHING_BILLED and RETURN_MIXED_UNIT_PRODUCT (by `response.data.code`), else the caller's own text. */
 export function refundErrorMessage(err: unknown, otherwise?: string): string | undefined {
   const code = (err as { response?: { data?: { code?: unknown } } } | null | undefined)?.response
     ?.data?.code;
+  if (code === API_ERROR_CODES.RETURN_NOTHING_BILLED) return RETURN_NOTHING_BILLED_COPY;
+  if (code === API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT) return RETURN_MIXED_UNIT_PRODUCT_COPY;
   return code === API_ERROR_CODES.RETURN_REFUND_OVER_LINE_HEADROOM
     ? RETURN_REFUND_OVER_LINE_HEADROOM_COPY
     : otherwise;

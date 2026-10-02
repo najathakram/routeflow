@@ -37,7 +37,7 @@ import {
  * line's mapped product (once the caller adds averageCost/unitsPerBox/
  * costingMethod alongside the line's own id/name/currentStock).
  */
-export interface VariantSplitParent {
+interface VariantSplitParent {
   id: string;
   name: string;
   currentStock: number;

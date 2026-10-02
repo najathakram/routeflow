@@ -2,6 +2,7 @@ import { API_ERROR_CODES } from "@routeflow/types";
 import {
   CREDIT_NOTE_ERROR_COPY,
   RETURN_REFUND_OVER_LINE_HEADROOM_COPY,
+  RETURN_MIXED_UNIT_PRODUCT_COPY,
   UNCONFIRMED_COPY,
   creditNoteErrorCopy,
   refundErrorMessage,
@@ -83,6 +84,14 @@ describe("voidConfirmMessage (#2418 U1)", () => {
 });
 
 describe("refundErrorMessage (SA-628, B946)", () => {
+  it("RETURN_MIXED_UNIT_PRODUCT shows the FIXED copy, never the server message (B965)", () => {
+    const err = {
+      response: { data: { code: "RETURN_MIXED_UNIT_PRODUCT", message: "raw server text" } },
+    };
+    expect(refundErrorMessage(err, "raw server text")).toBe(RETURN_MIXED_UNIT_PRODUCT_COPY);
+    expect(RETURN_MIXED_UNIT_PRODUCT_COPY).not.toMatch(/raw server text/);
+  });
+
   it("RETURN_REFUND_OVER_LINE_HEADROOM shows the FIXED copy, never the server message", () => {
     const err = {
       response: { data: { code: "RETURN_REFUND_OVER_LINE_HEADROOM", message: "raw server text" } },

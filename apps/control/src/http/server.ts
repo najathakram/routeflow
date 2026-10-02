@@ -856,9 +856,15 @@ export function createControlServer(deps: ControlDeps): ControlApp {
     // the handler needs no body field: hash the bytes as they arrive and keep none of them
     const mac = createHmac("sha256", cfg.webhookSecret);
     const body = await streamBody(req, WEBHOOK_LIMIT, (c) => void mac.update(c));
-    if (!body.ok) return sendJson(res, 413, { error: "too_large" });
+    // A REJECTED delivery closes its connection (like the early refusal above): Node destroys the
+    // socket once the response flushes, so bytes the client sends afterwards (the leftover of a
+    // half-sent or oversized upload) are never parsed as a NEW request, which answered the client a
+    // bare 400 (HPE_INVALID_METHOD) ahead of the real 401/413 on macOS (B950)
+    if (!body.ok) return sendJson(res, 413, { error: "too_large" }, { Connection: "close" });
     const want = mac.digest("hex");
-    if (!safeEqual(want, m[1])) return sendJson(res, 401, { error: "bad_signature" });
+    if (!safeEqual(want, m[1])) {
+      return sendJson(res, 401, { error: "bad_signature" }, { Connection: "close" });
+    }
     const id = req.headers["x-github-delivery"];
     if (typeof id === "string" && id !== "") {
       if (deliveries.includes(id)) return sendJson(res, 202, { accepted: true, duplicate: true });
