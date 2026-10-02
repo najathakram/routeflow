@@ -125,6 +125,9 @@
 //                    assertMoneyInvariantsOrThrow; the pricing package's MoneyInvariantError keeps its own literal because pricing may not
 //                    value-import this package), PARKED_REVERSALS_UNRESOLVED and PARKED_REVERSAL_UNRESOLVABLE (the 409s of the regulated
 //                    report and the parked-reversal resolver), REGULATED_POD_REQUIRED (the 400s of the regulated proof-of-delivery guard).
+//   B987-E1 — import and statement/payment refusals that now carry a code and structured fields (status and message unchanged):
+//                    IMPORT_COLUMN_NEEDS_ENTITLEMENT — `body.code` of the import 403 when a CSV column needs an entitlement the tenant lacks;
+//                    body carries `requires` (MSRP | TOBACCO_DEALER | FORECASTING) and `column` (the user's own header, capped at 120).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -274,6 +277,7 @@ export const API_ERROR_CODES = {
   PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
   PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
+  IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */

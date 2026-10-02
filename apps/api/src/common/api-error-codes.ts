@@ -160,6 +160,7 @@ export const API_ERROR_CODES = {
   PARKED_REVERSALS_UNRESOLVED: "PARKED_REVERSALS_UNRESOLVED",
   PARKED_REVERSAL_UNRESOLVABLE: "PARKED_REVERSAL_UNRESOLVABLE",
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
+  IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
 } as const satisfies Record<string, ApiErrorCode>;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
