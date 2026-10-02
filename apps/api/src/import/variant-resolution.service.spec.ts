@@ -60,6 +60,29 @@ describe("VariantResolutionService", () => {
       );
     });
 
+    it("B990: a LEGACY formula-led parent category is NEUTRALISED (not inherited, not refused): the variant is still created", async () => {
+      prisma.product.findUnique.mockResolvedValue({
+        id: "p1",
+        unit: "case",
+        pricePerUnit: "10.00",
+        priceTier2: "9.50",
+        priceTier3: "9.00",
+        priceTier4: "8.50",
+        priceTier5: "8.00",
+        category: "=LEGACY",
+        unitsPerBox: 12,
+        costingMethod: "FIFO",
+        standardCost: null,
+        isTobacco: false,
+      });
+      await expect(
+        service.createVariant({ parentProductId: "p1", variantName: "Jalapeño" }),
+      ).resolves.toBeDefined();
+      const dto = products.create.mock.calls[0][0];
+      expect(dto.category).toBeUndefined();
+      expect(dto.name).toBe("Jalapeño");
+    });
+
     it("throws when the parent does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(
@@ -117,6 +140,26 @@ describe("VariantResolutionService", () => {
           }),
         }),
       );
+    });
+
+    it("B990: refuses a CHANGED formula-led category with a labelled 400 and writes nothing", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "n1", category: "Drinks" });
+      const err: any = await service
+        .completeSetup("n1", { category: "=HYPERLINK(1)" })
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "category",
+      });
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("B990: an unchanged legacy category does not block confirming the other fields", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "n1", category: "=LEGACY" });
+      prisma.product.update.mockResolvedValue({ id: "n1", detailsIncomplete: false });
+      await expect(
+        service.completeSetup("n1", { category: "=LEGACY", pricePerUnit: 5 }),
+      ).resolves.toBeDefined();
     });
 
     it("throws when the product does not exist", async () => {
