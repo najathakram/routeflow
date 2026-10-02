@@ -48,6 +48,7 @@ import {
   PortalHiddenFilter,
 } from "./_components/PortalVisibilityControls";
 import { portalBadge, portalVisibleFilterParam } from "@/lib/product-portal-visibility-ui";
+import { NewFamilyButton } from "@/components/family/NewFamilyButton";
 import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { ProductsExportButton } from "./_components/ProductsExportButton";
 import {
@@ -1214,6 +1215,7 @@ export default function ProductsPage() {
                 section: sectionFilter,
               }}
             />
+            <NewFamilyButton />
             <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setShowCreate(true)}>
               New Product
             </Button>

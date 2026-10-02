@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { ProductKind } from "@routeflow/types";
 import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export function useProducts(
@@ -143,6 +144,8 @@ export type CostingMethod = "FIFO" | "LIFO" | "AVCO" | "STANDARD";
 
 export interface ApiProduct {
   id: string;
+  /** STANDARD | FAMILY | VARIANT | RECIPE (WS8): a FAMILY is a non-stocked, non-sellable container. */
+  kind?: ProductKind;
   name: string;
   sku?: string;
   /** Optional retail-unit (inner piece) code; null/absent ⇒ unit shares the case `sku`. */
