@@ -865,6 +865,18 @@ export class ReturnsService {
       : new Map<string, ProductPackBasis>();
   }
 
+  /**
+   * EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time gates, EXCEPT a return with no
+   * single pricing axis (B969): that has no refund amount to record, and a recorded $0 would feed net sales silently. Refused
+   * 409 RETURN_MIXED_UNIT_PRODUCT, like the mint.
+   */
+  private async externalRefundBasis(items: any[], order?: any) {
+    const priced = this.priceReturn(items, order, await this.packBasesOf(order));
+    if (priced.refusal === "UNIT_UNRESOLVED" && priced.unresolvedProductId)
+      throw this.mixedUnitRefusal(priced.unresolvedProductId);
+    return priced;
+  }
+
   private mixedUnitRefusal(productId: string): ConflictException {
     return new ConflictException({
       code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
@@ -1049,7 +1061,9 @@ export class ReturnsService {
     for (const [productId, qty] of returned) {
       const billedItems = billedItemsByProduct.get(productId) ?? [];
       if ((billedQtyByProduct.get(productId) ?? 0) <= 0) continue;
-      const axis = returnPricingAxis(packBases, productId, qty, billedItems);
+      const axis = returnPricingAxis(packBases, productId, qty, billedItems, {
+        pooled: creditable.length >= 2,
+      });
       if ("unresolved" in axis) {
         unresolvedProductId ??= productId;
         continue;
@@ -1068,7 +1082,8 @@ export class ReturnsService {
     const nothingBilled =
       [...returned].length > 0 &&
       [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
-    // B969: a product with no single pricing axis prices NOTHING (the mint refuses it 409), never a partial figure
+    // B969: if ANY returned product has no single pricing axis the WHOLE preview is $0 WITH a reason, because the mint refuses
+    // the whole return (409). Never make this a partial sum of the products that did resolve.
     const why = unresolvedProductId
       ? { refusal: "UNIT_UNRESOLVED" as const, unresolvedProductId }
       : nothingBilled
@@ -1162,11 +1177,7 @@ export class ReturnsService {
       unbilledItems?: UnbilledReturnItem[];
     } =
       method === "EXTERNAL_REFUND"
-        ? this.priceReturn(
-            ret.items ?? [],
-            ret.order ?? undefined,
-            await this.packBasesOf(ret.order),
-          )
+        ? await this.externalRefundBasis(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
     const {
       amount: refundAmount,

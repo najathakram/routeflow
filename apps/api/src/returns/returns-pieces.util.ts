@@ -239,8 +239,9 @@ export function standardReturnPieces(
  * a selling-unit item's is boxes x upb): pieces on BOTH sides, never a third axis. `pieces: false` is the legacy shape whose pack
  * no evidence proves (every live line unresolvable, `create()`'s `lineUnit` cap): typed and billed qty share the line's unit, so
  * the price runs in raw qty exactly as before. A mixed basis, an unknown basis beside a resolvable line, or billed items with
- * different factors on a product with no live line has no single axis: `unresolved` (the mint refuses it 409
- * RETURN_MIXED_UNIT_PRODUCT; the preview reports 0 with a reason).
+ * different factors on a product with no live line has no single axis: `unresolved`. So does the legacy line-unit shape
+ * once a billed item carries a split (it counts pieces), the items' factors differ, or the order has 2+ creditable invoices. The mint refuses an
+ * unresolved product 409 RETURN_MIXED_UNIT_PRODUCT; the preview reports 0 with a reason.
  */
 export type ReturnPricingAxis = { pieces: boolean; returned: number } | { unresolved: true };
 
@@ -249,11 +250,22 @@ export function returnPricingAxis(
   productId: string,
   qty: number,
   billedItems: ReadonlyArray<Parameters<typeof piecesPerQtyOf>[0] & { qty?: unknown }>,
+  /** 2+ creditable invoices: the order pool counts in pieces and refuses an unknown basis (`poolPieces`), so the price must too. */
+  opts: { pooled?: boolean } = {},
 ): ReturnPricingAxis {
   const basis = bases.get(productId);
   if (basis && "factor" in basis)
     return { pieces: true, returned: standardReturnPieces(bases, productId, qty).pieces };
-  if (basis && "unknown" in basis && basis.singleUnit) return { pieces: false, returned: qty };
+  if (basis && "unknown" in basis && basis.singleUnit) {
+    // The legacy line-unit price needs a billed side that is ALSO in the line's unit. A billed item carrying a boxes/pieces
+    // split counts PIECES (provably not the line's boxes), and items with different pieces-per-qty cannot be summed: both
+    // are ambiguous (a line billed across several items parks, it is never read from the split), so refused, never priced raw.
+    if (opts.pooled) return { unresolved: true };
+    const live = billedItems.filter((it) => Number(it.qty) > 0);
+    const hasSplit = live.some((it) => it.boxes != null || it.pieces != null);
+    if (hasSplit || new Set(live.map(piecesPerQtyOf)).size > 1) return { unresolved: true };
+    return { pieces: false, returned: qty };
+  }
   if (basis && ("unknown" in basis || "mixed" in basis)) return { unresolved: true };
   // No live order line for the product (the pre-line / fixture shape): the billed items' own single factor, as the pool does.
   const factors = new Set(billedItems.filter((it) => Number(it.qty) > 0).map(piecesPerQtyOf));
