@@ -43,6 +43,10 @@ export const EVENT_CHANNELS: Record<NotificationEvent, MessageChannel[]> = {
   // NOTIFICATION_TRIGGERS) — entry exists only so this Record stays exhaustive over
   // NotificationEvent.
   [NotificationEvent.CHECK_RETURNED]: [INTERNAL],
+  // SA-603c: no firing site yet — exhaustiveness only (absent from NOTIFICATION_TRIGGERS).
+  [NotificationEvent.STAFF_NEW_ORDER]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_EDITED]: [INTERNAL],
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: [INTERNAL],
 };
 
 /** Friendly label + starter body per event; `variables` derived from the body
@@ -106,6 +110,19 @@ export const DEFAULT_TEMPLATES: Record<NotificationEvent, { label: string; body:
   [NotificationEvent.CHECK_RETURNED]: {
     label: "Check returned",
     body: "A check payment from {{customerName}} for {{amount}} was returned ({{reason}}) on invoice {{invoiceNumber}}.",
+  },
+  // SA-603c: exhaustiveness-only templates; no firing site yet.
+  [NotificationEvent.STAFF_NEW_ORDER]: {
+    label: "New order (staff)",
+    body: "New order {{orderNumber}} from {{customerName}}.",
+  },
+  [NotificationEvent.BUYER_ORDER_EDITED]: {
+    label: "Order edited (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was edited.",
+  },
+  [NotificationEvent.BUYER_ORDER_CANCELLED]: {
+    label: "Order cancelled (buyer)",
+    body: "Order {{orderNumber}} from {{customerName}} was cancelled.",
   },
 };
 

@@ -23,6 +23,7 @@
 // apps/api/src/common/api-error-codes-parity.spec.ts, which `require`s THIS file.
 module.exports = {
   UserRole: {},
+  EMAIL_DELIVERY_STATUS_VALUES: ["QUEUED", "SENT", "FAILED", "BOUNCED", "WOULD_SEND", "OPTED_OUT"],
   // Hand copy of packages/types/api/preferences.ts PREF; pinned equal by
   // apps/api/src/users/users.controller.preferences.spec.ts.
   PREF: {
@@ -91,6 +92,7 @@ module.exports = {
     BILL_VOID: "BILL_VOID",
     RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
     INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
+    TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
   },
   CHECK_TRANSITIONS: {
     RECORDED: ["DEPOSITED", "BOUNCED"],
