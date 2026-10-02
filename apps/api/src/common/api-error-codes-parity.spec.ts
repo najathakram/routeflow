@@ -349,6 +349,24 @@ describe("API error codes: no bare string literal in production source (#2163)",
   });
 });
 
+describe("API error codes: the onboarding contracts are registered (B987-C)", () => {
+  // The three onboarding contract lists are pinned against the service sources by their own specs; those specs accept the
+  // constant form, so this pin makes sure every listed code IS registered here (value == key), in both directions of drift.
+  it("every INTAKE / ONBOARDING / TENANT_ONBOARDING contract code is an API_ERROR_CODES key with value == key", () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const shared = require("@routeflow/types") as Record<string, readonly string[]>;
+    const lists = [
+      shared.INTAKE_ERROR_CODES,
+      shared.ONBOARDING_CONFLICT_CODES,
+      shared.TENANT_ONBOARDING_CONFLICT_CODES,
+    ];
+    for (const list of lists) {
+      expect(Array.isArray(list) && list.length > 0).toBe(true);
+      for (const code of list) expect((API_LOCAL as Record<string, string>)[code]).toBe(code);
+    }
+  });
+});
+
 describe("API error codes: every code is still sent by the API (#2163)", () => {
   it.each(Object.keys(API_LOCAL))(
     "API_ERROR_CODES.%s is referenced by an API source file",
