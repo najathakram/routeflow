@@ -16,6 +16,17 @@ describe("safeTextErrorCopy (B956)", () => {
     ["businessName", "Business name can't start with =, +, -, @ or a tab/line break."],
     ["contactName", "Contact name can't start with =, +, -, @ or a tab/line break."],
     ["displayName", "Display name can't start with =, +, -, @ or a tab/line break."],
+    ["label", "Address label can't start with =, +, -, @ or a tab/line break."],
+    ["line1", "Address line 1 can't start with =, +, -, @ or a tab/line break."],
+    ["line2", "Address line 2 can't start with =, +, -, @ or a tab/line break."],
+    ["city", "City can't start with =, +, -, @ or a tab/line break."],
+    ["state", "State can't start with =, +, -, @ or a tab/line break."],
+    ["zip", "ZIP code can't start with =, +, -, @ or a tab/line break."],
+    ["tobaccoLicenseNo", "Tobacco license number can't start with =, +, -, @ or a tab/line break."],
+    ["licenseNumber", "License number can't start with =, +, -, @ or a tab/line break."],
+    ["buyerName", "Name can't start with =, +, -, @ or a tab/line break."],
+    ["productName", "Product name can't start with =, +, -, @ or a tab/line break."],
+    ["variantName", "Variant name can't start with =, +, -, @ or a tab/line break."],
   ])("%s → human label copy", (field, expected) => {
     expect(safeTextErrorCopy({ response: { data: body(field) } })).toBe(expected);
     expect(safeTextBodyCopy(body(field))).toBe(expected);
@@ -43,11 +54,24 @@ describe("safeTextErrorCopy (B956)", () => {
     expect(safeTextBodyCopy("TEXT_CELL_FORMULA_LEAD")).toBeNull();
   });
 
-  it("labels exist for the three customer name fields only", () => {
-    expect(Object.keys(SAFE_TEXT_FIELD_LABELS).sort()).toEqual([
-      "businessName",
-      "contactName",
-      "displayName",
-    ]);
+  it("labels exist for the customer name fields (B956) and the B964 address / license / buyer-name fields", () => {
+    expect(Object.keys(SAFE_TEXT_FIELD_LABELS).sort()).toEqual(
+      [
+        "businessName",
+        "contactName",
+        "displayName",
+        "label",
+        "line1",
+        "line2",
+        "city",
+        "state",
+        "zip",
+        "tobaccoLicenseNo",
+        "licenseNumber",
+        "buyerName",
+        "productName",
+        "variantName",
+      ].sort(),
+    );
   });
 });

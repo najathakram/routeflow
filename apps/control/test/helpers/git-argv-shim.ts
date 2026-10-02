@@ -3,14 +3,16 @@
  * execs the real git. Lets a spec prove what did, and did not, reach a git child's command line.
  * Throwaway dir under os.tmpdir(); call `shim.cleanup()` in afterEach.
  */
-import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { IS_WIN, realGitPath, rmTree } from "./platform";
 
 export interface GitShim {
   /** Directory to prepend to PATH. */
   dir: string;
+  /** Env the shim needs (empty on POSIX, where the log path is baked into the script). Merge into the child env. */
+  env: Record<string, string>;
   /** Every recorded argv, in call order. */
   argvs(): string[][];
   /** The raw log text (for substring checks). */
@@ -19,7 +21,7 @@ export interface GitShim {
 }
 
 export function installGitShim(): GitShim {
-  const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const real = realGitPath();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "git-shim-"));
   const log = path.join(dir, "argv.log");
   const script = [
@@ -36,10 +38,12 @@ export function installGitShim(): GitShim {
     `exec '${real}' "$@"`,
     "",
   ].join("\n");
-  fs.writeFileSync(path.join(dir, "git"), script, { mode: 0o755 });
+  if (IS_WIN) require("./win-git-shim").installWinGitShim(dir);
+  else fs.writeFileSync(path.join(dir, "git"), script, { mode: 0o755 });
   fs.writeFileSync(log, "");
   return {
     dir,
+    env: IS_WIN ? { SHIM_ARGV_LOG: log, REAL_GIT: real } : {},
     argvs: () =>
       fs
         .readFileSync(log, "utf8")
@@ -47,6 +51,6 @@ export function installGitShim(): GitShim {
         .filter((l) => l !== "")
         .map((l) => JSON.parse(l) as string[]),
     rawLog: () => fs.readFileSync(log, "utf8"),
-    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+    cleanup: () => rmTree(dir),
   };
 }

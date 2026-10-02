@@ -10,8 +10,9 @@ import * as path from "path";
 import { startServer, WEBHOOK_SECRET } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
 import { git, STATE_BRANCH } from "./helpers/temp-repo";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(60_000);
+jest.setTimeout(scaled(60_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let h: Harness;
 afterEach(() => h?.close());

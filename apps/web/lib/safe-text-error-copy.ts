@@ -11,6 +11,19 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
   businessName: "Business name",
   contactName: "Contact name",
   displayName: "Display name",
+  // B964: customer address, license numbers and buyer names (the same labels as the server's TEXT_CELL_FIELD_LABELS)
+  label: "Address label",
+  line1: "Address line 1",
+  line2: "Address line 2",
+  city: "City",
+  state: "State",
+  zip: "ZIP code",
+  tobaccoLicenseNo: "Tobacco license number",
+  licenseNumber: "License number",
+  buyerName: "Name",
+  // B964-2: product names
+  productName: "Product name",
+  variantName: "Variant name",
 };
 
 const UNKNOWN_FIELD_LABEL = "This field";

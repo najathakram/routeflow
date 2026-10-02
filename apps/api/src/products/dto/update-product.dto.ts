@@ -1,4 +1,5 @@
 import {
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDecimal,
@@ -32,6 +33,16 @@ const toOptionalMsrp = ({ value }: { value: unknown }) =>
 
 export class UpdateProductDto {
   @IsOptional() @IsString() name?: string;
+  /**
+   * Reuse API (one-tx reactivation): with `isActive: true`, the ids of the ACTIVE products blocking the reactivation
+   * (a retired code's holder, the same-name product). The server re-derives that set under its locks and refuses unless
+   * these are EXACTLY it (else a 409 with the current `holders[]`; HOLDERS_CHANGED only when nothing blocks any more); it then deactivates each in the same transaction.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @IsString({ each: true })
+  deactivateHolderIds?: string[];
   @IsOptional() @IsString() sku?: string;
   @IsOptional() @IsString() barcode?: string;
   // "" clears it back to "same as case code" (emptyToNull ⇒ an explicit null write).
