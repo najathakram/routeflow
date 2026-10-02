@@ -120,6 +120,7 @@ describe("decrementStockForSale returns backorderByProduct (SA-606k Q1)", () => 
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "INVENTORY_QUANTITY_INVALID" });
     expect(JSON.stringify(err.getResponse())).toContain("Widget p");
+    expect(err.getResponse().message).not.toMatch(/pack/i); // only a non-finite QUANTITY reaches this refusal
     expect(tx.$queryRaw).not.toHaveBeenCalled(); // the aggregated UPDATE never ran
     expect(tx.stockMovement.create).not.toHaveBeenCalled();
     expect(products[0].currentStock).toBe(5);

@@ -85,7 +85,7 @@ describe("create() returns the locked write", () => {
     await h.service.create(dto() as never, buyer as never);
     const include = (h.prisma.order.create as jest.Mock).mock.calls[0][0].include.lineItems;
     expect(include.include.product.select.unitsPerBox).toBe(true);
-    expect(include.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(include.orderBy).toEqual([{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }]);
   });
 });
 
@@ -155,7 +155,7 @@ describe("readEditedOrder: the response read is deterministic and carries the pa
     const findUnique = jest.fn().mockResolvedValue(null);
     await readEditedOrder({ forTenant: () => ({ order: { findUnique } }) } as never, "o-1");
     const lineItems = findUnique.mock.calls[0][0].include.lineItems;
-    expect(lineItems.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+    expect(lineItems.orderBy).toEqual([{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }]);
     expect(lineItems.include.product.select.unitsPerBox).toBe(true);
   });
 });
