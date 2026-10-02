@@ -1,5 +1,10 @@
 import { API_ERROR_CODES } from "../common/api-error-codes";
-import { assertSafeProductNames, productNameViolation } from "../common/text-cell-guards";
+import {
+  assertSafeProductCategory,
+  assertSafeProductNames,
+  productCategoryViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -637,6 +642,9 @@ export class ProductsService {
 
   async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
     assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
+    // B990: the typed free-text category too, unless a structured subcategory is chosen (its name wins; the typed text is not written)
+    if (dto.category !== undefined && !dto.trackedSubcategoryId)
+      assertSafeProductCategory(dto.category);
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -1043,6 +1051,10 @@ export class ProductsService {
       // the free-text field is hidden by the form for regulated items, so
       // force it back to the synced name rather than letting it desync.
       data.category = existing.trackedSubcategory?.name ?? null;
+    }
+    // B990: change-only, and only for text that will actually be WRITTEN (a structured category above overrides the typed one)
+    if (dto.category !== undefined && data.category === dto.category) {
+      assertSafeProductCategory(dto.category, existing.category ?? null);
     }
     // MSRP: normalize 0/negative to null even though the spread already carries
     // dto.msrp through — a bare "0" decimal string must never persist.
@@ -1585,7 +1597,8 @@ export class ProductsService {
 
         // B964-2: a formula-led NEW name rejects THIS row (readable reason); the rest of the batch still imports. Checked only
         // once the row would actually be created (change-only): a name that matches a stored product is a plain skip above.
-        const nameViolation = productNameViolation({ name: item.name });
+        const nameViolation =
+          productNameViolation({ name: item.name }) ?? productCategoryViolation(item.category);
         if (nameViolation) {
           errors.push({ row: rowNum, name: item.name, reason: nameViolation });
           continue;

@@ -119,6 +119,26 @@ describe("VariantResolutionService", () => {
       );
     });
 
+    it("B990: refuses a CHANGED formula-led category with a labelled 400 and writes nothing", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "n1", category: "Drinks" });
+      const err: any = await service
+        .completeSetup("n1", { category: "=HYPERLINK(1)" })
+        .catch((e) => e);
+      expect(err.getResponse()).toMatchObject({
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "category",
+      });
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("B990: an unchanged legacy category does not block confirming the other fields", async () => {
+      prisma.product.findUnique.mockResolvedValue({ id: "n1", category: "=LEGACY" });
+      prisma.product.update.mockResolvedValue({ id: "n1", detailsIncomplete: false });
+      await expect(
+        service.completeSetup("n1", { category: "=LEGACY", pricePerUnit: 5 }),
+      ).resolves.toBeDefined();
+    });
+
     it("throws when the product does not exist", async () => {
       prisma.product.findUnique.mockResolvedValue(null);
       await expect(service.completeSetup("nope", {})).rejects.toBeInstanceOf(NotFoundException);

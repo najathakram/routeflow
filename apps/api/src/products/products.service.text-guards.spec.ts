@@ -99,6 +99,81 @@ describe("ProductsService name guards (B964-2)", () => {
     });
   });
 
+  describe("free-text Product.category (B990)", () => {
+    const CAT_MSG = "Category can't start with =, +, -, @ or a tab/line break";
+
+    it("create refuses a formula-led category before any read or write", async () => {
+      const err = await refused(
+        service.create({
+          name: "Cola",
+          unit: "each",
+          pricePerUnit: "1.00",
+          category: "=cmd",
+        } as any),
+        "category",
+      );
+      expect(err.getResponse().message).toBe(CAT_MSG);
+      expect(prisma.product.findFirst).not.toHaveBeenCalled();
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    it("create ignores a typed category when a structured subcategory is chosen (it would not be written)", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      const err: any = await service
+        .create({
+          name: "Cola",
+          unit: "each",
+          pricePerUnit: "1.00",
+          category: "=cmd",
+          trackedSubcategoryId: "sub-1",
+        } as any)
+        .catch((e) => e);
+      expect(err?.getResponse?.()?.code).not.toBe("TEXT_CELL_FORMULA_LEAD");
+    });
+
+    const stored = (over: Record<string, unknown> = {}) => ({
+      id: "prod-1",
+      name: "Cola",
+      variantName: null,
+      category: "Drinks",
+      trackedSubcategoryId: null,
+      trackedSubcategory: null,
+      parentProductId: null,
+      imageKeys: [],
+      ...over,
+    });
+
+    it("update refuses a CHANGED formula-led category and writes nothing", async () => {
+      prisma.product.findUnique.mockResolvedValue(stored());
+      await refused(service.update("prod-1", { category: "@evil" } as any), "category");
+      expect(prisma.product.update).not.toHaveBeenCalled();
+    });
+
+    it("update lets a LEGACY formula-led category echoed back unchanged through", async () => {
+      prisma.product.findUnique.mockResolvedValue(stored({ category: "=LEGACY" }));
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored({ category: "=LEGACY" }));
+      await expect(
+        service.update("prod-1", { category: "=LEGACY", description: "x" } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it("update never refuses text it will not write: a structured-subcategory product forces its own category back", async () => {
+      prisma.product.findUnique.mockResolvedValue(
+        stored({
+          trackedSubcategoryId: "sub-1",
+          trackedSubcategory: { name: "Cigars" },
+          category: "Cigars",
+        }),
+      );
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.update.mockResolvedValue(stored());
+      await expect(
+        service.update("prod-1", { category: "=ignored" } as any),
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe("update", () => {
     const stored = (over: Record<string, unknown> = {}) => ({
       id: "prod-1",
@@ -168,6 +243,25 @@ describe("ProductsService name guards (B964-2)", () => {
       expect(result.created).toBe(1);
       expect(result.errors).toEqual([{ row: 1, name: "=HYPERLINK(1)", reason: MSG }]);
       expect(prisma.product.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects ONLY the row whose category is formula-led (readable reason); the rest imports", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "new-1" });
+      const result = await service.importFromZoho({
+        items: [
+          { name: "Widget", category: "=HYPERLINK(1)", unit: "each", pricePerUnit: 5 },
+          { name: "Gadget", category: "Tools", unit: "each", pricePerUnit: 5 },
+        ],
+      } as any);
+      expect(result.created).toBe(1);
+      expect(result.errors).toEqual([
+        {
+          row: 1,
+          name: "Widget",
+          reason: "Category can't start with =, +, -, @ or a tab/line break",
+        },
+      ]);
     });
 
     it("change-only: a formula-led name that ALREADY matches a stored product is a plain skip (nothing would be written), not an error", async () => {
