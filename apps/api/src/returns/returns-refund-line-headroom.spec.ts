@@ -302,6 +302,6 @@ describe("ReturnsService.processRefund: itemised refund under the shared per-lin
       expect.objectContaining({ amount: 75 }),
       expect.anything(),
     );
-    expect((service as any).priceReturn(ret.items, ret.order).amount).toBe(75);
+    expect((service as any).priceReturn(ret.items, ret.order, new Map()).amount).toBe(75);
   });
 });

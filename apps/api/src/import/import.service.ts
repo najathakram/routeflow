@@ -75,7 +75,7 @@ function isEntitlementDenial(e: unknown): boolean {
   const body = e.getResponse();
   const code =
     typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
-  return code !== "PLAN_GATE_UNAVAILABLE";
+  return code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE;
 }
 
 export interface ImportRowPlan {
@@ -94,10 +94,12 @@ import {
   mapBarcodeUniqueViolation,
   syncProductBarcodesFromLegacy,
 } from "../products/product-catalog-sync";
+import { claimCodes, codeClaims } from "../products/product-code-release";
 import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload
@@ -2962,6 +2964,14 @@ export class ImportService {
             // products.service.ts create().
             if (zohoBarcode) {
               await lockBarcodeCodes(tx, tenantIdForZoho, [zohoBarcode]);
+              // SA-603a: lock -> claim -> check -> create. A code an INACTIVE product still holds is released here
+              // (audited); an ACTIVE holder is a 409. (barcode and sku are the same code on this path.)
+              await claimCodes(tx, {
+                tenantId: tenantIdForZoho,
+                productId: null,
+                actorId: null,
+                codes: codeClaims({ barcode: zohoBarcode, sku: zohoBarcode }, null),
+              });
               await assertBarcodeAvailable(tx, {
                 tenantId: tenantIdForZoho,
                 productId: null,

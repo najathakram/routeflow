@@ -2,32 +2,7 @@
 
 import * as React from "react";
 import { cn } from "@routeflow/ui/web";
-
-const COMMON_UNITS = [
-  "each",
-  "unit",
-  "pcs",
-  "case",
-  "box",
-  "bag",
-  "pack",
-  "dozen",
-  "bundle",
-  "tray",
-  "pallet",
-  "kg",
-  "g",
-  "lb",
-  "oz",
-  "L",
-  "ml",
-  "liter",
-  "roll",
-  "sheet",
-  "bottle",
-  "can",
-  "strip",
-];
+import { COMMON_UNITS } from "@/lib/common-units";
 
 interface UnitComboboxProps {
   value: string;

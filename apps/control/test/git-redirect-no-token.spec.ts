@@ -6,7 +6,6 @@
  * git, real `git http-backend`; nothing leaves 127.0.0.1. The token-authenticated twin is
  * test/git-auth-redirect.spec.ts.
  */
-import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -14,9 +13,11 @@ import { startSmartHttp } from "./helpers/smart-http";
 import type { SmartHttp, SmartHttpOpts } from "./helpers/smart-http";
 import { runCli } from "./helpers/spawn-cli";
 import { baseState, makeWorld } from "./helpers/temp-repo";
+import { IS_WIN, realGitPath, scaled } from "./helpers/platform";
+import { installWinFailGit } from "./helpers/win-git-shim";
 import type { World } from "./helpers/temp-repo";
 
-jest.setTimeout(90_000);
+jest.setTimeout(scaled(90_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const G = (): any => require("../src/sources/git");
 
@@ -164,24 +165,31 @@ describe("a redirect (renamed or transferred state repo) tells the operator what
     world.seedBranch("ctl/state", baseState(0));
     const dir = path.join(world.root, "push-shim");
     fs.mkdirSync(dir);
-    const real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
-    fs.writeFileSync(
-      path.join(dir, "git"),
-      [
-        "#!/bin/sh",
-        'for a in "$@"; do',
-        '  if [ "$a" = push ]; then',
-        "    echo 'fatal: unable to access the repo: The requested URL returned error: 301' >&2",
-        "    exit 1",
-        "  fi",
-        "done",
-        `exec '${real}' "$@"`,
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
+    const FAIL = "fatal: unable to access the repo: The requested URL returned error: 301";
+    // POSIX: an sh `git` first on PATH. Windows cannot run that as `git`; its exe twin does the same.
+    let shimEnv: Record<string, string> = {};
+    if (IS_WIN) {
+      shimEnv = installWinFailGit(dir, "push", FAIL);
+    } else {
+      const real = realGitPath();
+      fs.writeFileSync(
+        path.join(dir, "git"),
+        [
+          "#!/bin/sh",
+          'for a in "$@"; do',
+          '  if [ "$a" = push ]; then',
+          `    echo '${FAIL}' >&2`,
+          "    exit 1",
+          "  fi",
+          "done",
+          `exec '${real}' "$@"`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+    }
     const r = await runCli(world, ["note", "hello"], {
-      env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}` },
+      env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, ...shimEnv },
     });
     expect(r.code).toBe(5);
     expect(r.stderr).toMatch(/returned error: 301/);

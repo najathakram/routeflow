@@ -10,8 +10,9 @@ import { startServer } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
 import { git, makeWorld } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 let h: Harness | undefined;
 let product: World | undefined;

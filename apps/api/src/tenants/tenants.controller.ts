@@ -24,6 +24,7 @@ import { FeatureOverrideService } from "../billing/feature-override.service";
 import { gateVia, FEATURE_REGISTRY } from "../billing/feature-registry";
 import type { ResolvedFeatures } from "../billing/feature-resolver.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
+import { PolicyService } from "../policy/policy.service";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -45,6 +46,7 @@ export class TenantsController {
     private readonly addonService: AddonService,
     private readonly featureOverrides: FeatureOverrideService,
     private readonly authority: EntitlementAuthority,
+    private readonly policies: PolicyService,
   ) {}
 
   // ─── Me: Features (feature grants v2 brief A) ─────────────────────────────────
@@ -69,9 +71,16 @@ export class TenantsController {
         message: "No tenant context.",
       });
     }
-    const [resolved, served]: [ResolvedFeatures | null, string[] | null] = await Promise.all([
+    // SA-138: the TENANT-scope effective policy values ride `modes`. `effectiveForClient` never
+    // throws — a failed policy read yields the registry defaults, i.e. today's behaviour.
+    const [resolved, served, policyModes]: [
+      ResolvedFeatures | null,
+      string[] | null,
+      Record<string, string>,
+    ] = await Promise.all([
       this.authority.resolveAll(user.tenantId),
       this.authority.servedFlags(user.tenantId).catch(() => null),
+      this.policies.effectiveForClient(user.tenantId),
     ]);
     if (!resolved || served === null) {
       throw new ServiceUnavailableException({
@@ -86,7 +95,7 @@ export class TenantsController {
     return {
       served,
       resolver,
-      modes: {},
+      modes: policyModes,
       catalogVersionId: resolved.catalogVersionId,
       computedAt: resolved.computedAt,
     };

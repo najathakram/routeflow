@@ -37,4 +37,9 @@ export default async function globalSetup(): Promise<void> {
   const dir = path.join(CONTROL, `${GLOBAL_DIST_PREFIX}${process.pid}`);
   compileDist(dir); // removes its own half-built dir on failure (jest skips the teardown then)
   process.env.CONTROL_TEST_DIST = dir;
+  // Git for Windows ships `core.autocrlf=true` in its SYSTEM gitconfig, so every checkout a spec makes
+  // would hand the code under test CRLF files (a nonce row then ends in a carriage return and
+  // Date.parse of it is NaN). The fixtures are byte-exact LF; the system config is irrelevant to
+  // offline fixture repos.
+  if (process.platform === "win32") process.env.GIT_CONFIG_NOSYSTEM = "1";
 }

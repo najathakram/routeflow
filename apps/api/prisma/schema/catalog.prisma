@@ -83,6 +83,12 @@ model Product {
   // Optional retail-unit (inner piece) code; NULL ⇒ unit shares the case `sku`.
   // Read sites use `unitSku ?? sku`.
   unitSku              String?
+  // Spec 06: hide a product from the buyer portal; independent of selling restrictions.
+  portalVisible        Boolean       @default(true)
+  // SA-603: the codes released on deactivate (legacy column -> retired*); the full uniques are unchanged.
+  retiredSku           String?
+  retiredBarcode       String?
+  retiredUnitSku       String?
   unit                 String
   pricePerUnit         Decimal       @db.Decimal(10, 2)
   priceTier2           Decimal       @default(0) @db.Decimal(10, 2)
@@ -187,15 +193,16 @@ model Product {
   @@unique([tenantId, sku])
   @@unique([tenantId, barcode])
   @@unique([tenantId, unitSku])
-  // Name uniqueness is enforced via two raw-SQL PARTIAL unique indexes
-  // (see migrations/20260504000000_variant_name_per_parent/migration.sql):
-  //   - (tenantId, name)                    WHERE parentProductId IS NULL
-  //       → standalone catalog stays flat-unique (no two parents named "X")
-  //   - (tenantId, parentProductId, name)   WHERE parentProductId IS NOT NULL
-  //       → variant names unique WITHIN their parent only
-  //         ("Strawberry" can be a flavor under both Geek Next 50K and Geek Bar)
-  // Prisma can't declare partial unique indexes; left here as a plain index
-  // for name-search query speed only.
+  // Name uniqueness among ACTIVE products is enforced by two raw-SQL PARTIAL unique indexes, created
+  // in migrations/20260929220000_sitting_b_bundle/migration.sql (SA-603b):
+  //   - Product_tenant_root_name_active_key:   (tenantId, name)
+  //       WHERE parentProductId IS NULL AND isActive
+  //       -> the standalone catalog stays flat-unique (no two active parents named "Acme Parent A")
+  //   - Product_tenant_parent_name_active_key: (tenantId, parentProductId, name)
+  //       WHERE parentProductId IS NOT NULL AND isActive
+  //       -> variant names unique WITHIN their parent only
+  //          ("Acme Flavor" can be a flavor under both "Acme Parent A" and "Acme Parent B")
+  // Prisma can't declare partial unique indexes; the plain index below is for name-search speed only.
   @@index([tenantId, name])
   @@index([category])
   @@index([isActive])
@@ -412,7 +419,9 @@ model ProductBarcode {
   id              String           @id @default(uuid())
   tenantId        String
   productId       String
-  code            String
+  // NULL = released on deactivate/reuse; NULLs are distinct under @@unique([tenantId, code, level]).
+  code            String?
+  retiredCode     String?
   symbology       BarcodeSymbology
   level           PackagingLevel
   origin          BarcodeOrigin    @default(ENTERED)

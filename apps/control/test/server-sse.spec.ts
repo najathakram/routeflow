@@ -1,8 +1,9 @@
 /** T54 (R25): SSE `version` on every fold change, ping, retry header, cleanup, connection cap. */
 import { startServer, openSse } from "./helpers/start-server";
 import type { Harness, Session } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 let h: Harness;
