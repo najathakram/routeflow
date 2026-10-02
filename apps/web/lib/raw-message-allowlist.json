@@ -363,10 +363,6 @@
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
-  "components/BatchItemReviewModal.tsx": {
-    "count": 4,
-    "why": "B986-8 the rest: per-surface raw message read, pending"
-  },
   "components/PackSizeUnknownModal.tsx": {
     "count": 1,
     "why": "B986-6 invoices + bills + finance: the modal description reads the 409 payload message (a live read the first scanner missed), pending"
@@ -374,10 +370,6 @@
   "components/PlanGateNotice.tsx": {
     "count": 1,
     "why": "B986-8 the rest: renders the plan-gate payload's server message (gate.message); pending"
-  },
-  "components/ProductCreateModal.tsx": {
-    "count": 1,
-    "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "components/RecordSupplierPaymentModal.tsx": {
     "count": 1,
@@ -391,10 +383,6 @@
   "components/StatementReviewGrid.tsx": {
     "count": 3,
     "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
-  },
-  "components/VariantSplitModal.tsx": {
-    "count": 1,
-    "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "components/import/ImportCsvPanel.tsx": {
     "count": 1,
