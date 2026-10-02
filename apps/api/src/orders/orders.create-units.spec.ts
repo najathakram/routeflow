@@ -178,6 +178,17 @@ describe("OrdersService.create — sell by a unit (units_v1, 4b-2b)", () => {
     expect(prisma.order.create).not.toHaveBeenCalled();
   });
 
+  it("WS8: a FAMILY container on a line is a 400 FAMILY_NOT_SELLABLE, for staff too, and nothing is written", async () => {
+    prisma.product.findMany.mockResolvedValue([{ ...PRODUCT, kind: "FAMILY" }]);
+    const err = await create([{ productId: "prod-1", qty: 1 }]).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "FAMILY_NOT_SELLABLE",
+      productIds: ["prod-1"],
+    });
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
   it("#2784 / SA-601 interim: a BUYER's plain qty stays a PACK line even when a level is flagged isDefaultSelling, and no ladder is read for a buyer", async () => {
     scopedUnits.findMany.mockResolvedValue(
       ladder.map((u) => (u.label === "Case" ? { ...u, isDefaultSelling: true } : u)),

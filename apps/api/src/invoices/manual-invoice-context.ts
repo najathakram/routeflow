@@ -1,4 +1,5 @@
 import { roundMoney } from "@routeflow/pricing";
+import { assertSellableLines } from "../products/sellable-lines";
 import type { CreateInvoiceDto } from "./dto/create-invoice.dto";
 import type { EntitlementsService } from "../billing/entitlements.service";
 import { prepareUnitLadders } from "../orders/unit-line-build";
@@ -25,12 +26,19 @@ export async function loadManualLineContext(
 ) {
   const { prisma, entitlements } = deps;
   const productIds = [...new Set(items.filter((i) => i.productId).map((i) => i.productId!))];
-  const products: Array<{ id: string; trackedCategoryId?: string | null }> =
+  const products: Array<{
+    id: string;
+    name?: string;
+    kind?: string;
+    trackedCategoryId?: string | null;
+  }> =
     productIds.length > 0
       ? await prisma.forTenant().product.findMany({
           where: { id: { in: productIds } },
           select: {
             id: true,
+            name: true,
+            kind: true,
             unit: true,
             unitsPerBox: true,
             trackedCategoryId: true,
@@ -39,6 +47,7 @@ export async function loadManualLineContext(
         })
       : [];
   const productMap = new Map<string, any>(products.map((p) => [p.id, p]));
+  assertSellableLines(products); // WS8: a FAMILY is never a line
   // units_v1 (4c-1): the server ladder of the products a line names a unit for. The CALLER runs
   // resolveLineUnits per item (the unit-line-writers scanner requires every writer to call it itself).
   const unitsByProduct = await prepareUnitLadders(items, { isStaff: true, prisma, entitlements });

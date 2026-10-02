@@ -144,6 +144,56 @@ describe("ImportService.importProducts — formula-led product name (B964-2, pre
     });
   });
 
+  describe("free-text category cell (B990)", () => {
+    const CAT_MSG = "Category can't start with =, +, -, @ or a tab/line break";
+    const csvCreate = "Item Name,SKU,Rate,Category\nWidget,SKU-9,10,=HYPERLINK(1)\n";
+
+    it("a NEW product with a formula-led category is a skip in BOTH modes, same reason, create() never called", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      const real: any = await service.importProducts(Buffer.from(csvCreate), "user-1");
+      expect(real.skipped).toBe(1);
+      expect(productsService.create).not.toHaveBeenCalled();
+      expect(real.errors.some((e: string) => e.endsWith(CAT_MSG))).toBe(true);
+      const preview: any = await service.importProducts(Buffer.from(csvCreate), "user-1", {
+        dryRun: true,
+      });
+      expect(preview.skipped).toBe(1);
+      expect(preview.errors).toEqual(real.errors);
+      expect(productsService.assertIdentityAvailable).not.toHaveBeenCalled();
+    });
+
+    it("an UPDATE that changes a stored category to a formula-led one is a skip in both modes; an unchanged legacy one is not", async () => {
+      const stored = {
+        id: "prod-1",
+        name: "Widget",
+        sku: "SKU-1",
+        unitsPerBox: null,
+        category: "Tools",
+        trackedSubcategoryId: null,
+      };
+      prisma.product.findFirst.mockImplementation(async (a: any) =>
+        a?.where?.sku === "SKU-1" ? stored : null,
+      );
+      const csv = "Item Name,SKU,Category\nWidget,SKU-1,@evil\n";
+      const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+      expect(real.skipped).toBe(1);
+      expect(productsService.update).not.toHaveBeenCalled();
+      const preview: any = await service.importProducts(Buffer.from(csv), "user-1", {
+        dryRun: true,
+      });
+      expect(preview.errors).toEqual(real.errors);
+
+      prisma.product.findFirst.mockImplementation(async (a: any) =>
+        a?.where?.sku === "SKU-1" ? { ...stored, category: "=LEGACY" } : null,
+      );
+      const legacy: any = await service.importProducts(
+        Buffer.from("Item Name,SKU,Category,Rate\nWidget,SKU-1,=LEGACY,5\n"),
+        "user-1",
+      );
+      expect(legacy.skipped).toBe(0);
+    });
+  });
+
   it("an ordinary name still previews and imports as a create", async () => {
     prisma.product.findFirst.mockResolvedValue(null);
     const ok = "Item Name,SKU,Rate\nWidget Pro,SKU-1,10\n";
