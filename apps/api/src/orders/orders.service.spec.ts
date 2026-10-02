@@ -25,8 +25,7 @@ jest.mock("../common/db-locks", () => ({
   })),
 }));
 
-// Mock InvoicesService before it's imported — prevents Jest from traversing
-// invoice-pdf.service.ts which imports @react-pdf/renderer (ESM-only module)
+// Mock InvoicesService first: Jest must not traverse invoice-pdf.service.ts (@react-pdf/renderer is ESM-only)
 jest.mock("../invoices/invoices.service", () => ({
   InvoicesService: jest.fn().mockImplementation(() => ({
     createFromOrder: jest.fn().mockResolvedValue({ id: "inv-1" }),
@@ -34,8 +33,7 @@ jest.mock("../invoices/invoices.service", () => ({
   })),
 }));
 
-// Mock NotificationsService — it imports expo-server-sdk which is ESM-only
-// and fails Jest's CommonJS parser.
+// Mock NotificationsService: it imports expo-server-sdk, which is ESM-only and fails Jest's CJS parser.
 jest.mock("../notifications/notifications.service", () => ({
   NotificationsService: jest.fn().mockImplementation(() => ({
     sendToCustomer: jest.fn().mockResolvedValue(undefined),
