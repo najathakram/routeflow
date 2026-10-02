@@ -10,6 +10,7 @@ import { foldDir } from "../src/sources/state-branch";
 import { makeWorld, baseState, git, NOW } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
+import { itPosix } from "./helpers/platform";
 import { runCli, bytes } from "./helpers/spawn-cli";
 import type { SpawnOpts } from "./helpers/spawn-cli";
 
@@ -144,7 +145,9 @@ describe("roster validation (exit 2, precise message, nothing pushed)", () => {
     expect(junk.stderr).not.toContain("secret-marker-9");
   });
 
-  it("a FIFO roster is exit 2 immediately (never opened for a blocking read)", async () => {
+  // POSIX-only: Windows has no mkfifo and no /dev nodes (the directory case below still covers the
+  // "not a regular file" guard there)
+  itPosix("a FIFO roster is exit 2 immediately (never opened for a blocking read)", async () => {
     const fifo = path.join(world.root, "roster.fifo");
     execFileSync("mkfifo", [fifo]);
     const r = await init(["--roster", fifo]);
@@ -152,7 +155,7 @@ describe("roster validation (exit 2, precise message, nothing pushed)", () => {
     expect(r.stderr).toMatch(/roster: not a regular file/);
     expect(tmpEntries()).toEqual([]);
   });
-  it("a character device roster (/dev/zero) is exit 2, not an endless read", async () => {
+  itPosix("a character device roster (/dev/zero) is exit 2, not an endless read", async () => {
     const r = await init(["--roster", "/dev/zero"]);
     expect(r.code).toBe(2);
     expect(r.stderr).toMatch(/roster: not a regular file/);
