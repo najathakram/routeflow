@@ -36,9 +36,9 @@ export type InsightGrain = (typeof INSIGHT_GRAINS)[number];
 export const INSIGHT_MAX_WINDOW_MONTHS = 36;
 export const INSIGHT_MAX_BUCKETS = 400;
 
-export type BucketGranularity = DemandGranularity | "quarter";
+type BucketGranularity = DemandGranularity | "quarter";
 
-export interface DemandBucketBounds {
+interface DemandBucketBounds {
   /** UTC-midnight start as "YYYY-MM-DD". The series key the client renders. */
   date: string;
   /** UTC-midnight EXCLUSIVE end. Equals the next bucket's `date`. */
