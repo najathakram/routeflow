@@ -2568,7 +2568,7 @@ export class OrdersService implements OnApplicationBootstrap {
               });
               if (claimed.count === 0)
                 throw new ConflictException({
-                  code: "ORDER_CHANGED_DURING_EDIT",
+                  code: API_ERROR_CODES.ORDER_CHANGED_DURING_EDIT,
                   message:
                     "The order changed while it was being cancelled — review it and try again.",
                 });
@@ -4810,7 +4810,7 @@ export class OrdersService implements OnApplicationBootstrap {
             // vanish inside this same tx, so a null re-read means the lock did not hold — never
             // a licence to price the edit off the stale snapshot.
             throw new ConflictException({
-              code: "CONCURRENT_UPDATE",
+              code: API_ERROR_CODES.CONCURRENT_UPDATE,
               reason: "LINE_VANISHED",
               retryable: true,
               message: "Another update changed this order line. Try again.",

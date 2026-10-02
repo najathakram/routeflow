@@ -70,7 +70,7 @@ function isEntitlementDenial(e: unknown): boolean {
   const body = e.getResponse();
   const code =
     typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
-  return code !== "PLAN_GATE_UNAVAILABLE";
+  return code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE;
 }
 
 export interface ImportRowPlan {
@@ -94,6 +94,7 @@ import {
   flagRestrictedLines,
   writeRestrictedLinesAudit,
 } from "../selling-restrictions/restricted-lines-flag";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * F9-008: hard row-count cap on any CSV import. The byte-size caps on the upload

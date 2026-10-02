@@ -43,6 +43,7 @@ import {
   type RemainingSupply,
 } from "./inline-returns-pricing";
 import type { QuoteInlineReturnDto, QuoteInlineReturnItemDto } from "./dto/quote-inline-return.dto";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** PR-1..3 ship fixed defaults (design.md §8) — config reading comes after
  * feature-grants PR-3a's EntitlementsService wiring. */
@@ -371,14 +372,14 @@ export class InlineReturnsQuoteService {
         const prior = priorReturnedMap.get(orderId)?.[item.productId];
         if (prior && "unknown" in prior) {
           throw new ConflictException({
-            code: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+            code: API_ERROR_CODES.INLINE_RETURN_PRIOR_BASIS_UNKNOWN,
             message: `${productName}: an earlier return on this customer's order cannot be counted (${prior.reason}) — credit it with a credit note or ask support; the standard return cannot classify it either.`,
           });
         }
       }
       if (conflictingPacks) {
         throw new ConflictException({
-          code: "INLINE_RETURN_PACK_CONFLICT",
+          code: API_ERROR_CODES.INLINE_RETURN_PACK_CONFLICT,
           message:
             `${productName} is packed at more than one size in this customer's recent ` +
             `history (${conflictingPacks.join(", ")}) — return these lines from the order ` +
@@ -397,7 +398,7 @@ export class InlineReturnsQuoteService {
         (resolvedUnitsPerBox == null || resolvedUnitsPerBox <= 0)
       ) {
         throw new ConflictException({
-          code: "INLINE_RETURN_PACK_UNKNOWN",
+          code: API_ERROR_CODES.INLINE_RETURN_PACK_UNKNOWN,
           message:
             `${productName}'s pack size is unknown — return these lines from the order ` +
             `page's standard return instead.`,

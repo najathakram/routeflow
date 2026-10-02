@@ -74,6 +74,16 @@
 //                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
 //                    field (businessName, contactName, displayName). Clients show FIXED copy with a
 //                    human field label and never the server message.
+//   B982 — codes the API threw as hand-typed literals, now named here. Each is `body.code` of the refusal
+//                    its throw site names (value == key, byte-identical to what was sent):
+//                    PLAN_GATE / PLAN_GATE_UNAVAILABLE (billing/plan-gate.ts, plan-flag-denial.ts), READ_ONLY
+//                    (tenant-status.guard.ts: a blocked write on a READ_ONLY tenant; the same word is also a
+//                    tenant STATUS value, which is not an error code), INSUFFICIENT_STOCK (the order-edit
+//                    oversell 409), the INLINE_RETURN_* family (returns/inline-returns*.ts, returns.service.ts),
+//                    UNIT_AWARE_LINE, MERGE_PACK_MISMATCH, ORDER_CHANGED_DURING_EDIT, CONCURRENT_UPDATE,
+//                    MERGE_IN_PROGRESS, LOCK_UNAVAILABLE (order/customer contention), PO_ALREADY_BILLED,
+//                    BILL_EXCEEDS_PO (vendor bills), INVOICE_HAS_UNSPENT_CREDIT (credit notes),
+//                    HANDOFF_CODE_INVALID (auth handoff).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -125,6 +135,36 @@ export const API_ERROR_CODES = {
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
+  PLAN_GATE: "PLAN_GATE",
+  PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
+  READ_ONLY: "READ_ONLY",
+  INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
+  INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+  INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  INLINE_RETURN_ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+  INLINE_RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  INLINE_RETURN_KEY_TAKEN: "INLINE_RETURN_KEY_TAKEN",
+  INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+  INLINE_RETURN_PRIOR_BASIS_UNKNOWN: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+  INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
+  INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
+  INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
+  MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
+  ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
+  MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
+  LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
+  BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
+  INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
+} as const;
+
+/** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
+export const PLAN_GATE_FLAG_KEYS = {
+  METER_CUSTOMERS: "meter.customers",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];
