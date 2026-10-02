@@ -139,6 +139,103 @@ describe("genericToastCopy: codes users rely on", () => {
     ).toBe("Some details aren't valid. Check what you entered and try again.");
   });
 
+  describe("B986: coded refusals that tell the user what to fix (never less actionable than the server sentence)", () => {
+    it("ALLOCATIONS_EXCEED_PAYMENT names the two amounts from the STRUCTURED fields, never the message", () => {
+      const copy = genericToastCopy(
+        err(400, { code: "ALLOCATIONS_EXCEED_PAYMENT", allocatedTotal: 150.5, totalAmount: 100 }),
+      );
+      expect(copy).toBe(
+        "The allocations add up to $150.50, more than the $100.00 payment. Lower an allocation or raise the payment amount.",
+      );
+      expect(genericToastCopy(err(400, { code: "ALLOCATIONS_EXCEED_PAYMENT" }))).toBe(
+        "The allocations add up to more than the payment. Lower an allocation or raise the payment amount.",
+      );
+      expect(
+        genericToastCopy(
+          err(400, { code: "ALLOCATIONS_EXCEED_PAYMENT", allocatedTotal: "x", totalAmount: 1 }),
+        ),
+      ).not.toMatch(/\$/);
+    });
+
+    it("UNLINKED_ITEMS (with lines, and the empty bill) says what to do", () => {
+      expect(
+        genericToastCopy(
+          err(409, { code: API_ERROR_CODES.UNLINKED_ITEMS, unlinkedItems: [{ id: "i" }] }),
+        ),
+      ).toBe(
+        "Some bill lines aren't linked to a product, so they won't update inventory or costs. Link them, or confirm to receive the bill anyway.",
+      );
+      expect(
+        genericToastCopy(err(409, { code: API_ERROR_CODES.UNLINKED_ITEMS, unlinkedItems: [] })),
+      ).toBe(
+        "This bill has no line items, so receiving it won't update inventory or costs. Add the lines first.",
+      );
+    });
+
+    it("PACK_SIZE_UNKNOWN keeps the 'confirm as loose pieces' option", () => {
+      expect(genericToastCopy(err(409, { code: API_ERROR_CODES.PACK_SIZE_UNKNOWN }))).toBe(
+        "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
+      );
+    });
+
+    describe("DUPLICATE_VENDOR_BILL: points at the existing bill, never teaches a bypass", () => {
+      const dup = (duplicate: unknown) =>
+        err(409, { code: API_ERROR_CODES.DUPLICATE_VENDOR_BILL, duplicate });
+      it("names the existing bill from the STRUCTURED field", () => {
+        expect(genericToastCopy(dup({ billNumber: "BILL-0012", status: "RECEIVED" }))).toBe(
+          "This bill is already recorded as BILL-0012. Open it instead.",
+        );
+      });
+      it("a DRAFT match says to finish receiving it", () => {
+        expect(genericToastCopy(dup({ billNumber: "BILL-0013", status: "DRAFT" }))).toBe(
+          "This bill is already saved as draft BILL-0013. Open it to finish receiving instead of creating a second bill.",
+        );
+      });
+      it("without a usable bill number it still says to open the existing bill", () => {
+        for (const d of [undefined, {}, { billNumber: 12 }, { billNumber: "<b>x</b> " + RAW }])
+          expect(genericToastCopy(dup(d))).toBe(
+            "This bill is already recorded. Open the existing bill instead.",
+          );
+      });
+      it("never suggests changing the invoice number (it would defeat the duplicate guard)", () => {
+        for (const d of [undefined, { billNumber: "B1", status: "DRAFT" }, { billNumber: "B1" }])
+          expect(genericToastCopy(dup(d))).not.toMatch(/change the invoice number/i);
+      });
+    });
+
+    it.each([
+      [
+        'A category named "Snacks" already exists.',
+        "A category with that name already exists. Choose a different name.",
+      ],
+      [
+        'A subcategory named "Cigars" already exists in this section.',
+        "A subcategory with that name already exists. Choose a different name.",
+      ],
+      [
+        'A product named "Widget" already exists',
+        "A product with that name already exists. Choose a different name.",
+      ],
+      ["SKU already exists", "That SKU is already used by another product. Use a different SKU."],
+      [
+        "Barcode already exists",
+        "That barcode is already used by another product. Use a different barcode.",
+      ],
+    ])("the duplicate 409 %s is a fixed sentence that says what to change", (message, copy) => {
+      expect(genericToastCopy(err(409, { message }))).toBe(copy);
+      expect(genericToastCopy(err(400, { message }))).toBe(copy);
+    });
+
+    it("a duplicate sentence that echoes user text or names another noun is NOT trusted", () => {
+      expect(genericToastCopy(err(409, { message: 'A secret named "x" already exists.' }))).toBe(
+        NEUTRAL_409,
+      );
+      expect(
+        genericToastCopy(err(409, { message: 'A category named "x" already exists. ' + RAW })),
+      ).toBe(NEUTRAL_409);
+    });
+  });
+
   it("a plan gate is the plan copy; PLAN_GATE_UNAVAILABLE falls through to the status copy", () => {
     expect(genericToastCopy(err(403, { code: "PLAN_GATE", flag: "x" }))).toBe(
       "This isn't included in your current plan.",

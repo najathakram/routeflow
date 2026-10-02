@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import {
@@ -112,7 +113,7 @@ export function AssignToSectionModal({ isOpen, onClose, products, onSuccess }: P
     } catch (err: any) {
       toast({
         title: "Failed to update regulated type",
-        description: err?.response?.data?.message ?? "Please try again.",
+        description: genericToastCopy(err),
         variant: "error",
       });
     }
