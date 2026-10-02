@@ -1,5 +1,6 @@
 import { BadRequestException } from "@nestjs/common";
 import type { PriceType } from "@prisma/client";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * D-20 (#1808, SA-304 / SA-330) — the SOURCE line's denomination for a copier that re-creates a line through
@@ -51,7 +52,7 @@ export function sourceLineFor(
   const { unitsPerBox: pack, unitPrice, originalPrice } = src;
   if (pack !== null && (!Number.isInteger(pack) || pack <= 1)) {
     throw new BadRequestException({
-      code: "SOURCE_LINE_INVALID",
+      code: API_ERROR_CODES.SOURCE_LINE_INVALID,
       message: `The source pack for product ${productId} is not a real box size (${pack}).`,
     });
   }
@@ -61,13 +62,13 @@ export function sourceLineFor(
     (originalPrice !== null && !Number.isFinite(originalPrice))
   ) {
     throw new BadRequestException({
-      code: "SOURCE_LINE_INVALID",
+      code: API_ERROR_CODES.SOURCE_LINE_INVALID,
       message: `The source price for product ${productId} is not a valid amount.`,
     });
   }
   if (draftItems.filter((i) => i.productId === productId).length > 1) {
     throw new BadRequestException({
-      code: "SOURCE_LINE_AMBIGUOUS",
+      code: API_ERROR_CODES.SOURCE_LINE_AMBIGUOUS,
       message: `Product ${productId} appears on more than one line, so a source line cannot be applied to a single one.`,
     });
   }
