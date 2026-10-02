@@ -132,7 +132,7 @@ describe("ProductsExportButton", () => {
     await waitFor(() => expect(screen.getByTestId("products-export-button")).not.toBeDisabled());
   });
 
-  it("toasts Export failed with the message on an error", async () => {
+  it("toasts Export failed with FIXED copy on an error (B986)", async () => {
     get.mockRejectedValue({
       message: "boom",
       response: { status: 500, data: { message: "db down" } },
@@ -144,7 +144,7 @@ describe("ProductsExportButton", () => {
       expect(toast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: "Export failed",
-          description: "db down",
+          description: "Something went wrong on our side. Please try again.",
           variant: "error",
         }),
       ),
@@ -167,7 +167,7 @@ describe("ProductsExportButton", () => {
     );
   });
 
-  it("surfaces the server message from a Blob error body, never the raw status line", async () => {
+  it("shows fixed copy for a Blob error body, never the server message or the raw status line (B986)", async () => {
     get.mockRejectedValue({
       message: "Request failed with status code 400",
       response: {
@@ -180,7 +180,9 @@ describe("ProductsExportButton", () => {
     fireEvent.click(screen.getByTestId("products-export-download"));
     await waitFor(() =>
       expect(toast).toHaveBeenCalledWith(
-        expect.objectContaining({ description: "from must be on or before to" }),
+        expect.objectContaining({
+          description: "Some details aren't valid. Check what you entered and try again.",
+        }),
       ),
     );
   });

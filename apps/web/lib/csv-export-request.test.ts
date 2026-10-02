@@ -3,12 +3,14 @@ import { exportErrorMessage, exportTailWarning, isoDay } from "./csv-export-requ
 const blobOf = (s: string) => new Blob([s], { type: "application/json" });
 
 describe("exportErrorMessage", () => {
-  it("reads the server message out of a Blob error body (responseType blob)", async () => {
+  it("shows FIXED copy for a Blob error body (responseType blob), never the server message (B986)", async () => {
     const err = {
       message: "Request failed with status code 400",
       response: { status: 400, data: blobOf(JSON.stringify({ message: "from must be a date" })) },
     };
-    await expect(exportErrorMessage(err)).resolves.toBe("from must be a date");
+    await expect(exportErrorMessage(err)).resolves.toBe(
+      "Some details aren't valid. Check what you entered and try again.",
+    );
   });
 
   it("shows a fixed friendly line, never the raw client error, when the Blob is not JSON", async () => {
@@ -24,11 +26,11 @@ describe("exportErrorMessage", () => {
   it("still handles plain-object bodies, the 429 line and a bare error", async () => {
     await expect(
       exportErrorMessage({ response: { status: 500, data: { message: "db down" } } }),
-    ).resolves.toBe("db down");
+    ).resolves.toBe("Something went wrong on our side. Please try again.");
     await expect(exportErrorMessage({ response: { status: 429 } })).resolves.toMatch(
       /try again in a minute/i,
     );
-    await expect(exportErrorMessage({ message: "boom" })).resolves.toBe("boom");
+    await expect(exportErrorMessage({ message: "boom" })).resolves.toMatch(/try again/i);
     await expect(exportErrorMessage({})).resolves.toMatch(/try again/i);
   });
 });

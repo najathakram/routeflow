@@ -132,7 +132,8 @@ describe("ImportCsvPanel", () => {
     fireEvent.click(screen.getByTestId("products-preview-button"));
 
     const gate = await screen.findByTestId("products-gate-error");
-    expect(gate).toHaveTextContent('Column "MSRP" needs the MSRP plan flag');
+    expect(gate).toHaveTextContent("A column in this file needs an add-on or plan upgrade");
+    expect(gate).not.toHaveTextContent("MSRP plan flag");
     expect(screen.queryByTestId("products-results-table")).not.toBeInTheDocument();
     expect(screen.getByTestId("products-import-button")).toBeDisabled();
   });

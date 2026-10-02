@@ -227,7 +227,9 @@ export function ImportCsvPanel({
       }
     } catch (err: any) {
       if (err?.response?.status === 403) {
-        setGateError("This column needs an add-on to import");
+        setGateError(
+          "A column in this file needs an add-on or plan upgrade. Remove the column or enable it.",
+        );
         setPreview(null);
       } else {
         toast({

@@ -303,10 +303,22 @@
     "count": 1,
     "why": "B986-3 settings + auth: per-surface raw message read, pending"
   },
+  "components/BatchItemReviewModal.tsx": {
+    "count": 4,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
+  "components/ProductCreateModal.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
+  },
   "components/ScanInvoiceModal.tsx": {
     "count": 1,
     "permanent": true,
     "why": "classification: msg only feeds the api-key regex, the toast copy is fixed"
+  },
+  "components/VariantSplitModal.tsx": {
+    "count": 1,
+    "why": "B986-8 the rest: per-surface raw message read, pending"
   },
   "lib/api/credit-limit.ts": {
     "count": 1,

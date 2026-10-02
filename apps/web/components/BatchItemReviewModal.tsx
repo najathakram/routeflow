@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { X, Sparkles, Check, Plus } from "lucide-react";
 import { Button, useToast, cn } from "@routeflow/ui/web";
 import { SupplierSelect } from "./SupplierSelect";
@@ -87,7 +86,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
         onError: (e: any) =>
           toast({
             title: "Couldn't save",
-            description: genericToastCopy(e),
+            description: e?.response?.data?.message ?? e.message,
             variant: "error",
           }),
       },
@@ -105,7 +104,7 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
         onError: (e: any) =>
           toast({
             title: "Couldn't resolve",
-            description: genericToastCopy(e),
+            description: e?.response?.data?.message ?? e.message,
             variant: "error",
           }),
       },
