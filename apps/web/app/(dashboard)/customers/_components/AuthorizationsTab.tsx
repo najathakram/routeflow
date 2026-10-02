@@ -1,5 +1,6 @@
 "use client";
 
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { ShieldCheck, Plus, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
@@ -73,7 +74,9 @@ function LicenseModal({
     };
     const onError = (err: unknown) =>
       setError(
-        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        // B964: a refused formula-led license number is fixed copy with its label, never the server text
+        safeTextErrorCopy(err) ??
+          (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
           "Something went wrong. Please try again.",
       );
 

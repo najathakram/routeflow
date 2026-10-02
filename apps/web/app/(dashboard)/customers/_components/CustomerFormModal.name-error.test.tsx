@@ -88,6 +88,15 @@ describe("CustomerFormModal — refused name (B956)", () => {
     expect(updateOpts).toHaveBeenCalledWith({ localErrorToast: true });
   });
 
+  it("B964: a refused ADDRESS field shows its human label (City), not the raw key or server text", () => {
+    createError = axiosRefusal("city");
+    renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);
+    expect(
+      screen.getByText("City can't start with =, +, -, @ or a tab/line break."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Request failed with status code 400/)).not.toBeInTheDocument();
+  });
+
   it("any other error keeps the existing banner text", () => {
     createError = new Error("Email or username already taken");
     renderWithProviders(<CustomerFormModal isOpen onClose={jest.fn()} mode="add" />);

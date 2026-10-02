@@ -18,6 +18,15 @@ describe("safeTextErrorCopy (B956: no raw server strings)", () => {
     ["businessName", "Business name can't start with =, +, -, @ or a tab/line break."],
     ["contactName", "Contact name can't start with =, +, -, @ or a tab/line break."],
     ["displayName", "Display name can't start with =, +, -, @ or a tab/line break."],
+    ["label", "Address label can't start with =, +, -, @ or a tab/line break."],
+    ["line1", "Address line 1 can't start with =, +, -, @ or a tab/line break."],
+    ["line2", "Address line 2 can't start with =, +, -, @ or a tab/line break."],
+    ["city", "City can't start with =, +, -, @ or a tab/line break."],
+    ["state", "State can't start with =, +, -, @ or a tab/line break."],
+    ["zip", "ZIP code can't start with =, +, -, @ or a tab/line break."],
+    ["tobaccoLicenseNo", "Tobacco license number can't start with =, +, -, @ or a tab/line break."],
+    ["licenseNumber", "License number can't start with =, +, -, @ or a tab/line break."],
+    ["buyerName", "Name can't start with =, +, -, @ or a tab/line break."],
   ])("%s → human label copy", (field, expected) => {
     expect(safeTextErrorCopy({ response: { data: body(field) } })).toBe(expected);
     expect(safeTextBodyCopy(body(field))).toBe(expected);
