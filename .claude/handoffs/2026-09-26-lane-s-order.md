@@ -4,21 +4,18 @@ Worktree `C:\ClaudeCode\routeflow\.claude\worktrees\rf-b749-overflow-batch`, now
 Re-verify every sha with `git -C` / `gh` before acting.
 
 ## Waiting on the lead's "go" (PC verify queue: ... Analytics #2179 -> ME #2174 -> ...)
-
 - #2174: local merge commit a04c6daf7 (plain merge of origin/master 0671706c6, trailer present), NOT pushed.
   Origin head c4428850. Diff vs master = 15 code files, no .claude/. Scoped jest (overflow-b749/b770) 2/2, web+ui tsc clean.
   On "go": plain push (JEST_MAX_WORKERS=4; the pre-push hook = full verify), then Playwright 1440/768/390, then ask for a PASS at the new sha.
 - The PR body's "Carried bookkeeping" section lists the lessons and map notes from #2062/#2067 plus #2174's own (the L-218 collision needs a new id).
 
 ## Queue (lead, latest): #2086 P0 FIRST -> #2174 -> #2215. Owner rule: message the lead only for a blocker/decision, a slot, or "PR ready: #N <full sha>".
-
 - #2086 NOW: local 015f0a725 on top of origin 50f238154 (ahead 1, not pushed; merges cleanly with master 5f8ecf749). Adds the LineItemRow wrap pin, the w-32 static pin (proven red without it), and an e2e 56 block (create + resume draft x 1440/768/390, long name via mocked responses, per keystroke: doc scrollWidth<=innerWidth, dialog left>=0, body scrollLeft 0). Asked the lead for the P0 slot. Slot GRANTED as next after Lane F's #1353 push. Lead exception: if the full pre-push verify is red ONLY on master's local-super-admin.spec.ts:16 (win32, #2221), re-push with SKIP_VERIFY=1 SKIP_VERIFY_REASON="win32-only master spec local-super-admin.spec.ts:16 (#2221); full verify otherwise green". Any other red = stop and tell the lead. On "go", in this order with nothing overlapping: push (the pre-push verify), `npm run janitor:preflight -- 8`, compose web build, then run the Playwright projects create-order-dialog-mobile-pan and date-input-grid-overflow; screenshots in test-results/2080-proof/.
 - (old) #2086: wait for the lead to relay the remote sha of the Mac's v2 commit 50f238154 (on top of e3f7041b5). Then: read the Opus BLOCK (#938, 01:23Z) and SA-360b verbatim; finish the unit specs and the re-pin; Playwright create AND edit at 1440/768/390 with a long name and a focused date, asserting scrollWidth<=innerWidth and dialog left>=0 while typing. Slot = P0, right after Lane F.
 - #2215: local commit 0d4ef0997 on fix/2215-orders-page-exports (from master 0671706c6), not pushed, no PR yet. A pure move of the editor block to _components/order-line-edit.tsx. orders/[id] jest 144/144, static tests 8/8, tsc/eslint clean.
   Still owed: the .next proof (`next build` for .next/types, then web check-types green) — do it in the verify slot. The PR body must list the other value-exporting pages, NOT fixed here: estimates/page.tsx (defaultIssueDate, defaultExpiryDate), invoices/page.tsx (resolveInvoiceListBalance), admin/tenants/[id]/page.tsx (FeatureOverridesSection). routes/create and shop export types only, which is fine.
 
 ## State ~05:50Z
-
 - #2086 PUSHED @015f0a72533e7819941cbd335555bb49ffb9e6e2 (sole pre-push red = #2221, audited skip); the lead is running reviews; the verify slot is released.
   Still owed: compose web image build, then Playwright 56/57 -> tell the lead "#2086 images built", then "#2086 playwright done".
   BLOCKED: Docker Desktop is wedged (engine pipe missing, docker-desktop WSL Stopped). The recovery (kill Docker + `wsl --shutdown`) was DENIED by this session's classifier, so the owner is doing it and the lead will ping. After the engine is up: `docker builder prune -f`, `npm run janitor:preflight -- 8` (disk ~5.3 GB; if still short, report the GB, no build).
@@ -64,12 +61,10 @@ Re-verify every sha with `git -C` / `gh` before acting.
   Only import-only or ratchet-row conflicts may be hand-resolved; anything else drops that PR. Then: full verify (JEST_MAX_WORKERS=3); local:up/seed/validate/e2e on images built from the train (print the build sha); Playwright 390/768/1440 on: driver dashboard, import, estimates, bills, offline order queue, Backoffice snapshots tab. Disk: prune only my own stale images; STOP below 4 GB. Post on #938 (train sha, tree hash, list, hand hunks, results). Push train/B branch only, no PR.
 
 ## Settled
-
 - #2119 preserved: origin feat/2119-insights-finder @e664a3908 (no PR; waits on #2179 — the Analytics lane's, not mine).
 - #2213 (SA-361a) -> Lane F, folded into #2060. #2062/#2067 CLOSED as superseded by #2174.
 - #2097 = the MacBook lane's PR #2133. Steps 10-11, B596 and B597 are all on master (#982, #1204, #1121).
 
 ## Held / not mine
-
 - #2086 (#2080 P0 dialog pan): HOLD. The v2 is probably held by a Mac mini lane; the lead will ask them. Don't start it.
 - #1189 = Lane U-po's. Don't touch it.

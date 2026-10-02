@@ -11,7 +11,7 @@
 
 **ACCEPTED — S2's CONFIRMED verdict stands, with S2's correction to S1 adopted as the defect statement.**
 
-The defect is precisely: _the park state is invisible at capture time_. It is not "lost forever" (report warning + filing block surface it later), so the fix is a capture-time visibility fix, not a ledger fix. That framing matters for the build: nothing about the park write, the report, or the filing gate changes.
+The defect is precisely: *the park state is invisible at capture time*. It is not "lost forever" (report warning + filing block surface it later), so the fix is a capture-time visibility fix, not a ledger fix. That framing matters for the build: nothing about the park write, the report, or the filing gate changes.
 
 Two places S2's reasoning is thin, neither rising to a send-back because neither changes the cause:
 
@@ -64,7 +64,7 @@ Apply it at **every** `return` of a `Return` row in `capture()` — four sites: 
 
 Rules the helper must obey:
 
-- **Ordering/visibility:** the read runs _after_ `reverseLedgerForReturn` has resolved on that path, on a client that can see its writes — the tx client if the return happens inside the transaction, `this.prisma` if after commit. Never before, never concurrently.
+- **Ordering/visibility:** the read runs *after* `reverseLedgerForReturn` has resolved on that path, on a client that can see its writes — the tx client if the return happens inside the transaction, `this.prisma` if after commit. Never before, never concurrently.
 - **Tenant clause:** `tenantId` is in the `where` unconditionally. This makes the fix correct whether or not `regulatedLedgerParkedReversal` is inside the `forTenant()` extension. The build plan still verifies the extension membership (S2's open item) and records the answer in the task brief; if the model somehow lacks a `tenantId` column, that is a send-back to me, not a silent drop of the clause.
 - **`resolvedAt: null` only.** A resolved row means the reversal was later booked; it must not warn.
 - Return type of `capture()`/`approve()` becomes `Return & { parkedReversals: InlineReturnParkedReversals | null }`; the value is **always emitted** (`null`, never `undefined`) on the server.
@@ -102,32 +102,32 @@ All REG tests must be **red on the current tree at the stated wrong value** befo
 
 **API — `apps/api/src/inline-returns/inline-returns.service.spec.ts`**
 
-| id                                                | setup                                                                                                                   | wrong today                         | must assert after                                                                                                        |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `REG-B735-api-capture-parked`                     | main path; `reverseReturnEntries` mocked resolve; `regulatedLedgerParkedReversal.findMany` mocked → `[{qty:3},{qty:2}]` | `res.parkedReversals === undefined` | `toEqual({ count: 2, pieces: 5 })`; `findMany` called with `where` containing `returnId`, `tenantId`, `resolvedAt: null` |
-| `REG-B735-api-capture-clean`                      | main path; `findMany` → `[]`                                                                                            | `undefined`                         | `toBeNull()` (strictly `null`, not `undefined`)                                                                          |
-| `REG-B735-api-capture-replay-shortcircuit-parked` | same `returnKey` pre-read short-circuit exit; `findMany` → `[{qty:4}]`; assert `reverseReturnEntries` **not** called    | `undefined`                         | `{ count: 1, pieces: 4 }`                                                                                                |
-| `REG-B735-api-capture-replay-p2002-parked`        | P2002 catch exit; `findMany` → `[{qty:4}]`                                                                              | `undefined`                         | `{ count: 1, pieces: 4 }`                                                                                                |
-| `REG-B735-api-capture-race-parked`                | in-lock race-check exit (if mockable at the unit boundary; otherwise a `.db.spec.ts` lane case)                         | `undefined`                         | `{ count: 1, pieces: 4 }`                                                                                                |
-| `REG-B735-api-capture-overcap-null`               | DRIVER_CAP/overCap capture; `findMany` → `[]`                                                                           | `undefined`                         | `toBeNull()` and `holdReason` present — the two signals are independent                                                  |
-| `REG-B735-api-approve-parked`                     | `approve()` reverses then `findUnique`; `findMany` → `[{qty:1}]`                                                        | `undefined`                         | `{ count: 1, pieces: 1 }`                                                                                                |
+| id | setup | wrong today | must assert after |
+|---|---|---|---|
+| `REG-B735-api-capture-parked` | main path; `reverseReturnEntries` mocked resolve; `regulatedLedgerParkedReversal.findMany` mocked → `[{qty:3},{qty:2}]` | `res.parkedReversals === undefined` | `toEqual({ count: 2, pieces: 5 })`; `findMany` called with `where` containing `returnId`, `tenantId`, `resolvedAt: null` |
+| `REG-B735-api-capture-clean` | main path; `findMany` → `[]` | `undefined` | `toBeNull()` (strictly `null`, not `undefined`) |
+| `REG-B735-api-capture-replay-shortcircuit-parked` | same `returnKey` pre-read short-circuit exit; `findMany` → `[{qty:4}]`; assert `reverseReturnEntries` **not** called | `undefined` | `{ count: 1, pieces: 4 }` |
+| `REG-B735-api-capture-replay-p2002-parked` | P2002 catch exit; `findMany` → `[{qty:4}]` | `undefined` | `{ count: 1, pieces: 4 }` |
+| `REG-B735-api-capture-race-parked` | in-lock race-check exit (if mockable at the unit boundary; otherwise a `.db.spec.ts` lane case) | `undefined` | `{ count: 1, pieces: 4 }` |
+| `REG-B735-api-capture-overcap-null` | DRIVER_CAP/overCap capture; `findMany` → `[]` | `undefined` | `toBeNull()` and `holdReason` present — the two signals are independent |
+| `REG-B735-api-approve-parked` | `approve()` reverses then `findUnique`; `findMany` → `[{qty:1}]` | `undefined` | `{ count: 1, pieces: 1 }` |
 
 The three replay rows are the ones that distinguish fresh-read from threading; they are not optional.
 
 **Web — `RecordInlineReturnDialog.test.tsx`**
 
-| id                                        | setup                                                             | wrong today                                              | must assert after                                                                   |
-| ----------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `REG-B735-web-dialog-parked-warning`      | capture resolves with `parkedReversals: { count: 1, pieces: 4 }`  | `queryByTestId("inline-return-parked-warning") === null` | present; text matches `/parked/i` and contains `4`; heading still "Return recorded" |
-| `REG-B735-web-dialog-parked-copy-vocab`   | same render                                                       | (new)                                                    | rendered success view text contains neither `/held/i` nor `/approve/i`              |
-| `REG-B735-web-dialog-no-field-no-warning` | capture resolves with **no** `parkedReversals` key (older server) | (new, back-compat)                                       | warning absent, plain success                                                       |
+| id | setup | wrong today | must assert after |
+|---|---|---|---|
+| `REG-B735-web-dialog-parked-warning` | capture resolves with `parkedReversals: { count: 1, pieces: 4 }` | `queryByTestId("inline-return-parked-warning") === null` | present; text matches `/parked/i` and contains `4`; heading still "Return recorded" |
+| `REG-B735-web-dialog-parked-copy-vocab` | same render | (new) | rendered success view text contains neither `/held/i` nor `/approve/i` |
+| `REG-B735-web-dialog-no-field-no-warning` | capture resolves with **no** `parkedReversals` key (older server) | (new, back-compat) | warning absent, plain success |
 
 **Pins of the two existing behaviours S2 found (must stay green throughout):**
 
-| id                                     | behaviour                                                                                                                                                                                               |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PIN-B735-web-dialog-replay-success`   | existing test: retry with the same `returnKey` shows success both times — **extend** with a variant where both responses carry `parkedReversals` non-null and assert the warning renders both times too |
-| `PIN-B735-web-dialog-holdreason-plain` | existing test: response with `holdReason` and `parkedReversals: null` shows plain success, no "held"/"approve" text, and **no** parked warning                                                          |
+| id | behaviour |
+|---|---|
+| `PIN-B735-web-dialog-replay-success` | existing test: retry with the same `returnKey` shows success both times — **extend** with a variant where both responses carry `parkedReversals` non-null and assert the warning renders both times too |
+| `PIN-B735-web-dialog-holdreason-plain` | existing test: response with `holdReason` and `parkedReversals: null` shows plain success, no "held"/"approve" text, and **no** parked warning |
 
 **Type:** no parity spec exists for this response (S2 §5); the API spec rows above assert on the typed `capture()` return, which is the pin. Do not add a parity spec in this bug.
 
@@ -138,7 +138,6 @@ The three replay rows are the ones that distinguish fresh-read from threading; t
 Line numbers are not available to S3; anchors are by symbol/text and the pack script should resolve them.
 
 **fix-1 — `apps/api/src/inline-returns/inline-returns.service.ts`**
-
 - `[before: "return result.ret;" (capture main-path tail), after: "return this.withParkedReversals(result.ret, <tx|this.prisma>);"]`
 - `[before: "return existing;" (pre-read short-circuit exit, whatever the local name), after: "return this.withParkedReversals(existing);"]`
 - `[before: "return <raced row>;" (in-lock race-check exit), after: "return this.withParkedReversals(<raced row>);"]`
@@ -147,16 +146,13 @@ Line numbers are not available to S3; anchors are by symbol/text and the pack sc
 - `[before: (no helper), after: "private async withParkedReversals(" declaration]`
 
 **fix-2 — `packages/types/api/inline-returns.ts`**
-
 - `[before: "export type InlineReturnRecord =" (or interface) declaration line, after: same declaration + "parkedReversals?: InlineReturnParkedReversals | null;"]`
 - `[before: (none), after: "export interface InlineReturnParkedReversals { count: number; pieces: number }"]`
 
 **fix-3 — `apps/web/.../RecordInlineReturnDialog.tsx`**
-
-- `[before: the success-branch JSX that renders refundAmount (last existing field), after: same + the `data-testid="inline-return-parked-warning"`block guarded by`result.parkedReversals`]`
+- `[before: the success-branch JSX that renders refundAmount (last existing field), after: same + the `data-testid="inline-return-parked-warning"` block guarded by `result.parkedReversals`]`
 
 **fix-4 (conditional) — `apps/web/lib/api/inline-returns.ts`**
-
 - `[before: capture() return-type annotation, after: unchanged if it is InlineReturnRecord; else the mapped/declared shape gains parkedReversals]`
 
 Review scope: these four files plus the two spec files. Nothing in `regulated-ledger/`, `returns/`, `credit-notes/`, or mobile.
@@ -178,7 +174,7 @@ rg -nU --type ts 'async \w+\([^)]*\)\s*:\s*Promise<void>\s*\{[\s\S]{0,2500}?this
 Then for each hit, one hop up: does the public method that calls it `return` a Prisma row / `@routeflow/types` record with no field describing the warned state? Expected hits to adjudicate:
 
 - other `park*` / classify-fallback paths in `regulated-ledger.service.ts` (same B681 family) — most likely true siblings;
-- the standard-returns LINE_UNIT reversal path — the sweep must _prove_ S2's "can never park" claim by reading `classifySaleAxis`'s inputs on that path, not restate it;
+- the standard-returns LINE_UNIT reversal path — the sweep must *prove* S2's "can never park" claim by reading `classifySaleAxis`'s inputs on that path, not restate it;
 - any credit-note / invoice ledger-posting helper that logs-and-continues on an unclassifiable axis.
 
 Same-bug siblings (a park that reaches an operator-facing response with no signal) get fixed in this diff **only** if they are on the operator inline-returns path; anything else is filed via `bugs.mjs`, not fixed here.
@@ -193,11 +189,11 @@ Same-bug siblings (a park that reaches an operator-facing response with no signa
 
 ## 7. Probe plan (fix-revert probes)
 
-| touched file                                                                                         | revert probe                                     | REG test that must go red                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/api/src/inline-returns/inline-returns.service.ts`                                              | revert the whole file                            | `REG-B735-api-capture-parked`, `REG-B735-api-capture-clean` (null vs undefined), `REG-B735-api-capture-replay-shortcircuit-parked`, `REG-B735-api-capture-replay-p2002-parked`, `REG-B735-api-approve-parked` |
-| same file, **partial** probe: revert only the short-circuit and P2002 call sites, keep the main path | proves the replay exits are independently pinned | `REG-B735-api-capture-replay-shortcircuit-parked`, `REG-B735-api-capture-replay-p2002-parked` red; `REG-B735-api-capture-parked` stays green                                                                  |
-| `apps/web/.../RecordInlineReturnDialog.tsx`                                                          | revert the file                                  | `REG-B735-web-dialog-parked-warning` red; both PIN tests stay green (the revert must not break them — if it does, the pins were wrongly coupled to the fix)                                                   |
-| `packages/types/api/inline-returns.ts`                                                               | revert the file                                  | not a Jest test: `npm run check-types` red in `apps/web` (dialog references `parkedReversals`) and in `apps/api` (service return type). Record the probe as a check-types probe, not a REG probe.             |
+| touched file | revert probe | REG test that must go red |
+|---|---|---|
+| `apps/api/src/inline-returns/inline-returns.service.ts` | revert the whole file | `REG-B735-api-capture-parked`, `REG-B735-api-capture-clean` (null vs undefined), `REG-B735-api-capture-replay-shortcircuit-parked`, `REG-B735-api-capture-replay-p2002-parked`, `REG-B735-api-approve-parked` |
+| same file, **partial** probe: revert only the short-circuit and P2002 call sites, keep the main path | proves the replay exits are independently pinned | `REG-B735-api-capture-replay-shortcircuit-parked`, `REG-B735-api-capture-replay-p2002-parked` red; `REG-B735-api-capture-parked` stays green |
+| `apps/web/.../RecordInlineReturnDialog.tsx` | revert the file | `REG-B735-web-dialog-parked-warning` red; both PIN tests stay green (the revert must not break them — if it does, the pins were wrongly coupled to the fix) |
+| `packages/types/api/inline-returns.ts` | revert the file | not a Jest test: `npm run check-types` red in `apps/web` (dialog references `parkedReversals`) and in `apps/api` (service return type). Record the probe as a check-types probe, not a REG probe. |
 
 Harness-integrity: the partial probe above is the one that catches a builder who fixed only the main path and made the replay tests pass by mocking `findMany` globally — the review must confirm each replay test asserts `reverseReturnEntries` was **not** called on that path.

@@ -22,7 +22,7 @@
 ## Code path (verified directly against the pinned worktree, not assumed from the registry)
 
 1. `apps/web/.../RecordInlineReturnDialog.tsx:216` — `captureMutation.mutate(...)`, `onSuccess:
-(data) => { setResult(data); setStep("success"); }`. No branch on any park signal — none exists
+   (data) => { setResult(data); setStep("success"); }`. No branch on any park signal — none exists
    to branch on.
 2. `RecordInlineReturnDialog.tsx:513-556` — the `step === "success"` block renders "Return
    recorded" plus return #, credit note link, refund amount, order link — **unconditionally**, off
@@ -33,23 +33,23 @@
    these methods are typed `Promise<any>` and return the raw Prisma `Return` row." No field
    anywhere in the interface represents a park.
 4. `apps/api/src/returns/inline-returns.service.ts:146` — `async capture(dto, user):
-Promise<any>`. Ends (`:355-365`) `return this.prisma.forTenant().return.findUnique(...)` or
+   Promise<any>`. Ends (`:355-365`) `return this.prisma.forTenant().return.findUnique(...)` or
    `return result.ret` — a raw Prisma `Return`/`ReturnItem[]` row. No additive field.
 5. `inline-returns.service.ts:309-311` (non-`overCap` branch only): `await
-restockReturnItems(tx, created, user.sub); await this.reverseLedgerForReturn(tx, created);` —
+   restockReturnItems(tx, created, user.sub); await this.reverseLedgerForReturn(tx, created);` —
    the return value of `reverseLedgerForReturn` is not read (it has none).
 6. `inline-returns.service.ts:93-113` — `private async reverseLedgerForReturn(tx, ret):
-Promise<void>`. Groups `ret.items` by `sourceOrderId`, calls
+   Promise<void>`. Groups `ret.items` by `sourceOrderId`, calls
    `this.ledger.reverseReturnEntries({ returnId, orderId, returnedByProduct, returnedUnit:
-"PIECES", db: tx })` once per source order, in an `await`ed loop with **no captured result**.
+   "PIECES", db: tx })` once per source order, in an `await`ed loop with **no captured result**.
 7. `apps/api/src/regulated/regulated-ledger.service.ts:400-...` — `async reverseReturnEntries(...):
-Promise<void>`. Every internal exit is a bare `return;`.
+   Promise<void>`. Every internal exit is a bare `return;`.
 8. Inside the per-sale-row loop (`:576-596`): `const verdict = classifySaleAxis(...)`; when
    `verdict.state === "legacy" || "unknown"`: calls `await this.parkReturnReversal(db, {...})`,
    sets `remaining = 0`, `break`s — **never pushes anything the caller can read**.
 9. `parkReturnReversal` (`:379-395`, `Promise<void>`): `await
-db.regulatedLedgerParkedReversal.createMany({ data: [row], skipDuplicates: true });
-this.logger.warn(...)`. This IS the "only signal" the bug describes — a server log line and a
+   db.regulatedLedgerParkedReversal.createMany({ data: [row], skipDuplicates: true });
+   this.logger.warn(...)`. This IS the "only signal" the bug describes — a server log line and a
    DB row in `RegulatedLedgerParkedReversal`, both invisible to the HTTP response.
 
 **Diverging point**: step 9 (the park write) is the last place the fact "this reversal did not
@@ -66,7 +66,7 @@ and discarded at every return boundary above it.
   `reverseLedgerForReturn`'s `void` signature predates #1255 and wasn't wrong until #1255 gave
   it something worth signaling.
 - Registry's own 2026-09-23 note: same gap independently reachable from `POST
-/returns/inline/:id/approve` (driver-cap-hold defers reversal to `approve()`), but no client
+  /returns/inline/:id/approve` (driver-cap-hold defers reversal to `approve()`), but no client
   calls that endpoint today (grepped web+mobile) — no UI blind yet, but any future
   driver-approval UI must apply the same fix.
 
@@ -108,5 +108,5 @@ and discarded at every return boundary above it.
 4. Confirm no other reader of `capture()`'s response (mobile, if inline returns reach it; any
    other web caller) would be broken by an additive field — additive-only per the bug's own
    suggested shape, so this should be low risk, but check the parity spec's discipline (`packages/
-types/api/inline-returns.ts:135` mentions "a service return-type parity spec" — find and read
+   types/api/inline-returns.ts:135` mentions "a service return-type parity spec" — find and read
    it before designing the field).

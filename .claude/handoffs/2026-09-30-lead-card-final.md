@@ -1,5 +1,4 @@
 # Lead card — FINAL 2026-09-30 ~16:05Z. Old "Routeflow Lead" (last address [e49ed7], PC), weekly 98% → handing off to a new account/lead.
-
 READ: 2026-09-30-NEXT-LEAD-INSTRUCTIONS.md (§0b = the LANE ROSTER + how to match your sessions to roles; then the state, rulings, and the FINAL STATE section at its end),
 then every 2026-09-30-<lane>.md here (the PC cards are all collected in this folder; the Mac/MacBook cards are on those machines at the same path),
 then local-assets/handoff/2026-09-30-owner-feature-gaps/MASTER-PLAN.md (the lead reconciliation at its top overrides the body).
