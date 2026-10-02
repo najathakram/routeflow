@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { assertSafeProductNames, productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -634,6 +636,7 @@ export class ProductsService {
   }
 
   async create(dto: CreateProductDto, options?: { suppressEmit?: boolean }) {
+    assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -859,6 +862,7 @@ export class ProductsService {
       await this.assertReorderAllowed();
     }
     const existing = await this.findOne(id);
+    assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     // The product's effective parent is the dto value if provided (could be null to promote a
@@ -1280,6 +1284,22 @@ export class ProductsService {
     if (parent.parentProductId) {
       throw new BadRequestException("Parent must be a standalone product, not a variant");
     }
+    // B964-2: validate EVERY assignment before the first write: one formula-led variant name rejects the WHOLE request with a coded 400
+    // that names the row (index + product id), never a half-applied batch.
+    dto.assignments.forEach((assignment, index) => {
+      const violation = productNameViolation({ variantName: assignment.variantName });
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          productId: assignment.id,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const succeeded: string[] = [];
     const failed: { id: string; reason: string }[] = [];
     for (const assignment of dto.assignments) {
@@ -1528,6 +1548,13 @@ export class ProductsService {
     for (let i = 0; i < dto.items.length; i++) {
       const item = dto.items[i];
       const rowNum = i + 1;
+
+      // B964-2: a formula-led name rejects THIS row (readable reason); the rest of the batch still imports.
+      const nameViolation = productNameViolation({ name: item.name });
+      if (nameViolation) {
+        errors.push({ row: rowNum, name: item.name, reason: nameViolation });
+        continue;
+      }
 
       try {
         // Check for duplicate name
