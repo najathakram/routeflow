@@ -396,8 +396,8 @@
 
 - **Symptom:** #2865's first Verify went red in a public window: `size-ratchet.spec.ts` reported `apps/mobile/components/NewOrderScreen.tsx` at 2637 lines (baseline 2560 + 25 headroom = 2585, +52 over). The window landed nothing; the extraction shipped as a re-pin (2535 lines).
 - **Root cause:** the ratchet lives in the API workspace but caps web and mobile files too, so a mobile- or web-only local check never runs it.
-- **Lesson:** **Before pushing a change that grows a ratcheted file, run `npx jest src/common/size-ratchet.spec.ts` in `apps/api` (or the full `npm run verify`) and extract the new code into its own module in the same PR; never raise a baseline without the owner. Cf. [[L-215]], [[L-227]].**
-- **Guard:** `apps/api/src/common/size-ratchet.spec.ts` (CI Verify).
+- **Lesson:** **Before pushing a change that grows a ratcheted file, run `cd apps/api && npx jest -c jest.repo-truth.config.js size-ratchet` (or `npm run test:repo-truth -w apps/api`; a plain `npx jest` finds no tests, the spec is in the repo-truth config) or the full `npm run verify` and extract the new code into its own module in the same PR; never raise a baseline without the owner. Cf. [[L-215]], [[L-227]].**
+- **Guard:** `apps/api/src/common/size-ratchet.spec.ts`, run by CI in the api `test:repo-truth` step.
 
 ### L-256 · 2026-10-02 · tooling · a master merge commit goes through lint-staged and reformats master's own files
 
