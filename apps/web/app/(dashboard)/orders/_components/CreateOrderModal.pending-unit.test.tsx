@@ -368,4 +368,113 @@ describe("CreateOrderModal pending selling unit (#2865 case c/d)", () => {
       "true",
     );
   });
+
+  const scanOther = async () => {
+    // a plain (NOT shared-code, not ambiguous) scan of the same product: it maps to a DIFFERENT level than the default
+    mockResolveProductByCode.mockResolvedValue({ ...boxed, ambiguous: false });
+    await act(async () => {
+      capturedOnScan!("222");
+    });
+  };
+
+  it("SA-632 H2: a scan of a DIFFERENT level while pending is REFUSED visibly: not counted, no 'Added', the line is untouched", async () => {
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(1);
+    expect(await screen.findByText("1 · loading units")).toBeInTheDocument();
+
+    await scanOther();
+    expect(mockToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Units are still loading. Scan again in a moment" }),
+    );
+    expect(mockToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Added to existing line" }),
+    );
+    expect(screen.getByText("1 · loading units")).toBeInTheDocument(); // still 1, not 2
+
+    await act(async () => release([bottleLevel, caseLevel]));
+    await waitFor(() => expect(screen.queryByText(/loading units/)).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 1, unitLabel: "Bottle" },
+    ]);
+  });
+
+  it("SA-632 M2: taps on a pending line never show N cases: the row and the total stay as ONE case until the load, then exactly N Bottles", async () => {
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(3);
+    expect(await screen.findByText("3 · loading units")).toBeInTheDocument();
+    expect(screen.getByTestId("line-total")).toHaveTextContent("$24.00"); // one case, never 3 cases ($72)
+
+    await act(async () => release([bottleLevel, caseLevel]));
+    await waitFor(() => expect(screen.getByTestId("line-total")).toHaveTextContent("$6.00"));
+  });
+
+  it("SA-632 H1: a typed price on a PENDING line is refused; after the load the line is exactly N default units at the tier price", async () => {
+    let release!: (u: unknown[]) => void;
+    mockFetchProductUnits.mockReturnValue(new Promise((r) => (release = r)));
+    await open(2);
+    expect(await screen.findByText("2 · loading units")).toBeInTheDocument();
+
+    // the price is tap-to-edit: while pending the tap target is aria-disabled and opens no price editor
+    const priceTargets = screen
+      .queryAllByRole("button")
+      .filter((b) => /\$24\.00/.test(b.textContent ?? ""));
+    expect(priceTargets.length).toBeGreaterThan(0);
+    for (const el of priceTargets) {
+      expect(el).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(el);
+    }
+    expect(screen.queryByRole("textbox", { name: "Price" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Price")).not.toBeInTheDocument();
+    await act(async () => undefined);
+    expect(screen.getByText("2 · loading units")).toBeInTheDocument();
+
+    await act(async () => release([bottleLevel, caseLevel]));
+    await waitFor(() => expect(screen.queryByText(/loading units/)).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
+    ]);
+  });
+
+  it("SA-632 M1: while the subscription read is in flight the row says LOADING, never 'Couldn't load' + Retry; a failed read then shows the error", async () => {
+    let failSub!: (e: Error) => void;
+    (apiClient.get as jest.Mock).mockImplementation((url: string) =>
+      String(url).includes("/billing/subscription")
+        ? new Promise((_r, rej) => (failSub = rej))
+        : Promise.resolve({ data: { taxRate: 0 } }),
+    );
+    await open(1);
+    expect(await screen.findByText("1 · loading units")).toBeInTheDocument();
+    await act(async () => undefined);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+
+    await act(async () => failSub(new Error("offline")));
+    const alert = await screen.findByRole("alert", {}, { timeout: 3000 });
+    expect(alert).toHaveTextContent("Couldn't load the selling units");
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("LOW: a Retry that fails again returns to the failed state with the count kept, then a good Retry -> exactly N Bottles", async () => {
+    mockFetchProductUnits.mockRejectedValue(new Error("offline"));
+    await open(2);
+    await screen.findByRole("alert", {}, { timeout: 3000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    // in flight the button says so; a failed retry returns to the failed state (not stuck "Retrying…")
+    const retry = await screen.findByRole("button", { name: "Retry" }, { timeout: 3000 });
+    expect(retry).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("2 added");
+
+    mockFetchProductUnits.mockResolvedValue([bottleLevel, caseLevel]);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    save();
+    expect(createOrderMutate.mock.calls[0][0].items).toEqual([
+      { productId: "prod-1", qty: 2, unitLabel: "Bottle" },
+    ]);
+  });
 });

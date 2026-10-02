@@ -360,3 +360,27 @@ describe("pending tap count (case c)", () => {
     expect(lines[0].qty).toBe(2);
   });
 });
+
+describe("LOW: a twin-fold never leaves a line stuck pending; M1: reasons say loading vs failed", () => {
+  it("resolving a pending line that has a settled twin folds into it and leaves NO pending line", () => {
+    const bottleOpt = buildUnitOptions(
+      { unit: "Case", unitsPerBox: 12, pricePerUnit: "24.00" } as never,
+      [BOTTLE, CASE_LEVEL],
+      1,
+    ).find((o) => o.value === "Bottle")!;
+    const twin = line({ tempId: "t2", startOnDefaultUnit: false, unitLabel: "Bottle", qty: 3 });
+    const folded = applyUnitToLines([line({ pendingTaps: 2 }), twin], "t1", bottleOpt, false, 1);
+    expect(folded.some(isPendingDefaultUnit)).toBe(false);
+    expect(folded).toHaveLength(1);
+  });
+
+  it("an unknown units answer is blocked as 'units-unknown' (loading), a failed ladder as 'ladder-failed'", async () => {
+    const unknown = await resolvePendingDefaultUnits(
+      [line()],
+      deps([BOTTLE], { unitsKnown: false }),
+    );
+    expect(unknown.reasons).toEqual({ t1: "units-unknown" });
+    const failed = await resolvePendingDefaultUnits([line()], deps(new Error("offline")));
+    expect(failed.reasons).toEqual({ t1: "ladder-failed" });
+  });
+});

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { pendingStatus, type PendingBlockReason } from "@routeflow/pricing";
 import { useSubscription } from "@/lib/api/billing";
 import { fetchProductUnits, productUnitsKey, UNITS_FLAG } from "@/lib/api/product-units";
 import {
@@ -44,7 +45,11 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
 
   // #2865 case c (SA-632): the lines whose units ladder FAILED to load (tempIds). A pending line not in this set is
   // still loading. The controls stay locked either way; a failed line shows the error and a Retry.
-  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const [blockedReasons, setBlockedReasons] = useState<
+    Readonly<Record<string, PendingBlockReason>>
+  >({});
+  // Retry in flight (LOW): the Retry button shows it and a failed retry returns to the failed state.
+  const [retrying, setRetrying] = useState(false);
 
   const pendingKey = lines
     .filter(isPendingDefaultUnit)
@@ -54,10 +59,10 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
     if (!pendingKey) return;
     const before = linesRef.current;
     let live = true;
-    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done, blocked }) => {
+    void resolvePendingDefaultUnits(before, depsRef.current!).then(({ lines: done, reasons }) => {
       if (!live) return;
       setLines((cur) => mergeResolvedLines(cur, before, done));
-      setFailed(new Set(blocked));
+      setBlockedReasons(reasons);
     });
     return () => {
       live = false;
@@ -81,17 +86,28 @@ export function useDefaultUnitResolver<T extends DefaultUnitLine>(
   /** Retry from a failed line's own button: the same refetch + resolve path, merged back like the effect does. */
   const retry = useCallback(async () => {
     const before = linesRef.current;
-    const { lines: done, blocked } = await resolveBeforeSubmit(before);
-    setLines((cur) => mergeResolvedLines(cur, before, done));
-    setFailed(new Set(blocked));
+    setRetrying(true);
+    try {
+      const { lines: done, reasons } = await resolveBeforeSubmit(before);
+      setLines((cur) => mergeResolvedLines(cur, before, done));
+      setBlockedReasons(reasons);
+    } finally {
+      setRetrying(false);
+    }
   }, [resolveBeforeSubmit, setLines]);
 
-  /** `loading` while the ladder is being fetched, `failed` once it could not be; undefined for a settled line. */
+  /**
+   * `loading` while the units answer or the ladder is still being fetched (the subscription read in flight is NOT a
+   * failure, M1); `failed` once it could not be loaded; undefined for a settled line. The shared rule decides.
+   */
   const statusFor = useCallback(
     (line: T): "loading" | "failed" | undefined =>
-      isPendingDefaultUnit(line) ? (failed.has(line.tempId) ? "failed" : "loading") : undefined,
-    [failed],
+      pendingStatus(isPendingDefaultUnit(line), {
+        reason: blockedReasons[line.tempId],
+        subscriptionFailed: sub.isError,
+      }),
+    [blockedReasons, sub.isError],
   );
 
-  return { resolveBeforeSubmit, retry, statusFor };
+  return { resolveBeforeSubmit, retry, statusFor, retrying };
 }

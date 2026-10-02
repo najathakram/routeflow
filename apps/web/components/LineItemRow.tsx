@@ -100,7 +100,13 @@ export interface LineItemRowProps {
    * ladder failed to load, a readable error and a real Retry button. `taps` is the PENDING TAP COUNT (N taps = N
    * of the default unit once it resolves), never a quantity in a guessed unit.
    */
-  pendingUnit?: { status: "loading" | "failed"; taps: number; onRetry: () => void };
+  pendingUnit?: {
+    status: "loading" | "failed";
+    taps: number;
+    onRetry: () => void;
+    /** A Retry is in flight: the button is disabled and says so; a failed retry returns to the failed state. */
+    retrying?: boolean;
+  };
 
   /** Registers/unregisters this row's root `<li>` with the caller (e.g.
    *  `CreateOrderModal`'s `rowRefs` map, used to scroll a just-scanned/just-added
@@ -240,7 +246,8 @@ export function LineItemRow({
               "mt-0.5 flex flex-wrap items-center gap-1.5",
               onTapPrice ? "cursor-pointer" : "",
             )}
-            onClick={onTapPrice}
+            onClick={qtyLocked ? undefined : onTapPrice}
+            aria-disabled={onTapPrice && qtyLocked ? true : undefined}
             role={onTapPrice ? "button" : undefined}
             tabIndex={onTapPrice ? 0 : undefined}
           >
@@ -316,6 +323,7 @@ export function LineItemRow({
                 placeholder={li.listPrice.toFixed(2)}
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
+                disabled={qtyLocked}
                 className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
               {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
@@ -596,9 +604,11 @@ export function PendingUnitStatus({
       <button
         type="button"
         onClick={pending.onRetry}
-        className="rounded border border-danger/40 px-2 py-0.5 font-medium hover:bg-danger/10 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        disabled={pending.retrying}
+        aria-busy={pending.retrying || undefined}
+        className="rounded border border-danger/40 px-2 py-0.5 font-medium hover:bg-danger/10 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
       >
-        Retry
+        {pending.retrying ? "Retrying…" : "Retry"}
       </button>
     </div>
   ) : (

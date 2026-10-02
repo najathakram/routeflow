@@ -83,20 +83,30 @@ describe("CreateOrderModal default selling unit wiring (#2784)", () => {
       });
     }
     expect(editLib.match(/startOnDefaultUnit: false/g)?.length).toBeGreaterThanOrEqual(6);
-    expect(editLib).toMatch(/isPending\(target\)\) return lines/);
+    expect(editLib).toMatch(/refusesLineEdit\(target, intent\)\) return lines/);
     for (const [name, next] of [
       ["const stepLineUnit", "const addLineItem"],
       ["const merge = (li: LineItem)", "// Built once, outside the updater"],
       ["const setDiscountedPrice", "const setOverrideReason"],
     ] as const) {
-      // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), via keepsDefaultStart
+      // a merge keeps the flag ONLY for a default-start add to a still-pending line (SA-626d), and then ONLY counts a tap (SA-632 M2: no box increment)
       const rule = name.startsWith("const merge")
-        ? /startOnDefaultUnit: keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)/
+        ? /keepsDefaultStart\(li, opts\?\.startOnDefaultUnit\)\s*\?\s*\{ \.\.\.li, pendingTaps: pendingCount\(li\) \+ 1 \}[\s\S]*startOnDefaultUnit: false/
         : /startOnDefaultUnit: false/;
       expect({ name, consumed: rule.test(slice(name, next)) }).toEqual({
         name,
         consumed: true,
       });
     }
+  });
+
+  it("SA-632 H1/H2: setDiscountedPrice refuses a pending line, addLineItem asks the shared scan rule", () => {
+    const price = src.slice(
+      src.indexOf("const setDiscountedPrice"),
+      src.indexOf("const setOverrideReason"),
+    );
+    expect(price).toMatch(/refusesLineEdit\(li, "price"\)/);
+    expect(src).toMatch(/pendingScanDecision\(/);
+    expect(src).toMatch(/UNITS_LOADING_SCAN_MESSAGE/);
   });
 });

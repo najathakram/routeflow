@@ -1,4 +1,5 @@
 import {
+  refusesLineEdit,
   setBoxesOnLines,
   setPiecesOnLines,
   setQtyOnLines,
@@ -114,5 +115,15 @@ describe("after the units resolve", () => {
   it("typed qty on a settled line works as before (whole number, at least 1)", () => {
     const out = setQtyOnLines([onBottles()], "a", 0);
     expect(out[0].qty).toBe(1);
+  });
+});
+
+describe("refusesLineEdit (SA-632 H1: a typed price is refused on a pending line exactly like a quantity)", () => {
+  it("refuses qty, price, unit and increment on a PENDING line; never a settled one; a tap is allowed", () => {
+    for (const intent of ["qty", "price", "unit", "increment"] as const) {
+      expect(refusesLineEdit(pending(), intent)).toBe(true);
+      expect(refusesLineEdit(base({ startOnDefaultUnit: false }), intent)).toBe(false);
+    }
+    expect(refusesLineEdit(pending(), "tap")).toBe(false);
   });
 });

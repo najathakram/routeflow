@@ -1,5 +1,12 @@
 import type { ProductUnitLevel } from "@routeflow/types";
-import { isUnitPending } from "@routeflow/pricing";
+import {
+  isUnitPending,
+  mayMergeResolved,
+  pendingResolvePlan,
+  pendingTapCount,
+  refreshUnitsAnswer as refreshUnitsAnswerShared,
+  type PendingBlockReason,
+} from "@routeflow/pricing";
 import {
   applyLineUnit,
   ladderProductOf,
@@ -15,6 +22,9 @@ import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-
  * THIS module once the ladder is known, so the order the operator submits carries a stored unit. The row's
  * OrderLineUnitPicker resolves through the same predicate and writer, so there is one rule and no second copy.
  */
+
+/** #2865 (SA-632 H2): the visible refusal of a scan of a DIFFERENT level while a line's default unit is loading. */
+export const UNITS_LOADING_SCAN_MESSAGE = "Units are still loading. Scan again in a moment";
 
 type Tier = number;
 
@@ -46,9 +56,8 @@ export function keepsDefaultStart(prev: DefaultUnitLine, dflt?: boolean): boolea
 /** Fast adds before the ladder loaded: N adds = N of the default unit (a boxed line's qty is total pieces). */
 export function pendingCount(line: UnitLine & { pendingTaps?: number }): number {
   // #2865 case c: the PENDING TAP COUNT is recorded explicitly (never inferred from a quantity in a guessed unit).
-  if (line.pendingTaps != null && line.pendingTaps >= 1) return line.pendingTaps;
-  return Math.max(
-    1,
+  return pendingTapCount(
+    line.pendingTaps,
     line.unitsPerBox ? (line.boxes ?? Math.round(line.qty / line.unitsPerBox)) : line.qty,
   );
 }
@@ -133,26 +142,12 @@ export interface DefaultUnitDeps {
   tierFor: (productId: string) => Tier;
 }
 
-/**
- * "Try again" on the blocked message: a STAFF caller whose units answer is still unknown (the subscription read failed or
- * never settled) REFETCHES it instead of staying stuck on the stale failure (SA-626g N10). A known answer, a non-staff
- * caller, or a refetch that fails again leave the deps as they were, so the line stays blocked, never the pack.
- */
-export async function refreshUnitsAnswer(
+/** "Try again" on the blocked message: the shared rule (@routeflow/pricing), kept under its old name for callers. */
+export const refreshUnitsAnswer: (
   deps: DefaultUnitDeps,
   refetch: () => Promise<{ isSuccess: boolean; flags: readonly string[] }>,
   unitsFlag: string,
-): Promise<DefaultUnitDeps> {
-  if (!deps.isStaff || deps.unitsKnown) return deps;
-  try {
-    const r = await refetch();
-    return r.isSuccess
-      ? { ...deps, unitsKnown: true, unitsEnabled: r.flags.includes(unitsFlag) }
-      : deps;
-  } catch {
-    return deps;
-  }
-}
+) => Promise<DefaultUnitDeps> = refreshUnitsAnswerShared;
 
 /**
  * Resolves every pending line, fetching the ladder when it is not cached. A line whose ladder cannot be loaded is
@@ -161,19 +156,26 @@ export async function refreshUnitsAnswer(
 export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
   lines: T[],
   deps: DefaultUnitDeps,
-): Promise<{ lines: T[]; blocked: string[] }> {
+): Promise<{ lines: T[]; blocked: string[]; reasons: Record<string, PendingBlockReason> }> {
   let out = lines;
   const blocked: string[] = [];
+  const reasons: Record<string, PendingBlockReason> = {};
+  const block = (id: string, reason: PendingBlockReason) => {
+    blocked.push(id);
+    reasons[id] = reason;
+  };
   for (const line of lines) {
     if (!isPendingDefaultUnit(line)) continue;
-    if (line.isUnlisted || !deps.isStaff || (deps.unitsKnown && !deps.unitsEnabled)) {
+    // #2865 (SA-632 M4): the per-line plan is the shared rule (@routeflow/pricing).
+    const plan = pendingResolvePlan({ ...deps, unlisted: line.isUnlisted });
+    if (plan.plan === "settle") {
       out = out.map((li) =>
         li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li,
       );
       continue;
     }
-    if (!deps.unitsKnown) {
-      blocked.push(line.tempId);
+    if (plan.plan === "blocked") {
+      block(line.tempId, plan.reason);
       continue;
     }
     try {
@@ -184,10 +186,10 @@ export async function resolvePendingDefaultUnits<T extends DefaultUnitLine>(
         ? applyUnitToLines(out, line.tempId, option, false, tier)
         : out.map((li) => (li.tempId === line.tempId ? { ...li, startOnDefaultUnit: false } : li));
     } catch {
-      blocked.push(line.tempId);
+      block(line.tempId, "ladder-failed");
     }
   }
-  return { lines: out, blocked };
+  return { lines: out, blocked, reasons };
 }
 
 const UNIT_FIELDS = [
@@ -225,7 +227,15 @@ export function mergeResolvedLines<T extends DefaultUnitLine>(
     const b = before.find((li) => li.tempId === d.tempId);
     const c = out.find((li) => li.tempId === d.tempId);
     // still pending AND the same count: a 2nd fast add that landed while this resolved must not be overwritten
-    if (!b || d === b || !c || !isPendingDefaultUnit(c) || pendingCount(c) !== pendingCount(b))
+    if (
+      !b ||
+      !mayMergeResolved({
+        cur: c && { startOnDefaultUnit: c.startOnDefaultUnit, shaped: isShapedLine(c) },
+        curCount: c ? pendingCount(c) : 0,
+        beforeCount: pendingCount(b),
+        changed: d !== b,
+      })
+    )
       continue;
     // only the unit fields: a note (or any other edit) typed while the units loaded must survive the merge (N3)
     out = out.map((li) => (li.tempId === d.tempId ? { ...li, ...pickUnitFields(d) } : li));

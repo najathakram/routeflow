@@ -1,10 +1,14 @@
-import { isUnitPending, normalizeBoxesPieces } from "@routeflow/pricing";
+import {
+  normalizeBoxesPieces,
+  refusesPendingEdit,
+  type PendingEditIntent,
+} from "@routeflow/pricing";
 import { isShapedLine } from "@/lib/default-unit-line";
 
 /**
  * #2865 case c (SA-632): the pure quantity editors of an order's lines. Each one REFUSES a PENDING line (its
  * default selling unit not yet resolved): the SAME lines array comes back, so a quantity can never depend on
- * how fast the units ladder loads. The decision is the shared `isUnitPending` (@routeflow/pricing), applied
+ * how fast the units ladder loads. The decision is the shared `refusesPendingEdit` (@routeflow/pricing), applied
  * here in the logic, not only by a disabled button.
  */
 export interface QtyEditLine {
@@ -21,12 +25,18 @@ export interface QtyEditLine {
   pendingTaps?: number;
 }
 
-const isPending = (l: QtyEditLine): boolean =>
-  isUnitPending({ startOnDefaultUnit: l.startOnDefaultUnit, shaped: isShapedLine(l) });
+/** Is this edit refused because the line is pending? The shared rule, adapted to the modal's line shape. */
+export const refusesLineEdit = (l: QtyEditLine, intent: PendingEditIntent): boolean =>
+  refusesPendingEdit({ startOnDefaultUnit: l.startOnDefaultUnit, shaped: isShapedLine(l) }, intent);
 
-function editOne<T extends QtyEditLine>(lines: T[], tempId: string, edit: (line: T) => T): T[] {
+function editOne<T extends QtyEditLine>(
+  lines: T[],
+  tempId: string,
+  intent: PendingEditIntent,
+  edit: (line: T) => T,
+): T[] {
   const target = lines.find((l) => l.tempId === tempId);
-  if (!target || isPending(target)) return lines; // refused in the logic: the same array, no change
+  if (!target || refusesLineEdit(target, intent)) return lines; // refused in the logic: the same array, no change
   return lines.map((l) => (l.tempId === tempId ? edit(l) : l));
 }
 
@@ -36,7 +46,7 @@ export function stepQtyOnLines<T extends QtyEditLine>(
   tempId: string,
   delta: number,
 ): T[] {
-  return editOne(lines, tempId, (li) => ({
+  return editOne(lines, tempId, "increment", (li) => ({
     ...li,
     qty: Math.max(1, li.qty + delta),
     startOnDefaultUnit: false,
@@ -50,7 +60,7 @@ export function setQtyOnLines<T extends QtyEditLine>(
   value: number,
 ): T[] {
   const qty = Math.max(1, Number.isFinite(value) ? Math.trunc(value) : 1);
-  return editOne(lines, tempId, (li) => ({ ...li, qty, startOnDefaultUnit: false }));
+  return editOne(lines, tempId, "qty", (li) => ({ ...li, qty, startOnDefaultUnit: false }));
 }
 
 export function setBoxesOnLines<T extends QtyEditLine>(
@@ -58,7 +68,7 @@ export function setBoxesOnLines<T extends QtyEditLine>(
   tempId: string,
   value: number,
 ): T[] {
-  return editOne(lines, tempId, (li) => {
+  return editOne(lines, tempId, "qty", (li) => {
     const boxes = Math.max(0, isNaN(value) ? 0 : value);
     const pieces = li.pieces ?? 0;
     const qty = boxes * (li.unitsPerBox ?? 1) + pieces;
@@ -76,7 +86,7 @@ export function setPiecesOnLines<T extends QtyEditLine>(
   tempId: string,
   value: number,
 ): T[] {
-  return editOne(lines, tempId, (li) => {
+  return editOne(lines, tempId, "qty", (li) => {
     const pieces = Math.max(0, isNaN(value) ? 0 : value);
     const boxes = li.boxes ?? 0;
     return {
@@ -94,7 +104,7 @@ export function setUnitQtyOnLines<T extends QtyEditLine>(
   tempId: string,
   value: number,
 ): T[] {
-  return editOne(lines, tempId, (li) => {
+  return editOne(lines, tempId, "unit", (li) => {
     const n = normalizeBoxesPieces({ qty: value, unitsPerBox: li.unitsPerBox });
     return {
       ...li,
@@ -112,5 +122,5 @@ export function setSellByOnLines<T extends QtyEditLine>(
   tempId: string,
   sellBy: "case" | "unit",
 ): T[] {
-  return editOne(lines, tempId, (li) => ({ ...li, sellBy, startOnDefaultUnit: false }));
+  return editOne(lines, tempId, "unit", (li) => ({ ...li, sellBy, startOnDefaultUnit: false }));
 }

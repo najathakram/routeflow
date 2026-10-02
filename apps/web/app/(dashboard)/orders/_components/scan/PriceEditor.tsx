@@ -279,6 +279,7 @@ export function PriceEditor({
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
                 aria-label="Price"
+                disabled={qtyLocked}
                 className="w-24 rounded-none border-0 bg-transparent px-1 py-1.5 text-right text-sm focus:ring-0"
               />
             </span>

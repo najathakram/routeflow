@@ -1,4 +1,13 @@
-import { isUnitPending, refusePendingQtyEdit } from "./pending-unit";
+import {
+  isUnitPending,
+  mayMergeResolved,
+  pendingResolvePlan,
+  pendingScanDecision,
+  pendingStatus,
+  pendingTapCount,
+  refreshUnitsAnswer,
+  refusesPendingEdit,
+} from "./pending-unit";
 
 /**
  * #2865 case c (SA-632): a line whose default selling unit is not yet resolved is PENDING, and its
@@ -27,19 +36,152 @@ describe("isUnitPending (shared by web and mobile)", () => {
   });
 });
 
-describe("refusePendingQtyEdit", () => {
-  const edit = jest.fn((l: { qty: number }) => ({ ...l, qty: l.qty + 1 }));
-  beforeEach(() => edit.mockClear());
+describe("refusesPendingEdit (the refusal rules, one for web and mobile)", () => {
+  const pending = { startOnDefaultUnit: true as const };
+  const settled = { startOnDefaultUnit: false as const };
 
-  it("returns a PENDING line UNCHANGED and never runs the edit (refused in the logic, not only by a disabled button)", () => {
-    const line = { startOnDefaultUnit: true as const, qty: 1 };
-    expect(refusePendingQtyEdit(line, edit)).toBe(line);
-    expect(edit).not.toHaveBeenCalled();
+  it("a PENDING line refuses a qty edit, a typed price, a unit total and a stepper increment", () => {
+    for (const intent of ["qty", "price", "unit", "increment"] as const) {
+      expect(refusesPendingEdit(pending, intent)).toBe(true);
+    }
   });
 
-  it("runs the edit on a settled line", () => {
-    const line = { startOnDefaultUnit: false as const, qty: 1 };
-    expect(refusePendingQtyEdit(line, edit)).toEqual({ startOnDefaultUnit: false, qty: 2 });
-    expect(edit).toHaveBeenCalledTimes(1);
+  it("only a default-start TAP may add to a pending line", () => {
+    expect(refusesPendingEdit(pending, "tap")).toBe(false);
+  });
+
+  it("a settled line, or no line yet, is never refused", () => {
+    for (const intent of ["qty", "price", "unit", "increment", "tap"] as const) {
+      expect(refusesPendingEdit(settled, intent)).toBe(false);
+      expect(refusesPendingEdit(undefined, intent)).toBe(false);
+    }
+  });
+
+  it("lifecycle: pending refuses, a failed load keeps refusing, a successful retry allows", () => {
+    const afterFailedLoad = pending; // a failed load never touches the line
+    expect(refusesPendingEdit(afterFailedLoad, "qty")).toBe(true);
+    const afterRetry = { startOnDefaultUnit: false as const };
+    expect(refusesPendingEdit(afterRetry, "qty")).toBe(false);
+  });
+});
+
+describe("pendingScanDecision (a scan landing on an existing line)", () => {
+  const pending = { startOnDefaultUnit: true as const };
+  it("a scan that maps to the DEFAULT unit counts as a tap", () => {
+    expect(pendingScanDecision(pending, { mapsToDefault: true })).toBe("tap");
+  });
+  it("a scan of a DIFFERENT level is REFUSED while pending (not counted, not 'Added')", () => {
+    expect(pendingScanDecision(pending, { mapsToDefault: false })).toBe("refuse");
+  });
+  it("a settled or absent line takes the scan as it always did", () => {
+    expect(pendingScanDecision({ startOnDefaultUnit: false }, { mapsToDefault: false })).toBe(
+      "add",
+    );
+    expect(pendingScanDecision(undefined, { mapsToDefault: false })).toBe("add");
+  });
+});
+
+describe("pendingTapCount", () => {
+  it("returns the recorded tap count, else the fallback, never below 1", () => {
+    expect(pendingTapCount(3, 9)).toBe(3);
+    expect(pendingTapCount(undefined, 2)).toBe(2);
+    expect(pendingTapCount(0, 0)).toBe(1);
+    expect(pendingTapCount(null, -4)).toBe(1);
+  });
+});
+
+describe("pendingResolvePlan", () => {
+  const base = { isStaff: true, unitsEnabled: true, unitsKnown: true };
+  it("non-staff, unlisted, or units switched off settle on the pack (no ladder read)", () => {
+    expect(pendingResolvePlan({ ...base, isStaff: false })).toEqual({ plan: "settle" });
+    expect(pendingResolvePlan({ ...base, unlisted: true })).toEqual({ plan: "settle" });
+    expect(pendingResolvePlan({ ...base, unitsEnabled: false })).toEqual({ plan: "settle" });
+  });
+  it("the units answer not known yet is BLOCKED as 'units-unknown', never settled", () => {
+    expect(pendingResolvePlan({ ...base, unitsKnown: false })).toEqual({
+      plan: "blocked",
+      reason: "units-unknown",
+    });
+  });
+  it("a missing product record is blocked; a known, enabled staff line fetches the ladder", () => {
+    expect(pendingResolvePlan({ ...base, productKnown: false })).toEqual({
+      plan: "blocked",
+      reason: "product-missing",
+    });
+    expect(pendingResolvePlan(base)).toEqual({ plan: "fetch" });
+  });
+});
+
+describe("pendingStatus (M1: loading is never reported as a failure)", () => {
+  it("a settled line has no status", () => {
+    expect(pendingStatus(false, {})).toBeUndefined();
+  });
+  it("a pending line is LOADING until something actually failed", () => {
+    expect(pendingStatus(true, {})).toBe("loading");
+    expect(pendingStatus(true, { reason: "units-unknown" })).toBe("loading");
+  });
+  it("units-unknown becomes FAILED only once the subscription read itself failed", () => {
+    expect(pendingStatus(true, { reason: "units-unknown", subscriptionFailed: true })).toBe(
+      "failed",
+    );
+  });
+  it("a failed ladder fetch, or a missing product, is FAILED", () => {
+    expect(pendingStatus(true, { reason: "ladder-failed" })).toBe("failed");
+    expect(pendingStatus(true, { reason: "product-missing" })).toBe("failed");
+  });
+});
+
+describe("mayMergeResolved (an async resolve never overwrites what the user did meanwhile)", () => {
+  const pending = { startOnDefaultUnit: true as const };
+  it("merges only into a still-pending line at the same tap count", () => {
+    expect(mayMergeResolved({ cur: pending, curCount: 2, beforeCount: 2, changed: true })).toBe(
+      true,
+    );
+    expect(mayMergeResolved({ cur: pending, curCount: 3, beforeCount: 2, changed: true })).toBe(
+      false,
+    );
+    expect(
+      mayMergeResolved({
+        cur: { startOnDefaultUnit: false },
+        curCount: 2,
+        beforeCount: 2,
+        changed: true,
+      }),
+    ).toBe(false);
+    expect(mayMergeResolved({ cur: undefined, curCount: 1, beforeCount: 1, changed: true })).toBe(
+      false,
+    );
+    expect(mayMergeResolved({ cur: pending, curCount: 2, beforeCount: 2, changed: false })).toBe(
+      false,
+    );
+  });
+});
+
+describe("refreshUnitsAnswer ('Try again' refetches an unknown units answer)", () => {
+  const deps = { isStaff: true, unitsEnabled: false, unitsKnown: false, other: 1 };
+  it("a STAFF caller with an unknown answer refetches and adopts it", async () => {
+    const out = await refreshUnitsAnswer(
+      deps,
+      async () => ({ isSuccess: true, flags: ["flag.units_v1"] }),
+      "flag.units_v1",
+    );
+    expect(out).toEqual({ ...deps, unitsKnown: true, unitsEnabled: true });
+  });
+  it("a failed or throwing refetch, a known answer or a non-staff caller leave the deps as they were", async () => {
+    const fail = async () => ({ isSuccess: false, flags: [] as string[] });
+    expect(await refreshUnitsAnswer(deps, fail, "f")).toBe(deps);
+    expect(
+      await refreshUnitsAnswer(
+        deps,
+        async () => {
+          throw new Error("x");
+        },
+        "f",
+      ),
+    ).toBe(deps);
+    const known = { ...deps, unitsKnown: true };
+    expect(await refreshUnitsAnswer(known, fail, "f")).toBe(known);
+    const driver = { ...deps, isStaff: false };
+    expect(await refreshUnitsAnswer(driver, fail, "f")).toBe(driver);
   });
 });

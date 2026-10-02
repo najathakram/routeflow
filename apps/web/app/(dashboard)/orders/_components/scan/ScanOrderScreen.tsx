@@ -226,9 +226,11 @@ export function ScanOrderScreen<T extends SummaryLine & { tempId: string; priceT
         const text =
           res.kind === "archived"
             ? `${res.name} is archived`
-            : res.kind === "unknown"
-              ? `Not in the catalog: ${code}`
-              : "Couldn't look up that code";
+            : res.kind === "refused"
+              ? res.message
+              : res.kind === "unknown"
+                ? `Not in the catalog: ${code}`
+                : "Couldn't look up that code";
         outcome = { feedback: { kind: "error", text } };
       }
       // The cue comes straight from the shared decision (`cueForOutcome`) and BEFORE any
