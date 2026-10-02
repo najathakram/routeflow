@@ -105,6 +105,7 @@ describe("ProductsService — importer seam (B858)", () => {
     ).rejects.toThrow(new ConflictException('A product named "Widget" already exists'));
     expect(prisma.product.findFirst.mock.calls[0][0].where).toEqual({
       name: { equals: "Widget", mode: "insensitive" },
+      isActive: true,
       parentProductId: null,
     });
   });
@@ -117,6 +118,7 @@ describe("ProductsService — importer seam (B858)", () => {
     );
     expect(prisma.product.findFirst.mock.calls[0][0].where).toEqual({
       OR: [{ sku: "W-1" }, { unitSku: "W-1" }],
+      isActive: true,
       id: { not: "prod-self" },
     });
   });

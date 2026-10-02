@@ -233,7 +233,7 @@ export class VendorBillsService {
     });
     if (already) {
       throw new ConflictException({
-        code: "PO_ALREADY_BILLED",
+        code: API_ERROR_CODES.PO_ALREADY_BILLED,
         message: `Purchase order ${po.poNumber} already has bill ${already.billNumber}.`,
       });
     }

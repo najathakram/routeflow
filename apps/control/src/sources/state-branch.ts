@@ -44,6 +44,41 @@ const LOCK_STALE_MS = 30_000;
 const MAX_ATTEMPTS = 6;
 const LANE_FILE_RE = /^([a-z0-9][a-z0-9._-]{0,40})\.jsonl$/;
 
+const RENAME_RETRIES = 8;
+
+/**
+ * Rename a directory. On Windows only, retry the transient refusals it gives while a virus scanner,
+ * the search indexer or a just-exited git child still holds a handle inside it (EPERM / EBUSY /
+ * EACCES; a clone is renamed into place right after git exits). On POSIX this is a direct rename
+ * with no retry and no sleep: a rename there never raises those codes for this, and the back-off
+ * blocks the thread (Atomics.wait), which a Linux server must never pay. Anything else, and the
+ * last failure, is thrown unchanged. `rename` / `sleep` / `win` are seams for the spec.
+ */
+export function renameDirRetrying(
+  from: string,
+  to: string,
+  rename: (a: string, b: string) => void = fs.renameSync,
+  sleep: (ms: number) => void = (ms) =>
+    void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
+  win: boolean = process.platform === "win32",
+): void {
+  if (!win) {
+    rename(from, to);
+    return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rename(from, to);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      const transient = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!transient || attempt >= RENAME_RETRIES) throw e;
+      sleep(50 * (attempt + 1));
+    }
+  }
+}
+
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const isObj = (v: unknown): v is Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v);
@@ -338,7 +373,7 @@ export async function ensureClone(env: Env): Promise<string> {
         throw new CtlError(5, withMovedHint(`clone failed: ${r.err.trim()}`));
       }
       markOurs(tmp, env.origin);
-      fs.renameSync(tmp, dir);
+      renameDirRetrying(tmp, dir);
     });
   }
   // keep our lock/parking files out of `git add -A`

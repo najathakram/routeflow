@@ -10,6 +10,7 @@ import { execFileSync, spawn } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { scaled } from "./platform";
 import { OFFLINE_GIT_ENV, git } from "./temp-repo";
 import type { World } from "./temp-repo";
 
@@ -158,7 +159,7 @@ export async function runCli(
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    const timer = setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs ?? 25_000);
+    const timer = setTimeout(() => child.kill("SIGKILL"), opts.timeoutMs ?? scaled(25_000));
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({ code, stdout, stderr });

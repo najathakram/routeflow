@@ -32,6 +32,7 @@ describe("TenantsController.getMyAddons — override merge", () => {
       addonService,
       featureOverrides,
       {} as any, // authority (feature grants v2 brief A) — unused by getMyAddons
+      {} as any, // policies (SA-138) — unused by getMyAddons
     );
     return { controller, addonService, featureOverrides };
   }
@@ -71,5 +72,41 @@ describe("TenantsController.getMyAddons — override merge", () => {
     const { controller } = build([], new Map([["flag.msrp", "GRANT"]]));
     const result = await controller.getMyAddons({ tenantId: "t1" } as unknown as JwtPayload);
     expect(result.addons).toEqual([]);
+  });
+});
+
+describe("TenantsController.getMyFeatures — SA-138 policy modes carrier", () => {
+  function build(policyModes: Record<string, string>) {
+    const authority = {
+      resolveAll: jest.fn().mockResolvedValue({
+        tenantId: "t1",
+        planKey: "TEAM",
+        catalogVersionId: "cv1",
+        byKey: new Map(),
+        computedAt: "2026-09-24T00:00:00.000Z",
+      }),
+      servedFlags: jest.fn().mockResolvedValue([]),
+    } as any;
+    const policies = { effectiveForClient: jest.fn().mockResolvedValue(policyModes) } as any;
+    const controller = new TenantsController(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      authority,
+      policies,
+    );
+    return { controller, policies };
+  }
+
+  it("serves the tenant-scope effective policy values in `modes`, for this tenant only", async () => {
+    const modes = {
+      "orders.driverAtDoorEdit": "amend",
+      "invoicing.priceDisclosure": '["originalPrice","discount","msrp"]',
+    };
+    const { controller, policies } = build(modes);
+    const result = await controller.getMyFeatures({ tenantId: "t1" } as unknown as JwtPayload);
+    expect(result.modes).toEqual(modes);
+    expect(policies.effectiveForClient).toHaveBeenCalledWith("t1");
   });
 });

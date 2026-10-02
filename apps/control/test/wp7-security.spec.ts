@@ -9,8 +9,9 @@ import { startServer, rawRequest, WEBHOOK_SECRET, FIXTURE } from "./helpers/star
 import type { Harness } from "./helpers/start-server";
 import { buildPrivateDist } from "./helpers/build-dist";
 import type { PrivateDist } from "./helpers/build-dist";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(60_000);
+jest.setTimeout(scaled(60_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const CONTROL = path.join(__dirname, "..");
 const read = (p: string): string => fs.readFileSync(p, "utf8");
@@ -243,7 +244,7 @@ describe("5 webhook hardening", () => {
           `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: 500000\r\n\r\n`,
         ),
       );
-      setTimeout(() => resolve(-1), 3000); // no body is ever sent: a read-first server would hang
+      setTimeout(() => resolve(-1), scaled(3000)); // no body is ever sent: a read-first server would hang
     });
     expect(code).toBe(401);
   });
@@ -266,7 +267,7 @@ describe("5 webhook hardening", () => {
           `POST /api/github-webhook HTTP/1.1\r\nHost: 127.0.0.1\r\nx-hub-signature-256: sha256=${"0".repeat(64)}\r\nContent-Length: 500000\r\n\r\n`,
         ),
       );
-      setTimeout(() => resolve(-1), 3000);
+      setTimeout(() => resolve(-1), scaled(3000));
     });
     expect(code).toBe(401);
   });
@@ -687,7 +688,7 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
           timedOut = true; // the server never closed the connection
           s.destroy();
           resolve();
-        }, 3000);
+        }, scaled(3000));
         s.on("data", (d) => {
           buf += d.toString();
           if (!junk && /^HTTP\/1\.1 401/.test(buf)) {
@@ -729,7 +730,7 @@ describe("5b webhook bodies are streamed into the HMAC, never buffered", () => {
         timedOut = true;
         s.destroy();
         resolve();
-      }, 3000);
+      }, scaled(3000));
       s.on("data", (d) => (head += d.toString()));
       s.on("error", () => {});
       s.on("close", () => {

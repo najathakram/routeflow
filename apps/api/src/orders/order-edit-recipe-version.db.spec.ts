@@ -62,11 +62,14 @@ describeDb("#2717 M3 SA-591(b) — an edit keeps a v1 line on v1, real Postgres"
       tenantSlug: slug,
     }) as JwtPayload;
 
+  // SA-603b: a product NAME is unique among ACTIVE products of its scope, so each seed() needs its own names.
+  let nameSeq = 0;
   const product = async (name: string, extra: Record<string, unknown> = {}) => {
+    nameSeq += 1;
     const p = await raw.product.create({
       data: {
         tenantId,
-        name: `${name} ${run}`,
+        name: `${name} ${run}-${nameSeq}`,
         unit: "Box",
         pricePerUnit: "30.00",
         unitsPerBox: 24,

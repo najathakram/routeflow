@@ -31,10 +31,13 @@
  *     Pool/PrismaClient connection — run this first to confirm where a real reseed would land.)
  */
 
-const { PrismaClient } = require("../../../node_modules/@prisma/client");
-const { PrismaPg } = require("../../../node_modules/@prisma/adapter-pg");
-const { Pool } = require("../../../node_modules/pg");
-const bcrypt = require("../../../node_modules/bcrypt");
+// #2146: these four are loaded LAZILY in bootstrap(), after the --print-target early exit —
+// requiring them here cost ~2.3s of pure module loading per `--print-target` child (three
+// spawns in e2e-seed-script.spec.ts) that never opens a connection or hashes anything.
+let PrismaClient;
+let PrismaPg;
+let Pool;
+let bcrypt;
 const { assertTestTenant } = require("../../../scripts/lib/test-tenants.cjs");
 const { isLocalDbTarget, localConnectionConfig } = require("./lib/local-db-target.cjs");
 const { ensureDriverUser } = require("./lib/driver-fixture.cjs");
@@ -75,6 +78,10 @@ async function bootstrap() {
   if (process.argv.includes("--print-target")) {
     process.exit(0);
   }
+  ({ PrismaClient } = require("../../../node_modules/@prisma/client"));
+  ({ PrismaPg } = require("../../../node_modules/@prisma/adapter-pg"));
+  ({ Pool } = require("../../../node_modules/pg"));
+  bcrypt = require("../../../node_modules/bcrypt");
   // A provably-local target dials the vetted explicit fields (a `?host=` on the raw string could redirect it).
   pool = new Pool(localConnectionConfig(dbUrl) ?? { connectionString: dbUrl });
   adapter = new PrismaPg(pool);

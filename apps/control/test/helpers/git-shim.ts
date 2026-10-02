@@ -4,9 +4,9 @@
  * and can create `ctl/state` on a bare origin the moment a `push` starts (a lost race).
  * Everything stays under the world's temp root; nothing here touches the network.
  */
-import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
+import { IS_WIN, realGitPath } from "./platform";
 import type { World } from "./temp-repo";
 
 export interface GitShim {
@@ -32,7 +32,7 @@ export function makeGitShim(world: World, opts: { raceOriginDir?: string } = {})
   fs.mkdirSync(dir, { recursive: true });
   const log = path.join(world.root, "shim.log");
   fs.writeFileSync(log, "");
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const realGit = realGitPath();
   const script = [
     "#!/bin/sh",
     'printf \'%s\\n\' "$*" >> "$SHIM_LOG"',
@@ -49,7 +49,10 @@ export function makeGitShim(world: World, opts: { raceOriginDir?: string } = {})
     'exec "$REAL_GIT" "$@"',
     "",
   ].join("\n");
-  fs.writeFileSync(path.join(dir, "git"), script, { mode: 0o755 });
+  // POSIX: the sh script above. Windows cannot run an extensionless script as `git`, so the same
+  // log / race jobs are done by test/helpers/git-shim.cs (built to git.exe, driven by the env below).
+  if (IS_WIN) require("./win-git-shim").installWinGitShim(dir);
+  else fs.writeFileSync(path.join(dir, "git"), script, { mode: 0o755 });
   const env: Record<string, string> = {
     PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`,
     SHIM_LOG: log,

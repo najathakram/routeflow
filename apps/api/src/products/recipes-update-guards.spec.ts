@@ -84,7 +84,8 @@ async function build(
     recipe: { ...prisma.recipe, ...recipeApi("tx") },
     product: {
       ...prisma.product,
-      findFirst: jest.fn().mockResolvedValue(existing),
+      // The SA-603a active-name probe (`where.name`) finds no other holder; every other read is `existing`.
+      findFirst: jest.fn(async (args: any) => (args?.where?.name ? null : existing)),
       update: jest.fn(async (args: any) => {
         events.push(`write:product:${args.where.id}`);
         return prisma.product.update(args);

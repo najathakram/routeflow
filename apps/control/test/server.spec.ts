@@ -6,8 +6,9 @@ import * as os from "os";
 import * as net from "net";
 import { startServer, openSse } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const cfg = (): any => require("../src/config");
 

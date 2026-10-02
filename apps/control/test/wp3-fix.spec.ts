@@ -7,6 +7,7 @@ import { execFileSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { scaled } from "./helpers/platform";
 import {
   makeWorld,
   baseState,
@@ -110,22 +111,26 @@ describe("A2 idempotent drain: a parked line applied once is never applied twice
 describe("A3 lock theft and git timeouts", () => {
   const lockDir = () => path.join(world.root, ".ctl.lock");
 
-  it("never reclaims a stale lock whose pid is alive on this host (exit 5 after the wait)", async () => {
-    const dir = lockDir();
-    fs.mkdirSync(dir);
-    fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
-    const old = new Date(Date.now() - 10_000);
-    fs.utimesSync(dir, old, old);
-    let ran = false;
-    const err = await fail(
-      LK.withLock(dir, 300, async () => {
-        ran = true;
-      }),
-    );
-    expect(ran).toBe(false);
-    expect(codeOf(err)).toBe(5);
-    expect(fs.existsSync(path.join(dir, "pid"))).toBe(true);
-  }, 20_000);
+  it(
+    "never reclaims a stale lock whose pid is alive on this host (exit 5 after the wait)",
+    async () => {
+      const dir = lockDir();
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
+      const old = new Date(Date.now() - 10_000);
+      fs.utimesSync(dir, old, old);
+      let ran = false;
+      const err = await fail(
+        LK.withLock(dir, 300, async () => {
+          ran = true;
+        }),
+      );
+      expect(ran).toBe(false);
+      expect(codeOf(err)).toBe(5);
+      expect(fs.existsSync(path.join(dir, "pid"))).toBe(true);
+    },
+    scaled(20_000),
+  );
 
   it("reclaims a stale lock whose pid is dead on this host", async () => {
     const dir = lockDir();
@@ -171,22 +176,26 @@ describe("A3 lock theft and git timeouts", () => {
 describe("N1 lock: a live same-host holder is never displaced; release is token-checked", () => {
   const lockDir = () => path.join(world.root, ".ctl.lock");
 
-  it("a live holder's lock aged 51 minutes is still not reclaimed (waiter gets exit 5)", async () => {
-    const dir = lockDir();
-    fs.mkdirSync(dir);
-    fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
-    const old = new Date(Date.now() - 51 * 60_000);
-    fs.utimesSync(dir, old, old);
-    let ran = false;
-    const err = await fail(
-      LK.withLock(dir, 300, async () => {
-        ran = true;
-      }),
-    );
-    expect(ran).toBe(false);
-    expect(codeOf(err)).toBe(5);
-    expect(fs.existsSync(path.join(dir, "pid"))).toBe(true);
-  }, 20_000);
+  it(
+    "a live holder's lock aged 51 minutes is still not reclaimed (waiter gets exit 5)",
+    async () => {
+      const dir = lockDir();
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "pid"), `${process.pid} ${os.hostname()}\n`);
+      const old = new Date(Date.now() - 51 * 60_000);
+      fs.utimesSync(dir, old, old);
+      let ran = false;
+      const err = await fail(
+        LK.withLock(dir, 300, async () => {
+          ran = true;
+        }),
+      );
+      expect(ran).toBe(false);
+      expect(codeOf(err)).toBe(5);
+      expect(fs.existsSync(path.join(dir, "pid"))).toBe(true);
+    },
+    scaled(20_000),
+  );
 
   it("release removes the dir only while the token is still ours", async () => {
     const dir = lockDir();
@@ -208,40 +217,44 @@ describe("N1 lock: a live same-host holder is never displaced; release is token-
 });
 
 describe("N2 nonces are kept by age; a parked line older than the retained window is set aside", () => {
-  it("600 appends later a restored parked line is still deduped (exactly one copy)", async () => {
-    world.seedBranch(STATE_BRANCH, baseState(4));
-    const hook = installRejectHook();
-    const env = world.env("a");
-    expect(codeOf(await fail(SB.appendAndPush(env, "lane-u", note("x"))))).toBe(5);
-    const pendingFile = path.join(env.cloneDir, "pending", "lane-u.jsonl");
-    const saved = fs.readFileSync(pendingFile, "utf8");
-    fs.rmSync(hook);
-    await SB.appendAndPush(env, "lane-u", note("y"));
-    const nonces = path.join(env.cloneDir, "nonces.txt");
-    const filler = Array.from(
-      { length: 600 },
-      (_, i) => `${i.toString(16).padStart(16, "0")} ${NOW}`,
-    );
-    fs.appendFileSync(nonces, filler.join("\n") + "\n");
-    git(env.cloneDir, ["add", "-A"]);
-    git(env.cloneDir, [
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@localhost",
-      "commit",
-      "-q",
-      "-m",
-      "fill",
-    ]);
-    git(env.cloneDir, ["push", "-q", "origin", `HEAD:refs/heads/${STATE_BRANCH}`]);
-    fs.writeFileSync(pendingFile, saved);
-    await SB.appendAndPush(env, "lane-u", note("z"));
-    fs.writeFileSync(pendingFile, saved); // and again: the nonce must survive being rewritten
-    await SB.appendAndPush(env, "lane-u", note("w"));
-    const notes = world.remoteLines("lane-u").map((l) => l.note);
-    expect(notes.filter((n) => n === "x")).toHaveLength(1);
-  }, 30_000);
+  it(
+    "600 appends later a restored parked line is still deduped (exactly one copy)",
+    async () => {
+      world.seedBranch(STATE_BRANCH, baseState(4));
+      const hook = installRejectHook();
+      const env = world.env("a");
+      expect(codeOf(await fail(SB.appendAndPush(env, "lane-u", note("x"))))).toBe(5);
+      const pendingFile = path.join(env.cloneDir, "pending", "lane-u.jsonl");
+      const saved = fs.readFileSync(pendingFile, "utf8");
+      fs.rmSync(hook);
+      await SB.appendAndPush(env, "lane-u", note("y"));
+      const nonces = path.join(env.cloneDir, "nonces.txt");
+      const filler = Array.from(
+        { length: 600 },
+        (_, i) => `${i.toString(16).padStart(16, "0")} ${NOW}`,
+      );
+      fs.appendFileSync(nonces, filler.join("\n") + "\n");
+      git(env.cloneDir, ["add", "-A"]);
+      git(env.cloneDir, [
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@localhost",
+        "commit",
+        "-q",
+        "-m",
+        "fill",
+      ]);
+      git(env.cloneDir, ["push", "-q", "origin", `HEAD:refs/heads/${STATE_BRANCH}`]);
+      fs.writeFileSync(pendingFile, saved);
+      await SB.appendAndPush(env, "lane-u", note("z"));
+      fs.writeFileSync(pendingFile, saved); // and again: the nonce must survive being rewritten
+      await SB.appendAndPush(env, "lane-u", note("w"));
+      const notes = world.remoteLines("lane-u").map((l) => l.note);
+      expect(notes.filter((n) => n === "x")).toHaveLength(1);
+    },
+    scaled(30_000),
+  );
 
   it("a parked line older than the oldest retained nonce is moved to pending/rejected/ with a notice", async () => {
     world.seedBranch(STATE_BRANCH, baseState(2));

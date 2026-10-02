@@ -101,7 +101,15 @@ function writers(): { file: string; hit: string }[] {
       for (let m = call.exec(text); m; m = call.exec(text)) {
         const body = callBody(text, m.index + m[0].length - 1);
         const field = fields.find((f) => new RegExp(`\\b${f}\\b`).test(body));
-        if (field) found.push({ file: path.slice(SRC.length + 1), hit: `${model}.${field}` });
+        if (field)
+          // `/`-separated whatever the OS (the EXEMPT keys and the expectations below are)
+          found.push({
+            file: path
+              .slice(SRC.length + 1)
+              .split("\\")
+              .join("/"),
+            hit: `${model}.${field}`,
+          });
       }
     }
   }

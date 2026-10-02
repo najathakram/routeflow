@@ -257,6 +257,7 @@ describe("a real git child", () => {
   it("the token is in no argv, and not in .git/config after init + fetch from a file:// repo", () => {
     shim = installGitShim();
     process.env.PATH = `${shim.dir}${path.delimiter}${SAVED.PATH ?? ""}`;
+    Object.assign(process.env, shim.env); // Windows: the exe's log path and real git (empty on POSIX)
     G().setGitAuth(TOKEN);
 
     const origin = tmp();
@@ -299,6 +300,7 @@ describe("a real git child", () => {
   it("the shim itself works: it records argv and runs the real git", () => {
     shim = installGitShim();
     process.env.PATH = `${shim.dir}${path.delimiter}${SAVED.PATH ?? ""}`;
+    Object.assign(process.env, shim.env); // Windows: the exe's log path and real git (empty on POSIX)
     const out = execFileSync("git", ["--version"], { encoding: "utf8", env: { ...process.env } });
     expect(out).toMatch(/^git version/);
     expect(shim.argvs()).toEqual([["--version"]]);

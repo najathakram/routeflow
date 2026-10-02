@@ -2,7 +2,7 @@
  * B965 / B967 (SA-628l/m): a STANDARD return's qty is in its order line's OWN unit, so a product sold on lines with different pack
  * factors (2 boxes of 12 on one line, 12 loose pieces on another) has no single piece count to refund. `create()` already refuses
  * to record such a return (SA-158, 409 "return it inline, per line"); this is the REFUND door's safety net for legacy RECEIVED
- * rows: refused 409 RETURN_MIXED_UNIT_PRODUCT before the claim, nothing minted. EXTERNAL_REFUND stays the escape hatch. A
+ * rows: refused 409 RETURN_MIXED_UNIT_PRODUCT before the claim, nothing minted. EXTERNAL_REFUND is refused the same way (B969). A
  * single-factor product (boxed or loose) is unchanged, and a 2+-invoice refund is checked against the pool in PIECES.
  */
 import { Test } from "@nestjs/testing";
@@ -148,14 +148,12 @@ describe("ReturnsService.processRefund — mixed-unit product at the refund door
     expect(prisma.return.updateMany).not.toHaveBeenCalled();
   });
 
-  it("EXTERNAL_REFUND stays the escape hatch: the same mixed return resolves without a mint", async () => {
+  it("EXTERNAL_REFUND on the same mixed return is refused too (B969): a mixed return has no refund amount to record, never a silent $0", async () => {
     withReturn(mixedInvoice(), [BOX_LINE, LOOSE_LINE], [{ productId: "pp", qty: 13 }]);
-    prisma.return.findUnique.mockResolvedValueOnce({
-      ...(await prisma.return.findUnique({ where: { id: "ret-1" } } as any)),
-    });
     await expect(
       service.processRefund("ret-1", { method: "EXTERNAL_REFUND" } as any),
-    ).resolves.toBeDefined();
+    ).rejects.toMatchObject({ response: { code: "RETURN_MIXED_UNIT_PRODUCT" } });
+    expect(prisma.return.updateMany).not.toHaveBeenCalled();
     expect(creditNotesCreate).not.toHaveBeenCalled();
   });
 

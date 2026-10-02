@@ -16,6 +16,7 @@
 
 import { ConflictException } from "@nestjs/common";
 import { packFromOwnSplit } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * The item's own resolved pack: `foldMergeItems`'s bucket-pack fact (`unitsPerBox`) if the
@@ -58,7 +59,7 @@ export function assertReplaceAllPackMatchesLive(
   const ownPack = ownPackOf(item);
   if (ownPack == null || !(ownPack > 1) || ownPack === livePack) return;
   throw new ConflictException({
-    code: "MERGE_PACK_MISMATCH",
+    code: API_ERROR_CODES.MERGE_PACK_MISMATCH,
     message: `Product ${item.productId} is priced at a ${ownPack}-pack, but the live product pack is now ${livePack} — resolve the mismatch before saving.`,
     productId: item.productId,
     existingPacks: [ownPack],
