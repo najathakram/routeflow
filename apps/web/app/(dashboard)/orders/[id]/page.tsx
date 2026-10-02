@@ -130,6 +130,7 @@ import { CreditNotePicker, type CreditSelection } from "../_components/CreditNot
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
 import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
+import { orderErrorText } from "@/lib/order-error-text";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -2505,7 +2506,7 @@ export default function OrderDetailPage() {
                 router.push("/orders");
               },
               onError: (e) => {
-                toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
+                toast({ title: orderErrorText(e), variant: "error" });
                 setShowDeleteConfirm(false);
               },
             });
@@ -2712,7 +2713,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2777,7 +2778,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2964,7 +2965,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: codedToastCopy(e) ?? e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });

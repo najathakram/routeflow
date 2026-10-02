@@ -107,7 +107,8 @@ describe("B986-7 Opus: uncoded refusals keep TODAY's server sentence (never a va
     expect(banner).toMatch(/err\.response\?\.data\?\.message \|\|\s*err\.message/);
     expect(banner).not.toContain("The order couldn't be created. Check the customer and lines");
     const page = read(`${D2}/orders/[id]/page.tsx`);
-    expect((page.match(/codedToastCopy\(e\) \?\? e\.message/g) ?? []).length).toBe(4);
+    expect((page.match(/orderErrorText\(e\)/g) ?? []).length).toBe(4);
+    expect(page).not.toMatch(/codedToastCopy\(e\)\s*\?\?\s*e\.message/);
     expect(page).toMatch(
       /codedToastCopy\(err\)\s*\?\?\s*err\?\.response\?\.data\?\.message\s*\?\?\s*"Please try again, or refresh and check its invoices\."/,
     );
