@@ -33,58 +33,58 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     }
   });
 
-  it("SA-632 refusal, per handler: every qty-changing handler refuses a PENDING line IN THE LOGIC through the shared rule", () => {
+  it("SA-632 refusal, per handler: every qty-changing handler goes through editItemLine (the shared refusal) and setLinePrice refuses the price", () => {
     const src = screen();
     for (const head of [
       "const removeOne = ",
       "const setBoxes = ",
       "const setPieces = ",
       "const setUnits = ",
-      "const setSellBy = ",
       "const setQty = ",
-      "const setLinePrice = ",
     ]) {
-      expect({ head, guarded: /refusesLineEdit\(/.test(body(src, head)) }).toEqual({
+      expect({ head, guarded: /editItemLine\(/.test(body(src, head)) }).toEqual({
         head,
         guarded: true,
       });
     }
+    expect(body(src, "const setSellBy = ")).toMatch(/refusesLineEdit\(m\[id\], "unit"\)/);
     expect(body(src, "const setLinePrice = ")).toMatch(/refusesLineEdit\(prev, "price"\)/); // H1
   });
 
-  it("H2/M3: addOne refuses through the shared rules (row '+' via the row, a different-level scan via the scan rule) and returns whether it added", () => {
+  it("H2/M3 + F3: addOne is the pure applyAddToItems (decided on the ref, re-applied on the latest lines) and returns false on a refusal", () => {
     const add = body(screen(), "const addOne = ", 3500);
     expect(add).toMatch(
-      /viaRow\s*\?\s*refusesLineEdit\(cur, "increment"\)\s*:\s*scanDecisionFor\(cur, scanMapsToDefault\(cur, dflt, code\)\) === "refuse"/,
+      /const input = \{ id, level, dflt, viaRow, code, role: userRole, upb, prefill \};/,
     );
-    expect(add).toMatch(/if \(refuses\(itemsRef\.current\[id\]\)\) return false;/);
-    expect(add).toMatch(/pendingTaps: pendingTapCount\(m\[id\]!, upb\) \+ 1/); // M2: a tap only counts
+    expect(add).toMatch(
+      /if \(applyAddToItems\(itemsRef\.current, input\) === itemsRef\.current\) return false;/,
+    );
+    expect(add).toMatch(/setItems\(\(m\) => applyAddToItems\(m, input\)\)/);
     expect(screen()).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true, true\)/); // M3: the row "+"
+    expect(body(screen(), "const finishAccept: ", 1500)).toMatch(/opts\?\.code\)/); // F3: the creating code travels
   });
 
-  it("H2: a refused scan is NOT counted or toasted 'Added': finishAccept returns before bumpScanned", () => {
+  it("H2/F4: a refused scan returns refusedScanOutcome(scanOpen) BEFORE bumpScanned: not counted, not 'Added', one message", () => {
     const fin = body(screen(), "const finishAccept: ", 1500);
-    const refusal = fin.indexOf("UNITS_LOADING_SCAN_MESSAGE");
+    const refusal = fin.indexOf("refusedScanOutcome(scanOpen)");
     expect(refusal).toBeGreaterThan(0);
     expect(refusal).toBeLessThan(fin.indexOf("bumpScanned(product.id)"));
     expect(fin).toMatch(/if \(!addOne\(/);
+    expect(screen()).not.toMatch(/showToast\(UNITS_LOADING_SCAN_MESSAGE\)/); // the toast lives in the adapter, once
   });
 
   it("case d (SA-632): Confirm is disabled + busy only while a line is LOADING; a failed line's press is the retry and STOPS", () => {
     const src = screen();
-    expect(src).toMatch(/unitStatusFor\(id, l\) === "loading"/);
+    expect(src).toMatch(/anyLineLoading\(items, unitStatusFor\)/);
     expect(src).toMatch(/disabled=\{!canSave \|\| anyUnitLoading\}/);
     expect(src).toMatch(
       /accessibilityState=\{\{ disabled: !canSave \|\| anyUnitLoading, busy: anyUnitLoading \}\}/,
     );
-    // the press that resolved a pending line returns before submitting (the user presses Confirm again)
-    const i = src.indexOf("await resolveDefaultUnits(items)");
+    const i = src.indexOf("await settleBeforeConfirm(items, resolveDefaultUnits)");
     expect(i).toBeGreaterThan(0);
-    const after = src.slice(i, i + 1400);
-    expect(after.indexOf("if (blocked.length)")).toBeGreaterThan(0);
-    expect(after).toMatch(
-      /Object\.values\(items\)\.some\(isPendingDefaultUnit\)\) return endSubmit\(\)/,
-    );
+    const after = src.slice(i, i + 900);
+    expect(after).toMatch(/settled\.kind === "blocked"[\s\S]*showToast\(UNITS_BLOCKED_MESSAGE\)/);
+    expect(after).toMatch(/settled\.kind === "stop"\) return endSubmit\(\)/);
   });
 
   it("web and mobile share ONE predicate (the mobile wrapper calls isUnitPending)", () => {
@@ -114,40 +114,5 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     expect(hook).toMatch(/pendingResolveKey\(/);
     expect(hook).toMatch(/count: l\.pendingTaps \?\? l\.qty/);
     expect(hook).not.toMatch(/\$\{id\}:\$\{l\.qty\}/);
-  });
-
-  it("F3: addOne records the creating scan's code and counts a repeat of it as a tap (the sheet's manual entry uses the SAME rule as the search box)", () => {
-    const add = body(screen(), "const addOne = ", 3500);
-    expect(add).toMatch(/code\?: string/);
-    expect(add).toMatch(/isPendingTap\(m\[id\], dflt, code, userRole\)/);
-    expect(add).toMatch(/line\.pendingCode = code/);
-    expect(body(screen(), "const finishAccept: ", 1500)).toMatch(/opts\?\.code\)/);
-  });
-
-  it("F4: a refused scan raises EXACTLY ONE toast (no second error pill beside it)", () => {
-    const src = screen();
-    expect(src.match(/showToast\(UNITS_LOADING_SCAN_MESSAGE\)/g)?.length).toBe(1);
-    const fin = body(src, "const finishAccept: ", 1500);
-    const refusal = fin.slice(fin.indexOf("if (!addOne("), fin.indexOf("bumpScanned(product.id)"));
-    expect(refusal).toMatch(/return undefined;/);
-    // with the sheet open the message is the sheet's own pill (the app toast sits under its Modal); never both layers
-    expect(refusal).toMatch(
-      /if \(scanOpen\) return \{ feedback: \{ kind: "error", text: UNITS_LOADING_SCAN_MESSAGE \} \};/,
-    );
-    expect(refusal.indexOf("if (scanOpen)")).toBeLessThan(refusal.indexOf("showToast("));
-  });
-
-  it("F4 both ways: sheet OPEN -> the sheet's own error pill and NO app toast; sheet CLOSED -> the app toast and NO pill; one message either way", () => {
-    const fin = body(screen(), "const finishAccept: ", 1500);
-    const start = fin.indexOf("if (!addOne(");
-    const refusal = fin.slice(start, fin.indexOf("bumpScanned(product.id)"));
-    const open = refusal.indexOf("if (scanOpen) return");
-    expect(open).toBeGreaterThan(0);
-    const openBranch = refusal.slice(open, refusal.indexOf(";", refusal.indexOf("})", open)) + 1);
-    expect(openBranch).toMatch(/feedback: \{ kind: "error", text: UNITS_LOADING_SCAN_MESSAGE \}/);
-    expect(openBranch).not.toMatch(/showToast/); // sheet open: the pill only
-    const closedBranch = refusal.slice(open + openBranch.length);
-    expect(closedBranch).toMatch(/showToast\(UNITS_LOADING_SCAN_MESSAGE\);\s*return undefined;/);
-    expect(closedBranch).not.toMatch(/feedback:/); // sheet closed: the toast only
   });
 });

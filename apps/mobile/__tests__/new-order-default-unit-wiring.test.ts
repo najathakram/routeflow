@@ -11,6 +11,7 @@ const screen = read("components", "NewOrderScreen.tsx");
 const cartRow = read("components", "CartRow.tsx");
 const row = read("components", "UnitPickerRow.tsx");
 const defaultUnitLine = read("lib", "default-unit-line.ts");
+const adapter = read("lib", "pending-unit-adapter.ts"); // #2865: the add decision + Confirm gate live here, the screen holds call sites
 const state = read("lib", "cart-line-state.ts");
 
 describe("mobile default selling unit wiring (#2784)", () => {
@@ -20,10 +21,10 @@ describe("mobile default selling unit wiring (#2784)", () => {
 
   it("addOne flags ONLY a new line and only when asked; the row-tap action asks, the scan path does not", () => {
     expect(screen).toMatch(/dflt\?: boolean/);
-    expect(screen).toMatch(
-      /if \(keepsDefaultStart\(m\[id\], dflt, userRole\)\) \{\s*line\.startOnDefaultUnit = line\.qty;/,
+    expect(adapter).toMatch(
+      /if \(keepsDefaultStart\(cur, a\.dflt, a\.role\)\) \{\s*line\.startOnDefaultUnit = line\.qty;/,
     );
-    expect(screen).toMatch(/line\.pendingTaps = 1;/); // #2865 case c
+    expect(adapter).toMatch(/line\.pendingTaps = 1;/); // #2865 case c
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true, true\)/);
     // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
     // box-only / unit-only code: finishAccept forwards `opts?.startOnDefault`, which the ladder sets for shared codes.
@@ -59,7 +60,7 @@ describe("mobile default selling unit wiring (#2784)", () => {
 
   it("Opus #2865 r2: the flag is the line's creation qty, and CartRow applies the default only while qty still equals it (no handler edits, no qty<=1 guard)", () => {
     expect(state).toMatch(/startOnDefaultUnit\?: number/);
-    expect(screen).toMatch(/line\.startOnDefaultUnit = line\.qty/);
+    expect(adapter).toMatch(/line\.startOnDefaultUnit = line\.qty/);
     expect(defaultUnitLine).toMatch(
       /startOnDefaultUnit: line\.startOnDefaultUnit,\s*qty: line\.qty/,
     );
@@ -73,12 +74,14 @@ describe("SA-626c: the default unit is resolved on the LINE, before Confirm (not
   );
 
   it("submitOrder resolves every pending line first, blocks when the ladder is unavailable, and prices from the resolved lines", () => {
-    expect(submit).toMatch(/await resolveDefaultUnits\(items\)/);
-    expect(submit).toMatch(/blocked\.length/);
+    expect(submit).toMatch(/await settleBeforeConfirm\(items, resolveDefaultUnits\)/);
+    expect(submit).toMatch(/settled\.kind === "blocked"/);
     expect(submit).toMatch(/Object\.entries\(lines\)/);
     expect(submit).toMatch(/mergeResolvedDefaults\(cur, items, lines\)/); // later tray edits are kept
     expect(submit).not.toMatch(/Object\.entries\(items\)/);
-    expect(submit.indexOf("blocked.length")).toBeLessThan(submit.indexOf("Object.entries(lines)"));
+    expect(submit.indexOf('settled.kind === "blocked"')).toBeLessThan(
+      submit.indexOf("Object.entries(lines)"),
+    );
   });
 
   it("the screen and the cart row share ONE writer and ONE pending rule (no second copy)", () => {
