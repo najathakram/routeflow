@@ -102,7 +102,6 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     ["Billing Address", "Address line 1"],
     ["Shipping Address", "Address line 1"],
     ["Shipping City", "City"],
-    ["Shipping Code", "ZIP code"],
   ])("a formula-led %s is refused as %s", async (column, label) => {
     const res = await service.importContacts(
       Buffer.from(`Customer Name,${column}\nBad Co,@SUM(A1)\n`),
@@ -112,6 +111,20 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     expect(
       res.errors.some((e: string) =>
         e.endsWith(`${label} can't start with =, +, -, @ or a tab/line break`),
+      ),
+    ).toBe(true);
+    expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  it("a formula-led Shipping Code is refused as ZIP code when the row has a shipping address to write", async () => {
+    const res = await service.importContacts(
+      Buffer.from("Customer Name,Shipping Address,Shipping Code\nBad Co,1 Dock St,@SUM(A1)\n"),
+      "user-1",
+    );
+    expect(res.created).toBe(0);
+    expect(
+      res.errors.some((e: string) =>
+        e.endsWith("ZIP code can't start with =, +, -, @ or a tab/line break"),
       ),
     ).toBe(true);
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
@@ -178,6 +191,22 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
       "user-1",
     );
     expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+  });
+
+  it("(lead Opus r2) shipping == billing writes no shipping row, so a stored legacy billing row is not refused on re-import", async () => {
+    prisma.customer.findMany.mockResolvedValue([
+      existingCustomer([
+        { addressType: "BILLING", line1: "=LEGACY", city: "=LEGACY", state: "TX", zip: "78701" },
+      ]),
+    ]);
+    const res = await service.importContacts(
+      Buffer.from(
+        "Customer Name,Billing Address,Billing City,Shipping Address,Shipping City\nAcme,=LEGACY,=LEGACY,=LEGACY,=LEGACY\n",
+      ),
+      "user-1",
+    );
+    expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+    expect(res.skipped).toBe(0);
   });
 
   it("a formula-led Tobacco Licence No rejects the row with the readable label", async () => {
