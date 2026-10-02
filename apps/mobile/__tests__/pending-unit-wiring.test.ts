@@ -78,4 +78,15 @@ describe("pending-unit lock wiring", () => {
     // only the default-start pick may add to a pending line (as a tap); the stepper "+" is refused
     expect(src).toMatch(/refusesPendingEdit\(m\[id\], dflt, userRole\)/);
   });
+
+  it("case d on mobile (SA-632): Confirm is disabled + busy while ANY line is pending (the shared predicate)", () => {
+    const src = read("components/NewOrderScreen.tsx");
+    expect(src).toMatch(
+      /const anyUnitPending = Object\.values\(items\)\.some\(isPendingDefaultUnit\)/,
+    );
+    expect(src).toMatch(/disabled=\{!canSave \|\| anyUnitPending\}/);
+    expect(src).toMatch(
+      /accessibilityState=\{\{ disabled: !canSave \|\| anyUnitPending, busy: anyUnitPending \}\}/,
+    );
+  });
 });

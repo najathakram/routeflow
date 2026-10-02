@@ -43,6 +43,7 @@ import { isCreditOpenForApply } from "../lib/credit-notes-logic";
 import { showToast } from "../lib/toast";
 import {
   applyUnitOption,
+  isPendingDefaultUnit,
   isStaffRole,
   keepsDefaultStart,
   pendingTapCount,
@@ -930,6 +931,7 @@ function ProductPickView({
     (id) => productById.get(id),
     effectiveTierFor,
   );
+  const anyUnitPending = Object.values(items).some(isPendingDefaultUnit);
   /** #2865 case c: loading/failed + the recorded tap count for a pending line; undefined once it settled. */
   const pendingUnitFor = useCallback(
     (id: string, line: LineState | undefined): PendingUnit | undefined => {
@@ -2376,11 +2378,12 @@ function ProductPickView({
           <Pressable
             style={[
               styles.confirmBtn,
-              (!canSave || createOrder.isPending) && styles.confirmBtnDisabled,
+              (!canSave || createOrder.isPending || anyUnitPending) && styles.confirmBtnDisabled,
             ]}
-            disabled={!canSave}
+            // #2865 case d (SA-632): no order is sent while ANY line is still waiting on its default unit
+            disabled={!canSave || anyUnitPending}
             onPress={() => onSave()}
-            accessibilityState={{ disabled: !canSave }}
+            accessibilityState={{ disabled: !canSave || anyUnitPending, busy: anyUnitPending }}
           >
             <Text style={styles.confirmBtnText} numberOfLines={1}>
               {createOrder.isPending || submitting ? "Saving…" : "Confirm"}
