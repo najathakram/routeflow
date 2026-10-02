@@ -126,7 +126,7 @@ const DEACTIVATE_CONFLICT_LINES: Record<string, string> = {
 export function isReadOnlyRefusal(err: unknown): boolean {
   return (
     (err as { response?: { data?: { code?: unknown } } } | null)?.response?.data?.code ===
-    "READ_ONLY"
+    API_ERROR_CODES.READ_ONLY
   );
 }
 
