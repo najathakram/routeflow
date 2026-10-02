@@ -44,32 +44,33 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
-  // string literals for the codes B987-A / B register in API_ERROR_CODES (whichever lands second adds this file's entries to the
-  // consumer allowlist or switches the keys to the constants).
-  UNIT_NOT_OFFERED:
+  // computed keys from API_ERROR_CODES (B987-A registered them); EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED stay bare keys until
+  // B987-B (#3053) registers them, then switch to the constants.
+  [API_ERROR_CODES.UNIT_NOT_OFFERED]:
     "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
   EMAIL_NOT_CONFIGURED:
     "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
   EMAIL_SEND_FAILED:
     "The email couldn't be sent. Check your email settings under Settings → Email, then try again.",
-  INVALID_LINE_SPLIT: "That line split isn't valid. Check the quantities and try again.",
-  SOURCE_LINE_AMBIGUOUS:
+  [API_ERROR_CODES.INVALID_LINE_SPLIT]:
+    "That line split isn't valid. Check the quantities and try again.",
+  [API_ERROR_CODES.SOURCE_LINE_AMBIGUOUS]:
     "This product is on more than one line, so the source line can't be applied to a single one. Edit the order lines directly.",
-  SOURCE_LINE_INVALID:
+  [API_ERROR_CODES.SOURCE_LINE_INVALID]:
     "The source line's pack size or price isn't valid. Check the pack and price, then try again.",
-  LINE_PACK_UNDERIVABLE:
+  [API_ERROR_CODES.LINE_PACK_UNDERIVABLE]:
     "This line has no pack size, so it can't be rolled to the next delivery. Set its pack size first.",
-  RECIPE_PACK_MISMATCH:
+  [API_ERROR_CODES.RECIPE_PACK_MISMATCH]:
     "The recipe's pack size differs from the line's pack size. Make them match, then try again.",
-  COMPOSITION_CORRUPT:
+  [API_ERROR_CODES.COMPOSITION_CORRUPT]:
     "This line's mixed-pack composition is inconsistent. Re-enter the pack split for this line.",
-  ORDER_BELOW_RETURN_CREDIT:
+  [API_ERROR_CODES.ORDER_BELOW_RETURN_CREDIT]:
     "This order's total can't drop below the credit already issued or held against its returns. Raise the total, or deal with the return credit first.",
-  UNIT_AWARE_LINE_UNVERIFIABLE:
+  [API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE]:
     "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
-  CHANGE_REQUEST_PACK_CHANGED:
+  [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
     "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
-  INVOICE_CHANGED_CONCURRENTLY:
+  [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
     "The invoice changed while this was happening. Refresh and try again.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
@@ -216,7 +217,8 @@ export function codedToastCopy(err: unknown): string | null {
   if (code === "ALLOCATIONS_EXCEED_PAYMENT") return allocationsCopy(data); // B987 moves this code into API_ERROR_CODES
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
-  if (code === "CREDIT_LIMIT_EXCEEDED") return creditLimitSentence(data.limit, data.exposure);
+  if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
+    return creditLimitSentence(data.limit, data.exposure);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

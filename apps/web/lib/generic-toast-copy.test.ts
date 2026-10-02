@@ -428,3 +428,32 @@ describe("handleMutationError with a predicate localErrorToast (B986-7)", () => 
     ).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("B986-7 fold: codes #3051 registered are spelled through API_ERROR_CODES, never as bare keys or literals", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const src = (require("fs") as typeof import("fs")).readFileSync(
+    (require("path") as typeof import("path")).join(__dirname, "generic-toast-copy.ts"),
+    "utf8",
+  );
+  const REGISTERED = [
+    "UNIT_NOT_OFFERED",
+    "INVALID_LINE_SPLIT",
+    "SOURCE_LINE_AMBIGUOUS",
+    "SOURCE_LINE_INVALID",
+    "LINE_PACK_UNDERIVABLE",
+    "RECIPE_PACK_MISMATCH",
+    "COMPOSITION_CORRUPT",
+    "ORDER_BELOW_RETURN_CREDIT",
+    "UNIT_AWARE_LINE_UNVERIFIABLE",
+    "CHANGE_REQUEST_PACK_CHANGED",
+    "INVOICE_CHANGED_CONCURRENTLY",
+  ];
+  it.each(REGISTERED)("%s is a computed [API_ERROR_CODES.X] key", (code) => {
+    expect(src).toContain(`[API_ERROR_CODES.${code}]:`);
+    expect(src).not.toMatch(new RegExp(`^\\s+${code}:`, "m"));
+  });
+  it("CREDIT_LIMIT_EXCEEDED is compared through the constant", () => {
+    expect(src).toContain("code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED");
+    expect(src).not.toMatch(/["'`]CREDIT_LIMIT_EXCEEDED["'`]/);
+  });
+});
