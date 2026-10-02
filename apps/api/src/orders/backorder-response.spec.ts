@@ -117,6 +117,19 @@ describe("withBackorderPieces — the line's pieces are the DECREMENT's own conv
   });
 });
 
+describe("withBackorderPieces — a response that cannot supply the pack is unresolvable", () => {
+  it("lines whose product was selected WITHOUT unitsPerBox (a narrower read) -> key omitted, never a pieces-as-boxes guess", () => {
+    // a box-unaware boxed line: qty 2 is BOXES. Without the pack the figure would size it as 2 pieces.
+    const bare = { ...li("a", "p", 2), product: { id: "p", name: "Widget", unit: "case" } };
+    expect(noKey(withBackorderPieces(order([bare]), sw([["p", 1]])))).toBe(true);
+  });
+
+  it("a line with no product row at all is unresolvable too", () => {
+    const orphan = { ...li("a", "p", 2), product: null };
+    expect(noKey(withBackorderPieces(order([orphan]), sw([["p", 1]])))).toBe(true);
+  });
+});
+
 describe("withBackorderPieces — lost write or too little demand: omit on the WHOLE order (Q-D)", () => {
   it("a product with overshoot > 0 and no line in the response", () => {
     expect(noKey(withBackorderPieces(order([li("a", "q", 5)]), sw([["p", 3]])))).toBe(true);
