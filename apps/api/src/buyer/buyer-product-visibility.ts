@@ -119,3 +119,33 @@ export function assertBuyerMayOrder(
     })),
   );
 }
+
+/** The parent's `portalVisible`, which the visibility gate needs on every product it judges (a hidden parent hides its variants). */
+export const PORTAL_PARENT_INCLUDE = { parent: { select: { portalVisible: true } } } as const;
+
+/** `findMany` args for the products an order names: by id, WITH the parent's `portalVisible` the gate needs. */
+export const portalGateArgs = (ids: string[]) =>
+  ({ where: { id: { in: ids } }, include: PORTAL_PARENT_INCLUDE }) as const;
+
+/**
+ * The order paths' call: for a BUYER (CUSTOMER) apply `assertBuyerMayOrder` before anything else runs (so the buyer 409
+ * comes before the staff-facing FAMILY 400); staff are untouched. `held` = lines the order already holds; `skip` = the
+ * caller's own exemption (an archived product is allowed on that path, so it is not judged).
+ */
+export function assertBuyerLines(
+  role: string | null | undefined,
+  products: readonly OrderableProduct[],
+  opts: {
+    held?: ReadonlySet<string> | ReadonlyArray<{ productId?: string | null }>;
+    skip?: boolean;
+  } = {},
+): void {
+  if (role !== "CUSTOMER" || opts.skip) return;
+  const held = opts.held ?? [];
+  assertBuyerMayOrder(
+    products,
+    "has" in held
+      ? held
+      : new Set((held as ReadonlyArray<{ productId?: string | null }>).map((l) => l.productId!)),
+  );
+}

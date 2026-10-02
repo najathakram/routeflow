@@ -11,7 +11,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
-import { assertBuyerMayOrder } from "../buyer/buyer-product-visibility";
+import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibility";
 import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
@@ -1609,19 +1609,11 @@ export class OrdersService implements OnApplicationBootstrap {
     const catalogIds = items.map((i) => i.productId).filter(Boolean) as string[];
     const products =
       catalogIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: catalogIds } },
-            // portal hiding: a hidden parent hides its variants — buyer-only check below.
-            include: { parent: { select: { portalVisible: true } } },
-          })
+        ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
+    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
-    // A BUYER naming a hidden product or a FAMILY container gets the buyer 409 (the cart's blocked-lines dialog), so
-    // that gate runs BEFORE the staff-facing FAMILY 400 below. (An archived product is not judged by the gate.)
-    if (user.role === UserRole.CUSTOMER && !options.allowArchived) {
-      assertBuyerMayOrder(products, new Set());
-    }
     assertSellableLines(products); // WS8: a FAMILY is never a line
 
     // units_v1 (4b-2b): the gate (staff, flag.units_v1) + the server ladder of the named units.
@@ -3222,12 +3214,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-          const products = await tx.product.findMany({
-            where: { id: { in: productIds } },
-            include: { parent: { select: { portalVisible: true } } },
-          });
-          if (user.role === UserRole.CUSTOMER)
-            assertBuyerMayOrder(products, new Set(heldItems.map((l: any) => l.productId!))); // the LOCKED heldItems (n1)
+          const products = await tx.product.findMany(portalGateArgs(productIds));
+          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3637,14 +3625,10 @@ export class OrdersService implements OnApplicationBootstrap {
             ];
             const addProducts =
               addProductIds.length > 0
-                ? await tx.product.findMany({
-                    where: { id: { in: addProductIds } },
-                    include: { parent: { select: { portalVisible: true } } },
-                  })
+                ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
+            assertBuyerLines(user?.role, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
-            // buyer 409 first (blocked-lines dialog), then the staff-facing FAMILY 400 (same order as create)
-            if (user?.role === UserRole.CUSTOMER) assertBuyerMayOrder(addProducts, new Set());
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
             // a diff-add's own pack-line create() below needs its own scoped load.

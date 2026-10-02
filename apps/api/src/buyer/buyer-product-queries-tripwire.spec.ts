@@ -79,11 +79,12 @@ describe("buyer product reads are built by the ONE visibility builder (WS6 M1)",
 
   it("orders.service.ts: the three buyer order-write gates are the ONE helper, with no inline copy of the rule", () => {
     const src = strip(readFileSync(join(SRC, "orders", "orders.service.ts"), "utf8"));
-    expect((src.match(/assertBuyerMayOrder\(/g) ?? []).length).toBe(3);
+    // each of the three order-write paths loads its products WITH the parent flag and runs the ONE gate helper
+    expect((src.match(/assertBuyerLines\(/g) ?? []).length).toBe(3);
+    expect((src.match(/portalGateArgs\(/g) ?? []).length).toBe(3);
+    expect(src).not.toMatch(/assertBuyerMayOrder\(/); // the rule itself lives only in buyer-product-visibility.ts
     expect(src).not.toMatch(/isBuyerVisible\w*\(/);
-    // The only portalVisible reads are the three `parent` includes that load the twin's required input.
-    expect((src.match(/portalVisible/g) ?? []).length).toBe(
-      (src.match(/parent: \{ select: \{ portalVisible: true \} \}/g) ?? []).length,
-    );
+    // no inline portalVisible read in the service: the parent include is portalGateArgs' (PORTAL_PARENT_INCLUDE)
+    expect(src).not.toMatch(/portalVisible/);
   });
 });
