@@ -27,7 +27,9 @@ describe("mobile default selling unit wiring (#2784)", () => {
     expect(screen).toMatch(/add: \(id: string\) => addOne\(id, undefined, "BOX", true, true\)/);
     // SA-626: a scan flags it ONLY for a shared code (isSharedScanCode, the same rule web uses), never for a
     // box-only / unit-only code: finishAccept forwards `opts?.startOnDefault`, which the ladder sets for shared codes.
-    expect(screen).toMatch(/addOne\(product\.id, product, level, opts\?\.startOnDefault\)/);
+    expect(screen).toMatch(
+      /addOne\(product\.id, product, level, opts\?\.startOnDefault, false, opts\?\.code\)/,
+    );
     expect(screen).toMatch(/scanAcceptOpts\(code, match\)/); // the settled-search auto-add uses the ladder's helper
   });
 

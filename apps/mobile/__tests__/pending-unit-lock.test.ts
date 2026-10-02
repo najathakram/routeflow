@@ -7,6 +7,8 @@ import {
   mergeResolvedDefaults,
   refusesLineEdit,
   scanDecisionFor,
+  scanMapsToDefault,
+  isPendingTap,
   resolvePendingDefaultUnits,
   type DefaultUnitDeps,
 } from "../lib/default-unit-line";
@@ -184,5 +186,34 @@ describe("pending tap count (case c)", () => {
       unitLabel: "Bottle",
       qty: 2,
     });
+  });
+
+  it("F3: repeat scans of the SAME code that created the pending line are taps, however a later lookup flags them (3 manual scans -> 3 Bottles)", async () => {
+    // scan 1 (flagged default) created the line; scans 2 and 3 resolve from a row that does not flag it (dflt false)
+    const created = pending({ pendingTaps: 1, pendingCode: "012345678905" });
+    for (const dflt of [true, false]) {
+      expect(isPendingTap(created, dflt, "012345678905", "OPERATOR")).toBe(true);
+    }
+    expect(scanMapsToDefault(created, false, "0012345678905")).toBe(true); // the same label, EAN-13 form
+    let line = created;
+    for (let n = 0; n < 2; n++) {
+      expect(isPendingTap(line, false, "012345678905", "OPERATOR")).toBe(true);
+      line = { ...line, pendingTaps: (line.pendingTaps ?? 1) + 1 };
+    }
+    expect(line.pendingTaps).toBe(3);
+    const { items } = await resolvePendingDefaultUnits({ p1: line }, deps([BOTTLE, CASE]));
+    expect(items.p1).toMatchObject({ unitLabel: "Bottle", qty: 3 });
+  });
+
+  it("F3: a DIFFERENT code on a pending line, a settled line and a non-staff role are NOT taps", () => {
+    const created = pending({ pendingTaps: 1, pendingCode: "012345678905" });
+    expect(isPendingTap(created, false, "999999999994", "OPERATOR")).toBe(false);
+    expect(scanDecisionFor(created, scanMapsToDefault(created, false, "999999999994"))).toBe(
+      "refuse",
+    );
+    expect(isPendingTap(pending({ startOnDefaultUnit: undefined }), true, "x", "OPERATOR")).toBe(
+      false,
+    );
+    expect(isPendingTap(created, true, "012345678905", "DRIVER")).toBe(false);
   });
 });

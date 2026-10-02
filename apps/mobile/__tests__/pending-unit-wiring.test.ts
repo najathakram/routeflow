@@ -55,7 +55,7 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
   it("H2/M3: addOne refuses through the shared rules (row '+' via the row, a different-level scan via the scan rule) and returns whether it added", () => {
     const add = body(screen(), "const addOne = ", 3500);
     expect(add).toMatch(
-      /viaRow \? refusesLineEdit\(cur, "increment"\) : scanDecisionFor\(cur, !!dflt\) === "refuse"/,
+      /viaRow\s*\?\s*refusesLineEdit\(cur, "increment"\)\s*:\s*scanDecisionFor\(cur, scanMapsToDefault\(cur, dflt, code\)\) === "refuse"/,
     );
     expect(add).toMatch(/if \(refuses\(itemsRef\.current\[id\]\)\) return false;/);
     expect(add).toMatch(/pendingTaps: pendingTapCount\(m\[id\]!, upb\) \+ 1/); // M2: a tap only counts
@@ -114,5 +114,22 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     expect(hook).toMatch(/pendingResolveKey\(/);
     expect(hook).toMatch(/count: l\.pendingTaps \?\? l\.qty/);
     expect(hook).not.toMatch(/\$\{id\}:\$\{l\.qty\}/);
+  });
+
+  it("F3: addOne records the creating scan's code and counts a repeat of it as a tap (the sheet's manual entry uses the SAME rule as the search box)", () => {
+    const add = body(screen(), "const addOne = ", 3500);
+    expect(add).toMatch(/code\?: string/);
+    expect(add).toMatch(/isPendingTap\(m\[id\], dflt, code, userRole\)/);
+    expect(add).toMatch(/line\.pendingCode = code/);
+    expect(body(screen(), "const finishAccept: ", 1500)).toMatch(/opts\?\.code\)/);
+  });
+
+  it("F4: a refused scan raises EXACTLY ONE toast (no second error pill beside it)", () => {
+    const src = screen();
+    expect(src.match(/showToast\(UNITS_LOADING_SCAN_MESSAGE\)/g)?.length).toBe(1);
+    const fin = body(src, "const finishAccept: ", 1500);
+    const refusal = fin.slice(fin.indexOf("if (!addOne("), fin.indexOf("bumpScanned(product.id)"));
+    expect(refusal).toMatch(/return undefined;/);
+    expect(refusal).not.toMatch(/feedback:/); // no feedback pill: that was the stacked second copy
   });
 });

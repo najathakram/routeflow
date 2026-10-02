@@ -1,5 +1,6 @@
 import type { ProductUnitLevel } from "@routeflow/types";
 import type { LineState } from "./cart-line-state";
+import { sameScanCode } from "./scan-accept-guard";
 import {
   isUnitPending,
   mayMergeResolved,
@@ -45,6 +46,7 @@ export function applyUnitOption(
     // any unit choice CONSUMES the default-start flag (a cart re-open never re-applies it, Opus #2865 B2)
     startOnDefaultUnit: undefined,
     pendingTaps: undefined,
+    pendingCode: undefined,
     // A still-pending line keeps its count (N fast adds = N of the unit); re-applying the unit the line ALREADY holds (a
     // stale sheet/picker after the resolver ran) keeps its quantity; any other choice resets to 1, as always.
     qty: sameUnit
@@ -95,6 +97,32 @@ function pendingFacts(line: LineState) {
  */
 export function refusesLineEdit(prev: LineState | undefined, intent: PendingEditIntent): boolean {
   return !!prev && sharedRefusesPendingEdit(pendingFacts(prev), intent);
+}
+
+/**
+ * #2865 (F3): does this scan map to the DEFAULT unit of a pending line? Yes when it is flagged default (a shared code), OR
+ * when it repeats the code that CREATED the line (the same label, so the same level, however the row data looks on a later
+ * lookup). A different code on a pending line stays refused.
+ */
+export function scanMapsToDefault(
+  prev: LineState | undefined,
+  dflt: boolean | undefined,
+  code?: string,
+): boolean {
+  if (dflt) return true;
+  return !!code && !!prev?.pendingCode && sameScanCode(code, prev.pendingCode);
+}
+
+/** A STAFF default-unit tap (flagged, or a repeat of the creating code) on a still-pending line: it only counts. */
+export function isPendingTap(
+  prev: LineState | undefined,
+  dflt: boolean | undefined,
+  code: string | undefined,
+  role?: string | null,
+): boolean {
+  return (
+    isStaffRole(role) && !!prev && isPendingDefaultUnit(prev) && scanMapsToDefault(prev, dflt, code)
+  );
 }
 
 /** A scan landing on an existing line: a tap (default unit), refused (a different level while pending), or a plain add. */
@@ -198,6 +226,7 @@ export async function resolvePendingDefaultUnits(
 
 const UNIT_FIELDS = [
   "pendingTaps",
+  "pendingCode",
   "unitLabel",
   "unitBasePrice",
   "unitFactor",

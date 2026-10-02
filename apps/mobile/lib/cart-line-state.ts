@@ -75,6 +75,8 @@ export type LineState = {
   startOnDefaultUnit?: number;
   /** #2865 case c UI-only: how many default-start taps this PENDING line recorded (N taps = N of the default unit on resolve). */
   pendingTaps?: number;
+  /** #2865 (F3): the scan code that CREATED this pending line; a repeat scan of the same label is a default-unit tap. */
+  pendingCode?: string;
   /** SA-626d: the remembered PACK price stashed while the line sells by a unit (re-applied on an explicit pack pick). */
   packUnitPrice?: number;
   /**

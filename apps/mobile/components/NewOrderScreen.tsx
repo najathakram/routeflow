@@ -44,6 +44,8 @@ import { showToast } from "../lib/toast";
 import {
   applyUnitOption,
   isPendingDefaultUnit,
+  isPendingTap,
+  scanMapsToDefault,
   UNITS_LOADING_SCAN_MESSAGE,
   isStaffRole,
   keepsDefaultStart,
@@ -790,6 +792,7 @@ function ProductPickView({
     level: SellLevel = "BOX",
     dflt?: boolean,
     viaRow?: boolean,
+    code?: string,
   ): boolean => {
     const p = snap ?? productById.get(id);
     const upb = Number(p?.unitsPerBox ?? 0);
@@ -804,11 +807,13 @@ function ProductPickView({
     // load timing. The row "+" and a scan of a DIFFERENT level are REFUSED (not counted, not "Added"); only a default-unit
     // scan (shared code) records one more tap. The shared rule decides, IN THE LOGIC.
     const refuses = (cur: LineState | undefined) =>
-      viaRow ? refusesLineEdit(cur, "increment") : scanDecisionFor(cur, !!dflt) === "refuse";
+      viaRow
+        ? refusesLineEdit(cur, "increment")
+        : scanDecisionFor(cur, scanMapsToDefault(cur, dflt, code)) === "refuse";
     if (refuses(itemsRef.current[id])) return false;
     setItems((m) => {
       if (refuses(m[id])) return m;
-      if (m[id] && keepsDefaultStart(m[id], dflt, userRole)) {
+      if (isPendingTap(m[id], dflt, code, userRole)) {
         // M2: a tap on a pending line ONLY counts; its own quantity (cases) is never touched
         return { ...m, [id]: { ...m[id]!, pendingTaps: pendingTapCount(m[id]!, upb) + 1 } };
       }
@@ -824,6 +829,7 @@ function ProductPickView({
       if (keepsDefaultStart(m[id], dflt, userRole)) {
         line.startOnDefaultUnit = line.qty;
         line.pendingTaps = 1; // the first tap; later taps only count (above)
+        line.pendingCode = code; // a repeat scan of THIS label is a tap, however a later lookup flags it
       }
       if (isNew && prefill != null) {
         line.unitPrice = prefill;
@@ -1048,12 +1054,11 @@ function ProductPickView({
   const scanGuardRef = useRef(createScanAcceptGuard<Product>());
 
   const finishAccept: ScanLadderDeps<Product>["accept"] = (product, level, opts) => {
-    if (!addOne(product.id, product, level, opts?.startOnDefault)) {
-      // #2865 (SA-632 H2): refused while the line's default unit is loading: not counted, no "Added".
+    if (!addOne(product.id, product, level, opts?.startOnDefault, false, opts?.code)) {
+      // #2865 (SA-632 H2): refused while the line's default unit is loading: not counted, no "Added". EXACTLY ONE toast: this
+      // one. The outcome carries no feedback (an error pill beside it was the second, stacked copy, F4).
       showToast(UNITS_LOADING_SCAN_MESSAGE);
-      return scanOpen
-        ? undefined
-        : { feedback: { kind: "error", text: UNITS_LOADING_SCAN_MESSAGE } };
+      return undefined;
     }
     bumpScanned(product.id);
     clearSearch();

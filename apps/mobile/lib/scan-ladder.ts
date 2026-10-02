@@ -25,6 +25,8 @@ import type { ScanAcceptGuard, ScanAcceptResolution } from "./scan-accept-guard"
 /** SA-626: set only for a SHARED code (resolves at both levels): the new line starts on the default selling unit. */
 export interface ScanAcceptOpts {
   startOnDefault?: boolean;
+  /** The scanned/typed code (trimmed): lets the screen tell a repeat of the SAME label from a different one. */
+  code?: string;
 }
 
 export interface ScanLadderDeps<T extends ScanMatchable> {
@@ -70,11 +72,8 @@ function scanLevel<T extends ScanMatchable & { unitsPerBox?: number | null }>(
 }
 
 /** `{ startOnDefault: true }` for a shared code, else undefined (the code decides the level). */
-export function scanAcceptOpts<T extends ScanMatchable>(
-  code: string,
-  product: T,
-): ScanAcceptOpts | undefined {
-  return isSharedScanCode(levelsForScan(code, product)) ? { startOnDefault: true } : undefined;
+export function scanAcceptOpts<T extends ScanMatchable>(code: string, product: T): ScanAcceptOpts {
+  return isSharedScanCode(levelsForScan(code, product)) ? { startOnDefault: true, code } : { code };
 }
 
 function resolveProducts<T extends ScanMatchable>(p: ScanLadderDeps<T>["products"]): readonly T[] {
