@@ -317,10 +317,10 @@ describeDb(
     it("(fold) a second order folded into the first: the merged order's lines sum to the write's overshoot", async () => {
       await setPolicy("backorder");
       await tenantCtx.run(tenantId, () =>
-        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0), { skipAutoMerge: true }),
+        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
       ); // stock 5 -> 1, no overshoot
       const second: any = await tenantCtx.run(tenantId, () =>
-        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0), { skipAutoMerge: true }),
+        orders.create({ items: [{ productId, qty: 4 }] }, buyer(0)),
       ); // 1 - 4 -> -3, overshoot 3
       const merged: any = await tenantCtx.run(tenantId, () =>
         orders.mergeAllPendingForCustomer(customerIds[0], { buyerInitiated: true }),
