@@ -34,9 +34,9 @@ describe("getPoBillRefusal", () => {
     expect(r?.advice).toMatch(/Edit the purchase order/);
   });
 
-  it("falls back to the server's message when it sends no violations", () => {
+  it("falls back to a FIXED line (never the server's message) when it sends no violations", () => {
     const r = getPoBillRefusal(conflict({ code: "BILL_EXCEEDS_PO", message: "Too much." }));
-    expect(r?.lines).toEqual(["Too much."]);
+    expect(r?.lines).toEqual(["This bill is more than the purchase order allows."]);
     expect(r?.poNumber).toBe("the purchase order");
   });
 });

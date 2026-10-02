@@ -161,3 +161,6 @@ strix_runs/
 # #2671: per-worktree Jest caches (each workspace's cacheDirectory) — never source.
 .jest-cache/
 .claude/control/.lane
+
+# #2865: planted trees from scripts/size-ratchet-gate.self-test.mjs (removed after each run).
+.size-ratchet-selftest/
