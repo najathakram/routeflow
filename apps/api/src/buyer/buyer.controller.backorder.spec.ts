@@ -303,38 +303,80 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
     });
   });
 
-  describe("buyer Reorder (generateOrder) PRESENT; staff manual run and cron ABSENT (B975, SA-606q)", () => {
-    it("a Reorder that wrote stock reports the figure on its lines, same rule as checkout", async () => {
+  describe("buyer Reorder (generateOrder): the holder is decided by EXISTENCE, like checkout (B975, SA-631d)", () => {
+    const notFound = () => Promise.reject(new NotFoundException("Order not found"));
+    const rowsOf = (rows: Record<string, unknown>) =>
+      orders.findOne.mockImplementation(async (id: string) => rows[id] ?? notFound());
+    /** What the template service returns: the SWEPT order (or the created one), carrying the created order's write + id. */
+    const swept = (id: string, lines: Array<[string, string, number]> = []) =>
+      withStockWrite(orderOf(id, lines), { ...write([["p", 3]]), orderId: "o-new" });
+
+    it("(iii) the sweep's BARE row (same id, no product): created is re-read in full and carries the figure", async () => {
       templates.generateOrder.mockResolvedValue(
-        withStockWrite(orderOf("o-r", [["r1", "p", 8]]), write([["p", 3]])),
+        swept("o-new", [["c1", "p", 8]]), // bare shape is irrelevant: only its id and carrier are used
       );
-      const res = await controller.reorderFromTemplate("t-1", CTX as any);
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
+      const res: any = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(res.id).toBe("o-new");
       expect(figures(res)).toEqual([3]);
     });
 
-    it("a Reorder order with no write behind it omits the key, never 0", async () => {
-      templates.generateOrder.mockResolvedValue(orderOf("o-r", [["r1", "p", 4]]));
-      const res = await controller.reorderFromTemplate("t-1", CTX as any);
-      expect(noKey(res)).toBe(true);
-      expect(JSON.stringify(res)).not.toMatch(/backorder/i);
+    it("(i) other orders folded INTO the created one: the response is the post-sweep order with the merged lines", async () => {
+      templates.generateOrder.mockResolvedValue(swept("o-new"));
+      rowsOf({
+        "o-new": orderOf("o-new", [
+          ["x1", "p", 4],
+          ["c1", "p", 8],
+        ]),
+      });
+      const res: any = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(res.lineItems).toHaveLength(2);
+      expect(figures(res)).toEqual([0, 3]);
     });
 
-    it("a lost write on the Reorder (lines lowered before the re-read) omits the key on the whole order", async () => {
-      templates.generateOrder.mockResolvedValue(
-        withStockWrite(orderOf("o-r", [["r1", "p", 2]]), write([["p", 3]])),
-      );
+    it("(ii) the created order was folded INTO another (its row is gone): the survivor is returned with the figure", async () => {
+      templates.generateOrder.mockResolvedValue(swept("o-old"));
+      rowsOf({
+        "o-old": orderOf("o-old", [
+          ["m1", "p", 5],
+          ["m2", "p", 8],
+        ]),
+      });
+      const res: any = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(res.id).toBe("o-old");
+      expect(figures(res)).toEqual([0, 3]);
+    });
+
+    it("(iv) neither row can be read: the order comes back untouched, key omitted, no throw", async () => {
+      const order = swept("o-old");
+      templates.generateOrder.mockResolvedValue(order);
+      rowsOf({});
+      await expect(controller.reorderFromTemplate("t-1", CTX as any)).resolves.toBe(order);
+    });
+
+    it("(v) a lowering edit between the sweep and the re-read (lost write): the key is omitted on the whole order", async () => {
+      templates.generateOrder.mockResolvedValue(swept("o-new"));
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 2]]) });
       expect(noKey(await controller.reorderFromTemplate("t-1", CTX as any))).toBe(true);
     });
 
-    it("a failure while attributing after the commit still returns the Reorder order, key absent", async () => {
-      const broken: any = withStockWrite({ id: "o-r" }, write([["p", 3]]));
-      Object.defineProperty(broken, "lineItems", {
-        get() {
-          throw new Error("boom after commit");
-        },
-      });
-      templates.generateOrder.mockResolvedValue(broken);
-      await expect(controller.reorderFromTemplate("t-1", CTX as any)).resolves.toBe(broken);
+    it("a non-NotFound failure on the created read is UNKNOWN: the order comes back untouched and the survivor is NOT read", async () => {
+      const order = swept("o-old");
+      templates.generateOrder.mockResolvedValue(order);
+      orders.findOne.mockRejectedValue(new Error("db down"));
+      await expect(controller.reorderFromTemplate("t-1", CTX as any)).resolves.toBe(order);
+      expect(orders.findOne).toHaveBeenCalledTimes(1); // only o-new, never o-old
+    });
+
+    it("an order with NO write behind it (no carrier, or a carrier without the created id) omits the key, never 0", async () => {
+      const plain = orderOf("o-r", [["r1", "p", 4]]);
+      templates.generateOrder.mockResolvedValue(plain);
+      const res: any = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(noKey(res)).toBe(true);
+      expect(orders.findOne).not.toHaveBeenCalled();
+      const noId = withStockWrite(orderOf("o-r", [["r1", "p", 4]]), write([["p", 3]]));
+      templates.generateOrder.mockResolvedValue(noId);
+      expect(noKey(await controller.reorderFromTemplate("t-1", CTX as any))).toBe(true);
     });
 
     it("the staff controllers never map it (static pin: no import of the response helper)", () => {

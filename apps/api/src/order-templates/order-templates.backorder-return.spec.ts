@@ -142,10 +142,11 @@ describe("OrderTemplatesService returns the locked write (B975)", () => {
     decrement.mockResolvedValue(write(3));
     const order: any = await service.generateOrder("t1", false, true);
     expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
+    expect(stockWriteOf(order)?.orderId).toBe("o1");
     expect(JSON.stringify(order)).not.toMatch(/backorder/i);
   });
 
-  it("a fold into another order keeps the CREATED order's write on the merged result", async () => {
+  it("a fold into another order: the SWEPT order comes back (as on master), carrying the CREATED order's write and its id", async () => {
     await build();
     decrement.mockResolvedValue(write(3));
     const merged = { id: "o-merged", lineItems: [] };
@@ -153,40 +154,22 @@ describe("OrderTemplatesService returns the locked write (B975)", () => {
     const order: any = await service.generateOrder("t1", false, true);
     expect(order).toBe(merged);
     expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
+    expect(stockWriteOf(order)?.orderId).toBe("o1"); // the created order, so the controller can re-read it by id
   });
 
-  it("a Reorder with NO other pending order: the sweep returns the BARE created row (same id) -> the CREATED order comes back carrying its write", async () => {
+  it("no other pending order: the sweep's BARE row comes back (unchanged), carrying the write and the created order's id", async () => {
     await build();
     decrement.mockResolvedValue(write(3));
-    // the real sweep return for <= 1 pending order: that row read with lineItems only
-    merge.mockResolvedValue({
+    const bare = {
       id: "o1",
       customerId: "c1",
       lineItems: [{ id: "l0", productId: "p1", qty: 3, status: "PENDING" }],
-    });
+    };
+    merge.mockResolvedValue(bare);
     const order: any = await service.generateOrder("t1", false, true);
-    expect(order.id).toBe("o1");
-    expect(stockWriteOf(order)?.backorderByProduct.get("p1")).toBe(3);
-    expect(order.lineItems[0].product).toBeDefined(); // the created order (with the product), not the bare row
-  });
-
-  it("the sweep returned ANOTHER order and the new one was not merge-eligible: that order comes back with NO write on it", async () => {
-    await build();
-    decrement.mockResolvedValue(write(3));
-    prisma.order.create.mockImplementation((a: any) =>
-      Promise.resolve({
-        id: "o1",
-        skipAutoMerge: true,
-        ...a.data,
-        lineItems: [],
-        customer: { id: "c1" },
-      }),
-    );
-    const other = { id: "o-other", lineItems: [] };
-    merge.mockResolvedValue(other);
-    const order: any = await service.generateOrder("t1", false, true);
-    expect(order).toBe(other);
-    expect(stockWriteOf(order)).toBeUndefined();
+    expect(order).toBe(bare); // not rewritten: staff and cron responses are exactly master's
+    expect(stockWriteOf(order)?.orderId).toBe("o1");
+    expect(JSON.stringify(order)).not.toMatch(/backorder/i);
   });
 
   it("the created order's lines are read with the shared include (the pack + a stable order)", async () => {
