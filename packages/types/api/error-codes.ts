@@ -132,6 +132,12 @@
 //                    `reason` (NOT_A_DAY | TO_NOT_A_DAY | FROM_NOT_A_DAY | BAD_GRAIN | TO_BEFORE_FROM | WINDOW_TOO_LONG | TOO_MANY_BUCKETS)
 //                    and numeric params (maxMonths, buckets, maxBuckets) or a validated grain; the message is unchanged. Opt-in: other
 //                    endpoints that map InsightWindowError keep their code-less body.
+//                    STATEMENT_APPLY_* — `body.code` of the 400s of POST /supplier-statements/:id/apply (SA-634; status and message
+//                    unchanged; numbers are the same rounded values the message interpolates): DISCARDED, NOT_MATCHED, NOTHING (no
+//                    fields); DUPLICATE_BILL {billId: a REQUEST ECHO}; WRONG_SUPPLIER, BILL_VOID, BILL_DRAFT {billId, billNumber,
+//                    line: CONFIRMED | IMPLIED_PAID}; NO_BACKING_LINE {billId, billNumber}; OVER_LINE {billId, billNumber, amount,
+//                    lineAmount}; OVER_BALANCE {billId, billNumber, amount, remaining}. An unknown or other tenant's bill id stays the
+//                    uncoded 404.
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -283,6 +289,16 @@ export const API_ERROR_CODES = {
   REGULATED_POD_REQUIRED: "REGULATED_POD_REQUIRED",
   IMPORT_COLUMN_NEEDS_ENTITLEMENT: "IMPORT_COLUMN_NEEDS_ENTITLEMENT",
   INSIGHT_WINDOW_INVALID: "INSIGHT_WINDOW_INVALID",
+  STATEMENT_APPLY_DISCARDED: "STATEMENT_APPLY_DISCARDED",
+  STATEMENT_APPLY_NOT_MATCHED: "STATEMENT_APPLY_NOT_MATCHED",
+  STATEMENT_APPLY_NOTHING: "STATEMENT_APPLY_NOTHING",
+  STATEMENT_APPLY_DUPLICATE_BILL: "STATEMENT_APPLY_DUPLICATE_BILL",
+  STATEMENT_APPLY_WRONG_SUPPLIER: "STATEMENT_APPLY_WRONG_SUPPLIER",
+  STATEMENT_APPLY_BILL_VOID: "STATEMENT_APPLY_BILL_VOID",
+  STATEMENT_APPLY_BILL_DRAFT: "STATEMENT_APPLY_BILL_DRAFT",
+  STATEMENT_APPLY_NO_BACKING_LINE: "STATEMENT_APPLY_NO_BACKING_LINE",
+  STATEMENT_APPLY_OVER_LINE: "STATEMENT_APPLY_OVER_LINE",
+  STATEMENT_APPLY_OVER_BALANCE: "STATEMENT_APPLY_OVER_BALANCE",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
