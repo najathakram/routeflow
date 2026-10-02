@@ -1,3 +1,4 @@
+import { NotFoundException } from "@nestjs/common";
 import { stockWriteOf, withStockWrite, type StockWriteResult } from "./order-stock";
 import { buyerCreateResponse, withBackorderPieces } from "./backorder-response";
 
@@ -273,13 +274,44 @@ describe("buyerCreateResponse — the holder is decided by EXISTENCE and read fr
     expect(noKey((await buyerCreateResponse(created(), null, read)) as any)).toBe(true);
   });
 
-  it("is total: a reader that throws (a 404, a dropped connection) is 'gone', never an error", async () => {
+  it("only null / NotFound means GONE: a real not-found on created falls through to the survivor", async () => {
+    const survivor = { ...order([li("m1", "p", 8)]), id: "o-old" };
+    const read = jest.fn(async (id: string) => {
+      if (id === "o-new") throw new NotFoundException("Order not found");
+      return id === "o-old" ? survivor : null;
+    });
+    const res: any = await buyerCreateResponse(created(), { id: "o-old" }, read);
+    expect(res.id).toBe("o-old");
+    expect(figures(res)).toEqual([3]);
+  });
+
+  it("any OTHER throw (a dropped connection, a timeout) is UNKNOWN, not gone: the sweep's order comes back untouched and the survivor is NOT read", async () => {
+    const read = jest.fn(async (id: string) => {
+      if (id === "o-new") throw new Error("db down");
+      return { ...order([li("m1", "p", 8)]), id: "o-old" }; // would be wrongly returned if the survivor were read
+    });
+    const sweep = { id: "o-old", lineItems: [] };
+    const res: any = await buyerCreateResponse(created(), sweep, read);
+    expect(res).toBe(sweep);
+    expect(noKey(res)).toBe(true);
+    expect(read.mock.calls.map((c) => c[0])).toEqual(["o-new"]); // never fell through to o-old
+  });
+
+  it("a non-NotFound failure on the SURVIVOR read is unknown too: the sweep's order comes back untouched, no throw", async () => {
+    const read = jest.fn(async (id: string) => {
+      if (id === "o-new") throw new NotFoundException("Order not found");
+      throw new Error("timeout");
+    });
+    const sweep = { id: "o-old", lineItems: [] };
+    await expect(buyerCreateResponse(created(), sweep, read)).resolves.toBe(sweep);
+  });
+
+  it("is total: a reader that throws is never an error out of the helper (created comes back untouched)", async () => {
     const boom = jest.fn(async () => {
       throw new Error("db down");
     });
     const c = created();
     await expect(buyerCreateResponse(c, null, boom)).resolves.toBe(c);
-    await expect(buyerCreateResponse(c, { id: "o-old" }, boom)).resolves.toEqual({ id: "o-old" });
   });
 
   it("a created order with no id (malformed) is unknown: returned untouched, no throw", async () => {
