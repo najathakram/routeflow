@@ -192,7 +192,16 @@ function StartOfDay({ run }: { run: RouteRun }) {
   const startRun = () =>
     updateStatus.mutate(
       { id: run.id, status: "IN_PROGRESS" },
-      { onSuccess: () => void startLocationTracking(run.id) },
+      {
+        onSuccess: () => void startLocationTracking(run.id),
+        // B923: offline the request is refused (online-only), so say so instead of doing nothing.
+        onError: (e: any) =>
+          showToast(
+            e?.isOnlineRequired
+              ? "Starting your route needs a connection. Connect and try again."
+              : (e?.response?.data?.message ?? "Couldn't start the route. Try again."),
+          ),
+      },
     );
 
   const onStart = async () => {

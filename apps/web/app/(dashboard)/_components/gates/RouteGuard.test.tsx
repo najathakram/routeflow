@@ -120,6 +120,19 @@ describe("RouteGuard (B449 fix-round finding 5)", () => {
     expect(boundaryProps[0]).toMatchObject({ planGateKey: null });
   });
 
+  // B966: the driver "Scan to add order" / "New order at door" links point here and are hidden for a
+  // DRIVER; a typed URL is still bounced client-side (the API keeps DRIVER POST /orders for mobile).
+  it("bounces a DRIVER off /orders to /dashboard", () => {
+    mockUser = { role: "DRIVER" };
+    mockPathname = "/orders";
+    render(
+      <RouteGuard>
+        <div />
+      </RouteGuard>,
+    );
+    expect(mockReplace).toHaveBeenCalledWith("/dashboard");
+  });
+
   it.each(["DRIVER", "CUSTOMER"])("bounces a %s off /purchase-orders to /dashboard", (role) => {
     mockUser = { role };
     mockPathname = "/purchase-orders";

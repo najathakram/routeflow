@@ -136,6 +136,9 @@ export interface PricedChunk {
   originalPrice?: number | null;
   overrideReason?: string | null;
   overriddenBy?: string | null;
+  /** B961 / SA-071c: an over-return chunk of a product WITH prior sales on this customer's candidate invoices (all returned or
+   * credited): "already returned or credited". Absent otherwise (a never-invoiced product stays "not on any invoice"). */
+  alreadyReturned?: boolean;
 }
 
 export interface QuoteBreakdown {

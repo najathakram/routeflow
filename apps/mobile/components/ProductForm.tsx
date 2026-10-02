@@ -28,13 +28,7 @@ import { tierLabel } from "../lib/tier-label";
 // Re-export the pure form logic so existing importers keep their import site,
 // while the logic itself lives in a React-Native-free module that mobile Jest
 // can unit-test directly (see __tests__/operator-create-forms.test.ts).
-export {
-  buildProductPayload,
-  emptyProductForm,
-  productFormFromValues,
-  type ProductFormValues,
-  type SubmitPayload,
-};
+export { emptyProductForm, productFormFromValues, type ProductFormValues, type SubmitPayload };
 
 function parseOptionalNumber(v: string): number | undefined {
   const t = v.trim();
