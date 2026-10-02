@@ -41,6 +41,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
+import { scrubbedGitEnv } from "../../scripts/lib/check-git-hooks.mjs";
 
 const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 
@@ -49,22 +50,8 @@ const STOP_HOOK = fileURLToPath(new URL("./stop.mjs", import.meta.url));
 // hazard `bugs.mjs`'s self-test scrubs (scripts/campaign/bugs.mjs :2880-2903).
 // Scrub them from the env handed to every spawned `git`/`node stop.mjs` here
 // so the throwaway repo is never silently re-pointed at the real repository.
-const GIT_KEYS = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_INDEX_FILE",
-  "GIT_COMMON_DIR",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_QUARANTINE_PATH",
-  "GIT_PREFIX",
-  "GIT_NAMESPACE",
-  "GIT_CEILING_DIRECTORIES",
-];
-
 function scrubbedEnv(extra = {}) {
-  const env = { ...process.env };
-  for (const k of GIT_KEYS) delete env[k];
+  const env = scrubbedGitEnv(); // the one shared GIT_* prefix filter
   delete env.PLANE_API_KEY; // never leak a real key from the ambient shell
   return { ...env, ...extra };
 }

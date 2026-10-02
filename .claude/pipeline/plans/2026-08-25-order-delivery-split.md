@@ -128,16 +128,18 @@ scheduledDate: true, completedAt: true, driver: { select: { id: true, contactNam
      only highlight that one. Keep the change local to the nav child active computation.
 
 2. `getNavForRole(role, canActAsDriver, devMode)` becomes
-   `getNavForRole(role, canActAsDriver, { devMode, routesAccess, deliveryAccess })`:
-   - Dispatch group shows when `devMode || routesAccess`.
-   - Deliveries group shows when `devMode || deliveryAccess`.
-   - Drivers leaf: keep inside Dispatch; when Dispatch is hidden but Deliveries shows,
-     append `{ label: "Drivers", href: "/drivers" }` to the Deliveries group (drivers are
-     needed by both features).
-   - DRIVER role: `My Routes` shows when `devMode || routesAccess || deliveryAccess`
-     (drivers run trips too).
-   - `canActAsDriver` My-Routes splice: applies when the Dispatch group is visible (as now);
-     if only Deliveries is visible, splice "My Routes" into Deliveries instead.
+`getNavForRole(role, canActAsDriver, { devMode, routesAccess, deliveryAccess })`:
+
+- Dispatch group shows when `devMode || routesAccess`.
+- Deliveries group shows when `devMode || deliveryAccess`.
+- Drivers leaf: keep inside Dispatch; when Dispatch is hidden but Deliveries shows,
+  append `{ label: "Drivers", href: "/drivers" }` to the Deliveries group (drivers are
+  needed by both features).
+- DRIVER role: `My Routes` shows when `devMode || routesAccess || deliveryAccess`
+  (drivers run trips too).
+- `canActAsDriver` My-Routes splice: applies when the Dispatch group is visible (as now);
+  if only Deliveries is visible, splice "My Routes" into Deliveries instead.
+
 3. RouteGuard: replace `DEV_MODE_PREFIXES` with:
 
 ```ts
@@ -159,13 +161,12 @@ const GATED_PREFIXES: { prefix: string; need: "routes" | "delivery" | "either" }
      immediately redirect to /deliveries which is then gated correctly).
 
 4. Drive-mode + `g r`/`g d` chords + `SHORTCUTS` filter + the two `devMode` pushes at
-   ~L1011/1014: gate on `routesAccess||devMode` (routes/drivers chords). Add nothing new.
-5. CommandPalette: `act-plan-trip` action href becomes `/deliveries/new`; add
-   `nav-deliveries` ("Go to Deliveries", href `/deliveries`). Replace the single
-   `DEV_MODE_COMMAND_IDS` filter with per-feature sets:
-   `ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"]` filtered by
-   `routesAccess||devMode`; `DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"]`
-   filtered by `deliveryAccess||devMode`. Preserve the existing role allowlists untouched.
+~L1011/1014: gate on `routesAccess||devMode` (routes/drivers chords). Add nothing new. 5. CommandPalette: `act-plan-trip` action href becomes `/deliveries/new`; add
+`nav-deliveries` ("Go to Deliveries", href `/deliveries`). Replace the single
+`DEV_MODE_COMMAND_IDS` filter with per-feature sets:
+`ROUTES_COMMAND_IDS = ["nav-routes", "nav-drivers", "act-new-route"]` filtered by
+`routesAccess||devMode`; `DELIVERY_COMMAND_IDS = ["act-plan-trip", "nav-deliveries"]`
+filtered by `deliveryAccess||devMode`. Preserve the existing role allowlists untouched.
 
 ### WP4 — Web: /deliveries surface, page moves, /routes cleanup, orders gate
 
@@ -215,13 +216,11 @@ export default function LegacyTripBuilderRedirect() {
 
 4. `routes/page.tsx`: remove the whole "Trips (ad-hoc)" section (its `useRoutes({kind:
 "ADHOC"...})` query, the `recentTrips` memo, and the JSX block) — this page is now purely
-   recurring routes. Do not touch anything else on the page.
-5. `orders/page.tsx`: the bulkbar "Plan delivery trip" gate changes from
-   `useDeveloperMode().enabled` to `useDeliveryAccess().enabled`; its push target becomes
-   `/deliveries/new?n=${ids.length}`. Nothing else changes.
-6. `lib/api/routes.ts`: extend the `Route` type with the WP2 additions:
-   `_count?: { runs: number; stops: number }` and
-   `runs?: { id: string; status: string; scheduledDate?: string | null; completedAt?: string | null; driver?: { id: string; contactName?: string | null } | null }[]`.
+recurring routes. Do not touch anything else on the page. 5. `orders/page.tsx`: the bulkbar "Plan delivery trip" gate changes from
+`useDeveloperMode().enabled` to `useDeliveryAccess().enabled`; its push target becomes
+`/deliveries/new?n=${ids.length}`. Nothing else changes. 6. `lib/api/routes.ts`: extend the `Route` type with the WP2 additions:
+`_count?: { runs: number; stops: number }` and
+`runs?: { id: string; status: string; scheduledDate?: string | null; completedAt?: string | null; driver?: { id: string; contactName?: string | null } | null }[]`.
 
 ### WP5 — Mobile: split gating, entries, labels
 
@@ -243,22 +242,18 @@ const EITHER_SECTIONS = new Set(["drivers", "driver"]);
      settles — keep the current `!devLoading && !devMode` fail-open style per hook) denies.
 
 2. `operator-tabs.ts`: keep `trips: "dispatch"`. Find where the dispatch TAB itself is
-   shown/hidden (grep `dispatch` in the tab bar component / operator-tabs). If the tab is
-   gated on `useDeveloperMode`, widen to `devMode || routesAccess || deliveryAccess` so a
-   delivery-only tenant still gets the tab (its hub will then show only delivery rows).
-   If the tab is not gated at all, change nothing here.
-3. `dispatch.tsx` (hub): the "Trips" section/row renames to "Order delivery" with row title
-   "Plan & history" (still → `/(operator)/trips`). Gate the recurring rows
-   (routes/route-runs/fleet) on `routesAccess||devMode` and the Order-delivery row on
-   `deliveryAccess||devMode` so a single-feature tenant sees only their rows.
-4. `orders/index.tsx`: the Select NavAction gate changes `useDeveloperMode` →
-   `useDeliveryAccess` (WP1 mobile helper).
-5. `trips/index.tsx`: screen title becomes "Deliveries"; ensure NO reuse/re-dispatch
-   affordance exists (delete stays draft-only as-is); empty state copy: "Past deliveries
-   will appear here. Plan one from the Orders tab." with a button to `/(operator)/(tabs)/orders`.
-   `trips/new.tsx`: NavBar title "Plan delivery" (if it says trip).
-6. `operator-tabs.test.ts`: keep the `trips → dispatch` assertions green (update only if
-   the mapping changed — it should not).
+shown/hidden (grep `dispatch` in the tab bar component / operator-tabs). If the tab is
+gated on `useDeveloperMode`, widen to `devMode || routesAccess || deliveryAccess` so a
+delivery-only tenant still gets the tab (its hub will then show only delivery rows).
+If the tab is not gated at all, change nothing here. 3. `dispatch.tsx` (hub): the "Trips" section/row renames to "Order delivery" with row title
+"Plan & history" (still → `/(operator)/trips`). Gate the recurring rows
+(routes/route-runs/fleet) on `routesAccess||devMode` and the Order-delivery row on
+`deliveryAccess||devMode` so a single-feature tenant sees only their rows. 4. `orders/index.tsx`: the Select NavAction gate changes `useDeveloperMode` →
+`useDeliveryAccess` (WP1 mobile helper). 5. `trips/index.tsx`: screen title becomes "Deliveries"; ensure NO reuse/re-dispatch
+affordance exists (delete stays draft-only as-is); empty state copy: "Past deliveries
+will appear here. Plan one from the Orders tab." with a button to `/(operator)/(tabs)/orders`.
+`trips/new.tsx`: NavBar title "Plan delivery" (if it says trip). 6. `operator-tabs.test.ts`: keep the `trips → dispatch` assertions green (update only if
+the mapping changed — it should not).
 
 ### WP6 — Platform-admin toggles + demo seed
 

@@ -3,6 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import PurchaseOrdersPage from "./page";
 
 const setTitle = jest.fn();
+// The scan entry has its own tests (ScanPoButton.test.tsx); here it is just a marker in the header.
+jest.mock("./ScanPoButton", () => ({
+  ScanPoButton: () => <button>Scan supplier invoice</button>,
+}));
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle }) }));
 
 jest.mock("@routeflow/ui/web", () => {
@@ -64,7 +68,7 @@ describe("/purchase-orders page", () => {
     expect(
       screen.getByText("Create one when you place an order with a supplier."),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/scan/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/scan a supplier|draft it for you/i)).not.toBeInTheDocument(); // the empty copy never promises scanning
     // the empty state's own action opens the same create flow as the header button
     const buttons = screen.getAllByRole("button", { name: "New purchase order" });
     expect(buttons.length).toBeGreaterThanOrEqual(2);
@@ -80,6 +84,11 @@ describe("/purchase-orders page", () => {
     expect(screen.getByLabelText("To date")).toHaveAttribute("type", "date");
     expect(screen.getByText("From")).toBeVisible();
     expect(screen.getByText("To")).toBeVisible();
+  });
+
+  it("offers Scan supplier invoice next to New purchase order", () => {
+    render(<PurchaseOrdersPage />);
+    expect(screen.getByRole("button", { name: "Scan supplier invoice" })).toBeInTheDocument();
   });
 
   it("has a page header", () => {

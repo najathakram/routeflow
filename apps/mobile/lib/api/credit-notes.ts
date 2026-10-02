@@ -1,6 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { CreditNoteStatus } from "@routeflow/types";
+import type {
+  CreditNoteStatus,
+  CreditNoteVoidPreview,
+  ReissueCreditNoteInput,
+  ReissueCreditNoteResult,
+} from "@routeflow/types";
 import { apiClient } from "../api-client";
+
+/**
+ * Credit notes are money: EVERY credit-note mutation is online-only (never offline-queued). A queued
+ * apply/void/edit would replay later behind a UI that said it failed, and a retry would double it.
+ * (api-client `_skipOfflineQueue`; a wiring test pins that every call in this file passes it.)
+ */
+const ONLINE_ONLY = { _skipOfflineQueue: true } as object;
 
 // ─── Types (mirror apps/web/lib/api/credit-notes.ts) ────────────────────────────
 
@@ -23,6 +35,8 @@ export interface CreditNote {
   reason?: string;
   notes?: string;
   expiresAt?: string | null;
+  /** #2648: the note's split across its source invoice's lines (empty for a lump-sum credit). */
+  items?: Array<{ invoiceItemId: string | null; amount: number; qty: number }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -102,7 +116,7 @@ export interface CreateCreditNoteInput {
 export function useCreateCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, CreateCreditNoteInput>({
-    mutationFn: (dto) => apiClient.post("/credit-notes", dto).then((r) => r.data),
+    mutationFn: (dto) => apiClient.post("/credit-notes", dto, ONLINE_ONLY).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["credit-notes"] }),
   });
 }
@@ -122,7 +136,7 @@ export function useApplyCreditNote() {
   const qc = useQueryClient();
   return useMutation<{ id: string }, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
-      apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }).then((r) => r.data),
+      apiClient.post(`/credit-notes/${id}/apply`, { invoiceId }, ONLINE_ONLY).then((r) => r.data),
     onSuccess: (_, { id, invoiceId }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -146,7 +160,7 @@ export function useUnapplyCreditNote() {
   const qc = useQueryClient();
   return useMutation<CreditNote, Error, { id: string; invoiceId: string }>({
     mutationFn: ({ id, invoiceId }) =>
-      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }).then((r) => r.data),
+      apiClient.post(`/credit-notes/${id}/unapply`, { invoiceId }, ONLINE_ONLY).then((r) => r.data),
     onSuccess: (_, { id, invoiceId }) => {
       invalidateCreditNote(qc, id);
       qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -160,11 +174,77 @@ export function useUnapplyCreditNote() {
   });
 }
 
-/** Void — server rejects if APPLIED or amountUsed>0; undoes any ledger reversal. */
-export function useVoidCreditNote() {
+/** #2648 / SA-535(a): reason/expiry, in place (a VOID note is not editable). */
+export function useUpdateCreditNote() {
   const qc = useQueryClient();
-  return useMutation<CreditNote, Error, string>({
-    mutationFn: (id) => apiClient.post(`/credit-notes/${id}/void`).then((r) => r.data),
-    onSuccess: (_, id) => invalidateCreditNote(qc, id),
+  return useMutation<CreditNote, Error, { id: string; reason?: string; expiresAt?: string | null }>(
+    {
+      mutationFn: ({ id, ...dto }) =>
+        apiClient.patch(`/credit-notes/${id}`, dto, ONLINE_ONLY).then((r) => r.data),
+      onSuccess: (_, { id }) => invalidateCreditNote(qc, id),
+    },
+  );
+}
+
+/** What a void-with-reversal (and so a reissue) would un-apply, and any refusal. Read-only. */
+export function useVoidPreview(id: string, enabled: boolean) {
+  return useQuery<CreditNoteVoidPreview>({
+    queryKey: ["credit-notes", id, "void-preview"],
+    queryFn: () => apiClient.get(`/credit-notes/${id}/void-preview`).then((r) => r.data),
+    enabled: !!id && enabled,
+    staleTime: 0,
+  });
+}
+
+/**
+ * SA-436 PR-2 (#2402): void a credit note AFTER un-applying it everywhere (each pair is remembered
+ * so the auto-apply sweep cannot re-apply it). The optional reason (#2540) is a web-dialog field.
+ */
+export function useVoidWithReversal() {
+  const qc = useQueryClient();
+  return useMutation<
+    {
+      creditNote: CreditNote;
+      reopened: Array<{ invoiceId: string; invoiceNumber: string; amount: number }>;
+    },
+    Error,
+    { id: string; reason?: string }
+  >({
+    mutationFn: ({ id, reason }) =>
+      apiClient
+        // Online-only: it needs a fresh void-preview, and a silent offline replay would void later.
+        .post(`/credit-notes/${id}/void-with-reversal`, reason ? { reason } : {}, ONLINE_ONLY)
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      invalidateCreditNote(qc, id);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
+  });
+}
+
+/** #2648 / SA-535(b): an amount/line edit — void-with-reversal + an unapplied replacement. */
+export function useReissueCreditNote() {
+  const qc = useQueryClient();
+  return useMutation<
+    ReissueCreditNoteResult<CreditNote>,
+    Error,
+    { id: string; idempotencyKey: string } & ReissueCreditNoteInput
+  >({
+    mutationFn: ({ id, idempotencyKey, ...dto }) =>
+      apiClient
+        // Online-only (see useVoidWithReversal): "Nothing was changed" on a network drop must be true.
+        .post(`/credit-notes/${id}/reissue`, dto, {
+          headers: { "Idempotency-Key": idempotencyKey },
+          ...ONLINE_ONLY,
+        })
+        .then((r) => r.data),
+    onSuccess: (_, { id }) => {
+      invalidateCreditNote(qc, id);
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "invoices"] });
+      qc.invalidateQueries({ queryKey: ["admin", "orders"] });
+    },
   });
 }

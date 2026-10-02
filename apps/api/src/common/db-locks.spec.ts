@@ -81,6 +81,8 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
       // "mailbox" (2026-09-17, email-connect-google PR-3) backs MailboxSendService's lazy
       // access-token refresh — a session-scoped critical section (POST to Google's token
       // endpoint plus the row update that persists the refreshed token).
+      // "policy-write" (2026-09-24, SA-138 policy layer phase 1) backs PolicyService#set/#clear's
+      // supersede-then-insert window, keyed `${tenantId}:${key}`.
       expect(mod.LOCK_FAMILIES).toEqual([
         "order-merge",
         "cron",
@@ -88,6 +90,7 @@ describe("db-locks — withAdvisoryLock (T1, R1)", () => {
         "tenant-mirror",
         "demo-booking",
         "mailbox",
+        "policy-write",
       ]);
     });
   });

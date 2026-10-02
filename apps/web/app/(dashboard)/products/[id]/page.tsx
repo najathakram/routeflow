@@ -76,28 +76,7 @@ import { ProductPortalVisibilityCard } from "./ProductPortalVisibilityCard";
 import { ProductUnitsCard } from "./ProductUnitsCard";
 import { ImageLightbox } from "./ImageLightbox";
 import { objectPositionForUrl, type FocalPoint } from "@/lib/image-focal";
-
-const COMMON_UNITS = [
-  "unit",
-  "each",
-  "case",
-  "box",
-  "bag",
-  "pack",
-  "dozen",
-  "pallet",
-  "kg",
-  "g",
-  "lb",
-  "oz",
-  "L",
-  "ml",
-  "tray",
-  "bottle",
-  "can",
-  "roll",
-  "sheet",
-];
+import { COMMON_UNITS } from "@/lib/common-units";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

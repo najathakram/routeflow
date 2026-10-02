@@ -1,4 +1,5 @@
 import { ConflictException, Logger } from "@nestjs/common";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * #2424 (tier 1): an inline-return `returnKey` replay must be a replay of the SAME capture.
@@ -18,7 +19,7 @@ import { ConflictException, Logger } from "@nestjs/common";
 
 /** The 409 code (also `INLINE_RETURN_ERROR_CODES.RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS`). */
 export const INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS =
-  "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS";
+  API_ERROR_CODES.INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS;
 
 type CaptureItemLike = {
   productId: string;

@@ -26,11 +26,12 @@
 
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { LockTimeoutError, LockUnavailableError } from "../common/db-locks";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** Response `code` of the 409 raised when a customer's merge lock is already held. */
-export const MERGE_IN_PROGRESS = "MERGE_IN_PROGRESS";
+export const MERGE_IN_PROGRESS = API_ERROR_CODES.MERGE_IN_PROGRESS;
 /** Response `code` of the 503 raised when no lock connection could be obtained at all. */
-export const LOCK_UNAVAILABLE = "LOCK_UNAVAILABLE";
+export const LOCK_UNAVAILABLE = API_ERROR_CODES.LOCK_UNAVAILABLE;
 
 export const MERGE_IN_PROGRESS_MESSAGE = "Another merge for this customer is in progress — retry.";
 export const LOCK_UNAVAILABLE_MESSAGE = "Order merge lock unavailable — retry shortly.";
