@@ -1,6 +1,7 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
 import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+import type { API_ERROR_CODES } from "./error-codes";
 
 /** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
  *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
@@ -267,7 +268,10 @@ export interface RecipeDto {
 /** One ACTIVE product blocking a reactivation, for one code or the name. */
 export interface ProductReactivationHolder {
   /** BARCODE_TAKEN for a barcode (SA-572b keeps its code); CODE_TAKEN for sku / unitSku; NAME_TAKEN for the name. */
-  code: "CODE_TAKEN" | "BARCODE_TAKEN" | "NAME_TAKEN";
+  code:
+    | typeof API_ERROR_CODES.CODE_TAKEN
+    | typeof API_ERROR_CODES.BARCODE_TAKEN
+    | typeof API_ERROR_CODES.NAME_TAKEN;
   field: "sku" | "barcode" | "unitSku" | "name";
   value: string;
   productId: string;
@@ -291,7 +295,7 @@ export interface ProductCodeTakenError extends ProductReactivationHolder {
  * index) cannot know who holds it, so on that path they are absent.
  */
 export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "productName"> & {
-  code: "NAME_TAKEN";
+  code: typeof API_ERROR_CODES.NAME_TAKEN;
   field: "name";
   productId?: string;
   productName?: string;
@@ -299,7 +303,7 @@ export type ProductNameTakenError = Omit<ProductCodeTakenError, "productId" | "p
 
 /** 409 when `deactivateHolderIds` was sent but NOTHING blocks the reactivation any more. */
 export interface ProductHoldersChangedError {
-  code: "HOLDERS_CHANGED";
+  code: typeof API_ERROR_CODES.HOLDERS_CHANGED;
   message: string;
   holders: [];
 }
@@ -336,21 +340,22 @@ export interface FamilyRowConflict {
   row: number | "family";
   field: "name" | "sku" | "barcode" | "unitSku";
   value: string;
-  reason: "CODE_TAKEN" | "NAME_TAKEN" | "DUPLICATE_IN_REQUEST";
+  reason:
+    typeof API_ERROR_CODES.CODE_TAKEN | typeof API_ERROR_CODES.NAME_TAKEN | "DUPLICATE_IN_REQUEST";
   /** The ACTIVE holder in the same tenant (absent for DUPLICATE_IN_REQUEST). */
   conflictProductId?: string;
 }
 
 /** 409 FAMILY_ROWS_CONFLICT: EVERY conflict, all-or-nothing (nothing was written). */
 export interface FamilyRowsConflictError {
-  code: "FAMILY_ROWS_CONFLICT";
+  code: typeof API_ERROR_CODES.FAMILY_ROWS_CONFLICT;
   message: string;
   rows: FamilyRowConflict[];
 }
 
 /** 400 FAMILY_NOT_SELLABLE: a FAMILY container named on a sellable line. */
 export interface FamilyNotSellableError {
-  code: "FAMILY_NOT_SELLABLE";
+  code: typeof API_ERROR_CODES.FAMILY_NOT_SELLABLE;
   message: string;
   productIds: string[];
 }
