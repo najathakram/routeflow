@@ -4,8 +4,9 @@
  */
 import { startServer, PASSWORD, SESSION_SECRET } from "./helpers/start-server";
 import type { Harness } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const auth = (): any => require("../src/http/auth");
 const csrf = (): any => require("../src/http/csrf");

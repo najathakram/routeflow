@@ -34,6 +34,16 @@ export const TEXT_CELL_FIELD_LABELS: Readonly<Record<string, string>> = {
   tobaccoLicenseNo: "Tobacco license number",
   licenseNumber: "License number",
   buyerName: "Name",
+  productName: "Product name",
+  variantName: "Variant name",
+  // B983: category / subcategory names (regulated filings, invoices, exports)
+  category: "Category", // Product.category (free text, B990)
+  categoryName: "Category name",
+  subcategoryName: "Subcategory name",
+  // B984: a person's name (Customer / ContactPerson)
+  salutation: "Salutation",
+  firstName: "First name",
+  lastName: "Last name",
 };
 
 /** Readable text for the 400 (and for an import row's skip reason). */

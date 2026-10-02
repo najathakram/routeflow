@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export function useProducts(
   params?: {
@@ -64,9 +65,10 @@ function invalidateProductSet(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["inventory"] });
 }
 
-export function useCreateProduct() {
+export function useCreateProduct(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/products", data).then((r) => r.data),
     onSuccess: () => invalidateProductSet(qc),
@@ -286,7 +288,7 @@ export interface BulkAssignParentResult {
   failed: Array<{ id: string; reason: string }>;
 }
 
-export function useBulkAssignParent() {
+export function useBulkAssignParent(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     BulkAssignParentResult,
@@ -296,6 +298,7 @@ export function useBulkAssignParent() {
       assignments: Array<{ id: string; variantName: string }>;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ parentProductId, assignments }) =>
       apiClient
         .post("/products/bulk-assign-parent", { parentProductId, assignments })

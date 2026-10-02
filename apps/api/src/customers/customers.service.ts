@@ -61,7 +61,11 @@ import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
 import { customerUpdateData } from "./customer-update-data";
 import { assertSafeCustomerNames } from "./customer-name-guard";
-import { assertSafeAddress, assertSafeLicense } from "../common/text-cell-guards";
+import {
+  assertSafeAddress,
+  assertSafeLicense,
+  assertSafePersonName,
+} from "../common/text-cell-guards";
 import { ChangeCustomerStatusDto } from "./dto/change-customer-status.dto";
 import { CreateAddressDto } from "./dto/create-address.dto";
 import { UpdateAddressDto } from "./dto/update-address.dto";
@@ -533,6 +537,7 @@ export class CustomersService {
 
   async create(dto: CreateCustomerDto) {
     assertSafeCustomerNames(dto); // B956: refuse a formula-led name before any read or write
+    assertSafePersonName(dto); // B984: salutation / first / last name, same rule
     for (const addr of dto.addresses ?? []) assertSafeAddress(addr); // B964: every address row, before any read or write
     // Soft-cap gate: only ever blocks a BRAND-NEW create, and only once a prior
     // over-cap grace window has expired. Never blocks anything else.
@@ -796,6 +801,7 @@ export class CustomersService {
       throw new ConflictException("Restore the customer first");
     }
     assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
+    assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
     assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
     return this.prisma.forTenant().customer.update({
       where: { id },
@@ -1466,7 +1472,7 @@ export class CustomersService {
     } catch (e) {
       if (e instanceof LockTimeoutError) {
         throw new ConflictException({
-          code: "WALLET_LOCK_BUSY",
+          code: API_ERROR_CODES.WALLET_LOCK_BUSY,
           message:
             "Another payment against this customer's wallet is in progress. Try again in a moment.",
         });
@@ -1599,6 +1605,7 @@ export class CustomersService {
     },
   ) {
     await this.findCustomerOrThrow(customerId);
+    assertSafePersonName(dto); // B984: refuse a formula-led name before any write
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {
         await tx.contactPerson.updateMany({
@@ -1639,6 +1646,7 @@ export class CustomersService {
       where: { id: contactId, customerId },
     });
     if (!existing) throw new NotFoundException("Contact person not found");
+    assertSafePersonName(dto, existing); // B984: only a CHANGED name is checked
 
     return this.prisma.tenantTransaction(async (tx) => {
       if (dto.isPrimary) {

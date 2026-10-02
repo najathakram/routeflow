@@ -37,6 +37,7 @@ import { addCycle, Cycle } from "./billing-math";
 import { BillingNotificationService } from "./billing-notification.service";
 import { PlanTransitionConfigService } from "./plan-transition-config.service";
 import { CUSTOM_FEE_UNCHANGED, priceOverrideOf } from "./price-override";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface SubscribeInput {
   planKey: string;
@@ -327,7 +328,7 @@ export class SubscriptionMutationService {
       // normalized by resolveFromPlanKey, so a legacy alias never reads as a change.
       if (lockedFromKey !== fromKey) {
         throw new ConflictException({
-          code: "PLAN_CHANGED_DURING_SUBSCRIBE",
+          code: API_ERROR_CODES.PLAN_CHANGED_DURING_SUBSCRIBE,
           retryable: true,
           message: "Your plan changed while this was being processed — please try again.",
         });

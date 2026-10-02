@@ -7,8 +7,9 @@
 import cp = require("child_process");
 import { startServer } from "./helpers/start-server";
 import type { Harness, Session } from "./helpers/start-server";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const V: any = require("../src/domain/validate");
 const F: any = require("../src/domain/fold");

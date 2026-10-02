@@ -209,6 +209,98 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     expect(res.skipped).toBe(0);
   });
 
+  describe("person names (B984)", () => {
+    it("a formula-led Salutation is refused as 'Salutation' for a NEW customer: nothing is written", async () => {
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,Salutation\nBad Co,=HYPERLINK(1)\n"),
+        "user-1",
+      );
+      expect(res.created).toBe(0);
+      expect(res.skipped).toBe(1);
+      expect(
+        res.errors.some((e: string) =>
+          e.endsWith("Salutation can't start with =, +, -, @ or a tab/line break"),
+        ),
+      ).toBe(true);
+      expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+    });
+
+    // The row's contact name is DERIVED from first + last, so B956's name guard already refuses a bad first/last name for a new
+    // customer (with its own wording); the pin here is that the ROW is refused and nothing is written.
+    it.each(["First Name", "Last Name"])(
+      "a formula-led %s refuses the row for a NEW customer: nothing is written",
+      async (column) => {
+        const res = await service.importContacts(
+          Buffer.from(`Customer Name,${column}\nBad Co,=HYPERLINK(1)\n`),
+          "user-1",
+        );
+        expect(res.created).toBe(0);
+        expect(res.skipped).toBe(1);
+        expect(res.errors.some((e: string) => /start with/.test(e))).toBe(true);
+        expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a good row alongside a bad one still imports (row-level rejection)", async () => {
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,First Name\nBad Co,@cmd\nGood Co,Jo\n"),
+        "user-1",
+      );
+      expect(res.created).toBe(1);
+      expect(res.skipped).toBe(1);
+    });
+
+    it("change-only: an existing customer whose stored firstName is formula-led and that already has a contact is NOT refused for echoing it", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          ...existingCustomer([]),
+          contactName: "=LEGACY",
+          firstName: "=LEGACY",
+          contactPersons: [{ id: "cp-1" }],
+        },
+      ]);
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,First Name\nAcme,=LEGACY\n"),
+        "user-1",
+      );
+      expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+      expect(res.skipped).toBe(0);
+    });
+
+    it("B984 (Opus): an existing customer with NO contact is checked ONLY when a contact will be created: a legacy salutation echo without a first/last name is not refused", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        { ...existingCustomer([]), salutation: "=LEGACY", contactPersons: [] },
+      ]);
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,Salutation\nAcme,=LEGACY\n"),
+        "user-1",
+      );
+      expect(res.errors.filter((e: string) => /can't start with/.test(e))).toEqual([]);
+      expect(res.skipped).toBe(0);
+    });
+
+    it("an existing customer with NO contact would get the CSV name written into a NEW ContactPerson: refused even if the customer's own copy matches", async () => {
+      prisma.customer.findMany.mockResolvedValue([
+        {
+          ...existingCustomer([]),
+          contactName: "=LEGACY",
+          firstName: "=LEGACY",
+          contactPersons: [],
+        },
+      ]);
+      const res = await service.importContacts(
+        Buffer.from("Customer Name,First Name\nAcme,=LEGACY\n"),
+        "user-1",
+      );
+      expect(res.skipped).toBe(1);
+      expect(
+        res.errors.some((e: string) =>
+          e.endsWith("First name can't start with =, +, -, @ or a tab/line break"),
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("a formula-led Tobacco Licence No rejects the row with the readable label", async () => {
     const res = await service.importContacts(
       Buffer.from("Customer Name,Tobacco Licence No\nBad Co,=1+1\n"),
@@ -252,5 +344,32 @@ describe("ImportService — formula-led addresses and license numbers (B964-1)",
     );
     expect(res.errors.some((e: string) => e.endsWith(CITY_MSG))).toBe(true);
     expect(prisma.tenantTransaction).not.toHaveBeenCalled();
+  });
+
+  describe("importInventory (Zoho stock CSV): product names (B964-2)", () => {
+    it("rejects a NEW product whose name is formula-led (readable row error) and still creates the good one", async () => {
+      prisma.product.findFirst.mockResolvedValue(null);
+      prisma.product.create.mockResolvedValue({ id: "p-new" });
+      const res = await service.importInventory(
+        Buffer.from("Item Name,SKU,Closing Stock\n=HYPERLINK(1),,5\nCola,,5\n"),
+        "user-1",
+      );
+      expect(res.created).toBe(1);
+      expect(res.skipped).toBe(1);
+      expect(res.errors).toEqual([
+        "=HYPERLINK(1): Product name can't start with =, +, -, @ or a tab/line break",
+      ]);
+    });
+
+    it("an EXISTING product with a legacy formula-led name still gets its stock synced (only its stock is written)", async () => {
+      prisma.product.findFirst.mockResolvedValue({ id: "p-1", name: "=LEGACY", currentStock: 1 });
+      prisma.product.update.mockResolvedValue({ id: "p-1" });
+      const res = await service.importInventory(
+        Buffer.from("Item Name,SKU,Closing Stock\n=LEGACY,,9\n"),
+        "user-1",
+      );
+      expect(res.errors).toEqual([]);
+      expect(res.updated).toBe(1);
+    });
   });
 });

@@ -828,32 +828,59 @@ describe("SA-606i: the family price is REQUIRED on create (no implicit $0.00), H
     );
   });
 
-  it("copyFamilyPrice WITHOUT a family price is the same 400 and NOTHING is written", async () => {
+  it("copyFamilyPrice WITHOUT a family price is a CODED 400 FAMILY_COPY_PRICE_REQUIRED and NOTHING is written", async () => {
     const h = build();
-    await expect(
-      h.service.createFamily(
-        { family: info(), variants: oneVariant, copyFamilyPrice: true } as never,
-        ACTOR,
-      ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const err = await h.service
+      .createFamily({ family: info(), variants: oneVariant, copyFamilyPrice: true } as never, ACTOR)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({ code: "FAMILY_COPY_PRICE_REQUIRED" });
+    expect(String(err.getResponse().message)).toMatch(/family price/i);
     expect(h.tx.products).toHaveLength(0);
     expect(h.tx.calls).not.toContain("product.create");
   });
 
-  it('an explicit "0.00" is allowed (a deliberate free family), with and without copyFamilyPrice', async () => {
+  it('copyFamilyPrice with an explicit "0" / "0.00" / "0.004" is the same coded 400, nothing written', async () => {
+    for (const price of ["0", "0.00", "0.004"]) {
+      const h = build();
+      const err = await h.service
+        .createFamily(
+          {
+            family: info({ pricePerUnit: price }),
+            variants: oneVariant,
+            copyFamilyPrice: true,
+          } as never,
+          ACTOR,
+        )
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "FAMILY_COPY_PRICE_REQUIRED" });
+      expect(h.tx.products).toHaveLength(0);
+    }
+  });
+
+  it("copyFamilyPrice with a price > 0 copies it to every variant, rounded via roundMoney", async () => {
+    const h = build();
+    await h.service.createFamily(
+      {
+        family: info({ pricePerUnit: "9.995" }),
+        variants: oneVariant,
+        copyFamilyPrice: true,
+      } as never,
+      ACTOR,
+    );
+    expect(
+      h.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT"),
+    ).toMatchObject({ pricePerUnit: "10.00" });
+  });
+
+  it('an explicit "0.00" is still allowed WITHOUT copyFamilyPrice (a deliberate free family)', async () => {
     const plain = { family: info({ pricePerUnit: "0.00" }), variants: oneVariant };
     expect(await errs(plain)).toEqual([]);
     const a = build();
     await a.service.createFamily(plain as never, ACTOR);
     expect(
       a.tx.products.find((p) => (p as Record<string, unknown>).kind === "FAMILY"),
-    ).toMatchObject({
-      pricePerUnit: "0.00",
-    });
-    const b = build();
-    await b.service.createFamily({ ...plain, copyFamilyPrice: true } as never, ACTOR);
-    expect(
-      b.tx.products.find((p) => (p as Record<string, unknown>).kind === "VARIANT"),
     ).toMatchObject({ pricePerUnit: "0.00" });
   });
 
@@ -866,5 +893,70 @@ describe("SA-606i: the family price is REQUIRED on create (no implicit $0.00), H
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
     }
+  });
+});
+
+const FORMULA_CODE = "TEXT_CELL_FORMULA_LEAD";
+const codeOf = async (p: Promise<unknown>) => {
+  const err = await p.catch((e) => e);
+  expect(err).toBeInstanceOf(BadRequestException);
+  return ((err as BadRequestException).getResponse() as Record<string, unknown>).code;
+};
+
+describe("B964-2 (merged with master): a formula-led family / variant name is refused before any write (CHANGE-ONLY)", () => {
+  it("createFamily refuses a formula-led family name and a formula-led variant name with TEXT_CELL_FORMULA_LEAD; nothing is created", async () => {
+    for (const body of [
+      { family: { pricePerUnit: "1.00", name: "=SUM(A1)" }, variants: [variant("Cola")] },
+      { family: { pricePerUnit: "1.00", name: "Soda" }, variants: [variant("+cmd|' /C calc'!A0")] },
+    ]) {
+      const { service, tx, audit } = build();
+      expect(await codeOf(service.createFamily(body as never, ACTOR))).toBe(FORMULA_CODE);
+      expect(tx.products).toHaveLength(0);
+      expect(audit.log).not.toHaveBeenCalled();
+    }
+  });
+
+  const fam = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+  const legacy = {
+    ...product({ id: "k1", name: "=LEGACY()" }),
+    variantName: "=LEGACY()",
+    kind: "VARIANT",
+    parentProductId: "fam",
+  } as never;
+
+  it("updateVariants refuses an ADDED formula-led variant (TEXT_CELL_FORMULA_LEAD); nothing is written", async () => {
+    const added = build({ products: [fam, legacy] });
+    expect(
+      await codeOf(
+        added.service.updateVariants("fam", { add: [variant("@HYPERLINK(1)")] as never }, ACTOR),
+      ),
+    ).toBe(FORMULA_CODE);
+  });
+
+  it("updateVariants refuses a RENAME to a formula-led name (TEXT_CELL_FORMULA_LEAD) and writes nothing", async () => {
+    const renamed = build({ products: [fam, legacy] });
+    expect(
+      await codeOf(
+        renamed.service.updateVariants(
+          "fam",
+          { update: [{ id: "k1", name: "-2+3" }] as never },
+          ACTOR,
+        ),
+      ),
+    ).toBe(FORMULA_CODE);
+    expect(renamed.tx.products.find((p) => p.id === "k1")!.name).toBe("=LEGACY()");
+  });
+
+  it("an UNCHANGED legacy formula name sent along with a sku edit is NOT refused (change-only): the sku is written, the name is kept", async () => {
+    const same = build({ products: [fam, legacy] });
+    await same.service.updateVariants(
+      "fam",
+      { update: [{ id: "k1", name: "=LEGACY()", sku: "NEW-SKU" }] as never },
+      ACTOR,
+    );
+    expect(same.tx.products.find((p) => p.id === "k1")).toMatchObject({
+      name: "=LEGACY()",
+      sku: "NEW-SKU",
+    });
   });
 });

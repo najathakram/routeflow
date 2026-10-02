@@ -21,6 +21,17 @@ export const SAFE_TEXT_FIELD_LABELS: Record<string, string> = {
   tobaccoLicenseNo: "Tobacco license number",
   licenseNumber: "License number",
   buyerName: "Name",
+  // B964-2: product names
+  productName: "Product name",
+  variantName: "Variant name",
+  // B983: category / subcategory names
+  category: "Category", // Product.category (free text, B990)
+  categoryName: "Category name",
+  subcategoryName: "Subcategory name",
+  // B984: a person's name (customer / contact person)
+  salutation: "Salutation",
+  firstName: "First name",
+  lastName: "Last name",
 };
 
 const UNKNOWN_FIELD_LABEL = "This field";

@@ -7,6 +7,7 @@
  */
 import * as path from "path";
 import { makeWorld, git, jl, NOW, STATE_BRANCH, World } from "./helpers/temp-repo";
+import { scaled } from "./helpers/platform";
 
 const FD = require("../src/domain/fold");
 const VAL = require("../src/domain/validate");
@@ -352,37 +353,41 @@ describe("B2 a realistic mixed 2 MB history compacts to a small tip and resumes 
     expect(events.length).toBeGreaterThan(15_000);
   });
 
-  it("compacted tip <= 512 KB; foldDir (resume path) == fold(all); a later append continues the seq", async () => {
-    const { files, events } = bigMixed();
-    world.seedBranch(STATE_BRANCH, files);
-    const env = world.env("srv");
-    const expected = FD.fold({ tasks: [], releases: [] }, byLane(events), null, null, NOW);
-    await CP.compact(env);
-    const snap = JSON.parse(world.remoteFile("snapshot.json"));
-    expect(snap.v).toBe(2);
-    expect(snap.acc).toBeTruthy();
-    const shallow = world.shallowClone(STATE_BRANCH, "shallow");
-    let bytes = 0;
-    const walk = (d: string) => {
-      const fs = require("fs");
-      for (const n of fs.readdirSync(d)) {
-        if (n === ".git") continue;
-        const p = path.join(d, n);
-        fs.statSync(p).isDirectory() ? walk(p) : (bytes += fs.statSync(p).size);
-      }
-    };
-    walk(shallow);
-    expect(bytes / 1024).toBeLessThanOrEqual(512);
-    expect(SB.foldDir(shallow, { tasks: [], releases: [] }, NOW)).toEqual(expected);
-    const ev = await SB.appendAndPush(env, "lane-a", {
-      type: "lane.note",
-      by: "agent",
-      note: "after",
-    });
-    const lastA = events.filter((e) => e.lane === "lane-a").length;
-    expect(ev.seq).toBe(lastA + 1);
-    void git;
-  }, 120_000);
+  it(
+    "compacted tip <= 512 KB; foldDir (resume path) == fold(all); a later append continues the seq",
+    async () => {
+      const { files, events } = bigMixed();
+      world.seedBranch(STATE_BRANCH, files);
+      const env = world.env("srv");
+      const expected = FD.fold({ tasks: [], releases: [] }, byLane(events), null, null, NOW);
+      await CP.compact(env);
+      const snap = JSON.parse(world.remoteFile("snapshot.json"));
+      expect(snap.v).toBe(2);
+      expect(snap.acc).toBeTruthy();
+      const shallow = world.shallowClone(STATE_BRANCH, "shallow");
+      let bytes = 0;
+      const walk = (d: string) => {
+        const fs = require("fs");
+        for (const n of fs.readdirSync(d)) {
+          if (n === ".git") continue;
+          const p = path.join(d, n);
+          fs.statSync(p).isDirectory() ? walk(p) : (bytes += fs.statSync(p).size);
+        }
+      };
+      walk(shallow);
+      expect(bytes / 1024).toBeLessThanOrEqual(512);
+      expect(SB.foldDir(shallow, { tasks: [], releases: [] }, NOW)).toEqual(expected);
+      const ev = await SB.appendAndPush(env, "lane-a", {
+        type: "lane.note",
+        by: "agent",
+        note: "after",
+      });
+      const lastA = events.filter((e) => e.lane === "lane-a").length;
+      expect(ev.seq).toBe(lastA + 1);
+      void git;
+    },
+    scaled(120_000),
+  );
 });
 
 describe("B3 validateEvents(files, ctx, resume)", () => {

@@ -193,7 +193,7 @@ export class VendorBillsService {
   private translateLinkRace(e: unknown, linking: boolean): unknown {
     if (linking && e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
       return new ConflictException({
-        code: "PO_LINK_CONFLICT",
+        code: API_ERROR_CODES.PO_LINK_CONFLICT,
         message:
           "Another bill or purchase order was created at the same moment — please try again.",
       });
@@ -826,7 +826,7 @@ export class VendorBillsService {
     }
     const billNumber = scan.vendorBill?.billNumber ?? null;
     throw new ConflictException({
-      code: "SCAN_ALREADY_POSTED",
+      code: API_ERROR_CODES.SCAN_ALREADY_POSTED,
       message: billNumber
         ? `This scan was already posted as bill ${billNumber}. Void that bill to post the scan again.`
         : "This scan was already posted. Refresh and check its bill before posting again.",
@@ -986,7 +986,7 @@ export class VendorBillsService {
         // Fail CLOSED: a link to a PO that no longer resolves can't be checked.
         if (!linkedPo) {
           throw new ConflictException({
-            code: "PO_LINK_BROKEN",
+            code: API_ERROR_CODES.PO_LINK_BROKEN,
             message: "The purchase order this bill is linked to could not be found.",
           });
         }
@@ -2066,7 +2066,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         throw new BadRequestException({
           message:
             "The Anthropic API key is invalid or expired. Go to Settings → AI & Integrations to update it.",
-          code: "AI_KEY_INVALID",
+          code: API_ERROR_CODES.AI_KEY_INVALID,
         });
       }
       // Non-transient 4xx (bad/oversized/corrupt image, malformed request) —
@@ -2076,12 +2076,12 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
         throw new BadRequestException({
           message:
             "The scanner couldn't process this file. Try a clearer photo or re-export as JPEG.",
-          code: "AI_SCAN_REJECTED",
+          code: API_ERROR_CODES.AI_SCAN_REJECTED,
         });
       }
       throw new ServiceUnavailableException({
         message: "The AI scanner is temporarily unavailable. Try again in a minute.",
-        code: "AI_UNAVAILABLE",
+        code: API_ERROR_CODES.AI_UNAVAILABLE,
       });
     }
     const scanDurationMs = Date.now() - startedAt;
@@ -2100,7 +2100,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
     if (content.type !== "text") {
       throw new UnprocessableEntityException({
         message: "The AI scanner returned an unexpected response. Try again.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
 
@@ -2120,7 +2120,7 @@ IMPORTANT: Always read the actual quantity from each line item. Do not default t
       this.logger.error(`scanInvoice: failed to parse AI response. Raw output:\n${content.text}`);
       throw new UnprocessableEntityException({
         message: "Couldn't read the scan result. Try again — a retry usually works.",
-        code: "AI_PARSE_FAILED",
+        code: API_ERROR_CODES.AI_PARSE_FAILED,
       });
     }
     // Disclose pages that were skipped (unreadable HEIC) in the result notes.

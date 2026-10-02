@@ -4,6 +4,7 @@ import * as React from "react";
 import { UnitPicker } from "@/components/UnitPicker";
 import { useProductUnits, useUnitsEnabled } from "@/lib/api/product-units";
 import { buildUnitOptions, defaultUnitValue, type UnitOption } from "@/lib/unit-options";
+import { isShapedLine } from "@/lib/default-unit-line";
 import { ladderProductOf, type PackBase } from "@/lib/order-line-unit";
 
 /** The line fields the picker reads (structurally satisfied by the order modal's line). */
@@ -76,13 +77,7 @@ export function OrderLineUnitPicker({
     startedRef.current = true; // one shot per mount: the operator's later choice is never re-overridden
     // Only a line whose price the operator has not shaped (Opus #2865 B1/r2). Qty is NOT a guard: on a boxed line it is total
     // pieces (a fresh 1-box line is 24); the modal clears the flag in every qty/price handler instead.
-    const shaped =
-      !!line.unitLabel ||
-      !!line.priceEdited ||
-      line.discountedPrice != null ||
-      line.priceType === "DISCOUNTED" ||
-      line.priceType === "MANUAL";
-    if (shaped || !units.data) return;
+    if (isShapedLine(line) || !units.data) return;
     const value = defaultUnitValue(product, units.data, tier);
     const option = value ? options.find((o) => o.value === value) : undefined;
     if (option) onChange(option, false);

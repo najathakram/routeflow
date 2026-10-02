@@ -5,6 +5,7 @@
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
+import { posixPath } from "./helpers/platform";
 
 function tryRequire(load: () => unknown): any {
   try {
@@ -27,7 +28,7 @@ const snapshot = (): Record<string, string> => {
       const p = path.join(d, n);
       if (fs.statSync(p).isDirectory()) walk(p);
       else
-        out[path.relative(FIX, p)] = crypto
+        out[posixPath(path.relative(FIX, p))] = crypto
           .createHash("sha256")
           .update(fs.readFileSync(p))
           .digest("hex");

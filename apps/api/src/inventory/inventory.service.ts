@@ -1,3 +1,5 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import { productNameViolation } from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -495,6 +497,23 @@ export class InventoryService {
   }
 
   async assignToVariants(dto: VariantAssignDto, performedById: string) {
+    // B964-2: a NEW variant's name becomes Product.name / variantName: refuse a formula-led one with a coded 400 that names the
+    // row, before any lock, transaction or write.
+    dto.assignments.forEach((a, index) => {
+      const violation = a.newVariant
+        ? productNameViolation({ variantName: a.newVariant.name })
+        : null;
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const restockedProductIds: string[] = [];
     const familyMode = await readFamilyPriceMode(this.featureConfig, this.prisma.getTenantId());
 
@@ -558,7 +577,7 @@ export class InventoryService {
           // assignments of the same generic safe. Never hoist this check out.
           if (totalQty > Number(parent.currentStock)) {
             throw new BadRequestException({
-              code: "INSUFFICIENT_UNASSIGNED",
+              code: API_ERROR_CODES.INSUFFICIENT_UNASSIGNED,
               message: `Only ${parent.currentStock} unassigned in stock; tried to assign ${totalQty}`,
             });
           }
@@ -1637,7 +1656,7 @@ export class InventoryService {
     const consumedLots = lots.filter((l) => new Prisma.Decimal(l.remainingQty).lt(l.qty));
     if (consumedLots.length > 0) {
       throw new ConflictException({
-        code: "PO_LOT_PARTIALLY_CONSUMED",
+        code: API_ERROR_CODES.PO_LOT_PARTIALLY_CONSUMED,
         message:
           `Part of what was received on ${po.poNumber} has already been sold or used (FIFO/LIFO lot ` +
           "partially consumed), so its inventory can't be re-applied — that would invent stock. " +
@@ -1825,7 +1844,7 @@ export class InventoryService {
         });
         if (liveBill) {
           throw new ConflictException({
-            code: "PO_HAS_LINKED_BILL",
+            code: API_ERROR_CODES.PO_HAS_LINKED_BILL,
             message:
               `${po.poNumber} has already been billed (${liveBill.billNumber}), so its lines and supplier ` +
               "are locked — the bill was checked against them. Void the bill to change them, or edit " +
@@ -2890,7 +2909,7 @@ export class InventoryService {
         // UNLINKED_ITEMS/DUPLICATE_VENDOR_BILL structured-conflict shape used
         // elsewhere in this codebase.
         throw new ConflictException({
-          code: "INVENTORY_LEDGER_GAP",
+          code: API_ERROR_CODES.INVENTORY_LEDGER_GAP,
           message:
             `"${product.name}" can't be updated right now — its stock records don't fully ` +
             "explain the quantity currently on hand (this usually happens after past sales). " +

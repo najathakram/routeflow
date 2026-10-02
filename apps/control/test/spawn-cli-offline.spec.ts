@@ -10,8 +10,9 @@ import * as path from "path";
 import { cliChildEnv, runCli } from "./helpers/spawn-cli";
 import { makeWorld } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(60_000);
+jest.setTimeout(scaled(60_000));
 
 // built from parts so this file (scanned by the client-data guard) holds no literal address
 const AT = "@";

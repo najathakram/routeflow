@@ -96,6 +96,7 @@ import { withDeliveredSoFar } from "./run-delivered-so-far";
 import { DeletedEvidenceRow, deliveredQtyRecompute } from "./delivered-so-far";
 import { withPayableInvoicesFlat } from "./run-projections";
 import { withRunStopProjections, withRunStopProjectionsForRunsPage } from "./run-projections";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 export {
   NON_ROUTABLE_ORDER_STATUSES,
   RELEASED_CHANGE_REQUEST_REASON,
@@ -1867,7 +1868,7 @@ export class RoutesService {
       // flip instead of dead-ending on the settlement screen.
       if (run.settlementNote != null) {
         throw new BadRequestException({
-          code: "RUN_ALREADY_SETTLED",
+          code: API_ERROR_CODES.RUN_ALREADY_SETTLED,
           message: "This run has already been settled. Ask an operator to amend it.",
         });
       }

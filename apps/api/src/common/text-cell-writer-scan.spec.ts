@@ -23,11 +23,31 @@ import { join } from "node:path";
 
 /** model accessor -> the guarded fields written under it. Extend for B964 (addresses, licenses…). */
 const GUARDED: Record<string, readonly string[]> = {
-  customer: ["businessName", "contactName", "displayName", "tobaccoLicenseNo"],
+  customer: [
+    "businessName",
+    "contactName",
+    "displayName",
+    "tobaccoLicenseNo",
+    // B984: the Customer's own copy of the person name
+    "salutation",
+    "firstName",
+    "lastName",
+  ],
+  // B984: a contact person's name (printed on statements, route sheets, exports). Email / phone / mobile are not guarded.
+  contactPerson: ["salutation", "firstName", "lastName"],
   // B964-1: addresses (printed on documents, route sheets, the tobacco filing header), license numbers, buyer names.
   customerAddress: ["label", "line1", "line2", "city", "state", "zip"],
   customerAuthorization: ["licenseNumber"],
   buyerAccount: ["name"],
+  // B964-2: product names (invoices, order sheets, exports, regulated filings). #2881's family create/update writes the same
+  // columns: it fails this scan until it calls the guard.
+  // B990: the free-text Product.category too (printed on exports, buyer facets, filings).
+  product: ["name", "variantName", "category"],
+  // B983: category / subcategory names (regulated filings, invoices, exports). ProductCategory's rename writes through a variable
+  // `data` + updateMany (a scan blind spot): product-categories.name-guards.spec.ts pins that write.
+  productCategory: ["name"],
+  trackedCategory: ["name"],
+  trackedSubcategory: ["name"],
   // The tenant name is mirrored into a Customer row (tenant-mirror) and printed on buyer documents.
   tenant: ["name"],
   // Printed on buyer documents and on the tobacco filing header.
@@ -48,11 +68,24 @@ const GUARD_CALLS = [
   "assertSafeBuyerName",
   "safeBuyerDisplayName",
   "isFormulaLedText",
+  // B983
+  "assertSafeCategoryName",
+  "assertSafeSubcategoryName",
+  // B984
+  "assertSafePersonName",
+  "personNameViolation",
+  // B964-2
+  "assertSafeProductNames",
+  "productNameViolation",
+  // B990
+  "assertSafeProductCategory",
+  "productCategoryViolation",
 ];
 
 /** file (relative to src/) -> why an unguarded write of the fields there is safe. */
 const EXEMPT: Record<string, string> = {
-  // (none): B964-1 closed the tenant-mirror's admin-username path (it falls back to the guarded tenant name), so it calls the guard.
+  // (B964-1 closed the tenant-mirror's admin-username path: it falls back to the guarded tenant name, so it calls the guard.)
+  // (B983: tracked-categories.service now calls the guard itself, so its old exemption is gone.)
 };
 
 const SRC = join(__dirname, "..");
@@ -86,7 +119,15 @@ function writers(): { file: string; hit: string }[] {
       for (let m = call.exec(text); m; m = call.exec(text)) {
         const body = callBody(text, m.index + m[0].length - 1);
         const field = fields.find((f) => new RegExp(`\\b${f}\\b`).test(body));
-        if (field) found.push({ file: path.slice(SRC.length + 1), hit: `${model}.${field}` });
+        if (field)
+          // `/`-separated whatever the OS (the EXEMPT keys and the expectations below are)
+          found.push({
+            file: path
+              .slice(SRC.length + 1)
+              .split("\\")
+              .join("/"),
+            hit: `${model}.${field}`,
+          });
       }
     }
   }
@@ -143,6 +184,18 @@ describe("text-cell writer scan (B956)", () => {
       hit: "customerAddress.label",
     });
     expect(hits).toContainEqual({ file: "buyer/buyer-auth.service.ts", hit: "buyerAccount.name" });
+  });
+
+  it("B964-2: the product-name writers are found and guarded (a NEW unguarded writer, e.g. #2881's family create, turns the scan red)", () => {
+    const files = new Set(hits.map((h) => h.file));
+    for (const f of [
+      "products/products.service.ts",
+      "import/import.service.ts",
+      "inventory/inventory.service.ts",
+    ]) {
+      expect(files).toContain(f);
+    }
+    expect(hits).toContainEqual({ file: "products/products.service.ts", hit: "product.name" });
   });
 
   it("every EXEMPT entry still names a real writer (no stale exemptions)", () => {

@@ -27,6 +27,7 @@ import {
   type ProductFacts,
   type RestrictionRuleFacts,
 } from "./selling-restrictions.core";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 export interface EvaluateLine {
   productId: string;
@@ -41,7 +42,7 @@ export const SELLING_RESTRICTIONS_ENABLED_VALUE = "true";
 export const SELLING_RESTRICTIONS_DISABLED_VALUE = "false";
 
 /** `ConflictException` code `assertReadyToEnable` throws while the tenant's data is not ready. */
-export const SELLING_RESTRICTIONS_NOT_READY = "SELLING_RESTRICTIONS_NOT_READY";
+export const SELLING_RESTRICTIONS_NOT_READY = API_ERROR_CODES.SELLING_RESTRICTIONS_NOT_READY;
 
 /** Customers the enable-readiness probe reads per query (keeps a large tenant off one giant read). */
 export const ENABLE_READINESS_PAGE_SIZE = 500;
@@ -429,7 +430,7 @@ export class SellingRestrictionsService {
     // Same value the evaluation was judged on; only the literal "STAFF" is trusted with the detail.
     if (params.channel === "STAFF") {
       const body: SellingRestrictedError = {
-        code: "SELLING_RESTRICTED",
+        code: API_ERROR_CODES.SELLING_RESTRICTED,
         message: restrictedSummary(evaluation.reasons),
         blockedLines: evaluation.reasons,
       };
@@ -443,7 +444,7 @@ export class SellingRestrictionsService {
       blockedLines.push({ productId: r.productId, productName: r.productName });
     }
     const body: BuyerSellingRestrictedError = {
-      code: "SELLING_RESTRICTED",
+      code: API_ERROR_CODES.SELLING_RESTRICTED,
       message: buyerRestrictedSummary(blockedLines),
       blockedLines,
     };
@@ -459,7 +460,7 @@ export class SellingRestrictionsService {
 export function hiddenFromPortalRestriction(blockedLines: BuyerBlockedLine[]): ConflictException {
   const names = blockedLines.slice(0, 3).map((l) => `"${l.productName}"`);
   const body: BuyerSellingRestrictedError = {
-    code: "SELLING_RESTRICTED",
+    code: API_ERROR_CODES.SELLING_RESTRICTED,
     message:
       blockedLines.length === 1
         ? `${names[0]} isn't available for online ordering.`

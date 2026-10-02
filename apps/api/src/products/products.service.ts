@@ -1,3 +1,10 @@
+import { API_ERROR_CODES } from "../common/api-error-codes";
+import {
+  assertSafeProductCategory,
+  assertSafeProductNames,
+  productCategoryViolation,
+  productNameViolation,
+} from "../common/text-cell-guards";
 import {
   BadRequestException,
   ConflictException,
@@ -658,6 +665,10 @@ export class ProductsService {
     dto: CreateProductDto,
     options?: { suppressEmit?: boolean; actorId?: string | null },
   ) {
+    assertSafeProductNames(dto); // B964-2: a formula-led name/variantName is refused before any read or write
+    // B990: the typed free-text category too, UNCONDITIONALLY: even with a structured subcategory chosen or a parent without one
+    // the written value can still be the typed text, and checking at the top is before any read or write.
+    if (dto.category !== undefined) assertSafeProductCategory(dto.category);
     await this.assertCanFlagTobacco(dto.isTobacco);
     if (dto.msrp !== undefined) await this.assertMsrpAllowed();
     if (dto.reorderPoint !== undefined || dto.reorderQty !== undefined) {
@@ -912,6 +923,10 @@ export class ProductsService {
         "deactivateHolderIds only applies when reactivating an inactive product",
       );
     }
+    assertSafeProductNames(dto, existing); // B964-2: change-only against the one read already made
+    // B990: change-only for the free-text category, BEFORE resolveOrCreateTobaccoCategory below, so a refusal never leaves an orphan Tobacco type
+    if (dto.category !== undefined)
+      assertSafeProductCategory(dto.category, existing.category ?? null);
     // #2533: a PATCH may only reorder/drop this product's own images (400 before any write).
     if (dto.imageKeys !== undefined) assertImageKeysReorder(id, existing.imageKeys, dto.imageKeys);
     // The product's effective parent is the dto value if provided (could be null to promote a
@@ -1414,6 +1429,22 @@ export class ProductsService {
     if (parent.parentProductId) {
       throw new BadRequestException("Parent must be a standalone product, not a variant");
     }
+    // B964-2: validate EVERY assignment before the first write: one formula-led variant name rejects the WHOLE request with a coded 400
+    // that names the row (index + product id), never a half-applied batch.
+    dto.assignments.forEach((assignment, index) => {
+      const violation = productNameViolation({ variantName: assignment.variantName });
+      if (violation) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: API_ERROR_CODES.TEXT_CELL_FORMULA_LEAD,
+          field: "variantName",
+          index,
+          productId: assignment.id,
+          message: violation,
+          error: "Bad Request",
+        });
+      }
+    });
     const succeeded: string[] = [];
     const failed: { id: string; reason: string }[] = [];
     for (const assignment of dto.assignments) {
@@ -1717,6 +1748,15 @@ export class ProductsService {
             skipped++;
             continue;
           }
+        }
+
+        // B964-2: a formula-led NEW name rejects THIS row (readable reason); the rest of the batch still imports. Checked only
+        // once the row would actually be created (change-only): a name that matches a stored product is a plain skip above.
+        const nameViolation =
+          productNameViolation({ name: item.name }) ?? productCategoryViolation(item.category);
+        if (nameViolation) {
+          errors.push({ row: rowNum, name: item.name, reason: nameViolation });
+          continue;
         }
 
         // B562 follow-up: an opening balance written straight onto

@@ -5,8 +5,9 @@
 import { makeWorld, baseState, jl } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { runCli, bytes, lineCount } from "./helpers/spawn-cli";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 let world: World;
 afterEach(() => world.cleanup());

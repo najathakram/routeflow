@@ -1,5 +1,6 @@
 "use client";
 
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -560,7 +561,10 @@ export default function ProductDetailPage() {
         onError: (e: any) =>
           toast({
             title: "Failed to save product",
-            description: String(e?.response?.data?.message ?? "Check the fields and try again."),
+            // B964-2: a refused formula-led product / variant name is fixed copy with its label, never the server text
+            description:
+              safeTextErrorCopy(e) ??
+              String(e?.response?.data?.message ?? "Check the fields and try again."),
             variant: "error",
           }),
       },

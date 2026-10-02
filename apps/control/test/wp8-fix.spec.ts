@@ -7,8 +7,10 @@ import * as path from "path";
 import { makeWorld, baseState, git, jl } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { runCli, makeWorkRepo, bytes, lineCount } from "./helpers/spawn-cli";
+import { IS_WIN, scaled } from "./helpers/platform";
+import { installWinFailGit } from "./helpers/win-git-shim";
 
-jest.setTimeout(90_000);
+jest.setTimeout(scaled(90_000));
 
 let world: World;
 afterEach(() => world.cleanup());
@@ -303,7 +305,9 @@ describe("next --hook", () => {
     const ms = Date.now() - t0;
     fs.renameSync(world.originDir + ".gone", world.originDir);
     expect(r.code).toBe(0);
-    expect(ms).toBeLessThan(2000);
+    // the hook budget is 2 s on POSIX; a Windows process start (node + git) alone costs about 1 s, so there
+    // the same "never waits on the network" proof gets 8 s (an unreachable origin would take 25 s+)
+    expect(ms).toBeLessThan(IS_WIN ? 8000 : 2000);
     expect(r.stdout).toMatch(/lane lane-u/);
     expect(lineCount(r.stdout)).toBeLessThanOrEqual(30);
   });
@@ -330,13 +334,19 @@ describe("git stderr credential scrub", () => {
   it("an error carrying https://user:tok@host/x prints <redacted> and no token", async () => {
     // a stub git that fails with a credentialed URL in stderr (real git strips userinfo itself)
     const bin = fs.mkdtempSync(path.join(world.root, "stubgit-"));
-    fs.writeFileSync(
-      path.join(bin, "git"),
-      "#!/bin/sh\necho 'fatal: unable to access https://user:tok@host/x' >&2\nexit 1\n",
-      { mode: 0o755 },
-    );
+    let shimEnv: Record<string, string> = {};
+    if (IS_WIN) {
+      // Windows cannot run an extensionless sh script as `git`: the exe twin fails every call alike
+      shimEnv = installWinFailGit(bin, "*", "fatal: unable to access https://user:tok@host/x");
+    } else {
+      fs.writeFileSync(
+        path.join(bin, "git"),
+        "#!/bin/sh\necho 'fatal: unable to access https://user:tok@host/x' >&2\nexit 1\n",
+        { mode: 0o755 },
+      );
+    }
     const r = await runCli(world, ["note", "hello"], {
-      env: { PATH: `${bin}${path.delimiter}${process.env.PATH}` },
+      env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, ...shimEnv },
     });
     expect(r.code).not.toBe(0);
     expect(r.stderr).not.toMatch(/tok/);

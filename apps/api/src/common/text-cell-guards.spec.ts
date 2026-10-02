@@ -1,6 +1,10 @@
 /** B964-1: the address / license / buyer-name wrappers over the one B956 guard, and the OAuth display-name neutraliser. */
 import { BadRequestException } from "@nestjs/common";
 import {
+  productNameViolation,
+  assertSafePersonName,
+  personNameViolation,
+  assertSafeProductNames,
   addressViolation,
   assertSafeAddress,
   assertSafeBuyerName,
@@ -21,6 +25,14 @@ describe("TEXT_CELL_FIELD_LABELS: the readable 400 text names the field by a hum
     ["tobaccoLicenseNo", "Tobacco license number"],
     ["licenseNumber", "License number"],
     ["buyerName", "Name"],
+    ["category", "Category"],
+    ["categoryName", "Category name"],
+    ["subcategoryName", "Subcategory name"],
+    ["salutation", "Salutation"],
+    ["firstName", "First name"],
+    ["lastName", "Last name"],
+    ["productName", "Product name"],
+    ["variantName", "Variant name"],
   ])("%s -> %s", (field, label) => {
     expect(TEXT_CELL_FIELD_LABELS[field]).toBe(label);
     expect(formulaLeadMessage(field)).toBe(
@@ -132,5 +144,77 @@ describe("safeBuyerDisplayName (OAuth: never block a sign-in, neutralise the nam
   it("an empty / missing provider name also falls back (local-part, then 'Customer')", () => {
     expect(safeBuyerDisplayName("", "sam@example.com")).toBe("sam");
     expect(safeBuyerDisplayName(null, null)).toBe("Customer");
+  });
+});
+
+describe("assertSafeProductNames (B964-2)", () => {
+  it.each([
+    ["name", "productName"],
+    ["variantName", "variantName"],
+  ] as const)("refuses a formula-led %s as field %s", (key, field) => {
+    let err: BadRequestException | undefined;
+    try {
+      assertSafeProductNames({ [key]: "=HYPERLINK(1)" });
+    } catch (e) {
+      err = e as BadRequestException;
+    }
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err?.getResponse()).toMatchObject({ code: "TEXT_CELL_FORMULA_LEAD", field });
+  });
+
+  it("accepts ordinary product names, including '=' / '@' / '-' / '+' INSIDE the text and numeric-only", () => {
+    for (const name of ["Coke - 12oz", "A=B Foods", "Foods@home", "7-Up", "-12"]) {
+      expect(() => assertSafeProductNames({ name, variantName: name })).not.toThrow();
+    }
+  });
+
+  it("refuses a leading + or = even on a plausible product ('+1 Energy', '=Value Pack')", () => {
+    expect(() => assertSafeProductNames({ name: "+1 Energy" })).toThrow(BadRequestException);
+    expect(() => assertSafeProductNames({ name: "=Value Pack" })).toThrow(BadRequestException);
+  });
+
+  it("is change-only: a LEGACY formula-led stored name echoed back never blocks; a changed one does", () => {
+    expect(() => assertSafeProductNames({ name: "=OLD" }, { name: "=OLD" })).not.toThrow();
+    expect(() => assertSafeProductNames({ name: "=NEW" }, { name: "=OLD" })).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it("productNameViolation is the non-throwing readable text for importers, or null", () => {
+    expect(productNameViolation({ name: "-2+3" })).toBe(
+      "Product name can't start with =, +, -, @ or a tab/line break",
+    );
+    expect(productNameViolation({ name: "Cola" })).toBeNull();
+  });
+});
+
+describe("person-name guard (B984)", () => {
+  it.each(["salutation", "firstName", "lastName"] as const)(
+    "refuses a formula-led %s with a labelled 400",
+    (field) => {
+      const err: any = (() => {
+        try {
+          assertSafePersonName({ [field]: "=HYPERLINK(1)" });
+        } catch (e) {
+          return e;
+        }
+      })();
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.getResponse()).toMatchObject({ code: "TEXT_CELL_FORMULA_LEAD", field });
+    },
+  );
+
+  it("is change-only, leaves email/phone alone, and has a non-throwing importer form", () => {
+    expect(() => assertSafePersonName({ lastName: "=OLD" }, { lastName: "=OLD" })).not.toThrow();
+    expect(() => assertSafePersonName({ lastName: "=NEW" }, { lastName: "=OLD" })).toThrow(
+      BadRequestException,
+    );
+    expect(() =>
+      assertSafePersonName({ firstName: "Jo", phone: "+1 555 0100" } as never),
+    ).not.toThrow();
+    expect(personNameViolation({ firstName: "@x" })).toBe(
+      "First name can't start with =, +, -, @ or a tab/line break",
+    );
+    expect(personNameViolation({ firstName: "Jo", lastName: "Lee" })).toBeNull();
   });
 });
