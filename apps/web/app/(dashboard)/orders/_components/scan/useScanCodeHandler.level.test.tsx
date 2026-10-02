@@ -60,23 +60,23 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
   it("R2 (SA-580b): a shared code (BOX and UNIT) -> the product default unit: 'BOX' at upb>1", async () => {
     const p = boxed({ scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } });
     const d = await scan("SH", p);
-    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX");
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX", { startOnDefaultUnit: true });
   });
 
   it("R2 (SA-580b): a shared code on an upb<=1 product -> 'UNIT' (the default unit, not BOX)", async () => {
     const p = boxed({ unitsPerBox: 1, scanMatch: { code: "SH", levels: ["UNIT", "BOX"] } });
     const d = await scan("SH", p);
-    expect(d.addLineItem).toHaveBeenCalledWith(p, "UNIT");
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "UNIT", { startOnDefaultUnit: true });
   });
 
-  it("SA-580c: a shared code on a units_v1 product (default-selling 'Piece') = the picker tap as-is -> 'BOX', NOT isDefaultSelling", async () => {
-    // Follow-up (owner ruling pending): picker tap AND scan honour isDefaultSelling together.
+  it("#2784 (supersedes SA-580c): a shared code on a units_v1 product (default-selling 'Piece') stays level 'BOX' and tells addLineItem the new line may start on the default unit", async () => {
+    // The picker tap AND the shared-code scan now honour isDefaultSelling together (OrderLineUnitPicker applies it).
     const p = boxed({
       units: [{ label: "Piece", isDefaultSelling: true }],
       scanMatch: { code: "SH", levels: ["UNIT", "BOX"] },
     });
     const d = await scan("SH", p);
-    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX");
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX", { startOnDefaultUnit: true });
   });
 
   it("web unitSku scan -> a piece (named behaviour change, SA-578 Q2): no scanMatch, code equals unitSku, upb>1 -> 'UNIT'", async () => {
@@ -85,11 +85,13 @@ describe("useScanCodeHandler — passes the scanned level (R1/R2)", () => {
     expect(d.addLineItem).toHaveBeenCalledWith(p, "UNIT");
   });
 
-  it("no scanMatch, code equals sku -> 'BOX'; equals barcode (shared with the synthesized UNIT row) -> 'BOX'", async () => {
+  it("no scanMatch, code equals sku -> 'BOX'; equals barcode (shared with the synthesized UNIT row) -> 'BOX' + the default-unit hint (#2784)", async () => {
     const p = boxed();
     expect((await scan("CHIPS-12", p)).addLineItem).toHaveBeenCalledWith(p, "BOX");
     jest.clearAllMocks();
-    expect((await scan("4005006000012", p)).addLineItem).toHaveBeenCalledWith(p, "BOX");
+    expect((await scan("4005006000012", p)).addLineItem).toHaveBeenCalledWith(p, "BOX", {
+      startOnDefaultUnit: true,
+    });
   });
 
   it("no scanMatch but cached row barcodes[]: a UNIT-only row code -> 'UNIT'", async () => {
@@ -141,5 +143,26 @@ describe("scanLevelForHit — scanMatch only speaks for the code that produced i
 
   it("a rescan of the same code (case-insensitive) keeps the server levels", () => {
     expect(scanLevelForHit("unit-u", snap("UNIT-U", ["UNIT"]))).toBe("UNIT");
+  });
+});
+
+describe("useScanCodeHandler: the substring first-row auto-add is a picker-style pick (SA-626a)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("an ambiguous multi-match (first row wins) starts the new line on the default unit, like a tap", async () => {
+    const p = boxed();
+    mockResolve.mockResolvedValue({
+      notFound: false,
+      archived: false,
+      product: p,
+      source: "search",
+      ambiguous: true,
+      matches: [p, boxed({ id: "p2" })],
+    });
+    const d = deps();
+    const { result } = renderHook(() => useScanCodeHandler(d));
+    result.current.current("CHIPS");
+    await waitFor(() => expect(d.addLineItem).toHaveBeenCalled());
+    expect(d.addLineItem).toHaveBeenCalledWith(p, "BOX", { startOnDefaultUnit: true });
   });
 });
