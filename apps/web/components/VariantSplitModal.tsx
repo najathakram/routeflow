@@ -12,6 +12,7 @@ import {
   type VariantAssignResult,
 } from "@/lib/api/variant-assign";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 /**
  * Move stock from a generic parent product to its variants — partial or
@@ -93,7 +94,7 @@ interface VariantSplitModalProps {
 export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantSplitModalProps) {
   const { toast } = useToast();
   const { data: parentDetail, isLoading: loadingVariants } = useProduct(parent.id);
-  const assignToVariants = useAssignToVariants();
+  const assignToVariants = useAssignToVariants({ localErrorToast: localToastForSafeTextRefusal });
 
   // ACTIVE children only. `GET /products/:id` includes deactivated variants
   // too (it only sorts `isActive desc`), and the server rejects an inactive
@@ -233,11 +234,9 @@ export function VariantSplitModal({ parent, pool, onClose, onSuccess }: VariantS
       });
       setResult(res);
     } catch (err: any) {
-      toast({
-        title: "Couldn't assign stock",
-        description: safeTextErrorCopy(err) ?? "Please try again.",
-        variant: "error",
-      });
+      // Only the formula-led refusal is ours; any other error already reached the global toast.
+      const copy = safeTextErrorCopy(err);
+      if (copy) toast({ title: "Couldn't assign stock", description: copy, variant: "error" });
     }
   };
 

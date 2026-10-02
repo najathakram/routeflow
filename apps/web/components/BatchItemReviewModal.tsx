@@ -15,6 +15,7 @@ import {
   type UpdateBatchItemLinePatch,
 } from "@/lib/api/batch-import";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 
 const fmt = (n: number | null | undefined) =>
   n != null
@@ -39,8 +40,8 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
   const { data: suppliersData } = useSuppliers();
   const suppliers = (suppliersData as { id: string; name: string }[] | undefined) ?? [];
 
-  const updateItem = useUpdateBatchItem({ localErrorToast: true });
-  const resolveItem = useResolveItem({ localErrorToast: true });
+  const updateItem = useUpdateBatchItem({ localErrorToast: localToastForSafeTextRefusal });
+  const resolveItem = useResolveItem({ localErrorToast: localToastForSafeTextRefusal });
 
   const [supplierId, setSupplierId] = React.useState(item.supplierMatchId ?? "");
   // Local per-line decisions since the last save: productId picked, or "keep as custom".
@@ -84,12 +85,11 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
           setCustomized({});
           toast({ title: "Saved", variant: "success" });
         },
-        onError: (e: any) =>
-          toast({
-            title: "Couldn't save",
-            description: safeTextErrorCopy(e) ?? "Please try again.",
-            variant: "error",
-          }),
+        onError: (e: unknown) => {
+          // Only the formula-led refusal is ours; any other error already reached the global toast.
+          const copy = safeTextErrorCopy(e);
+          if (copy) toast({ title: "Couldn't save", description: copy, variant: "error" });
+        },
       },
     );
   };
@@ -102,12 +102,11 @@ export function BatchItemReviewModal({ batchId, item, onClose }: Props) {
           toast({ title: "Marked resolved — ready to post", variant: "success" });
           onClose();
         },
-        onError: (e: any) =>
-          toast({
-            title: "Couldn't resolve",
-            description: safeTextErrorCopy(e) ?? "Please try again.",
-            variant: "error",
-          }),
+        onError: (e: unknown) => {
+          // Only the formula-led refusal is ours; any other error already reached the global toast.
+          const copy = safeTextErrorCopy(e);
+          if (copy) toast({ title: "Couldn't resolve", description: copy, variant: "error" });
+        },
       },
     );
   };

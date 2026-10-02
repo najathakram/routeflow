@@ -103,6 +103,47 @@ describe("ImportService.importProducts — formula-led product name (B964-2, pre
     if (plan) expect(plan.action).toBe("skip");
   });
 
+  describe("a RENAME of a stored product (the update path)", () => {
+    const csvRename = "Item Name,SKU,Price Tier 2\n=HYPERLINK(1),SKU-1,9.5\n";
+    const stored = {
+      id: "prod-1",
+      name: "Widget Pro",
+      sku: "SKU-1",
+      unitsPerBox: null,
+      priceTier2: 5,
+    };
+    const found = () =>
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "SKU-1" ? stored : null,
+      );
+
+    it("a formula-led NEW name on a matched product is a skip in BOTH modes, with the same reason; update() is never called", async () => {
+      found();
+      const real: any = await service.importProducts(Buffer.from(csvRename), "user-1");
+      expect(real.skipped).toBe(1);
+      expect(productsService.update).not.toHaveBeenCalled();
+      expect(real.errors.some((e: string) => e.endsWith(NAME_MSG))).toBe(true);
+
+      found();
+      const preview: any = await service.importProducts(Buffer.from(csvRename), "user-1", {
+        dryRun: true,
+      });
+      expect(preview.skipped).toBe(1);
+      expect(preview.errors).toEqual(real.errors);
+      expect(productsService.assertIdentityAvailable).not.toHaveBeenCalled();
+    });
+
+    it("change-only: a LEGACY formula-led stored name echoed back unchanged still updates other fields", async () => {
+      prisma.product.findFirst.mockImplementation(async (args: any) =>
+        args?.where?.sku === "SKU-1" ? { ...stored, name: "=LEGACY" } : null,
+      );
+      const csv = "Item Name,SKU,Price Tier 2\n=LEGACY,SKU-1,9.5\n";
+      const real: any = await service.importProducts(Buffer.from(csv), "user-1");
+      expect(real.skipped).toBe(0);
+      expect(productsService.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("an ordinary name still previews and imports as a create", async () => {
     prisma.product.findFirst.mockResolvedValue(null);
     const ok = "Item Name,SKU,Rate\nWidget Pro,SKU-1,10\n";

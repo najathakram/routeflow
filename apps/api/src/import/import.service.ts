@@ -2706,6 +2706,19 @@ export class ImportService {
           continue;
         }
 
+        // B964-2: a RENAME to a formula-led name is a skip in BOTH modes, decided before the dry-run split (update() would refuse
+        // it in a real run). `changes.name` is already a DIFFERING value, so this is change-only against the stored name.
+        if (typeof changes.name === "string") {
+          const renameViolation = productNameViolation(
+            { name: changes.name },
+            { name: existing.name as string | null },
+          );
+          if (renameViolation) {
+            skipRow(renameViolation);
+            continue;
+          }
+        }
+
         const plannedChanges: Record<string, { from: unknown; to: unknown }> = {};
         for (const [field, to] of Object.entries(changes)) {
           plannedChanges[field] = { from: (existing as any)[field] ?? null, to };

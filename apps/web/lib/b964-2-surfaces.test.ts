@@ -4,6 +4,8 @@ import * as React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { groupAssignErrorCopy } from "./group-assign-error-copy";
+import { localToastForSafeTextRefusal } from "./local-error-toast";
+import { handleMutationError } from "./mutation-error-toast";
 
 /**
  * B964-2 (lead Opus on #3020): the four product surfaces that showed a raw server / axios message for a
@@ -39,13 +41,11 @@ describe("groupAssignErrorCopy", () => {
       "Variant name can't start with =, +, -, @ or a tab/line break. Nothing was grouped.",
     );
   });
-  it("any other error is a fixed sentence, never the server text", () => {
+  it("any other error is NOT ours (null): it reaches the global toast, never a raw message from here", () => {
     expect(
       groupAssignErrorCopy({ response: { status: 500, data: { message: "db down" } } }, products),
-    ).toBe("Couldn't group these products. Please try again.");
-    expect(groupAssignErrorCopy(new Error("boom"), products)).toBe(
-      "Couldn't group these products. Please try again.",
-    );
+    ).toBeNull();
+    expect(groupAssignErrorCopy(new Error("boom"), products)).toBeNull();
   });
 });
 
@@ -61,6 +61,16 @@ describe("the four surfaces", () => {
     expect(src).not.toMatch(/\b(?:err|e|error)\??\.message/);
   });
 
+  it("no surface falls back to its OWN sentence for a non-refusal (that would double the global toast)", () => {
+    for (const f of [
+      "components/VariantSplitModal.tsx",
+      "components/BatchItemReviewModal.tsx",
+      "components/ProductCreateModal.tsx",
+    ])
+      expect(read(f)).not.toMatch(/safeTextErrorCopy\([^)]*\)\s*\?\?/);
+    expect(read("components/GroupAsVariantsModal.tsx")).not.toContain("Please try again");
+  });
+
   it("they use the shared safe copy", () => {
     for (const f of [
       "components/VariantSplitModal.tsx",
@@ -71,19 +81,27 @@ describe("the four surfaces", () => {
     expect(read("components/GroupAsVariantsModal.tsx")).toContain("groupAssignErrorCopy(");
   });
 
-  it("GroupAsVariantsModal catches the grouping failure (no unhandled rejection) and opts out of the global toast", () => {
-    const src = read("components/GroupAsVariantsModal.tsx");
-    expect(src).toMatch(/try \{\s*result = await bulkAssign\.mutateAsync/);
-    expect(src).toContain("useBulkAssignParent({ localErrorToast: true })");
+  it("GroupAsVariantsModal catches the grouping failure (no unhandled rejection)", () => {
+    expect(read("components/GroupAsVariantsModal.tsx")).toMatch(
+      /try \{\s*result = await bulkAssign\.mutateAsync/,
+    );
   });
 
-  it("the other two mutation surfaces opt out so a failure shows once", () => {
-    expect(read("components/ProductCreateModal.tsx")).toContain(
-      "useCreateProduct({ localErrorToast: true })",
-    );
+  it("every mutation surface opts out ONLY for the refusal it renders (a predicate, never `true`)", () => {
+    const P = "localErrorToast: localToastForSafeTextRefusal";
+    expect(read("components/GroupAsVariantsModal.tsx")).toContain(`useBulkAssignParent({ ${P} })`);
+    expect(read("components/ProductCreateModal.tsx")).toContain(`useCreateProduct({ ${P} })`);
+    expect(read("components/VariantSplitModal.tsx")).toContain(`useAssignToVariants({ ${P} })`);
     const b = read("components/BatchItemReviewModal.tsx");
-    expect(b).toContain("useUpdateBatchItem({ localErrorToast: true })");
-    expect(b).toContain("useResolveItem({ localErrorToast: true })");
+    expect(b).toContain(`useUpdateBatchItem({ ${P} })`);
+    expect(b).toContain(`useResolveItem({ ${P} })`);
+    for (const f of [
+      "components/GroupAsVariantsModal.tsx",
+      "components/ProductCreateModal.tsx",
+      "components/VariantSplitModal.tsx",
+      "components/BatchItemReviewModal.tsx",
+    ])
+      expect(read(f)).not.toContain("localErrorToast: true");
   });
 });
 
@@ -115,11 +133,51 @@ describe("the hooks carry meta.localErrorToast only when asked", () => {
   it("useCreateProduct / useBulkAssignParent / useUpdateBatchItem / useResolveItem", async () => {
     const products = await import("./api/products");
     const batch = await import("./api/batch-import");
-    const on = { localErrorToast: true };
-    expect(await metaOf(() => products.useCreateProduct({ localErrorToast: true }))).toEqual(on);
-    expect(await metaOf(() => products.useBulkAssignParent({ localErrorToast: true }))).toEqual(on);
-    expect(await metaOf(() => batch.useUpdateBatchItem({ localErrorToast: true }))).toEqual(on);
-    expect(await metaOf(() => batch.useResolveItem({ localErrorToast: true }))).toEqual(on);
+    const on = { localErrorToast: localToastForSafeTextRefusal };
+    expect(
+      await metaOf(() =>
+        products.useCreateProduct({ localErrorToast: localToastForSafeTextRefusal }),
+      ),
+    ).toEqual(on);
+    expect(
+      await metaOf(() =>
+        products.useBulkAssignParent({ localErrorToast: localToastForSafeTextRefusal }),
+      ),
+    ).toEqual(on);
+    expect(
+      await metaOf(() =>
+        batch.useUpdateBatchItem({ localErrorToast: localToastForSafeTextRefusal }),
+      ),
+    ).toEqual(on);
+    expect(
+      await metaOf(() => batch.useResolveItem({ localErrorToast: localToastForSafeTextRefusal })),
+    ).toEqual(on);
+    const variant = await import("./api/variant-assign");
+    expect(
+      await metaOf(() =>
+        variant.useAssignToVariants({ localErrorToast: localToastForSafeTextRefusal }),
+      ),
+    ).toEqual(on);
     expect(await metaOf(() => products.useCreateProduct())).toBeUndefined();
+  });
+});
+
+describe("handleMutationError with a predicate localErrorToast (B964-2)", () => {
+  const meta = { localErrorToast: localToastForSafeTextRefusal };
+  const run = (e: unknown) => {
+    const toast = jest.fn();
+    handleMutationError(e, { meta }, toast, { push: jest.fn() });
+    return toast;
+  };
+  it("skips the global toast for the formula-led refusal (the surface renders it)", () => {
+    expect(run(refusal("b"))).not.toHaveBeenCalled();
+  });
+  it("shows the global toast for any other error: exactly once", () => {
+    const toast = run({ response: { status: 500, data: { message: "db down" } } });
+    expect(toast).toHaveBeenCalledTimes(1);
+  });
+  it("a read-only tenant still gets 'Choose a plan' (the predicate never hides it)", () => {
+    const toast = run({ response: { status: 403, data: { code: "READ_ONLY", message: "x" } } });
+    expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
   });
 });

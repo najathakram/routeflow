@@ -5,6 +5,7 @@ import { X, GitBranch, AlertCircle, ArrowRight } from "lucide-react";
 import { Button, useToast } from "@routeflow/ui/web";
 import { useProducts, useBulkAssignParent, type BulkAssignParentResult } from "@/lib/api/products";
 import { SearchableProductPicker } from "./SearchableProductPicker";
+import { localToastForSafeTextRefusal } from "@/lib/local-error-toast";
 import { groupAssignErrorCopy } from "@/lib/group-assign-error-copy";
 
 interface ProductLite {
@@ -60,7 +61,7 @@ export function GroupAsVariantsModal({
   const { toast } = useToast();
   const { data: allProductsData } = useProducts({ limit: 0 });
   const allProducts: ProductLite[] = allProductsData?.data ?? [];
-  const bulkAssign = useBulkAssignParent({ localErrorToast: true });
+  const bulkAssign = useBulkAssignParent({ localErrorToast: localToastForSafeTextRefusal });
 
   const [parentId, setParentId] = React.useState("");
   // Per-row override of the suggested variant name
@@ -111,11 +112,10 @@ export function GroupAsVariantsModal({
         assignments,
       });
     } catch (err: unknown) {
-      toast({
-        title: "Couldn't group these products",
-        description: groupAssignErrorCopy(err, selectedProducts),
-        variant: "error",
-      });
+      // Only the formula-led refusal is ours (it names the product); any other error already reached the global toast.
+      const copy = groupAssignErrorCopy(err, selectedProducts);
+      if (copy)
+        toast({ title: "Couldn't group these products", description: copy, variant: "error" });
       return;
     }
     if (result.failed.length === 0) {
