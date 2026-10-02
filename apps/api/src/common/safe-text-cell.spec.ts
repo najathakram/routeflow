@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { BadRequestException } from "@nestjs/common";
 import { FORMULA_LEAD, PLAIN_DECIMAL } from "./csv";
 import { assertSafeTextCell, firstFormulaLedField, isFormulaLedText } from "./safe-text-cell";
-import { assertSafeCustomerNames, customerNameViolation } from "../customers/customer-name-guard";
+import {
+  assertSafeCustomerNames,
+  customerNameViolation,
+  refusedCustomerNameField,
+} from "../customers/customer-name-guard";
 
 const REFUSED = [
   "=1+1",
@@ -88,6 +92,15 @@ describe("customer name wrapper", () => {
     expect(() =>
       assertSafeCustomerNames({ businessName: "Acme", contactName: "A B" }),
     ).not.toThrow();
+  });
+
+  it("refusedCustomerNameField returns the structured field (no message parsing), or null", () => {
+    expect(refusedCustomerNameField({ businessName: "Acme", contactName: "-1+1" })).toBe(
+      "contactName",
+    );
+    expect(refusedCustomerNameField({ displayName: "@x" })).toBe("displayName");
+    expect(refusedCustomerNameField({ businessName: "Acme" })).toBeNull();
+    expect(refusedCustomerNameField({ businessName: "=x" }, { businessName: "=x" })).toBeNull();
   });
 
   it("customerNameViolation returns the readable text, or null", () => {

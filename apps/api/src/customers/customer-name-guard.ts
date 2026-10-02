@@ -22,6 +22,14 @@ export function assertSafeCustomerNames(next: NameInput, stored?: NameInput | nu
   assertSafeTextCell(pick(next), stored ? pick(stored) : null);
 }
 
+/** The first refused customer-name field (a structured result, never parsed from a message), or null. */
+export function refusedCustomerNameField(
+  next: NameInput,
+  stored?: NameInput | null,
+): string | null {
+  return firstFormulaLedField(pick(next), stored ? pick(stored) : null);
+}
+
 /** Non-throwing form for the import, which rejects the ROW (not the batch) with this text. */
 export function customerNameViolation(next: NameInput, stored?: NameInput | null): string | null {
   const field = firstFormulaLedField(pick(next), stored ? pick(stored) : null);

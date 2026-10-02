@@ -15,7 +15,7 @@
 // collide with, another tenant's rows.
 import { randomBytes } from "crypto";
 import { API_ERROR_CODES } from "../../common/api-error-codes";
-import { customerNameViolation } from "../../customers/customer-name-guard";
+import { refusedCustomerNameField } from "../../customers/customer-name-guard";
 import { normalizeEmail, normalizePhoneE164, slugUsername } from "../crm-identity";
 import type { GhlContact, GhlOpportunity } from "./gohighlevel.client";
 
@@ -99,8 +99,7 @@ function createNames(contact: GhlContact): { businessName: string; contactName: 
 
 /** The first create-name field the customer guard would refuse (B956), or null. */
 function refusedName(contact: GhlContact): string | null {
-  const violation = customerNameViolation(createNames(contact));
-  return violation ? violation.split(" ")[0] : null;
+  return refusedCustomerNameField(createNames(contact));
 }
 
 function buildNotes(opportunity: GhlOpportunity, contact: GhlContact): string {
