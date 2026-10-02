@@ -67,6 +67,8 @@ import { useAuth } from "@/lib/auth-context";
 import { useHasAddon, TOBACCO_ADDON } from "@/lib/api/tobacco";
 import { MSRP_ADDON } from "@/lib/api/addons";
 import { CropModal } from "./CropModal";
+import { useReactivateFlow } from "./useReactivateFlow";
+import { deactivateFailureToast, isReadOnlyRefusal } from "@/lib/product-reactivation-refusal";
 import { DemandCard } from "./DemandCard";
 import { SalesHistoryCard } from "./SalesHistoryCard";
 import { ProductInsightsExport } from "./ProductInsightsExport";
@@ -300,6 +302,7 @@ export default function ProductDetailPage() {
   const { data: allProductsResult } = useProducts({ limit: 0 });
   const { data: tierLabels } = useTierLabels();
   const updateProduct = useUpdateProduct();
+  const reactivateFlow = useReactivateFlow();
   const createProduct = useCreateProduct();
   const deleteProduct = useDeleteProduct();
   const uploadImages = useUploadProductImages(id);
@@ -580,11 +583,8 @@ export default function ProductDetailPage() {
       toast({ title: "Product deleted", variant: "success" });
       router.push("/products");
     } catch (err: any) {
-      toast({
-        title: "Failed to delete product",
-        description: err?.response?.data?.message,
-        variant: "error",
-      });
+      // READ_ONLY already got the global "workspace is read-only" toast.
+      if (!isReadOnlyRefusal(err)) toast(deactivateFailureToast(err, "Failed to delete product"));
     } finally {
       setShowDeleteConfirm(false);
     }
@@ -778,16 +778,9 @@ export default function ProductDetailPage() {
 
   const handleToggleVariantActive = (variant: ApiProduct) => {
     if (variant.isActive) {
-      if (!window.confirm("Deactivate this variant?")) return;
-      updateProduct.mutate(
-        { id: variant.id, isActive: false },
-        { onSuccess: () => toast({ title: "Variant deactivated", variant: "success" }) },
-      );
+      reactivateFlow.askDeactivate(variant.id, variant.variantName ?? variant.name, "variant");
     } else {
-      updateProduct.mutate(
-        { id: variant.id, isActive: true },
-        { onSuccess: () => toast({ title: "Variant reactivated", variant: "success" }) },
-      );
+      reactivateFlow.start(variant.id, "variant");
     }
   };
 
@@ -1028,6 +1021,7 @@ export default function ProductDetailPage() {
           onSuccess={() => setShowVariantSplit(false)}
         />
       )}
+      {reactivateFlow.dialog}
       <ConfirmDialog
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
@@ -1543,9 +1537,11 @@ export default function ProductDetailPage() {
                         size="sm"
                         variant="secondary"
                         onClick={() =>
-                          updateProduct.mutate({ id: id, isActive: !product.isActive })
+                          product.isActive
+                            ? reactivateFlow.askDeactivate(id, product.name)
+                            : reactivateFlow.start(id)
                         }
-                        loading={updateProduct.isPending}
+                        loading={reactivateFlow.isPending}
                       >
                         {product.isActive ? "Deactivate" : "Activate"}
                       </Button>

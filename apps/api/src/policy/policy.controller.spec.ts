@@ -55,6 +55,7 @@ describe("PolicyController behaviour", () => {
       "orders.driverAtDoorEdit",
       "credit.approvalThreshold",
       "invoicing.priceDisclosure",
+      "orders.buyerOversell",
     ]);
     const credit = res.policies.find((p) => p.key === "credit.approvalThreshold")!;
     expect(credit.default).toBeNull();
