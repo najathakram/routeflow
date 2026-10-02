@@ -17,6 +17,11 @@
  * uses — same fields, one selling unit — so re-scanning an item increments its
  * line instead of duplicating it, and Done returns to the catalog with the
  * floating cart bar already updated.
+ *
+ * #2717 M4a-1 (SA-580a): a BUYER hit adds ONE line in the product's DEFAULT unit whatever level
+ * the code carries (owner 09-19 v1: buyer orders are default-unit only). The staff level rule
+ * (R1-R4, the shared scan-level resolver) is deliberately NOT applied here; `cartStore.add` already adds
+ * one selling unit, so a unitSku scan on a boxed product adds a case, never a loose piece.
  */
 import { useRouter } from "expo-router";
 import { View, StyleSheet } from "react-native";
@@ -43,7 +48,7 @@ export default function CustomerScanScreen() {
       addToCart({
         productId: p.id,
         name: p.name,
-        unitPrice: Number(p.buyerPrice ?? p.basePrice ?? p.price) || 0,
+        unitPrice: p.buyerPrice,
         unit: p.unit,
         unitsPerBox: p.unitsPerBox ?? null,
         category: p.category ?? null,

@@ -5,6 +5,7 @@ import {
   PLAN_KEYS as API_PLAN_KEYS,
   FLAG_KEYS as API_FLAG_KEYS,
 } from "../billing/plan-catalog.constants";
+import { SELL_LEVEL_VALUES } from "@routeflow/pricing";
 
 /**
  * Guards the class of bug found by the Wave E DTO sweep (imp-10b): web and
@@ -86,6 +87,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   ["ROUTE_OPTIMIZE_METRIC_VALUES", "RouteOptimizeMetric"],
   ["CHANGE_REQUEST_TYPE_VALUES", "ChangeRequestType"],
   ["CHANGE_REQUEST_STATUS_VALUES", "ChangeRequestStatus"],
+  ["ITEM_STATUS_VALUES", "ItemStatus"],
+  ["PAYMENT_METHOD_VALUES", "PaymentMethod"],
   ["RECURRING_FREQUENCY_VALUES", "RecurringFrequency"],
   ["MOVEMENT_TYPE_VALUES", "MovementType"],
   ["CRM_CONNECTION_STATUS_VALUES", "CrmConnectionStatus"],
@@ -114,6 +117,37 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // (features.ts, the shared contract — the explain-trace/diff-log `source` field).
   ["FEATURE_OVERRIDE_KIND_VALUES", "FeatureOverrideKind"],
   ["FEATURE_SOURCE_VALUES", "FeatureSource"],
+  // Order tracking (#2095): long-standing enums, newly mirrored for the shared tracking payload
+  // (packages/types/api/order-tracking.ts) that web and mobile branch on. Existing enums, so the
+  // triage count below does not move.
+  ["ORDER_STATUS_VALUES", "OrderStatus"],
+  ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
+  ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
+  ["HANDOFF_REALM_VALUES", "HandoffRealm"],
+  // #2169 (SA-395): brand-new Prisma enum, mirrored immediately as
+  // `INVOICE_ITEM_SYSTEM_KIND_VALUES` — see the triage tripwire below.
+  ["INVOICE_ITEM_SYSTEM_KIND_VALUES", "InvoiceItemSystemKind"],
+  // SA-436 (#2401): brand-new Prisma enum, mirrored immediately — see the triage tripwire below.
+  ["CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES", "CreditNoteApplyBlockReason"],
+  // #2159 S1 (wholesaler onboarding): four brand-new Prisma enums, mirrored immediately in
+  // packages/types/api/onboarding.ts (the back-office contract) — see the triage tripwire below.
+  ["ONBOARDING_STAGE_VALUES", "OnboardingStage"],
+  ["ONBOARDING_CASE_STATUS_VALUES", "OnboardingCaseStatus"],
+  ["ONBOARDING_STEP_STATUS_VALUES", "OnboardingStepStatus"],
+  ["ONBOARDING_ACTOR_TYPE_VALUES", "OnboardingActorType"],
+  // #2159 S2 (onboarding intake link): two brand-new Prisma enums, mirrored in onboarding.ts.
+  ["INTAKE_SECTION_KEY_VALUES", "IntakeSectionKey"],
+  ["INTAKE_SECTION_STATUS_VALUES", "IntakeSectionStatus"],
+  // #2717 M1 (SA-572a, #2728 P1): four brand-new Prisma enums, mirrored immediately in
+  // packages/types/api/enums.ts — see the triage tripwire below.
+  ["PRODUCT_KIND_VALUES", "ProductKind"],
+  ["PACKAGING_LEVEL_VALUES", "PackagingLevel"],
+  ["BARCODE_SYMBOLOGY_VALUES", "BarcodeSymbology"],
+  ["BARCODE_ORIGIN_VALUES", "BarcodeOrigin"],
+  // #2717 M2 (SA-574): RecipeStatus, mirrored immediately — see the triage tripwire below.
+  ["RECIPE_STATUS_VALUES", "RecipeStatus"],
+  // #2717 M3 (SA-572): CompositionMode, mirrored immediately — see the triage tripwire below.
+  ["COMPOSITION_MODE_VALUES", "CompositionMode"],
 ];
 
 describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
@@ -187,7 +221,34 @@ describe("enum parity: packages/types/api/enums.ts vs @prisma/client", () => {
 // tenant_feature_config_snapshot migration — mirrored immediately as `SNAPSHOT_REASON_VALUES` +
 // its `ENUM_TABLE` row above; verified via `node apps/api/scripts/split-prisma-schema.mjs --check`
 // (95 → 96).
-const PINNED_PRISMA_ENUM_COUNT = 96;
+// Triage for InvoiceItemSystemKind (#2169, SA-395, 2026-09-26): one brand-new Prisma enum
+// (migration 20260926120000_2169_invoice_item_system_kind) — mirrored immediately as
+// `INVOICE_ITEM_SYSTEM_KIND_VALUES` + its `ENUM_TABLE` row above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (96 → 97).
+// Triage for CreditNoteApplyBlockReason (SA-436 PR-1, #2401, 2026-09-27): one brand-new Prisma
+// enum (migration 20260927043000_sa436_credit_auto_apply_off) — mirrored immediately as
+// `CREDIT_NOTE_APPLY_BLOCK_REASON_VALUES` + its `ENUM_TABLE` row above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (97 → 98).
+// Triage for OnboardingStage + OnboardingCaseStatus + OnboardingStepStatus + OnboardingActorType
+// (#2159 S1, 2026-09-27): four brand-new Prisma enums (migration
+// 20260927060000_onboarding_s1_cases) — mirrored immediately in packages/types/api/onboarding.ts +
+// their `ENUM_TABLE` rows above; verified via `Object.keys(PrismaEnums.$Enums).length` (98 → 102).
+// Triage for IntakeSectionKey + IntakeSectionStatus (#2159 S2, 2026-09-27): two brand-new Prisma
+// enums (migration 20260927070000_onboarding_s2_intake) — mirrored immediately in
+// packages/types/api/onboarding.ts + their `ENUM_TABLE` rows above (102 → 104).
+// Triage for HandoffRealm (#2653, 2026-09-28): one brand-new Prisma enum (migration
+// 20260929190000_2653_auth_handoff_code), mirrored immediately as HANDOFF_REALM_VALUES in
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (110 → 111, after M1's four, M2's RecipeStatus and M3's CompositionMode).
+
+// Triage for ProductKind + PackagingLevel + BarcodeSymbology + BarcodeOrigin (#2717 M1, SA-572a,
+// #2728 P1, 2026-09-28): four brand-new Prisma enums (migration
+// 20260928230000_2717_m1_catalog_barcodes_images) — mirrored immediately in
+// packages/types/api/enums.ts + their `ENUM_TABLE` rows above; verified via
+// `node apps/api/scripts/split-prisma-schema.mjs --check` (104 → 108).
+// Triage for RecipeStatus (#2717 M2, SA-574, 2026-09-29): one brand-new Prisma enum (migration
+// 20260929120000_2717_m2_recipes) — mirrored immediately as `RECIPE_STATUS_VALUES` in
+// packages/types/api/enums.ts + its `ENUM_TABLE` row above (108 → 109).
+const PINNED_PRISMA_ENUM_COUNT = 111;
 
 describe("enum triage tripwire: generated Prisma enum count (L-072)", () => {
   it("pins the number of generated Prisma enums — a new enum must be triaged into ENUM_TABLE or explicitly left unmirrored", () => {
@@ -451,6 +512,20 @@ describe("WP1 T3: tenant-plan-lite migration is additive-only", () => {
     expect(raw).not.toMatch(/\bDROP\b/i);
     expect(raw).not.toMatch(/\bRENAME\b/i);
     expect(raw).not.toMatch(/ALTER\s+COLUMN/i);
+  });
+});
+
+// ─── (d) #2728 M1 follow-up, pre-merge BLOCK: sell-level values were a bare literal union with no
+// parity pin against the generated PackagingLevel enum — pin it directly (a subset check, since
+// PackagingLevel also has values SELL_LEVEL_VALUES deliberately excludes, e.g. any future level). ──
+
+describe("d: SELL_LEVEL_VALUES ⊂ Prisma PackagingLevel", () => {
+  it("every @routeflow/pricing SELL_LEVEL_VALUES member is a real Prisma PackagingLevel value", () => {
+    const packagingLevelValues = Object.values(PrismaEnums.PackagingLevel);
+    for (const level of SELL_LEVEL_VALUES) {
+      expect(packagingLevelValues).toContain(level);
+    }
+    expect(SELL_LEVEL_VALUES.length).toBeGreaterThan(0);
   });
 });
 

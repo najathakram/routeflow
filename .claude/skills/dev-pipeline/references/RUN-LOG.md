@@ -10,6 +10,198 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 
 ---
 
+## 2026-09-30-control-system (run 1, aborted) + engine fix B907 · feature · major · $n/a (closeout pending run 2) · ~1:30 · 2026-09-30
+
+- Caught: nothing in-product. Run 1 found three ENGINE defects by failing: (1) scopeCheckPrompt ran `git status --porcelain` without `--untracked-files=all`, so a new dir (`?? apps/control/`) read as a non-test file; all 10 test stages were blocked and the remediation reverted the authored tests; (2) the wave loop never read dependency results, so UI1 ran its full fix loop with WP7 blocked; (3) a Haiku sha-capture step (fix-base:UI1:r4) wrote and committed a 12-file scaffold (evidence tag ctl-haiku-backup).
+- Wasted: a whole run (~160 agent calls, 0 implementers), including the final gate and final read on a blocked graph. Also run 0 aborted in validateTasks: a missing `type` was rejected though SKILL.md documents feature as the default.
+- Engine change (proved test-first; dry-run BF1/BF1b/BF2/BF3a/BF3c + a Haiku-guard audit went RED then GREEN; selftest-all PASS): --untracked-files=all + a dir-prefix exemption; blockedTaskFromUpstream skips dependents; MECHANICAL_GUARD on every Haiku call; plus 3 lead-accepted extras (09-30): args.waveBatchSize override, a missing type defaults to feature (per SKILL.md), meta.description names Opus. Patches (pipeline.js + a dry-run.mjs diff rebuilt from the agent transcript, which applies byte-exactly): routeflow local-assets/engine-patch-2026-09-30/.
+- Knob candidate (evidence: this run's zero-implementer run was reported only at the end): abort the run once every task in wave 1 is blocked, instead of spending the remaining waves plus the final gate and final read.
+- Deviations: run 2 (wf_425f0441-447) uses the Mac engine's PRE-09-29 routing: Sonnet 5 (claude-sonnet-5) implementers, and Opus review only on HIGH tasks (WP3/WP5/WP7), Sonnet reviewers elsewhere. The PC engine is canonical (Sonnet 5.5 builds, Opus 5.5 reviews every task), and the Mac syncs from the lead's docs-only branch (sha256 + selftest-all). Observed cost: run 2's 12 mechanical agents used ~907K tokens (~75K each), which looks like the session's full MCP tool list loading into every subagent. That's an owner call (disable non-RouteFlow connectors for fleet sessions) and is not yet measured per call. Run 2 also lost one resume to a Haiku brief agent that answered in text without calling StructuredOutput. The planner's per-task model/effort args are ignored by the engine (the implementer is hard-coded Sonnet), so they were dropped from the args. The final gate was scoped to `-w apps/control` because the Mac runs one full verify at a time, by Mac Lead slot; the full verify runs by hand.
+
+## 2026-09-30-session-a8447f3a · light-loop · unknown-scale · $0.36 · 0:00 · 2026-09-30
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-28-B889-buyer-edit-custom-lines · light-loop · small · $n/a (multi-task session) · ~2:55 · 2026-09-28
+
+- Caught: the runtime repro (not the code read) settled both halves: mobile Save's {productId:null} got a 200 and was silently ignored; the server's buyer replace preserves custom lines, so the fix was client-only (tier 2). The lead's Opus + SA-566 review caught the one real defect in my first cut: `isCustomLine` also matched a catalog line with a missing product relation, which the replace-by-product Save would then DELETE (fold: custom = !productId only; pinned red-first).
+- Wasted: the first Expo-web "before" capture served the FIX code: `expo start` with CI=1 disables Metro's file watching, so restoring files mid-session changes nothing. Restart Metro per phase.
+- Knob candidate (evidence: this run's wrong before-capture): the UI-verify/capture step should restart Metro per code state (before/after) and assert the served state (e.g. the DOM carries or lacks the fix's marker) before shooting.
+- Deviation: no ledger row. This lane session ran #2631/#2639/#2656/#2699/#2703/#2709/#2720 since 09-26, so session-usage can't be split per run, and closeout.mjs would stamp `--telemetry true` even with `--no-usage`. result.json was written by hand (light-loop). Bookkeeping (lesson + map) is Option B, with the coordinator.
+
+## 2026-09-28-session-f9f7517a · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-28-session-8d4d424d · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-28-session-9e5a7534 · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-28-session-9ad606d4 · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-28-session-a0ebb696 · light-loop · unknown-scale · $193.83 · 15:13 · 2026-09-28
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-25-B861-numbering-continuity · light-loop · major · $51.17 · 1:31 · 2026-09-25
+
+- Caught: S2 Opus refutation widened the bug (PAYMENT row dead too; unescaped prefix = latent tx abort; year-less scan wedges at 5 attempts; stale-card rewind) → all became SA-274 rulings. In-lane Opus review: BLOCKER `updateMany({where:{...compoundKey}})` — passes tsc + every mock, 500s against real Prisma on every second save. Independent pre-merge (Opus): BLOCK `(\d{1,9})` w/o `0*` hid zero-padded migrated numbers → mint below existing. Red gate: REG-B861-Z first went red on a TypeError (wrong reason) — fixed before push. Revert probes 2/2 caught. F2 DB lane red 12/15 → green 15/15, full lane 319/319.
+- Wasted: engine never launched (see Deviation) — no ~$ saving, but parallel write-only agents avoided idle slot waits; ~6 commitlint rejections (uppercase "B861"/"REG" subject starts) and one combined commit to split; a fix commit swept the tests in after a failed test commit.
+- Knob candidate (evidence: this run — both BLOCKs were real-DB/real-data shapes a mocked unit fixture cannot see): for HIGH-risk bug runs whose fix adds raw SQL or a new where/CAS shape, schedule the DB-lane red/green BEFORE the independent pre-merge verdict rather than after, and brief the reviewer with "what the NEW namespace actually holds" (padding range, empty prefix) — the in-lane review checked escaping but not the data shape.
+- Later rounds (same run): independent pre-merge BLOCK (0-padding scan) → fixed; fleet-lead Opus SHIP-W/N + SA-287b folds (row lock FOR UPDATE, token required, two concurrency pins) → fixed, red-first, in-lane refute CLEAN. Owner's Q4 prod count = 0. Wasted: one full `npm run verify` — a SCOPED web jest run inside the burst left `.campaign/runs/web.json` PARTIAL and verify's freshness pre-step failed before the (cache-replayed) full web run could rewrite it. Rule for burst plans: run scoped jest for red/green, then the FULL web/api suites (or skip scoped runs) before `npm run verify`.
+- SA-306 round: the red check caught a VACUOUS repro: REG-B861-AD matched `/reload/`, but the neighbouring 409's copy also said "reload", so it passed on the pre-fix code. Rule: a repro asserting a refusal matches the exception CLASS (or status), never a message regex shared by a sibling error. F2 caught a test-setup save missing the now-required token (P-6).
+- Deviation: HIGH-risk lane but pipeline.js NOT launched — the fleet grants HEAVY slots per burst with gaps (Mac Lead), and the engine cannot pause between bursts. Ran the same bugfix stages by hand: write-only Sonnet agents (tests ∥ fix) → burst 1 red-on-master + green → Opus in-lane review + sibling sweep (light) → burst 2 revert probes → burst 3 verify+push → pre-merge BLOCK → burst 4. Design ruling from the SA seat (SA-274), not a Fable S3 call. DB lane run only by the prover. Session cost $51 (> $40/major guide): Opus reviews ×4 + 5 Sonnet authors + long coordination waits.
+
+## 2026-09-25-f51-billing-mrr-ledger · bugfix · major · $44.62 · 0:48 · 2026-09-25
+
+- Caught: Gate & Review (24 raw) found the real seams: subscribe() as a 5th ledger writer (the gate itself created an under-book), a lock-upgrade deadlock, admin booking revenue with Stripe unconfigured. The independent pre-merge-review (Opus) then found 2 concurrency double-books (pre-lock reads in subscribe/admin enable) that every in-engine review missed. The SA caught none of these in advance; its ruling premise on the lock was wrong (SA-E23).
+- Wasted: all 7 "Mutation probe" findings were false. The engine probes via `git show HEAD:<file>`, but the repro tests were left UNCOMMITTED, so HEAD already held the fix. Hand probes bit on 5/5. Baseline flagged tsc/npm test "broken on baseline" (pre-existing), which excluded the final gate. result.json carried a placeholder runId, so closeout needed --wf.
+- Knob candidate (evidence: this run's 7/7 false probe blockers): the engine must commit each repro-test task's tests before any revert-probe runs, or probe against the pre-fix commit (`git show <baselineSha>:<file>`) instead of HEAD. Also write the real Workflow runId into result.json/RESUME.
+- Deviation: engine ended clean:false. The fix round (6 commits) and the concurrency fix (1) ran as hand-briefed Sonnet agents outside the engine, reviewed by two independent Opus passes. Bookkeeping (L-217, L-211 archive, map) parked as an Option B patch.
+
+## 2026-09-25-mimo-4x2 · in-session (dev-pipeline, owner choice) · major · $19.81 · 1:13 · 2026-09-25
+
+- Caught: one Opus read-only review of the finished folder found 4 gates that could not fail (equal-noise M2, M9 re-running the call that wrote the data, M4 jitter below the hysteresis, M6 scored against the wrong DMRS segment) plus a latent blind->hold zero-weight bug; mutation probes then proved M2 catches a Sigma-for-Sigma^-1 WMF and an unwhitened one.
+- Wasted: first full gate batch (1.9 h) ran before the review, so four gates were re-run (36 min); MATLAB MCP worker hung all session, each batch start took 460 s.
+- Knob candidate: when a gate run is expensive (> 30 min), run the independent review on the gate script before the first full run. Evidence: this run's review found 4 vacuous gates after a 1.9 h run.
+- Deviation: light-loop not used (no git repo, one MATLAB session, owner chose in-session gates-first); red run skipped because MATLAB was down while the code was written, replaced by post-hoc mutation probes.
+
+## 2026-09-23-session-26aeb40e · light-loop · unknown-scale · $6.38 · 0:31 · 2026-09-23
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-23-session-76cbefea · light-loop · unknown-scale · $529.77 · 20:36 · 2026-09-23
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-23-session-fd0bf171 · light-loop · unknown-scale · $529.77 · 20:36 · 2026-09-23
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-23-session-20c86a26 · light-loop · unknown-scale · $529.77 · 20:36 · 2026-09-23
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-23-session-384f6f66 · light-loop · unknown-scale · $529.77 · 20:36 · 2026-09-23
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-22-session-e0521e74 · light-loop · unknown-scale · $18.69 · 1:27 · 2026-09-22
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-19-session-cc14e09f · light-loop · unknown-scale · $0.50 · 0:00 · 2026-09-19
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-18-session-13291829 · light-loop · unknown-scale · $90.48 · 4:02 · 2026-09-18
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-18-session-a73d87ae · light-loop · unknown-scale · $0.85 · 0:00 · 2026-09-18
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-18-session-1b0518a0 · light-loop · unknown-scale · $0.91 · 0:00 · 2026-09-18
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## 2026-09-17-session-1d9aec4e · light-loop · unknown-scale · $189.31 · 8:59 · 2026-09-17
+
+- Caught: (no confirmedByPhase data in result.json)
+- Wasted: (none identified from result.json fields)
+- Knob candidate: TODO (one change WITH evidence)
+- Deviation: TODO
+
+## Retro — 2026-09-16 · routeflow · trueTelemetryCount=11
+
+## 2026-09-16-prach-rmi-port4 (session cbd9f7ea, Debugs\PRACH_RMI (Sep 2026)) · light Workflow (analysis: 2 MATLAB scripts + findings note) · minor · $42.9 true (session $29.2 Fable, workflow $6.4 / 15 agents, Agent-tool subagents $7.3 / 6) · ~1:10 active session, 1:35 workflow wall · 2026-09-16
+
+- Caught (real): the oracle-gated Opus review found the port-4 noise sigma computed with norminv(P0) instead of norminv((1+P0)/2) (1.257 vs 0.53 LSB16, +7.5 dB) plus a floor line with no full-scale reference; invisible to the builder's self-check, fixed in one Sonnet round, re-run green. The Opus plan critic (plan mode) added the NCO-alias hypothesis and the root-1 offset/lag degeneracy and caught the bit_stats percent-units mismatch before any code existed.
+- Caught (design): the noise-floor-vs-signal comparison (port-4 floor 9 dB down, signal 68 dB down) reversed the first cause reading ("antenna-4 chain 68 dB low"); measured read-only in plan mode with a Python reference before building, which is also what made the oracle possible.
+- Wasted: 5 of 6 Agent-tool subagents and the workflow's last agent were flagged "stalled" by the stream watchdog while streaming long final reports (work complete, results recovered from files/journal); the workflow failed on its last agent after 6 retries. The FT-PRACH model-floor experiment ($1.9) returned an export that does not scale with input (block exponent unresolved), so it answered nothing.
+- Knob candidate (evidence: 6 stalls this run, 3 of them plan-mode explores): cap every agent's final message at ~300 words and require deliverables on disk; treat a null agent result whose artifact exists as success (both were in this run's prefix; make them the Workflow default).
+- Deviation: owner pinned the light Workflow over dev-pipeline for an analysis deliverable (route-task advised bug-/dev-pipeline on wording); no ledger row (no pipeline runDir; session-usage.json kept in the mirror); findings note written by Fable after the draft agent stalled; two review minors (RUN.ma field, pm2) fixed by Fable directly.
+- Follow-up (same session, second light Workflow, 6 agents, $3.9 + session growth to $48.6 Fable; whole session $66.2 true): prach_pcap_demod.m (bit-drop + constellation ring). Caught (real): the reviewer found the reference lag taken from occasion 1 alone (431, the frame with the +1-sample quirk) saturating the fractional-timing grid on 3 of 5 occasions (EVM 50 % instead of 1.2 %) and asked for an edge guard; one fix round, shipped. Wasted: nothing notable; no stalls this time (short reports, deliverables on disk).
+
+## 2026-09-16-pipeline-redesign (SS1-SS9, session 35ae735b) · engine + router redesign · major · true cost pending `append-manual` (see Deviation 2) · single session, zero API-call proofs throughout · 2026-09-16
+
+- Caught (real): the dry-run harness earned its keep three times. (1) A **TDZ crash** — SS5's `HOLISTIC_TASK_SCHEMA` was a `const` declared after `fixLoopStage`, so every task blocked with "Cannot access before initialization"; 36 pre-existing assertions went red in one run and named it exactly. A real launch would have lost the whole run. (2) SS4d's first cut moved a FIXED three fields and still left result.json at 207 KB over a 150 KB cap — the test measured it and forced a size-driven, largest-first split instead. (3) Two of my own new assertions were wrong, not the code: `isHighRisk()`'s documented "an unclassified owned file defaults HIGH" rule means a fixture must say `risk:'LOW'` explicitly to exercise the LOW path at all.
+- Caught (design): SS3's spec ("surgical ~2 agent calls, standard ~4") is unimplementable as a whole-run total — a total of 4 halts during Ground, before any work. Implemented as the mechanism specified (counter on `askAgent`, checkpoint + `haltedAt:'agent-cap'`, never a silent re-spawn) at ceilings sized from the loop's real shape (20/32, healthy runs ~15/~26), with `workAgentCalls` reported so the number gets retuned from ledger evidence. SS9's "delete `.claude/skills/*`" would have destroyed 14 project-only skills (plane, rebuild, bug-registry, …); only 6 are true duplicates of `~/.claude/skills`.
+- Wasted: three shell round-trips lost to heredoc/JSON quoting on Windows (a literal U+00B7 in an anchor, a `\'` in a JSON string). Switching to file-based literal-replace scripts with a loud no-match exit removed the class entirely — every subsequent edit landed first try, and the "wanted 1, got 0" failures caught two anchors that had already drifted.
+- Knob candidate (evidence: this run + the 5 repeated RUN-LOG entries SS5 finally acts on): now that `finalPass.holisticReads` exists, the next 10 runs can answer whether the relocated read finds MORE than the end-of-run one did — compare confirmed findings tagged `source:'holistic-read'` against historical Final-pass findings. If the relocated read's findings are consistently resolved within the remaining rounds, the same argument extends to running it after round 2 as well on `maxFixRounds:4` runs. Do not move that knob before the 10 rows exist.
+- Deviation: (1) SS4c stops at the diagnostic step the plan specified — the two sibling-sweep skip guards are now logged and the wrong-tree case has its own reason (`grep-wrong-tree`, distinct from `grep-died`), but the guard itself is unchanged, since the plan requires one real repro first and this session produced none. (2) No `closeout.mjs` row: this session had no `runDir`/`result.json`, which is exactly the gap SS8 widened `append-manual` to cover — the row is owed as `append-manual --run 2026-09-16-pipeline-redesign --approach dev-pipeline --session 35ae735b-bc45-4d6a-a7c3-1cdcd3c4ec86` and is held only because a peer session holds the repo's landing window (the ledger is a tracked file). (3) SS5 did NOT add `review-pack.mjs`'s whole-run-diff mode: both holistic reads use a raw `git diff` range exactly as the end-of-run read always did, so no pack change was needed. (4) `pre-merge-review` was found wired to NEITHER engine's close-out, not just light-loop's — SS3b adds it to both.
+- Engine fix from retro 2026-09-16 (P1): Baseline no longer silently excludes a redGate/final command that fails on the unmodified tree — it is now a `(gate-command)` BLOCKER, unless the failure is "no files/tests matching" against a path this run's own plan is about to create, which defers to exactly one re-check right after Implement wave 1 (still-failing then resolves definitively: final -> blocker, perRound -> excluded as before). Plan templates (BUILD-PLAN.md) now default full-suite Jest to `--maxWorkers=2`, `--reporters=default` last, `--passWithNoTests` on new-spec-only finals. Proven with dry-run scenarios BF/BG/BH (zero API calls); full `selftest-all.mjs` stays ALL PASSED, zero regressions in the pre-existing 71 scenarios.
+
+## 2026-09-15-tooling-flaky-gates (B225/B244/B231/B415/B418/B411/B352, PR-A of the tooling batch) · bug-pipeline (bugfix) · small · tokens-only (session-usage.mjs had no resolution path for this Workflow-tool runId, --no-usage; see Deviation) · ~1 h 35 m active across engine + review + fix rounds · 2026-09-15
+
+- Caught (real): Gate & Review flagged FIX1 (a permanent CPU-saturation test that itself manufactured CI-wide flakiness, contrary to the run's own root-cause data on the load level actually needed) and FIX3 (RT3 never landed, silently leaving half its brief undelivered) — both resolved by in-engine fix-rounds before the run ended. A post-run independent Opus refute-first review (commissioned by the orchestrating session, not the engine) then found one real BLOCKER the engine's own review missed entirely: FIX2's new self-test wrapper spec ran in the SAME parallel jest lane as the two specs this PR de-flaked, re-introducing the load condition under test — plus REG-B411's regression test copying its target's own assertion verbatim (never actually calling into shared logic, so a regression to the old formula would pass undetected) and FIX5 silently dropping the CVE-minimum-version floor the guard existed to enforce (major-line-only tolerance accepts 15.0.0, which predates the two CRITICAL advisories). All fixed in a second, Sonnet-only fix round.
+- Wasted: two tasks (FIX2, FIX5) never got an implementer round in-engine — task-brief.mjs failed at brief-generation (exitCode 3, section-not-found) for both, most likely reading a build-plan.md mid-inconsistent from the orchestrating session's own concurrent git operations on the shared worktree at the time. Hand-finished afterward by two Sonnet subagents outside the engine. The run's own `confirmedFindings` field is stale by design — it reflects the point-in-time review pass, not re-verified after subsequent fix-rounds, so 4 of its 4 listed findings (all against FIX1/FIX3) were already resolved by the time the run completed; a reader trusting that field alone would think there were live defects when there weren't.
+- Knob candidate (evidence: this run): `confirmedFindings` in the final result should be re-derived after the LAST fix-round that touches a finding's file, or explicitly marked resolved/stale — a summary field that goes stale mid-run and is never refreshed is actively misleading for anyone closing out without reading every checkpoint by hand (which is what this close-out had to do).
+- Deviation: (1) a genuine engine defect (E9/E10 predecessor) — every one of the 5 chains' repro-test steps (RT1-RT5) hit scope-guard/workdir-guard false positives; RT2/RT5's scope-checks read git status against files that provably only exist in the MAIN checkout (e.g. `.claude/handoffs/2026-09-10-train4-hunt-plane.md`, confirmed absent from this worktree), and their revert attempts then failed (exitCode 1, "treat the tree as suspect") — no data was lost, but 3 of 5 repro-tests never landed cleanly in-engine. Root cause confirmed by the engine owner (routeflow-c4): `task-brief.mjs` had no `--cwd`, which explains BOTH this scope-check leak AND the FIX2/FIX5 brief-generation failures as one defect, not two — fixed engine-side as E10 (sha 02d58b81, every git/script/search call now pinned to workdir, wrong-tree read fails safe) after this run completed. (2) `session-usage.mjs` could not resolve true token telemetry for this run's Workflow-tool runId (`wf_31a583fc-e7c` / internal `wf_2026-09-15-tooling-flaky-gates`) — closed out with `--no-usage`; real numbers from the tool's own completion result: 108 agents, 7,430,862 subagent tokens, 802 tool_uses, ~65 min for the engine run itself; a follow-up Opus review agent (193,032 tokens, ~14 min) and two fix-round Sonnet agents (112,570 + 157,838 + a third ~150k-range fix-round agent) run afterward by the orchestrating session are not in that total. (3) B408 and B459 registry work happened interleaved with this run in the same session (separate PRs) — unrelated to this run's own scope, noted here only because both share the same wall-clock window.
+
+## 2026-09-14-phase0-t12-t15-ship · light-loop · major · shipped via PR #767 (0d54f46d) · ~181M tokens / ~$75.4 (orchestrator 69.2M/$20.94, workflow 111.5M/$52.97, final-pass 0.3M/$1.48) · 2026-09-15
+
+- What caught the real defects: the independent Opus F1–F4 review round (all three shipped deltas came from it, none from the plan).
+- Wasted: "Author tests" was the most expensive phase (27.8M / 7 agents TP-A..E) — more than Fix (12.0M/15) or Gate&Review (18.6M/15); 06-verify.json shows the same three files re-flagged as blockers 3–4× across passes (dashboard/page.tsx, AdminBadge.tsx, admin/tenants/new/page.tsx) before converging.
+- Knob candidate (evidence: 06-verify.json re-flag counts): cap per-file re-flags at 2, then route that file to the holistic read instead of another gate/fix/regate cycle — test on the next major run.
+- Deviation: three hardening deltas vs build-plan's "exact code" blocks (dry-run-by-default + --apply; house-tenant INTERNAL/not-deleted re-validation before every write; per-tenant advisory try-lock + one P2002 retry) — S5 build-plan checklist gap for HIGH-risk packages: concurrency + tenant-state edge cases must be specified, not discovered in review.
+- Note: distinct slug from the pre-existing `## 2026-09-14-phase0-t12-t15` heading above (the interrupted legacy-engine attempt, stopped after phase 07, never reached Final pass) — that earlier entry's own slug was already claimed, so `stepRunLog`'s idempotency check would have silently skipped this one under the same slug (closeout.mjs reported "skipped as idempotent" for exactly that reason). Same underlying work (phase0 T12–T15), two different close-outs: the abandoned engine attempt and the light-loop that actually shipped it.
+
 ## 2026-09-15-session-c47433e0 · light-loop · unknown-scale · $3.86 · 0:30 · 2026-09-15
 
 - Caught: (no confirmedByPhase data in result.json)
@@ -611,7 +803,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - **2026-09-08-F16b-invoice-counter** · bug-pipeline (bugfix) · scale major · est $26.40 · 58 agents · 3 h 50 m · REAL DEFECTS CAUGHT: the S2 refutation (design of record replaced: the per-tenant/per-year sequence already existed); the review round (mint outside the tx on two paths, an oversize imported number overflowing the int seed, an unbounded collision guard); the FINAL PASS (mint inside the caller's tx holds the counter lock to COMMIT → lock-order inversion with the driver stop-completion path + full-body serialization; the estimate generator ten lines above the hunk untouched) — three probes caught, harness clean. WASTED: two red-gate audits before the pins were behavioural (P3/P4/P6 green-today, source-text pins — L-060/L-087 class); the aggregate result (>200 KB) truncated again → journal reconstruction. KNOB CANDIDATE: run the final pass BEFORE the fix round on HIGH-risk runs (its lock/tx findings are design-level and would have shaped round 1) — evidence: this run's only unfixed findings were final-pass findings. DEVIATION: light-loop round 2 (Fable-ruled: standalone short reservation tx; estimates folded onto the primitive).
 - Amendment (16:30Z): the "quiet" re-measure after the pool memo was not quiet either — 1640 s, 85/85 green, no MATLAB CPU contention but 49–75 % host load from non-MATLAB processes (OneDrive sync of the fresh mirror suspected); R52 stays unproven. Owner then retired the git repo (OneDrive is the single copy; no git) — a project without a repo has no code map/lessons routine; the records live in `model\notes\`.
 
-## 2026-09-08 · 2026-09-07-ingestion-acme · bugfix · major · est $14.94 · ~2h20m active + a 5h resumed tail (79 agents, 4.93M subagent tokens)
+## 2026-09-08 · 2026-09-07-ingestion-affa · bugfix · major · est $14.94 · ~2h20m active + a 5h resumed tail (79 agents, 4.93M subagent tokens)
 
 - Caught the real defects: Gate & Review lenses (13 confirmed: XLSX branch could throw out of parseStatement; only-one-sheet ingest; no header-locator unit test; error-surfacing half of R4 untested; format-hint copy in two more places) and the 5 fix-revert probes (5/5 caught, all restored). Verify: 42 votes → 2 drops, 12 disputes all dropped — i.e. the fixers' refute-first was right every time.
 - Wasted: the RESUME re-run re-executed every probe and a whole fix round live (probe prompts embed file checksums that changed after fixes → cache miss) — ~$7 of the $14.94 and 5 wall-clock hours for zero new confirmed findings; 12 stale review findings re-refuted against a tree the fixers had already changed. `mutationProbe.restoredVerified=false` is that same checksum drift, not a restore failure.
@@ -627,7 +819,7 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - Candidate knob (evidence above): a docs executor brief with two halves needs a structured return with one field per half (or two agents); a free-text "notes" let a half-done job read as done. Second: add a "reproduce the goldens first" step to S1 for any vector-based repo — it killed the R1 oracle here in 94 s.
 - Deviation: light loop instead of the engine (no git); Fable did its own artifact/lessons/RESUME writing and the final doc corrections; the LTE cfg→runner wire is covered only by the Full-tagged T15 (recorded, not fixed).
 
-## 2026-09-08 · 2026-09-08-r1-ingest (acme-cashbook, standalone S-Corp cash-book builder) · mode feature · scale major · est $23.76 · ~3 h active over 3 launches (19:03Z start; process exit during test authoring; first resume lost 49/59 agents to the session usage limit after 17 min; second resume 2 h 36 m) · 87 agents · 9.63 M subagent tokens
+## 2026-09-08 · 2026-09-08-r1-ingest (affa-cashbook, standalone S-Corp cash-book builder) · mode feature · scale major · est $23.76 · ~3 h active over 3 launches (19:03Z start; process exit during test authoring; first resume lost 49/59 agents to the session usage limit after 17 min; second resume 2 h 36 m) · 87 agents · 9.63 M subagent tokens
 
 - Caught (real): the six Opus lenses (44 raw → 41 confirmed; Verify 43 votes, 1 refuted = 2.4 %, 1 dropped) — Posting-Date blocker, blank-balance guard, verifyHashes with no `missing` list, telemetry dropped before JSON.parse, readCsv swallowing quote errors, the CORROBORATING gate, run.ts exiting 1 on a stage subset; the mutation probe 9/9 caught with byte-verified restores; and the FINAL PASS (Opus read ×2, Fable decision) found every design-level defect the lenses missed: calendar-month sums compared to business-day statement cycles returning a silent 'ok' for unchecked months (84 of 96 on the real manifest), `--stage workbook` overwriting the deliverables from an empty build at exit 0, an AI cache key with no source identity, quarantine flagged but still feeding every downstream total, and two contradictory opening-balance sources in one workbook.
 - Wasted: the whole first resume (~$0.67, 17 min, 49 dead agents — usage limit, not a defect); a Haiku grounding pass that reported PRICES/PRICES_AS_OF "not exported" from a stub the plan said would be written (two disputes for the planner); the baseline typecheck failure was a Sonnet test author's noUncheckedIndexedAccess slip, fixed by Fable by hand; two in-engine fix rounds ($8, 48 fixes) spent on lens findings while the five majors waited for the final pass.
@@ -652,3 +844,20 @@ Knobs change on ledger evidence (ten-run rules), never on one entry.
 - **2026-09-10-train4-run-c** (B216 Stripe reinstatement leaves a pre-lapse downgrade armed) · bug-pipeline (bugfix) · small · est $21.08 · 27 agents · 1 h 10 m · 2.65 M tokens. REAL DEFECTS CAUGHT: red gate behaviorally RED first attempt (REG-B216-A/B/C on their exact predicted values); Gate & Review found the missing fourth-site pin (suspendOverdueTenants must NOT disarm — T7, asserted beside the suspension write so it cannot pass vacuously); manual revert probe at close-out (small scale skips the engine probe): A + C red, B untouched (sibling path), restore byte-exact. WASTED: $21 for a one-file small fix — round 1 spent an Opus "environment repair" wave on a check-types failure ("Cannot find module @routeflow/pricing" in 47 files) that the fixer itself then disputed as a wrong-cwd artifact (the gate agent had run outside the worktree; lockfile, node_modules and dist untouched, verified); the same phantom stayed in remainingFindings as a blocker, so clean=false on a green tree; siblingSweep again skipped "no-patterns" with two patterns in args (4/4 runs today). KNOB CANDIDATE (evidence: this run + damage-report): gate agents must run every command with an explicit `cwd` = workdir and record `process.cwd()` in the gate result; a Baseline that passed (3/3 here) makes a later identical-command failure a cwd/env suspect first, not a fix round. DEVIATION: none in scope; doc line-range nit fixed at commit.
 
 - **E7 workdir enforcement (lead c4 2026-09-15)** · engine fix, not a pipeline run · pipeline.js + dry-run.mjs. EVIDENCE: real 2026-09-15 launch, Lite lane — two implementer agents wrote six files into the MAIN checkout (C:\ClaudeCode\routeflow) while their workdir was the worktree `.claude/worktrees/rf-lite-L1`; REPO_NOTE's "cd into workdir" is advisory text an agent can ignore, and their tasks then stalled with only brief.md written — nothing detected either failure. THREE LAYERS: (1) prompt — REPO_NOTE (the shared RUN_PREFIX, not any per-task brief) now requires `git -C "<workdir>"` for every git call and forbids touching any path outside workdir, including another checkout of the same repo; (2) guard — `withWorkdirGuard` fingerprints the MAIN checkout (HEAD sha + scoped `git status --porcelain`, main root derived once via `git -C <workdir> rev-parse --git-common-dir`) before/after every implement/test-author/fix agent call and blocks the task with a `(workdir)` / phase `'Workdir guard'` finding on drift, skipped when workdir IS the main checkout, fail-safe on a dead fingerprint agent; (3) liveness — `checkImplementLiveness` mechanically confirms (report.md existence + a real git-status count) before blocking a non-blocked, empty-footprint implementer report as "no work in workdir", never trusting the self-reported `filesChanged` array alone. DRY-RUN: added AX/AY/AZ (guard trips; skipped when workdir==main; liveness blocks); full suite ALL DRY-RUN SCENARIOS PASSED, zero regressions in the existing 40+ scenarios (none set `workdir`, so the guard was previously silently dormant everywhere). DEVIATION: fix-round exec calls (all branches) are guarded too, reusing the same wrapper, though the observed defect was specifically implementers; the liveness check was scoped to implement/docs-implement only, per spec.
+
+- **2026-09-24-coordinator-w12-w14-pc-lane** (PC landing coordinator, #1284/#1194/#1326/#1327/#1296/#1278) · not a pipeline run — merge/deploy only, lanes wrote their own reviews. CAUGHT (real, via lane review posted on #938 before merge): #1284's shadow-DOM/iframe focus gap noted but out of scope (Opus); #1194's actionError double-announce + missing role=alert (Opus, follow-up); #1327's 4/4 mutant-kill + scratch-transpile re-run before MERGE-READY. WASTED: #1321 and #1325 both had clean lane reviews but failed CI on rebase — #1321 (B756) hit the routes.service.ts size-ratchet from combined accretion with already-merged #1292 (10 over ceiling, same shape as #1315); #1325 (B783) broke a mobile source-pin test (routes-service-source-pins.test.ts) that counts literal throw-site occurrences, invalidated by #1325's own legitimate guard-consolidation. Neither was coordinator-fixable; both traced precisely and returned to lane on #938. KNOB CANDIDATE (3rd occurrence of the ratchet-accretion shape after #1315 x2): a PR reviewed clean against an older master should re-check its ratchet-pinned files' combined count as part of `gh pr update-branch`, before CI spends 7 min proving it. DEVIATION: none — standard per-PR protocol (update-branch, tree-identity diff, real green CI, squash + Bookkeeping-Follow-Up trailer, deploy SUCCESS per service).
+
+- **2026-09-25-route-realtime-emits** (#2095 follow-up: route-driven order.statusChanged / route.stop.completed / new route.progress to buyer rooms; dead inventory.low.stock deleted) · dev-pipeline light-loop (standard) · major (22 files) · ledger row appended by closeout.mjs (synthesized, no result.json). REAL DEFECTS CAUGHT: the independent Opus review (1 agent, 14 tool calls) found a missed writer class — route-optimization `optimizeRoute`/`applyRouteVariant(runId)` re-sequence run stops with no route.progress — fixed in-session with two after-commit specs; it refuted nothing it could not verify and flagged its own trip-dispatch finding "plausible" (refuted: createTrip writes a template, the run comes via createRun). Proof: live Socket.IO "who receives" spec (10 tests) + 3 mutation probes all RED; wiring spec 12 tests, revert-probe of routes.service.ts → 9/9 positive tests RED.
+- WASTED: the light-loop Workflow ran 40 min of preflight (3 retries) and aborted `host-contention` on a fleet-saturated PC (54–96 build procs, 85–100% CPU) — zero work done; npm ci in a fresh worktree took ~35 min on the same host. My own gate command `jest --testPathIgnorePatterns=/node_modules/ <file>` ran the WHOLE api suite (69 min; the array option swallowed the path) — use `-- <file>`.
+- KNOB CANDIDATE (evidence: this run's 40-min abort; the host is chronically contended by the fleet): light-loop preflight should fail FAST on contention (one probe, not 3 retries over ~13 min each) and report, so the session can choose manual execution immediately; or let the caller pass `allowContended:true` with gates pinned to --maxWorkers=1.
+- DEVIATION: planning by the Opus 5.5 session (Fable not the session model); build executed in-session by Opus (light-loop manual fallback) after the preflight abort; review by one Opus agent; one fix round in-session.
+
+- **2026-09-28-closeout-light-noUsage-telemetry** (user-level tooling fix, reported by lane U-units during B889 close-out) · light loop, in-session · small (1 file: scripts/closeout.mjs). DEFECT: a light-loop close-out with `--no-usage --reason` appended the ledger row with `--telemetry true` and wrote `telemetry:"true"` into the synthesized result.json, so a row with no usage data claimed true telemetry. FIX: a new `lightTelemetry(usageResult)` returns "true" only when session-usage actually ran with no override, and "legacy" otherwise (pipeline-ledger.mjs accepts only legacy|true). It drives the ledger arg, the --dry preview and buildLightResult. usageOverrideReason is still written to the row. Engine and real-usage (`--usage`) paths are unchanged.
+- PROOF: the selftest had encoded the bug (it asserted "true" for a --no-usage light-loop row). I flipped that assertion first and it went RED on the bug's own value ("got 'true'"). Added: the row carries usageOverrideReason; the synthesized result.json says legacy; a light loop with stubbed real usage gives "true" on both the row and result.json; 4 direct lightTelemetry cases. The engine --no-usage → legacy case (2b) passes unchanged. `closeout.mjs selftest` and `selftest-all.mjs` are green.
+- HISTORY: 0 of 50 unique rows across the 24 RouteFlow ledger copies on the PC have telemetry "true" alongside a usageOverrideReason, and all 9 light-loop "true" rows carry a real trueCostUsd. The B889 row is not on the PC; it is probably on the Mac mini. Nothing was rewritten.
+- KNOB CANDIDATE: none. LESSON (general): a selftest that pins today's output can lock a bug in, so assert the invariant ("no usage means no 'true'"), not the current value.
+
+- **2026-09-29-routing-ruling-opus-plans-reviews-sonnet55-builds** (user-level tooling, owner ruling via question box ~02:48Z) · in-session builder. RULING: Opus 5.5 @ high replaces Fable 5.1 for planning (S1-S5) and every engine judgment read (holistic/final read); Opus 5.5 reviews EVERY task (medium routine, high HIGH-risk, both profiles); all builder lanes run Sonnet 5.5 (`claude-sonnet-5-5`) @ medium, never low for code.
+- FILES (backups `*.bak-2026-09-29`): dev-pipeline/pipeline.js (CFG.models.sonnet, pricing row, `reviewTier()`, `CFG.effort.reviewRoutine`, holistic/final read -> M.opus, `VERIFY_NOTE` on implement/docs/fixExec/testAuthor/redRemediation prompts), scripts/light-loop.js + references/LIGHT-LOOP.md, model-routing/scripts/route-task.mjs (buildRoles + selftest 8b), dev-pipeline/SKILL.md, model-routing/SKILL.md, bug-pipeline/SKILL.md.
+- EVIDENCE: https://www.anthropic.com/claude-sonnet-5-5 , https://www.anthropic.com/claude-opus-5-5 , the claude-api migration guide (Sonnet 5.5 effort recalibration; `low` can report done without a check that exercises the change; verification paragraph used verbatim).
+- MEASURE: next ten true-telemetry runs compare review findings, folds, CI rolls and cost per task vs the pre-2026-09-29 rows; a lane or role that ships more defects reverts. KNOB CANDIDATE: none yet (needs ledger evidence).

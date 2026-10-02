@@ -25,7 +25,7 @@ import {
 } from "@/lib/api/estimates";
 import { useCustomers, useCustomerPrices } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
-import { computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
+import { isSpecialTier, computeLineSubtotal, getTierPrice } from "@routeflow/pricing";
 import { apiClient } from "@/lib/api-client";
 import { useTierLabels } from "@/lib/api/tier-labels";
 import { tierLabel } from "@/lib/tier-label";
@@ -235,7 +235,7 @@ function CreateEstimateModal({
     const tierOverride = cpMap.get(product.id);
     const effectiveTier = tierOverride ?? customerTier;
     const tierPrice = getTierPrice(product, effectiveTier);
-    const priceType = effectiveTier !== 1 ? ("SPECIAL" as const) : ("STANDARD" as const);
+    const priceType = isSpecialTier(effectiveTier) ? ("SPECIAL" as const) : ("STANDARD" as const);
     setLineItems((prev) => [
       ...prev,
       {
@@ -825,7 +825,7 @@ export default function EstimatesPage() {
               setDateFrom(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date from"
           />
           <span className="text-navy/70">–</span>
@@ -837,7 +837,7 @@ export default function EstimatesPage() {
               setDateTo(e.target.value);
               setPage(1);
             }}
-            className="h-10 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
+            className="h-10 w-32 rounded border border-surface-border bg-white px-2 text-sm text-navy focus:border-transparent focus:outline-none focus:ring-2 focus:ring-brand-500"
             title="Issue date to"
           />
           {(dateFrom || dateTo) && (
@@ -858,108 +858,114 @@ export default function EstimatesPage() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-lg border border-surface-border">
-        <table className="w-full text-sm">
-          <thead className="border-b border-surface-border bg-surface-raised">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Expiry Date</th>
-              <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
-              <th className="w-10 px-3 py-3" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-surface-border bg-white">
-            {isLoading ? (
+        {/* #2211: the bare table clipped at 320-430px; the inner wrapper scrolls it, the outer
+            div keeps overflow-hidden only for its rounded corners (same pattern as B750). */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="border-b border-surface-border bg-surface-raised">
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center">
-                  <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
-                </td>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Estimate #</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Customer</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Issue Date</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">
+                  Expiry Date
+                </th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-navy/70">Total</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-navy/70">Status</th>
+                <th className="w-10 px-3 py-3" />
               </tr>
-            ) : isError ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
-                  Failed to load estimates. Please try again.
-                </td>
-              </tr>
-            ) : estimates.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-0">
-                  {search || statusFilter || dateFrom || dateTo ? (
-                    <EmptyState
-                      variant="invoices"
-                      title="No matching estimates"
-                      description="No estimates match your current search and filters."
-                      action={
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setSearch("");
-                            setStatusFilter("");
-                            setDateFrom("");
-                            setDateTo("");
-                            setPage(1);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <EmptyState
-                      variant="invoices"
-                      title="No estimates yet"
-                      description="Create an estimate to quote a customer before converting it to an invoice."
-                      action={
-                        <Button size="sm" onClick={() => setIsCreateOpen(true)}>
-                          New estimate
-                        </Button>
-                      }
-                    />
-                  )}
-                </td>
-              </tr>
-            ) : (
-              estimates.map((est: Estimate) => (
-                <tr
-                  key={est.id}
-                  onClick={() => router.push(`/estimates/${est.id}`)}
-                  className="cursor-pointer transition-colors hover:bg-surface-raised"
-                >
-                  <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
-                    {est.estimateNumber}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-navy">
-                    {est.customer?.businessName ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate(est.issueDate ?? est.createdAt)}
-                  </td>
-                  <td className="px-4 py-3 text-navy">
-                    {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
-                  </td>
-                  <td className="px-4 py-3 text-right font-medium text-navy">
-                    {fmt(Number(est.total))}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge status={est.status} />
-                  </td>
-                  <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      title="View estimate"
-                      onClick={() => router.push(`/estimates/${est.id}`)}
-                      className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+            </thead>
+            <tbody className="divide-y divide-surface-border bg-white">
+              {isLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center">
+                    <Loader2 className="mx-auto h-6 w-6 animate-spin text-navy/70" />
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-danger">
+                    Failed to load estimates. Please try again.
+                  </td>
+                </tr>
+              ) : estimates.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    {search || statusFilter || dateFrom || dateTo ? (
+                      <EmptyState
+                        variant="invoices"
+                        title="No matching estimates"
+                        description="No estimates match your current search and filters."
+                        action={
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setSearch("");
+                              setStatusFilter("");
+                              setDateFrom("");
+                              setDateTo("");
+                              setPage(1);
+                            }}
+                          >
+                            Clear filters
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <EmptyState
+                        variant="invoices"
+                        title="No estimates yet"
+                        description="Create an estimate to quote a customer before converting it to an invoice."
+                        action={
+                          <Button size="sm" onClick={() => setIsCreateOpen(true)}>
+                            New estimate
+                          </Button>
+                        }
+                      />
+                    )}
+                  </td>
+                </tr>
+              ) : (
+                estimates.map((est: Estimate) => (
+                  <tr
+                    key={est.id}
+                    onClick={() => router.push(`/estimates/${est.id}`)}
+                    className="cursor-pointer transition-colors hover:bg-surface-raised"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs font-semibold text-navy">
+                      {est.estimateNumber}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-navy">
+                      {est.customer?.businessName ?? "—"}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate(est.issueDate ?? est.createdAt)}
+                    </td>
+                    <td className="px-4 py-3 text-navy">
+                      {fmtCalendarDate((est as any).expiresAt ?? (est as any).expiryDate)}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-navy">
+                      {fmt(Number(est.total))}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge status={est.status} />
+                    </td>
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        title="View estimate"
+                        onClick={() => router.push(`/estimates/${est.id}`)}
+                        className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy transition-colors"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}

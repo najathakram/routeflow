@@ -10,6 +10,7 @@
  */
 import { readFileSync } from "fs";
 import { join } from "path";
+import { readEditItemsSurface } from "./support/edit-items-source";
 
 const SCREEN_PATH = join(
   __dirname,
@@ -22,7 +23,8 @@ const SCREEN_PATH = join(
   "edit-items.tsx",
 );
 const MODULE_PATH = join(__dirname, "..", "lib", "edit-items-draft.ts");
-const source = readFileSync(SCREEN_PATH, "utf8");
+// #2340: the screen plus the modules it was sliced into.
+const source = readEditItemsSurface();
 const moduleSource = readFileSync(MODULE_PATH, "utf8");
 
 /** A source-text assertion must never be satisfied (or defeated) by prose. */
@@ -127,7 +129,7 @@ describe("edit-items.tsx lazy catalogue idle state (REG-EDIT-IDLE)", () => {
 describe("edit-items.tsx per-line price gate (REG-EDIT-PRICE-GATE)", () => {
   it("REG-EDIT-PRICE-GATE: the SPECIAL-tier lock mirrors the create surface", () => {
     expect(parentSrc).toContain(
-      "const isSpecialFor = (productId: string) => effectiveTierFor(productId) !== 1;",
+      "const isSpecialFor = (productId: string) => isSpecialTier(effectiveTierFor(productId));",
     );
     expect(parentSrc).toContain(
       "const effectiveTierFor = (productId: string) => cpMap.get(productId) ?? customerTier ?? 1;",
@@ -301,7 +303,7 @@ describe("edit-items.tsx scan-accept guard on the picker (REG-EDIT-SCAN-GUARD)",
     // Consume the attempt FIRST, then offer — a parked attempt must not
     // re-park on a later settle.
     expect(pickerSrc).toMatch(
-      /shouldAutoAdd\(code\)\) return;[\s\S]*?if \(!scanGuardRef\.current\.offer\(code, match, kind\)\) return;/,
+      /shouldAutoAdd\(code\)\) return;[\s\S]*?if \(!scanGuardRef\.current\.offer\(code, match, level\)\) return;/,
     );
   });
 

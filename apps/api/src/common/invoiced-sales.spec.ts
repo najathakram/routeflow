@@ -12,6 +12,7 @@ import {
   fetchCostIndex,
   fetchInvoicedSaleLines,
   fetchProductCostFacts,
+  netOf,
   resolveUnitCost,
   roundQty,
   soldProductIds,
@@ -293,6 +294,62 @@ describe("accrual net sales (B440/B455/B456)", () => {
       net: 250,
     });
     expect(result.get("c2")).toEqual({ gross: 0, creditNotes: 200, externalRefunds: 0, net: -200 });
+  });
+});
+
+// #2118: the B440 arithmetic lives in ONE pure function the sales-facts layer shares with
+// the two fetchers above (whose own pins stay untouched — they are the "signatures and stubs
+// unchanged" proof).
+describe("netOf — the one B440 net composition (#2118)", () => {
+  it("REG-netOf-compose: net = gross - creditNotes - externalRefunds", () => {
+    expect(netOf({ gross: 500, creditNotes: 200, externalRefunds: 50 })).toEqual({
+      gross: 500,
+      creditNotes: 200,
+      externalRefunds: 50,
+      net: 250,
+    });
+  });
+
+  it("REG-netOf-round: every term is rounded to cents BEFORE it is subtracted (no float drift)", () => {
+    // 0.1 + 0.2 = 0.30000000000000004 — must never reach a term or the net.
+    expect(netOf({ gross: 0.1 + 0.2, creditNotes: 0.1, externalRefunds: 0 })).toEqual({
+      gross: 0.3,
+      creditNotes: 0.1,
+      externalRefunds: 0,
+      net: 0.2,
+    });
+    // Half a cent rounds away from zero on EACH term (roundMoney's policy), then the net is
+    // taken from the ROUNDED terms: 2.14 - 0.01 - 1.01 = 1.12. Subtracting the raw values
+    // first (2.135 - 0.005 - 1.005 = 1.125) would round to 1.13 — the order is the contract.
+    expect(netOf({ gross: 2.135, creditNotes: 0.005, externalRefunds: 1.005 })).toEqual({
+      gross: 2.14,
+      creditNotes: 0.01,
+      externalRefunds: 1.01,
+      net: 1.12,
+    });
+  });
+
+  it("REG-netOf-negative: never clamped — a credit-heavy window nets negative", () => {
+    expect(netOf({ gross: 0, creditNotes: 200, externalRefunds: 0.5 }).net).toBe(-200.5);
+  });
+
+  it("REG-netOf-shared: both fetchers return exactly netOf of their own sums", async () => {
+    const db = stubDb({
+      invoiceAgg: { _sum: { total: D("100.10"), taxAmount: D("0.20") } },
+      creditNoteAgg: { _sum: { amount: D("0.30") } },
+      returnAgg: { _sum: { refundAmount: D("0.60") } },
+      invoiceGroupBy: [{ customerId: "c1", _sum: { total: D("100.10"), taxAmount: D("0.20") } }],
+      creditNoteGroupBy: [{ customerId: "c1", _sum: { amount: D("0.30") } }],
+      returnGroupBy: [{ customerId: "c1", _sum: { refundAmount: D("0.60") } }],
+    });
+    const window = { gte: new Date("2026-06-01"), lte: new Date("2026-06-30") };
+    const expected = netOf({ gross: 100.1 - 0.2, creditNotes: 0.3, externalRefunds: 0.6 });
+
+    expect(expected).toEqual({ gross: 99.9, creditNotes: 0.3, externalRefunds: 0.6, net: 99 });
+    expect(await fetchAccrualNetSales(db, "tenant-1", window)).toEqual(expected);
+    expect((await fetchAccrualNetSalesByCustomer(db, "tenant-1", window)).get("c1")).toEqual(
+      expected,
+    );
   });
 });
 

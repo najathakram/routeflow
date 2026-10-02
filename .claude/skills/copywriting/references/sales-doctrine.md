@@ -1,10 +1,11 @@
 # Sales Doctrine
 
-Distilled from Grant Cardone's *Sell or Be Sold*, the golden reference for this skill. These
+Distilled from Grant Cardone's _Sell or Be Sold_, the golden reference for this skill. These
 are not suggestions. When copy decisions conflict, this file wins, with one exception: the
 honesty rules (no fabrication, advertisability) are absolute and sit above everything.
 
 Contents:
+
 1. The Core Law: Be Sold First
 2. The Conviction Gate
 3. The Buyer's Mind

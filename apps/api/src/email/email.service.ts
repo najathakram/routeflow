@@ -5,6 +5,8 @@ import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
 import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
+import { isInternalEmail } from "../common/internal-email";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -176,18 +178,35 @@ export function mapSmtpError(
   return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
 }
 
+/** Upper bound on the text redactAddresses will scan (it runs on remote server responses). */
+const REDACT_MAX_INPUT = 4096;
+
 /**
- * Strip IPv4/IPv6 address literals from an error string (see mapSmtpError fallback).
- * The IPv6 pattern is intentionally NOT \b-anchored at the start and requires ≥2 colon
- * groups: that catches "::"-compressed forms Node actually emits (e.g. "::1:587",
- * ":::53408" for the unspecified address), which a \b-anchored, single-group-minimum
- * pattern would miss. Quantifiers stay bounded ({0,4}/{2,8}) so there is no ReDoS risk,
- * and over-redaction of address-shaped tokens in this fallback branch is acceptable.
+ * Strip IPv4/IPv6 address literals AND email addresses (local part masked, domain kept) from
+ * an error string (see mapSmtpError fallback; also the Resend error text we log).
+ *
+ * This runs on text a remote, tenant-controlled SMTP host chooses, so it must not be a
+ * ReDoS surface: the input is sliced to REDACT_MAX_INPUT first, and every quantifier is
+ * BOUNDED (email local part {1,64}, domain labels {1,63} x {1,8}; IPv6 groups {0,4}/{2,8}).
+ * An unbounded `[...]+@` pattern backtracks quadratically on a long no-`@` string (50k
+ * chars blocked the event loop for ~12 s). The IPv6 pattern is intentionally NOT
+ * \b-anchored at the start and requires >=2 colon groups: that catches "::"-compressed
+ * forms Node actually emits (e.g. "::1:587", ":::53408"), which a \b-anchored pattern would
+ * miss. Over-redaction of address-shaped tokens in this fallback branch is acceptable. The email
+ * pattern needs a dotted domain, so a bare `user@localhost` is deliberately not masked.
  */
-function redactAddresses(msg: string): string {
-  return msg
-    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
-    .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]"); // IPv6 incl. ::-compressed
+export function redactAddresses(msg: string): string {
+  return (
+    msg
+      .slice(0, REDACT_MAX_INPUT)
+      // Email addresses: keep the domain (what an operator needs), mask the local part (PII).
+      .replace(
+        /[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8})/g,
+        "***@$1",
+      )
+      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
+      .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]")
+  ); // IPv6 incl. ::-compressed
 }
 
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
@@ -1087,6 +1106,35 @@ export class EmailService {
 
   // ─── Internal send ─────────────────────────────────────────────────────────
 
+  /** B911: the log form of a recipient — the domain only, never the full address. */
+  private logRecipient(to: string): string {
+    const at = to.lastIndexOf("@");
+    return at >= 0 ? to.slice(at) : "<no-domain>";
+  }
+
+  /**
+   * #2854 Opus B4+r2: ONE refusal shared by BOTH public send paths — `send()` and
+   * `sendPlatform()` (which is called directly by set-password / tenant-welcome /
+   * email-change / role-change, billing-notification and onboarding, so a guard in
+   * `send()` alone left an admin resetPassword mailing an @imported.local user).
+   * Import sentinels (@imported.local / @placeholder.local) are non-routable;
+   * refusing is treated exactly like "no email on file". Honest result (R5).
+   * The warn log carries the sentinel DOMAIN only, never the full address.
+   */
+  private refuseSentinel(
+    to: string,
+  ): { delivered: false; transport: "none"; error: string } | null {
+    if (!isInternalEmail(to)) return null;
+    this.logger.warn(
+      `send refused: recipient is at the internal sentinel domain ${this.logRecipient(to)} (no real email on file)`,
+    );
+    return {
+      delivered: false,
+      transport: "none",
+      error: "Recipient is an internal placeholder address (no real email on file).",
+    };
+  }
+
   /**
    * Send an email and return an HONEST result. NEVER throws for a delivery/config
    * problem — it returns `{delivered:false, …}` instead — so fire-and-forget callers
@@ -1146,6 +1194,11 @@ export class EmailService {
      */
     fromAddress?: string;
   }> {
+    // Sentinel guard (#2854 Opus B4 + r2): shared with sendPlatform() below —
+    // BOTH public send paths refuse before any transport or delegation.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) return refusedTo;
+
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses
@@ -1237,7 +1290,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via tenant SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via tenant SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1277,7 +1330,7 @@ export class EmailService {
           attachments: params.attachments,
         });
         this.logger.log(
-          `Email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return {
           delivered: true,
@@ -1326,10 +1379,19 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected email to ${params.to}: ${msg}`);
-          return { delivered: false, transport: "resend", error: msg, smtpFallbackReason };
+          this.logger.error(
+            `Resend rejected email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
+          );
+          return {
+            delivered: false,
+            transport: "resend",
+            error: redactAddresses(String(msg)),
+            smtpFallbackReason,
+          };
         }
-        this.logger.log(`Email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`);
+        this.logger.log(
+          `Email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
+        );
         // Resend rescued a failing tenant SMTP send — delivered:true is honest (the mail
         // DID go out), but smtpFallbackReason must still ride along: this is exactly the
         // case where, without it, nobody ever learns their own mailbox is broken. The From
@@ -1342,11 +1404,13 @@ export class EmailService {
           fromAddress: smtpFallbackReason ? this.addressOf(from) : undefined,
         };
       } catch (err: any) {
-        this.logger.error(`Failed to send email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
+        );
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
           smtpFallbackReason,
         };
       }
@@ -1354,7 +1418,7 @@ export class EmailService {
 
     // 4. No transport configured — NOT delivered (was a silent mock "success").
     this.logger.warn(
-      `[EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
+      `[EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no SMTP or platform email is configured.`,
     );
     return {
       delivered: false,
@@ -1392,6 +1456,12 @@ export class EmailService {
     id?: string;
     error?: string;
   }> {
+    // Sentinel guard (#2854 Opus r2): sendPlatform is PUBLIC and called directly
+    // (set-password / welcome / email-change / role-change, billing-notification,
+    // onboarding) — it needs its own refusal, not just send()'s.
+    const refusedTo = this.refuseSentinel(params.to);
+    if (refusedTo) return refusedTo;
+
     // 1. Platform SMTP (Google Workspace mailbox) — same transport as send()'s own
     // platform-SMTP step, but the From identity is always the bare platform address.
     if (this.platformSmtp) {
@@ -1412,7 +1482,7 @@ export class EmailService {
           replyTo: params.replyTo,
         });
         this.logger.log(
-          `Platform email sent via platform SMTP to ${params.to} — messageId: ${info.messageId}`,
+          `Platform email sent via platform SMTP to ${this.logRecipient(params.to)} — messageId: ${info.messageId}`,
         );
         return { delivered: true, transport: "smtp", id: info.messageId };
       } catch (err: any) {
@@ -1437,26 +1507,30 @@ export class EmailService {
         });
         if ((result as any)?.error) {
           const msg = (result as any).error?.message ?? "Resend rejected the message";
-          this.logger.error(`Resend rejected platform email to ${params.to}: ${msg}`);
-          return { delivered: false, transport: "resend", error: msg };
+          this.logger.error(
+            `Resend rejected platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(msg))}`,
+          );
+          return { delivered: false, transport: "resend", error: redactAddresses(String(msg)) };
         }
         this.logger.log(
-          `Platform email sent via Resend to ${params.to} — id: ${(result.data as any)?.id}`,
+          `Platform email sent via Resend to ${this.logRecipient(params.to)} — id: ${(result.data as any)?.id}`,
         );
         return { delivered: true, transport: "resend", id: (result.data as any)?.id };
       } catch (err: any) {
-        this.logger.error(`Failed to send platform email to ${params.to}: ${err?.message}`);
+        this.logger.error(
+          `Failed to send platform email to ${this.logRecipient(params.to)}: ${redactAddresses(String(err?.message ?? ""))}`,
+        );
         return {
           delivered: false,
           transport: "resend",
-          error: err?.message ?? "Resend send failed",
+          error: redactAddresses(String(err?.message ?? "Resend send failed")),
         };
       }
     }
 
     // 3. No platform transport configured.
     this.logger.warn(
-      `[PLATFORM EMAIL NOT SENT] To: ${params.to} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
+      `[PLATFORM EMAIL NOT SENT] To: ${this.logRecipient(params.to)} | Subject: ${params.subject} — no platform SMTP or Resend configured.`,
     );
     return { delivered: false, transport: "none" };
   }
@@ -1903,6 +1977,67 @@ export class EmailService {
     });
   }
 
+  /**
+   * #2439: the new-workspace welcome email. It carries the workspace, the username, a single-use
+   * set-password link (never a password), the login URL and — when self-serve checkout is allowed
+   * for the plan — a STABLE "Pay now" link (login → /settings/billing, which mints a fresh Stripe
+   * checkout on click), so nothing in it goes stale in 24h. Platform sender only.
+   */
+  async sendTenantWelcomeEmail(params: {
+    to: string;
+    username: string;
+    businessName: string;
+    workspace: string;
+    setPasswordUrl: string;
+    expiryHours: number;
+    loginUrl: string;
+    payUrl: string | null;
+    trialDays: number;
+  }) {
+    const p = (html: string) =>
+      `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${html}</p>`;
+    const paySection = params.payUrl
+      ? `${p(
+          params.trialDays === 0
+            ? "Complete payment to activate your workspace:"
+            : `Your trial runs for ${params.trialDays} days. Complete payment any time to keep going:`,
+        )}
+    ${renderBrandButton("Pay now", params.payUrl)}
+    ${p('<span style="font-size:13px;color:#6b7280;">Sign in, then you\'ll go straight to billing.</span>')}`
+      : "";
+    const body = `${p(`Hi ${escapeHtml(params.username)},`)}
+    ${p(`Your RouteFlow workspace for <strong>${escapeHtml(params.businessName)}</strong> is ready.`)}
+    ${p(`<strong>Workspace:</strong> ${escapeHtml(params.workspace)}<br/><strong>Username:</strong> ${escapeHtml(params.username)}`)}
+    ${p("Start by setting your password:")}
+    ${renderBrandButton("Set your password", params.setPasswordUrl)}
+    ${p(`<span style="font-size:13px;color:#6b7280;">This link works once and expires in ${params.expiryHours} hours.</span>`)}
+    ${renderBrandButton("Sign in", params.loginUrl)}
+    ${paySection}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: "Your RouteFlow workspace is ready",
+      bodyHtml: body,
+      bodyText: [
+        `Hi ${params.username},`,
+        `Your RouteFlow workspace for ${params.businessName} is ready.`,
+        `Workspace: ${params.workspace}`,
+        `Username: ${params.username}`,
+        `Set your password (works once, expires in ${params.expiryHours} hours): ${params.setPasswordUrl}`,
+        `Sign in: ${params.loginUrl}`,
+        ...(params.payUrl
+          ? [`Pay now (sign in, then you'll go straight to billing): ${params.payUrl}`]
+          : []),
+      ],
+      footerNote: "RouteFlow Platform — this is an automated account email.",
+    });
+    return this.sendPlatform({
+      to: params.to,
+      subject: `Welcome to RouteFlow — your ${params.businessName} workspace is ready`,
+      html,
+      text,
+    });
+  }
+
   /** Notice to a user's OLD address after their login email is changed — never opt-out. */
   async sendEmailChangedNotice(params: { to: string; username: string; newEmail: string }) {
     const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
@@ -1980,6 +2115,48 @@ export class EmailService {
       subject: "Your RouteFlow role was changed",
       html,
       text,
+    });
+  }
+
+  // ─── F-10a: connected mailbox revoked (platform-sent, tenant-admin-facing) ─────
+
+  /**
+   * Tells a tenant admin that RouteFlow can no longer send from their connected Gmail/Outlook
+   * mailbox (`MailboxAlertService`, once per revocation). ALWAYS the platform sender class: the
+   * mailbox this is about is exactly the one that can't send, and the notice is RouteFlow talking
+   * to its own customer, not tenant-branded mail — so it never reaches the connected mailbox or
+   * the tenant's SMTP, whatever tenant context is active. The words come from
+   * `mailboxRevokedCopy`, the same source as the in-app notification. Never throws (`send()` is
+   * honest-by-result).
+   */
+  async sendMailboxRevokedNotice(params: {
+    to: string;
+    username: string;
+    accountEmail: string;
+    provider: "GOOGLE" | "MICROSOFT";
+    /** Whether a fallback sender exists (`isEmailConfigured()`), so the copy never promises one
+     *  that doesn't. */
+    hasFallback: boolean;
+  }) {
+    const copy = mailboxRevokedCopy(params);
+    // The same destination MailboxController sends the admin back to after (re)connecting.
+    const settingsUrl = `${(this.config.get<string>("WEB_URL") ?? "http://localhost:3001").replace(/\/$/, "")}/settings?tab=email`;
+    const body = `<p style="margin:0 0 16px;font-size:15px;color:#374151;">Hi ${escapeHtml(params.username)},</p>
+    ${copy.paragraphs.map((line) => `<p style="margin:0 0 16px;font-size:15px;color:#374151;">${escapeHtml(line)}</p>`).join("")}
+    ${renderBrandButton(copy.cta, settingsUrl)}`;
+    const { html, text } = renderBrandedEmail({
+      headerHtml: brandHeaderHtml(),
+      heading: copy.heading,
+      bodyHtml: body,
+      bodyText: [`Hi ${params.username},`, ...copy.paragraphs, `${copy.cta}: ${settingsUrl}`],
+      footerNote: "RouteFlow Platform — automated notification.",
+    });
+    return this.send({
+      to: params.to,
+      subject: copy.subject,
+      html,
+      text,
+      senderClass: "platform",
     });
   }
 

@@ -1,6 +1,9 @@
 import { NotFoundException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
 import { RecurringInvoicesService } from "./recurring-invoices.service";
+import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { TenantContextService } from "../tenant/tenant-context.service";
 import { InvoicesService } from "../invoices/invoices.service";
@@ -45,6 +48,15 @@ describe("RecurringInvoicesService — schedule + outcome (F13)", () => {
         { provide: PrismaService, useValue: prisma },
         { provide: TenantContextService, useValue: {} },
         { provide: InvoicesService, useValue: invoices },
+        {
+          provide: SellingRestrictionsService,
+          useValue: {
+            assertLinesSellable: jest.fn().mockResolvedValue(undefined),
+            checkLinesSellable: jest.fn().mockResolvedValue({ outcome: "ALLOW", reasons: [] }),
+          },
+        },
+        { provide: NotificationsService, useValue: { sendToUser: jest.fn().mockResolvedValue(1) } },
+        { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
     service = mod.get(RecurringInvoicesService);

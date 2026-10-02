@@ -1,0 +1,4 @@
+{"id":"D-01","title":"Acme deferral 1","fromFeature":"F-01","fromBug":null,"why":"time -- synthetic fixture","decidedBy":"lead","decidedOn":"2026-01-08T10:00Z","revisitBy":"2026-01-30","owner":"Lead","status":"open","notes":"Synthetic."}
+{"id":"D-02","title":"Acme deferral 2","fromFeature":"F-02","fromBug":null,"why":"time -- synthetic fixture","decidedBy":"lead","decidedOn":"2026-01-08T10:00Z","revisitBy":"2026-01-30","owner":"Lead","status":"open","notes":"Synthetic."}
+{"id":"D-03","title":"Acme deferral 3","fromFeature":"F-03","fromBug":null,"why":"time -- synthetic fixture","decidedBy":"lead","decidedOn":"2026-01-08T10:00Z","revisitBy":"2026-01-30","owner":"Lead","status":"open","notes":"Synthetic."}
+{"id":"D-04","title":"Acme deferral 4","fromFeature":"F-04","fromBug":null,"why":"time -- synthetic fixture","decidedBy":"lead","decidedOn":"2026-01-08T10:00Z","revisitBy":"2026-01-30","owner":"Lead","status":"closed","notes":"Synthetic."}

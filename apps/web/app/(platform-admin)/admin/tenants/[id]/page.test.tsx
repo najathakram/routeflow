@@ -1,5 +1,6 @@
 import * as React from "react";
 import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import { PLAN_KEYS } from "@routeflow/types";
 import TenantDetailPage from "./page";
 import { REGISTRY_FIXTURE } from "./_features/__fixtures__/registry.fixtures";
 import { EFFECTIVE_FIXTURE } from "./_features/__fixtures__/effective.fixtures";
@@ -37,6 +38,8 @@ jest.mock("@/lib/platform-admin/features", () => ({
     mockWriteConfig(tenantId, key, req),
 }));
 
+let tenantOverrides: Record<string, unknown> = {};
+
 function tenantFixture() {
   return {
     id: TENANT_ID,
@@ -58,6 +61,7 @@ function tenantFixture() {
     phone: null,
     subscription: null,
     counts: { users: 1, customers: 0, orders: 0, drivers: 0, routes: 0, customerLinks: 0 },
+    ...tenantOverrides,
   };
 }
 
@@ -102,6 +106,14 @@ jest.mock("@/lib/admin-api", () => ({
   },
 }));
 
+// B857: the plan controls read the published catalog (GET /billing/plans via fetchPlanCatalog).
+const mockFetchPlanCatalog = jest.fn();
+jest.mock("@/lib/api/platform-pricing", () => ({
+  ...jest.requireActual("@/lib/api/platform-pricing"),
+  fetchPlanCatalog: () => mockFetchPlanCatalog(),
+  fetchTenantPricing: () => new Promise(() => {}),
+}));
+
 jest.mock("@/lib/tenant-cookie", () => ({ setTenantCookie: jest.fn() }));
 jest.mock("@/lib/impersonation", () => ({ setImpersonation: jest.fn() }));
 
@@ -126,6 +138,8 @@ beforeEach(() => {
   mockFetchDiffs.mockResolvedValue(diffsFixture(TENANT_ID));
   mockFetchMode.mockResolvedValue({ mode: "shadow" });
   mockPost.mockResolvedValue({ data: {} });
+  tenantOverrides = {};
+  mockFetchPlanCatalog.mockResolvedValue(v11Catalog());
 });
 
 describe("Tenant detail page — Feature Console 'Customise' action (brief D test 4)", () => {
@@ -183,5 +197,91 @@ describe("Tenant detail page — Feature Console 'Customise' action (brief D tes
     );
     const [, sentPayload] = mockPost.mock.calls[0];
     expect(sentPayload).not.toHaveProperty("acknowledgeUnmetRequires");
+  });
+});
+
+// v11-shaped published catalog: the public projection never carries invite-only LITE.
+function v11Catalog() {
+  const entry = (planKey: string, sortOrder: number) => ({
+    planKey,
+    name: planKey,
+    monthlyPrice: "0",
+    annualPrice: null,
+    isCustom: false,
+    sortOrder,
+  });
+  return {
+    version: 11,
+    effectiveAt: null,
+    plans: [entry("SCALE", 2), entry("STARTER", 0), entry("ENTERPRISE", 3), entry("GROWTH", 1)],
+  };
+}
+
+function optionValues(select: HTMLElement): string[] {
+  return Array.from((select as HTMLSelectElement).options).map((o) => o.value);
+}
+
+async function gotoBillingTab() {
+  render(<TenantDetailPage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Billing & Subscription" }));
+}
+
+describe("REG-B857: tenant plan controls offer the published catalog, not a hardcoded list", () => {
+  it("REG-B857 T1: Manual Activation offers every catalog plan, GROWTH included, in catalog order", async () => {
+    tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
+    await gotoBillingTab();
+    const select = await screen.findByRole("combobox", { name: "Plan" });
+    await waitFor(() =>
+      expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]),
+    );
+  });
+
+  it("REG-B857 T2: Manual Activation shows the tenant's own plan and posts exactly what it shows", async () => {
+    tenantOverrides = { plan: "TEAM", planKey: "GROWTH" };
+    await gotoBillingTab();
+    const select = (await screen.findByRole("combobox", { name: "Plan" })) as HTMLSelectElement;
+    await waitFor(() => expect(optionValues(select)).toContain("GROWTH"));
+    expect(select.value).toBe("GROWTH");
+
+    const { superAdminClient } = jest.requireMock("@/lib/admin-api");
+    superAdminClient.post.mockResolvedValueOnce({
+      data: { plan: "GROWTH", periodEnd: "2026-10-25T00:00:00.000Z" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Activate Subscription" }));
+    await waitFor(() =>
+      expect(superAdminClient.post).toHaveBeenCalledWith(
+        `/platform-admin/tenants/${TENANT_ID}/activate-subscription`,
+        expect.objectContaining({ plan: "GROWTH" }),
+      ),
+    );
+  });
+
+  it("REG-B857 T3: Change Plan offers the catalog plans with the tenant's resolved plan selected", async () => {
+    tenantOverrides = { plan: "TEAM", planKey: "GROWTH" };
+    render(<TenantDetailPage />);
+    const select = (await screen.findByRole("combobox", { name: "New plan" })) as HTMLSelectElement;
+    await waitFor(() =>
+      expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]),
+    );
+    expect(select.value).toBe("GROWTH");
+    expect(screen.getByRole("button", { name: "Change Plan" })).toBeDisabled();
+  });
+
+  it("pin: a tenant on a plan the catalog does not offer (invite-only LITE) keeps it selected", async () => {
+    tenantOverrides = { plan: "LITE", planKey: "LITE" };
+    await gotoBillingTab();
+    const select = (await screen.findByRole("combobox", { name: "Plan" })) as HTMLSelectElement;
+    await waitFor(() => expect(optionValues(select)).toContain("SCALE"));
+    expect(optionValues(select)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE", "LITE"]);
+    expect(select.value).toBe("LITE");
+  });
+
+  it("pin: an unreadable catalog falls back to every plan the API accepts, with a notice", async () => {
+    mockFetchPlanCatalog.mockRejectedValue(new Error("down"));
+    tenantOverrides = { plan: "STARTER", planKey: "STARTER" };
+    await gotoBillingTab();
+    const select = await screen.findByRole("combobox", { name: "Plan" });
+    await waitFor(() => expect(optionValues(select)).toEqual([...PLAN_KEYS]));
+    expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
   });
 });

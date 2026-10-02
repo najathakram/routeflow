@@ -1,0 +1,185 @@
+{
+  "v": 1,
+  "sessionId": "62d0a7ce-33e8-4ac3-9253-576266772fc2",
+  "project": "/Users/maznahamanullah/code/routeflow/.claude/worktrees/cool-leakey-1635b0",
+  "pricesAsOf": "2026-06-24",
+  "session": {
+    "byModel": {
+      "claude-opus-5-5": {
+        "input": 496,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 741072,
+        "cacheRead": 75452551,
+        "output": 241345,
+        "messages": 225,
+        "tokens": 76435464,
+        "costUsd": 51.1731005
+      },
+      "<synthetic>": {
+        "input": 0,
+        "cacheWrite5m": 0,
+        "cacheWrite1h": 0,
+        "cacheRead": 0,
+        "output": 0,
+        "messages": 2,
+        "tokens": 0,
+        "costUsd": null
+      }
+    },
+    "total": {
+      "input": 496,
+      "cacheWrite5m": 0,
+      "cacheWrite1h": 741072,
+      "cacheRead": 75452551,
+      "output": 241345,
+      "messages": 227,
+      "tokens": 76435464,
+      "costUsd": 51.1731005
+    },
+    "messages": 227,
+    "firstAt": "2026-09-25T17:06:08.660Z",
+    "lastAt": "2026-09-25T20:08:00.543Z",
+    "activeMs": 5440384,
+    "cacheHitRatio": 0.9902673853345558
+  },
+  "workflows": {},
+  "agents": {
+    "byType": {
+      "general-purpose": {
+        "total": {
+          "input": 282,
+          "cacheWrite5m": 1286042,
+          "cacheWrite1h": 0,
+          "cacheRead": 17927709,
+          "output": 28222,
+          "messages": 0,
+          "tokens": 19242255,
+          "costUsd": 10.02160065
+        },
+        "byModel": {
+          "claude-opus-5-5": {
+            "input": 84,
+            "cacheWrite5m": 459791,
+            "cacheWrite1h": 0,
+            "cacheRead": 3829172,
+            "output": 4330,
+            "messages": 0,
+            "tokens": 4293377,
+            "costUsd": 4.89694975
+          },
+          "claude-sonnet-5": {
+            "input": 198,
+            "cacheWrite5m": 826251,
+            "cacheWrite1h": 0,
+            "cacheRead": 14098537,
+            "output": 23892,
+            "messages": 0,
+            "tokens": 14948878,
+            "costUsd": 5.124650900000001
+          }
+        },
+        "agents": 9,
+        "durationMs": 3219384
+      }
+    },
+    "list": [
+      {
+        "id": "a061a3942d6554888",
+        "agentType": "general-purpose",
+        "description": "Independent delta re-review PR 2170",
+        "tokens": 563584,
+        "costUsd": 0.63647125,
+        "cacheHitRatio": 0.897260225281424,
+        "durationMs": 86681
+      },
+      {
+        "id": "a2529b4975b8c5b2d",
+        "agentType": "general-purpose",
+        "description": "Implement B861 web fix (FIX2)",
+        "tokens": 1474446,
+        "costUsd": 0.49078710000000003,
+        "cacheHitRatio": 0.9425148506524249,
+        "durationMs": 170163
+      },
+      {
+        "id": "a621bf211ad798111",
+        "agentType": "general-purpose",
+        "description": "Write B861 web REG test",
+        "tokens": 839829,
+        "costUsd": 0.3747175,
+        "cacheHitRatio": 0.8933109300536584,
+        "durationMs": 158837
+      },
+      {
+        "id": "a8d77ed96befd94c4",
+        "agentType": "general-purpose",
+        "description": "Author the B861 DB-lane spec",
+        "tokens": 2883182,
+        "costUsd": 1.1041875,
+        "cacheHitRatio": 0.9334992225681727,
+        "durationMs": 499349
+      },
+      {
+        "id": "a9c21b23f5892a31f",
+        "agentType": "general-purpose",
+        "description": "Opus review of B861 fix diff",
+        "tokens": 1456279,
+        "costUsd": 1.46877225,
+        "cacheHitRatio": 0.9143254701747394,
+        "durationMs": 177258
+      },
+      {
+        "id": "ab9aac40690d469d9",
+        "agentType": "general-purpose",
+        "description": "Write B861 API REG tests",
+        "tokens": 4664551,
+        "costUsd": 1.5997857000000002,
+        "cacheHitRatio": 0.939281544636569,
+        "durationMs": 750529
+      },
+      {
+        "id": "ac1e2325e21b5d3d5",
+        "agentType": "general-purpose",
+        "description": "Independent pre-merge verdict PR 2170",
+        "tokens": 1357657,
+        "costUsd": 1.4495365,
+        "cacheHitRatio": 0.9048903888528887,
+        "durationMs": 216599
+      },
+      {
+        "id": "ac8223870eebe223c",
+        "agentType": "general-purpose",
+        "description": "S2 cause refutation for B861",
+        "tokens": 915857,
+        "costUsd": 1.34216975,
+        "cacheHitRatio": 0.837774687126197,
+        "durationMs": 286238
+      },
+      {
+        "id": "ae5b815d7cd1db0ba",
+        "agentType": "general-purpose",
+        "description": "Implement B861 API fix (FIX1)",
+        "tokens": 5086870,
+        "costUsd": 1.5551731000000002,
+        "cacheHitRatio": 0.9649490404193998,
+        "durationMs": 873730
+      }
+    ],
+    "total": {
+      "input": 282,
+      "cacheWrite5m": 1286042,
+      "cacheWrite1h": 0,
+      "cacheRead": 17927709,
+      "output": 28222,
+      "messages": 141,
+      "tokens": 19242255,
+      "costUsd": 10.02160065
+    },
+    "cacheHitRatio": 0.9330528890004509
+  },
+  "warnings": [
+    "project: resolved via --project -> /Users/maznahamanullah/code/routeflow/.claude/worktrees/cool-leakey-1635b0",
+    "unknown model id '<synthetic>' -- cost set to null for its usage",
+    "--wf all: no matching wf_* directory under '/Users/maznahamanullah/.claude/projects/-Users-maznahamanullah-code-routeflow--claude-worktrees-cool-leakey-1635b0/62d0a7ce-33e8-4ac3-9253-576266772fc2/subagents/workflows'"
+  ]
+}

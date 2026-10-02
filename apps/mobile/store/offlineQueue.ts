@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { FailedActionRecord } from "../lib/queue-drain";
+import {
+  pruneSettledKeys,
+  referencedReturnKeys,
+  type SettledKey,
+} from "../lib/inline-return-submit-key";
 import { resolveQueueIdentity, stampQueuedAction, type QueueIdentity } from "../lib/queue-identity";
 
 export interface QueuedAction {
@@ -24,7 +29,7 @@ export interface QueuedAction {
 }
 
 /** Upper bound on the persisted failure list (see addFailedAction). */
-export const MAX_FAILED_ACTIONS = 50;
+const MAX_FAILED_ACTIONS = 50;
 
 interface OfflineQueueState {
   queue: QueuedAction[];
@@ -45,6 +50,20 @@ interface OfflineQueueState {
   addFailedAction: (record: FailedActionRecord) => void;
   clearFailedAction: (actionId: string) => void;
   clearFailedActions: () => void;
+  /** GLOBAL tombstones (SA-220: a user-scoped list would bring back a settled attempt after a
+   *  driver hand-off — legacy queue entries are ADOPTED by the next user, REG-B137) of inline-return captures that reached a TERMINAL outcome (landed / definitely
+   *  refused). The sign-in nonce rebuild skips these, so a stale failed-action record can never
+   *  resurrect a settled key (Opus re-review of #1270). Persisted with the queue (which sign-out
+   *  deliberately leaves alone) so they survive sign-out AND relaunch; a returnKey is unique per
+   *  attempt so a tombstone can never suppress a later capture. Pruned by age (90 days) and a
+   *  count cap at seed time (`pruneSettledInlineReturnKeys`) — never unbounded (SA-206). */
+  settledInlineReturnKeys: SettledKey[];
+  /** Age + count prune, never evicting a key the queue / failed-actions list still references. */
+  pruneSettledInlineReturnKeys: (now?: number) => void;
+  /** A capture attempt (its `returnKey`) reached a terminal outcome: tombstone the key AND drop
+   *  EVERY failed-action record carrying it (direct- and drain-origin alike) in ONE update, pruning
+   *  on every insert. */
+  settleInlineReturnKey: (returnKey: string) => void;
 }
 
 export const useOfflineQueue = create<OfflineQueueState>()(
@@ -118,11 +137,50 @@ export const useOfflineQueue = create<OfflineQueueState>()(
         })),
 
       clearFailedActions: () => set({ failedActions: [] }),
+
+      settledInlineReturnKeys: [],
+      pruneSettledInlineReturnKeys: (now = Date.now()) =>
+        set((state) => {
+          const pruned = pruneSettledKeys(
+            state.settledInlineReturnKeys,
+            now,
+            referencedReturnKeys(state.queue, state.failedActions),
+          );
+          return pruned === state.settledInlineReturnKeys
+            ? state
+            : { settledInlineReturnKeys: [...pruned] };
+        }),
+      settleInlineReturnKey: (returnKey) =>
+        set((state) => {
+          const failedActions = state.failedActions.filter(
+            (f) =>
+              !(
+                f.action.endpoint === "/returns/inline/capture" &&
+                (f.action.body as { returnKey?: string } | undefined)?.returnKey === returnKey
+              ),
+          );
+          const now = Date.now();
+          const next = [
+            ...state.settledInlineReturnKeys.filter((t) => t.key !== returnKey),
+            { key: returnKey, at: now },
+          ];
+          return {
+            failedActions,
+            // prune on EVERY insert (the just-settled key is protected by being newest)
+            settledInlineReturnKeys: [
+              ...pruneSettledKeys(next, now, referencedReturnKeys(state.queue, failedActions)),
+            ],
+          };
+        }),
     }),
     {
       name: "routeflow-offline-queue",
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ queue: state.queue, failedActions: state.failedActions }),
+      partialize: (state) => ({
+        queue: state.queue,
+        failedActions: state.failedActions,
+        settledInlineReturnKeys: state.settledInlineReturnKeys,
+      }),
     },
   ),
 );

@@ -2,7 +2,7 @@ import React from "react";
 import { Document, Page, Text, View, StyleSheet, Image, Link } from "@react-pdf/renderer";
 import { carrierLabel, getTrackingUrl } from "../common/shipping";
 import { roundMoney } from "@routeflow/pricing";
-import { promoNote, qtyCellText, showOriginalPrice } from "./invoice-pdf-item";
+import { promoNote, qtyCellText, showOriginalPrice, type PdfSubLine } from "./invoice-pdf-item";
 import { CREDIT_NOTE_METHOD, resolveConfirmedAmounts } from "./payment-predicates";
 
 type DecimalLike = { toNumber(): number } | number | string;
@@ -112,7 +112,11 @@ export interface InvoicePdfData {
     product?: { name: string } | null;
     barcodeDataUri?: string;
     barcodeText?: string;
+    /** #2717 M3: frozen sub-lines of a composed (mixed-pack) line, "(included)": display only, never summed. */
+    subLines?: PdfSubLine[];
   }>;
+  /** #2717 M3: PNG data URI of the order QR (order-linked invoice, mixed_packs on); absent = no QR. */
+  qrDataUri?: string;
   payments: Array<{
     id: string;
     amount: DecimalLike;
@@ -615,6 +619,30 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
                       </Text>
                     </View>
                   ) : null}
+                  {/* #2717 M3: the pieces inside a mixed pack; the box line above stays authoritative. */}
+                  {item.subLines?.map((sub, subIdx) => (
+                    <View key={`${item.id}-sub-${subIdx}`} style={{ marginTop: 3, marginLeft: 8 }}>
+                      <Text style={{ fontSize: 7, color: "#334155" }}>
+                        {[
+                          sub.name,
+                          sub.qtyText,
+                          sub.unitSku ? `SKU ${sub.unitSku}` : null,
+                          sub.priceText,
+                        ]
+                          .filter(Boolean)
+                          .join("  |  ")}
+                      </Text>
+                      {sub.barcodeDataUri ? (
+                        <Image
+                          src={sub.barcodeDataUri}
+                          style={{ height: 14, width: 70, objectFit: "contain", marginTop: 1 }}
+                        />
+                      ) : null}
+                      {sub.barcodeText ? (
+                        <Text style={{ fontSize: 6, color: "#64748b" }}>{sub.barcodeText}</Text>
+                      ) : null}
+                    </View>
+                  ))}
                 </View>
                 <View style={styles.colQty}>
                   <Text style={styles.cellTextRight}>
@@ -665,6 +693,16 @@ export function InvoicePdfTemplate({ invoice }: { invoice: InvoicePdfData }) {
               </View>
             );
           })}
+
+          {/* #2717 M3: order QR (opens the order in the buyer portal). */}
+          {invoice.qrDataUri ? (
+            <View style={{ marginTop: 10, alignItems: "flex-end" }}>
+              <Image src={invoice.qrDataUri} style={{ height: 64, width: 64 }} />
+              <Text style={{ fontSize: 6.5, color: "#64748b", marginTop: 2 }}>
+                Scan to view this order
+              </Text>
+            </View>
+          ) : null}
 
           {/* Totals */}
           <View style={styles.totalsWrapper}>

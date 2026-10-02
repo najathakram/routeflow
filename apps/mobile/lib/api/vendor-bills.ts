@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
+import { API_ERROR_CODES } from "@routeflow/types";
 import type {
   CheckVendorBillDuplicateDto,
   DuplicateVendorBillError,
@@ -96,13 +97,15 @@ export interface ScanResult {
 /** Extract the UNLINKED_ITEMS payload from an axios error, if that's what it is. */
 export function getUnlinkedItemsError(error: unknown): UnlinkedItemsError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "UNLINKED_ITEMS" ? (data as UnlinkedItemsError) : null;
+  return data?.code === API_ERROR_CODES.UNLINKED_ITEMS ? (data as UnlinkedItemsError) : null;
 }
 
 /** Extract the DUPLICATE_VENDOR_BILL payload from an axios error, if that's what it is. */
 export function getDuplicateVendorBillError(error: unknown): DuplicateVendorBillError | null {
   const data = (error as { response?: { data?: { code?: string } } })?.response?.data;
-  return data?.code === "DUPLICATE_VENDOR_BILL" ? (data as DuplicateVendorBillError) : null;
+  return data?.code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL
+    ? (data as DuplicateVendorBillError)
+    : null;
 }
 
 // isMoneyInvariantError lives in ../vendor-bill-scan (a pure, react-native-free
@@ -237,6 +240,10 @@ export function useVoidVendorBill() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["vendor-bills"] });
       qc.invalidateQueries({ queryKey: ["vendor-bills", id] });
+      // #1528 (B86): void decrements stock server-side — refresh the stock views too.
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["inventory"] });
+      qc.invalidateQueries({ queryKey: ["admin", "products"] }); // SA-543a: operator product lists
     },
   });
 }

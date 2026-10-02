@@ -19,7 +19,14 @@
  * screen's BUY_N_GET_M netting through so the drawer, the line card and the
  * footer cannot disagree.
  */
-import { roundMoney, effectiveQty, type LadderProduct } from "@routeflow/pricing";
+import { needsUnitLabelConfirm } from "./scan-unit-confirm";
+import {
+  roundMoney,
+  effectiveQty,
+  unitLineCount,
+  type LadderProduct,
+  type SellLevel,
+} from "@routeflow/pricing";
 import {
   buildOrderItemDiff,
   type DiffCatalogLine,
@@ -108,6 +115,12 @@ export type DraftItem = {
    */
   promoFreeUnits?: number | null;
   promoBaseUnits?: number | null;
+  /**
+   * #2231 / SA-388: a stored unit line whose COUNT can't be derived (see `unitLineCount`).
+   * Its qty is not editable and any edit to it refuses to save (`repairBlockedLines`) —
+   * the server needs a count on every unit-line UPDATE, and guessing one bills wrong.
+   */
+  needsRepair?: boolean;
 };
 
 /**
@@ -153,6 +166,11 @@ function toNumber(v: number | string | null | undefined): number {
  * clears a line's unit, only resends the one it was loaded with (see
  * `stagedDiffItems` below, which puts it on the wire for a unit line's save).
  */
+// #2231 / SA-388 rule 1: the COUNT of a stored unit line — ONE implementation in
+// @routeflow/pricing (#2276; web and mobile had drifting copies). Re-exported so buyer-edit-items
+// and the specs keep importing it from here.
+export { unitLineCount };
+
 export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | null | undefined): {
   draft: Record<string, DraftItem>;
   unlisted: UnlistedDraft[];
@@ -186,7 +204,10 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
     // `item.qty` everywhere downstream — the steppers, the margin hint, the on-screen "Qty
     // (Case) N" — and `buildOrderItemDiff`'s existing `line.boxes ?? line.qty` wire fallback
     // still resolves correctly (boxes is now always unset for a unit line).
-    const qty = unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty);
+    // #2231 / SA-388: the count comes from ONE rule (unitLineCount); an underivable one is 0
+    // + needsRepair (0 on both this side and orderOriginals', so untouched it sends nothing).
+    const count = unitLabel ? unitLineCount(li) : null;
+    const qty = unitLabel ? (count ?? 0) : toNumber(li.qty);
     // B775 (SA-101/SA-108): key by the line's OWN id — the record key is the
     // ONLY identity, never a `?? productId` fallback. units_v1 can legitimately
     // carry two lines for the same product (a Case line + a pack line), and a
@@ -230,8 +251,11 @@ export function hydrateFromOrder(order: { lineItems?: readonly any[] | null } | 
       // at, so a qty edit rescales it exactly like the server does on save.
       promoFreeUnits: li.promoFreeUnits ?? null,
       promoBaseUnits: li.promoFreeUnits
-        ? Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
+        ? unitLabel
+          ? count
+          : Math.trunc(Number(li.boxes != null ? li.boxes : li.qty) || 0)
         : null,
+      ...(unitLabel && count == null ? { needsRepair: true } : {}),
     };
   }
   return { draft: next, unlisted: nextUnlisted };
@@ -406,7 +430,7 @@ export interface PickInput {
   catalogPrice: number;
   name: string;
   unit?: string;
-  kind: "case" | "piece";
+  level: SellLevel;
   /** The fresh-add ladder snapshot (`ladderProductFor`'s real-tier-prices
    *  input) — only used on a fresh add; an existing entry keeps its own. */
   packLadder?: LadderProduct;
@@ -442,7 +466,7 @@ export function applyPickToDraft(
     // its COUNT — never the pack's box math, regardless of scan kind.
     if (boxed && !isUnitLine(existing)) {
       const line =
-        input.kind === "piece"
+        input.level === "UNIT"
           ? incrementLinePiece(existing, true, upb)
           : incrementLine(existing, true, upb);
       return { ...draft, [key]: { ...line, boxSplit: true } };
@@ -460,7 +484,7 @@ export function applyPickToDraft(
   };
   if (boxed) {
     // 1 box for a case scan/tap; 1 LOOSE piece for a piece-code scan.
-    return input.kind === "piece"
+    return input.level === "UNIT"
       ? { ...draft, [key]: { ...base, qty: 1, boxes: 0, pieces: 1, boxSplit: true } }
       : { ...draft, [key]: { ...base, qty: upb, boxes: 1, pieces: 0, boxSplit: true } };
   }
@@ -473,7 +497,7 @@ export interface ResolvePickTargetInput {
   name: string;
   unit?: string;
   unitsPerBox: number | null;
-  kind: "case" | "piece";
+  level: SellLevel;
   startPrice: number;
   catalogPrice: number;
   packLadder?: LadderProduct;
@@ -503,9 +527,16 @@ export function resolvePickTarget(
   const existingUnitEntry = Object.entries(draft).find(
     ([, it]) => it.productId === input.productId && it.unitLabel,
   );
-  const existingLabel = existingUnitEntry?.[1].unitLabel ?? undefined;
+  // SA-580b: the unit-label keying + confirm apply only to a UNIT scan on a BOXED product (same
+  // rule as NewOrderScreen's needsUnitLabelConfirm); upb <= 1 behaves like a picker tap.
+  const unitLabelScan = needsUnitLabelConfirm(
+    input.level,
+    { unitsPerBox: input.unitsPerBox },
+    existingUnitEntry?.[1].unitLabel,
+  );
+  const existingLabel = unitLabelScan ? (existingUnitEntry?.[1].unitLabel ?? undefined) : undefined;
   const key =
-    input.kind === "piece" && existingUnitEntry
+    unitLabelScan && existingUnitEntry
       ? existingUnitEntry[0]
       : resolveDraftKeyForPick(draft, input.productId, null);
   const apply = (d: Record<string, DraftItem>) =>
@@ -516,7 +547,7 @@ export function resolvePickTarget(
       catalogPrice: input.catalogPrice,
       name: input.name,
       unit: input.unit,
-      kind: input.kind,
+      level: input.level,
       packLadder: input.packLadder,
     });
   return { key, existingLabel, apply };
@@ -569,6 +600,7 @@ export interface BaselineLine {
   /** units_v1 (SA-085f MEDIUM #4): present only on a unit-sold line — see `orderOriginals`. */
   unitLabel?: string | null;
   boxes?: number | null;
+  unitsPerBox?: number | null;
 }
 
 export interface BaselineOrderLike {
@@ -594,7 +626,7 @@ export function orderOriginals(order: BaselineOrderLike | null | undefined): Ori
     .map((li) => ({
       id: li.id,
       productId: li.productId ?? null,
-      qty: li.unitLabel ? toNumber(li.boxes != null ? li.boxes : li.qty) : toNumber(li.qty),
+      qty: li.unitLabel ? (unitLineCount(li) ?? 0) : toNumber(li.qty),
       unitPrice: toNumber(li.unitPrice),
       name: li.name ?? null,
       notes: li.notes ?? null,
@@ -644,6 +676,32 @@ export function stagedDiffItems(
     pendingDeletes: [...staged.pendingDeletes],
     pendingCancels: [],
   });
+}
+
+/**
+ * #2231 / SA-388: names of LOCKED unit lines (`needsRepair`) the operator has edited. The
+ * diff can't carry them (no derivable count, qty 0 skips the UPDATE), so Save must refuse
+ * with "needs repair" and send nothing rather than drop the edit or guess a count. Removing
+ * the line is fine — it leaves the draft, and a DELETE needs no count.
+ */
+export function repairBlockedLines(
+  draft: Record<string, DraftItem>,
+  originals: OriginalLine[],
+): string[] {
+  const byId = new Map(originals.map((o) => [o.id, o]));
+  return Object.values(draft)
+    .filter((i) => {
+      const o = i.needsRepair && i.lineId ? byId.get(i.lineId) : undefined;
+      if (!o) return false;
+      return (
+        i.qty !== o.qty ||
+        Math.abs(i.unitPrice - o.unitPrice) > 0.0001 ||
+        (i.notes ?? "").trim() !== (o.notes ?? "").trim() ||
+        (i.overrideReason ?? null) !== (o.overrideReason ?? null) ||
+        !!i.substituteProductId
+      );
+    })
+    .map((i) => i.name);
 }
 
 /** True when Save would send at least one line action. */

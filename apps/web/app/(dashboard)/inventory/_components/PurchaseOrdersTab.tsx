@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { Plus, Eye, Pencil, Send, PackageCheck, ChevronDown, ChevronUp } from "lucide-react";
-import { Badge, Button, useToast } from "@routeflow/ui/web";
+import { Badge, Button, EmptyState, Skeleton, useToast } from "@routeflow/ui/web";
+import { poDisplayTotal } from "@routeflow/pricing";
 import { formatMoney } from "@/lib/format";
-import { unitsLabel } from "@/lib/stock-label";
 import { fmtCalendarDate } from "@/lib/formatting";
 import {
   usePurchaseOrders,
@@ -12,20 +13,14 @@ import {
   useSendPurchaseOrder,
   useClosePurchaseOrder,
 } from "@/lib/api/inventory";
-import {
-  resolveStoredPOLineAmounts,
-  type POItem,
-  type POStatus,
-  type PurchaseOrder,
-  type Supplier,
-  linePack,
-} from "./purchase-orders-shared";
+import type { POStatus, PurchaseOrder, Supplier } from "./purchase-orders-shared";
 import { CreatePOModal } from "./PurchaseOrdersCreateModal";
 import { ReceivePOModal } from "./PurchaseOrdersReceiveModal";
 import { PurchaseOrdersEditModal } from "./PurchaseOrdersEditModal";
 import { isEditable } from "./purchase-orders-edit";
+import { PurchaseOrderReadOnlyLines } from "./PurchaseOrderReadOnlyLines";
 
-function poStatusBadge(status: POStatus) {
+export function poStatusBadge(status: POStatus) {
   const map: Record<
     POStatus,
     { variant: "neutral" | "info" | "warning" | "success"; label: string }
@@ -74,60 +69,7 @@ function PODetailRow({
     <tr>
       <td colSpan={8} className="px-6 py-4 bg-surface-raised/40">
         <div className="space-y-3">
-          {/* Line items */}
-          <div className="rounded-lg border border-surface-border overflow-hidden bg-white">
-            <table className="w-full text-xs">
-              <thead className="bg-surface-raised text-navy/70">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Product</th>
-                  <th className="px-3 py-2 text-right font-medium">Qty</th>
-                  <th className="px-3 py-2 text-right font-medium">Unit Cost</th>
-                  <th className="px-3 py-2 text-right font-medium">Received</th>
-                  <th className="px-3 py-2 text-right font-medium">Subtotal</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-surface-border">
-                {(po.items ?? []).map((item: POItem) => {
-                  const upb = linePack(
-                    item,
-                    Number(catalogById.get(item.productId)?.unitsPerBox ?? 0),
-                  );
-                  const isBoxed = upb > 1;
-                  const ordered = Number(item.qtyOrdered ?? 0);
-                  const received = Number(item.qtyReceived ?? 0);
-                  // MONEY: the stored exact total through the shared resolver — never `qtyOrdered x unitCost`,
-                  // which re-multiplies a boxed line's rounded per-piece cost (#1199: $11,000.40 for $11,000.00).
-                  const subtotal = resolveStoredPOLineAmounts(item, upb).totalCost;
-                  return (
-                    <tr key={item.id}>
-                      <td className="px-3 py-2 font-medium text-navy">
-                        {item.product?.name ?? catalogById.get(item.productId)?.name ?? "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {isBoxed ? unitsLabel(ordered, upb) : ordered}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        ${Number(item.unitCost).toFixed(isBoxed ? 4 : 2)}
-                        {isBoxed && <span className="text-navy/30"> /pc</span>}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">
-                        {item.qtyReceived != null ? (
-                          isBoxed ? (
-                            unitsLabel(received, upb)
-                          ) : (
-                            received
-                          )
-                        ) : (
-                          <span className="text-navy/30">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right text-navy/70">{formatMoney(subtotal)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <PurchaseOrderReadOnlyLines items={po.items ?? []} catalogById={catalogById} />
 
           {/* Notes */}
           {po.notes && (
@@ -180,53 +122,98 @@ function PODetailRow({
   );
 }
 
+const PAGE_SIZE = 20;
+
 export function PurchaseOrdersTab({
   suppliers,
   products,
+  headerExtra,
+  highlightId,
 }: {
   suppliers: Supplier[];
   products: { id: string; name: string; sku?: string; unitsPerBox?: number | null }[];
+  /** Extra header action(s), rendered before "New purchase order". */
+  headerExtra?: React.ReactNode;
+  /** A PO to mark as just drafted: filters clear and the list returns to page 1 so it is on screen. */
+  highlightId?: string | null;
 }) {
   const [statusFilter, setStatusFilter] = React.useState("");
   const [supplierFilter, setSupplierFilter] = React.useState("");
   const [dateFrom, setDateFrom] = React.useState("");
   const [dateTo, setDateTo] = React.useState("");
+  const [page, setPage] = React.useState(1);
   const [showCreateModal, setShowCreateModal] = React.useState(false);
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [receivePO, setReceivePO] = React.useState<PurchaseOrder | null>(null);
   const [editPO, setEditPO] = React.useState<PurchaseOrder | null>(null);
 
-  const { data: poData, isLoading } = usePurchaseOrders({
-    status: statusFilter || undefined,
-    supplierId: supplierFilter || undefined,
-    from: dateFrom || undefined,
-    to: dateTo || undefined,
-    page: 1,
-    limit: 20,
-  });
+  const {
+    data: poData,
+    isLoading,
+    isError,
+    isFetching,
+    isPlaceholderData,
+    refetch,
+  } = usePurchaseOrders(
+    {
+      status: statusFilter || undefined,
+      supplierId: supplierFilter || undefined,
+      from: dateFrom || undefined,
+      to: dateTo || undefined,
+      page,
+      limit: PAGE_SIZE,
+    },
+    { keepPrevious: true },
+  );
+
+  // A new filter starts from page 1 in the same event, so no fetch runs on a stale page.
+  const onFilter = (set: (v: string) => void, value: string) => {
+    set(value);
+    setPage(1);
+  };
+
+  React.useEffect(() => {
+    if (!highlightId) return;
+    setStatusFilter("");
+    setSupplierFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  }, [highlightId]);
 
   const orders: PurchaseOrder[] = poData?.data ?? poData ?? [];
+  const total: number = poData?.meta?.total ?? orders.length;
+  const totalPages: number = poData?.meta?.totalPages ?? 1;
+  // Rows can disappear under us (a PO removed elsewhere): never stay stranded past the last page.
+  React.useEffect(() => {
+    // only trust a settled response: a failed or in-flight page-2 fetch must not be 'fixed' away
+    if (poData?.meta && !isFetching && totalPages > 0 && page > totalPages) setPage(totalPages);
+  }, [page, totalPages, poData, isFetching]);
 
   const toggleExpand = (id: string) => setExpandedId((prev) => (prev === id ? null : id));
 
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-navy">Purchase Orders</h2>
-        <Button
-          size="sm"
-          leftIcon={<Plus className="h-4 w-4" />}
-          onClick={() => setShowCreateModal(true)}
-        >
-          Create PO
-        </Button>
+        <h3 className="text-base font-semibold text-navy">All purchase orders</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {headerExtra}
+          <Button
+            size="sm"
+            leftIcon={<Plus className="h-4 w-4" />}
+            onClick={() => setShowCreateModal(true)}
+          >
+            New purchase order
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
       <div className="mb-4 flex flex-wrap gap-3">
         <select
+          aria-label="Status"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => onFilter(setStatusFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <option value="">All Statuses</option>
@@ -238,8 +225,9 @@ export function PurchaseOrdersTab({
         </select>
 
         <select
+          aria-label="Supplier"
           value={supplierFilter}
-          onChange={(e) => setSupplierFilter(e.target.value)}
+          onChange={(e) => onFilter(setSupplierFilter, e.target.value)}
           className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
           <option value="">All Suppliers</option>
@@ -250,20 +238,26 @@ export function PurchaseOrdersTab({
           ))}
         </select>
 
-        <input
-          type="date"
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-          placeholder="From"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
-        <input
-          type="date"
-          value={dateTo}
-          onChange={(e) => setDateTo(e.target.value)}
-          placeholder="To"
-          className="rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
-        />
+        <label className="flex items-center gap-2 text-sm text-navy/70">
+          From
+          <input
+            type="date"
+            aria-label="From date"
+            value={dateFrom}
+            onChange={(e) => onFilter(setDateFrom, e.target.value)}
+            className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-navy/70">
+          To
+          <input
+            type="date"
+            aria-label="To date"
+            value={dateTo}
+            onChange={(e) => onFilter(setDateTo, e.target.value)}
+            className="w-36 rounded border border-surface-border px-3 py-1.5 text-sm text-navy focus:outline-none focus:ring-2 focus:ring-brand-500"
+          />
+        </label>
         {(statusFilter || supplierFilter || dateFrom || dateTo) && (
           <button
             onClick={() => {
@@ -271,6 +265,7 @@ export function PurchaseOrdersTab({
               setSupplierFilter("");
               setDateFrom("");
               setDateTo("");
+              setPage(1);
             }}
             className="rounded px-2 py-1.5 text-xs text-navy/70 hover:text-navy hover:bg-surface-raised"
           >
@@ -279,14 +274,48 @@ export function PurchaseOrdersTab({
         )}
       </div>
 
+      {/* Announced whenever stale rows are on screen, whether or not there is a pager. */}
+      <p role="status" className={isPlaceholderData ? "mb-2 text-sm text-navy/70" : "sr-only"}>
+        {isPlaceholderData ? "Updating…" : ""}
+      </p>
+
       {isLoading ? (
-        <div className="space-y-2">
+        <div className="space-y-2" aria-busy="true">
           {[...Array(5)].map((_, i) => (
-            <div key={i} className="h-12 animate-pulse rounded-lg bg-surface-raised" />
+            <Skeleton key={i} shape="block" height={48} />
           ))}
         </div>
+      ) : isError ? (
+        <EmptyState
+          title="Couldn't load purchase orders."
+          description="Check your connection and try again."
+          action={
+            <Button size="sm" variant="secondary" onClick={() => refetch()}>
+              Retry
+            </Button>
+          }
+        />
+      ) : orders.length === 0 && !(statusFilter || supplierFilter || dateFrom || dateTo) ? (
+        <EmptyState
+          title="No purchase orders yet"
+          description="Create one when you place an order with a supplier."
+          action={
+            <Button
+              size="sm"
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setShowCreateModal(true)}
+            >
+              New purchase order
+            </Button>
+          }
+        />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-surface-border">
+        <div
+          aria-busy={isPlaceholderData || undefined}
+          className={`overflow-x-auto rounded-xl border border-surface-border transition-opacity ${
+            isPlaceholderData ? "opacity-50" : ""
+          }`}
+        >
           <table className="w-full text-sm">
             <thead className="border-b border-surface-border bg-surface-raised text-xs text-navy/70">
               <tr>
@@ -309,15 +338,25 @@ export function PurchaseOrdersTab({
             <tbody className="divide-y divide-surface-border">
               {orders.map((po) => (
                 <React.Fragment key={po.id}>
-                  <tr className="transition-colors hover:bg-surface-raised/40">
+                  <tr
+                    data-highlighted={po.id === highlightId ? "true" : undefined}
+                    className={`transition-colors hover:bg-surface-raised/40 ${
+                      po.id === highlightId ? "bg-brand-50" : ""
+                    }`}
+                  >
                     <td className="px-4 py-3 font-mono text-xs font-medium text-navy">
-                      {po.poNumber}
+                      <Link
+                        href={`/purchase-orders/${po.id}`}
+                        className="text-brand-500 hover:underline"
+                      >
+                        {po.poNumber}
+                      </Link>
                     </td>
                     <td className="px-4 py-3 text-navy/70">{po.supplier?.name ?? "—"}</td>
                     <td className="px-4 py-3">{poStatusBadge(po.status)}</td>
                     <td className="px-4 py-3 text-navy/70">{po.items?.length ?? 0}</td>
                     <td className="px-4 py-3 font-medium text-navy">
-                      {formatMoney(po.total ?? 0)}
+                      {formatMoney(poDisplayTotal(po))}
                     </td>
                     <td className="px-4 py-3 text-navy/70">
                       {po.expectedDate ? fmtCalendarDate(po.expectedDate) : "—"}
@@ -379,6 +418,35 @@ export function PurchaseOrdersTab({
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {(totalPages > 1 || page > 1) && (
+        <div className="mt-3 flex items-center justify-between text-sm text-navy/70">
+          <span>
+            {total > 0
+              ? `Showing ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)} of ${total}`
+              : ""}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page <= 1 || isPlaceholderData}
+              onClick={() => setPage((p) => p - 1)}
+              aria-label="Previous page"
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page >= totalPages || isPlaceholderData}
+              onClick={() => setPage((p) => p + 1)}
+              aria-label="Next page"
+            >
+              Next
+            </Button>
+          </div>
         </div>
       )}
 

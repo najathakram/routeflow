@@ -1,3 +1,4 @@
+import type { InvoiceItemSystemKind } from "@routeflow/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../api-client";
 import { fetchPdfBlob } from "../fetch-pdf-blob";
@@ -14,6 +15,7 @@ import type {
   SendInvoiceEmailResult,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  UpdateInvoiceItem,
 } from "@routeflow/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ export type {
   SendInvoiceEmailResult,
   SetCheckStatusDto,
   StandalonePaymentDto,
+  UpdateInvoiceItem,
 } from "@routeflow/types";
 
 /** P5-12: lifecycle of a CHECK InvoicePayment. Always null/absent on non-check payments. */
@@ -58,6 +61,8 @@ export interface InvoiceItem {
   productId?: string;
   product?: { id: string; name: string; unit?: string; unitsPerBox?: number | null };
   description: string;
+  /** #2169: the system line kind ("NSF_FEE" for the bounce-fee line), null for a normal line. */
+  systemKind?: InvoiceItemSystemKind | null;
   qty: number;
   unitPrice: number;
   discount?: number;
@@ -358,7 +363,11 @@ export function useDuplicateInvoice() {
 
 export function useUpdateInvoice() {
   const qc = useQueryClient();
-  return useMutation<Invoice, Error, { id: string } & Partial<CreateInvoiceDto>>({
+  return useMutation<
+    Invoice,
+    Error,
+    { id: string } & Partial<Omit<CreateInvoiceDto, "items">> & { items?: UpdateInvoiceItem[] }
+  >({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/invoices/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["invoices"] });

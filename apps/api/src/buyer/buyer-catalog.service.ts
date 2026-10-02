@@ -7,33 +7,14 @@ import { effectiveBuyerPrice, getTierPrice } from "@routeflow/pricing";
 import { OrdersService } from "../orders/orders.service";
 import { ReplenishmentService } from "./replenishment.service";
 import { PromotionsService } from "../promotions/promotions.service";
+import { signableImageKeys } from "../products/product-image-keys";
+import type { BuyerProduct } from "@routeflow/types";
 
 /** Max images presigned per product for the tile's dot-pager (P5-02). */
 const MAX_TILE_IMAGES = 4;
 
-export interface BuyerProduct {
-  id: string;
-  name: string;
-  description: string | null;
-  sku: string | null;
-  barcode: string | null;
-  unit: string;
-  category: string | null;
-  buyerPrice: number;
-  unitsPerBox: number | null;
-  thumbnailUrl: string | null;
-  imageKeys: string[];
-  isFeatured: boolean;
-  isNew: boolean;
-  isDeal: boolean;
-  /** Presigned URLs for the first images (max 4) — the tile dot-pager. [] when no images. */
-  imageUrls: string[];
-  // RF-200: stock availability fields
-  inStock: boolean;
-  stockStatus: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
-  /** Whole units remaining, exposed ONLY while stockStatus === "LOW" ("Only N left"); else null. */
-  stockLeft: number | null;
-}
+// #2703: the catalog row shape is shared with web + mobile — one declaration in @routeflow/types.
+export type { BuyerProduct } from "@routeflow/types";
 
 @Injectable()
 export class BuyerCatalogService {
@@ -207,10 +188,10 @@ export class BuyerCatalogService {
 
         // Dot pager: presign up to the first 4 images (HMAC-local, no network).
         // First entry corresponds to thumbnailUrl (same key, first image).
-        const imageUrls =
-          (p.imageKeys?.length ?? 0) > 0
-            ? await this.storage.presignedUrls(p.imageKeys.slice(0, MAX_TILE_IMAGES))
-            : [];
+        // #2533: only keys under this product's own prefix are listed or signed.
+        const ownKeys = signableImageKeys(p.id, p.imageKeys);
+        const tileKeys = ownKeys.slice(0, MAX_TILE_IMAGES);
+        const imageUrls = tileKeys.length > 0 ? await this.storage.presignedUrls(tileKeys) : [];
 
         return {
           id: p.id,
@@ -226,7 +207,7 @@ export class BuyerCatalogService {
           isNew: p.isNew ?? false,
           isDeal: p.isDeal ?? false,
           thumbnailUrl: p.thumbnailUrl ?? null,
-          imageKeys: p.imageKeys ?? [],
+          imageKeys: ownKeys,
           imageUrls,
           ...this.deriveStock(p),
         };
@@ -494,7 +475,7 @@ export class BuyerCatalogService {
           priceHist[f.productId]?.lastPrice ?? null,
         ),
         thumbnailUrl: null as string | null, // thumbnails resolved in catalog listing
-        imageKeys: f.product.imageKeys ?? [],
+        imageKeys: signableImageKeys(f.productId, f.product.imageKeys),
         // Needed so add-to-cart from the mobile favorites screen orders a boxed
         // product as boxes (not loose pieces) — matches getCatalog.
         unitsPerBox: f.product.unitsPerBox ?? null,

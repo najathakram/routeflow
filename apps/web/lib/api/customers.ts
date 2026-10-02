@@ -103,18 +103,24 @@ export function useCustomer(id: string) {
   });
 }
 
-export function useCreateCustomer() {
+/**
+ * `localErrorToast`: the caller renders its own error UI (the customer form's banner), so the
+ * app-wide generic error toast must not show the same failure a second time.
+ */
+export function useCreateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: (data: Record<string, unknown>) =>
       apiClient.post("/customers", data).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["customers"] }),
   });
 }
 
-export function useUpdateCustomer() {
+export function useUpdateCustomer(options?: { localErrorToast?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
+    meta: options?.localErrorToast ? { localErrorToast: true } : undefined,
     mutationFn: ({ id, ...data }: { id: string; [k: string]: unknown }) =>
       apiClient.patch(`/customers/${id}`, data).then((r) => r.data),
     onSuccess: (_d, vars) => {
@@ -768,33 +774,6 @@ export function useDeleteCustomerTaxDocument(customerId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["customers", customerId, "tax-documents"] });
       qc.invalidateQueries({ queryKey: ["customers", customerId] });
-    },
-  });
-}
-
-// ─── Cleanup imported customers ────────────────────────────────────────────────
-
-export interface CleanupPreview {
-  toDelete: number;
-  toKeep: number;
-  buyers: { id: string; businessName: string }[];
-}
-
-export function useCleanupPreview() {
-  return useQuery<CleanupPreview>({
-    queryKey: ["customers", "cleanup-preview"],
-    queryFn: () => apiClient.get("/customers/cleanup-preview").then((r) => r.data),
-    enabled: false,
-    staleTime: 0,
-  });
-}
-
-export function useDeleteImportedCustomers() {
-  const qc = useQueryClient();
-  return useMutation<{ deleted: number; preserved: number }>({
-    mutationFn: () => apiClient.delete("/customers/cleanup-imported").then((r) => r.data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["customers"] });
     },
   });
 }

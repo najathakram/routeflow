@@ -1,5 +1,37 @@
 // ─── Products / inventory / stock-count (wave E / imp-10b) ─────────────────────
 
+import type { BarcodeOrigin, BarcodeSymbology, PackagingLevel, RecipeStatus } from "./enums";
+
+/** #2717 M1: a product barcode as the product read model returns it. `origin: "LEGACY"` = synthesized from the legacy
+ *  Product.barcode column for a product with no ProductBarcode rows yet (never persisted). */
+export interface ProductBarcodeView {
+  code: string;
+  level: PackagingLevel;
+  symbology: BarcodeSymbology;
+  origin: BarcodeOrigin | "LEGACY";
+  copiedFromLevel: PackagingLevel | null;
+  primaryFor: PackagingLevel | null;
+}
+
+/** #2717 M4a-1: which code a scan hit and the packaging levels that code has on the resolved product
+ *  (additive on the scan-lookup response; a shared code reports both levels). */
+export interface ScanMatchView {
+  code: string;
+  levels: PackagingLevel[];
+}
+
+/** #2717 M1: a product image as the product read model returns it (`origin: "LEGACY"` = synthesized from imageKeys). */
+export interface ProductImageView {
+  storageKey: string;
+  url: string | null;
+  focalX: number | null;
+  focalY: number | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  altText: string | null;
+  origin: "ROW" | "LEGACY";
+}
+
 export interface InventoryValuation {
   totalValue: number;
   productCount: number;
@@ -8,22 +40,25 @@ export interface InventoryValuation {
 }
 
 export interface RecomputeCostsResult {
+  /** B562 PR-3: true unless the caller sent `dryRun: false` — dry run is the default. */
   dryRun: boolean;
   processed: number;
+  /** Products whose average this call corrected (always 0 on a dry run). */
   updated: number;
   noHistory: { productId: string; name: string }[];
   /** B562: products whose StockMovement ledger can't account for their real
-   *  currentStock (order sales/edits write no movement row) — the replay
-   *  would be sales-blind, so nothing was written for these; `stockDrift` is
-   *  the unaccounted quantity. */
+   *  currentStock — the replay would run on a wrong stock balance, so nothing
+   *  is written for these; `stockDrift` is the unaccounted quantity. */
   gapsDetected: { productId: string; name: string; stockDrift: number }[];
+  /** B562 PR-3 (SA-136 §4): per product, the replayed average and — on an apply that changed it —
+   *  the id of the one appended COST_BASIS correction row. No existing row is ever rewritten. */
   results: {
     productId: string;
     name: string;
+    gap: number;
     oldAvgCost: number | null;
     newAvgCost: number | null;
-    stockDrift: number;
-    movementsBackfilled: number;
+    correctionId: string | null;
   }[];
 }
 
@@ -85,7 +120,8 @@ export interface VariantAssignResult {
 
 /** Per-buyer sales history for the product-detail Sales card. Backed by
  *  `GET /analytics/product-sales/:productId?limit=` — reads INVOICED sales only
- *  (DRAFT/VOID/WRITTEN_OFF excluded), newest first. `lineTotal`/`unitPrice` are
+ *  (DRAFT/VOID excluded; WRITTEN_OFF included and badged via `writtenOff`, #2118),
+ *  newest first, at most `limit` LINES. `lineTotal`/`unitPrice` are
  *  authoritative — never re-derive from qty × unitPrice (would over-charge a
  *  boxed line by `unitsPerBox`). */
 export interface ProductSaleLine {
@@ -114,6 +150,9 @@ export interface ProductSaleLine {
   originalPrice: number | null;
   /** True when the line carries a non-STANDARD price (override/promo/tier). */
   overridden: boolean;
+  /** True when the invoice was written off — still a sale (accrual basis), badged.
+   *  Optional so older fixtures stay valid; the API always sends it. */
+  writtenOff?: boolean;
 }
 
 export interface ProductSalesSummary {
@@ -200,4 +239,26 @@ export interface ProductCategoryDto {
   id: string;
   name: string;
   archivedAt: string | null;
+}
+
+/** #2717 M2: one component line of a recipe version. */
+export interface RecipeComponentDto {
+  id: string;
+  componentProductId: string;
+  qty: number;
+  position: number;
+}
+
+/** #2717 M2: one recipe version as the recipes API returns it. Dates are ISO strings on the wire. */
+export interface RecipeDto {
+  id: string;
+  productId: string;
+  familyProductId: string;
+  version: number;
+  unitsPerPack: number;
+  status: RecipeStatus;
+  activeFor: string | null;
+  effectiveFrom: string | null;
+  retiredAt: string | null;
+  components: RecipeComponentDto[];
 }

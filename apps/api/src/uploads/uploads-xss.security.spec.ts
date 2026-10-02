@@ -193,6 +193,7 @@ describe("RF-076/RF-157 — Customer-document MIME allowlist", () => {
 import { UploadsController } from "./uploads.controller";
 import { UploadsAccessGuard } from "./uploads-access.guard";
 import { PrismaService } from "../prisma/prisma.service";
+import { listenOnLoopback } from "../common/testing/listen-loopback";
 
 describe("RF-078 — GET /uploads/* response headers", () => {
   let app: INestApplication;
@@ -242,7 +243,7 @@ describe("RF-078 — GET /uploads/* response headers", () => {
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {
@@ -314,7 +315,7 @@ describe("RF-078 — PDF is inline, non-allowlisted MIME still forces attachment
       .compile();
 
     app = module.createNestApplication();
-    await app.init();
+    await listenOnLoopback(app);
   });
 
   afterAll(async () => {

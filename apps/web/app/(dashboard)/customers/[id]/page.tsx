@@ -64,8 +64,13 @@ import { useAuth } from "@/lib/auth-context";
 import { useApprovePortalRequest, useDeclinePortalRequest } from "@/lib/api/portal-approvals";
 import { CustomerFormModal } from "../_components/CustomerFormModal";
 import { AuthorizationsTab } from "../_components/AuthorizationsTab";
-import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
-import { getTierPrice, computeMarginFraction, classifyMargin } from "@routeflow/pricing";
+import { fmt, fmtCalendarDate, fmtDate, displayEmail } from "@/lib/formatting";
+import {
+  isSpecialTier,
+  getTierPrice,
+  computeMarginFraction,
+  classifyMargin,
+} from "@routeflow/pricing";
 import {
   SELECTABLE_PAYMENT_METHODS,
   PAYMENT_METHOD_LABELS,
@@ -976,7 +981,7 @@ function SpecialPricesTab({ customerId }: { customerId: string }) {
 
   // An unset tier column (0/null) inherits the list price at checkout — label it.
   const tierUnset = (product: any, tier: number) =>
-    !!product && tier !== 1 && !(Number(product[`priceTier${tier}`]) > 0);
+    !!product && isSpecialTier(tier) && !(Number(product[`priceTier${tier}`]) > 0);
 
   const openAdd = () => {
     setEditingPrice(null);
@@ -2467,7 +2472,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     {customer.displayName && (
                       <InfoRow icon={User} label="Display Name" value={customer.displayName} />
                     )}
-                    {customer.email && <InfoRow icon={Mail} label="Email" value={customer.email} />}
+                    {displayEmail(customer.email) && (
+                      <InfoRow icon={Mail} label="Email" value={customer.email} />
+                    )}
                     {customer.mobile && (
                       <InfoRow icon={Phone} label="Mobile" value={customer.mobile} />
                     )}
@@ -3136,7 +3143,9 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                       {portalStatus?.status === "ACTIVE" && portalStatus.buyerAccount && (
                         <div className="rounded-lg bg-surface-raised px-3 py-2 text-xs text-navy/70">
                           <p className="font-medium">{portalStatus.buyerAccount.name}</p>
-                          <p>{portalStatus.buyerAccount.email}</p>
+                          {displayEmail(portalStatus.buyerAccount.email) && (
+                            <p>{portalStatus.buyerAccount.email}</p>
+                          )}
                         </div>
                       )}
 

@@ -12,6 +12,7 @@ import { confirm } from "../../../lib/confirm";
 import { priceCart, promoRulesFrom } from "../../../lib/buyer-cart-pricing";
 import { freeUnitsLabel } from "../../../lib/buyer-cart-logic";
 import { QtyTextInput } from "../../../components/QtyStepper";
+import { QTY_INPUT_WIDTH } from "../../../lib/row-layout";
 
 function formatDateInput(raw: string): string {
   const digits = raw.replace(/\D/g, "").slice(0, 8);
@@ -373,7 +374,15 @@ const styles = StyleSheet.create({
     minWidth: 18,
     textAlign: "center",
   },
-  qtyInputReset: { paddingVertical: 0, paddingHorizontal: 0 },
+  // #2727: a DEFINITE width (row-layout.ts) — on react-native-web the TextInput is an <input> with
+  // the UA `size=20` intrinsic width (~177px), which ballooned the stepper and squeezed the name
+  // column to "B…" at 390. `minWidth` (qtyText) is only a floor.
+  qtyInputReset: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    width: QTY_INPUT_WIDTH.buyerCart,
+    flexShrink: 0,
+  },
   itemTotal: {
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",

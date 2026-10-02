@@ -12,11 +12,13 @@ import * as bcrypt from "bcrypt";
 import * as crypto from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
+import { AppleOAuthService } from "../auth/apple-oauth.service";
 import { AppConfig } from "../config/configuration";
 import { BuyerJwtPayload } from "./interfaces/buyer-jwt-payload.interface";
 import { BuyerRegisterDto } from "./dto/buyer-register.dto";
 import { BuyerLoginDto } from "./dto/buyer-login.dto";
 import { escapeHtml } from "../common/html-escape";
+import { isLoginEligible, isSignInBlocked } from "../auth/login-eligibility";
 
 export interface BuyerDeviceInfo {
   userAgent?: string;
@@ -33,6 +35,7 @@ export class BuyerAuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService<AppConfig>,
     private readonly emailService: EmailService,
+    private readonly appleOAuth: AppleOAuthService,
   ) {}
 
   // ─── Register ─────────────────────────────────────────────────────────────────
@@ -201,14 +204,12 @@ export class BuyerAuthService {
     // F3-005: return a CONSTANT "Invalid credentials" for not-found, deleted,
     // suspended, AND wrong-password alike — never a distinct message, so none
     // of these leaks account existence/status via the response BODY.
-    if (!account || account.deletedAt) {
-      throw new UnauthorizedException("Invalid credentials");
-    }
-
-    // Account lockout — same policy as staff (auth.service.ts): locked
-    // accounts fail without running bcrypt and with the identical message
-    // (enumeration-safe); time-based auto-unlock only.
-    if (account.lockedUntil && account.lockedUntil > new Date()) {
+    //
+    // Deleted, or the account lockout — same policy as staff (auth.service.ts):
+    // refused without running bcrypt and with the identical message
+    // (enumeration-safe); time-based auto-unlock only. The rule lives in
+    // login-eligibility.ts (one rule for every sign-in path, #2653).
+    if (!account || isSignInBlocked(account)) {
       throw new UnauthorizedException("Invalid credentials");
     }
 
@@ -227,7 +228,7 @@ export class BuyerAuthService {
     // runs) — a timing oracle for "is this email a suspended buyer account"
     // that the message-level fix above never addressed. Only reachable with
     // the CORRECT password, so nothing new leaks to a stranger guessing.
-    if (account.status !== "ACTIVE") {
+    if (!isLoginEligible(account)) {
       throw new UnauthorizedException("Invalid credentials");
     }
     if (account.failedLoginAttempts > 0 || account.lockedUntil) {
@@ -245,6 +246,33 @@ export class BuyerAuthService {
       account.passwordSet,
     );
 
+    return {
+      ...tokens,
+      buyer: {
+        id: account.id,
+        email: account.email,
+        name: account.name,
+        hasPassword: account.passwordSet,
+      },
+    };
+  }
+
+  /**
+   * #2653 in-app sign-in handoff (SA-542b): a FRESH pair for an account that BuyerHandoffService
+   * has already checked (isLoginEligible), minted by the SAME issuer as login() and returned
+   * in login()'s shape. Never the app's own pair.
+   */
+  async issueHandoffPair(
+    account: { id: string; email: string; name: string; passwordSet: boolean },
+    deviceInfo: BuyerDeviceInfo,
+  ) {
+    const tokens = await this.issueBuyerTokenPair(
+      account.id,
+      account.email,
+      account.name,
+      deviceInfo,
+      account.passwordSet,
+    );
     return {
       ...tokens,
       buyer: {
@@ -365,10 +393,31 @@ export class BuyerAuthService {
   // ─── Delete account ───────────────────────────────────────────────────────────
 
   async deleteAccount(buyerAccountId: string) {
-    // Soft delete account
+    // #2309 (SA-418 §4/5.1.1(v)): Apple requires apps offering Sign in with Apple to
+    // revoke the token on account deletion. Runs BEFORE the soft-delete below clears
+    // appleId/appleRefreshTokenEnc. revokeForBuyer already logs-and-swallows its own
+    // failures, but deletion must proceed even if the call itself throws unexpectedly —
+    // the catch here is defense in depth, never load-bearing for the happy path.
+    await this.appleOAuth
+      .revokeForBuyer(buyerAccountId)
+      .catch((e: Error) =>
+        this.logger.warn(`Apple revoke failed for buyer ${buyerAccountId}: ${e.message}`),
+      );
+
+    // Soft delete account. Also clears appleId/googleId (#2309 SA-418 §5, B-id noted
+    // in SA-418: a soft-deleted row previously kept its @unique googleId, so a
+    // re-sign-up after deletion hit P2002 — clearing both here fixes Apple's half and
+    // Google's pre-existing half in the same write) so the stable sub can sign up again.
     await this.prisma.buyerAccount.update({
       where: { id: buyerAccountId },
-      data: { status: "DELETED", deletedAt: new Date() },
+      data: {
+        status: "DELETED",
+        deletedAt: new Date(),
+        appleId: null,
+        googleId: null,
+        // revoked above; never keep a dead credential on a deleted row
+        appleRefreshTokenEnc: null,
+      },
     });
 
     // Disconnect all active/pending links

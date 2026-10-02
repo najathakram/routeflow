@@ -21,6 +21,7 @@ import { ListUsersDto } from "./dto/list-users.dto";
 import { CreateOperatorDto } from "./dto/create-operator.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { ChangeUserStatusDto } from "./dto/change-user-status.dto";
+import { PreferencesBodyPipe } from "./dto/update-preferences.dto";
 
 @ApiTags("users")
 @ApiBearerAuth()
@@ -54,7 +55,10 @@ export class UsersController {
   }
 
   @Patch("me/preferences")
-  async updateMyPreferences(@CurrentUser() user: JwtPayload, @Body() dto: Record<string, string>) {
+  async updateMyPreferences(
+    @CurrentUser() user: JwtPayload,
+    @Body(PreferencesBodyPipe) dto: Record<string, string>,
+  ) {
     await this.usersService.setPreferences(user.sub, dto);
     return this.usersService.getPreferences(user.sub);
   }
