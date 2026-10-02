@@ -145,3 +145,30 @@ export function orderableAndBackorder(args: { stock: number; allowOversell: bool
     ? { orderable: true, backorder: true }
     : { orderable: false, backorder: false };
 }
+
+/**
+ * SA-606k (lines): attribute each product's overshoot to that product's lines in REQUEST order,
+ * stock-first — earlier lines take the pieces stock covered, later lines carry the shortfall — so
+ * the sum over a product's lines equals its overshoot (the movement's). A line with no product never
+ * touches stock, so it is 0. One entry per input line, in order.
+ */
+export function attributeBackorderToLines(
+  lines: ReadonlyArray<{ productId: string | null; pieces: number }>,
+  backorderByProduct: ReadonlyMap<string, number>,
+): number[] {
+  const demand = new Map<string, number>();
+  for (const l of lines) {
+    if (l.productId) demand.set(l.productId, round3((demand.get(l.productId) ?? 0) + l.pieces));
+  }
+  const covered = new Map<string, number>();
+  for (const [id, d] of demand) {
+    covered.set(id, Math.max(0, round3(d - (backorderByProduct.get(id) ?? 0))));
+  }
+  return lines.map((l) => {
+    if (!l.productId) return 0;
+    const left = covered.get(l.productId) ?? 0;
+    const take = Math.min(l.pieces, left);
+    covered.set(l.productId, round3(left - take));
+    return round3(l.pieces - take);
+  });
+}

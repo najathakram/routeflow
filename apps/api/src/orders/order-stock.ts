@@ -11,7 +11,7 @@ import { linePieceQty } from "./line-piece-qty";
  * names so no call site changes.
  */
 export interface OrderStockDeps {
-  logger: { warn(message: string): void };
+  logger: { warn(message: string): void; error?(message: string): void };
   /** The ambient tenant id (`PrismaService.getTenantId()`), read where the class read it. */
   tenantId: string | null | undefined;
 }
@@ -28,6 +28,23 @@ export interface OrderStockEvent {
 }
 
 export const orderStockReference = (orderId: string) => `ORDER:${orderId}`;
+
+/**
+ * SA-606k/n: what a locked stock write returns. `backorderByProduct` is the overshoot THIS write
+ * created per product (pieces), read from the write's own result under the row lock — never from an
+ * earlier read. Every product the write touched is present (0 when it stayed in stock).
+ */
+export interface StockWriteResult {
+  backorderByProduct: Map<string, number>;
+}
+
+/**
+ * The overshoot a write created: of `requested` pieces taken, how many pushed the counter below zero.
+ * `newStock` is what the row held AFTER the write. Right when stock was already negative (all of
+ * `requested` is backordered) and when the order is fully covered (0).
+ */
+export const backorderFromLockedStock = (requested: number, newStock: number): number =>
+  Math.round(Math.min(requested, Math.max(0, -newStock)) * 1000) / 1000;
 
 /** A stock helper's parameters after `deps`: what OrdersService's thin delegators take. */
 export type StockArgs<F> = F extends (deps: OrderStockDeps, ...rest: infer R) => any ? R : never;
@@ -93,8 +110,8 @@ export async function decrementStockForSale(
   stockLines: StockLine[],
   allowOversell: boolean,
   event: OrderStockEvent,
-): Promise<void> {
-  if (stockLines.length === 0) return;
+): Promise<StockWriteResult> {
+  if (stockLines.length === 0) return { backorderByProduct: new Map() };
   const productIds = stockLines.map((li) => li.productId);
   // SELECT … FOR UPDATE acquires row-level locks in the current transaction.
   await tx.$executeRaw`
@@ -117,6 +134,28 @@ export async function decrementStockForSale(
       lockedProducts.find((lp: any) => lp.id === li.productId)?.unitsPerBox,
     ),
   }));
+
+  // SA-606k: a line that cannot be sized is refused BEFORE any stock write, whatever the policy.
+  // Non-finite pieces come from product DATA (a boxed line whose pack is missing), so they are a
+  // coded 409 the tenant can fix; a NEGATIVE line is our own contract violation (the DTO forbids it)
+  // and must page, so it is a RangeError (500) with an error log — never a 4xx.
+  stockLines.forEach((li, i) => {
+    const name = lockedProducts.find((lp: any) => lp.id === li.productId)?.name ?? li.productId;
+    const pieces = pieceLines[i].pieces;
+    if (Number(li.qty) < 0 || pieces < 0) {
+      const msg = `decrementStockForSale: negative line for ${name} (${li.productId}) on order ${event.orderId}: ${pieces} pieces`;
+      deps.logger.error?.(msg);
+      throw new RangeError(msg);
+    }
+    if (!Number.isFinite(Number(li.qty)) || !Number.isFinite(pieces)) {
+      throw new ConflictException({
+        code: "INVENTORY_QUANTITY_INVALID",
+        message: `Cannot size the ${name} line: its quantity is not a valid number. Check the product's pack.`,
+        productId: li.productId,
+        name,
+      });
+    }
+  });
 
   const oosItems: string[] = [];
   for (const li of pieceLines) {
@@ -172,7 +211,14 @@ export async function decrementStockForSale(
       ${stockTenantId ? Prisma.sql`AND p."tenantId" = ${stockTenantId}` : Prisma.empty}
     RETURNING p.id, p."currentStock"
   `;
+  // SA-606k: every touched product is present (0 = stayed in stock); a product the UPDATE did not
+  // match (cross-tenant id) moved nothing and stays 0.
+  const backorderByProduct = new Map<string, number>([...qtyByProduct.keys()].map((id) => [id, 0]));
   for (const row of moved) {
+    backorderByProduct.set(
+      row.id,
+      backorderFromLockedStock(qtyByProduct.get(row.id) ?? 0, Number(row.currentStock)),
+    );
     await recordSaleMovement(tx, {
       productId: row.id,
       quantity: -(qtyByProduct.get(row.id) ?? 0),
@@ -182,6 +228,7 @@ export async function decrementStockForSale(
       performedById: event.performedById,
     });
   }
+  return { backorderByProduct };
 }
 
 /**
@@ -269,8 +316,8 @@ export async function settleStockForEdit(
    * policy read here, SA-606c). Absent: CUSTOMER/DRIVER refuse, everyone else may oversell.
    */
   opts?: { allowOversell?: boolean },
-): Promise<void> {
-  if (order.status === "DRAFT") return;
+): Promise<StockWriteResult> {
+  if (order.status === "DRAFT") return { backorderByProduct: new Map() };
 
   // Qty the order already holds per product (pre-edit, non-cancelled lines),
   // plus — over the SAME line set — how much of it has already gone out the
@@ -327,7 +374,7 @@ export async function settleStockForEdit(
     const r = requestedParts.get(id) ?? zero;
     return round3(r.fixed - h.fixed) !== 0 || round3(r.perPack - h.perPack) !== 0;
   });
-  if (touched.length === 0) return;
+  if (touched.length === 0) return { backorderByProduct: new Map() };
 
   // RF-017 parity: lock the touched product rows BEFORE reading
   // currentStock, mirroring create()'s lock (:1863-1867).
@@ -356,7 +403,7 @@ export async function settleStockForEdit(
     const delta = round3(requested.get(id)! - held.get(id)!);
     if (delta !== 0) deltas.set(id, delta);
   }
-  if (deltas.size === 0) return;
+  if (deltas.size === 0) return { backorderByProduct: new Map() };
 
   const increases = [...deltas.entries()]
     .filter(([, delta]) => delta > 0)
@@ -433,12 +480,20 @@ export async function settleStockForEdit(
       notes: event.notes,
       performedById: user?.sub ?? event.performedById ?? null,
     });
+  // SA-606e C9: the edit's backorder is the shortfall of THIS write's per-product DELTA, from the
+  // counter the write itself left — never a whole-order figure recomputed from current stock.
+  const backorderByProduct = new Map<string, number>();
   for (const [productId, delta] of deltas) {
+    backorderByProduct.set(productId, 0);
     if (delta > 0) {
       const updated = await db.product.update({
         where: { id: productId },
         data: { currentStock: { decrement: delta } },
       });
+      backorderByProduct.set(
+        productId,
+        backorderFromLockedStock(delta, Number(updated.currentStock)),
+      );
       await saleRow(productId, -delta, updated);
       continue;
     }
@@ -455,6 +510,7 @@ export async function settleStockForEdit(
     });
     await saleRow(productId, credit, updated);
   }
+  return { backorderByProduct };
 }
 
 /**

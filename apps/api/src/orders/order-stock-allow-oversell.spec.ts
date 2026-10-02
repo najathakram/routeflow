@@ -113,14 +113,14 @@ describe("settleStockForEdit opts.allowOversell", () => {
 
   it("opts absent + OPERATOR oversells with a warn (unchanged)", async () => {
     const r = run([prod(3)], { role: UserRole.OPERATOR });
-    await expect(r.p).resolves.toBeUndefined();
+    await expect(r.p).resolves.toEqual({ backorderByProduct: new Map([["p", 5]]) });
     expect(r.products[0].currentStock).toBe(-5);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it("allowOversell=true + CUSTOMER: warn and oversell", async () => {
     const r = run([prod(3)], { role: UserRole.CUSTOMER }, { allowOversell: true });
-    await expect(r.p).resolves.toBeUndefined();
+    await expect(r.p).resolves.toEqual({ backorderByProduct: new Map([["p", 5]]) });
     expect(r.products[0].currentStock).toBe(-5);
     expect(warn).toHaveBeenCalledTimes(1);
   });

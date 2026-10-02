@@ -76,15 +76,15 @@ describe("decrementStockForSale returns backorderByProduct (SA-606k Q1)", () => 
     expect(backorder(r, "p")).toBe(3);
   });
 
-  it("a boxed line is counted in PIECES (2 boxes of a 12-pack = 24 against 20 -> 4)", async () => {
+  it.each([
+    ["box-unaware (qty = boxes, the live pack sizes it)", ln("p", 2)],
+    [
+      "box-split (qty = pieces, the line's own snapshot)",
+      ln("p", 24, { boxes: 2, pieces: 0, unitsPerBox: 12 }),
+    ],
+  ])("a boxed line is counted in PIECES: %s, 24 against 20 -> 4", async (_name, line) => {
     const tx = fakeStockTx([prod("p", 20, 12)]);
-    const r = await decrementStockForSale(
-      deps,
-      tx,
-      [ln("p", 2, { boxes: 2, pieces: 0, unitsPerBox: 12 })],
-      true,
-      event,
-    );
+    const r = await decrementStockForSale(deps, tx, [line], true, event);
     expect(backorder(r, "p")).toBe(4);
   });
 
@@ -120,8 +120,8 @@ describe("decrementStockForSale returns backorderByProduct (SA-606k Q1)", () => 
     expect(err).toBeInstanceOf(ConflictException);
     expect(err.getResponse()).toMatchObject({ code: "INVENTORY_QUANTITY_INVALID" });
     expect(JSON.stringify(err.getResponse())).toContain("Widget p");
-    expect(tx.$executeRaw).not.toHaveBeenCalled(); // not even the FOR UPDATE
-    expect(tx.$queryRaw).not.toHaveBeenCalled();
+    expect(tx.$queryRaw).not.toHaveBeenCalled(); // the aggregated UPDATE never ran
+    expect(tx.stockMovement.create).not.toHaveBeenCalled();
     expect(products[0].currentStock).toBe(5);
   });
 
