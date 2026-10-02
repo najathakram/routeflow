@@ -229,6 +229,15 @@ const SELLING_RESTRICTED_REASON_FILES = [
   "apps/api/src/order-templates/order-templates.service.ts",
 ];
 
+/**
+ * `ONBOARDING_STEP_WAIVED` is ALSO an audit ACTION key (`ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED"`) in the audit-actions
+ * constant: data, not an error code. The 409 body (in onboarding.service.ts) goes through the constant, and the audit file may
+ * not spell it as a `code`.
+ */
+const ONBOARDING_STEP_WAIVED_AUDIT_FILES = [
+  "apps/api/src/platform-admin/audit-actions.constant.ts",
+];
+
 /** A READ_ONLY literal used as an error CODE: a property (`code: "READ_ONLY"`) or a comparison (`code === "READ_ONLY"`, `!==`, `==`). */
 const READ_ONLY_CODE_LITERAL = /\bcode\b\s*(?::|[!=]==?)\s*["'`]READ_ONLY/;
 
@@ -246,6 +255,10 @@ describe("API error codes: no bare string literal in production source (#2163)",
         .filter((rel) => !(key === "READ_ONLY" && READ_ONLY_STATUS_FILES.includes(rel)))
         .filter(
           (rel) => !(key === "SELLING_RESTRICTED" && SELLING_RESTRICTED_REASON_FILES.includes(rel)),
+        )
+        .filter(
+          (rel) =>
+            !(key === "ONBOARDING_STEP_WAIVED" && ONBOARDING_STEP_WAIVED_AUDIT_FILES.includes(rel)),
         );
       expect(offenders).toEqual([]);
     },
@@ -302,6 +315,24 @@ describe("API error codes: no bare string literal in production source (#2163)",
       (s) => posix(s.rel) === "apps/api/src/selling-restrictions/selling-restrictions.service.ts",
     );
     expect(svc?.text).toContain("code: API_ERROR_CODES.SELLING_RESTRICTED");
+  });
+
+  it("ONBOARDING_STEP_WAIVED: the audit file really spells it as an audit action, never as an error `code`, and the 409 body goes through the constant", () => {
+    const codeLiteral =
+      /\bcode["'`]?\s*(?::|[!=]==?)\s*["'`]ONBOARDING_STEP_WAIVED|["'`]ONBOARDING_STEP_WAIVED["'`]\s*[!=]==?\s*[\w$.?[\]"'`]*\bcode\b/;
+    for (const rel of ONBOARDING_STEP_WAIVED_AUDIT_FILES) {
+      const src = sources.find((s) => posix(s.rel) === rel);
+      expect(src?.text).toMatch(/ONBOARDING_STEP_WAIVED:\s*["'`]ONBOARDING_STEP_WAIVED["'`]/);
+      expect(src?.text).not.toMatch(codeLiteral);
+    }
+    expect(codeLiteral.test('code: "ONBOARDING_STEP_WAIVED"')).toBe(true);
+    expect(codeLiteral.test("body.code === 'ONBOARDING_STEP_WAIVED'")).toBe(true);
+    expect(codeLiteral.test('ONBOARDING_STEP_WAIVED: "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    expect(codeLiteral.test('action: "ONBOARDING_STEP_WAIVED"')).toBe(false);
+    const svc = sources.find(
+      (s) => posix(s.rel) === "apps/api/src/onboarding/onboarding.service.ts",
+    );
+    expect(svc?.text).toContain("code: API_ERROR_CODES.ONBOARDING_STEP_WAIVED");
   });
 
   it("READ_ONLY: the status files really spell the status, and the guard's 403 body goes through the constant", () => {
