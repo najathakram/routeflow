@@ -21,6 +21,18 @@
 //   BARCODE_TAKEN — `body.code` of the 409 a product barcode write answers when another product
 //                    of the same tenant already holds the code (#2717 M1, SA-572b Q3); body also
 //                    carries `barcode` and the holder's `productId`.
+//   CODE_TAKEN     — `body.code` of the 409 when a product sku / unit code (a barcode answers
+//                    BARCODE_TAKEN) is held by another ACTIVE product of the tenant (SA-603a); body
+//                    carries `field` (sku | unitSku), `value`, the holder's `productId` and `productName`.
+//   CATALOG_TOO_LARGE_FOR_CLEAR_ALL — `body.code` of the 409 from DELETE /products/clear-all AND DELETE /products/bulk (both soft-delete through one code-lock set) when that set holds more
+//                    than 1,000 distinct codes (one advisory lock per code is held to COMMIT; Opus/SA #2860). Delete in smaller batches.
+//   CODES_CHANGED — `body.code` of the 409 when a deactivation finds a live code of the product that was NOT in the
+//                    code-lock set the writer took up front (the codes changed under it): retry (Opus #2860 R1).
+//   HOLDERS_CHANGED — `body.code` of the 409 when `deactivateHolderIds` was sent on a reactivation but NOTHING blocks it any
+//                    more (`holders: []`). A set that is merely stale/wrong answers with the conflict shape instead
+//                    (CODE_TAKEN / BARCODE_TAKEN / NAME_TAKEN) carrying the CURRENT `holders[]` (SA-603i).
+//   NAME_TAKEN     — `body.code` of the 409 when reactivating a product whose name an ACTIVE product of
+//                    the same scope now holds (SA-603a/b); body carries the holder's `productId`/`productName`.
 //   RECIPE_IMMUTABLE — `body.code` of the 409 when a recipe that is ACTIVE or RETIRED is edited
 //                    in place (#2717 M2, I3); clone it with POST /recipes/:id/versions instead.
 //   RECIPE_CATEGORY_LOCKED — `body.code` of the 409 when a product that sits in a non-RETIRED
@@ -62,6 +74,16 @@
 //                    starts with = + - @ or a tab/line break (B956, SA-629f); `body.field` names the
 //                    field (businessName, contactName, displayName). Clients show FIXED copy with a
 //                    human field label and never the server message.
+//   B982 — codes the API threw as hand-typed literals, now named here. Each is `body.code` of the refusal
+//                    its throw site names (value == key, byte-identical to what was sent):
+//                    PLAN_GATE / PLAN_GATE_UNAVAILABLE (billing/plan-gate.ts, plan-flag-denial.ts), READ_ONLY
+//                    (tenant-status.guard.ts: a blocked write on a READ_ONLY tenant; the same word is also a
+//                    tenant STATUS value, which is not an error code), INSUFFICIENT_STOCK (the order-edit
+//                    oversell 409), the INLINE_RETURN_* family (returns/inline-returns*.ts, returns.service.ts),
+//                    UNIT_AWARE_LINE, MERGE_PACK_MISMATCH, ORDER_CHANGED_DURING_EDIT, CONCURRENT_UPDATE,
+//                    MERGE_IN_PROGRESS, LOCK_UNAVAILABLE (order/customer contention), PO_ALREADY_BILLED,
+//                    BILL_EXCEEDS_PO (vendor bills), INVOICE_HAS_UNSPENT_CREDIT (credit notes),
+//                    HANDOFF_CODE_INVALID (auth handoff).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
@@ -74,6 +96,11 @@ export const API_ERROR_CODES = {
   ORDER_LINE_CHANGED: "ORDER_LINE_CHANGED",
   NSF_LINE_UNTAXED: "NSF_LINE_UNTAXED",
   BARCODE_TAKEN: "BARCODE_TAKEN",
+  CODE_TAKEN: "CODE_TAKEN",
+  NAME_TAKEN: "NAME_TAKEN",
+  HOLDERS_CHANGED: "HOLDERS_CHANGED",
+  CODES_CHANGED: "CODES_CHANGED",
+  CATALOG_TOO_LARGE_FOR_CLEAR_ALL: "CATALOG_TOO_LARGE_FOR_CLEAR_ALL",
   RECIPE_IMMUTABLE: "RECIPE_IMMUTABLE",
   RECIPE_CATEGORY_LOCKED: "RECIPE_CATEGORY_LOCKED",
   RECIPE_FAMILY_LOCKED: "RECIPE_FAMILY_LOCKED",
@@ -108,6 +135,36 @@ export const API_ERROR_CODES = {
   RETURN_NOTHING_BILLED: "RETURN_NOTHING_BILLED",
   INVOICE_CHANGED_CONCURRENTLY: "INVOICE_CHANGED_CONCURRENTLY",
   TEXT_CELL_FORMULA_LEAD: "TEXT_CELL_FORMULA_LEAD",
+  PLAN_GATE: "PLAN_GATE",
+  PLAN_GATE_UNAVAILABLE: "PLAN_GATE_UNAVAILABLE",
+  READ_ONLY: "READ_ONLY",
+  INSUFFICIENT_STOCK: "INSUFFICIENT_STOCK",
+  INLINE_RETURN_ORDER_NOT_FOUND: "INLINE_RETURN_ORDER_NOT_FOUND",
+  INLINE_RETURN_ORDER_CUSTOMER_MISMATCH: "INLINE_RETURN_ORDER_CUSTOMER_MISMATCH",
+  INLINE_RETURN_ORDER_CANCELLED: "INLINE_RETURN_ORDER_CANCELLED",
+  INLINE_RETURN_KEY_CONFLICT: "INLINE_RETURN_KEY_CONFLICT",
+  INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS: "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
+  INLINE_RETURN_KEY_TAKEN: "INLINE_RETURN_KEY_TAKEN",
+  INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED: "INLINE_RETURN_ALREADY_RETURNED_REASON_REQUIRED",
+  INLINE_RETURN_PRIOR_BASIS_UNKNOWN: "INLINE_RETURN_PRIOR_BASIS_UNKNOWN",
+  INLINE_RETURN_PACK_CONFLICT: "INLINE_RETURN_PACK_CONFLICT",
+  INLINE_RETURN_PACK_UNKNOWN: "INLINE_RETURN_PACK_UNKNOWN",
+  INLINE_RETURN_USE_INLINE_ENDPOINTS: "INLINE_RETURN_USE_INLINE_ENDPOINTS",
+  UNIT_AWARE_LINE: "UNIT_AWARE_LINE",
+  MERGE_PACK_MISMATCH: "MERGE_PACK_MISMATCH",
+  ORDER_CHANGED_DURING_EDIT: "ORDER_CHANGED_DURING_EDIT",
+  CONCURRENT_UPDATE: "CONCURRENT_UPDATE",
+  MERGE_IN_PROGRESS: "MERGE_IN_PROGRESS",
+  LOCK_UNAVAILABLE: "LOCK_UNAVAILABLE",
+  PO_ALREADY_BILLED: "PO_ALREADY_BILLED",
+  BILL_EXCEEDS_PO: "BILL_EXCEEDS_PO",
+  INVOICE_HAS_UNSPENT_CREDIT: "INVOICE_HAS_UNSPENT_CREDIT",
+  HANDOFF_CODE_INVALID: "HANDOFF_CODE_INVALID",
+} as const;
+
+/** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
+export const PLAN_GATE_FLAG_KEYS = {
+  METER_CUSTOMERS: "meter.customers",
 } as const;
 
 export type ApiErrorCode = (typeof API_ERROR_CODES)[keyof typeof API_ERROR_CODES];

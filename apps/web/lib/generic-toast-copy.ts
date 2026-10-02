@@ -153,11 +153,11 @@ export function genericToastCopy(err: unknown): string {
     unknown
   >;
   const gate = parsePlanGate(err);
-  if (gate && gate.code !== "PLAN_GATE_UNAVAILABLE") return PLAN_COPY;
+  if (gate && gate.code !== API_ERROR_CODES.PLAN_GATE_UNAVAILABLE) return PLAN_COPY;
   const code = typeof data.code === "string" ? data.code : "";
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
-  if (code === "READ_ONLY") return READ_ONLY_COPY;
-  if (code === "INSUFFICIENT_STOCK") return STOCK_COPY;
+  if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
+  if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
   // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
   if (code === "ALLOCATIONS_EXCEED_PAYMENT") return allocationsCopy(data); // B987 moves this code into API_ERROR_CODES
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);

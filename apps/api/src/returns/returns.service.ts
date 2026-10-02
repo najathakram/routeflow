@@ -33,6 +33,7 @@ import { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import {
   addCredits,
+  piecesPerQtyOf,
   planProductRefund,
   toHeadroomLine,
   loadLineCredits,
@@ -53,7 +54,9 @@ import {
   capBasis,
   returnedPiecesByProduct,
   soldQtyForProduct,
+  returnPricingAxis,
   standardPackBases,
+  standardPackBasesForOrders,
   standardReturnPieces,
 } from "./returns-pieces.util";
 import { restockReturnItems } from "./returns-restock.util";
@@ -61,7 +64,7 @@ import { standardRestockResolver, type ProductPackBasis } from "./returns-restoc
 
 /** M6/§2.3: every standard-path method refuses an INLINE-kind return — it has its own
  * endpoints and state machine (PR-1c/1d). Thrown the moment a `kind` is known to be INLINE. */
-const INLINE_RETURN_USE_INLINE_ENDPOINTS = "INLINE_RETURN_USE_INLINE_ENDPOINTS";
+const INLINE_RETURN_USE_INLINE_ENDPOINTS = API_ERROR_CODES.INLINE_RETURN_USE_INLINE_ENDPOINTS;
 
 /** The shape `create` returns — reused to type a replayed (idempotent) result. */
 type CreatedReturn = Prisma.ReturnGetPayload<{ include: { items: true } }>;
@@ -470,11 +473,9 @@ export class ReturnsService {
               },
               lineItems: {
                 select: {
-                  productId: true,
-                  qty: true,
+                  ...PACK_LINE_SELECT, // B969: the pack evidence the pieces-basis price reads
                   unitPrice: true,
                   subtotal: true,
-                  status: true,
                 },
               },
             },
@@ -488,6 +489,11 @@ export class ReturnsService {
       }),
       this.prisma.forTenant().return.count({ where }),
     ]);
+    // B969: ONE invoice-item read for the whole page (only for lines whose pack needs evidence), never one per row.
+    const packBasesByOrder = await standardPackBasesForOrders(
+      this.prisma.forTenant(),
+      data.filter((ret: any) => ret.kind !== "INLINE").map((ret: any) => ret.order),
+    );
     const enriched = data.map((ret: any) => {
       // The invoice graph above is fetched ONLY to price a STANDARD row — it never crosses
       // the wire (GET /returns is readable by DRIVER/CUSTOMER roles). The response's
@@ -508,7 +514,11 @@ export class ReturnsService {
       // Pure, DB-free pricing: the read path must never issue a per-row query (the
       // list is fetched with limit 500 for the KPI tile) and must never swallow a
       // refusal into a silent $0 — the reason travels with the row instead.
-      const { amount, refusal } = this.priceReturn(ret.items ?? [], ret.order ?? undefined);
+      const { amount, refusal } = this.priceReturn(
+        ret.items ?? [],
+        ret.order ?? undefined,
+        packBasesByOrder.get(ret.order?.id) ?? new Map(),
+      );
       return {
         ...rest,
         order: strippedOrder,
@@ -628,7 +638,14 @@ export class ReturnsService {
     pooledRefund?: Array<{ productId: string; qty: number }>;
     unbilledItems?: UnbilledReturnItem[];
   }> {
-    const { amount, invoiceId, creditable, refusal } = this.priceReturn(items, order);
+    // B969: the pack basis is loaded FIRST: the price below and the itemiser count in PIECES with it, the same converters the
+    // preview (`findOne`/`findAll`) uses, so preview == mint.
+    const packBases = await this.packBasesOf(order);
+    const { amount, invoiceId, creditable, refusal, unresolvedProductId } = this.priceReturn(
+      items,
+      order,
+      packBases,
+    );
     if (refusal === "NOTHING_CREDITABLE") {
       throw new BadRequestException("Nothing billed on this order can be refunded");
     }
@@ -643,21 +660,14 @@ export class ReturnsService {
         it.productId,
         (returnedByProduct.get(it.productId) ?? 0) + Number(it.qty),
       );
-    const packBases =
-      order?.id && (order.lineItems?.length ?? 0) > 0
-        ? await standardPackBases(this.prisma.forTenant(), order.id, order.lineItems)
-        : new Map<string, ProductPackBasis>();
     for (const productId of returnedByProduct.keys()) {
       const basis = packBases.get(productId);
       if (basis && ("mixed" in basis || ("unknown" in basis && !basis.singleUnit)))
-        throw new ConflictException({
-          code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
-          message:
-            "This product was sold in different units on this order (for example boxes and loose pieces), so the return " +
-            "cannot be priced as one quantity. Credit it per line via an inline return, or manually.",
-          productId,
-        });
+        throw this.mixedUnitRefusal(productId);
     }
+    // B969: a product with no live order line whose billed items count in different units has no single axis either.
+    if (refusal === "UNIT_UNRESOLVED" && unresolvedProductId)
+      throw this.mixedUnitRefusal(unresolvedProductId);
 
     // No invoice rows at all: the amount came from the legacy order-line basis and
     // there is no source invoice for create() to cap against, so nothing to gate.
@@ -754,7 +764,7 @@ export class ReturnsService {
     let refundItems: RefundItem[] | undefined;
     let effectiveAmount = amount;
     if (creditable.length === 1 && latest) {
-      const itemised = await this.itemiseRefund(items, latest);
+      const itemised = await this.itemiseRefund(items, latest, packBases);
       if (itemised.length > 0) {
         refundItems = itemised;
         effectiveAmount = roundMoney(itemised.reduce((n, it) => n + it.amount, 0));
@@ -848,13 +858,50 @@ export class ReturnsService {
     return qty * ([...factors][0] ?? 1);
   }
 
+  /** The pack basis of every product on the order's live lines (B969: the axis a STANDARD return is priced on). */
+  private async packBasesOf(order?: any): Promise<Map<string, ProductPackBasis>> {
+    return order?.id && (order.lineItems?.length ?? 0) > 0
+      ? standardPackBases(this.prisma.forTenant(), order.id, order.lineItems)
+      : new Map<string, ProductPackBasis>();
+  }
+
+  /**
+   * EXTERNAL_REFUND mints nothing, so it prices with the PURE helper and skips the mint-time gates, EXCEPT a return with no
+   * single pricing axis (B969): that has no refund amount to record, and a recorded $0 would feed net sales silently. Refused
+   * 409 RETURN_MIXED_UNIT_PRODUCT, like the mint.
+   */
+  private async externalRefundBasis(items: any[], order?: any) {
+    const priced = this.priceReturn(items, order, await this.packBasesOf(order));
+    if (priced.refusal === "UNIT_UNRESOLVED" && priced.unresolvedProductId)
+      throw this.mixedUnitRefusal(priced.unresolvedProductId);
+    return priced;
+  }
+
+  private mixedUnitRefusal(productId: string): ConflictException {
+    return new ConflictException({
+      code: API_ERROR_CODES.RETURN_MIXED_UNIT_PRODUCT,
+      message:
+        "This product was sold in different units on this order (for example boxes and loose pieces), so the return " +
+        "cannot be priced as one quantity. Credit it per line via an inline return, or manually.",
+      productId,
+    });
+  }
+
   /**
    * SA-628: the refund as per-line items against `invoice`, filled in line order under what each line still has (qty AND
    * net amount, after item-bearing credit notes and the legacy itemless-refund term). REFUSES (409
    * RETURN_REFUND_OVER_LINE_HEADROOM), never clips, when a returned product has more qty than its lines can still absorb.
    * An invoice whose items carry no id (never the real query) stays a lump sum.
+   *
+   * B969 (SA-628p): the returned qty is in the ORDER line's unit and an invoice line counts its own (a box-split item counts
+   * pieces, a selling-unit item counts boxes), so the lines are planned in PIECES (the `toPiecesPool` shape, the SAME axis
+   * `priceReturn` prices on) and each item's qty is written back in its own line's axis (pieces / pieces-per-qty).
    */
-  private async itemiseRefund(returnItems: any[], invoice: any): Promise<RefundItem[]> {
+  private async itemiseRefund(
+    returnItems: any[],
+    invoice: any,
+    packBases: Map<string, ProductPackBasis>,
+  ): Promise<RefundItem[]> {
     const lines: HeadroomLine[] = (invoice?.items ?? []).map(toHeadroomLine);
     if (lines.length === 0 || lines.some((l) => !l.id)) return [];
     const returnedByProduct = new Map<string, number>();
@@ -867,12 +914,33 @@ export class ReturnsService {
     let credited = await loadLineCredits(this.prisma.forTenant(), invoice.id, lines);
     const out: RefundItem[] = [];
     for (const [productId, returnedQty] of returnedByProduct) {
-      const { items, refusal } = planProductRefund(
-        lines,
-        credited,
+      const mine = lines.filter((l) => l.productId === productId);
+      const axis = returnPricingAxis(
+        packBases,
         productId,
         returnedQty,
+        (invoice.items ?? []).filter((it: any) => it.productId === productId),
+      );
+      if ("unresolved" in axis) throw this.mixedUnitRefusal(productId);
+      const factorOf = (l: HeadroomLine): number => (axis.pieces ? (l.piecesPerQty ?? 1) : 1);
+      const inPieces = mine.map((l) => ({ ...l, qty: l.qty * factorOf(l), piecesPerQty: 1 }));
+      const creditedInPieces = new Map(credited);
+      for (const l of mine) {
+        const c = credited.get(l.id);
+        if (c) creditedInPieces.set(l.id, { ...c, qty: c.qty * factorOf(l) });
+      }
+      // EPS (0.001) per line on the line's own axis, scaled by its pieces-per-qty, like `pooledRefundRefusal`
+      const qtyTol = Math.max(
+        0.001,
+        mine.reduce((t, l) => t + 0.001 * factorOf(l), 0),
+      );
+      const { items, refusal } = planProductRefund(
+        inPieces,
+        creditedInPieces,
+        productId,
+        axis.returned,
         "refund",
+        qtyTol,
       );
       if (refusal) {
         throw new ConflictException({
@@ -885,11 +953,18 @@ export class ReturnsService {
           remaining: refusal.remainingAmount,
           requestedQty: refusal.requestedQty,
           remainingQty: refusal.remainingQty,
-          qtyUnit: refusal.qtyUnit,
+          qtyUnit: axis.pieces ? "pieces" : refusal.qtyUnit,
         });
       }
-      out.push(...items);
-      credited = addCredits(credited, items);
+      const lineById = new Map(mine.map((l) => [l.id, l]));
+      const inLineAxis = items.map((it) => ({
+        ...it,
+        qty:
+          Math.round((it.qty / factorOf(lineById.get(it.invoiceItemId) as HeadroomLine)) * 1000) /
+          1000,
+      }));
+      out.push(...inLineAxis);
+      credited = addCredits(credited, inLineAxis);
     }
     return out;
   }
@@ -903,12 +978,15 @@ export class ReturnsService {
    */
   private priceReturn(
     items: any[],
-    order?: any,
+    order: any,
+    packBases: Map<string, ProductPackBasis>,
   ): {
     amount: number;
     invoiceId?: string;
     creditable: any[];
-    refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED";
+    refusal?: "NOTHING_CREDITABLE" | "NOTHING_BILLED" | "UNIT_UNRESOLVED";
+    /** B969: the first returned product with no single pricing axis (mixed units); set with `UNIT_UNRESOLVED`. */
+    unresolvedProductId?: string;
   } {
     const allInvoices = order?.invoices ?? [];
 
@@ -956,32 +1034,46 @@ export class ReturnsService {
     }
 
     const billedQtyByProduct = new Map<string, number>();
-    const billedSubtotalByProduct = new Map<string, number>();
+    const billedItemsByProduct = new Map<string, any[]>();
     for (const inv of creditable) {
       for (const invItem of inv.items ?? []) {
         billedQtyByProduct.set(
           invItem.productId,
           (billedQtyByProduct.get(invItem.productId) ?? 0) + Number(invItem.qty),
         );
-        billedSubtotalByProduct.set(
-          invItem.productId,
-          (billedSubtotalByProduct.get(invItem.productId) ?? 0) + Number(invItem.subtotal),
-        );
+        const list = billedItemsByProduct.get(invItem.productId);
+        if (list) list.push(invItem);
+        else billedItemsByProduct.set(invItem.productId, [invItem]);
       }
     }
 
     // SA-628b: the pooled average per product (master's price), the same `planProductRefund` price the mint uses, rounded
     // per product so the preview equals what the mint itemises (money-neutral vs master up to a cent across products).
+    // B969 (SA-628p): the average runs in PIECES on both sides (`returnPricingAxis`: the returned qty through
+    // `standardReturnPieces`, each billed item through `piecesPerQtyOf`) so 1 box of a 2-box line billed as 24 pieces refunds
+    // 12 x (120 / 24), not 1 x (120 / 24).
     const returned = new Map<string, number>();
     for (const item of items) {
       returned.set(item.productId, (returned.get(item.productId) ?? 0) + Number(item.qty));
     }
     let amount = 0;
+    let unresolvedProductId: string | undefined;
     for (const [productId, qty] of returned) {
-      const billedQty = billedQtyByProduct.get(productId) ?? 0;
-      if (billedQty <= 0) continue;
-      const billedSubtotal = billedSubtotalByProduct.get(productId) ?? 0;
-      amount += roundMoney((Math.min(qty, billedQty) * billedSubtotal) / billedQty);
+      const billedItems = billedItemsByProduct.get(productId) ?? [];
+      if ((billedQtyByProduct.get(productId) ?? 0) <= 0) continue;
+      const axis = returnPricingAxis(packBases, productId, qty, billedItems, {
+        pooled: creditable.length >= 2,
+      });
+      if ("unresolved" in axis) {
+        unresolvedProductId ??= productId;
+        continue;
+      }
+      const billed = billedItems.reduce(
+        (t, it) => t + Number(it.qty) * (axis.pieces ? piecesPerQtyOf(it) : 1),
+        0,
+      );
+      const billedSubtotal = billedItems.reduce((t, it) => t + Number(it.subtotal), 0);
+      amount += roundMoney((Math.min(axis.returned, billed) * billedSubtotal) / billed);
     }
     amount = roundMoney(amount);
 
@@ -990,7 +1082,14 @@ export class ReturnsService {
     const nothingBilled =
       [...returned].length > 0 &&
       [...returned.keys()].every((productId) => (billedQtyByProduct.get(productId) ?? 0) <= 0);
-    const why = nothingBilled ? { refusal: "NOTHING_BILLED" as const } : {};
+    // B969: if ANY returned product has no single pricing axis the WHOLE preview is $0 WITH a reason, because the mint refuses
+    // the whole return (409). Never make this a partial sum of the products that did resolve.
+    const why = unresolvedProductId
+      ? { refusal: "UNIT_UNRESOLVED" as const, unresolvedProductId }
+      : nothingBilled
+        ? { refusal: "NOTHING_BILLED" as const }
+        : {};
+    if (unresolvedProductId) amount = 0;
 
     if (creditable.length === 1) {
       return { amount, invoiceId: creditable[0].id, creditable, ...why };
@@ -1078,7 +1177,7 @@ export class ReturnsService {
       unbilledItems?: UnbilledReturnItem[];
     } =
       method === "EXTERNAL_REFUND"
-        ? this.priceReturn(ret.items ?? [], ret.order ?? undefined)
+        ? await this.externalRefundBasis(ret.items ?? [], ret.order ?? undefined)
         : await this.billedBasisFor(ret.items ?? [], ret.order ?? undefined);
     const {
       amount: refundAmount,
@@ -1351,11 +1450,9 @@ export class ReturnsService {
             },
             lineItems: {
               select: {
-                productId: true,
-                qty: true,
+                ...PACK_LINE_SELECT, // B969: the pack evidence the pieces-basis price reads
                 unitPrice: true,
                 subtotal: true,
-                status: true,
               },
             },
           },
@@ -1409,7 +1506,11 @@ export class ReturnsService {
       refundEstimate = null;
       refusal = "INLINE";
     } else {
-      ({ amount: refundEstimate, refusal } = this.priceReturn(ret.items, ret.order ?? undefined));
+      ({ amount: refundEstimate, refusal } = this.priceReturn(
+        ret.items,
+        ret.order ?? undefined,
+        await this.packBasesOf(ret.order),
+      ));
     }
 
     // The invoice graph is fetched only to price the row — strip it back out (this

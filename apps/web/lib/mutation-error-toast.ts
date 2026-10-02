@@ -1,4 +1,5 @@
 import type { ToastData } from "@routeflow/ui/web";
+import { API_ERROR_CODES } from "@routeflow/types";
 import { genericToastCopy } from "./generic-toast-copy";
 import { safeTextBodyCopy } from "./safe-text-error-copy";
 
@@ -45,12 +46,12 @@ export function handleMutationError(
     "CREDIT_LIMIT_EXCEEDED",
     // RO-1: a blocked write against a READ_ONLY tenant — handled explicitly
     // below with its own toast + CTA, never the bare guard message.
-    "READ_ONLY",
+    API_ERROR_CODES.READ_ONLY,
   ];
   // RO-1: TenantStatusGuard's 403 on a blocked write — replace the raw guard
   // message with a title the tenant understands plus a way out, instead of
   // just swallowing the toast like the other HANDLED_CODES above.
-  if (data?.code === "READ_ONLY") {
+  if (data?.code === API_ERROR_CODES.READ_ONLY) {
     toast({
       title: "Your workspace is read-only",
       description: "Choose a plan to make changes.",
