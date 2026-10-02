@@ -136,4 +136,18 @@ describe("pending-unit wiring (mobile, old native screen)", () => {
     );
     expect(refusal.indexOf("if (scanOpen)")).toBeLessThan(refusal.indexOf("showToast("));
   });
+
+  it("F4 both ways: sheet OPEN -> the sheet's own error pill and NO app toast; sheet CLOSED -> the app toast and NO pill; one message either way", () => {
+    const fin = body(screen(), "const finishAccept: ", 1500);
+    const start = fin.indexOf("if (!addOne(");
+    const refusal = fin.slice(start, fin.indexOf("bumpScanned(product.id)"));
+    const open = refusal.indexOf("if (scanOpen) return");
+    expect(open).toBeGreaterThan(0);
+    const openBranch = refusal.slice(open, refusal.indexOf(";", refusal.indexOf("})", open)) + 1);
+    expect(openBranch).toMatch(/feedback: \{ kind: "error", text: UNITS_LOADING_SCAN_MESSAGE \}/);
+    expect(openBranch).not.toMatch(/showToast/); // sheet open: the pill only
+    const closedBranch = refusal.slice(open + openBranch.length);
+    expect(closedBranch).toMatch(/showToast\(UNITS_LOADING_SCAN_MESSAGE\);\s*return undefined;/);
+    expect(closedBranch).not.toMatch(/feedback:/); // sheet closed: the toast only
+  });
 });
