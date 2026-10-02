@@ -1,5 +1,5 @@
 import { stockWriteOf, withStockWrite, type StockWriteResult } from "./order-stock";
-import { buyerCreateResponse, withBackorderPieces } from "./backorder-response";
+import { buyerCreateResponse, carryCreatedWrite, withBackorderPieces } from "./backorder-response";
 
 /**
  * SA-606o: the buyer response carries `backorderPieces` per line = the pieces THIS write
@@ -259,5 +259,34 @@ describe("buyerCreateResponse — which order carries the figure after the post-
     });
     const merged = { id: "o-x", lineItems: [] };
     expect(() => buyerCreateResponse(bad, merged)).not.toThrow();
+  });
+});
+
+describe("carryCreatedWrite — the carrier rides ONLY on an order it describes (B975)", () => {
+  const created = (extra: Record<string, unknown> = {}) =>
+    withStockWrite({ id: "o-new", skipAutoMerge: false, lineItems: [], ...extra }, sw([["p", 3]]));
+  const wroteOn = (o: any) => stockWriteOf(o)?.backorderByProduct.get("p");
+
+  it("nothing from the sweep, or the SAME order (a bare row): the CREATED order, carrying its write", () => {
+    const c = created();
+    expect(carryCreatedWrite(c, null)).toBe(c);
+    const out: any = carryCreatedWrite(c, { id: "o-new", lineItems: [] });
+    expect(out).toBe(c);
+    expect(wroteOn(out)).toBe(3);
+  });
+
+  it("folded into ANOTHER order (created merge-eligible): the merged order carries the write", () => {
+    const merged = { id: "o-old", lineItems: [] };
+    const out: any = carryCreatedWrite(created(), merged);
+    expect(out).toBe(merged);
+    expect(wroteOn(out)).toBe(3);
+  });
+
+  it("another order and created NOT eligible (or unknown): that order comes back with NO carrier", () => {
+    const other = { id: "o-other", lineItems: [] };
+    expect(wroteOn(carryCreatedWrite(created({ skipAutoMerge: true }), other))).toBeUndefined();
+    const unknown: any = created();
+    delete unknown.skipAutoMerge;
+    expect(wroteOn(carryCreatedWrite(unknown, { id: "o-x", lineItems: [] }))).toBeUndefined();
   });
 });
