@@ -7,9 +7,9 @@ import * as path from "path";
 import { makeWorld, baseState, git } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { runCli, makeWorkRepo, bytes } from "./helpers/spawn-cli";
-import { IS_WIN } from "./helpers/platform";
+import { IS_WIN, scaled } from "./helpers/platform";
 
-jest.setTimeout(30_000);
+jest.setTimeout(scaled(30_000));
 
 let world: World;
 beforeEach(() => {

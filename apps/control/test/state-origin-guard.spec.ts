@@ -14,8 +14,9 @@ import { baseState, git, makeWorld } from "./helpers/temp-repo";
 import type { World } from "./helpers/temp-repo";
 import { makeGitShim, withoutOriginProbes } from "./helpers/git-shim";
 import type { GitShim } from "./helpers/git-shim";
+import { scaled } from "./helpers/platform";
 
-jest.setTimeout(60_000);
+jest.setTimeout(scaled(60_000));
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type SB = typeof import("../src/sources/state-branch");
 type CompactMod = typeof import("../src/sources/compact");
