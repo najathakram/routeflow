@@ -116,7 +116,20 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "EDIT_WINDOW_OPEN",
   ],
   "apps/mobile/app/(driver)/route/settlement.tsx": ["RUN_ALREADY_SETTLED"],
+  "apps/mobile/app/(operator)/(tabs)/invoices/[id].tsx": ["EMAIL_SEND_FAILED"],
+  "apps/mobile/app/(operator)/statements/index.tsx": [
+    "AI_KEY_INVALID",
+    "AI_SCAN_REJECTED",
+    "AI_UNAVAILABLE",
+    "AI_PARSE_FAILED",
+  ],
   "apps/mobile/components/NewOrderScreen.tsx": ["MERGE_CHOICE_REQUIRED"],
+  "apps/mobile/lib/api/supplier-statements.ts": [
+    "AI_KEY_INVALID",
+    "AI_SCAN_REJECTED",
+    "AI_UNAVAILABLE",
+    "AI_PARSE_FAILED",
+  ],
   "apps/mobile/lib/at-stop-cr-outcome.ts": ["CHANGE_REQUEST_ALREADY_RESOLVED"],
   "apps/mobile/lib/credit-limit-error.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/mobile/lib/inline-return-submit-key.ts": [
@@ -133,6 +146,16 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/app/(dashboard)/compliance/[categoryId]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/finance/commissions/[id]/page.tsx": ["PLAN_GATE"],
   "apps/web/app/(dashboard)/finance/commissions/page.tsx": ["PLAN_GATE"],
+  "apps/web/app/(dashboard)/finance/statements/page.tsx": [
+    "AI_KEY_INVALID",
+    "AI_SCAN_REJECTED",
+    "AI_UNAVAILABLE",
+    "AI_PARSE_FAILED",
+  ],
+  "apps/web/app/(dashboard)/inventory/_components/purchase-orders-edit.ts": [
+    "PO_LOT_PARTIALLY_CONSUMED",
+  ],
+  "apps/web/app/(dashboard)/invoices/[id]/page.tsx": ["EMAIL_NOT_CONFIGURED", "EMAIL_SEND_FAILED"],
   "apps/web/app/(dashboard)/orders/[id]/page.tsx": [
     "CHANGE_REQUEST_ALREADY_RESOLVED",
     "CHANGE_WINDOW_CLOSED",
@@ -146,9 +169,16 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
     "CHANGE_WINDOW_CLOSED",
     "EDIT_WINDOW_OPEN",
   ],
+  "apps/web/components/ScanInvoiceModal.tsx": ["AI_KEY_INVALID"],
   "apps/web/lib/api/credit-limit.ts": ["CREDIT_LIMIT_EXCEEDED"],
   "apps/web/lib/api/restrictions-settings.ts": ["SELLING_RESTRICTIONS_NOT_READY"],
   "apps/web/lib/api/selling-restricted.ts": ["SELLING_RESTRICTED"],
+  "apps/web/lib/api/supplier-statements.ts": [
+    "AI_KEY_INVALID",
+    "AI_SCAN_REJECTED",
+    "AI_UNAVAILABLE",
+    "AI_PARSE_FAILED",
+  ],
   "apps/web/lib/mutation-error-toast.ts": [
     "CHANGE_REQUEST_ALREADY_RESOLVED",
     "CHANGE_WINDOW_CLOSED",
@@ -164,7 +194,7 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
   "apps/web/lib/po-bill-refusal.ts": ["BILL_EXCEEDS_PO"],
   "apps/web/lib/scan-po-lock.ts": ["PLAN_GATE"],
 };
-const CONSUMER_ALLOWLIST_TOTAL = 45;
+const CONSUMER_ALLOWLIST_TOTAL = 66;
 
 /**
  * `READ_ONLY` is ALSO a tenant STATUS value (`tenant.status === "READ_ONLY"`), which is not an error
@@ -245,7 +275,9 @@ describe("API error codes: no bare string literal in production source (#2163)",
   });
 
   it("SELLING_RESTRICTED: the reason files really spell it as a reason, never as an error `code`, and the 409 body goes through the constant", () => {
-    const codeLiteral = /\bcode\b\s*(?::|[!=]==?)\s*["'`]SELLING_RESTRICTED/;
+    // A property (`code: "X"`, quoted key `"code": "X"`), a comparison (`code === "X"`) or the reversed comparison (`"X" === body.code`).
+    const codeLiteral =
+      /\bcode["'`]?\s*(?::|[!=]==?)\s*["'`]SELLING_RESTRICTED|["'`]SELLING_RESTRICTED["'`]\s*[!=]==?\s*[\w$.?[\]"'`]*\bcode\b/;
     for (const rel of SELLING_RESTRICTED_REASON_FILES) {
       const src = sources.find((s) => posix(s.rel) === rel);
       expect(src?.text).toMatch(/["'`]SELLING_RESTRICTED["'`]/);
@@ -253,7 +285,12 @@ describe("API error codes: no bare string literal in production source (#2163)",
     }
     expect(codeLiteral.test('code: "SELLING_RESTRICTED"')).toBe(true);
     expect(codeLiteral.test("body.code === 'SELLING_RESTRICTED'")).toBe(true);
+    expect(codeLiteral.test('{ "code": "SELLING_RESTRICTED" }')).toBe(true);
+    expect(codeLiteral.test('"SELLING_RESTRICTED" === code')).toBe(true);
+    expect(codeLiteral.test("'SELLING_RESTRICTED' !== err.response?.data?.code")).toBe(true);
     expect(codeLiteral.test('reason: "SELLING_RESTRICTED"')).toBe(false);
+    expect(codeLiteral.test('reason === "SELLING_RESTRICTED"')).toBe(false);
+    expect(codeLiteral.test('"SELLING_RESTRICTED" === suspendedReason')).toBe(false);
     const svc = sources.find(
       (s) => posix(s.rel) === "apps/api/src/selling-restrictions/selling-restrictions.service.ts",
     );
