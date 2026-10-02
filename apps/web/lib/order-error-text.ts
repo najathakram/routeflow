@@ -19,3 +19,17 @@ export function orderErrorText(err: unknown): string {
     return message;
   return genericToastCopy(err);
 }
+
+/** Order detail "mark as sent": fixed copy, with this surface's own sentence for an uncoded 400 / 409 / 422. */
+export const markSentErrorText = (err: unknown): string =>
+  genericToastCopy(
+    err,
+    "The invoice couldn't be marked as sent. Check its status, then try again.",
+  );
+
+/** Order detail "email the invoice": fixed copy, with this surface's own sentence for an uncoded 400 / 409 / 422. */
+export const sendEmailErrorText = (err: unknown): string =>
+  genericToastCopy(
+    err,
+    "The email couldn't be sent. Check the customer's email address, then try again.",
+  );

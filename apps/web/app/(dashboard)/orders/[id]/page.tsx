@@ -129,8 +129,8 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
-import { codedToastCopy, genericToastCopy } from "@/lib/generic-toast-copy";
-import { orderErrorText } from "@/lib/order-error-text";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -175,10 +175,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
       onError: (e) =>
         toast({
           title: "Couldn't mark the invoice as sent",
-          description: genericToastCopy(
-            e,
-            "The invoice couldn't be marked as sent. Check its status, then try again.",
-          ),
+          description: markSentErrorText(e),
           variant: "error",
         }),
     });
@@ -200,10 +197,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         onError: (e: any) =>
           toast({
             title: "Failed to send email",
-            description: genericToastCopy(
-              e,
-              "The email couldn't be sent. Check the customer's email address, then try again.",
-            ),
+            description: sendEmailErrorText(e),
             variant: "error",
           }),
       },

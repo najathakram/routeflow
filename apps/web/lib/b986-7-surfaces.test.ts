@@ -28,7 +28,7 @@ describe("no raw server message on the orders + customers surfaces", () => {
 
   it("each surface passes its OWN actionable sentence for an uncoded refusal", () => {
     const want: Record<string, RegExp[]> = {
-      [`${D}/orders/[id]/page.tsx`]: [/couldn't be marked as sent/, /email couldn't be sent/],
+      "lib/order-error-text.ts": [/couldn't be marked as sent/, /email couldn't be sent/],
       [`${D}/orders/page.tsx`]: [/orders export couldn't be created/],
       [`${D}/orders/_components/CreditNotePicker.tsx`]: [/credit note couldn't be created/],
       [`${D}/orders/_components/LicenseGuardModal.tsx`]: [
@@ -39,6 +39,13 @@ describe("no raw server message on the orders + customers surfaces", () => {
       [`${D}/customers/[id]/StandingOrderModal.tsx`]: [/standing order couldn't be saved/],
     };
     for (const [f, res] of Object.entries(want)) for (const re of res) expect(read(f)).toMatch(re);
+  });
+
+  it("order detail mark-sent and send-email use the extracted sentence helpers (the page stays under its size ratchet)", () => {
+    const page = read(`${D}/orders/[id]/page.tsx`);
+    expect(page).toContain("markSentErrorText(e)");
+    expect(page).toContain("sendEmailErrorText(e)");
+    expect(page).not.toMatch(/couldn't be marked as sent|email couldn't be sent/);
   });
 
   it("the surfaces that render their own error opt out of the global toast (a failure shows once)", () => {
