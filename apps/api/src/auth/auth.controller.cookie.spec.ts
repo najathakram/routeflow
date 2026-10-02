@@ -17,6 +17,7 @@ function makeController(authService: any) {
     {} as any,
     {} as any,
     {} as any, // staffHandoff (#2653) — unused by the cookie paths under test
+    {} as any, // appleOAuth — unused by the cookie paths under test
   );
 }
 

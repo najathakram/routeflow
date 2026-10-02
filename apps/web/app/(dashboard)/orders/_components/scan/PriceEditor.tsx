@@ -6,6 +6,7 @@ import { Button, cn } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
+import { PendingUnitStatus, type LineItemRowProps } from "@/components/LineItemRow";
 import {
   caseWord,
   unitWord,
@@ -21,6 +22,8 @@ export interface PriceEditorProps {
   costRevealed: boolean;
   priceHistoryEntry?: { lastPrice: number };
   onQtyDelta: (delta: number) => void;
+  /** #2865 case c (SA-632): set while the line's default selling unit is not yet resolved: the qty controls are locked. */
+  pendingUnit?: LineItemRowProps["pendingUnit"];
   onSetBoxes: (value: number) => void;
   onSetPieces: (value: number) => void;
   onSetUnitQty: (value: number) => void;
@@ -57,6 +60,7 @@ export function PriceEditor({
   costRevealed,
   priceHistoryEntry,
   onQtyDelta,
+  pendingUnit,
   onSetBoxes,
   onSetPieces,
   onSetUnitQty,
@@ -71,6 +75,7 @@ export function PriceEditor({
 }: PriceEditorProps) {
   // #2696 (d): the loose-units field is opt-in ("+ units"); shown whenever pieces > 0 regardless.
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
+  const qtyLocked = !!pendingUnit;
   const boxed = !!li.unitsPerBox;
   // The row labels the price "Case price" only for a real pack (> 1), though it shows the case
   // qty controls for any unitsPerBox — mirror both.
@@ -127,7 +132,16 @@ export function PriceEditor({
         </div>
 
         {/* Quantity — the row's own case/unit control, one field at a time. */}
-        <section className="space-y-2">
+        <fieldset
+          disabled={qtyLocked}
+          aria-busy={qtyLocked}
+          aria-label={
+            qtyLocked
+              ? "Line quantity controls, locked while the selling unit loads"
+              : "Line quantity controls"
+          }
+          className="m-0 border-0 p-0 min-w-0 space-y-2"
+        >
           {boxed ? (
             <>
               <div className="inline-flex overflow-hidden rounded border border-surface-border text-xs font-medium">
@@ -247,7 +261,8 @@ export function PriceEditor({
               </button>
             </div>
           )}
-        </section>
+        </fieldset>
+        {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
 
         {/* Price — #2696(c): a special (customer) price is the default here, never locked; moving
             off it needs a reason (below), as the server requires. */}
@@ -264,6 +279,7 @@ export function PriceEditor({
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
                 aria-label="Price"
+                disabled={qtyLocked}
                 className="w-24 rounded-none border-0 bg-transparent px-1 py-1.5 text-right text-sm focus:ring-0"
               />
             </span>

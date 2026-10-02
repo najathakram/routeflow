@@ -11,6 +11,8 @@ type Base = {
   hidden?: boolean;
   /** Keep the scanner open after each scan (order/invoice builders). */
   continuous?: boolean;
+  /** OPT-IN aim box + steady-read on the camera (default off; only the driver screen passes it). */
+  aimAssist?: boolean;
 };
 
 /**
@@ -68,7 +70,13 @@ const TOP_RESERVED = 60;
  * scanner button. A floating button keeps the action one tap away regardless
  * of scroll position.
  */
-export function BarcodeFab({ onScanned, onPress, hidden = false, continuous = false }: Props) {
+export function BarcodeFab({
+  onScanned,
+  onPress,
+  hidden = false,
+  continuous = false,
+  aimAssist = false,
+}: Props) {
   const { width, height } = Dimensions.get("window");
   const persisted = useFabPositionStore();
 
@@ -183,6 +191,7 @@ export function BarcodeFab({ onScanned, onPress, hidden = false, continuous = fa
         <View style={styles.scannerOverlay}>
           <BarcodeScanner
             continuous={continuous}
+            aimAssist={aimAssist}
             onScanned={(code) => {
               // Continuous mode: the scanner stays open and shows the outcome's
               // feedback itself; it closes via the outcome or the Done button.

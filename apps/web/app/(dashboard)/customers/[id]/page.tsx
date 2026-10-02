@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
@@ -154,6 +155,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CustomerRecordPaymentModal } from "@/components/CustomerRecordPaymentModal";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { BrandMark } from "@/components/brand";
+import { focusRefusedContactField } from "@/lib/refused-text-field";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -827,10 +829,10 @@ function ContactPersonModal({
     if (editingContact) {
       updateContact.mutate(
         { ...payload, contactId: editingContact.id },
-        { onSuccess: () => onClose() },
+        { onSuccess: () => onClose(), onError: focusRefusedContactField },
       );
     } else {
-      addContact.mutate(payload, { onSuccess: () => onClose() });
+      addContact.mutate(payload, { onSuccess: () => onClose(), onError: focusRefusedContactField });
     }
   };
 
@@ -870,12 +872,14 @@ function ContactPersonModal({
               </select>
             </div>
             <Input
+              id="contact-first-name"
               label="First Name *"
               placeholder="John"
               value={form.firstName}
               onChange={handleChange("firstName") as any}
             />
             <Input
+              id="contact-last-name"
               label="Last Name"
               placeholder="Doe"
               value={form.lastName}
@@ -1961,8 +1965,8 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   const { data: orderTemplates } = useOrderTemplates(id);
   const updateStatus = useUpdateCustomerStatus();
   const updateCustomer = useUpdateCustomer();
-  const addAddress = useAddCustomerAddress();
-  const updateAddress = useUpdateCustomerAddress();
+  const addAddress = useAddCustomerAddress({ localErrorToast: true });
+  const updateAddress = useUpdateCustomerAddress({ localErrorToast: true });
   const deleteAddress = useDeleteCustomerAddress();
   const updateTemplate = useUpdateOrderTemplate();
   const deleteTemplate = useDeleteOrderTemplate();
@@ -2232,10 +2236,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             setIsAddAddressOpen(false);
             setEditingAddress(null);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Update failed",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },
@@ -2248,10 +2252,10 @@ function CustomerDetailPageInner({ id }: { id: string }) {
             toast({ title: "Address added", variant: "success" });
             setIsAddAddressOpen(false);
           },
-          onError: (err: any) =>
+          onError: (err: unknown) =>
             toast({
               title: "Couldn't add address",
-              description: err?.response?.data?.message ?? "",
+              description: safeTextErrorCopy(err) ?? "Please check the address and try again.",
               variant: "error",
             }),
         },

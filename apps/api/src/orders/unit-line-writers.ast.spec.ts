@@ -302,6 +302,14 @@ const INVENTORY: Record<string, Row> = {
     kind: "NOT_ORDER_INVOICE_LINE",
     why: "VendorBillItem",
   },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.delete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
+  },
+  "vendor-bills/vendor-bills.service.ts::VendorBillsService.bulkDelete": {
+    kind: "NOT_ORDER_INVOICE_LINE",
+    why: "VendorBillItem: AP bill line delete only: no qty/unit/price write, no sellable product added",
+  },
 };
 
 /** Methods that are not writers but decide merge targets / roll lines forward: they must guard too. */

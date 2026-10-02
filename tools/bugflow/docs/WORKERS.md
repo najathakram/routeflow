@@ -17,11 +17,11 @@ GitHub-Actions-hosted agent (see [GUARDRAILS.md](GUARDRAILS.md) for why that bou
 separate billing surface, no separate credential to leak, no infrastructure to run). Three surfaces,
 in increasing order of "someone has to be watching":
 
-| Surface | Where it runs | Permission prompts | Trigger | Identity |
-|---|---|---|---|---|
-| **Desktop scheduled task** | The developer's own machine, inside the Claude Code app | Whatever mode the task was configured with (can be zero) | Schedule (minimum 1 minute) or manual | The developer's own logged-in account |
-| **Cloud Routine** | Anthropic-managed cloud, research preview | None, ever | Schedule (minimum 1 hour), an API `fire` with a bearer token, or a GitHub Pull-request/Release event (not Issues) | The account that created the Routine |
-| **`/loop` + `/goal`** | Inside a running interactive session | Whatever the session already has | Session-scoped, ≤ 50 tasks, 7-day expiry (`/loop`); a condition a Haiku evaluator judges (`/goal`) | Whoever is running the session |
+| Surface                    | Where it runs                                           | Permission prompts                                       | Trigger                                                                                                           | Identity                              |
+| -------------------------- | ------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| **Desktop scheduled task** | The developer's own machine, inside the Claude Code app | Whatever mode the task was configured with (can be zero) | Schedule (minimum 1 minute) or manual                                                                             | The developer's own logged-in account |
+| **Cloud Routine**          | Anthropic-managed cloud, research preview               | None, ever                                               | Schedule (minimum 1 hour), an API `fire` with a bearer token, or a GitHub Pull-request/Release event (not Issues) | The account that created the Routine  |
+| **`/loop` + `/goal`**      | Inside a running interactive session                    | Whatever the session already has                         | Session-scoped, ≤ 50 tasks, 7-day expiry (`/loop`); a condition a Haiku evaluator judges (`/goal`)                | Whoever is running the session        |
 
 A Desktop task fires only while the Claude Code app is open and the machine is awake; it makes one
 catch-up run for anything it missed on wake, and skips a tick outright if the previous run is still
@@ -33,13 +33,13 @@ already started, not unattended background capacity.
 
 ## Job → surface
 
-| Job | Surface | Cadence | Why |
-|---|---|---|---|
-| Developer's own fix loop | Desktop scheduled task, **worktree toggle ON** | Every 30 min | Runs beside the developer's interactive work on the same machine; the isolated worktree keeps it off whatever branch the developer has checked out; 30 min is comfortably longer than one run (≤ 45 min, see caps below), so a tick never queues up behind the last one |
-| Housekeeping (`reap`, `sync`, `snapshot`) | Cloud Routine | Hourly | Nothing here needs a working tree or a human's machine — it is API calls against GitHub. Hourly bounds a stale lease to at most ~30 min past its 90-min expiry before the next `reap` catches it, and keeps one account's daily Routine-run budget cheap |
-| Triage (assign class/tier/severity/area, apply the carve-out) | Cloud Routine | Nightly | New bugs are not claim-latency-sensitive the way a lease is; batching the pass overnight matches the existing per-batch (not per-bug) analysis convention, and keeps the Routine's daily run count low |
-| Deploy verification (`verifying` → `done` / `regressed`) | Not a separate surface — `sync` reading GitHub deployment + check-run facts | Piggybacks on the housekeeping tick | There is no new trigger to build: the deploy and its check runs are already GitHub facts a scheduled `sync` can read, the same design as `campaign-check.mjs` — which only ever trusts a run artifact, never a status someone typed |
-| Fleet capacity | **Either** a dedicated Team seat's Desktop task at 5-min cadence on a machine that never sleeps, **or** a cloud Routine accepting the 1-hour floor and the cold-clone cost | 5 min (Desktop) / 1 hour (Routine) | Desktop buys much tighter cadence and a warm tree at the cost of real hardware to keep awake; Routine buys zero hardware at the cost of an hourly ceiling and a cold clone every run — pick per how much the always-on machine actually costs to run |
+| Job                                                           | Surface                                                                                                                                                                    | Cadence                             | Why                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Developer's own fix loop                                      | Desktop scheduled task, **worktree toggle ON**                                                                                                                             | Every 30 min                        | Runs beside the developer's interactive work on the same machine; the isolated worktree keeps it off whatever branch the developer has checked out; 30 min is comfortably longer than one run (≤ 45 min, see caps below), so a tick never queues up behind the last one |
+| Housekeeping (`reap`, `sync`, `snapshot`)                     | Cloud Routine                                                                                                                                                              | Hourly                              | Nothing here needs a working tree or a human's machine — it is API calls against GitHub. Hourly bounds a stale lease to at most ~30 min past its 90-min expiry before the next `reap` catches it, and keeps one account's daily Routine-run budget cheap                |
+| Triage (assign class/tier/severity/area, apply the carve-out) | Cloud Routine                                                                                                                                                              | Nightly                             | New bugs are not claim-latency-sensitive the way a lease is; batching the pass overnight matches the existing per-batch (not per-bug) analysis convention, and keeps the Routine's daily run count low                                                                  |
+| Deploy verification (`verifying` → `done` / `regressed`)      | Not a separate surface — `sync` reading GitHub deployment + check-run facts                                                                                                | Piggybacks on the housekeeping tick | There is no new trigger to build: the deploy and its check runs are already GitHub facts a scheduled `sync` can read, the same design as `campaign-check.mjs` — which only ever trusts a run artifact, never a status someone typed                                     |
+| Fleet capacity                                                | **Either** a dedicated Team seat's Desktop task at 5-min cadence on a machine that never sleeps, **or** a cloud Routine accepting the 1-hour floor and the cold-clone cost | 5 min (Desktop) / 1 hour (Routine)  | Desktop buys much tighter cadence and a warm tree at the cost of real hardware to keep awake; Routine buys zero hardware at the cost of an hourly ceiling and a cold clone every run — pick per how much the always-on machine actually costs to run                    |
 
 ## Identity
 
@@ -78,7 +78,7 @@ Stage 1 has ten fleet runs; see Open questions):**
 - 1 fleet seat, Desktop task, always-on machine, 5-min schedule. The schedule alone would allow 288
   ticks/day, but a run occupies the seat for up to 45 min and the next tick is skipped while one is
   in progress, so the real ceiling is wall-clock-bound: at an illustrative 30-min average run,
-  ⌊24 × 60 / 30⌋ = 48 possible runs/day *if* work never runs out.
+  ⌊24 × 60 / 30⌋ = 48 possible runs/day _if_ work never runs out.
 - Suppose the owner sets that seat's `dailyClaimCap` to 12 (illustrative for this worked example
   only, not a recommendation — the shipped default is 6) — that becomes the binding ceiling before
   the wall-clock one does.
@@ -95,12 +95,12 @@ Stage 1 has ten fleet runs; see Open questions):**
 Subscription usage is finite and shared with the human's own interactive work on that same seat —
 every cap below exists to stop an unattended loop from spending someone else's budget invisibly.
 
-| Cap | Value | Why |
-|---|---|---|
-| Batches per run | 1 | Keeps one invocation's cost bounded and keeps the batch-scoped claim/lease model meaningful — a worker holding three leases against one wall-clock budget is exactly the failure this prevents |
-| Ralph iterations | ≤ 8 | An unattended loop with no permission prompts has no other backstop against grinding on a wrong fix forever; capping it forces escalation to a human instead of silent spend |
-| `dailyClaimCap` | per seat, owner-set | Stops one fast seat (especially a fleet seat) from claiming every ready bug before anyone else's worker gets a turn, and bounds that account's daily draw on the shared subscription pool |
-| Wall-clock | 45 min max | Bounds a single run's cost and keeps the next scheduled tick from queuing up behind a hung one (a Desktop task skips a tick outright while the last is still running) |
+| Cap                | Value                                               | Why                                                                                                                                                                                                                               |
+| ------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Batches per run    | 1                                                   | Keeps one invocation's cost bounded and keeps the batch-scoped claim/lease model meaningful — a worker holding three leases against one wall-clock budget is exactly the failure this prevents                                    |
+| Ralph iterations   | ≤ 8                                                 | An unattended loop with no permission prompts has no other backstop against grinding on a wrong fix forever; capping it forces escalation to a human instead of silent spend                                                      |
+| `dailyClaimCap`    | per seat, owner-set                                 | Stops one fast seat (especially a fleet seat) from claiming every ready bug before anyone else's worker gets a turn, and bounds that account's daily draw on the shared subscription pool                                         |
+| Wall-clock         | 45 min max                                          | Bounds a single run's cost and keeps the next scheduled tick from queuing up behind a hung one (a Desktop task skips a tick outright while the last is still running)                                                             |
 | Release-on-failure | mandatory, with `needs:human` + an attempts comment | Without it, a bug a worker gave up on sits invisibly `claimed`/`in_progress` until the 90-min lease expires and `reap` notices — release-on-failure hands it back (or flags it) immediately instead of waiting on the lease clock |
 
 ## What happens when a laptop sleeps

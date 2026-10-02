@@ -36,6 +36,12 @@ export const OPAQUE_ALLOW: Record<string, { count: number; reason: string }> = {
       "createVariantRowInTx spreads the family's five price columns and a cost-basis `data`; " +
       "neither names familyPriceOverride (the flag has no writer in M2, SA-584a).",
   },
+  "src/products/product-code-release.ts": {
+    count: 2,
+    reason:
+      "releaseLive / restoreProductCodes build `data` from the three code columns and their retired* " +
+      "twins only (sku, barcode, unitSku); no price, tier or family column is ever named.",
+  },
   "src/products/family-price.ts": {
     count: 2,
     reason:

@@ -24,7 +24,7 @@ Subcommands:
 - **`status`** — reports the current pin (approach/profile/task/pinnedAt/sessionId), or "no
   approach pinned."
 - **`close --run <slug> [--task-ref <id>] [--first-pass-green true|false] [--findings <c,i,m>]
-  [--human-minutes <n>] [--files-touched <n>] [--lines-changed <n>]`** — for a `dev-pipeline` or
+[--human-minutes <n>] [--files-touched <n>] [--lines-changed <n>]`** — for a `dev-pipeline` or
   `bug-pipeline` pin, prints the reminder to close out via `dev-pipeline/scripts/closeout.mjs`
   instead (it stamps approach/profile and appends to the ledger itself). For a `superpowers`/`raw`
   pin, appends one ledger row via `pipeline-ledger.mjs append-manual` — true cost and active time

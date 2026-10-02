@@ -22,10 +22,10 @@ import { UserRole } from "@prisma/client";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
-import { PlanFlagGuard } from "../billing/plan-flag.guard";
-import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { PlanFlagGuard } from "../billing/plan-flag.guard";
+import { RequirePlanFlag } from "../billing/require-plan-flag.decorator";
 import { ProductsService } from "./products.service";
 import { ProductsExportService } from "./products-export.service";
 import { streamCsv } from "./products-export.stream";
@@ -94,8 +94,8 @@ export class ProductsController {
 
   @Post()
   @Roles(UserRole.OPERATOR)
-  create(@Body() dto: CreateProductDto) {
-    return this.productsService.create(dto);
+  create(@Body() dto: CreateProductDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.create(dto, { actorId: user.sub ?? null });
   }
 
   // Must be declared before :id to avoid route collision
@@ -152,8 +152,8 @@ export class ProductsController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateProductDto) {
-    return this.productsService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateProductDto, @CurrentUser() user: JwtPayload) {
+    return this.productsService.update(id, dto, { actorId: user.sub ?? null });
   }
 
   @Delete(":id")

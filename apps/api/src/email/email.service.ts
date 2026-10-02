@@ -1,12 +1,18 @@
+import { redactAddresses } from "./redact-addresses";
 import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Resend } from "resend";
 import * as nodemailer from "nodemailer";
 import { PrismaService } from "../prisma/prisma.service";
 import { EncryptionService } from "../common/encryption.service";
-import { MailboxSendService } from "./mailbox/mailbox-send.service";
-import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { isInternalEmail } from "../common/internal-email";
+import { MailboxSendService } from "./mailbox/mailbox-send.service";
+import {
+  EmailDeliveryService,
+  sanitizeDeliveryError,
+  type EmailDeliveryContext,
+} from "./email-delivery.service";
+import { mailboxRevokedCopy } from "./mailbox/mailbox-alert.copy";
 import { escapeHtml, safeLinkHref } from "../common/html-escape";
 // F03/R9: ONE original-price display decision shared with the PDF, so the two
 // customer-facing documents of the same send can never disagree (a pure helper —
@@ -178,36 +184,7 @@ export function mapSmtpError(
   return safe ? `The mail server refused the connection: ${safe}` : "The connection test failed.";
 }
 
-/** Upper bound on the text redactAddresses will scan (it runs on remote server responses). */
-const REDACT_MAX_INPUT = 4096;
-
-/**
- * Strip IPv4/IPv6 address literals AND email addresses (local part masked, domain kept) from
- * an error string (see mapSmtpError fallback; also the Resend error text we log).
- *
- * This runs on text a remote, tenant-controlled SMTP host chooses, so it must not be a
- * ReDoS surface: the input is sliced to REDACT_MAX_INPUT first, and every quantifier is
- * BOUNDED (email local part {1,64}, domain labels {1,63} x {1,8}; IPv6 groups {0,4}/{2,8}).
- * An unbounded `[...]+@` pattern backtracks quadratically on a long no-`@` string (50k
- * chars blocked the event loop for ~12 s). The IPv6 pattern is intentionally NOT
- * \b-anchored at the start and requires >=2 colon groups: that catches "::"-compressed
- * forms Node actually emits (e.g. "::1:587", ":::53408"), which a \b-anchored pattern would
- * miss. Over-redaction of address-shaped tokens in this fallback branch is acceptable. The email
- * pattern needs a dotted domain, so a bare `user@localhost` is deliberately not masked.
- */
-export function redactAddresses(msg: string): string {
-  return (
-    msg
-      .slice(0, REDACT_MAX_INPUT)
-      // Email addresses: keep the domain (what an operator needs), mask the local part (PII).
-      .replace(
-        /[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){1,8})/g,
-        "***@$1",
-      )
-      .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, "[address]") // IPv4 (and IPv4-mapped tail)
-      .replace(/(?:[0-9a-f]{0,4}:){2,8}[0-9a-f]{0,4}/gi, "[address]")
-  ); // IPv6 incl. ::-compressed
-}
+export { redactAddresses };
 
 /** Platform-level Google Workspace SMTP config (B452, owner ruling 2026-09-16). */
 interface PlatformSmtpConfig {
@@ -332,6 +309,59 @@ function renderBrandButton(label: string, url: string): string {
   </td></tr></table>`;
 }
 
+/** The argument of the transport chain (and of the public `send`, which adds `delivery`). */
+export type EmailSendParams = {
+  to: string;
+  subject: string;
+  html: string;
+  replyTo?: string;
+  /** Plain-text alternative (added independently by both N1 and N3 — same field,
+   *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
+   *  email clients that can't/won't render HTML fall back to this. Optional so every
+   *  EXISTING caller is unaffected — a transport that doesn't get one just sends
+   *  HTML-only, same as before this field existed. */
+  text?: string;
+  /**
+   * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
+   * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
+   * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
+   * verification, new-device, email/role-change notices) must never leave from a tenant's
+   * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
+   * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
+   * specific call sites migrated to `"platform"`.
+   */
+  senderClass?: "tenant" | "platform";
+  /**
+   * Files to attach (invoice PDF today). Threaded through every transport this
+   * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
+   * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
+   * by every EXISTING caller, so no prior behavior changes for anything but the new
+   * invoice-attachment callers.
+   */
+  attachments?: { filename: string; content: Buffer; contentType?: string }[];
+};
+
+/** What a send resolves to. */
+export type EmailSendResult = {
+  delivered: boolean;
+  transport: "mailbox" | "smtp" | "resend" | "none";
+  id?: string;
+  error?: string;
+  /**
+   * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
+   * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
+   * rejection, no-transport). This is what lets a Resend-rescued send still tell the
+   * operator their own mail is broken instead of quietly looking fine.
+   */
+  smtpFallbackReason?: string;
+  /**
+   * The bare platform address actually used, set alongside `smtpFallbackReason` on a
+   * Resend rescue — the From identity silently changed from the tenant's own mailbox
+   * to the platform address, and that's part of the disclosure, not a footnote.
+   */
+  fromAddress?: string;
+};
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
@@ -351,6 +381,8 @@ export class EmailService {
     private readonly prisma: PrismaService,
     private readonly encryption: EncryptionService,
     private readonly mailboxSend: MailboxSendService,
+    // WS4: best-effort audit rows for sends that carry a `delivery` context.
+    private readonly deliveries: EmailDeliveryService,
   ) {
     const apiKey = this.config.get<string>("RESEND_API_KEY");
 
@@ -1145,60 +1177,79 @@ export class EmailService {
    * mock, tenant-SMTP failure → fallthrough → mock, and Resend API-level rejection
    * whose `result.error` was never inspected), which is why the UI said "sent" when
    * nothing went out.
+   *
+   * WS4: pass `delivery` to record exactly one `EmailDelivery` row (SENT/FAILED) for the attempt.
+   * The row write is best-effort and never changes the result; without `delivery` nothing is
+   * recorded (every existing caller is unchanged).
    */
-  async send(params: {
-    to: string;
-    subject: string;
-    html: string;
-    replyTo?: string;
-    /** Plain-text alternative (added independently by both N1 and N3 — same field,
-     *  reconciled on merge). Both nodemailer and Resend accept it alongside `html`;
-     *  email clients that can't/won't render HTML fall back to this. Optional so every
-     *  EXISTING caller is unaffected — a transport that doesn't get one just sends
-     *  HTML-only, same as before this field existed. */
-    text?: string;
-    /**
-     * email-connect-google PR-3 (security review Phase 2): `"platform"` DELEGATES the whole
-     * send to `sendPlatform()` — bare platform From, no tenant Reply-To, no tenant domain, no
-     * connected mailbox, no tenant SMTP. Security/platform mail (invites, password reset/set,
-     * verification, new-device, email/role-change notices) must never leave from a tenant's
-     * own mailbox or SMTP server, or carry a tenant's own branding. Every EXISTING caller
-     * omits this (defaults to tenant-eligible), so no prior behavior changes except for the
-     * specific call sites migrated to `"platform"`.
-     */
-    senderClass?: "tenant" | "platform";
-    /**
-     * Files to attach (invoice PDF today). Threaded through every transport this
-     * method can reach (mailbox, tenant SMTP, platform SMTP, Resend) — nodemailer and
-     * Resend both accept this exact `{filename, content, contentType}` shape. Omitted
-     * by every EXISTING caller, so no prior behavior changes for anything but the new
-     * invoice-attachment callers.
-     */
-    attachments?: { filename: string; content: Buffer; contentType?: string }[];
-  }): Promise<{
-    delivered: boolean;
-    transport: "mailbox" | "smtp" | "resend" | "none";
-    id?: string;
-    error?: string;
-    /**
-     * The mapped, plain-language SMTP diagnostic — set whenever the tenant's OWN SMTP
-     * attempt failed, in EVERY branch that follows the catch (Resend rescue, Resend
-     * rejection, no-transport). This is what lets a Resend-rescued send still tell the
-     * operator their own mail is broken instead of quietly looking fine.
-     */
-    smtpFallbackReason?: string;
-    /**
-     * The bare platform address actually used, set alongside `smtpFallbackReason` on a
-     * Resend rescue — the From identity silently changed from the tenant's own mailbox
-     * to the platform address, and that's part of the disclosure, not a footnote.
-     */
-    fromAddress?: string;
-  }> {
-    // Sentinel guard (#2854 Opus B4 + r2): shared with sendPlatform() below —
-    // BOTH public send paths refuse before any transport or delegation.
+  async send(
+    params: EmailSendParams & { delivery?: EmailDeliveryContext },
+  ): Promise<EmailSendResult> {
+    // Sentinel guard (#2854 Opus B4 + r2): the public `send` is the one entry; a sentinel refuses
+    // BEFORE any transport or delegation. With a delivery ctx the refusal records ONE masked
+    // FAILED row (SA-615(3)); without a ctx nothing is recorded.
     const refusedTo = this.refuseSentinel(params.to);
-    if (refusedTo) return refusedTo;
+    if (refusedTo) {
+      const ctx = params.delivery;
+      if (ctx) {
+        try {
+          await this.deliveries.record({
+            tenantId: ctx.tenantId,
+            kind: ctx.kind,
+            toAddress: `***${this.logRecipient(params.to)}`,
+            entityType: ctx.entityType,
+            entityId: ctx.entityId,
+            status: "FAILED",
+            providerMessageId: null,
+            error: refusedTo.error,
+            attempts: 0,
+            sentAt: null,
+          });
+        } catch {
+          // audit failure must never change the refusal result
+        }
+      }
+      return refusedTo;
+    }
 
+    const { delivery, ...rest } = params;
+    if (!delivery) return this.sendUnrecorded(rest);
+
+    let result: EmailSendResult;
+    try {
+      result = await this.sendUnrecorded(rest);
+    } catch (err) {
+      result = {
+        delivered: false,
+        transport: "none",
+        error: (err as Error)?.message ?? "Email send failed",
+      };
+    }
+    try {
+      await this.deliveries.record({
+        tenantId: delivery.tenantId,
+        kind: delivery.kind,
+        toAddress: params.to,
+        entityType: delivery.entityType,
+        entityId: delivery.entityId,
+        status: result.delivered ? "SENT" : "FAILED",
+        providerMessageId: result.delivered ? (result.id ?? null) : null,
+        error: result.delivered
+          ? null
+          : sanitizeDeliveryError(
+              result.error ?? result.smtpFallbackReason ?? "Email was not delivered",
+            ),
+        attempts: 1,
+        sentAt: result.delivered ? new Date() : null,
+      });
+    } catch {
+      // audit failure must never change the send result
+    }
+    return result;
+  }
+
+  /** The transport chain itself (mailbox, tenant SMTP, platform SMTP, Resend), no audit row. PRIVATE: every caller goes through `send`, the one entry a recipient guard can sit on. */
+  private async sendUnrecorded(params: EmailSendParams): Promise<EmailSendResult> {
     // Security review Phase 2: a platform-class send is a full DELEGATION to `sendPlatform()`
     // — not a set of skipped branches inside this method. `sendPlatform` never resolves
     // tenant SMTP, a tenant's own Reply-To, or a tenant's connected mailbox; it always uses

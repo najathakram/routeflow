@@ -82,7 +82,10 @@ describe("a blocked save gives one message", () => {
     reject(500, { message: "Boom" });
     save();
     await waitFor(() => expect(toast).toHaveBeenCalledTimes(1));
-    expect(toast.mock.calls[0][0]).toMatchObject({ title: "Boom", variant: "error" });
+    expect(toast.mock.calls[0][0]).toMatchObject({
+      title: "Something went wrong on our side. Please try again.",
+      variant: "error",
+    });
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

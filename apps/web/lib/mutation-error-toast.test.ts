@@ -12,10 +12,13 @@ describe("handleMutationError (#1965)", () => {
   });
   const setup = () => ({ toast: jest.fn(), router: { push: jest.fn() } });
 
-  it("shows the generic toast for an ordinary mutation (behaviour unchanged)", () => {
+  it("shows FIXED copy for an ordinary mutation, never the server message (B980)", () => {
     const { toast, router } = setup();
     handleMutationError(axiosErr({ message: "Nope" }), { meta: undefined }, toast, router);
-    expect(toast).toHaveBeenCalledWith({ title: "Nope", variant: "error" });
+    expect(toast).toHaveBeenCalledWith({
+      title: "Something went wrong on our side. Please try again.",
+      variant: "error",
+    });
   });
 
   it("shows NOTHING when the mutation opts out with meta.localErrorToast", () => {
@@ -39,6 +42,8 @@ describe("handleMutationError (#1965)", () => {
     );
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+    // B980: the description is fixed copy too, never the raw guard message.
+    expect(toast.mock.calls[0][0].description).toBe("Choose a plan to make changes.");
   });
 
   it("still swallows HANDLED_CODES and still turns READ_ONLY into the read-only toast", () => {
@@ -48,5 +53,58 @@ describe("handleMutationError (#1965)", () => {
     handleMutationError(axiosErr({ code: "READ_ONLY", message: "x" }), {}, toast, router);
     expect(toast).toHaveBeenCalledTimes(1);
     expect(toast.mock.calls[0][0].title).toBe("Your workspace is read-only");
+  });
+
+  // B956: a refused formula-led name is FIXED copy with a human field label here too, never the raw
+  // server message ("businessName must not start with …") or the raw axios text.
+  describe("a refused name (TEXT_CELL_FORMULA_LEAD)", () => {
+    const refusal = (field: string) =>
+      axiosErr({
+        statusCode: 400,
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field,
+        message: `${field} must not start with = + - @ or a tab/line break`,
+      });
+
+    it("toasts the fixed copy with the field label, never the raw message", () => {
+      const { toast, router } = setup();
+      handleMutationError(refusal("businessName"), {}, toast, router);
+      expect(toast).toHaveBeenCalledTimes(1);
+      expect(toast).toHaveBeenCalledWith({
+        title: "Business name can't start with =, +, -, @ or a tab/line break.",
+        variant: "error",
+      });
+      expect(JSON.stringify(toast.mock.calls)).not.toMatch(/must not start|businessName/);
+    });
+
+    it("an opted-out mutation (the customer form shows its own banner) shows nothing, so it never shows twice", () => {
+      const { toast, router } = setup();
+      handleMutationError(
+        refusal("contactName"),
+        { meta: { localErrorToast: true } },
+        toast,
+        router,
+      );
+      expect(toast).not.toHaveBeenCalled();
+    });
+  });
+
+  it("B964-2: a refused formula-led product name toasts the fixed 'Product name' copy, never the server text", () => {
+    const { toast, router } = setup();
+    handleMutationError(
+      axiosErr({
+        statusCode: 400,
+        code: "TEXT_CELL_FORMULA_LEAD",
+        field: "productName",
+        message: "productName must not start with = + - @ or a tab/line break",
+      }),
+      { meta: undefined },
+      toast,
+      router,
+    );
+    expect(toast).toHaveBeenCalledWith({
+      title: "Product name can't start with =, +, -, @ or a tab/line break.",
+      variant: "error",
+    });
   });
 });

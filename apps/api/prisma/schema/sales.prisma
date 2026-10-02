@@ -1119,7 +1119,7 @@ model Return {
   capturedRole      String?
   routeRunStopId    String?
   // RETURN_HOLD_REASON_VALUES (packages/types/api/enums.ts): CAPTURE_PENDING | CAPTURE_FAILED
-  // | OVER_RETURN | DRIVER_CAP | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
+  // | OVER_RETURN | DRIVER_CAP | ALREADY_RETURNED | UNREFERENCED. String, not an enum (same CREATE-TYPE-avoidance
   // reason as refundMethod above); validated at the DTO/service edge.
   holdReason        String?
   captureAttempts   Int        @default(0)
