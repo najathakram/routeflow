@@ -1,3 +1,4 @@
+import { roundMoney } from "@routeflow/pricing";
 import type { CreditNoteStatus } from "./api/credit-notes";
 
 /**
@@ -83,4 +84,169 @@ export function isCreditOpenForApply(
   if (cn.status !== "ISSUED") return false;
   if (cn.expiresAt && new Date(cn.expiresAt) <= now) return false;
   return openCreditBalance(cn) > 0;
+}
+
+// ─── #2648 / SA-535(c): Edit a credit note ──────────────────────────────────────
+
+/** What the Edit form holds. `expiry` is a calendar date "YYYY-MM-DD", "" = no expiry. */
+export interface CreditNoteEditDraft {
+  amount: number | null;
+  /** Per-line amounts, keyed by invoiceItemId (line-linked notes only). */
+  lineAmounts: Record<string, number | null>;
+  reason: string;
+  expiry: string;
+}
+
+export interface CreditNoteEditSource {
+  /** ISSUED is the only status whose expiry can change in place (the server says 400 otherwise). */
+  status?: string;
+  amount: number | string;
+  reason?: string | null;
+  expiresAt?: string | null;
+  items?: Array<{ invoiceItemId: string | null; amount: number | string }>;
+}
+
+export type CreditNoteEditPlan =
+  | { kind: "none" }
+  | { kind: "invalid"; message: string }
+  | { kind: "patch"; patch: { reason?: string; expiresAt?: string | null } }
+  | {
+      kind: "reissue";
+      input: {
+        amount: number;
+        items?: Array<{ invoiceItemId: string; amount: number }>;
+        reason?: string;
+        expiresAt?: string | null;
+      };
+    };
+
+/** The server bound on a credit note reason (PATCH and reissue DTOs). */
+export const CREDIT_NOTE_REASON_MAX = 450;
+
+const cents = (n: number | string | null | undefined) => roundMoney(Number(n ?? 0));
+
+/** The note's lines that carry an invoice line link (a line-linked note must restate them). */
+export function creditNoteLines(note: CreditNoteEditSource) {
+  return (note.items ?? []).filter(
+    (i): i is { invoiceItemId: string; amount: number | string } => !!i.invoiceItemId,
+  );
+}
+
+/** The draft's credit amount: Σ lines for a line-linked note, else the amount field. */
+export function creditNoteDraftAmount(note: CreditNoteEditSource, draft: CreditNoteEditDraft) {
+  const lines = creditNoteLines(note);
+  return lines.length
+    ? roundMoney(lines.reduce((s, l) => s + cents(draft.lineAmounts[l.invoiceItemId]), 0))
+    : cents(draft.amount);
+}
+
+/**
+ * Mirrors web's EditCreditNoteModal: reason/expiry only ⇒ an in-place PATCH; an amount or line
+ * change ⇒ a reissue (void-with-reversal + an unapplied replacement), never in place (SA-500).
+ */
+export function planCreditNoteEdit(
+  note: CreditNoteEditSource,
+  draft: CreditNoteEditDraft,
+): CreditNoteEditPlan {
+  const lines = creditNoteLines(note);
+  const amount = creditNoteDraftAmount(note, draft);
+  const moneyChanged = lines.length
+    ? lines.some((l) => cents(draft.lineAmounts[l.invoiceItemId]) !== cents(l.amount))
+    : amount !== cents(note.amount);
+  const reason = draft.reason.trim();
+  const reasonChanged = reason !== (note.reason ?? "").trim();
+  const oldExpiry = note.expiresAt ? note.expiresAt.slice(0, 10) : "";
+  const expiryChanged = draft.expiry !== oldExpiry;
+
+  // Mirrors web: a reason that was set can be changed but not blanked, and is bounded (server max 450).
+  if (reasonChanged && reason === "" && (note.reason ?? "").trim() !== "")
+    return { kind: "invalid", message: "A reason is required." };
+  if (reason.length > CREDIT_NOTE_REASON_MAX)
+    return {
+      kind: "invalid",
+      message: `The reason can be at most ${CREDIT_NOTE_REASON_MAX} characters.`,
+    };
+  // Mirrors web: the expiry field is locked on a non-ISSUED note unless the amount is being changed.
+  if (expiryChanged && !moneyChanged && note.status && note.status !== "ISSUED")
+    return {
+      kind: "invalid",
+      message: "The expiry can only be changed while the credit note is unused.",
+    };
+
+  if (draft.expiry && !/^\d{4}-\d{2}-\d{2}$/.test(draft.expiry))
+    return { kind: "invalid", message: "Enter the expiry as YYYY-MM-DD, or leave it empty." };
+  const expiresAt = draft.expiry ? new Date(draft.expiry).toISOString() : null;
+  if (expiryChanged && expiresAt && new Date(expiresAt).getTime() <= Date.now())
+    return { kind: "invalid", message: "The expiry must be in the future." };
+
+  if (moneyChanged) {
+    if (!(amount > 0) || lines.some((l) => !(cents(draft.lineAmounts[l.invoiceItemId]) > 0)))
+      return { kind: "invalid", message: "Every amount must be greater than 0." };
+    return {
+      kind: "reissue",
+      input: {
+        amount,
+        ...(lines.length
+          ? {
+              items: lines.map((l) => ({
+                invoiceItemId: l.invoiceItemId,
+                amount: cents(draft.lineAmounts[l.invoiceItemId]),
+              })),
+            }
+          : {}),
+        ...(reasonChanged ? { reason } : {}),
+        ...(expiryChanged ? { expiresAt } : {}),
+      },
+    };
+  }
+  if (!reasonChanged && !expiryChanged) return { kind: "none" };
+  return {
+    kind: "patch",
+    patch: {
+      ...(reasonChanged ? { reason } : {}),
+      ...(expiryChanged ? { expiresAt } : {}),
+    },
+  };
+}
+
+/**
+ * Whether the expiry field is editable: an ISSUED note's always; otherwise only while the amount is
+ * changing (a reissue) or while the expiry differs from the note's, so a change can be put back
+ * (amount -> expiry -> amount back is not a trap).
+ */
+export function creditNoteExpiryEditable(
+  note: { status?: string; expiresAt?: string | null },
+  draftExpiry: string,
+  planKind: CreditNoteEditPlan["kind"],
+): boolean {
+  return (
+    note.status === "ISSUED" ||
+    planKind === "reissue" ||
+    draftExpiry !== (note.expiresAt ? note.expiresAt.slice(0, 10) : "")
+  );
+}
+
+/** The money path's confirm copy (SA-535(c)); `unapplied` comes from void-preview. */
+export function reissueConfirmMessage(
+  creditNoteNumber: string,
+  newAmount: number,
+  unapplied: Array<{ invoiceNumber: string; amount: number | string }>,
+): string {
+  const money = (n: number | string) => `$${cents(n).toFixed(2)}`;
+  const off = unapplied.length
+    ? ` and un-applies ${unapplied.map((u) => `${money(u.amount)} from ${u.invoiceNumber}`).join(", ")}`
+    : "";
+  return `This voids ${creditNoteNumber} and issues a new credit note for ${money(newAmount)}${off}. The new credit note starts unapplied.`;
+}
+
+/** The void confirm copy (SA-436 PR-2); `unapplied` comes from void-preview. Fixed wording, no server text. */
+export function voidConfirmMessage(
+  creditNoteNumber: string,
+  unapplied: Array<{ invoiceNumber: string; amount: number | string }>,
+): string {
+  const money = (n: number | string) => `$${cents(n).toFixed(2)}`;
+  const off = unapplied.length
+    ? ` It first un-applies ${unapplied.map((u) => `${money(u.amount)} from ${u.invoiceNumber}`).join(", ")}, which reopens ${unapplied.length === 1 ? "that invoice" : "those invoices"}.`
+    : "";
+  return `${creditNoteNumber} will be voided and can't be undone.${off}`;
 }

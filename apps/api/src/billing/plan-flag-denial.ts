@@ -4,6 +4,7 @@ import type { PlanCatalogService } from "./plan-catalog.service";
 import type { FeatureOverrideService } from "./feature-override.service";
 import { buildPlanGateBody } from "./plan-gate";
 import { isDarkFlag } from "./plan-flag-policy";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /** No self-service fix exists for an admin override — an upgrade CTA would be misleading. */
 const NO_UPGRADE = {
@@ -50,7 +51,7 @@ export async function buildPlanFlagDenial(
   } catch (err) {
     deps.logger.error(`Entitlement resolution failed for tenant ${tenantId}`, err as Error);
     return new ForbiddenException({
-      code: "PLAN_GATE_UNAVAILABLE",
+      code: API_ERROR_CODES.PLAN_GATE_UNAVAILABLE,
       message: "Entitlements are temporarily unavailable. Please retry.",
     });
   }

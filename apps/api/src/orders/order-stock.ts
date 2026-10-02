@@ -3,6 +3,7 @@ import { Prisma, UserRole } from "@prisma/client";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { recordSaleMovement } from "../inventory/sale-movement";
 import { linePieceQty } from "./line-piece-qty";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * Stock bookkeeping for order writes — lifted verbatim out of `OrdersService` (B585 prefactor:
@@ -476,7 +477,7 @@ export async function settleStockForEdit(
       } else {
         const first = violations[0];
         throw new ConflictException({
-          code: "INSUFFICIENT_STOCK",
+          code: API_ERROR_CODES.INSUFFICIENT_STOCK,
           message:
             `Not enough stock for ${first.name} ` +
             `(available: ${first.available}, requested: ${first.requested}).`,

@@ -10,7 +10,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
  */
 const inFlight = new WeakMap<QueryClient, Map<string, Promise<void>>>();
 
-export function refetchOnce(queryClient: QueryClient, queryKey: readonly unknown[]): Promise<void> {
+function refetchOnce(queryClient: QueryClient, queryKey: readonly unknown[]): Promise<void> {
   let byKey = inFlight.get(queryClient);
   if (!byKey) {
     byKey = new Map();

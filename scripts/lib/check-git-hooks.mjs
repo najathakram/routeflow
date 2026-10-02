@@ -20,20 +20,19 @@ import { spawnSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
+
+const cjsScrubbedGitEnv = createRequire(import.meta.url)("./scrubbed-git-env.cjs");
 
 const FIX =
   "run `npx husky` at the worktree root (and do not create worktrees with `npm ci --ignore-scripts`)";
 
 /**
- * The process environment WITHOUT git's own variables. A git hook (pre-push) exports GIT_DIR,
- * GIT_WORK_TREE, GIT_INDEX_FILE ... into everything it spawns, and those override the repository git
- * would discover from a cwd, so a child asking "which repo is THIS directory?" would silently be
- * answered about the hook's repo instead (the B420 shape). The guard asks about a directory, so it
- * must not inherit them.
+ * The process environment WITHOUT git's own variables (GIT_DIR, GIT_WORK_TREE ... — a git hook exports
+ * them into every child, and they override the repository git would discover from a cwd: the B420
+ * shape). The single definition lives in ./scrubbed-git-env.cjs so ts-jest CJS specs share it.
  */
-export function scrubbedGitEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("GIT_")));
-}
+export const { scrubbedGitEnv } = cjsScrubbedGitEnv;
 
 /** Default git runner: `git <args>` in `cwd`, returning { status, stdout }. */
 export function runGit(cwd, args) {

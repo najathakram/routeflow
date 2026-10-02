@@ -43,6 +43,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "./merge-contention";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @ApiTags("orders")
 @ApiBearerAuth()
@@ -118,7 +119,7 @@ export class OrdersController {
         // Operator hasn't told us what to do — make them choose.
         if (!choice) {
           throw new ConflictException({
-            code: "MERGE_CHOICE_REQUIRED",
+            code: API_ERROR_CODES.MERGE_CHOICE_REQUIRED,
             message: "An open draft/pending order exists for this customer.",
             activeOrder: {
               id: activeOrder.id,

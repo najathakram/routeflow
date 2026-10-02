@@ -95,6 +95,7 @@
 import { ConflictException, Logger } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { Pool, type PoolClient } from "pg";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 export type LockMode = "wait" | "try";
 /**
@@ -374,9 +375,11 @@ export type NoWaitLockTable = (typeof NOWAIT_LOCK_TABLES)[number];
  *
  * What NOWAIT buys is exactly this much: the transaction never WAITS on these rows, so it cannot
  * deadlock while ACQUIRING them. It still HOLDS them for the rest of the tx — so this is not a
- * licence to take them out of order. Callers must take them in the same order as every other
- * writer of the same rows (Invoice LAST, after InvoicePayment/CreditNote — see
- * CreditNotesService.voidInvoice), or a later blocking lock can still close a cycle.
+ * licence to take them out of order. The canonical row-lock order across documents is Return →
+ * Order → Invoice → InvoicePayment/CreditNote, each set id-sorted (SA-214 / SA-214b): take any
+ * subset in that order, never the reverse. E.g. `InvoicesService.voidInvoice` locks Order →
+ * Invoice FIRST (SA-404) and only then deletes payments and restores credit notes. A caller that
+ * breaks the order can still close a cycle through a later blocking lock.
  *
  * NO KEY UPDATE, not FOR UPDATE, so a transaction merely holding an FK KEY SHARE on the row does
  * not trip it while a real UPDATE does. The busy path writes nothing — callers take this before
@@ -412,7 +415,7 @@ export async function lockRowsNoWait(
       /55P03|could not obtain lock/i.test(String((err as any)?.message ?? ""));
     if (!lockUnavailable) throw err;
     throw new ConflictException({
-      code: "CONCURRENT_UPDATE",
+      code: API_ERROR_CODES.CONCURRENT_UPDATE,
       reason,
       retryable: true,
       message: "Another update to this record is in progress. Try again in a moment.",

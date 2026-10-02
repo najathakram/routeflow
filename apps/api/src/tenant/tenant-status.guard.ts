@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import type { Request } from "express";
 import { PrismaService } from "../prisma/prisma.service";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 interface CachedStatus {
   status: string;
@@ -139,7 +140,7 @@ export class TenantStatusGuard implements CanActivate {
         path.startsWith("/api/v1/billing/subscription/");
       if (!isRead && !allowedMutation) {
         throw new ForbiddenException({
-          code: "READ_ONLY",
+          code: API_ERROR_CODES.READ_ONLY,
           message:
             "Your workspace is read-only. Subscribe to restore full access — exports still work.",
         });

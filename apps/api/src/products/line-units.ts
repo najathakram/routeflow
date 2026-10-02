@@ -8,6 +8,7 @@ import {
   type LadderUnit,
 } from "@routeflow/pricing";
 import { keepsHeldUnit, norm } from "../orders/unit-label-norm";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * THE one place an order/invoice line's pack factor is decided (units_v1, step 4).
@@ -115,7 +116,7 @@ export function resolveLineUnits(
     if (e instanceof UnknownUnitError) {
       // #2277: the same code as a held unit the product no longer offers (unit-line-build.ts).
       throw new BadRequestException({
-        code: "UNIT_NOT_OFFERED",
+        code: API_ERROR_CODES.UNIT_NOT_OFFERED,
         message: `"${e.unitLabel}" is not a unit of this product.`,
       });
     }

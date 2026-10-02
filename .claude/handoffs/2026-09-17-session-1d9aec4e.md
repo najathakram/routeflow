@@ -1,4 +1,5 @@
 # Handoff — 2026-09-20 · 2026-09-17-session-1d9aec4e
+
 - Task: close out pipeline run '2026-09-17-session-1d9aec4e' (light-loop, major)
 - State: closed out
 - Branch/tree: master @ 5c0239e6 · uncommitted: 58 files · worktrees: 78 extra

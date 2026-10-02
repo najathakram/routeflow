@@ -250,3 +250,35 @@ describe("#2439 create-tenant success panel", () => {
     expect(screen.queryByRole("button", { name: "Copy Pay-now link" })).not.toBeInTheDocument();
   });
 });
+
+// B956: a refused formula-led business name shows FIXED copy with a human label, not the server text.
+describe("B956 create-tenant refused business name", () => {
+  it("shows the Business name copy, never the raw server message", async () => {
+    mockFetchPlanCatalog.mockResolvedValue({ version: 1, effectiveAt: null, plans: [] });
+    (superAdminClient.post as jest.Mock).mockRejectedValueOnce(
+      Object.assign(new Error("Request failed with status code 400"), {
+        response: {
+          data: {
+            statusCode: 400,
+            code: "TEXT_CELL_FORMULA_LEAD",
+            field: "businessName",
+            message: "businessName must not start with = + - @ or a tab/line break",
+          },
+        },
+      }),
+    );
+    render(<AdminCreateTenantPage />);
+    fireEvent.change(screen.getByLabelText(/slug/i), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText(/business name/i), { target: { value: "=EVIL(1)" } });
+    fireEvent.change(screen.getByLabelText(/admin email/i), {
+      target: { value: "o@acme.example" },
+    });
+    fireEvent.change(screen.getByLabelText(/admin username/i), { target: { value: "owner" } });
+    fireEvent.submit(screen.getByRole("button", { name: /create tenant/i }).closest("form")!);
+
+    expect(
+      await screen.findByText("Business name can't start with =, +, -, @ or a tab/line break."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/businessName must not start/)).not.toBeInTheDocument();
+  });
+});

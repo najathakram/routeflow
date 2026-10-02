@@ -1,0 +1,1 @@
+Paused per fleet lead (owner updating Claude) at a clean stop: `feat/mobile-order-unit-picker` fully pushed and merged with master, tree clean, nothing uncommitted, HEAD `27752fd8`, PR #1264 open (Tier 1, awaiting CI + independent PASS) — no further action needed from this lane, just resume-and-check-PR-status when unpaused.
