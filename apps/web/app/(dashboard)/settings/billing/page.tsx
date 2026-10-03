@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { CreditCard, Check, AlertTriangle, Loader2, Zap } from "lucide-react";
-import { Card, Button, Badge, useToast, cn } from "@routeflow/ui/web";
+import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/lib/auth-context";
@@ -15,6 +15,7 @@ import {
   useResumeSubscription,
   useEnableAddon,
   useDisableAddon,
+  useProrationPreview,
   useCreateCheckout,
   type MeterReading,
   type SubscriptionView,
@@ -25,6 +26,10 @@ const money = (n: number | null | undefined) =>
   n == null
     ? "—"
     : `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+
+/** Cents always shown — a charge the tenant is about to confirm reads "$24.50", never "$24.5". */
+const moneyExact = (n: number) =>
+  `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const METER_LABEL: Record<string, string> = {
   SEATS: "Seats",
@@ -84,6 +89,83 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
   );
 }
 
+/**
+ * Confirm sheet for turning an add-on ON. Enabling bills the prorated amount immediately, so the
+ * charge is shown HERE, from the same server calculation the enable call then applies
+ * (`GET /billing/proration-preview`), and the tenant must confirm it first. Confirm stays
+ * disabled until that figure is on screen — a sheet that lets you commit without seeing the money
+ * would defeat the point.
+ */
+function EnableAddonSheet({
+  addon,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  addon: AddonSkuDef | null;
+  busy: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  const preview = useProrationPreview(addon?.sku ?? null);
+  const p = preview.data;
+  const ready = !!p && !preview.isLoading && !preview.isError;
+  return (
+    <Modal
+      open={addon != null}
+      onClose={onClose}
+      title={addon ? `Enable ${addon.name}?` : "Enable add-on"}
+      className="max-w-sm"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={busy} disabled={!ready || busy}>
+            Enable add-on
+          </Button>
+        </>
+      }
+    >
+      {addon && (
+        <div className="space-y-3 text-sm text-slate-600">
+          <div className="rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+            <div className="flex justify-between">
+              <span className="font-medium text-slate-800">{addon.name}</span>
+              <span className="tabular-nums text-slate-800">
+                {moneyExact(addon.monthlyPrice)}/mo
+              </span>
+            </div>
+            {ready && (
+              <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 font-medium text-slate-900">
+                <span>Charged today</span>
+                <span className="tabular-nums">{moneyExact(p.proratedToday)}</span>
+              </div>
+            )}
+          </div>
+          {preview.isLoading && (
+            <p className="flex items-center gap-2 text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Working out today&apos;s charge…
+            </p>
+          )}
+          {preview.isError && (
+            <p className="text-red-700">
+              We couldn&apos;t work out today&apos;s charge. Close this and try again.
+            </p>
+          )}
+          {ready && (
+            <p>
+              Prorated for the {p.daysRemaining} of {p.daysInCycle} days left in this cycle, then{" "}
+              {moneyExact(addon.monthlyPrice)}/mo after that. You are charged as soon as you
+              confirm.
+            </p>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function BillingSettingsPage() {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -97,34 +179,50 @@ export default function BillingSettingsPage() {
   const disable = useDisableAddon();
   const checkout = useCreateCheckout();
   const [endTrialOpen, setEndTrialOpen] = React.useState(false);
+  const [cancelOpen, setCancelOpen] = React.useState(false);
+  // An add-on awaiting confirmation. Enabling bills at once and disabling stops a paid feature,
+  // so a click only OPENS the matching confirm — the mutation fires from the confirm, never here.
+  const [enableTarget, setEnableTarget] = React.useState<AddonSkuDef | null>(null);
+  const [disableTarget, setDisableTarget] = React.useState<AddonSkuDef | null>(null);
 
   const activeSkus = new Set(
     (sub.data?.addons ?? []).map((a) => a.sku).filter(Boolean) as string[],
   );
 
   const toggleAddon = (addon: AddonSkuDef) => {
-    if (activeSkus.has(addon.sku)) {
-      disable.mutate(
-        { sku: addon.sku },
-        {
-          onSuccess: () =>
-            toast({ title: `${addon.name} disabled`, description: "History kept read-only." }),
+    if (activeSkus.has(addon.sku)) setDisableTarget(addon);
+    else setEnableTarget(addon);
+  };
+
+  const confirmEnable = () => {
+    const addon = enableTarget;
+    if (!addon) return;
+    enable.mutate(
+      { sku: addon.sku },
+      {
+        onSuccess: (res) => {
+          const prorated = (res as { proratedNow?: number })?.proratedNow;
+          toast({
+            title: `${addon.name} enabled`,
+            description: prorated != null ? `Prorated ${money(prorated)} today.` : undefined,
+          });
         },
-      );
-    } else {
-      enable.mutate(
-        { sku: addon.sku },
-        {
-          onSuccess: (res) => {
-            const prorated = (res as { proratedNow?: number })?.proratedNow;
-            toast({
-              title: `${addon.name} enabled`,
-              description: prorated != null ? `Prorated ${money(prorated)} today.` : undefined,
-            });
-          },
-        },
-      );
-    }
+      },
+    );
+    setEnableTarget(null);
+  };
+
+  const confirmDisable = () => {
+    const addon = disableTarget;
+    if (!addon) return;
+    disable.mutate(
+      { sku: addon.sku },
+      {
+        onSuccess: () =>
+          toast({ title: `${addon.name} disabled`, description: "History kept read-only." }),
+      },
+    );
+    setDisableTarget(null);
   };
 
   if (sub.isLoading) {
@@ -254,11 +352,7 @@ export default function BillingSettingsPage() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() =>
-                  cancel.mutate(undefined, {
-                    onSuccess: () => toast({ title: "Cancellation scheduled" }),
-                  })
-                }
+                onClick={() => setCancelOpen(true)}
                 disabled={cancel.isPending}
               >
                 Cancel
@@ -280,6 +374,41 @@ export default function BillingSettingsPage() {
         confirmLabel="End trial"
         variant="danger"
         loading={cancel.isPending}
+      />
+
+      <ConfirmDialog
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        onConfirm={() => {
+          cancel.mutate(undefined, {
+            onSuccess: () => toast({ title: "Cancellation scheduled" }),
+          });
+          setCancelOpen(false);
+        }}
+        title="Cancel your subscription?"
+        description="Your plan stays active until the end of the current period, then your workspace becomes read-only (exports still work). You can keep your plan any time before then."
+        confirmLabel="Cancel subscription"
+        cancelLabel="Keep my plan"
+        variant="danger"
+        loading={cancel.isPending}
+      />
+
+      <EnableAddonSheet
+        addon={enableTarget}
+        busy={enable.isPending}
+        onConfirm={confirmEnable}
+        onClose={() => setEnableTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={disableTarget != null}
+        onClose={() => setDisableTarget(null)}
+        onConfirm={confirmDisable}
+        title={disableTarget ? `Disable ${disableTarget.name}?` : "Disable add-on?"}
+        description="Turns this add-on off for your whole workspace. Your history is kept read-only."
+        confirmLabel="Disable add-on"
+        variant="danger"
+        loading={disable.isPending}
       />
 
       {/* Usage */}

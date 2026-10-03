@@ -25,15 +25,26 @@ const mockCancelMutate = jest.fn();
 // WP9: mutable per-test fixture for useCreateCheckout, same pattern as mockCancelMutate.
 const mockCheckoutMutate = jest.fn();
 let mockCheckoutPending = false;
+// Add-on fixtures: the catalog the page lists, and the mutations/preview the confirm sheet drives.
+const mockEnableMutate = jest.fn();
+const mockDisableMutate = jest.fn();
+let mockPlansAddons: Array<Record<string, unknown>> = [];
+let mockProrationPreview: {
+  data?: Record<string, unknown>;
+  isLoading: boolean;
+  isError: boolean;
+} = { isLoading: false, isError: false };
 
 jest.mock("@/lib/api/billing", () => ({
   useSubscription: () => ({ data: mockSubscriptionView, isLoading: false, isError: false }),
   useUsage: () => ({ data: [], isLoading: false }),
-  usePlans: () => ({ data: { plans: [], addons: [] }, isLoading: false }),
+  usePlans: () => ({ data: { plans: [], addons: mockPlansAddons }, isLoading: false }),
   useCancelSubscription: () => ({ mutate: mockCancelMutate, isPending: false }),
   useResumeSubscription: () => ({ mutate: jest.fn(), isPending: false }),
-  useEnableAddon: () => ({ mutate: jest.fn(), isPending: false, variables: undefined }),
-  useDisableAddon: () => ({ mutate: jest.fn(), isPending: false, variables: undefined }),
+  useEnableAddon: () => ({ mutate: mockEnableMutate, isPending: false, variables: undefined }),
+  useDisableAddon: () => ({ mutate: mockDisableMutate, isPending: false, variables: undefined }),
+  useProrationPreview: (sku: string | null) =>
+    sku ? mockProrationPreview : { data: undefined, isLoading: false, isError: false },
   useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
 }));
 
@@ -255,5 +266,149 @@ describe("BillingSettingsPage — Complete payment (WP9, R2.5/R2.8)", () => {
     await screen.findByRole("button", { name: /change plan/i });
     expect(screen.queryByRole("button", { name: "Complete payment" })).not.toBeInTheDocument();
     expect(screen.queryByText("Starter · $59/mo")).not.toBeInTheDocument();
+  });
+});
+
+// ─── Money confirmations: nothing is charged / cancelled before an explicit confirm ─────────────
+
+const ADDON = {
+  sku: "ROUTE_PLUS",
+  name: "Route Plus",
+  monthlyPrice: 49,
+  unit: "tenant",
+  includedAtPlan: null,
+  meteredKey: null,
+  capacityPerUnit: null,
+  stackable: false,
+  grantsFlags: [],
+  sortOrder: 1,
+};
+
+describe("BillingSettingsPage — add-on and cancel confirmations", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAuthUser = { role: "TENANT_ADMIN" };
+    mockPlansAddons = [ADDON];
+    mockProrationPreview = {
+      data: {
+        sku: "ROUTE_PLUS",
+        name: "Route Plus",
+        monthly: 49,
+        proratedToday: 24.5,
+        daysRemaining: 15,
+        daysInCycle: 30,
+        effectiveAt: "2026-10-02T00:00:00.000Z",
+        nextChargeAt: "2026-10-17T00:00:00.000Z",
+      },
+      isLoading: false,
+      isError: false,
+    };
+    mockSubscriptionView = subscriptionView({ status: "ACTIVE", cancelAtPeriodEnd: false });
+  });
+
+  it("Enable opens a confirm sheet with the add-on name and the prorated charge, and does NOT enable yet", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("Enable Route Plus?")).toBeInTheDocument();
+    expect(dialog.getByText("Route Plus")).toBeInTheDocument();
+    expect(dialog.getByText("$24.50")).toBeInTheDocument();
+    expect(mockEnableMutate).not.toHaveBeenCalled();
+  });
+
+  it("confirming the sheet enables the add-on exactly once, with its sku", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+
+    expect(mockEnableMutate).toHaveBeenCalledTimes(1);
+    expect(mockEnableMutate).toHaveBeenCalledWith(
+      { sku: "ROUTE_PLUS" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("dismissing the enable sheet never enables the add-on", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+    expect(mockEnableMutate).not.toHaveBeenCalled();
+  });
+
+  it("the enable sheet cannot be confirmed until the prorated charge has loaded", async () => {
+    mockProrationPreview = { data: undefined, isLoading: true, isError: false };
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(mockEnableMutate).not.toHaveBeenCalled();
+  });
+
+  it("the enable sheet stays blocked, with fixed copy, when the charge preview fails", async () => {
+    mockProrationPreview = { data: undefined, isLoading: false, isError: true };
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(dialog.getByText(/couldn.t work out today.s charge/i)).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+  });
+
+  it("Disable asks for confirmation before disabling", async () => {
+    mockSubscriptionView = subscriptionView({
+      status: "ACTIVE",
+      addons: [{ sku: "ROUTE_PLUS", name: "Route Plus", monthly: 49 }] as never,
+    });
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Disable" }));
+    expect(mockDisableMutate).not.toHaveBeenCalled();
+
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Disable add-on" }));
+    expect(mockDisableMutate).toHaveBeenCalledTimes(1);
+    expect(mockDisableMutate).toHaveBeenCalledWith(
+      { sku: "ROUTE_PLUS" },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("Cancel subscription asks for confirmation and does not cancel until confirmed", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    expect(mockCancelMutate).not.toHaveBeenCalled();
+
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Cancel subscription" }));
+    expect(mockCancelMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismissing the cancel confirm never cancels the subscription", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: /^cancel$/i }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Keep my plan" }));
+
+    expect(mockCancelMutate).not.toHaveBeenCalled();
   });
 });
