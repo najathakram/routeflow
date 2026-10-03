@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 interface OrderItemForSplit {
   id: string;
@@ -63,7 +64,7 @@ export function SplitInvoiceModal({
   onCreated,
 }: SplitInvoiceModalProps) {
   const { toast } = useToast();
-  const createPartial = useCreatePartialInvoiceFromOrder();
+  const createPartial = useCreatePartialInvoiceFromOrder({ localErrorToast: true });
 
   // Per-row qty to invoice (defaults to remaining for each row).
   const [qtyById, setQtyById] = React.useState<Record<string, number>>({});
@@ -126,11 +127,14 @@ export function SplitInvoiceModal({
           onClose();
         },
         onError: (err: any) => {
-          const msg =
-            err?.response?.data?.message ||
-            err?.message ||
-            "Failed to create invoice. Please try again.";
-          toast({ title: "Could not create invoice", description: msg, variant: "error" });
+          toast({
+            title: "Could not create invoice",
+            description: genericToastCopy(
+              err,
+              "The invoice couldn't be created. Check the selected lines, then try again.",
+            ),
+            variant: "error",
+          });
         },
       },
     );

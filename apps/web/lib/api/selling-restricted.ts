@@ -10,7 +10,7 @@ export function parseSellingRestricted(err: unknown): BlockedLine[] | null {
     err as {
       response?: {
         status?: number;
-        data?: { code?: string; blockedLines?: BlockedLine[]; message?: string };
+        data?: { code?: string; blockedLines?: BlockedLine[] };
       };
     }
   )?.response;
@@ -25,7 +25,7 @@ export function parseSellingRestricted(err: unknown): BlockedLine[] | null {
       productName: "An item on this order",
       ruleId: null,
       reason: "UNKNOWN_PRODUCT",
-      message: res.data.message ?? "",
+      message: "",
     },
   ];
 }

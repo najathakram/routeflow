@@ -129,6 +129,8 @@ import { fetchPdfBlob } from "@/lib/fetch-pdf-blob";
 import { CreditNotePicker, type CreditSelection } from "../_components/CreditNotePicker";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import type { UnitOption } from "@/lib/unit-options";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
+import { markSentErrorText, orderErrorText, sendEmailErrorText } from "@/lib/order-error-text";
 
 // ─── Send Invoice Modal ────────────────────────────────────────────────────────
 
@@ -151,8 +153,8 @@ interface InvoiceModalData {
 
 function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: () => void }) {
   const { toast } = useToast();
-  const sendInvoice = useSendInvoice();
-  const sendInvoiceEmail = useSendInvoiceEmail();
+  const sendInvoice = useSendInvoice({ localErrorToast: true });
+  const sendInvoiceEmail = useSendInvoiceEmail({ localErrorToast: true });
   const [pdfLoading, setPdfLoading] = React.useState(false);
   const [printLoading, setPrintLoading] = React.useState(false);
   const [sent, setSent] = React.useState(false);
@@ -170,7 +172,12 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         setSent(true);
         toast({ title: "Invoice marked as sent", variant: "success" });
       },
-      onError: (e) => toast({ title: e.message, variant: "error" }),
+      onError: (e) =>
+        toast({
+          title: "Couldn't mark the invoice as sent",
+          description: markSentErrorText(e),
+          variant: "error",
+        }),
     });
   }
 
@@ -190,7 +197,7 @@ function SendInvoiceModal({ data, onClose }: { data: InvoiceModalData; onClose: 
         onError: (e: any) =>
           toast({
             title: "Failed to send email",
-            description: e?.response?.data?.message || e.message,
+            description: sendEmailErrorText(e),
             variant: "error",
           }),
       },
@@ -1978,12 +1985,14 @@ export default function OrderDetailPage() {
   );
   const router = useRouter();
   const updateStatus = useUpdateOrderStatus();
+  // The cancel flow renders its own error (every other status change keeps the global toast), so it has its own instance.
+  const cancelOrder = useUpdateOrderStatus({ localErrorToast: true });
   const updateItems = useUpdateOrderItems();
   const reopenOrder = useReopenOrder();
-  const deleteOrder = useDeleteOrder();
+  const deleteOrder = useDeleteOrder({ localErrorToast: true });
   const updateShipment = useUpdateOrderShipment();
   const createInvoiceFromOrder = useCreateInvoiceFromOrder();
-  const patchFulfillPath = usePatchOrderFulfillPath();
+  const patchFulfillPath = usePatchOrderFulfillPath({ localErrorToast: true });
   // Bumped after a SHIP order is marked shipped, to nudge the ShipmentCard's
   // tracking-entry dialog open — see openSignal prop below.
   const [shipmentOpenSignal, setShipmentOpenSignal] = React.useState(0);
@@ -2342,7 +2351,7 @@ export default function OrderDetailPage() {
       setShowCancelConfirm(false);
       return;
     }
-    updateStatus.mutate(
+    cancelOrder.mutate(
       { id: order.id, status: "CANCELLED" },
       {
         onSuccess: () => {
@@ -2354,6 +2363,7 @@ export default function OrderDetailPage() {
           toast({
             title: "Couldn't cancel this order",
             description:
+              codedToastCopy(err) ??
               err?.response?.data?.message ??
               "Please try again, or refresh and check its invoices.",
             variant: "error",
@@ -2489,7 +2499,10 @@ export default function OrderDetailPage() {
                 toast({ title: successTitle, variant: "success" });
                 router.push("/orders");
               },
-              onError: () => setShowDeleteConfirm(false),
+              onError: (e) => {
+                toast({ title: orderErrorText(e), variant: "error" });
+                setShowDeleteConfirm(false);
+              },
             });
           }}
         >
@@ -2694,7 +2707,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2759,7 +2772,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -2946,7 +2959,7 @@ export default function OrderDetailPage() {
                             router.push("/orders");
                           },
                           onError: (e) => {
-                            toast({ title: e.message, variant: "error" });
+                            toast({ title: orderErrorText(e), variant: "error" });
                             setShowDeleteConfirm(false);
                           },
                         });
@@ -3397,7 +3410,7 @@ export default function OrderDetailPage() {
                             onError: (err: any) =>
                               toast({
                                 title: "Could not update fulfillment",
-                                description: err?.response?.data?.message,
+                                description: codedToastCopy(err) ?? err?.response?.data?.message,
                                 variant: "error",
                               }),
                           },
@@ -3663,7 +3676,7 @@ export default function OrderDetailPage() {
         }
         confirmLabel={cancelCopy.confirmLabel ? "Yes, cancel order" : "Close"}
         variant="danger"
-        loading={updateStatus.isPending || cancelImpact.isLoading}
+        loading={updateStatus.isPending || cancelOrder.isPending || cancelImpact.isLoading}
       />
 
       {/* Demote reason modal */}
@@ -3671,7 +3684,7 @@ export default function OrderDetailPage() {
         open={!!demoteTarget}
         onClose={() => setDemoteTarget(null)}
         onConfirm={handleDemote}
-        loading={updateStatus.isPending}
+        loading={updateStatus.isPending || cancelOrder.isPending}
         targetStatus={demoteTarget ?? ""}
       />
 
