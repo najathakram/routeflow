@@ -109,7 +109,7 @@ interface EstimateLineItem {
   pieces?: number;
 }
 
-/** The pricing-helper view of a line — boxed lines prorate, never qty * unitPrice. */
+/** The pricing-helper view of a line: a boxed line prorates by its box split (BOX price). */
 function toTotalsLine(li: EstimateLineItem): InvoiceTotalsLine {
   return {
     unitPrice: li.unitPrice,
