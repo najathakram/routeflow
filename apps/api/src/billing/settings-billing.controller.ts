@@ -96,8 +96,16 @@ export class SettingsBillingController {
 
   @Get("proration-preview")
   @ApiOperation({ summary: "Mid-cycle prorated charge to enable an add-on today" })
-  prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {
-    return this.proration.prorationPreview(this.tenantIdOf(user), sku);
+  async prorationPreview(@CurrentUser() user: AuthUser, @Query("sku") sku: string) {
+    const tenantId = this.tenantIdOf(user);
+    // `proratedToday` is an ESTIMATE: Stripe's own proration (returned by the enable call) is the
+    // authoritative figure. `billed` is false for a free pilot / unconfigured Stripe, where the
+    // add-on is included at no charge — the UI must not promise a charge there.
+    const [preview, billed] = await Promise.all([
+      this.proration.prorationPreview(tenantId, sku),
+      this.mutations.isAddonBilled(tenantId),
+    ]);
+    return { ...preview, billed };
   }
 
   @Get("export")

@@ -201,6 +201,27 @@ function catalogWithLite(): ReturnType<typeof catalog> {
   } as ReturnType<typeof catalog>;
 }
 
+/** A tenant billed through Stripe: self-serve add-ons go on its subscription (owner ruling 2026-10-03). */
+const BILLED_SUB = {
+  stripeSubId: "sub_1",
+  stripeCustomerId: "cus_1",
+  billingInterval: "month",
+  cycle: "MONTHLY",
+};
+
+/** Stripe module-boundary mock for the add-on item calls (no live Stripe). */
+function addonStripeClient() {
+  return {
+    products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
+    subscriptionItems: {
+      create: jest.fn().mockResolvedValue({ id: "si_1" }),
+      update: jest.fn().mockResolvedValue({ id: "si_1" }),
+      del: jest.fn().mockResolvedValue({}),
+    },
+    invoiceItems: { list: jest.fn().mockResolvedValue({ data: [] }) },
+  };
+}
+
 interface Opts {
   catalog?: ReturnType<typeof catalog>;
   tenantStatus?: string;
@@ -359,6 +380,7 @@ function make(opts: Opts = {}) {
     opts.stripe ??
     ({
       isConfigured: true,
+      client: addonStripeClient(),
       updateSubscription: jest.fn().mockResolvedValue({}),
       // CHANGE-1 (2026-09-13): the READ_ONLY cohort's cancel() branch now cancels the Stripe
       // subscription IMMEDIATELY (see cancelReadOnlyStripeSubImmediately) instead of scheduling
@@ -1248,7 +1270,7 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
   it("enableAddon charges the qty delta only (idempotent re-enable at same qty emits nothing)", async () => {
     // CUSTOMER_PACK_100, not SEAT_EXTRA — SEAT_EXTRA is seat-billing plumbing, never a
     // self-service toggle (see the SELF_SERVICE_ADDON_SKUS tests below).
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
@@ -1278,7 +1300,7 @@ describe("SubscriptionMutationService downgrade / add-ons", () => {
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // 12 × 2
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
   });
 });
@@ -1292,7 +1314,11 @@ describe("SubscriptionMutationService.enableAddon/disableAddon — B865 ledger g
   it("REG-B865-SELF TRIAL tenant enabling CUSTOMER_PACK_100 ×2 books nothing (activation books it once)", async () => {
     // SA-277: enableAddon() never changes tenant status, so the tx-scoped paying-set read
     // must stay TRIAL here too (never the ACTIVE default `subscribe()`'s tests rely on).
-    const { svc, tx, events } = make({ tenantStatus: "TRIAL", txTenantStatus: "TRIAL" });
+    const { svc, tx, events } = make({
+      tenantStatus: "TRIAL",
+      txTenantStatus: "TRIAL",
+      sub: BILLED_SUB,
+    });
 
     await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
 
@@ -1398,7 +1424,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // model — re-enabling at the same qty is documented, tested idempotent behaviour (see
     // "enableAddon charges the qty delta only" above), not a conflict. The lock must not
     // change that: this guard test pins it stays a no-op, not a new refusal.
-    const first = make();
+    const first = make({ sub: BILLED_SUB });
     await first.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "admin");
     expect(deltaOf(first.events, BILLING_EVENTS.ADDON_ENABLED)).toBe(24); // 12 × 2
 
@@ -1432,8 +1458,10 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
         return { id: "addon1", ...row };
       }),
     };
+    const raceStripeClient = addonStripeClient();
     const prisma = {
       tenantAddon,
+      tenantSubscription: { findUnique: jest.fn().mockResolvedValue(BILLED_SUB) },
       $transaction: jest.fn(async (fn: any) =>
         fn({
           tenantAddon,
@@ -1462,7 +1490,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     const entitlements = { invalidate: jest.fn() } as any;
     const events = { emit: jest.fn().mockResolvedValue({}) } as any;
     const tenantStatus = { invalidate: jest.fn() } as any;
-    const stripe = { isConfigured: false } as any;
+    const stripe = { isConfigured: true, client: raceStripeClient } as any;
     const billingNotification = {
       notifyUpgradeConfirmed: jest.fn().mockResolvedValue(undefined),
       notifyDowngradeScheduled: jest.fn().mockResolvedValue(undefined),
@@ -1495,6 +1523,8 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     );
     expect(enabledEmits).toHaveLength(1);
     expect(enabledEmits[0][3].amountDelta).toBe(12); // ONE delta of 1 × $12, never 24
+    // ... and ONE Stripe item: the second, serialised call sees the first call's row.
+    expect(raceStripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
 
     // Structural pin: the lock actually wraps the critical section, keyed per (tenantId, sku)
     // — matching the admin path's key shape exactly so the two paths serialise against
@@ -3121,9 +3151,12 @@ describe("#2188 tenant paths find an admin legacy-keyed row (constructed path, S
   };
 
   it("self-serve enable re-activates the admin's legacy row IN PLACE and nets the ledger once", async () => {
-    const { svc, store, events } = withStore([
-      { addonKey: "msrp", sku: "MSRP", active: true, quantity: 1, priceSnapshot: 0 },
-    ]);
+    // INACTIVE seed: an ACTIVE free row is never retro-billed by a re-enable (see
+    // subscription-mutation.addon-billing.spec.ts case 8); re-activation is the billed path.
+    const { svc, store, events } = withStore(
+      [{ addonKey: "msrp", sku: "MSRP", active: false, quantity: 1, priceSnapshot: 0 }],
+      { sub: BILLED_SUB },
+    );
     await svc.enableAddon("t1", "MSRP", 1);
     expect(store.rows).toHaveLength(1);
     expect(store.rows[0]).toMatchObject({ id: "row1", addonKey: "msrp", active: true });

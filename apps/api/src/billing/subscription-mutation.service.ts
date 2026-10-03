@@ -116,6 +116,16 @@ const STRIPE_TERMINAL_STATUSES: ReadonlySet<string> = new Set(["canceled", "inco
 const ADMIN_ONLY_ADDON_MESSAGE =
   "This add-on is enabled by RouteFlow for your workspace — contact support";
 
+/** Fixed tenant-facing copy for the self-serve add-on billing paths — never a Stripe/internal message. */
+const ADDON_ENABLE_BILLING_FAILED =
+  "We couldn't turn this add-on on because billing didn't go through. Nothing was changed. Please try again.";
+const ADDON_DISABLE_BILLING_FAILED =
+  "We couldn't turn this add-on off because billing didn't go through. It is still on. Please try again.";
+const ADDON_ANNUAL_NOT_SUPPORTED =
+  "Add-ons can't be added to an annual plan online yet. Please contact support.";
+
+export type AddonBilling = "STRIPE" | "UNBILLED";
+
 /**
  * Subscription state MUTATIONS (Plans & Billing Phase 4). Owns the tenant's
  * entitlement state — plan, add-ons, cycle, schedule — and emits a BillingEvent for
@@ -1401,7 +1411,6 @@ export class SubscriptionMutationService {
     if (!skuDef) throw new BadRequestException(`Unknown add-on "${sku}"`);
     if (!isSelfServiceAddon(sku)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
     const qty = Math.max(1, Math.trunc(quantity ?? 1));
-    const preview = await this.proration.prorationPreview(tenantId, sku);
 
     // FINDING-3 (round 3 review): same family and the same SKU-keyed shape as the admin path in
     // addon.service.ts, so the two paths serialise against each other and not merely within
@@ -1411,50 +1420,7 @@ export class SubscriptionMutationService {
     try {
       const result = await withAdvisoryLock(
         { family: "billing", key: lockKey, mode: "wait", waitMs: 10_000 },
-        async () => {
-          await this.prisma.$transaction(async (tx) => {
-            // B865 / SA-277 FIX-2/FIX-3 (house lock order): tenant row lock FIRST — and the
-            // existence read moves INSIDE the tx, AFTER the lock, so `existing` (and the
-            // `before` snapshot derived from it) can never observe a stale pre-lock state a
-            // concurrent enable/disable committed in between.
-            await lockTenantForLedger(tx, tenantId);
-            // #2188 / SA-385: finds a row the admin path keyed on a legacy addonKey too.
-            const existing = await findAddonRow(tx, tenantId, sku);
-            const before = existing?.active
-              ? { priceSnapshot: existing.priceSnapshot, quantity: existing.quantity }
-              : { priceSnapshot: 0, quantity: 0 };
-
-            // Re-activate an existing row IN PLACE (whichever key it carries); else create.
-            await tx.tenantAddon.upsert({
-              where: { tenantId_addonKey: { tenantId, addonKey: existing?.addonKey ?? sku } },
-              create: {
-                tenantId,
-                addonKey: sku,
-                sku,
-                quantity: qty,
-                active: true,
-                priceSnapshot: skuDef.monthlyPrice,
-              },
-              update: { sku, quantity: qty, active: true, priceSnapshot: skuDef.monthlyPrice },
-            });
-            await emitAddonDelta(tx, this.events, {
-              tenantId,
-              sku,
-              before,
-              after: { priceSnapshot: skuDef.monthlyPrice, quantity: qty },
-              actorId,
-              payload: { quantity: qty, prorated: preview.proratedToday },
-            });
-            if (sku === "SEAT_EXTRA" && !existing?.active) {
-              await this.events.emit(
-                tenantId,
-                BILLING_EVENTS.SEAT_ADDED,
-                { quantity: qty },
-                { actorId, tx },
-              );
-            }
-          });
-        },
+        () => this.enableAddonLocked(tenantId, sku, skuDef, qty, actorId),
       );
 
       if (!result.acquired) {
@@ -1465,6 +1431,15 @@ export class SubscriptionMutationService {
           `Could not enable add-on "${sku}" for tenant ${tenantId} — lock unavailable`,
         );
       }
+      const outcome = result.value;
+      if (outcome.changed) this.entitlements.invalidate(tenantId);
+      return {
+        // Billed: what STRIPE prorated (authoritative; null when it could not be read back).
+        // Unbilled: 0. The local `prorationPreview` is only an estimate and is never returned here.
+        proratedNow: outcome.proratedNow,
+        billing: outcome.billing,
+        subscription: await this.subscription.getSubscription(tenantId),
+      };
     } catch (e) {
       if (e instanceof LockTimeoutError || e instanceof LockUnavailableError) {
         this.logger.error(
@@ -1476,11 +1451,233 @@ export class SubscriptionMutationService {
       }
       throw e;
     }
+  }
 
-    this.entitlements.invalidate(tenantId);
+  /**
+   * Is this tenant's self-serve add-on billed through Stripe? True only with Stripe configured
+   * AND a live `stripeSubId` (a free pilot has none — its add-ons stay unbilled and unbooked).
+   * Read-only; the preview uses it to say "included at no charge" instead of promising a charge.
+   */
+  async isAddonBilled(tenantId: string): Promise<boolean> {
+    return (await this.addonBillingContext(tenantId)).billed;
+  }
+
+  private async addonBillingContext(tenantId: string) {
+    const sub = await this.prisma.tenantSubscription.findUnique({
+      where: { tenantId },
+      select: {
+        stripeSubId: true,
+        stripeCustomerId: true,
+        billingInterval: true,
+        cycle: true,
+      },
+    });
+    const billed = this.stripe.isConfigured && !!sub?.stripeSubId;
+    return { sub, billed };
+  }
+
+  /**
+   * What Stripe actually prorated for `itemId` — the pending proration invoice items of this
+   * subscription item, in dollars. null when it cannot be read (the add-on is on and billed
+   * regardless; the amount then simply shows on the next invoice). Never throws.
+   */
+  private async readStripeProration(
+    sub: { stripeCustomerId?: string | null } | null,
+    itemId: string,
+  ): Promise<number | null> {
+    if (!sub?.stripeCustomerId) return null;
+    try {
+      const list = await this.stripe.client.invoiceItems.list({
+        customer: sub.stripeCustomerId,
+        pending: true,
+        limit: 100,
+      });
+      const mine = (list?.data ?? []).filter(
+        (ii: any) => ii?.proration === true && ii?.subscription_item === itemId,
+      );
+      if (mine.length === 0) return null;
+      const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
+      return roundMoney(cents / 100);
+    } catch (err) {
+      this.logger.warn(
+        `Could not read Stripe's proration for item ${itemId}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
+  /** Best-effort removal of a Stripe item THIS call created but could not commit a row for. */
+  private async deleteOrphanItem(itemId: string, tenantId: string, sku: string): Promise<void> {
+    try {
+      await this.stripe.client.subscriptionItems.del(itemId);
+    } catch (err) {
+      if (!isStripeResourceMissing(err)) {
+        this.logger.error(
+          `Add-on "${sku}" for tenant ${tenantId}: could not remove orphan Stripe item ${itemId}: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * The enable critical section (runs under the `addon:<tenant>:<sku>` advisory lock).
+   *
+   * BILLED = Stripe configured AND the tenant has a `stripeSubId`. Then, for a new / re-activated
+   * add-on, ONE Stripe subscription item is created (inline `price_data`, explicit
+   * `create_prorations`) BEFORE any row is written; a Stripe failure refuses the call with fixed
+   * copy and leaves no enabled row and no ledger event. The ledger books the add-on only after
+   * Stripe succeeded, inside the same transaction as the row.
+   *
+   * UNBILLED (a free pilot with no `stripeSubId`, or Stripe not configured): the add-on is on, the
+   * row's `priceSnapshot` is explicitly 0 and the ledger books nothing — never revenue we do not bill.
+   * A row that was ALREADY active is never retro-billed: a same-qty re-enable is a no-op and a row
+   * with no Stripe item keeps its stored snapshot.
+   */
+  private async enableAddonLocked(
+    tenantId: string,
+    sku: string,
+    skuDef: PlanVersionWithCatalog["addonSkus"][number],
+    qty: number,
+    actorId?: string,
+  ): Promise<{ changed: boolean; proratedNow: number | null; billing: AddonBilling }> {
+    const { sub, billed } = await this.addonBillingContext(tenantId);
+    const existing = await findAddonRow(this.prisma, tenantId, sku);
+    const existingBilling: AddonBilling = existing?.stripeItemId ? "STRIPE" : "UNBILLED";
+
+    // Idempotent: already on at this quantity — nothing to create, update or book.
+    if (existing?.active && existing.quantity === qty) {
+      return { changed: false, proratedNow: 0, billing: existingBilling };
+    }
+
+    let stripeItemId: string | null = null;
+    let createdItemId: string | null = null;
+    let proratedNow: number | null = 0;
+    let priceSnapshot: number;
+
+    if (existing?.active && existing.stripeItemId) {
+      // Billed row, new quantity: update the item (prorated). Its price stays the one it was
+      // created at (grandfathered) — only the quantity moves.
+      if (!this.stripe.isConfigured) {
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      try {
+        await this.stripe.client.subscriptionItems.update(existing.stripeItemId, {
+          quantity: qty,
+          proration_behavior: "create_prorations",
+        });
+      } catch (err) {
+        this.logger.error(
+          `Add-on "${sku}" tenant ${tenantId}: Stripe quantity update failed: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      stripeItemId = existing.stripeItemId;
+      priceSnapshot = Number(existing.priceSnapshot ?? 0);
+      proratedNow = await this.readStripeProration(sub, stripeItemId);
+    } else if (existing?.active) {
+      // Already on and NOT billed (a legacy / pilot row): never retro-bill. Keep its stored
+      // snapshot; only the quantity changes.
+      priceSnapshot = Number(existing.priceSnapshot ?? 0);
+    } else if (billed && sub?.stripeSubId) {
+      const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
+      if (interval !== "month") {
+        // Stripe cannot mix a monthly item into a yearly subscription; fail closed, no Stripe call.
+        throw new ConflictException(ADDON_ANNUAL_NOT_SUPPORTED);
+      }
+      try {
+        const product = await this.stripe.client.products.create({
+          name: `RouteFlow add-on — ${skuDef.name}`,
+          metadata: { tenantId, sku },
+        });
+        const item = await this.stripe.client.subscriptionItems.create({
+          subscription: sub.stripeSubId,
+          quantity: qty,
+          proration_behavior: "create_prorations",
+          price_data: {
+            currency: "usd",
+            unit_amount: Math.round(Number(skuDef.monthlyPrice) * 100),
+            recurring: { interval: "month" },
+            product: product.id,
+          },
+          metadata: { tenantId, sku },
+        });
+        createdItemId = item.id;
+        stripeItemId = item.id;
+      } catch (err) {
+        this.logger.error(
+          `Add-on "${sku}" tenant ${tenantId}: Stripe item create failed: ${(err as Error).message}`,
+        );
+        throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
+      }
+      priceSnapshot = Number(skuDef.monthlyPrice);
+      proratedNow = await this.readStripeProration(sub, createdItemId as string);
+    } else {
+      // Free pilot / Stripe not configured: on, unbilled, priced explicitly at 0 (books nothing).
+      priceSnapshot = 0;
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // B865 / SA-277 FIX-2/FIX-3 (house lock order): tenant row lock FIRST, and the existence
+        // read INSIDE the tx, AFTER the lock, so `before` can never observe a stale pre-lock state.
+        await lockTenantForLedger(tx, tenantId);
+        // #2188 / SA-385: finds a row the admin path keyed on a legacy addonKey too.
+        const current = await findAddonRow(tx, tenantId, sku);
+        if (createdItemId && current?.active) {
+          // Lost a race against an unlocked writer (subscribe): never leave two billing handles.
+          throw new ConflictException(ADDON_ENABLE_BILLING_FAILED);
+        }
+        const before = current?.active
+          ? { priceSnapshot: current.priceSnapshot, quantity: current.quantity }
+          : { priceSnapshot: 0, quantity: 0 };
+
+        // Re-activate an existing row IN PLACE (whichever key it carries); else create.
+        await tx.tenantAddon.upsert({
+          where: { tenantId_addonKey: { tenantId, addonKey: current?.addonKey ?? sku } },
+          create: {
+            tenantId,
+            addonKey: sku,
+            sku,
+            quantity: qty,
+            active: true,
+            priceSnapshot,
+            stripeItemId,
+          },
+          update: {
+            sku,
+            quantity: qty,
+            active: true,
+            priceSnapshot,
+            ...(stripeItemId ? { stripeItemId } : {}),
+          },
+        });
+        await emitAddonDelta(tx, this.events, {
+          tenantId,
+          sku,
+          before,
+          after: { priceSnapshot, quantity: qty },
+          actorId,
+          payload: { quantity: qty, prorated: proratedNow ?? 0, billed: stripeItemId != null },
+        });
+        if (sku === "SEAT_EXTRA" && !current?.active) {
+          await this.events.emit(
+            tenantId,
+            BILLING_EVENTS.SEAT_ADDED,
+            { quantity: qty },
+            { actorId, tx },
+          );
+        }
+      });
+    } catch (err) {
+      // The item exists in Stripe but no row points at it: remove it so nothing bills unowned.
+      if (createdItemId) await this.deleteOrphanItem(createdItemId, tenantId, sku);
+      throw err;
+    }
+
     return {
-      proratedNow: preview.proratedToday,
-      subscription: await this.subscription.getSubscription(tenantId),
+      changed: true,
+      proratedNow,
+      billing: stripeItemId ? "STRIPE" : "UNBILLED",
     };
   }
 
@@ -1496,6 +1693,27 @@ export class SubscriptionMutationService {
     // platform-admin — self-disabling one is a dead end, since re-enabling it is a 403.
     if (!isSelfServiceAddon(code)) throw new ForbiddenException(ADMIN_ONLY_ADDON_MESSAGE);
 
+    // A billed add-on carries a Stripe subscription item: it must actually be removed (or already
+    // gone) BEFORE the entitlement is turned off, so we never keep billing for an add-on the tenant
+    // no longer has. Any other Stripe failure refuses the call with fixed copy (the add-on stays on).
+    if (addon.stripeItemId && this.stripe.isConfigured) {
+      try {
+        await this.stripe.client.subscriptionItems.del(addon.stripeItemId, {
+          proration_behavior: "create_prorations",
+        });
+      } catch (err) {
+        if (!isStripeResourceMissing(err)) {
+          this.logger.error(
+            `Add-on "${code}" tenant ${tenantId}: Stripe item ${addon.stripeItemId} removal failed: ${(err as Error).message}`,
+          );
+          throw new ServiceUnavailableException(ADDON_DISABLE_BILLING_FAILED);
+        }
+        this.logger.warn(
+          `Add-on "${code}" tenant ${tenantId}: Stripe item ${addon.stripeItemId} was already removed; clearing the pointer`,
+        );
+      }
+    }
+
     await this.prisma.$transaction(async (tx) => {
       // FIX-864 r2 finding #0: `addon` above was read outside the transaction and before any
       // lock — two concurrent self-serve disables could both observe active=true and both emit
@@ -1508,7 +1726,10 @@ export class SubscriptionMutationService {
       await tx.$queryRaw`SELECT id FROM "TenantAddon" WHERE id = ${addon.id} FOR UPDATE`;
       const current = await tx.tenantAddon.findUnique({ where: { id: addon.id } });
       if (!current?.active) return; // already disabled by a concurrent call that won the race
-      await tx.tenantAddon.update({ where: { id: addon.id }, data: { active: false } });
+      await tx.tenantAddon.update({
+        where: { id: addon.id },
+        data: { active: false, stripeItemId: null },
+      });
       await emitAddonDelta(tx, this.events, {
         tenantId,
         sku: code,

@@ -16,7 +16,9 @@ interface AuthUser {
 
 /** Instantiate the controller with mocked proration + mutations (+ billing) only (no
  *  Nest module needed). */
-function make(opts: { change?: any; checkoutResult?: any; planKey?: string } = {}) {
+function make(
+  opts: { change?: any; checkoutResult?: any; planKey?: string; billed?: boolean } = {},
+) {
   const subscription = {
     getSubscription: jest
       .fn()
@@ -26,8 +28,10 @@ function make(opts: { change?: any; checkoutResult?: any; planKey?: string } = {
   } as any;
   const proration = {
     quote: jest.fn().mockResolvedValue({ subtotalMonthly: 173, lines: [] }),
+    prorationPreview: jest.fn().mockResolvedValue({ sku: "FORECASTING", proratedToday: 6.4 }),
   } as any;
   const mutations = {
+    isAddonBilled: jest.fn().mockResolvedValue(opts.billed ?? true),
     planChangePreview: jest
       .fn()
       .mockResolvedValue(opts.change ?? { action: "UPGRADE", proratedNow: 12.3 }),
@@ -145,5 +149,20 @@ describe("SettingsBillingController.subscribe — PLAN_CHANGED_DURING_SUBSCRIBE 
       .catch((e: any) => e);
     expect(err.getStatus()).toBe(409);
     expect(err.getResponse()).toEqual(body);
+  });
+});
+
+describe("SettingsBillingController.prorationPreview — says whether the add-on is billed", () => {
+  it("a Stripe-billed tenant: preview carries billed: true next to the estimate", async () => {
+    const { controller, mutations } = make({ billed: true });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res).toMatchObject({ proratedToday: 6.4, billed: true });
+    expect(mutations.isAddonBilled).toHaveBeenCalledWith("t1");
+  });
+
+  it("a free pilot: billed: false, so the sheet can say it is included at no charge", async () => {
+    const { controller } = make({ billed: false });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res.billed).toBe(false);
   });
 });
