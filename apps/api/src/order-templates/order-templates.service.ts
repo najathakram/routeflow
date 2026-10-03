@@ -626,6 +626,9 @@ export class OrderTemplatesService {
     // nothing (null, like the all-license-gated case).
     const inactive = template.items.filter((i) => productMap.get(i.productId)?.isActive === false);
     const inactiveCount = inactive.length;
+    // Told only AFTER the order commits (below): a run that then fails — a buyer oversell 409, or the
+    // remaining lines being license-gated — must not announce an order that was never placed.
+    let inactiveNotice: { count: number; names: string } | null = null;
     if (inactiveCount > 0) {
       const names = [
         ...new Set(inactive.map((i) => productMap.get(i.productId)?.name).filter(Boolean)),
@@ -639,8 +642,12 @@ export class OrderTemplatesService {
         throw new BadRequestException(
           "Every item on this standing order is no longer available — edit the template.",
         );
-      await this.notifySkippedInactiveLines(template, inactiveCount, names).catch(() => {});
-      if (template.items.length === 0) return null; // unattended: nothing is ordered
+      if (template.items.length === 0) {
+        // unattended and nothing left to order: no order will follow, so the notice goes now
+        await this.notifySkippedInactiveLines(template, inactiveCount, names).catch(() => {});
+        return null;
+      }
+      inactiveNotice = { count: inactiveCount, names };
     }
 
     // B658: the SAME regulated per-category levy the interactive create path computes
@@ -862,6 +869,12 @@ export class OrderTemplatesService {
     });
 
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
+    if (inactiveNotice)
+      await this.notifySkippedInactiveLines(
+        template,
+        inactiveNotice.count,
+        inactiveNotice.names,
+      ).catch(() => {});
 
     // If the customer already had PENDING orders, fold the newly-created one
     // (and any pre-existing duplicates) into a single winner. The newest order

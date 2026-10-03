@@ -150,6 +150,40 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     );
   });
 
+  it("sends no notice when nothing was skipped", async () => {
+    setup([{ id: "p-active", isActive: true }]);
+
+    await service.generateOrder("t1", false, false);
+
+    expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it("sends no notice when the run then fails — nobody is told about an order that was never placed", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+    prisma.order.create.mockRejectedValue(new Error("oversell"));
+
+    await expect(service.generateOrder("t1", false, false)).rejects.toThrow("oversell");
+
+    expect(notifications.sendToCustomer).not.toHaveBeenCalled();
+    expect(notifications.sendToUser).not.toHaveBeenCalled();
+  });
+
+  it("sends the notice only once the order is placed", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+
+    await service.generateOrder("t1", false, false);
+
+    const created = prisma.order.create.mock.invocationCallOrder[0];
+    expect(notifications.sendToCustomer.mock.invocationCallOrder[0]).toBeGreaterThan(created);
+  });
+
   it("refuses with a readable 400 when every line is deactivated, creating no order", async () => {
     setup([
       { id: "p-gone", isActive: false },
