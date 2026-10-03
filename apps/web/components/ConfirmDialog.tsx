@@ -14,6 +14,9 @@ export interface ConfirmDialogProps {
   title: string;
   description?: string;
   confirmLabel?: string;
+  /** Label of the dismiss button — default "Cancel". Set it where "Cancel" would be ambiguous
+   *  (e.g. confirming a cancellation: "Keep my plan"). */
+  cancelLabel?: string;
   /** "danger" = red button, "secondary" = neutral button */
   variant?: "danger" | "secondary";
   loading?: boolean;
@@ -26,6 +29,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = "Confirm",
+  cancelLabel = "Cancel",
   variant = "danger",
   loading = false,
 }: ConfirmDialogProps) {
@@ -38,7 +42,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={loading}>
-            Cancel
+            {cancelLabel}
           </Button>
           <Button variant={variant} onClick={onConfirm} loading={loading}>
             {confirmLabel}
