@@ -3636,6 +3636,12 @@ export default function OrderDetailPage() {
           // Stored line subtotal so the preview prorates it the same way the server
           // bills the split — never a raw qty × unitPrice (over-charges boxed lines).
           subtotal: li.subtotal != null ? Number(li.subtotal) : undefined,
+          // Boxed split + box-size snapshot: lets the preview re-price boxed-aware when a line
+          // has no stored subtotal, instead of qty * unitPrice.
+          boxes: li.boxes ?? null,
+          pieces: li.pieces ?? null,
+          unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
+          promoFreeUnits: li.promoFreeUnits ?? null,
           unit: li.product?.unit,
         }))}
       />

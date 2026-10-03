@@ -93,6 +93,7 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
+import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -2625,9 +2626,7 @@ export default function InvoiceDetailPage() {
                             {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
                               rounded via pricing.ts). NEVER re-derive qty*unitPrice — that
                               over-charges boxed lines by unitsPerBox and ignores line discounts. */}
-                            {fmt(
-                              Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)),
-                            )}
+                            {fmt(storedOrComputedLineSubtotal(item))}
                           </span>
                         </td>
                       </tr>

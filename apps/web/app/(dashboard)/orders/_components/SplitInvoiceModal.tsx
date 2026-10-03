@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
+import { computeLineSubtotal, prorateLineSubtotal } from "@routeflow/pricing";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
 
 interface OrderItemForSplit {
@@ -12,20 +13,36 @@ interface OrderItemForSplit {
   unitPrice: number;
   /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
   subtotal?: number;
+  /** Boxed split + sale-time box size: needed to re-price a line that has no stored subtotal. */
+  boxes?: number | null;
+  pieces?: number | null;
+  unitsPerBox?: number | null;
+  /** BUY_N_GET_M snapshot (whole free selling units) for the no-stored-subtotal re-price. */
+  promoFreeUnits?: number | null;
   unit?: string;
 }
 
 /**
  * Preview line total for billing `billQty` of an order line. Mirrors the server:
  * prorate the STORED subtotal by qty (so boxed lines, whose unitPrice is the BOX
- * price, are never multiplied by the piece count). Falls back to qty × unitPrice
- * only when the line has no stored subtotal.
+ * price, are never multiplied by the piece count). When the line has no stored
+ * subtotal, re-price the whole line with `computeLineSubtotal` (boxes/pieces aware)
+ * and prorate that — NEVER `qty * unitPrice`. All rounding is `roundMoney`.
  */
 function previewLineTotal(it: OrderItemForSplit, billQty: number): number {
-  if (it.subtotal != null && it.qty > 0) {
-    return Math.round(((it.subtotal * billQty) / it.qty) * 100) / 100;
-  }
-  return Math.round(billQty * it.unitPrice * 100) / 100;
+  if (!(it.qty > 0)) return 0;
+  const lineSubtotal =
+    it.subtotal != null
+      ? it.subtotal
+      : computeLineSubtotal({
+          unitPrice: it.unitPrice,
+          qty: it.qty,
+          boxes: it.boxes ?? null,
+          pieces: it.pieces ?? null,
+          unitsPerBox: it.unitsPerBox ?? null,
+          freeUnits: Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0)),
+        });
+  return prorateLineSubtotal(lineSubtotal, billQty, it.qty);
 }
 
 interface SplitInvoiceModalProps {
