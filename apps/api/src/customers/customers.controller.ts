@@ -168,8 +168,8 @@ export class CustomersController {
 
   @Patch(":id")
   @Roles(UserRole.OPERATOR)
-  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto) {
-    return this.customersService.update(id, dto);
+  update(@Param("id") id: string, @Body() dto: UpdateCustomerDto, @CurrentUser() user: JwtPayload) {
+    return this.customersService.update(id, dto, undefined, user);
   }
 
   @Patch(":id/status")

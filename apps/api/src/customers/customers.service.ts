@@ -9,6 +9,7 @@ import {
   ForbiddenException,
   ServiceUnavailableException,
   UnprocessableEntityException,
+  Optional,
 } from "@nestjs/common";
 import * as crypto from "crypto";
 import { BuyerMergeRequestStatus, MergeInitiator } from "@prisma/client";
@@ -86,6 +87,8 @@ import { GRACE_DAYS } from "../billing/plan-catalog.constants";
 import { portalInviteEmailHtml } from "./portal-invite-email";
 import { buildCustomersCsv } from "./customers-csv";
 import { API_ERROR_CODES, PLAN_GATE_FLAG_KEYS } from "../common/api-error-codes";
+import { AuditService } from "../audit/audit.service";
+import { recordCreditLimitChange } from "./credit-limit-audit";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -106,6 +109,8 @@ export class CustomersService {
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
     private readonly email: EmailService,
+    // B1018: credit-limit audit; @Optional (AuditModule is global, so production always has it).
+    @Optional() private readonly audit?: AuditService,
   ) {}
 
   /**
@@ -793,7 +798,12 @@ export class CustomersService {
     }
   }
 
-  async update(id: string, dto: UpdateCustomerDto, options?: compliance.CustomerUpdateOptions) {
+  async update(
+    id: string,
+    dto: UpdateCustomerDto,
+    options?: compliance.CustomerUpdateOptions,
+    actor?: { sub?: string | null; impersonatedBy?: string | null },
+  ) {
     const existing = await this.findCustomerOrThrow(id);
     // REG-B170: a removed customer's page still rendered its edit controls; refuse the write
     // rather than silently editing a customer nobody can see in the list.
@@ -803,10 +813,19 @@ export class CustomersService {
     assertSafeCustomerNames(dto, existing); // B956: only a CHANGED name is checked
     assertSafePersonName(dto, existing); // B984: same for salutation / first / last name
     assertSafeLicense(options?.compliance ?? {}, existing); // B964: the importer's tobaccoLicenseNo, change-only
-    return this.prisma.forTenant().customer.update({
+    const updated = await this.prisma.forTenant().customer.update({
       where: { id },
       data: compliance.withCompliance(options, customerUpdateData(dto)),
     });
+    await recordCreditLimitChange(
+      this.audit,
+      this.prisma.getTenantId(),
+      id,
+      existing.creditLimit,
+      dto.creditLimit,
+      actor,
+    );
+    return updated;
   }
 
   /** SA-305 (2): sole consent writer, self-opening tx; never call inside a tenantTransaction. */

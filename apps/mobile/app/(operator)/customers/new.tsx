@@ -14,16 +14,20 @@ export default function NewCustomerScreen() {
       submitting={mut.isPending}
       initial={emptyCustomerForm()}
       onSubmit={(payload) =>
-        mut.mutate(payload, {
-          onSuccess: (res) => {
-            showToast("Customer created");
-            router.replace(`/(operator)/customers/${res.customer.id}`);
+        // B1018: null (clear) is an UPDATE-only value; a create never carries it.
+        mut.mutate(
+          { ...payload, creditLimit: payload.creditLimit ?? undefined },
+          {
+            onSuccess: (res) => {
+              showToast("Customer created");
+              router.replace(`/(operator)/customers/${res.customer.id}`);
+            },
+            onError: (e: any) =>
+              showToast(
+                safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
+              ),
           },
-          onError: (e: any) =>
-            showToast(
-              safeTextErrorCopy(e) ?? e?.response?.data?.message ?? e?.message ?? "Try again.",
-            ),
-        })
+        )
       }
     />
   );

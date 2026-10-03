@@ -23,7 +23,8 @@ export interface Customer {
   taxId?: string;
   isTaxExempt?: boolean;
   taxExemptDocumentKeys?: string[];
-  creditLimit?: number;
+  /** `null` clears the limit (update only); `0` is a real $0 limit; omitted leaves it alone (B1018). */
+  creditLimit?: number | null;
   currency?: string;
   pricingTier?: number;
   receivables?: number;
