@@ -3119,6 +3119,11 @@ export class InvoicesService {
           warn: (m) => this.logger.warn(`update(): invoiceId ${id} ${m}`),
         });
         const itemsData = editLines.map((l) => l.data);
+        // B1026: the SAME discount-exceeds-line guard create() runs, over the lines THIS edit writes
+        // (changed or new), before any write; a stored line the edit leaves verbatim is not re-judged.
+        assertNoNegativeLineSubtotal(
+          editLines.filter((l) => !l.untouched).map((l) => l.data as any),
+        );
         await this.applyMsrpSnapshots(
           tx,
           inv.customerId,
