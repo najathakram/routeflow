@@ -6,6 +6,7 @@ import {
   buildSettlementNote,
   shouldForceSettlement,
   buildSettlementRows,
+  settlementTotalsReady,
 } from "../lib/run-settlement";
 
 const entries = [
@@ -209,5 +210,21 @@ describe("buildSettlementRows (B1008)", () => {
   it("(g) a payload without checkTotal still loads (checks count as 0), and undefined is NOT loaded", () => {
     expect(buildSettlementRows({ cashTotal: 5 }, []).serverLoaded).toBe(true);
     expect(buildSettlementRows(undefined, []).serverLoaded).toBe(false);
+  });
+});
+
+// SA-644a: cached run data is not "loaded". The totals count as ready only when the payload is present AND
+// this screen's own fetch has completed (react-query isFetchedAfterMount), never on a cache hit alone.
+describe("settlementTotalsReady (SA-644a)", () => {
+  it("is ready only when the payload loaded AND it was fetched after this screen mounted", () => {
+    expect(settlementTotalsReady({ serverLoaded: true, fetchedAfterMount: true })).toBe(true);
+  });
+
+  it("a cached payload that has not been refetched since mount is NOT ready", () => {
+    expect(settlementTotalsReady({ serverLoaded: true, fetchedAfterMount: false })).toBe(false);
+  });
+
+  it("a fresh fetch without a payload is NOT ready", () => {
+    expect(settlementTotalsReady({ serverLoaded: false, fetchedAfterMount: true })).toBe(false);
   });
 });

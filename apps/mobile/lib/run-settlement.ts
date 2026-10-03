@@ -111,6 +111,18 @@ export function buildSettlementRows(
   return { rows, deviceOnly, serverLoaded: expectedPhysicalCash(collected) != null };
 }
 
+/**
+ * SA-644a: the settlement totals count as ready only when the run payload is present AND this screen's
+ * own fetch has completed (react-query `isFetchedAfterMount`). A cache hit from an earlier visit is data
+ * the server may since have moved on from, so it never unlocks closing the run on its own.
+ */
+export function settlementTotalsReady(args: {
+  serverLoaded: boolean;
+  fetchedAfterMount: boolean;
+}): boolean {
+  return args.serverLoaded && args.fetchedAfterMount;
+}
+
 /** counted - expected, cents-rounded. Positive = over, negative = short. */
 export function computeVariance(expectedCash: number, countedCash: number): number {
   return roundMoney(countedCash - expectedCash);

@@ -16,8 +16,10 @@ describe("settlement screen row source (B1008)", () => {
     expect(src).not.toMatch(/summary\.byMethod/);
   });
 
-  it("disables Close run (button and handler) until the server totals have loaded", () => {
-    expect(src).toMatch(/disabled=\{[^}]*!serverLoaded[^}]*\}/);
-    expect(src).toMatch(/if \(!serverLoaded\) return/);
+  it("disables Close run (button and handler) until the totals are ready (loaded AND fetched this session)", () => {
+    expect(src).toMatch(/isFetchedAfterMount/);
+    expect(src).toMatch(/settlementTotalsReady\(\{[^}]*fetchedAfterMount: isFetchedAfterMount/);
+    expect(src).toMatch(/disabled=\{[^}]*!totalsReady[^}]*\}/);
+    expect(src).toMatch(/if \(!totalsReady\) return/);
   });
 });

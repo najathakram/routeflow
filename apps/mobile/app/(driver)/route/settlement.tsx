@@ -16,6 +16,7 @@ import { useRouteRun, useSettleRun, useUpdateRunStatus } from "../../../lib/api/
 import { useRunSettlementStore } from "../../../store/runSettlementStore";
 import {
   buildSettlementRows,
+  settlementTotalsReady,
   summarizeCollections,
   computeVariance,
   expectedPhysicalCash,
@@ -49,7 +50,12 @@ export default function RunSettlementScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ runId: string }>();
   const runId = params.runId;
-  const { data: run, isLoading, refetch: refetchRun } = useRouteRun(runId ?? "");
+  const {
+    data: run,
+    isLoading,
+    refetch: refetchRun,
+    isFetchedAfterMount,
+  } = useRouteRun(runId ?? "");
 
   const collections = useRunSettlementStore((s) =>
     runId ? (s.collectionsByRun[runId] ?? EMPTY_COLLECTIONS) : EMPTY_COLLECTIONS,
@@ -69,6 +75,10 @@ export default function RunSettlementScreen() {
     () => buildSettlementRows(run?.collectedPayments, collections),
     [run?.collectedPayments, collections],
   );
+  const totalsReady = settlementTotalsReady({
+    serverLoaded,
+    fetchedAfterMount: isFetchedAfterMount,
+  });
 
   const [counted, setCounted] = useState("");
   const [reason, setReason] = useState("");
@@ -95,7 +105,7 @@ export default function RunSettlementScreen() {
 
   async function closeRun() {
     if (!runId || !run) return;
-    if (!serverLoaded) return;
+    if (!totalsReady) return;
     if (counted === "") {
       setError("Enter the cash & checks you counted.");
       return;
@@ -180,11 +190,11 @@ export default function RunSettlementScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.caption}>
-          {serverLoaded
+          {totalsReady
             ? `Collected during this run — ${run.collectedPayments?.count ?? summary.count} payment${
                 (run.collectedPayments?.count ?? summary.count) === 1 ? "" : "s"
               }.`
-            : "Offline: showing this device's tally only. Close run is unavailable until the totals load."}
+            : "Totals are loading or you are offline: showing this device's tally only. Close run is unavailable until they load."}
         </Text>
 
         <View style={styles.card}>
@@ -249,9 +259,9 @@ export default function RunSettlementScreen() {
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Pressable
-          style={[styles.closeBtn, (saving || !serverLoaded) && styles.closeBtnDisabled]}
-          onPress={saving || !serverLoaded ? undefined : closeRun}
-          disabled={saving || !serverLoaded}
+          style={[styles.closeBtn, (saving || !totalsReady) && styles.closeBtnDisabled]}
+          onPress={saving || !totalsReady ? undefined : closeRun}
+          disabled={saving || !totalsReady}
         >
           <Text style={styles.closeBtnText}>{saving ? "Closing…" : "Close run"}</Text>
         </Pressable>
