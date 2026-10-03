@@ -52,6 +52,7 @@ import {
   applyAddToItems,
   editItemLine,
   refusedScanOutcome,
+  reserveAdd,
   settleBeforeConfirm,
   UNITS_BLOCKED_MESSAGE,
 } from "../lib/pending-unit-adapter";
@@ -803,7 +804,7 @@ function ProductPickView({
     );
     // #2865: the add decision is the pure `applyAddToItems` (lib/pending-unit-adapter): refused while the line is pending -> false.
     const input = { id, level, dflt, viaRow, code, role: userRole, upb, prefill };
-    if (applyAddToItems(itemsRef.current, input) === itemsRef.current) return false;
+    if (!reserveAdd(itemsRef, input)) return false; // moves the ref forward: a same-render second add sees this one (B992)
     setItems((m) => applyAddToItems(m, input));
     // Retain a snapshot for EVERY added line, not just scanned ones.
     //
