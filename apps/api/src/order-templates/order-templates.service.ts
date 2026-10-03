@@ -619,6 +619,30 @@ export class OrderTemplatesService {
     assertSellableLines(products); // WS8: a FAMILY line would become a SALE StockMovement
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // B1025: a DEACTIVATED (archived) product is never ordered — the interactive create path refuses it
+    // ("Product X is archived"); this path never looked. Handled like the other unusable lines here (a
+    // suspended or license-gated line): the line is SKIPPED, both sides are told, and the rest is ordered.
+    // When nothing usable is left a manual run refuses with a readable 400; the unattended run creates
+    // nothing (null, like the all-license-gated case).
+    const inactive = template.items.filter((i) => productMap.get(i.productId)?.isActive === false);
+    const inactiveCount = inactive.length;
+    if (inactiveCount > 0) {
+      const names = [
+        ...new Set(inactive.map((i) => productMap.get(i.productId)?.name).filter(Boolean)),
+      ].join(", ");
+      template = {
+        ...template,
+        items: template.items.filter((i) => productMap.get(i.productId)?.isActive !== false),
+      };
+      // A manual run that has nothing left answers the caller directly; it needs no notice of its own.
+      if (template.items.length === 0 && !unattended)
+        throw new BadRequestException(
+          "Every item on this standing order is no longer available — edit the template.",
+        );
+      await this.notifySkippedInactiveLines(template, inactiveCount, names).catch(() => {});
+      if (template.items.length === 0) return null; // unattended: nothing is ordered
+    }
+
     // B658: the SAME regulated per-category levy the interactive create path computes
     // (orders.service.ts's own categoryMap) — a standing order never went through
     // OrdersService.create() at all, so categoryTaxAmount was hardcoded 0 below.
@@ -652,6 +676,8 @@ export class OrderTemplatesService {
       return !catId || !blockedCategoryIds.has(catId);
     });
     const skippedCount = template.items.length - allowedItems.length;
+    const unavailableNote =
+      inactiveCount > 0 ? ` (${inactiveCount} item(s) skipped — no longer available)` : "";
 
     if (skippedCount > 0) {
       await this.notifySkippedRegulatedLines(template, blocked, skippedCount).catch(() => {});
@@ -779,7 +805,9 @@ export class OrderTemplatesService {
     const orderNumber = `ORD-${Date.now()}`;
     const today = new Date();
     const skipNote =
-      skippedCount > 0 ? ` (${skippedCount} regulated line(s) skipped — license not verified)` : "";
+      (skippedCount > 0
+        ? ` (${skippedCount} regulated line(s) skipped — license not verified)`
+        : "") + unavailableNote;
 
     // B647: a standing order is a real (non-draft) sale the moment it's placed — it must
     // decrement stock through the SAME locked, aggregated helper OrdersService.create()
@@ -940,6 +968,25 @@ export class OrderTemplatesService {
     for (const op of operators) {
       await this.notifications.sendToUser(op.id, { title: "Standing order", body }).catch(() => {});
     }
+  }
+
+  /** B1025: the notice a run sends when it left deactivated product lines out. Best-effort: never fails the run. */
+  private async notifySkippedInactiveLines(
+    template: { customerId: string; name: string },
+    skippedCount: number,
+    names: string,
+  ): Promise<void> {
+    const what = names ? ` (${names})` : "";
+    await this.notifications
+      .sendToCustomer(
+        template.customerId,
+        "Unavailable items skipped from your standing order",
+        `${skippedCount} item(s)${what} on "${template.name}" are no longer available and were left out. Contact your supplier.`,
+      )
+      .catch(() => {});
+    await this.notifyOperators(
+      `Standing order "${template.name}" skipped ${skippedCount} deactivated product(s)${what}. Edit the template to remove or replace them.`,
+    );
   }
 
   private async notifySkippedRegulatedLines(
