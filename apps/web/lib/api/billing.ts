@@ -179,10 +179,15 @@ export function useRecommendation() {
   });
 }
 
+/** A MONEY quote the add-on confirm sheet shows before the tenant commits: never served from
+ *  the cache as current. `staleTime: 0` + `refetchOnMount: "always"` override the app-wide 30s
+ *  staleTime, so every open re-checks; callers gate Confirm on `isFetching`, not `isLoading`. */
 export function useProrationPreview(sku: string | null) {
   return useQuery<ProrationPreview>({
     queryKey: [...KEY, "proration-preview", sku],
     enabled: !!sku,
+    staleTime: 0,
+    refetchOnMount: "always",
     queryFn: () =>
       apiClient.get(`/billing/proration-preview`, { params: { sku } }).then((r) => r.data),
   });

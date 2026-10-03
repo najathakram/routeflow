@@ -6,6 +6,7 @@ import { Card, Button, Badge, Modal, useToast, cn } from "@routeflow/ui/web";
 import { ReadOnlyBanner } from "@/components/ReadOnlyBanner";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/lib/auth-context";
+import { formatMoney } from "@/lib/format";
 import { BillingExportButton } from "./BillingExportButton";
 import {
   useSubscription,
@@ -26,10 +27,6 @@ const money = (n: number | null | undefined) =>
   n == null
     ? "—"
     : `$${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
-
-/** Cents always shown — a charge the tenant is about to confirm reads "$24.50", never "$24.5". */
-const moneyExact = (n: number) =>
-  `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const METER_LABEL: Record<string, string> = {
   SEATS: "Seats",
@@ -90,11 +87,12 @@ function TrialBanner({ sub }: { sub: SubscriptionView }) {
 }
 
 /**
- * Confirm sheet for turning an add-on ON. Enabling bills the prorated amount immediately, so the
- * charge is shown HERE, from the same server calculation the enable call then applies
- * (`GET /billing/proration-preview`), and the tenant must confirm it first. Confirm stays
- * disabled until that figure is on screen — a sheet that lets you commit without seeing the money
- * would defeat the point.
+ * Confirm sheet for turning an add-on ON. The add-on is switched on at once and the prorated
+ * amount is booked from the same server calculation the enable call applies
+ * (`GET /billing/proration-preview`); `enableAddon` makes no card/Stripe call, so the sheet says
+ * the amount lands on the next bill rather than claiming an immediate charge. Confirm stays
+ * disabled until a FRESH figure is on screen (not a cached one still being re-checked) — a sheet
+ * that lets you commit without seeing the money would defeat the point.
  */
 function EnableAddonSheet({
   addon,
@@ -109,7 +107,7 @@ function EnableAddonSheet({
 }) {
   const preview = useProrationPreview(addon?.sku ?? null);
   const p = preview.data;
-  const ready = !!p && !preview.isLoading && !preview.isError;
+  const ready = !!p && !preview.isFetching && !preview.isError;
   return (
     <Modal
       open={addon != null}
@@ -133,17 +131,17 @@ function EnableAddonSheet({
             <div className="flex justify-between">
               <span className="font-medium text-slate-800">{addon.name}</span>
               <span className="tabular-nums text-slate-800">
-                {moneyExact(addon.monthlyPrice)}/mo
+                {formatMoney(addon.monthlyPrice)}/mo
               </span>
             </div>
             {ready && (
               <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 font-medium text-slate-900">
-                <span>Charged today</span>
-                <span className="tabular-nums">{moneyExact(p.proratedToday)}</span>
+                <span>Prorated this cycle</span>
+                <span className="tabular-nums">{formatMoney(p.proratedToday)}</span>
               </div>
             )}
           </div>
-          {preview.isLoading && (
+          {preview.isFetching && !preview.isError && (
             <p className="flex items-center gap-2 text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" /> Working out today&apos;s charge…
             </p>
@@ -155,9 +153,9 @@ function EnableAddonSheet({
           )}
           {ready && (
             <p>
-              Prorated for the {p.daysRemaining} of {p.daysInCycle} days left in this cycle, then{" "}
-              {moneyExact(addon.monthlyPrice)}/mo after that. You are charged as soon as you
-              confirm.
+              Turns on right away. Prorated for the {p.daysRemaining} of {p.daysInCycle} days left
+              in this cycle, added to your next bill, then {formatMoney(addon.monthlyPrice)}/mo
+              after that. Your card is not charged when you confirm.
             </p>
           )}
         </div>
@@ -204,7 +202,8 @@ export default function BillingSettingsPage() {
           const prorated = (res as { proratedNow?: number })?.proratedNow;
           toast({
             title: `${addon.name} enabled`,
-            description: prorated != null ? `Prorated ${money(prorated)} today.` : undefined,
+            description:
+              prorated != null ? `Prorated ${formatMoney(prorated)} this cycle.` : undefined,
           });
         },
       },
