@@ -331,7 +331,8 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
-  const updateStatus = useUpdateOrderStatus();
+  // The bulk cancel shows its own single summary toast — no per-order global error toasts.
+  const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
   // B823: DraftDock (layout.tsx) floats over the bottom-left of every dashboard screen;
   // below md there isn't enough vertical room for the toolbar above it AND the dock's own
