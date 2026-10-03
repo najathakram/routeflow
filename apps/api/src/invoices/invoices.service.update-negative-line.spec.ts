@@ -228,4 +228,42 @@ describe("InvoicesService.update() — B1026 a negative line subtotal is refused
       }),
     ).resolves.toBeDefined();
   });
+
+  // SA-640 condition 1: "changed" is decided SERVER-SIDE by comparing the payload with the stored row.
+  it("(g) a stored line whose ONLY change is a bigger discount counts as changed (stored 1 x $50, discount 0 -> 60) and is refused", async () => {
+    arrange([
+      {
+        id: "item-1",
+        productId: null,
+        description: "Widget",
+        qty: 1,
+        unitPrice: 50,
+        discount: 0,
+        subtotal: 50,
+        taxRate: 0,
+      },
+    ]);
+    const run = service.update("inv-box", {
+      items: [{ id: "item-1", description: "Widget", qty: 1, unitPrice: 50, discount: 60 }],
+    });
+    await expect(run).rejects.toThrow(NEG("Widget", -10));
+    noWrites();
+  });
+
+  // SA-640 condition 2: the guard judges the FINAL computed (rounded) subtotal, not a pre-rounding figure.
+  it("(h) the FINAL rounded subtotal is judged: 5 - 5.004 rounds to 0 and saves; 5 - 5.01 is -0.01 and is refused", async () => {
+    arrange();
+    await service.update("inv-box", {
+      items: [{ description: "Widget", qty: 1, unitPrice: 5, discount: 5.004 }],
+    });
+    // roundMoney(-0.004) is -0; Object.is(-0, 0) is false, so compare by value
+    expect(prisma.invoice.update.mock.calls[0][0].data.items.create[0].subtotal).toBeCloseTo(0, 5);
+    prisma.invoice.update.mockClear();
+    await expect(
+      service.update("inv-box", {
+        items: [{ description: "Widget", qty: 1, unitPrice: 5, discount: 5.01 }],
+      }),
+    ).rejects.toThrow(NEG("Widget", -0.01));
+    expect(prisma.invoice.update).not.toHaveBeenCalled();
+  });
 });
