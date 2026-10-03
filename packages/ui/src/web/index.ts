@@ -61,3 +61,17 @@ export {
   IllustrationInboxZero,
   IllustrationNoData,
 } from "./illustrations";
+
+export { MotionProvider, useReducedMotion } from "./motion";
+export { Switch } from "./Switch";
+export type { SwitchProps } from "./Switch";
+export { Fold } from "./Fold";
+export type { FoldProps } from "./Fold";
+export { ChipGroup } from "./ChipGroup";
+export type { ChipGroupProps, ChipOption } from "./ChipGroup";
+export { ListRow } from "./ListRow";
+export type { ListRowProps } from "./ListRow";
+export { Sheet } from "./Sheet";
+export type { SheetProps } from "./Sheet";
+export { StickyFooter } from "./StickyFooter";
+export type { StickyFooterProps } from "./StickyFooter";
