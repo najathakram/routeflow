@@ -6611,10 +6611,9 @@ describe("OrdersService", () => {
       );
     });
 
-    it("a driver diff fresh add bills LIST even for a tiered customer — tier resolution is staff-only", async () => {
-      // WP1 gave the operator/admin branch a tier ladder, and a DRIVER diff is
-      // routed through that same branch (A4). Driver edits keep the legacy list
-      // pricing, so the customer's tier 3 ($6) must not touch this line.
+    it("a driver diff fresh add bills the customer's TIER price (ruling 2026-10-03), same as staff", async () => {
+      // A DRIVER diff is routed through the operator/admin branch (A4). Owner ruling 2026-10-03: the
+      // customer's own tier 3 ($6) prices a driver-entered line; a driver still cannot type a price.
       prisma.order.findUnique.mockResolvedValue(twoLineOrder);
       prisma.customer.findUnique.mockResolvedValue({ pricingTier: 3 });
       prisma.customerPrice.findMany.mockResolvedValue([
@@ -6639,10 +6638,10 @@ describe("OrdersService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             productId: "prod-C",
-            unitPrice: 9,
-            originalPrice: null,
-            priceType: "STANDARD",
-            subtotal: 18,
+            unitPrice: 6,
+            originalPrice: 9,
+            priceType: "SPECIAL",
+            subtotal: 12,
           }),
         }),
       );

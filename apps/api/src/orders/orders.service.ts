@@ -144,6 +144,7 @@ import {
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
+import { isDriverCaller, linesPriceAtCustomerTier, typedLinePrice } from "./driver-line-price";
 import {
   buildExistingLineMaps,
   buildReplaceAllLineData,
@@ -3222,11 +3223,10 @@ export class OrdersService implements OnApplicationBootstrap {
           const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
           // P5-04: buyer pricing context (tier + per-product override + active promos).
-          // Loaded only for the buyer (CUSTOMER) merge path; DRIVER edits keep the
-          // legacy list pricing unchanged. This also corrects a pre-existing bug where
-          // the buyer merge billed LIST price, ignoring the customer's tier.
+          // Loaded for the buyer (CUSTOMER) merge path and a DRIVER's full list (ruling 2026-10-03).
           const isBuyerEdit = user.role === UserRole.CUSTOMER;
-          const buyerTierCtx = isBuyerEdit
+          const pricesAtTier = isBuyerEdit || isDriverCaller(user);
+          const buyerTierCtx = pricesAtTier
             ? await tx.customer.findFirst({
                 where: { id: order.customerId },
                 select: { pricingTier: true },
@@ -3234,7 +3234,7 @@ export class OrdersService implements OnApplicationBootstrap {
             : null;
           const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
           const buyerCustomerPrices =
-            isBuyerEdit && productIds.length > 0
+            pricesAtTier && productIds.length > 0
               ? await tx.customerPrice.findMany({
                   where: { customerId: order.customerId, productId: { in: productIds } },
                 })
@@ -3334,13 +3334,13 @@ export class OrdersService implements OnApplicationBootstrap {
             // P5-04: buyers get their tier price + best active promotion. The
             // QTY_BREAK threshold is measured in PIECES: split.qty when re-split, else
             // box-count × unitsPerBox for boxed selling-unit lines, else the piece qty.
-            // DRIVER edits keep the legacy list price (unchanged).
+            // A DRIVER's full list resolves the customer's tier like a buyer's (ruling 2026-10-03).
             // B661-sweep: box-unaware multiply, converts to regulatedUnitBasis in a follow-up PR.
             const qtyPieces = split ? split.qty : upb > 1 ? item.qty * upb : item.qty;
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            const priced = isBuyerEdit
+            const priced = pricesAtTier
               ? this.resolveBuyerLinePrice(
                   product,
                   buyerCpMap.get(item.productId) ?? buyerDefaultTier,
@@ -3436,13 +3436,11 @@ export class OrdersService implements OnApplicationBootstrap {
           // flat catalog price (mirrors create() + the isBuyerEdit branch above).
           // Post-MSRP hazard: CustomerPrice.pricingTier is nullable (an MSRP-only
           // row) — every lookup falls back to the customer's default tier below.
-          // STAFF ONLY, same posture as the substitute branch's isStaffCaller: a
-          // DRIVER also lands in this branch (A4 routes its diff payload here, with
-          // prices stripped) and driver edits keep the legacy list pricing — so no
-          // tier is resolved and no extra query is issued for them.
+          // Staff and DRIVER (ruling 2026-10-03: driver-entered lines resolve the customer's tier;
+          // A4 routes a driver diff here with prices stripped) — see driver-line-price.ts.
           const isStaffEdit =
             user?.role === UserRole.OPERATOR || user?.role === UserRole.TENANT_ADMIN;
-          const atCustomerTier = isStaffEdit || user?.role === UserRole.CUSTOMER; // SA-407: unit counts
+          const atCustomerTier = linesPriceAtCustomerTier(user) || user?.role === UserRole.CUSTOMER;
           // B465 fix round (Opus BLOCK): an id-only UPDATE entry (web/mobile send
           // {id, action, qty, unitPrice} with no productId of their own) must resolve
           // tier pricing for the EXISTING line's product too — not just products
@@ -3701,20 +3699,19 @@ export class OrdersService implements OnApplicationBootstrap {
                 const boxesForLine = hasBoxSplit ? (item.boxes ?? null) : null;
                 const piecesForLine = hasBoxSplit ? (item.pieces ?? null) : null;
                 const catalogPrice = Number(product.pricePerUnit);
-                const overridePrice = item.unitPrice !== undefined ? Number(item.unitPrice) : null;
+                const overridePrice = typedLinePrice(user, item.unitPrice);
                 const unitsPerBoxNum = Number(product.unitsPerBox ?? 0);
                 const qtyPieces =
                   boxesForLine != null ? qty : unitsPerBoxNum > 1 ? qty * unitsPerBoxNum : qty;
                 const qtyUnits = boxesForLine != null ? boxesForLine : qty;
-                const tierForProduct = isStaffEdit
+                const tierForProduct = linesPriceAtCustomerTier(user)
                   ? (operatorCpMap.get(item.productId) ?? operatorDefaultTier)
                   : 1;
                 // #2716c: ONE rule (staff-line-price.ts -> decideStaffOverride). A special-tier
                 // line (B465) refuses a changed price with no reason; a price within half a cent
                 // of the customer's tier price is no override; otherwise below list is DISCOUNTED,
                 // at/above list MANUAL, originalPrice = list. WP1: ONLY a line with no price at
-                // all falls through to the tier ladder, and only for staff — a DRIVER diff add
-                // (prices stripped by B13) keeps list pricing.
+                // all falls through to the tier ladder (staff and DRIVER; a driver's price is stripped).
                 const addDecision =
                   overridePrice !== null
                     ? decideAddedLinePrice({
@@ -3729,7 +3726,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 const isManualOverride = !!addDecision && isOverride(addDecision);
                 const priced = addDecision
                   ? { ...addDecision, freeUnits: 0 }
-                  : isStaffEdit
+                  : linesPriceAtCustomerTier(user)
                     ? this.resolveBuyerLinePrice(
                         product,
                         tierForProduct,
@@ -3745,7 +3742,7 @@ export class OrdersService implements OnApplicationBootstrap {
                         },
                       )
                     : {
-                        // Non-staff caller (driver diff add): legacy list pricing.
+                        // Neither staff nor driver (a buyer never reaches a diff add): list pricing.
                         unitPrice: catalogPrice,
                         originalPrice: null as number | null,
                         priceType: PriceType.STANDARD,
@@ -3866,7 +3863,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 // tier resolution as the ADD/UPDATE branches above (reuse isSpecialTier(),
                 // operatorCpMap/operatorDefaultTier — operatorProductIds now also collects
                 // substituteProductId so the per-product CustomerPrice row is fetched).
-                const tierForProduct = isStaffCaller
+                const tierForProduct = linesPriceAtCustomerTier(user)
                   ? (operatorCpMap.get(item.substituteProductId) ?? operatorDefaultTier)
                   : 1;
                 // The baseline is the SUBSTITUTE's own tier price (list at tier 1, so non-special
