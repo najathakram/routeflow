@@ -97,7 +97,7 @@ export function CustomerStatementCard({
       <div className="rounded-xl border border-surface-border bg-white p-8 shadow-[0_2px_12px_0_rgb(0,0,0,0.06)]">
         <div
           data-testid="statement-tiles"
-          className="mb-6 grid grid-cols-3 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border"
+          className="mb-6 grid grid-cols-1 gap-px overflow-hidden rounded-lg border border-surface-border bg-surface-border sm:grid-cols-3"
         >
           {[
             {
