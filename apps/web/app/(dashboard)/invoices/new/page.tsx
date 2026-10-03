@@ -1061,6 +1061,12 @@ export default function NewInvoicePage() {
         errs.items = "All quantities must be greater than 0.";
         break;
       }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
+        break;
+      }
     }
     if (depositOpen) {
       if (depositPercent != null && depositPercent > 0 && !depositDueDate) {
@@ -2051,6 +2057,7 @@ export default function NewInvoicePage() {
 
                     {/* Discount */}
                     <MoneyInput
+                      aria-label="Line discount"
                       min={0}
                       placeholder="0.00"
                       value={item.discount || null}

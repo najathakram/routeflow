@@ -102,10 +102,21 @@ describe("computeInvoiceTotals — discount, shipping, tax", () => {
     expect(t.total).toBe(399);
   });
 
-  it("a line discount larger than the line floors that line at 0, never negative", () => {
+  it("a line discount above its line is NOT floored: 1 x $5 less $50, plus 1 x $100, stores $55.00", () => {
+    // The server stores roundMoney(before - discount) per line and sums them; it never floors.
+    const t = computeInvoiceTotals([
+      { unitPrice: 5, qty: 1, discount: 50 },
+      { unitPrice: 100, qty: 1 },
+    ]);
+    expect(t.lineTotals).toEqual([-45, 100]);
+    expect(t.subtotal).toBe(55);
+    expect(t.total).toBe(55);
+  });
+
+  it("a lone over-discounted line is negative, exactly as the server computes it", () => {
     const t = computeInvoiceTotals([{ unitPrice: 5, qty: 1, discount: 50 }]);
-    expect(t.lineTotals).toEqual([0]);
-    expect(t.total).toBe(0);
+    expect(t.lineTotals).toEqual([-45]);
+    expect(t.total).toBe(-45);
   });
 
   it("an empty invoice is all zeros; non-finite inputs are treated as 0", () => {

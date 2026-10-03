@@ -32,7 +32,7 @@ export interface InvoiceTotalsOptions {
 }
 
 export interface InvoiceTotals {
-  /** Each line's post-discount, boxed-aware, rounded total (never negative). Same order as input. */
+  /** Each line's post-discount, boxed-aware, rounded total. Same order as input. */
   lineTotals: number[];
   subtotal: number;
   tax: number;
@@ -46,7 +46,12 @@ const finite = (n: number | null | undefined): number => {
   return Number.isFinite(v) ? v : 0;
 };
 
-/** One line's post-discount total: `computeLineSubtotal` (boxes/pieces/free units), then discount. */
+/**
+ * One line's post-discount total: `computeLineSubtotal` (boxes/pieces/free units), then discount.
+ * NOT floored at 0: the server stores exactly `roundMoney(before - discount)` and refuses a negative
+ * line (`Line item ... has a negative subtotal`), so a footer that floored would show a total the
+ * server never computes. Forms refuse a line discount above its line before submit instead.
+ */
 export function computeInvoiceLineTotal(line: InvoiceTotalsLine): number {
   const before = computeLineSubtotal({
     unitPrice: finite(line.unitPrice),
@@ -56,7 +61,7 @@ export function computeInvoiceLineTotal(line: InvoiceTotalsLine): number {
     unitsPerBox: line.unitsPerBox ?? null,
     freeUnits: line.freeUnits ?? 0,
   });
-  return Math.max(0, roundMoney(before - finite(line.discount)));
+  return roundMoney(before - finite(line.discount));
 }
 
 export function computeInvoiceTotals(

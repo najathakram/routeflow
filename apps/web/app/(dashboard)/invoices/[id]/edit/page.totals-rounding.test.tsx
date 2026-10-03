@@ -1,4 +1,5 @@
 import * as React from "react";
+import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils/render";
 import EditInvoicePage from "./page";
 
@@ -9,6 +10,7 @@ import EditInvoicePage from "./page";
  */
 
 let mockInvoice: Record<string, unknown> | undefined;
+const updateMutate = jest.fn();
 
 jest.mock("next/navigation", () => ({
   useParams: () => ({ id: "inv-1" }),
@@ -17,7 +19,7 @@ jest.mock("next/navigation", () => ({
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 jest.mock("@/lib/api/invoices", () => ({
   useInvoice: () => ({ data: mockInvoice, isLoading: false, isError: false }),
-  useUpdateInvoice: () => ({ mutate: jest.fn(), mutateAsync: jest.fn(), isPending: false }),
+  useUpdateInvoice: () => ({ mutate: updateMutate, mutateAsync: jest.fn(), isPending: false }),
 }));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: undefined }),
@@ -86,5 +88,29 @@ describe("invoice edit footer — rounded like the server", () => {
     renderWithProviders(<EditInvoicePage />);
     expect(row("Tax")).toHaveTextContent("$0.11");
     expect(row("Total")).toHaveTextContent("$2.31");
+  });
+});
+
+describe("invoice edit — a line discount above its line", () => {
+  const overDiscounted = () =>
+    draft([
+      { id: "li-5", description: "Gum", qty: 1, unitPrice: 5, taxRate: 0, discount: 50 },
+      { id: "li-6", description: "Mints", qty: 1, unitPrice: 100, taxRate: 0, discount: 0 },
+    ]);
+
+  it("the footer follows the server, which never floors a line: Subtotal and Total are $55.00, not $100.00", () => {
+    mockInvoice = overDiscounted();
+    renderWithProviders(<EditInvoicePage />);
+    expect(row("Subtotal")).toHaveTextContent("$55.00");
+    expect(row("Total")).toHaveTextContent("$55.00");
+  });
+
+  it("Save Changes refuses it with a fixed message and sends nothing", async () => {
+    updateMutate.mockClear();
+    mockInvoice = overDiscounted();
+    renderWithProviders(<EditInvoicePage />);
+    await userEvent.setup().click(screen.getByRole("button", { name: /save changes/i }));
+    expect(screen.getByText("Line discount cannot exceed the line total.")).toBeInTheDocument();
+    expect(updateMutate).not.toHaveBeenCalled();
   });
 });

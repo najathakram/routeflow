@@ -574,6 +574,12 @@ export default function EditInvoicePage() {
         errs.items = "All quantities must be greater than 0.";
         break;
       }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
+        break;
+      }
     }
     setErrors(errs);
     return Object.keys(errs).length === 0;
