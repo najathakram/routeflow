@@ -147,5 +147,21 @@ describe("CustomerStatementCard (B1005, option A)", () => {
     renderCard();
     await waitFor(() => expect(get).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: /download statement/i })).toBeDisabled();
+    expect(screen.getByText("No statements yet")).toBeInTheDocument();
+  });
+
+  it("a network failure says the download failed, never that it may have gone through", async () => {
+    get.mockImplementation((url: string) =>
+      url === "/customers/c1/statements"
+        ? Promise.resolve({ data: { months: ["2026-09"] } })
+        : Promise.reject(new Error("Network Error")),
+    );
+    renderCard();
+    await screen.findByRole("button", { name: /2026-09/ });
+    fireEvent.click(screen.getByRole("button", { name: /download statement/i }));
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const arg = toast.mock.calls[0][0];
+    expect(arg.description).toBe("Couldn't download the statement. Try again.");
+    expect(JSON.stringify(arg)).not.toMatch(/went through/);
   });
 });

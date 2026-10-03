@@ -53,7 +53,9 @@ export function CustomerStatementCard({
     } catch (err) {
       toast({
         title: "Couldn't download the statement",
-        description: genericToastCopy(err),
+        description: (err as { response?: unknown })?.response
+          ? genericToastCopy(err)
+          : "Couldn't download the statement. Try again.",
         variant: "error",
       });
     } finally {
@@ -91,6 +93,7 @@ export function CustomerStatementCard({
           >
             Download statement (PDF)
           </Button>
+          {!month && <span className="text-xs text-gray-500">No statements yet</span>}
         </div>
       </div>
 
