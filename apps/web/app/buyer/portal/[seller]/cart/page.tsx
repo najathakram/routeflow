@@ -371,16 +371,14 @@ export default function BuyerCartPage() {
                               <div className="flex items-center gap-1.5 text-xs">
                                 <div className="flex items-center gap-0.5">
                                   <button
-                                    onClick={() => {
-                                      const b = Math.max(0, (item.boxes ?? 0) - 1);
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0) {
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                      } else {
-                                        cart.removeItem(item.productId);
-                                      }
-                                    }}
+                                    onClick={() =>
+                                      // a box edit REPLACES the split (B999); an empty split removes the line
+                                      cart.setBoxesPieces(
+                                        item.productId,
+                                        Math.max(0, (item.boxes ?? 0) - 1),
+                                        item.pieces ?? 0,
+                                      )
+                                    }
                                     className="rounded p-1 text-navy/70 hover:bg-surface-raised"
                                   >
                                     <Minus className="h-3 w-3" />
@@ -389,26 +387,24 @@ export default function BuyerCartPage() {
                                     type="number"
                                     min={0}
                                     value={item.boxes ?? 0}
-                                    onChange={(e) => {
-                                      const b = Math.max(0, Number(e.target.value));
-                                      const p = item.pieces ?? 0;
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
+                                    onChange={(e) =>
+                                      cart.setBoxesPieces(
+                                        item.productId,
+                                        Math.max(0, Number(e.target.value)),
+                                        item.pieces ?? 0,
+                                        { keepEmpty: true },
+                                      )
+                                    }
                                     className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
                                   />
                                   <button
-                                    onClick={() => {
-                                      const b = (item.boxes ?? 0) + 1;
-                                      const p = item.pieces ?? 0;
-                                      cart.addItem({
-                                        ...item,
-                                        qty: b * item.unitsPerBox! + p,
-                                        boxes: b,
-                                        pieces: p,
-                                      });
-                                    }}
+                                    onClick={() =>
+                                      cart.setBoxesPieces(
+                                        item.productId,
+                                        (item.boxes ?? 0) + 1,
+                                        item.pieces ?? 0,
+                                      )
+                                    }
                                     className="rounded p-1 text-navy/70 hover:bg-surface-raised"
                                   >
                                     <Plus className="h-3 w-3" />
@@ -422,19 +418,20 @@ export default function BuyerCartPage() {
                                     min={0}
                                     max={(item.unitsPerBox ?? 1) - 1}
                                     value={item.pieces ?? 0}
-                                    onChange={(e) => {
-                                      const b = item.boxes ?? 0;
-                                      const p = Math.max(
-                                        0,
-                                        Math.min(
-                                          Number(e.target.value),
-                                          (item.unitsPerBox ?? 1) - 1,
+                                    onChange={(e) =>
+                                      cart.setBoxesPieces(
+                                        item.productId,
+                                        item.boxes ?? 0,
+                                        Math.max(
+                                          0,
+                                          Math.min(
+                                            Number(e.target.value),
+                                            (item.unitsPerBox ?? 1) - 1,
+                                          ),
                                         ),
-                                      );
-                                      const qty = b * item.unitsPerBox! + p;
-                                      if (qty > 0)
-                                        cart.addItem({ ...item, qty, boxes: b, pieces: p });
-                                    }}
+                                        { keepEmpty: true },
+                                      )
+                                    }
                                     className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
                                   />
                                   <span className="text-navy/70">pcs</span>

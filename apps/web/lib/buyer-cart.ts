@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { mergeAddLine, setLineQty, setLineSplit } from "./buyer-cart-lines";
 
 export interface CartItem {
   productId: string;
@@ -80,7 +81,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
         if (existing) {
           next = {
             items: prev.items.map((i) =>
-              i.productId === item.productId ? { ...i, qty: i.qty + item.qty } : i,
+              i.productId === item.productId ? mergeAddLine(i, item) : i,
             ),
           };
         } else {
@@ -112,13 +113,31 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
       }
       setCart((prev) => {
         const next = {
-          items: prev.items.map((i) => (i.productId === productId ? { ...i, qty } : i)),
+          items: prev.items.map((i) => (i.productId === productId ? setLineQty(i, qty) : i)),
         };
         if (key) writeCart(key, next);
         return next;
       });
     },
     [key, removeItem],
+  );
+
+  /** A box / loose-pieces edit on a boxed line: REPLACES the split (never adds), normalised; an empty split removes the line (a TYPED edit passes keepEmpty: it ignores a zero, as it always did). */
+  const setBoxesPieces = React.useCallback(
+    (productId: string, boxes: number, pieces: number, opts?: { keepEmpty?: boolean }) => {
+      setCart((prev) => {
+        const next = {
+          items: prev.items.flatMap((i) => {
+            if (i.productId !== productId) return [i];
+            const line = setLineSplit(i, boxes, pieces);
+            return line ? [line] : opts?.keepEmpty ? [i] : [];
+          }),
+        };
+        if (key) writeCart(key, next);
+        return next;
+      });
+    },
+    [key],
   );
 
   const clearCart = React.useCallback(() => {
@@ -139,6 +158,7 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     addItem,
     removeItem,
     updateQty,
+    setBoxesPieces,
     clearCart,
     getItemQty,
     itemCount: cart.items.length,
