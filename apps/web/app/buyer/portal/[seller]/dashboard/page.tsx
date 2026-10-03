@@ -26,7 +26,7 @@ import {
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
-import { ReorderReviewSheet } from "../_components/ReorderReviewSheet";
+import { ReorderReviewSheet, REORDER_FAILED_COPY } from "../_components/ReorderReviewSheet";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -102,7 +102,7 @@ function StandingOrdersPanel({
       await reorder.mutateAsync(reviewing.id);
       setReviewing(null);
     } catch {
-      setPlaceError("We couldn't place this order. Please try again, or contact your seller.");
+      setPlaceError(REORDER_FAILED_COPY);
     } finally {
       setPlacing(false);
     }

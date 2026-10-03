@@ -15,6 +15,10 @@ function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+/** Shown when placing fails. Fixed on purpose: a server message can carry ids or internals. */
+export const REORDER_FAILED_COPY =
+  "We couldn't place this order. Please try again, or contact your seller.";
+
 interface ReorderReviewSheetProps {
   /** The standing order under review; null = closed. */
   template: BuyerOrderTemplate | null;
@@ -83,7 +87,8 @@ function ReviewBody({
     () => priceReorderReview(template, products.data?.data ?? [], promoRules),
     [template, products.data, promoRules],
   );
-  const ready = !loading && !failed && review.lines.length > 0;
+  const pricedCount = review.lines.length - review.unresolvedCount;
+  const ready = !loading && !failed && pricedCount > 0;
 
   return (
     <div className="space-y-4">
@@ -108,6 +113,13 @@ function ReviewBody({
         </p>
       )}
 
+      {!loading && !failed && review.lines.length > 0 && pricedCount === 0 && (
+        <p role="alert" className="rounded-lg bg-danger-bg px-3 py-2 text-sm text-danger">
+          None of these items can be priced here, so this order can&apos;t be placed from this
+          screen. Please contact your seller.
+        </p>
+      )}
+
       {!loading && !failed && review.lines.length > 0 && (
         <>
           <ul className="divide-y divide-surface-border rounded-lg border border-surface-border bg-white">
@@ -127,20 +139,24 @@ function ReviewBody({
             ))}
           </ul>
           <div className="space-y-1 text-sm">
-            <div className="flex justify-between border-t border-surface-border pt-3">
-              <span className="font-semibold text-navy">Estimated total</span>
-              <span className="text-lg font-bold tabular-nums text-navy">
-                {fmt(review.subtotal)}
-              </span>
-            </div>
-            <p className="text-xs text-navy/60">
-              Tax is added when the order is placed. Your seller confirms the final total.
-            </p>
+            {pricedCount > 0 && (
+              <>
+                <div className="flex justify-between border-t border-surface-border pt-3">
+                  <span className="font-semibold text-navy">Estimated total</span>
+                  <span className="text-lg font-bold tabular-nums text-navy">
+                    {fmt(review.subtotal)}
+                  </span>
+                </div>
+                <p className="text-xs text-navy/60">
+                  Tax is added when the order is placed. Your seller confirms the final total.
+                </p>
+              </>
+            )}
             {review.unresolvedCount > 0 && (
               <p className="text-xs text-navy/60">
                 {review.unresolvedCount === 1
-                  ? "1 item isn't priced here and is left out of this estimate."
-                  : `${review.unresolvedCount} items aren't priced here and are left out of this estimate.`}
+                  ? "1 item isn't priced here and is left out of this estimate; it is still on the order."
+                  : `${review.unresolvedCount} items aren't priced here and are left out of this estimate; they are still on the order.`}
               </p>
             )}
           </div>

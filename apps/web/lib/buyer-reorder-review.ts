@@ -10,8 +10,10 @@ import type { BuyerOrderTemplate, BuyerProduct } from "@/lib/api/buyer";
  * bills `computeLineSubtotal({ unitPrice, qty, freeUnits })` — the one shared money helper,
  * never `qty * unitPrice` re-derived here. A line whose product is not in the buyer's catalog
  * is `unresolved`: it is excluded from the total (never counted as $0) and the sheet says so.
- * Tax and any above-list price remembered by the seller are applied by the server when the
- * order is placed, so the total is an ESTIMATE of the subtotal — the same stance as the cart.
+ * The catalog `buyerPrice` already carries the buyer's tier and any remembered above-list price,
+ * so the only divergence from the server is promotion stacking on a remembered above-list price.
+ * Tax is added by the server when the order is placed, so the total is an ESTIMATE of the
+ * subtotal — the same stance as the cart.
  */
 export interface ReorderReviewLine {
   id: string;
