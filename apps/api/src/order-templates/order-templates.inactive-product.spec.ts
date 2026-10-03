@@ -96,16 +96,49 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
     isActive,
   });
 
+  // A stateful stand-in for the template rows: the writes the service makes (suspend, lift, deactivate)
+  // are visible to the NEXT run, so "two consecutive runs" really is two runs over the persisted state.
+  let tpl: any;
   function setup(lines: Array<{ id: string; isActive: boolean }>) {
     prisma.product.findMany.mockResolvedValue(lines.map((l) => product(l.id, l.isActive)));
-    prisma.orderTemplate.findUnique.mockResolvedValue({
+    tpl = {
       id: "t1",
       customerId: "c1",
       name: "Weekly",
       isActive: true,
-      items: lines.map((l) => ({ productId: l.id, qty: 2, notes: null })),
+      items: lines.map((l, i) => ({
+        id: `i${i}`,
+        productId: l.id,
+        qty: 2,
+        notes: null,
+        suspendedAt: null,
+        suspendedReason: null,
+      })),
+    };
+    prisma.orderTemplate.findUnique.mockImplementation(async () => ({
+      ...tpl,
+      items: tpl.items.map((i: any) => ({ ...i })),
+    }));
+    prisma.orderTemplateItem.updateMany.mockImplementation(async ({ where, data }: any) => {
+      for (const i of tpl.items)
+        if (where.productId.in.includes(i.productId)) Object.assign(i, data);
+      return { count: 1 };
     });
+    prisma.orderTemplateItem.findFirst.mockImplementation(
+      async ({ where }: any) => tpl.items.find((i: any) => i.id === where.id) ?? null,
+    );
+    prisma.orderTemplateItem.update.mockImplementation(async ({ where, data }: any) =>
+      Object.assign(
+        tpl.items.find((i: any) => i.id === where.id),
+        data,
+      ),
+    );
+    prisma.orderTemplate.update.mockImplementation(async ({ data }: any) =>
+      Object.assign(tpl, data),
+    );
   }
+  const auditActions = () =>
+    prisma.auditLog.create.mock.calls.map((c: any) => [c[0].data.action, c[0].data.meta]);
 
   const orderedProductIds = () =>
     prisma.order.create.mock.calls[0][0].data.lineItems.create.map((l: any) => l.productId);
@@ -217,5 +250,97 @@ describe("OrderTemplatesService — deactivated product on a standing order (REG
 
     expect(result).toBeNull();
     expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  // ─── SA-638: suspend once, notify once ──────────────────────────────────────────
+
+  it("two consecutive runs send ONE customer notice and ONE operator notice", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+
+    await service.generateOrder("t1", false, false);
+    prisma.order.create.mockClear();
+    await service.generateOrder("t1", false, false);
+
+    // the second run still orders the active line, but the suspended one is no longer re-announced
+    expect(prisma.order.create).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
+  });
+
+  it("suspends the deactivated line with reason PRODUCT_INACTIVE and an audit row", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+
+    await service.generateOrder("t1", false, false);
+
+    const gone = tpl.items.find((i: any) => i.productId === "p-gone");
+    expect(gone.suspendedReason).toBe("PRODUCT_INACTIVE");
+    expect(gone.suspendedAt).toBeInstanceOf(Date);
+    expect(tpl.items.find((i: any) => i.productId === "p-active").suspendedAt).toBeNull();
+    expect(auditActions()).toContainEqual([
+      "order-template.line-suspended",
+      { reason: "PRODUCT_INACTIVE", productIds: ["p-gone"] },
+    ]);
+  });
+
+  it("lifting the suspension after the product is reactivated orders the line again", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+    await service.generateOrder("t1", false, false);
+
+    // the operator reactivates the product, then lifts the line
+    prisma.product.findMany.mockResolvedValue([product("p-active", true), product("p-gone", true)]);
+    await service.liftItemSuspension("t1", "i1", { sub: "op1" } as any);
+    prisma.order.create.mockClear();
+    await service.generateOrder("t1", false, false);
+
+    expect(orderedProductIds()).toEqual(["p-active", "p-gone"]);
+  });
+
+  it("a failing run suspends nothing (the suspension follows the commit like the notice)", async () => {
+    setup([
+      { id: "p-active", isActive: true },
+      { id: "p-gone", isActive: false },
+    ]);
+    prisma.order.create.mockRejectedValue(new Error("oversell"));
+
+    await expect(service.generateOrder("t1", false, false)).rejects.toThrow("oversell");
+
+    expect(tpl.items.every((i: any) => i.suspendedAt === null)).toBe(true);
+  });
+
+  it("unattended with every line deactivated: suspends, deactivates the template once, notifies once", async () => {
+    setup([{ id: "p-gone", isActive: false }]);
+    const template = await prisma.orderTemplate.findUnique();
+    const ctx = { ban: null };
+
+    await (service as any).createOrderFromTemplate(template, true, true, ctx);
+
+    expect(tpl.isActive).toBe(false);
+    expect(tpl.items[0].suspendedReason).toBe("PRODUCT_INACTIVE");
+    expect(auditActions()).toContainEqual([
+      "order-template.deactivated",
+      { reason: "NO_ACTIVE_PRODUCTS" },
+    ]);
+    expect(notifications.sendToCustomer).toHaveBeenCalledTimes(1);
+    expect(notifications.sendToUser).toHaveBeenCalledTimes(1);
+    expect(prisma.order.create).not.toHaveBeenCalled();
+  });
+
+  it("a manual run with every line deactivated is still a 400 and changes nothing", async () => {
+    setup([{ id: "p-gone", isActive: false }]);
+
+    await expect(service.generateOrder("t1", false, false)).rejects.toThrow(BadRequestException);
+
+    expect(tpl.isActive).toBe(true);
+    expect(tpl.items[0].suspendedAt).toBeNull();
+    expect(notifications.sendToCustomer).not.toHaveBeenCalled();
   });
 });

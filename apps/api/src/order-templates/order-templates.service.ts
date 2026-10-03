@@ -620,15 +620,17 @@ export class OrderTemplatesService {
     const productMap = new Map(products.map((p) => [p.id, p]));
 
     // B1025: a DEACTIVATED (archived) product is never ordered — the interactive create path refuses it
-    // ("Product X is archived"); this path never looked. Handled like the other unusable lines here (a
-    // suspended or license-gated line): the line is SKIPPED, both sides are told, and the rest is ordered.
-    // When nothing usable is left a manual run refuses with a readable 400; the unattended run creates
-    // nothing (null, like the all-license-gated case).
+    // ("Product X is archived"); this path never looked. Handled like the F-05 banned lines: the line is
+    // SKIPPED and SUSPENDED (reason PRODUCT_INACTIVE, so `live` drops it on every later run and the notice
+    // goes ONCE, at suspension, not on every run day), the rest is ordered, and the operator's lift-a-line
+    // action puts it back after the product is reactivated. When nothing usable is left a manual run
+    // refuses with a readable 400 (no change made); the unattended run suspends the lines, deactivates
+    // the template once and notifies once (the deactivateForRestriction shape).
     const inactive = template.items.filter((i) => productMap.get(i.productId)?.isActive === false);
     const inactiveCount = inactive.length;
     // Told only AFTER the order commits (below): a run that then fails — a buyer oversell 409, or the
     // remaining lines being license-gated — must not announce an order that was never placed.
-    let inactiveNotice: { count: number; names: string } | null = null;
+    let inactiveNotice: { count: number; names: string; productIds: string[] } | null = null;
     if (inactiveCount > 0) {
       const names = [
         ...new Set(inactive.map((i) => productMap.get(i.productId)?.name).filter(Boolean)),
@@ -642,12 +644,16 @@ export class OrderTemplatesService {
         throw new BadRequestException(
           "Every item on this standing order is no longer available — edit the template.",
         );
+      const inactiveIds = [...new Set(inactive.map((i) => i.productId))];
       if (template.items.length === 0) {
-        // unattended and nothing left to order: no order will follow, so the notice goes now
+        // unattended and nothing left to order: no order will follow, so suspend, deactivate the
+        // template once (the cron no longer selects it) and tell both sides once, now
+        await this.suspendInactiveLines(template, inactiveIds);
+        await this.deactivateForRestriction(template, "NO_ACTIVE_PRODUCTS");
         await this.notifySkippedInactiveLines(template, inactiveCount, names).catch(() => {});
         return null;
       }
-      inactiveNotice = { count: inactiveCount, names };
+      inactiveNotice = { count: inactiveCount, names, productIds: inactiveIds };
     }
 
     // B658: the SAME regulated per-category levy the interactive create path computes
@@ -869,12 +875,20 @@ export class OrderTemplatesService {
     });
 
     if (ctx) ctx.placed = true; // the order tx committed: whatever happens next, the order EXISTS
-    if (inactiveNotice)
+    if (inactiveNotice) {
+      // Suspension and notice both follow the commit, so a run that fails never leaves a silent
+      // suspension behind; a failure to suspend must not fail the placed order (it just re-skips next run).
+      await this.suspendInactiveLines(template, inactiveNotice.productIds).catch((err) =>
+        this.logger.warn(
+          `B1025: could not suspend inactive lines on template ${template.id}: ${String(err)}`,
+        ),
+      );
       await this.notifySkippedInactiveLines(
         template,
         inactiveNotice.count,
         inactiveNotice.names,
       ).catch(() => {});
+    }
 
     // If the customer already had PENDING orders, fold the newly-created one
     // (and any pre-existing duplicates) into a single winner. The newest order
@@ -959,13 +973,31 @@ export class OrderTemplatesService {
     });
   }
 
+  /** B1025: mark each line whose product was deactivated suspended, atomically with its audit row. */
+  private async suspendInactiveLines(
+    template: { id: string },
+    productIds: string[],
+  ): Promise<void> {
+    await this.prisma.tenantTransaction(async (tx) => {
+      await tx.orderTemplateItem.updateMany({
+        where: { templateId: template.id, productId: { in: productIds } },
+        data: { suspendedAt: new Date(), suspendedReason: "PRODUCT_INACTIVE" },
+      });
+      await this.auditInTx(tx, "order-template.line-suspended", template.id, null, {
+        reason: "PRODUCT_INACTIVE",
+        productIds,
+      });
+    });
+  }
+
   /** F-05: a template with no orderable line is deactivated once, with its audit row in the same tx. */
-  private async deactivateForRestriction(template: { id: string }): Promise<void> {
+  private async deactivateForRestriction(
+    template: { id: string },
+    reason: "NO_SELLABLE_LINES" | "NO_ACTIVE_PRODUCTS" = "NO_SELLABLE_LINES",
+  ): Promise<void> {
     await this.prisma.tenantTransaction(async (tx) => {
       await tx.orderTemplate.update({ where: { id: template.id }, data: { isActive: false } });
-      await this.auditInTx(tx, "order-template.deactivated", template.id, null, {
-        reason: "NO_SELLABLE_LINES",
-      });
+      await this.auditInTx(tx, "order-template.deactivated", template.id, null, { reason });
     });
   }
 
