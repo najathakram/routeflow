@@ -26,6 +26,7 @@ import {
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
+import { ReorderReviewSheet } from "../_components/ReorderReviewSheet";
 
 function fmt(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -82,15 +83,28 @@ function StandingOrdersPanel({
   isLoading: boolean;
 }) {
   const reorder = useBuyerReorder();
-  const [reordering, setReordering] = React.useState<string | null>(null);
+  // A tap on Reorder only OPENS the review sheet (lines + total); the order is placed from its
+  // "Place order" button, never from the tap itself.
+  const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
+  const [placing, setPlacing] = React.useState(false);
+  const [placeError, setPlaceError] = React.useState<string | null>(null);
 
-  const handleReorder = async (templateId: string) => {
-    if (reordering) return;
-    setReordering(templateId);
+  const closeReview = () => {
+    setReviewing(null);
+    setPlaceError(null);
+  };
+
+  const handlePlace = async () => {
+    if (!reviewing || placing) return;
+    setPlacing(true);
+    setPlaceError(null);
     try {
-      await reorder.mutateAsync(templateId);
+      await reorder.mutateAsync(reviewing.id);
+      setReviewing(null);
+    } catch {
+      setPlaceError("We couldn't place this order. Please try again, or contact your seller.");
     } finally {
-      setReordering(null);
+      setPlacing(false);
     }
   };
 
@@ -120,7 +134,6 @@ function StandingOrdersPanel({
         {active.map((t) => {
           const nextLabel = nextDeliveryLabel(t.daysOfWeek);
           const dayChips = t.daysOfWeek.sort().map((d) => DAY_NAMES[d]);
-          const isReordering = reordering === t.id;
           return (
             <div key={t.id} className="flex items-center gap-4 px-4 py-3">
               <div className="flex-1 min-w-0">
@@ -152,15 +165,10 @@ function StandingOrdersPanel({
                   {nextLabel}
                 </p>
                 <button
-                  onClick={() => handleReorder(t.id)}
-                  disabled={isReordering}
-                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors disabled:opacity-50"
+                  onClick={() => setReviewing(t)}
+                  className="mt-1 flex items-center gap-1 rounded-lg bg-buyer-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-buyer-600 transition-colors"
                 >
-                  {isReordering ? (
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  ) : (
-                    <ShoppingCart className="h-3 w-3" />
-                  )}
+                  <ShoppingCart className="h-3 w-3" />
                   Reorder
                 </button>
               </div>
@@ -168,6 +176,13 @@ function StandingOrdersPanel({
           );
         })}
       </div>
+      <ReorderReviewSheet
+        template={reviewing}
+        placing={placing}
+        error={placeError}
+        onConfirm={handlePlace}
+        onClose={closeReview}
+      />
     </div>
   );
 }

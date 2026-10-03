@@ -16,6 +16,7 @@ import {
 import { Badge, Button } from "@routeflow/ui/web";
 import { useBuyerAuth } from "@/lib/buyer-auth-context";
 import { useBuyerTemplates, useBuyerReorder, type BuyerOrderTemplate } from "@/lib/api/buyer";
+import { ReorderReviewSheet } from "../_components/ReorderReviewSheet";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,9 @@ export default function BuyerTemplatesPage() {
   const reorder = useBuyerReorder();
 
   const [reorderingId, setReorderingId] = React.useState<string | null>(null);
+  // The standing order awaiting review: a tap on Reorder Now only OPENS the review sheet; the
+  // order is placed from its "Place order" button, never from the tap itself.
+  const [reviewing, setReviewing] = React.useState<BuyerOrderTemplate | null>(null);
   const [successId, setSuccessId] = React.useState<string | null>(null);
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
@@ -176,6 +180,7 @@ export default function BuyerTemplatesPage() {
       setErrorMsg(err?.response?.data?.message ?? "Failed to create order from template.");
     } finally {
       setReorderingId(null);
+      setReviewing(null);
     }
   };
 
@@ -244,12 +249,19 @@ export default function BuyerTemplatesPage() {
             <TemplateRow
               key={t.id}
               template={t}
-              onReorder={() => handleReorder(t.id)}
+              onReorder={() => setReviewing(t)}
               isReordering={reorderingId === t.id}
             />
           ))}
         </div>
       )}
+
+      <ReorderReviewSheet
+        template={reviewing}
+        placing={reorderingId != null}
+        onConfirm={() => reviewing && handleReorder(reviewing.id)}
+        onClose={() => setReviewing(null)}
+      />
 
       {/* Summary footer */}
       {templates.length > 0 && (

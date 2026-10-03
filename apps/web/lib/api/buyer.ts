@@ -134,6 +134,8 @@ export interface BuyerOrderTemplate {
     productId: string;
     qty: number;
     notes: string | null;
+    /** Set when the seller suspended this line — a manual reorder never places it. */
+    suspendedAt?: string | null;
     product: { id: string; name: string; unit: string };
   }>;
   customer: { id: string; businessName: string };
