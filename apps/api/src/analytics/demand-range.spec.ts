@@ -4,6 +4,7 @@ import {
   DEMAND_RANGES,
   type DemandRange,
   INSIGHT_GRAINS,
+  INSIGHT_MAX_BUCKETS,
   InsightWindowError,
   addCalendarDays,
   bucketIndexOf,
@@ -336,23 +337,16 @@ describe("InsightWindowError reason (B987-E d): opt-in, set at every throw site"
     expect(caught.reason).toBe(reason);
   });
 
-  it("the buckets refusal carries its numbers as params", () => {
+  it("the buckets refusal carries its numbers as params (637 daily buckets over a window under the 36-month cap)", () => {
     let caught: any;
     try {
-      rangeWindow("2025-10-01", "2026-09-29", "day");
+      rangeWindow("2025-01-01", "2026-09-29", "day");
     } catch (e) {
       caught = e;
     }
-    // either the window or the bucket limit trips first; when it is the bucket limit the numbers are data
-    if (caught?.reason === "TOO_MANY_BUCKETS") {
-      expect(caught.params).toEqual({
-        buckets: expect.any(Number),
-        maxBuckets: expect.any(Number),
-        grain: "day",
-      });
-    } else {
-      expect(caught === undefined || caught instanceof InsightWindowError).toBe(true);
-    }
+    expect(caught).toBeInstanceOf(InsightWindowError);
+    expect(caught.reason).toBe("TOO_MANY_BUCKETS");
+    expect(caught.params).toEqual({ buckets: 637, maxBuckets: INSIGHT_MAX_BUCKETS, grain: "day" });
   });
 });
 

@@ -558,6 +558,7 @@ describe("B987-E (d): the export's window refusals carry a code and a reason (st
   it.each([
     [{ from: "2026-09-01", to: "2026-9-29" }, "TO_NOT_A_DAY", {}],
     [{ from: "2026-13-40", to: "2026-09-29" }, "FROM_NOT_A_DAY", {}],
+    [{ to: "2026-02-30" }, "NOT_A_DAY", {}],
     [{ from: "2026-09-29", to: "2026-09-01" }, "TO_BEFORE_FROM", {}],
     [
       { from: "2020-01-01", to: "2026-09-29" },
