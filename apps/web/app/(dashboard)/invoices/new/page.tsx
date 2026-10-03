@@ -31,6 +31,7 @@ import {
 } from "@/lib/api/invoices";
 import { useCreateSale, useUninvoicedOrders, type CreateSaleDto } from "@/lib/api/orders";
 import { SplitInvoiceModal } from "../../orders/_components/SplitInvoiceModal";
+import { toSplitInvoiceLine, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import {
   useCustomers,
   useCustomerPrices,
@@ -533,14 +534,7 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
   const [splitOrder, setSplitOrder] = React.useState<{
     id: string;
     orderNumber: string | null;
-    items: {
-      id: string;
-      productName: string;
-      qty: number;
-      invoicedQty: number;
-      unitPrice: number;
-      unit?: string;
-    }[];
+    items: SplitInvoiceLine[];
   } | null>(null);
 
   const billWhole = (orderId: string) => {
@@ -613,14 +607,9 @@ function ExistingOrderInvoiceFlow({ onBack }: { onBack: () => void }) {
                         setSplitOrder({
                           id: o.id,
                           orderNumber: o.orderNumber,
-                          items: (o.lineItems ?? []).map((li) => ({
-                            id: li.id,
-                            productName: li.product?.name ?? "Item",
-                            qty: Number(li.qty),
-                            invoicedQty: Number(li.invoicedQty ?? 0),
-                            unitPrice: Number(li.unitPrice),
-                            unit: li.product?.unit,
-                          })),
+                          items: (o.lineItems ?? []).map((li) =>
+                            toSplitInvoiceLine(li, li.product?.name ?? "Item"),
+                          ),
                         })
                       }
                     >

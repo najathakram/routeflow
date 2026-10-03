@@ -122,6 +122,7 @@ import { resolveProductByCode } from "@/lib/barcode-resolve";
 import * as scan from "./scan-level-line";
 import { ShipmentCard } from "@/components/ShipmentCard";
 import { SplitInvoiceModal } from "../_components/SplitInvoiceModal";
+import { toSplitInvoiceLine } from "@/lib/split-invoice-line";
 import { InvoicePreviewModal, DivergenceNote } from "../../_components/LinkedDocPreviewModal";
 import { apiClient } from "@/lib/api-client";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
@@ -3627,23 +3628,11 @@ export default function OrderDetailPage() {
         onClose={() => setSplitInvoiceOpen(false)}
         orderId={order.id}
         orderNumber={order.orderNumber ?? null}
-        items={(order.lineItems ?? []).map((li: any) => ({
-          id: li.id,
-          productName: orderLineName(li) ?? "Custom item",
-          qty: Number(li.qty),
-          invoicedQty: Number((li as any).invoicedQty ?? 0),
-          unitPrice: Number(li.unitPrice),
-          // Stored line subtotal so the preview prorates it the same way the server
-          // bills the split — never a raw qty × unitPrice (over-charges boxed lines).
-          subtotal: li.subtotal != null ? Number(li.subtotal) : undefined,
-          // Boxed split + box-size snapshot: lets the preview re-price boxed-aware when a line
-          // has no stored subtotal, instead of qty * unitPrice.
-          boxes: li.boxes ?? null,
-          pieces: li.pieces ?? null,
-          unitsPerBox: li.unitsPerBox ?? li.product?.unitsPerBox ?? null,
-          promoFreeUnits: li.promoFreeUnits ?? null,
-          unit: li.product?.unit,
-        }))}
+        // One mapper for every caller (stored subtotal + box split + free units): the preview
+        // prorates the stored money exactly as the server bills the split, never qty x unitPrice.
+        items={(order.lineItems ?? []).map((li: any) =>
+          toSplitInvoiceLine(li, orderLineName(li) ?? "Custom item"),
+        )}
       />
 
       <InvoicePreviewModal

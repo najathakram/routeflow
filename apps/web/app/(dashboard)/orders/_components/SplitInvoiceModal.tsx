@@ -1,56 +1,17 @@
 "use client";
 
 import * as React from "react";
+import { roundMoney } from "@routeflow/pricing";
 import { Modal, Button, useToast } from "@routeflow/ui/web";
-import { computeLineSubtotal, prorateLineSubtotal } from "@routeflow/pricing";
+import { previewSplitLineTotal, type SplitInvoiceLine } from "@/lib/split-invoice-line";
 import { useCreatePartialInvoiceFromOrder } from "@/lib/api/invoices";
-
-interface OrderItemForSplit {
-  id: string;
-  productName: string;
-  qty: number;
-  invoicedQty: number;
-  unitPrice: number;
-  /** Stored line subtotal — prorated for the preview so boxed lines aren't over-charged. */
-  subtotal?: number;
-  /** Boxed split + sale-time box size: needed to re-price a line that has no stored subtotal. */
-  boxes?: number | null;
-  pieces?: number | null;
-  unitsPerBox?: number | null;
-  /** BUY_N_GET_M snapshot (whole free selling units) for the no-stored-subtotal re-price. */
-  promoFreeUnits?: number | null;
-  unit?: string;
-}
-
-/**
- * Preview line total for billing `billQty` of an order line. Mirrors the server:
- * prorate the STORED subtotal by qty (so boxed lines, whose unitPrice is the BOX
- * price, are never multiplied by the piece count). When the line has no stored
- * subtotal, re-price the whole line with `computeLineSubtotal` (boxes/pieces aware)
- * and prorate that — NEVER `qty * unitPrice`. All rounding is `roundMoney`.
- */
-function previewLineTotal(it: OrderItemForSplit, billQty: number): number {
-  if (!(it.qty > 0)) return 0;
-  const lineSubtotal =
-    it.subtotal != null
-      ? it.subtotal
-      : computeLineSubtotal({
-          unitPrice: it.unitPrice,
-          qty: it.qty,
-          boxes: it.boxes ?? null,
-          pieces: it.pieces ?? null,
-          unitsPerBox: it.unitsPerBox ?? null,
-          freeUnits: Math.max(0, Math.trunc(Number(it.promoFreeUnits ?? 0) || 0)),
-        });
-  return prorateLineSubtotal(lineSubtotal, billQty, it.qty);
-}
 
 interface SplitInvoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   orderId: string;
   orderNumber: string | null;
-  items: OrderItemForSplit[];
+  items: SplitInvoiceLine[];
   /** Default tenant terms (e.g. "Net 30"). Used to compute the initial due date. */
   defaultTerms?: string;
   onCreated?: (invoiceId: string) => void;
@@ -103,10 +64,9 @@ export function SplitInvoiceModal({
   }, [isOpen, items, defaultTerms]);
 
   const billable = items.filter((it) => it.qty - it.invoicedQty > 0.001);
-  const selectedTotal = billable.reduce((s, it) => {
-    const q = qtyById[it.id] ?? 0;
-    return s + previewLineTotal(it, q);
-  }, 0);
+  const selectedTotal = roundMoney(
+    billable.reduce((s, it) => s + previewSplitLineTotal(it, qtyById[it.id] ?? 0), 0),
+  );
 
   const onTermsChange = (newTerms: string) => {
     setTerms(newTerms);
@@ -220,7 +180,7 @@ export function SplitInvoiceModal({
                         />
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-navy">
-                        ${previewLineTotal(it, q).toFixed(2)}
+                        ${previewSplitLineTotal(it, q).toFixed(2)}
                       </td>
                     </tr>
                   );

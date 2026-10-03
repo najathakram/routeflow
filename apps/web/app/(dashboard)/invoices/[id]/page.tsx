@@ -77,6 +77,7 @@ import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
+import { InvoiceLineAmount } from "./InvoiceLineAmount";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -93,7 +94,6 @@ import { useTenant } from "@/components/tenant-provider";
 import { useAuth } from "@/lib/auth-context";
 import { OrderPreviewModal } from "../../_components/LinkedDocPreviewModal";
 import { printPdfBlob } from "@/lib/print-pdf-blob";
-import { storedOrComputedLineSubtotal } from "@/lib/line-subtotal";
 
 // ─── Credit-note relation on a payment row ─────────────────────────────────────
 // WP2 (invoices.service.ts findOne) includes `creditNote: {id, creditNoteNumber,
@@ -2621,14 +2621,7 @@ export default function InvoiceDetailPage() {
                             </p>
                           )}
                         </td>
-                        <td className="px-8 py-3 text-right">
-                          <span className="money text-navy">
-                            {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
-                              rounded via pricing.ts). NEVER re-derive qty*unitPrice — that
-                              over-charges boxed lines by unitsPerBox and ignores line discounts. */}
-                            {fmt(storedOrComputedLineSubtotal(item))}
-                          </span>
-                        </td>
+                        <InvoiceLineAmount item={item} />
                       </tr>
                     );
                   })}
