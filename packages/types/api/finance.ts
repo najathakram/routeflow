@@ -341,7 +341,10 @@ export interface RecordSupplierPaymentResult {
 }
 
 export type StatementAiErrorCode =
-  "AI_KEY_INVALID" | "AI_SCAN_REJECTED" | "AI_UNAVAILABLE" | "AI_PARSE_FAILED";
+  | typeof API_ERROR_CODES.AI_KEY_INVALID
+  | typeof API_ERROR_CODES.AI_SCAN_REJECTED
+  | typeof API_ERROR_CODES.AI_UNAVAILABLE
+  | typeof API_ERROR_CODES.AI_PARSE_FAILED;
 
 export interface StatementAiError {
   /** null covers both the no-API-key case (a plain, code-less

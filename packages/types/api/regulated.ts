@@ -36,22 +36,32 @@ export interface RegulatedLedgerResponse {
   totals: { qty: number; netSales: number; categoryTax: number };
 }
 
-export type RegulatedReportWarningCode =
-  | "MISSING_WHOLESALER_LICENSE"
-  | "MISSING_ITEM_TYPE"
-  | "MISSING_UOM"
-  | "MISSING_TAXPAYER_ID"
-  | "INVALID_TAXPAYER_ID"
-  | "MISSING_RETAILER_LICENSE"
-  | "INVALID_RETAILER_LICENSE"
-  | "INVALID_WHOLESALER_LICENSE"
-  | "MISSING_ADDRESS"
-  | "NEGATIVE_NET_INVOICE"
-  | "FRACTIONAL_QTY"
-  | "UNLINKED_LEDGER_ROWS"
-  | "UNMATCHED_LEDGER_LINE"
-  | "UNLISTED_PRODUCT_LINE"
-  | "UNCATEGORISED_LINE_IN_RULE_STATE";
+/**
+ * The warning codes of a regulated report (`RegulatedReportWarning.code`). The API keeps a local copy of this list
+ * (`REPORT_WARNING_CODES` in apps/api/src/regulated/report-types.ts) because it cannot value-import this package;
+ * `report-warning-codes-parity.spec.ts` pins the two equal (members and order). PARKED_REVERSALS was sent by the API
+ * but missing from this type: clients typed by it now know it.
+ */
+export const REGULATED_REPORT_WARNING_CODES = [
+  "MISSING_WHOLESALER_LICENSE",
+  "MISSING_ITEM_TYPE",
+  "MISSING_UOM",
+  "MISSING_TAXPAYER_ID",
+  "INVALID_TAXPAYER_ID",
+  "MISSING_RETAILER_LICENSE",
+  "INVALID_RETAILER_LICENSE",
+  "INVALID_WHOLESALER_LICENSE",
+  "MISSING_ADDRESS",
+  "NEGATIVE_NET_INVOICE",
+  "FRACTIONAL_QTY",
+  "UNLINKED_LEDGER_ROWS",
+  "UNMATCHED_LEDGER_LINE",
+  "UNLISTED_PRODUCT_LINE",
+  "UNCATEGORISED_LINE_IN_RULE_STATE",
+  "PARKED_REVERSALS",
+] as const;
+
+export type RegulatedReportWarningCode = (typeof REGULATED_REPORT_WARNING_CODES)[number];
 
 export interface RegulatedReportWarning {
   code: RegulatedReportWarningCode;

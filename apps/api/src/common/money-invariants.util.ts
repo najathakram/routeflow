@@ -4,6 +4,7 @@ import {
   MoneyInvariantError,
   type MoneyInvariantInput,
 } from "@routeflow/pricing";
+import { API_ERROR_CODES } from "./api-error-codes";
 
 /**
  * HTTP-layer wrapper around `@routeflow/pricing`'s `assertMoneyInvariants`
@@ -16,7 +17,10 @@ export function assertMoneyInvariantsOrThrow(input: MoneyInvariantInput): void {
     assertMoneyInvariants(input);
   } catch (err) {
     if (err instanceof MoneyInvariantError) {
-      throw new BadRequestException({ code: "MONEY_INVARIANT", message: err.message });
+      throw new BadRequestException({
+        code: API_ERROR_CODES.MONEY_INVARIANT,
+        message: err.message,
+      });
     }
     throw err;
   }

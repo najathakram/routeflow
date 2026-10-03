@@ -58,7 +58,7 @@ export function handoffTokenSecret(env: NodeJS.ProcessEnv = process.env): string
 export function handoffRoleNotAllowed(): ForbiddenException {
   return new ForbiddenException({
     statusCode: 403,
-    code: "HANDOFF_ROLE_NOT_ALLOWED",
+    code: API_ERROR_CODES.HANDOFF_ROLE_NOT_ALLOWED,
     message: "In-app sign-in is not available for this account.",
   });
 }
@@ -85,7 +85,7 @@ export class HandoffCodeService {
     if (!secret) {
       throw new ConflictException({
         statusCode: 409,
-        code: "HANDOFF_NOT_CONFIGURED",
+        code: API_ERROR_CODES.HANDOFF_NOT_CONFIGURED,
         message: "In-app sign-in is not available yet.",
       });
     }
