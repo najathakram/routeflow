@@ -46,6 +46,7 @@ import { displayProductName } from "@/lib/product-display";
 import { InlineCreateProductModal } from "@/components/InlineCreateProductModal";
 import { BarcodeScannerButton } from "@/components/BarcodeScannerButton";
 import { LineItemRow } from "@/components/LineItemRow";
+import { LineItemRowCompact } from "@/components/LineItemRowCompact";
 import { OrderLineUnitPicker } from "@/components/OrderLineUnitPicker";
 import { sameProductUnit, unitLabelPayload, type PackBase } from "@/lib/order-line-unit";
 import {
@@ -1380,48 +1381,54 @@ export function CreateOrderModal({
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
-    <LineItemRow
-      key={li.tempId}
-      item={li}
-      category={lineCategory(li) ?? null}
-      marginFloor={floorForCategory(marginConfig, li.category)}
-      floorAcked={floorAcked.has(li.tempId)}
-      costRevealed={costRevealed.has(li.tempId)}
-      // the remembered price is a PACK price (the server excludes unit lines from it, B606)
-      priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
-      highlighted={ctx?.highlighted}
-      onTapPrice={ctx?.onTapPrice}
-      rowRef={(el) => {
-        if (el) rowRefs.current.set(li.tempId, el);
-        else rowRefs.current.delete(li.tempId);
-      }}
-      onQtyDelta={(delta) => updateQty(li.tempId, delta)}
-      onSetQty={(value) => setQty(li.tempId, value)}
-      onSetBoxes={(value) => setBoxes(li.tempId, value)}
-      onSetPieces={(value) => setPieces(li.tempId, value)}
-      onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
-      onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
-      onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
-      onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
-      onAckFloor={() => ackFloor(li.tempId)}
-      onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
-      onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
-      onSetNote={(note) => setLineNote(li.tempId, note)}
-      onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
-      onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
-      onRemove={() => removeLineItem(li.tempId)}
-      pendingUnit={pendingUnitOf(li)}
-      unitSlot={
-        <OrderLineUnitPicker
-          line={li}
-          tier={tierForProduct(li.productId)}
-          startOnDefaultUnit={li.startOnDefaultUnit}
-          onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
-        />
-      }
-    />
-  );
+  const renderLine = (
+    li: LineItem,
+    ctx?: { highlighted?: boolean; onTapPrice?: () => void; compact?: boolean },
+  ) => {
+    const Row = ctx?.compact ? LineItemRowCompact : LineItemRow;
+    return (
+      <Row
+        key={li.tempId}
+        item={li}
+        category={lineCategory(li) ?? null}
+        marginFloor={floorForCategory(marginConfig, li.category)}
+        floorAcked={floorAcked.has(li.tempId)}
+        costRevealed={costRevealed.has(li.tempId)}
+        // the remembered price is a PACK price (the server excludes unit lines from it, B606)
+        priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
+        highlighted={ctx?.highlighted}
+        onTapPrice={ctx?.onTapPrice}
+        rowRef={(el) => {
+          if (el) rowRefs.current.set(li.tempId, el);
+          else rowRefs.current.delete(li.tempId);
+        }}
+        onQtyDelta={(delta) => updateQty(li.tempId, delta)}
+        onSetQty={(value) => setQty(li.tempId, value)}
+        onSetBoxes={(value) => setBoxes(li.tempId, value)}
+        onSetPieces={(value) => setPieces(li.tempId, value)}
+        onSetUnitQty={(value) => setUnitQty(li.tempId, value)}
+        onSetSellBy={(mode) => setSellBy(li.tempId, mode)}
+        onSetDiscountedPrice={(value) => setDiscountedPrice(li.tempId, value)}
+        onSetToFloor={(floorPrice) => setDiscountedPrice(li.tempId, floorPrice)}
+        onAckFloor={() => ackFloor(li.tempId)}
+        onToggleCostRevealed={() => toggleCostRevealed(li.tempId)}
+        onToggleNoteOpen={() => toggleNoteOpen(li.tempId)}
+        onSetNote={(note) => setLineNote(li.tempId, note)}
+        onUpdateUnlistedName={(name) => updateUnlistedName(li.tempId, name)}
+        onUpdateUnlistedPrice={(value) => updateUnlistedPrice(li.tempId, value)}
+        onRemove={() => removeLineItem(li.tempId)}
+        pendingUnit={pendingUnitOf(li)}
+        unitSlot={
+          <OrderLineUnitPicker
+            line={li}
+            tier={tierForProduct(li.productId)}
+            startOnDefaultUnit={li.startOnDefaultUnit}
+            onChange={(option, refresh) => setLineUnit(li.tempId, option, refresh)}
+          />
+        }
+      />
+    );
+  };
 
   // The scan screen's price/quantity sheet for one line: the same handlers, and the same
   // MarginHint floor check, the row uses — no separate write path.
@@ -1936,6 +1943,7 @@ export function CreateOrderModal({
                     // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
+                    compact: true,
                   }),
                 )}
               </ul>

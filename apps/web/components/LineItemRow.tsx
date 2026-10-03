@@ -184,7 +184,6 @@ export function LineItemRow({
   onSetQty,
   rowRef,
 }: LineItemRowProps) {
-  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
   return (
     <li
@@ -240,70 +239,7 @@ export function LineItemRow({
       ) : (
         <div className="col-start-1 row-start-1 min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-navy">{li.productName}</p>
-          {/* Price display with special/discount indicators */}
-          <div
-            className={cn(
-              "mt-0.5 flex flex-wrap items-center gap-1.5",
-              onTapPrice ? "cursor-pointer" : "",
-            )}
-            onClick={qtyLocked ? undefined : onTapPrice}
-            aria-disabled={onTapPrice && qtyLocked ? true : undefined}
-            role={onTapPrice ? "button" : undefined}
-            tabIndex={onTapPrice ? 0 : undefined}
-          >
-            {li.priceType === "SPECIAL" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Special price
-                </span>
-              </>
-            ) : li.priceType === "DISCOUNTED" ? (
-              <>
-                <span className="text-xs text-navy/70 line-through">
-                  ${li.listPrice.toFixed(2)}
-                </span>
-                <span className="text-xs font-medium text-amber-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
-                  Discounted
-                </span>
-              </>
-            ) : li.priceType === "MANUAL" ? (
-              <>
-                {/* Upsell (sold above list). Operator-only green badge;
-                    no strikethrough — the base is never shown to the buyer. */}
-                <span className="text-xs font-medium text-emerald-600">
-                  ${li.unitPrice.toFixed(2)} / {li.unit}
-                </span>
-                <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
-                  Upsell
-                </span>
-              </>
-            ) : (
-              <span className="text-xs text-navy/70">
-                ${li.unitPrice.toFixed(2)} / {li.unit}
-              </span>
-            )}
-            {onTapPrice && (
-              <>
-                <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
-                <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
-              </>
-            )}
-          </div>
-          {/* Price per piece (when product has box packaging) */}
-          {li.unitsPerBox && li.unitsPerBox > 1 && (
-            <div className="mt-0.5 text-[10px] text-navy/70">
-              ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
-            </div>
-          )}
+          <LinePriceDisplay item={li} qtyLocked={qtyLocked} onTapPrice={onTapPrice} />
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
           {/* #2865 F2: the pending-unit status lives IN the info column (full width at every breakpoint). As a row child it
               became a fourth flex item at sm+ and was crushed between the qty controls and the total. */}
@@ -365,189 +301,16 @@ export function LineItemRow({
         </div>
       )}
       {/* Qty controls */}
-      {li.unitsPerBox ? (
-        // Not #2080 — a narrower 320px glitch found alongside it: the grid's `minmax(0,1fr)`
-        // track resolves to ~170-182px there, and a `min-w-[190px]` floor forced this column
-        // past it. `min-w-0` below `sm` lets the column shrink; its CONTENT fits the shrunk
-        // track because the cases/units row below wraps (spec 56 measures the content, not
-        // this box). `sm:min-w-[190px]` keeps desktop unchanged.
-        <fieldset
-          data-testid="line-qty-controls"
-          disabled={qtyLocked}
-          aria-busy={qtyLocked}
-          aria-label={
-            qtyLocked
-              ? "Line quantity controls, locked while the selling unit loads"
-              : "Line quantity controls"
-          }
-          className="col-start-1 row-start-2 m-0 flex min-w-0 flex-col gap-0.5 border-0 p-0 sm:min-w-[190px]"
-        >
-          {/* Case | Unit sell-by toggle — UI-only; the payload always
-              carries {qty, boxes, pieces} regardless of the mode. */}
-          <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
-            <button
-              type="button"
-              disabled={qtyLocked}
-              onClick={() => onSetSellBy("case")}
-              className={cn(
-                "px-1.5 py-0.5 transition-colors",
-                (li.sellBy ?? "case") === "case"
-                  ? "bg-brand-500 text-white"
-                  : "bg-white text-navy/70 hover:bg-surface-raised",
-              )}
-            >
-              Case
-            </button>
-            <button
-              type="button"
-              disabled={qtyLocked}
-              onClick={() => onSetSellBy("unit")}
-              className={cn(
-                "border-l border-surface-border px-1.5 py-0.5 transition-colors",
-                li.sellBy === "unit"
-                  ? "bg-brand-500 text-white"
-                  : "bg-white text-navy/70 hover:bg-surface-raised",
-              )}
-            >
-              Unit
-            </button>
-          </div>
-          {li.sellBy === "unit" ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                disabled={qtyLocked}
-                type="number"
-                min={0}
-                value={li.qty}
-                onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
-                onFocus={(e) => e.target.select()}
-                className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                title="Total units"
-              />
-              <span className="text-xs text-navy/70">units</span>
-            </div>
-          ) : (
-            // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
-            // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
-            // 320px, less as the line total in column 2 grows). The second group drops to
-            // its own line there instead of overflowing into the line total; on one line
-            // (every `sm`+ layout) nothing changes.
-            <div
-              data-testid="line-qty-cases-row"
-              className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
-            >
-              <span className="flex items-center gap-1.5 whitespace-nowrap">
-                <input
-                  disabled={qtyLocked}
-                  type="number"
-                  min={0}
-                  value={li.boxes ?? 0}
-                  onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
-                  onFocus={(e) => e.target.select()}
-                  className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                  title="Number of whole cases"
-                />
-                <span className="text-xs text-navy/70">{caseWord(li.boxes ?? 0)}</span>
-              </span>
-              {showLooseUnits ? (
-                <span className="flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="text-xs text-navy/30">+</span>
-                  <input
-                    disabled={qtyLocked}
-                    type="number"
-                    min={0}
-                    max={li.unitsPerBox - 1}
-                    value={li.pieces ?? 0}
-                    onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
-                    onFocus={(e) => e.target.select()}
-                    className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
-                    title="Extra loose units (less than a full case)"
-                    aria-label="Extra loose units"
-                  />
-                  <span className="text-xs text-navy/70">{unitWord(li.pieces ?? 0)}</span>
-                  {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
-                  {(li.boxes ?? 0) >= 1 && (
-                    <button
-                      disabled={qtyLocked}
-                      type="button"
-                      onClick={() => {
-                        onSetPieces(0);
-                        closeLooseUnits();
-                      }}
-                      aria-label="Remove extra units"
-                      className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
-                    >
-                      ×
-                    </button>
-                  )}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  disabled={qtyLocked}
-                  onClick={openLooseUnits}
-                  // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
-                  className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
-                >
-                  + units
-                </button>
-              )}
-            </div>
-          )}
-          <span className="text-[10px] text-navy/30">
-            1 case = {li.unitsPerBox} units
-            {li.qty > 0 && (
-              <>
-                {" "}
-                · <span className="font-medium text-navy/70">{li.qty} pcs total</span>
-              </>
-            )}
-          </span>
-        </fieldset>
-      ) : (
-        <fieldset
-          disabled={qtyLocked}
-          aria-busy={qtyLocked}
-          aria-label={
-            qtyLocked
-              ? "Line quantity controls, locked while the selling unit loads"
-              : "Line quantity controls"
-          }
-          className="col-start-1 row-start-2 m-0 flex min-w-0 items-center gap-1 border-0 p-0"
-        >
-          <button
-            type="button"
-            onClick={() => onQtyDelta(-1)}
-            disabled={li.qty <= 1}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
-          >
-            −
-          </button>
-          {onSetQty ? (
-            <input
-              disabled={qtyLocked}
-              type="number"
-              inputMode="numeric"
-              min={1}
-              value={li.qty}
-              onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
-              onFocus={(e) => e.target.select()}
-              aria-label="Quantity"
-              className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-            />
-          ) : (
-            <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
-          )}
-          <button
-            type="button"
-            disabled={qtyLocked}
-            onClick={() => onQtyDelta(1)}
-            className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
-          >
-            +
-          </button>
-        </fieldset>
-      )}
+      <LineQtyControls
+        item={li}
+        qtyLocked={qtyLocked}
+        onQtyDelta={onQtyDelta}
+        onSetBoxes={onSetBoxes}
+        onSetPieces={onSetPieces}
+        onSetUnitQty={onSetUnitQty}
+        onSetSellBy={onSetSellBy}
+        onSetQty={onSetQty}
+      />
       {/* Line total */}
       <span
         data-testid="line-total"
@@ -587,6 +350,283 @@ export function LineItemRow({
         </button>
       </div>
     </li>
+  );
+}
+
+/** The price line of a row: list/special/discounted/upsell figures, the tap-to-edit affordance and the per-piece price. Shared by the standard and compact rows. */
+export function LinePriceDisplay({
+  item: li,
+  qtyLocked,
+  onTapPrice,
+}: {
+  item: LineItemRowItem;
+  qtyLocked: boolean;
+  onTapPrice?: () => void;
+}) {
+  return (
+    <>
+      {/* Price display with special/discount indicators */}
+      <div
+        className={cn(
+          "mt-0.5 flex flex-wrap items-center gap-1.5",
+          onTapPrice ? "cursor-pointer" : "",
+        )}
+        onClick={qtyLocked ? undefined : onTapPrice}
+        aria-disabled={onTapPrice && qtyLocked ? true : undefined}
+        role={onTapPrice ? "button" : undefined}
+        tabIndex={onTapPrice ? 0 : undefined}
+      >
+        {li.priceType === "SPECIAL" ? (
+          <>
+            <span className="text-xs text-navy/70 line-through">${li.listPrice.toFixed(2)}</span>
+            <span className="text-xs font-medium text-emerald-600">
+              ${li.unitPrice.toFixed(2)} / {li.unit}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+              Special price
+            </span>
+          </>
+        ) : li.priceType === "DISCOUNTED" ? (
+          <>
+            <span className="text-xs text-navy/70 line-through">${li.listPrice.toFixed(2)}</span>
+            <span className="text-xs font-medium text-amber-600">
+              ${li.unitPrice.toFixed(2)} / {li.unit}
+            </span>
+            <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-200">
+              Discounted
+            </span>
+          </>
+        ) : li.priceType === "MANUAL" ? (
+          <>
+            {/* Upsell (sold above list). Operator-only green badge;
+                    no strikethrough — the base is never shown to the buyer. */}
+            <span className="text-xs font-medium text-emerald-600">
+              ${li.unitPrice.toFixed(2)} / {li.unit}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-emerald-200">
+              Upsell
+            </span>
+          </>
+        ) : (
+          <span className="text-xs text-navy/70">
+            ${li.unitPrice.toFixed(2)} / {li.unit}
+          </span>
+        )}
+        {onTapPrice && (
+          <>
+            <Pencil aria-label="Change price" className="h-3 w-3 text-navy/50" />
+            <span className="text-[10px] text-navy/50 underline sm:hidden">Tap to change</span>
+          </>
+        )}
+      </div>
+      {/* Price per piece (when product has box packaging) */}
+      {li.unitsPerBox && li.unitsPerBox > 1 && (
+        <div className="mt-0.5 text-[10px] text-navy/70">
+          ${perUnitPrice(li.unitPrice, li.unitsPerBox)?.toFixed(2)} / piece
+        </div>
+      )}
+    </>
+  );
+}
+
+/** The quantity controls for one line (case/unit toggle + typed boxes/pieces, or a plain stepper), locked while a pending unit loads. Shared by the standard row and the compact row. */
+export function LineQtyControls({
+  item: li,
+  qtyLocked,
+  placement = "col-start-1 row-start-2",
+  onQtyDelta,
+  onSetBoxes,
+  onSetPieces,
+  onSetUnitQty,
+  onSetSellBy,
+  onSetQty,
+}: Pick<
+  LineItemRowProps,
+  "onQtyDelta" | "onSetBoxes" | "onSetPieces" | "onSetUnitQty" | "onSetSellBy" | "onSetQty"
+> & { item: LineItemRowItem; qtyLocked: boolean; placement?: string }) {
+  const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
+  return li.unitsPerBox ? (
+    // Not #2080 — a narrower 320px glitch found alongside it: the grid's `minmax(0,1fr)`
+    // track resolves to ~170-182px there, and a `min-w-[190px]` floor forced this column
+    // past it. `min-w-0` below `sm` lets the column shrink; its CONTENT fits the shrunk
+    // track because the cases/units row below wraps (spec 56 measures the content, not
+    // this box). `sm:min-w-[190px]` keeps desktop unchanged.
+    <fieldset
+      data-testid="line-qty-controls"
+      disabled={qtyLocked}
+      aria-busy={qtyLocked}
+      aria-label={
+        qtyLocked
+          ? "Line quantity controls, locked while the selling unit loads"
+          : "Line quantity controls"
+      }
+      className={cn(placement, "m-0 flex min-w-0 flex-col gap-0.5 border-0 p-0 sm:min-w-[190px]")}
+    >
+      {/* Case | Unit sell-by toggle — UI-only; the payload always
+              carries {qty, boxes, pieces} regardless of the mode. */}
+      <div className="inline-flex self-start overflow-hidden rounded border border-surface-border text-[10px] font-medium">
+        <button
+          type="button"
+          disabled={qtyLocked}
+          onClick={() => onSetSellBy("case")}
+          className={cn(
+            "px-1.5 py-0.5 transition-colors",
+            (li.sellBy ?? "case") === "case"
+              ? "bg-brand-500 text-white"
+              : "bg-white text-navy/70 hover:bg-surface-raised",
+          )}
+        >
+          Case
+        </button>
+        <button
+          type="button"
+          disabled={qtyLocked}
+          onClick={() => onSetSellBy("unit")}
+          className={cn(
+            "border-l border-surface-border px-1.5 py-0.5 transition-colors",
+            li.sellBy === "unit"
+              ? "bg-brand-500 text-white"
+              : "bg-white text-navy/70 hover:bg-surface-raised",
+          )}
+        >
+          Unit
+        </button>
+      </div>
+      {li.sellBy === "unit" ? (
+        <div className="flex items-center gap-1.5">
+          <input
+            disabled={qtyLocked}
+            type="number"
+            min={0}
+            value={li.qty}
+            onChange={(e) => onSetUnitQty(parseInt(e.target.value, 10) || 0)}
+            onFocus={(e) => e.target.select()}
+            className="w-16 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+            title="Total units"
+          />
+          <span className="text-xs text-navy/70">units</span>
+        </div>
+      ) : (
+        // Two no-wrap groups in a wrapping row: "[n] cases" and "+ [n] units" together
+        // need ~186px, but under `sm` the column's track can be narrower (~170-182px at
+        // 320px, less as the line total in column 2 grows). The second group drops to
+        // its own line there instead of overflowing into the line total; on one line
+        // (every `sm`+ layout) nothing changes.
+        <div
+          data-testid="line-qty-cases-row"
+          className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
+        >
+          <span className="flex items-center gap-1.5 whitespace-nowrap">
+            <input
+              disabled={qtyLocked}
+              type="number"
+              min={0}
+              value={li.boxes ?? 0}
+              onChange={(e) => onSetBoxes(parseInt(e.target.value, 10))}
+              onFocus={(e) => e.target.select()}
+              className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+              title="Number of whole cases"
+            />
+            <span className="text-xs text-navy/70">{caseWord(li.boxes ?? 0)}</span>
+          </span>
+          {showLooseUnits ? (
+            <span className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className="text-xs text-navy/30">+</span>
+              <input
+                disabled={qtyLocked}
+                type="number"
+                min={0}
+                max={li.unitsPerBox - 1}
+                value={li.pieces ?? 0}
+                onChange={(e) => onSetPieces(parseInt(e.target.value, 10))}
+                onFocus={(e) => e.target.select()}
+                className="w-12 rounded border border-surface-border bg-white px-1.5 py-1 text-center text-sm font-semibold text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
+                title="Extra loose units (less than a full case)"
+                aria-label="Extra loose units"
+              />
+              <span className="text-xs text-navy/70">{unitWord(li.pieces ?? 0)}</span>
+              {/* SA-563: hidden at 0 cases — the units ARE the line then, never a removable extra. */}
+              {(li.boxes ?? 0) >= 1 && (
+                <button
+                  disabled={qtyLocked}
+                  type="button"
+                  onClick={() => {
+                    onSetPieces(0);
+                    closeLooseUnits();
+                  }}
+                  aria-label="Remove extra units"
+                  className="relative before:absolute before:-inset-2 before:content-[''] text-xs text-navy/50 hover:text-danger"
+                >
+                  ×
+                </button>
+              )}
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={qtyLocked}
+              onClick={openLooseUnits}
+              // hitSlop 8 (mobile parity, #2706): the pseudo-element grows the tap target, not the layout.
+              className="relative before:absolute before:-inset-2 before:content-[''] whitespace-nowrap rounded border border-dashed border-surface-border px-1.5 py-0.5 text-[10px] font-medium text-navy/60 hover:bg-surface-raised"
+            >
+              + units
+            </button>
+          )}
+        </div>
+      )}
+      <span className="text-[10px] text-navy/30">
+        1 case = {li.unitsPerBox} units
+        {li.qty > 0 && (
+          <>
+            {" "}
+            · <span className="font-medium text-navy/70">{li.qty} pcs total</span>
+          </>
+        )}
+      </span>
+    </fieldset>
+  ) : (
+    <fieldset
+      disabled={qtyLocked}
+      aria-busy={qtyLocked}
+      aria-label={
+        qtyLocked
+          ? "Line quantity controls, locked while the selling unit loads"
+          : "Line quantity controls"
+      }
+      className={cn(placement, "m-0 flex min-w-0 items-center gap-1 border-0 p-0")}
+    >
+      <button
+        type="button"
+        onClick={() => onQtyDelta(-1)}
+        disabled={li.qty <= 1}
+        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-30 transition-colors"
+      >
+        −
+      </button>
+      {onSetQty ? (
+        <input
+          disabled={qtyLocked}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          value={li.qty}
+          onChange={(e) => onSetQty(parseInt(e.target.value, 10))}
+          onFocus={(e) => e.target.select()}
+          aria-label="Quantity"
+          className="h-6 w-10 rounded border border-surface-border bg-white px-1 text-center text-sm font-semibold text-navy [appearance:textfield] focus:outline-none focus:ring-1 focus:ring-brand-500 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
+      ) : (
+        <span className="w-8 text-center text-sm font-semibold text-navy">{li.qty}</span>
+      )}
+      <button
+        type="button"
+        disabled={qtyLocked}
+        onClick={() => onQtyDelta(1)}
+        className="flex h-6 w-6 items-center justify-center rounded border border-surface-border text-sm text-navy/70 hover:bg-surface-raised transition-colors"
+      >
+        +
+      </button>
+    </fieldset>
   );
 }
 
