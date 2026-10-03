@@ -32,8 +32,9 @@ let mockPlansAddons: Array<Record<string, unknown>> = [];
 let mockProrationPreview: {
   data?: Record<string, unknown>;
   isLoading: boolean;
+  isFetching?: boolean;
   isError: boolean;
-} = { isLoading: false, isError: false };
+} = { isLoading: false, isFetching: false, isError: false };
 
 jest.mock("@/lib/api/billing", () => ({
   useSubscription: () => ({ data: mockSubscriptionView, isLoading: false, isError: false }),
@@ -44,7 +45,9 @@ jest.mock("@/lib/api/billing", () => ({
   useEnableAddon: () => ({ mutate: mockEnableMutate, isPending: false, variables: undefined }),
   useDisableAddon: () => ({ mutate: mockDisableMutate, isPending: false, variables: undefined }),
   useProrationPreview: (sku: string | null) =>
-    sku ? mockProrationPreview : { data: undefined, isLoading: false, isError: false },
+    sku
+      ? mockProrationPreview
+      : { data: undefined, isLoading: false, isFetching: false, isError: false },
   useCreateCheckout: () => ({ mutate: mockCheckoutMutate, isPending: mockCheckoutPending }),
 }));
 
@@ -301,6 +304,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
         nextChargeAt: "2026-10-17T00:00:00.000Z",
       },
       isLoading: false,
+      isFetching: false,
       isError: false,
     };
     mockSubscriptionView = subscriptionView({ status: "ACTIVE", cancelAtPeriodEnd: false });
@@ -346,7 +350,7 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
   });
 
   it("the enable sheet cannot be confirmed until the prorated charge has loaded", async () => {
-    mockProrationPreview = { data: undefined, isLoading: true, isError: false };
+    mockProrationPreview = { data: undefined, isLoading: true, isFetching: true, isError: false };
     const user = userEvent.setup();
     renderWithProviders(<BillingSettingsPage />);
 
@@ -355,6 +359,40 @@ describe("BillingSettingsPage — add-on and cancel confirmations", () => {
 
     expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
     expect(mockEnableMutate).not.toHaveBeenCalled();
+  });
+
+  it("a cached preview that is being re-fetched cannot be confirmed and its amount is not shown", async () => {
+    // isLoading is false whenever there is cached data; only isFetching says the figure is stale.
+    mockProrationPreview = {
+      ...mockProrationPreview,
+      data: { ...mockProrationPreview.data, proratedToday: 24.5 },
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+    };
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(dialog.getByRole("button", { name: "Enable add-on" })).toBeDisabled();
+    expect(dialog.queryByText("$24.50")).not.toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Enable add-on" }));
+    expect(mockEnableMutate).not.toHaveBeenCalled();
+  });
+
+  it("the sheet says what happens: no card charge on confirm, prorated amount on the next bill", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<BillingSettingsPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Enable" }));
+    const dialog = within(await screen.findByRole("dialog"));
+
+    expect(dialog.getByText("Prorated this cycle")).toBeInTheDocument();
+    expect(dialog.getByText(/added to your next bill/i)).toBeInTheDocument();
+    expect(dialog.queryByText(/charged as soon as you confirm/i)).not.toBeInTheDocument();
+    expect(dialog.queryByText("Charged today")).not.toBeInTheDocument();
   });
 
   it("the enable sheet stays blocked, with fixed copy, when the charge preview fails", async () => {
