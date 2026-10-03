@@ -64,9 +64,9 @@ function lineCount(abs: string): number {
   return text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
 }
 
-describe("size ratchet — the 15 largest source files never grow past baseline + headroom", () => {
-  it("tracks exactly 15 files", () => {
-    expect(Object.keys(BASELINE)).toHaveLength(15);
+describe("size ratchet — the 16 largest source files never grow past baseline + headroom", () => {
+  it("tracks exactly 16 files", () => {
+    expect(Object.keys(BASELINE)).toHaveLength(16);
   });
 
   it.each(Object.entries(BASELINE))("%s stays within %i + HEADROOM lines", (rel, baseline) => {
