@@ -156,6 +156,9 @@ describe("buyer standing orders — Reorder Now review", () => {
     expect(dialog.getByText("Price on confirmation")).toBeInTheDocument();
     expect(dialog.getAllByText("$60.00")).toHaveLength(2); // the line and the estimated total
     expect(dialog.getByRole("button", { name: "Place order" })).toBeEnabled();
+    // A license-gated or banned line is skipped by the server, so never promise it is ordered.
+    expect(dialog.getByText(/may also be left out of the order/i)).toBeInTheDocument();
+    expect(dialog.queryByText(/still on the order/i)).not.toBeInTheDocument();
   });
 
   it("when NO line can be priced there is no total and Place order stays disabled", async () => {

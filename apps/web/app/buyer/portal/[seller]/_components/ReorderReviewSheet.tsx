@@ -155,8 +155,8 @@ function ReviewBody({
             {review.unresolvedCount > 0 && (
               <p className="text-xs text-navy/60">
                 {review.unresolvedCount === 1
-                  ? "1 item isn't priced here and is left out of this estimate; it is still on the order."
-                  : `${review.unresolvedCount} items aren't priced here and are left out of this estimate; they are still on the order.`}
+                  ? "1 item isn't priced here and is left out of this estimate. It may also be left out of the order; your seller confirms."
+                  : `${review.unresolvedCount} items aren't priced here and are left out of this estimate. They may also be left out of the order; your seller confirms.`}
               </p>
             )}
           </div>
