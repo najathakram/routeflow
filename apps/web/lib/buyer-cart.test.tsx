@@ -111,3 +111,45 @@ describe("setBoxesPieces keepEmpty (a typed zero changes nothing)", () => {
     expect(r.result.current.items).toHaveLength(0);
   });
 });
+
+describe("unitsPerBox = 1 (a pack of one is a PLAIN line): a box edit never deletes it", () => {
+  const single: CartItem = { productId: "p3", name: "Gum", unit: "each", unitsPerBox: 1, qty: 1 };
+
+  it("setBoxesPieces on a upb-1 line sets a plain qty (boxes + pieces), it does NOT remove the line", () => {
+    const r = hook();
+    act(() => r.result.current.addItem(single));
+    act(() => r.result.current.setBoxesPieces("p3", 2, 0));
+    expect(r.result.current.items).toHaveLength(1);
+    expect(only(r)).toMatchObject({ qty: 2 });
+    expect(only(r).boxes).toBeUndefined();
+    act(() => r.result.current.setBoxesPieces("p3", 1, 2));
+    expect(only(r)).toMatchObject({ qty: 3 });
+  });
+
+  it("an EMPTY split on a upb-1 line still removes it (the minus path), and keepEmpty keeps it", () => {
+    const r = hook();
+    act(() => r.result.current.addItem(single));
+    act(() => r.result.current.setBoxesPieces("p3", 0, 0, { keepEmpty: true }));
+    expect(only(r)).toMatchObject({ qty: 1 });
+    act(() => r.result.current.setBoxesPieces("p3", 0, 0));
+    expect(r.result.current.items).toHaveLength(0);
+  });
+
+  it("the cart page shows the box UI only for unitsPerBox > 1", () => {
+    const page = require("fs").readFileSync(
+      require("path").join(
+        __dirname,
+        "..",
+        "app",
+        "buyer",
+        "portal",
+        "[seller]",
+        "cart",
+        "page.tsx",
+      ),
+      "utf8",
+    ) as string;
+    expect(page).toMatch(/item\.unitsPerBox && item\.unitsPerBox > 1 \?/);
+    expect(page).not.toMatch(/item\.unitsPerBox > 0/);
+  });
+});

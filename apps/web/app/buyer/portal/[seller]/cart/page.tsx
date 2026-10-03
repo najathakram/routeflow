@@ -365,7 +365,7 @@ export default function BuyerCartPage() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          {item.unitsPerBox && item.unitsPerBox > 0 ? (
+                          {item.unitsPerBox && item.unitsPerBox > 1 ? (
                             // Boxes + Pieces input
                             <div className="flex flex-col items-center gap-1">
                               <div className="flex items-center gap-1.5 text-xs">

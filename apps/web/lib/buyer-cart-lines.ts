@@ -38,9 +38,13 @@ export function mergeAddLine<T extends CartLine>(existing: T, add: CartLine): T 
   return withTotal(existing, totalPieces(existing, upb) + totalPieces(add, upb));
 }
 
-/** A box / loose-pieces EDIT: REPLACES the split (box + from 2 boxes = 3 boxes), normalised; null = nothing left (remove). */
+/** A box / loose-pieces EDIT: REPLACES the split (box + from 2 boxes = 3 boxes), normalised; null = nothing left (remove). A line that is not boxed (unitsPerBox <= 1) takes boxes + pieces as a plain qty. */
 export function setLineSplit<T extends CartLine>(line: T, boxes: number, pieces: number): T | null {
-  if (!isBoxed(line)) return null;
+  if (!isBoxed(line)) {
+    // a pack of one (unitsPerBox 0/1) is a PLAIN line: the "split" is just a count, never a reason to drop the line
+    const qty = Math.max(0, Math.trunc(Number(boxes) || 0) + Math.trunc(Number(pieces) || 0));
+    return qty > 0 ? withTotal(line, qty) : null;
+  }
   const n = normalizeBoxesPieces({ boxes, pieces, unitsPerBox: line.unitsPerBox });
   return n.qty > 0 ? withTotal(line, n.qty) : null;
 }
