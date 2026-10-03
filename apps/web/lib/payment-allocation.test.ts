@@ -1,4 +1,4 @@
-import { clampAllocationInput } from "./CustomerRecordPaymentModal";
+import { clampAllocationInput } from "./payment-allocation";
 
 // B313: mobile's payments/record.tsx caps each allocation row at the invoice's balance
 // ("Cap at the invoice's balance — the server would happily over-pay it"), but this web
