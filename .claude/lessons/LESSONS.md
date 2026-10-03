@@ -273,8 +273,10 @@
   To renumber, pull each row's ORIGINAL entry from git history, remap only `id`, and splice it
   back directly; never trust `index`'s carry-forward across an id change. Diff for net-zero
   before committing any bulk-id rewrite.**
+- **Recurred 2026-10-02:** marking bugs fixed with `move` + `already-fixed` writes the ledger but leaves each record's `closed:` flag to the refresh. Run `node scripts/campaign/bugs.mjs sync`, then the read-only `sync --check` ("N record(s) mirror the ledger") and the full `self-test`, before the commit; `campaign-check` does not cover the record-to-ledger mirror. #3062 skipped it and master's self-test (T13b/R9) stayed red until #3067.
 - **Guard:** none yet — propose a `bugs.mjs renumber <old> <new>` command doing the safe remap
   atomically, or a self-test asserting `index` refuses/warns on a renamed fixture.
+  The record-to-ledger mirror is pinned by `bugs.mjs self-test` T13b/R9 (run by `common/bugs-self-test-script.spec.ts`).
 
 ### L-194 · 2026-09-17 · tooling · preview_start binds to the main checkout, not the calling session's worktree
 

@@ -88,6 +88,7 @@ import {
   type OrderInlineReturnsSectionHandle,
 } from "./OrderInlineReturnsSection";
 import { RETURN_SAVE_BLOCKED, useOrderInlineReturnSave } from "./use-order-inline-return-save";
+import { codedToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ export function CreateOrderModal({
   onViewOrder,
 }: CreateOrderModalProps) {
   const { toast } = useToast();
-  const createOrder = useCreateOrder();
+  const createOrder = useCreateOrder({ localErrorToast: true });
   // #2406: an inline return started (lines entered + quoted) before this order is saved.
   const returnsRef = React.useRef<OrderInlineReturnsSectionHandle>(null);
   const returnSave = useOrderInlineReturnSave(returnsRef);
@@ -1368,7 +1369,14 @@ export function CreateOrderModal({
     // A SELLING_RESTRICTED 409 has its own dialog; the banner would repeat it (with the rule's
     // admin-written reason) and outlive the dialog's OK.
     if (parseSellingRestricted(err)) return null;
-    return err.response?.data?.message || err.message || "Something went wrong. Please try again.";
+    // B986-7 (Opus): a RECOGNISED refusal (a coded one, a stock shortfall, a credit limit...) is fixed copy; an UNCODED one keeps
+    // today's server sentence, which says what to fix (B991 / B987-E mint the codes + fields, then this read goes).
+    return (
+      codedToastCopy(err) ||
+      err.response?.data?.message ||
+      err.message ||
+      "Something went wrong. Please try again."
+    );
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
