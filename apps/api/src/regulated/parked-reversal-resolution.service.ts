@@ -7,6 +7,7 @@ import {
 import { PrismaService } from "../prisma/prisma.service";
 import { RegulatedLedgerService } from "./regulated-ledger.service";
 import { periodBucketOf } from "./period";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 /**
  * SA-089/SA-089a/SA-089b — B660 PR B: the OPERATOR resolution of a parked regulated-ledger
@@ -136,7 +137,7 @@ export class ParkedReversalResolutionService {
 
       if (resolution.outcome === "unresolvable") {
         throw new ConflictException({
-          code: "PARKED_REVERSAL_UNRESOLVABLE",
+          code: API_ERROR_CODES.PARKED_REVERSAL_UNRESOLVABLE,
           message: `Cannot resolve this parked reversal with pack ${pack}: ${resolution.unresolvableReason}`,
         });
       }

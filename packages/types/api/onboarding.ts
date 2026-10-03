@@ -20,6 +20,7 @@
 //   GET    platform-admin/demo-bookings?status=&from=&to=                   → DemoBookingListItem[]
 
 import type { DemoBookingStatus } from "./enums";
+import { API_ERROR_CODES } from "./error-codes";
 
 export const ONBOARDING_STAGE_VALUES = [
   "FOLLOW_UP",
@@ -142,7 +143,7 @@ export type OnboardingStageCounts = Record<OnboardingStage, number> & {
 /** 409 body when `advance` is refused. */
 export interface OnboardingGateBlocked {
   statusCode: 409;
-  code: "ONBOARDING_GATE_BLOCKED";
+  code: typeof API_ERROR_CODES.ONBOARDING_GATE_BLOCKED;
   message: string;
   stage: OnboardingStage;
   blockers: OnboardingGateBlocker[];
@@ -213,14 +214,14 @@ export interface DemoBookingListItem {
 
 /** Every 409 `code` the onboarding endpoints return — the web maps each to fixed copy. */
 export const ONBOARDING_CONFLICT_CODES = [
-  "ONBOARDING_GATE_BLOCKED",
-  "ONBOARDING_CASE_NOT_OPEN",
-  "ONBOARDING_CASE_CLOSED",
-  "ONBOARDING_STEP_NOT_REACHED",
-  "ONBOARDING_STEP_BEHIND_GATE",
-  "ONBOARDING_STEP_WAIVED",
-  "ONBOARDING_STEP_NOT_PENDING",
-  "ONBOARDING_BOOKING_HAS_CASE",
+  API_ERROR_CODES.ONBOARDING_GATE_BLOCKED,
+  API_ERROR_CODES.ONBOARDING_CASE_NOT_OPEN,
+  API_ERROR_CODES.ONBOARDING_CASE_CLOSED,
+  API_ERROR_CODES.ONBOARDING_STEP_NOT_REACHED,
+  API_ERROR_CODES.ONBOARDING_STEP_BEHIND_GATE,
+  API_ERROR_CODES.ONBOARDING_STEP_WAIVED,
+  API_ERROR_CODES.ONBOARDING_STEP_NOT_PENDING,
+  API_ERROR_CODES.ONBOARDING_BOOKING_HAS_CASE,
 ] as const;
 export type OnboardingConflictCode = (typeof ONBOARDING_CONFLICT_CODES)[number];
 
@@ -502,10 +503,10 @@ export interface OnboardingIntakeAdminView {
  * INTAKE_ANSWERS_INVALID is a 400 with `errors: [{ field, messages[] }]`.
  */
 export const INTAKE_ERROR_CODES = [
-  "INTAKE_SECTION_LOCKED",
-  "INTAKE_ORDER_NOT_READY",
-  "INTAKE_SECTION_NOT_REVIEWABLE",
-  "INTAKE_ANSWERS_INVALID",
+  API_ERROR_CODES.INTAKE_SECTION_LOCKED,
+  API_ERROR_CODES.INTAKE_ORDER_NOT_READY,
+  API_ERROR_CODES.INTAKE_SECTION_NOT_REVIEWABLE,
+  API_ERROR_CODES.INTAKE_ANSWERS_INVALID,
 ] as const;
 export type IntakeErrorCode = (typeof INTAKE_ERROR_CODES)[number];
 
@@ -561,7 +562,9 @@ export interface OnboardingSignOffRequest {
 }
 
 /** The only 409 code the tenant-side endpoints return. */
-export const TENANT_ONBOARDING_CONFLICT_CODES = ["ONBOARDING_SIGN_OFF_NOT_AVAILABLE"] as const;
+export const TENANT_ONBOARDING_CONFLICT_CODES = [
+  API_ERROR_CODES.ONBOARDING_SIGN_OFF_NOT_AVAILABLE,
+] as const;
 export type TenantOnboardingConflictCode = (typeof TENANT_ONBOARDING_CONFLICT_CODES)[number];
 
 /** Customer-facing stage names — web and mobile render the same words (#2159 S4). */
@@ -596,7 +599,7 @@ export function tenantOnboardingSummary(o: TenantOnboardingView | null | undefin
 export function tenantOnboardingSignOffErrorCopy(err: unknown): string {
   const res = (err as { response?: { status?: number; data?: { code?: string } } } | null)
     ?.response;
-  if (res?.data?.code === "ONBOARDING_SIGN_OFF_NOT_AVAILABLE") {
+  if (res?.data?.code === API_ERROR_CODES.ONBOARDING_SIGN_OFF_NOT_AVAILABLE) {
     return "Sign-off isn't open yet. Your onboarding lead will let you know when it is.";
   }
   if (res?.status === 403) {

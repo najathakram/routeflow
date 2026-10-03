@@ -3,6 +3,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { ProductsService } from "../products/products.service";
 import { ProductAliasService } from "./product-alias.service";
 import { roundMoney } from "@routeflow/pricing";
+import { assertSafeProductCategory } from "../common/text-cell-guards";
+import { isFormulaLedText } from "../common/safe-text-cell";
 import { lockBarcodeCodes, syncProductBarcodesFromLegacy } from "../products/product-catalog-sync";
 
 /** Default gross margin for a brand-new product's list price: cost × (1 + margin). */
@@ -46,7 +48,8 @@ export class VariantResolutionService {
       priceTier3: parent.priceTier3.toString(),
       priceTier4: parent.priceTier4.toString(),
       priceTier5: parent.priceTier5.toString(),
-      category: parent.category ?? undefined,
+      // B990: a legacy formula-led parent category is NEUTRALISED (the variant simply carries none), never copied and never a refusal
+      category: parent.category && !isFormulaLedText(parent.category) ? parent.category : undefined,
       unitsPerBox: parent.unitsPerBox ?? undefined,
       costingMethod: parent.costingMethod,
       standardCost: parent.standardCost != null ? parent.standardCost.toString() : undefined,
@@ -134,6 +137,9 @@ export class VariantResolutionService {
     return this.prisma.tenantTransaction(async (tx: any) => {
       const product = await tx.product.findUnique({ where: { id } });
       if (!product) throw new NotFoundException("Product not found");
+      // B990: the confirmed free-text category is written verbatim; change-only against the stored text
+      if (dto.category !== undefined)
+        assertSafeProductCategory(dto.category, product.category ?? null);
       await lockBarcodeCodes(tx, tenantId, [product.barcode]);
       const row = await tx.product.update({
         where: { id },

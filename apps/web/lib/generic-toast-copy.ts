@@ -40,7 +40,8 @@ const CODE_COPY: Record<string, string> = {
   MERGE_IN_PROGRESS: "Another change for this customer is in progress. Try again in a moment.",
   LOCK_UNAVAILABLE: "This is busy right now. Try again in a moment.",
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
-  [API_ERROR_CODES.DUPLICATE_VENDOR_BILL]: "That vendor bill already exists.",
+  [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
+    "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
@@ -79,6 +80,51 @@ function statusCopy(status: number): string {
  */
 const STOCK_COPY = "Some items aren't available in that quantity.";
 
+const usd = (n: unknown): string | null =>
+  typeof n === "number" && Number.isFinite(n) && n >= 0 ? `$${n.toFixed(2)}` : null;
+
+/** A payment's allocations add up to more than the payment: the two amounts come from structured body fields. */
+function allocationsCopy(data: Record<string, unknown>): string {
+  const allocated = usd(data.allocatedTotal);
+  const total = usd(data.totalAmount);
+  const lead =
+    allocated && total
+      ? `The allocations add up to ${allocated}, more than the ${total} payment.`
+      : "The allocations add up to more than the payment.";
+  return `${lead} Lower an allocation or raise the payment amount.`;
+}
+
+/**
+ * A duplicate vendor bill (document identity: same supplier invoice number, or the same scanned lines): points at the EXISTING
+ * bill from the structured `duplicate` payload. It never suggests changing the invoice number, which would defeat the guard.
+ */
+const BILL_NUMBER = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,39}$/;
+function duplicateBillCopy(data: Record<string, unknown>): string {
+  const dup = (data.duplicate ?? {}) as { billNumber?: unknown; status?: unknown };
+  const number =
+    typeof dup.billNumber === "string" && BILL_NUMBER.test(dup.billNumber) ? dup.billNumber : null;
+  if (!number) return "This bill is already recorded. Open the existing bill instead.";
+  return dup.status === "DRAFT"
+    ? `This bill is already saved as draft ${number}. Open it to finish receiving instead of creating a second bill.`
+    : `This bill is already recorded as ${number}. Open it instead.`;
+}
+
+/** Receiving a bill with unlinked lines (or no lines): says what to do next. The line list is the caller's dialog, not toast text. */
+function unlinkedCopy(data: Record<string, unknown>): string {
+  return Array.isArray(data.unlinkedItems) && data.unlinkedItems.length === 0
+    ? "This bill has no line items, so receiving it won't update inventory or costs. Add the lines first."
+    : "Some bill lines aren't linked to a product, so they won't update inventory or costs. Link them, or confirm to receive the bill anyway.";
+}
+
+/** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
+const DUPLICATE_NAME =
+  /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
+const DUPLICATE_FIELD: Record<string, string> = {
+  "SKU already exists": "That SKU is already used by another product. Use a different SKU.",
+  "Barcode already exists":
+    "That barcode is already used by another product. Use a different barcode.",
+};
+
 /** A server sentence that is already product text, matched WHOLE against the two closed tables. */
 function sentenceForMessage(data: Record<string, unknown>): string | null {
   const message = data.message;
@@ -87,6 +133,10 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
     return KNOWN_SERVER_SENTENCES[message];
   if (Object.prototype.hasOwnProperty.call(KNOWN_REFUSAL_SENTENCES, message))
     return KNOWN_REFUSAL_SENTENCES[message];
+  if (Object.prototype.hasOwnProperty.call(DUPLICATE_FIELD, message))
+    return DUPLICATE_FIELD[message];
+  const dup = DUPLICATE_NAME.exec(message);
+  if (dup) return `A ${dup[1]} with that name already exists. Choose a different name.`;
   return null;
 }
 
@@ -108,6 +158,10 @@ export function genericToastCopy(err: unknown): string {
   if (code === API_ERROR_CODES.ADDON_GATE) return PLAN_COPY;
   if (code === API_ERROR_CODES.READ_ONLY) return READ_ONLY_COPY;
   if (code === API_ERROR_CODES.INSUFFICIENT_STOCK) return STOCK_COPY;
+  // B986: coded refusals whose server sentence tells the user what to fix; the numbers come from STRUCTURED fields.
+  if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
+  if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
+  if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];

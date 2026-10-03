@@ -50,6 +50,7 @@ import { toEffectiveFeature } from "../billing/feature-resolver.service";
 import type { FeaturePreviewRequest } from "@routeflow/types";
 import { AdminAuditAction } from "./audit-actions.constant";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
+import { API_ERROR_CODES } from "../common/api-error-codes";
 
 @ApiTags("platform-admin")
 @ApiBearerAuth()
@@ -455,7 +456,7 @@ export class PlatformAdminController {
       if (hasUnexplained && !(dto.force && dto.reason)) {
         throw new ConflictException({
           statusCode: 409,
-          code: "UNEXPLAINED_DIFFS",
+          code: API_ERROR_CODES.UNEXPLAINED_DIFFS,
           message:
             "Unexplained FeatureResolverDiff rows exist — explain them, or pass {force:true, reason} to override.",
         });
