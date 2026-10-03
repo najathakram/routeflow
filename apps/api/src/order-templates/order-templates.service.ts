@@ -33,7 +33,6 @@ import {
 import type { CategoryTaxType } from "@routeflow/pricing";
 import { taxRateFractionFrom } from "../common/tax-rate";
 import { decrementStockForSale, stockWriteOf, withStockWrite } from "../orders/order-stock";
-import { RESPONSE_LINE_ITEMS } from "../orders/order-edit-cancelled";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import { assertMoneyInvariantsOrThrow } from "../common/money-invariants.util";
@@ -809,7 +808,7 @@ export class OrderTemplatesService {
           lineItems: { create: lineItemsData },
         },
         include: {
-          lineItems: RESPONSE_LINE_ITEMS, // B975: the pack + a stable order, so the buyer Reorder can attribute
+          lineItems: { include: { product: { select: { id: true, name: true, unit: true } } } },
           customer: { select: { id: true, businessName: true } },
         },
       });

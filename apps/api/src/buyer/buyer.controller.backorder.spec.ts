@@ -365,12 +365,39 @@ describe("BuyerController backorderPieces on the response (SA-606o)", () => {
       templates.generateOrder.mockResolvedValue(order);
       rowsOf({});
       await expect(controller.reorderFromTemplate("t-1", CTX as any)).resolves.toBe(order);
+      // the created order is tried FIRST, then the survivor (a version that skips either read is red)
+      expect(orders.findOne.mock.calls.map((c) => c[0])).toEqual(["o-new", "o-old"]);
     });
 
     it("(v) a lowering edit between the sweep and the re-read (lost write): the key is omitted on the whole order", async () => {
+      const sweptOrder = swept("o-new");
+      templates.generateOrder.mockResolvedValue(sweptOrder);
+      const fresh = orderOf("o-new", [["c1", "p", 2]]);
+      rowsOf({ "o-new": fresh });
+      const res = await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(res).toBe(fresh); // the FRESH re-read row came back, not the swept order handed in
+      expect(res).not.toBe(sweptOrder);
+      expect(noKey(res)).toBe(true);
+    });
+
+    it("the Reorder's re-read runs as the BUYER (customer role, tenant of the request), never as staff", async () => {
       templates.generateOrder.mockResolvedValue(swept("o-new"));
-      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 2]]) });
-      expect(noKey(await controller.reorderFromTemplate("t-1", CTX as any))).toBe(true);
+      rowsOf({ "o-new": orderOf("o-new", [["c1", "p", 8]]) });
+      await controller.reorderFromTemplate("t-1", CTX as any);
+      expect(orders.findOne).toHaveBeenCalledWith(
+        "o-new",
+        expect.objectContaining({ role: "CUSTOMER", type: "BUYER", tenantId: CTX.tenantId }),
+      );
+    });
+
+    it("a BOXED Reorder line sizes the same as the decrement did (2 cases of 12 = 24 pieces, overshoot 20): the figure needs the re-read row's pack", async () => {
+      templates.generateOrder.mockResolvedValue(
+        withStockWrite(orderOf("o-new", []), { ...write([["p", 20]]), orderId: "o-new" }),
+      );
+      // the findOne row carries the product pack (the decrement's own fallback); without it the line is unsizable
+      const boxed = { ...line("c1", "p", 2), product: { id: "p", unitsPerBox: 12 } };
+      rowsOf({ "o-new": { id: "o-new", skipAutoMerge: false, lineItems: [boxed] } });
+      expect(figures(await controller.reorderFromTemplate("t-1", CTX as any))).toEqual([20]);
     });
 
     it("a non-NotFound failure on the created read is UNKNOWN: the order comes back untouched and the survivor is NOT read", async () => {

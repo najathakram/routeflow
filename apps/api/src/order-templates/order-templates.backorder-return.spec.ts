@@ -28,8 +28,6 @@ import { SellingRestrictionsService } from "../selling-restrictions/selling-rest
 import { AuditService } from "../audit/audit.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import { decrementStockForSale, stockWriteOf } from "../orders/order-stock";
-import { withBackorderPieces } from "../orders/backorder-response";
-import * as cancelledLines from "../orders/order-edit-cancelled";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
@@ -172,19 +170,12 @@ describe("OrderTemplatesService returns the locked write (B975)", () => {
     expect(JSON.stringify(order)).not.toMatch(/backorder/i);
   });
 
-  it("the created order's lines are read with the shared include (the pack + a stable order)", async () => {
+  it("the created order's lines keep master's narrow product select: the Reorder's pack comes from the findOne re-read, so staff and cron responses are unchanged", async () => {
     await build();
     await service.generateOrder("t1", false, true);
-    const include = (prisma.order.create as jest.Mock).mock.calls[0][0].include;
-    expect(include.lineItems).toBe(cancelledLines.RESPONSE_LINE_ITEMS);
-  });
-
-  it("a BOXED template line: the response demand equals the decrement's pieces (2 cases of 12 = 24; overshoot 4)", async () => {
-    await build({ pack: 12, qty: 2 });
-    decrement.mockResolvedValue(write(4)); // 24 pieces against stock 20
-    const order: any = await service.generateOrder("t1", false, true);
-    const response: any = withBackorderPieces(order, stockWriteOf(order));
-    expect(response.lineItems.map((l: any) => l.backorderPieces)).toEqual([4]);
+    const lineItems = (prisma.order.create as jest.Mock).mock.calls[0][0].include.lineItems;
+    expect(lineItems.include.product.select).toEqual({ id: true, name: true, unit: true });
+    expect(lineItems.orderBy).toBeUndefined();
   });
 
   it("the staff manual run returns no figure on the wire (the service carries it, nothing maps it)", async () => {
