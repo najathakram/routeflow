@@ -279,6 +279,9 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
   );
 }
 
+/** An unknown KPI (failed or unanswered request) reads "—", never a zero that looks like data. */
+const UNKNOWN_KPI = "—";
+
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
 
 function OverdueInvoicesPanel({
@@ -576,11 +579,30 @@ export default function DashboardPage() {
 
   // ── Data fetching ──
   const POLL = { refetchInterval: 30_000 };
-  const {
-    data: allOrdersData,
-    isLoading: ordersLoading,
-    isError: ordersError,
-  } = useOrders({ page: 1, limit: 100 }, { ...POLL, enabled: readsBusinessData });
+  // REG-B1015: the order KPIs are the server's own per-status `meta.total` (limit 1 — we only want the
+  // count), never a count over the newest 100 rows, which stalled every figure at 100.
+  const pendingQ = useOrders(
+    { page: 1, limit: 1, status: "PENDING" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  const confirmedQ = useOrders(
+    { page: 1, limit: 1, status: "CONFIRMED" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  const outForDeliveryQ = useOrders(
+    { page: 1, limit: 1, status: "OUT_FOR_DELIVERY" },
+    { ...POLL, enabled: readsBusinessData },
+  );
+  // The pipeline strip (operator only) also shows the two terminal states.
+  const deliveredQ = useOrders(
+    { page: 1, limit: 1, status: "DELIVERED" },
+    { ...POLL, enabled: readsBusinessData && isOperator },
+  );
+  const cancelledQ = useOrders(
+    { page: 1, limit: 1, status: "CANCELLED" },
+    { ...POLL, enabled: readsBusinessData && isOperator },
+  );
+  const ordersLoading = pendingQ.isLoading || confirmedQ.isLoading || outForDeliveryQ.isLoading;
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
     { urgent: true, limit: 5 },
     { ...POLL, enabled: readsBusinessData },
@@ -602,6 +624,11 @@ export default function DashboardPage() {
     { page: 1, limit: 20 },
     { ...POLL, enabled: routesAccess },
   );
+  // Exact count of ACTIVE drivers (the list above is one page of 20 and was being counted client-side).
+  const activeDriversQ = useDrivers(
+    { page: 1, limit: 1, status: "ACTIVE" },
+    { ...POLL, enabled: routesAccess },
+  );
   const { data: lowStockData, isLoading: lowStockLoading } = useProducts(
     { isActive: true, stockStatus: "LOW", limit: 5 },
     POLL,
@@ -616,30 +643,34 @@ export default function DashboardPage() {
   );
 
   // ── KPI calculations ──
-  const activeOrders = React.useMemo(() => {
-    const activeStatuses = ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY"];
-    return (allOrdersData?.data ?? []).filter((o) => activeStatuses.includes(o.status)).length;
-  }, [allOrdersData]);
+  // An UNKNOWN figure (the request failed, or never answered) is null and renders "—", never a zero
+  // (the customer page's CreditLimitPanel rule). Counts are server totals, so they are exact.
+  const total = (q: { data?: { meta?: { total?: number } } }): number | null => {
+    const n = q.data?.meta?.total;
+    return typeof n === "number" && Number.isFinite(n) ? n : null;
+  };
+  const sumKnown = (parts: Array<number | null>): number | null =>
+    parts.some((n) => n === null) ? null : parts.reduce<number>((a, n) => a + (n as number), 0);
+  const orderPipeline = {
+    PENDING: total(pendingQ),
+    CONFIRMED: total(confirmedQ),
+    OUT_FOR_DELIVERY: total(outForDeliveryQ),
+    DELIVERED: total(deliveredQ),
+    CANCELLED: total(cancelledQ),
+  };
+  const activeOrders = sumKnown([
+    orderPipeline.PENDING,
+    orderPipeline.CONFIRMED,
+    orderPipeline.OUT_FOR_DELIVERY,
+  ]);
 
-  const orderPipeline = React.useMemo(() => {
-    const all = allOrdersData?.data ?? [];
-    return {
-      PENDING: all.filter((o) => o.status === "PENDING").length,
-      CONFIRMED: all.filter((o) => o.status === "CONFIRMED").length,
-      OUT_FOR_DELIVERY: all.filter((o) => o.status === "OUT_FOR_DELIVERY").length,
-      DELIVERED: all.filter((o) => o.status === "DELIVERED").length,
-      CANCELLED: all.filter((o) => o.status === "CANCELLED").length,
-    };
-  }, [allOrdersData]);
-
-  const routesToday = routeRunsData?.meta?.total ?? 0;
-  const driversOnRoad = React.useMemo(
-    () => (driversData?.data ?? []).filter((d: Driver) => d.status === "ACTIVE").length,
-    [driversData],
-  );
-  const lowStockTotal = lowStockData?.meta?.total ?? 0;
-  const todayRevenue = financeData?.summaryTable?.today?.sales ?? 0;
-  const overdueCount = overdueData?.meta?.total ?? 0;
+  const routesToday = total({ data: routeRunsData });
+  const driversOnRoad = total(activeDriversQ);
+  const lowStockTotal = total({ data: lowStockData });
+  const revenueRaw = financeData?.summaryTable?.today?.sales;
+  const todayRevenue =
+    typeof revenueRaw === "number" && Number.isFinite(revenueRaw) ? revenueRaw : null;
+  const overdueCount = total({ data: overdueData });
   const overdueInvoices = overdueData?.data ?? [];
   const lowStockProducts: Product[] = lowStockData?.data ?? [];
 
@@ -754,7 +785,11 @@ export default function DashboardPage() {
             <Link href="/finance" className="block">
               <StatCard
                 label="Today's Revenue"
-                value={`$${Number(todayRevenue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                value={
+                  todayRevenue === null
+                    ? UNKNOWN_KPI
+                    : `$${todayRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                }
                 icon={<DollarSign className="h-5 w-5 text-success" />}
                 className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
               />
@@ -767,13 +802,15 @@ export default function DashboardPage() {
             <Link href="/invoices?status=OVERDUE" className="block">
               <StatCard
                 label="Overdue Invoices"
-                value={overdueCount}
+                value={overdueCount ?? UNKNOWN_KPI}
                 icon={
-                  <FileMinus className={cn("h-5 w-5", overdueCount > 0 ? "text-danger" : "")} />
+                  <FileMinus
+                    className={cn("h-5 w-5", (overdueCount ?? 0) > 0 ? "text-danger" : "")}
+                  />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  overdueCount > 0 ? "ring-1 ring-inset ring-danger/20" : "",
+                  (overdueCount ?? 0) > 0 ? "ring-1 ring-inset ring-danger/20" : "",
                 )}
               />
             </Link>
@@ -784,7 +821,7 @@ export default function DashboardPage() {
           <Link href="/orders" className="block">
             <StatCard
               label="Active Orders"
-              value={activeOrders}
+              value={activeOrders ?? UNKNOWN_KPI}
               icon={<ShoppingCart className="h-5 w-5" />}
               className="cursor-pointer transition-shadow hover:shadow-md"
             />
@@ -798,7 +835,7 @@ export default function DashboardPage() {
             <Link href="/routes" className="block">
               <StatCard
                 label="Scheduled Routes"
-                value={routesToday}
+                value={routesToday ?? UNKNOWN_KPI}
                 icon={<MapPin className="h-5 w-5" />}
                 className="cursor-pointer transition-shadow hover:shadow-md"
               />
@@ -812,11 +849,13 @@ export default function DashboardPage() {
             <Link href="/drivers" className="block">
               <StatCard
                 label="Active Drivers"
-                value={driversOnRoad}
-                icon={<Truck className={cn("h-5 w-5", driversOnRoad > 0 && "text-success")} />}
+                value={driversOnRoad ?? UNKNOWN_KPI}
+                icon={
+                  <Truck className={cn("h-5 w-5", (driversOnRoad ?? 0) > 0 && "text-success")} />
+                }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  driversOnRoad > 0 ? "ring-1 ring-inset ring-success/20" : "",
+                  (driversOnRoad ?? 0) > 0 ? "ring-1 ring-inset ring-success/20" : "",
                 )}
               />
             </Link>
@@ -828,15 +867,15 @@ export default function DashboardPage() {
             <Link href="/products?lowStock=true" className="block">
               <StatCard
                 label="Low Stock Items"
-                value={lowStockTotal}
+                value={lowStockTotal ?? UNKNOWN_KPI}
                 icon={
                   <AlertTriangle
-                    className={cn("h-5 w-5", lowStockTotal > 0 ? "text-warning" : "")}
+                    className={cn("h-5 w-5", (lowStockTotal ?? 0) > 0 ? "text-warning" : "")}
                   />
                 }
                 className={cn(
                   "cursor-pointer transition-shadow hover:shadow-md",
-                  lowStockTotal > 0 ? "ring-1 ring-inset ring-warning/20" : "",
+                  (lowStockTotal ?? 0) > 0 ? "ring-1 ring-inset ring-warning/20" : "",
                 )}
               />
             </Link>
@@ -879,16 +918,16 @@ export default function DashboardPage() {
                 href={`/orders?status=${key}`}
                 className={cn(
                   "flex flex-col gap-1 px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
-                  bg && orderPipeline[key] > 0 && bg,
+                  bg && (orderPipeline[key] ?? 0) > 0 && bg,
                 )}
               >
                 <span
                   className={cn(
                     "text-xl font-semibold tabular-nums",
-                    orderPipeline[key] > 0 ? color : "text-navy/20",
+                    (orderPipeline[key] ?? 0) > 0 ? color : "text-navy/20",
                   )}
                 >
-                  {orderPipeline[key]}
+                  {orderPipeline[key] ?? UNKNOWN_KPI}
                 </span>
                 <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
               </Link>
@@ -913,7 +952,7 @@ export default function DashboardPage() {
           {/* Overdue invoices action list */}
           <OverdueInvoicesPanel
             invoices={overdueInvoices}
-            totalCount={overdueCount}
+            totalCount={overdueCount ?? 0}
             isLoading={overdueLoading}
           />
         </div>
@@ -1059,7 +1098,7 @@ export default function DashboardPage() {
               {/* Low stock items */}
               <LowStockPanel
                 products={lowStockProducts}
-                total={lowStockTotal}
+                total={lowStockTotal ?? 0}
                 isLoading={lowStockLoading}
               />
             </div>

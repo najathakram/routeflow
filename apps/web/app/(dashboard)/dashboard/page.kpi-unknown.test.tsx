@@ -1,0 +1,146 @@
+import * as React from "react";
+import { renderWithProviders, screen } from "@/test-utils/render";
+import DashboardPage from "./page";
+
+// REG-B1015: a KPI whose query failed (or never answered) rendered as $0.00 / 0, indistinguishable from
+// a real zero, and the order KPIs were counted from the newest 100 orders, so they stalled at 100.
+// Like the customer page's CreditLimitPanel, an unknown figure is "—", never a zero; and the counts come
+// from the server's own `meta.total` (exact), never from counting a capped list.
+
+jest.mock("next/navigation", () => ({
+  ...jest.requireActual("next/navigation"),
+  useRouter: () => ({ push: jest.fn(), replace: jest.fn(), prefetch: jest.fn() }),
+  usePathname: () => "/dashboard",
+}));
+jest.mock("@/lib/auth-context", () => ({
+  ...jest.requireActual("@/lib/auth-context"),
+  useAuth: () => ({ user: { role: "OPERATOR" } }),
+}));
+jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
+jest.mock("@/lib/api/addons", () => ({
+  useRoutesAccess: () => ({ enabled: true, resolved: true }),
+  useDeliveryAccess: () => ({ enabled: false, resolved: true }),
+}));
+jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
+jest.mock("@/lib/api-client", () => ({
+  ...jest.requireActual("@/lib/api-client"),
+  apiClient: { get: jest.fn().mockResolvedValue({ data: {} }) },
+}));
+
+type Mode = "ok" | "loading" | "error";
+let mode: Mode = "ok";
+// A tenant with 250 PENDING, 30 CONFIRMED and 5 OUT_FOR_DELIVERY orders: far past the old 100 cap.
+const TOTALS: Record<string, number> = {
+  PENDING: 250,
+  CONFIRMED: 30,
+  OUT_FOR_DELIVERY: 5,
+  DELIVERED: 400,
+  CANCELLED: 12,
+};
+const state = () =>
+  mode === "loading"
+    ? { data: undefined, isLoading: true, isError: false }
+    : mode === "error"
+      ? { data: undefined, isLoading: false, isError: true }
+      : null;
+const page = (total: number, rows: unknown[] = []) => ({
+  data: { data: rows, meta: { total, page: 1, limit: rows.length || 1, totalPages: 1 } },
+  isLoading: false,
+  isError: false,
+});
+
+jest.mock("@/lib/api/orders", () => ({
+  useOrders: (p: { status?: string; limit?: number }) => {
+    const s = state();
+    if (s) return s;
+    if (p?.status) return page(TOTALS[p.status]);
+    // the list queries (recent / urgent / the old limit-100 fetch): a capped window of the PENDING rows
+    const rows = Array.from({ length: p?.limit ?? 20 }, (_, i) => ({
+      id: `o${i}`,
+      orderNumber: `ORD-${i}`,
+      status: "PENDING",
+      urgent: false,
+      total: 1,
+      createdAt: "2026-10-01T00:00:00.000Z",
+      customer: { businessName: "Acme" },
+      lineItems: [],
+    }));
+    return page(250, rows);
+  },
+}));
+jest.mock("@/lib/api/finance", () => ({
+  useFinanceDashboard: () =>
+    state() ?? {
+      data: { summaryTable: { today: { sales: 1234.5 } }, arAging: null },
+      isLoading: false,
+      isError: false,
+    },
+}));
+jest.mock("@/lib/api/invoices", () => ({
+  useInvoices: () => state() ?? page(7),
+}));
+jest.mock("@/lib/api/routes", () => ({ useRouteRuns: () => state() ?? page(3) }));
+jest.mock("@/lib/api/drivers", () => ({
+  useDrivers: (p: { status?: string }) => state() ?? (p?.status === "ACTIVE" ? page(41) : page(60)),
+}));
+jest.mock("@/lib/api/products", () => ({ useProducts: () => state() ?? page(9) }));
+
+// The StatCard label (the uppercase <p>), not a panel heading of the same words.
+const tile = (label: string) =>
+  screen
+    .getAllByText(label)
+    .find((el) => el.tagName === "P" && el.className.includes("uppercase"))!
+    .closest("[class*='rounded-card']") as HTMLElement;
+
+describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
+  beforeEach(() => {
+    mode = "ok";
+  });
+
+  it("counts orders exactly past 100: Active Orders is the server totals, not a capped list", () => {
+    renderWithProviders(<DashboardPage />);
+    // 250 + 30 + 5. The old code counted the newest 100 rows and read 100.
+    expect(tile("Active Orders")).toHaveTextContent("285");
+    // the pipeline strip uses the same exact counts
+    expect(screen.getByText("Out for Delivery").previousSibling).toHaveTextContent("5");
+    expect(screen.getByText("Delivered").previousSibling).toHaveTextContent("400");
+  });
+
+  it("Active Drivers is the server's ACTIVE total, not a count over the first 20 drivers", () => {
+    renderWithProviders(<DashboardPage />);
+    expect(tile("Active Drivers")).toHaveTextContent("41");
+  });
+
+  it("shows real figures when everything loads (control)", () => {
+    renderWithProviders(<DashboardPage />);
+    expect(tile("Today's Revenue")).toHaveTextContent("$1,234.50");
+    expect(tile("Overdue Invoices")).toHaveTextContent("7");
+    expect(tile("Scheduled Routes")).toHaveTextContent("3");
+    expect(tile("Low Stock Items")).toHaveTextContent("9");
+  });
+
+  it("a failed query shows — on every KPI, never $0.00 or 0", () => {
+    mode = "error";
+    renderWithProviders(<DashboardPage />);
+    for (const label of [
+      "Today's Revenue",
+      "Overdue Invoices",
+      "Active Orders",
+      "Scheduled Routes",
+      "Active Drivers",
+      "Low Stock Items",
+    ]) {
+      const t = tile(label);
+      expect(t).toHaveTextContent("—");
+      expect(t).not.toHaveTextContent("$0.00");
+      expect(t.querySelector("p:nth-of-type(2)")?.textContent).toBe("—");
+    }
+  });
+
+  it("while loading, no KPI tile claims a figure", () => {
+    mode = "loading";
+    renderWithProviders(<DashboardPage />);
+    expect(screen.queryAllByText("Today's Revenue")).toHaveLength(0);
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+});
