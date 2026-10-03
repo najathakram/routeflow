@@ -1287,3 +1287,17 @@ Format: `## <date> <anchor>` then `- what:` `- cause:` `- guard:` `- rule:` (opt
 - cause: The old argument parser looked only for `--dry-run`, `--json` and `--quiet`, ignored every other argument, and defaulted to writing.
 - guard: #2616 (`b13f29c93`): `parseArgs` in `scripts/work/reconcile.mjs` rejects any unknown argument (exit 2 with the usage, nothing written, decided before the lock, the log or any gh call), a bare run is a DRY RUN, and writing needs an explicit `--apply`: `npm run work:reconcile` is the dry run and `npm run work:reconcile:apply` writes (`docs/work/WORKFLOW.md` states it). B973 tracks the follow-up self-test hardening (a temp ROOT, `--help --apply` and `--apply=1` cases).
 - rule: A command that writes shared state needs an explicit opt-in flag and an allow-list parser; a help or typo path must never reach the writer, and "I only wanted the usage" is not a safe assumption about any script.
+
+## 2026-10-02 #3062
+
+- what: Marked 14 bugs already-fixed and landed it; master's `bugs.mjs self-test` (T13b/R9, `sync --check`) went red and every lane's pre-push with it, until #3067 set `closed: yes` on those 14 records.
+- cause: `move` + `already-fixed` write the ledger, but each record's `closed:` flag only changes in the refresh (`sync`); the checks run before the commit were campaign-check and the validators, none of which compares records with the ledger.
+- guard: before committing bug-registry bookkeeping run `node scripts/campaign/bugs.mjs sync`, then `sync --check` (read-only) and `self-test`; L-193 carries the recurrence note.
+- rule: A check that passes does not cover what it was not written to look at; name the invariant a change can break and run the check that owns it.
+
+## 2026-10-02 #3063
+
+- what: Docs-only pushes from a worktree with no `npm ci` were refused by the new pre-push size-ratchet gate ("cannot resolve jest from apps/api"), even under an audited `SKIP_VERIFY`.
+- cause: #3063's gate runs on every push ahead of the `SKIP_VERIFY` hatch and needs jest resolvable from `apps/api`; a fresh worktree has no installed tree.
+- guard: for a docs-only push (and commit: lint-staged needs prettier) link the main checkout's `node_modules` into the worktree, push, then remove the link; never `HUSKY=0` or `--no-verify`. L-254 states the worktree hook rules.
+- rule: A gate placed before the escape hatch needs its install precondition written down where the hatch is documented.
