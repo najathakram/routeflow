@@ -58,6 +58,59 @@ export function summarizeCollections(entries: CollectionEntry[]): SettlementSumm
   return { byMethod, cashTotal, total, count: entries.length };
 }
 
+export interface SettlementRow {
+  method: CollectedMethod;
+  amount: number;
+  /**
+   * "server": the run's own `collectedPayments` aggregate, the SAME source as the total the driver
+   * reconciles against. "device": this device's tally (the offline fallback, or a method the server
+   * aggregate does not cover).
+   */
+  basis: "server" | "device";
+}
+
+export interface SettlementRows {
+  /** The reconciliation table: CASH and CHECK only, the physical money the total is made of. */
+  rows: SettlementRow[];
+  /** Methods the server total does not cover (card, Zelle, advance, other): info only, this device's tally. */
+  deviceOnly: SettlementRow[];
+  /** True once the run's `collectedPayments` has loaded; until then every figure is this device's tally. */
+  serverLoaded: boolean;
+}
+
+/**
+ * B1008 (SA-644): the settlement screen's rows. CASH and CHECK come from the server's
+ * `collectedPayments` whenever it has loaded, so they always sum to `expectedPhysicalCash` (the total
+ * shown beside them) and cannot disagree after a sign-out, a reinstall, a second device or an offline
+ * payment the server has not seen yet. Before the payload loads they fall back to this device's tally
+ * (basis "device", `serverLoaded` false, and the screen disables closing). Card, Zelle, advance and
+ * other are NOT part of the cash settlement: they are returned separately, from this device, for an
+ * info list. Pure: it only picks between already-final amounts, it never re-derives one.
+ */
+export function buildSettlementRows(
+  collected: { cashTotal: number; checkTotal?: number; count?: number } | null | undefined,
+  entries: CollectionEntry[],
+): SettlementRows {
+  const local = summarizeCollections(entries).byMethod;
+  const rows: SettlementRow[] = [];
+  const deviceOnly: SettlementRow[] = [];
+  for (const method of COLLECTED_METHODS) {
+    const physical = method === "CASH" || method === "CHECK";
+    let amount = local[method] ?? 0;
+    let basis: SettlementRow["basis"] = "device";
+    if (collected && method === "CASH") {
+      amount = collected.cashTotal;
+      basis = "server";
+    } else if (collected && method === "CHECK") {
+      amount = collected.checkTotal ?? 0;
+      basis = "server";
+    }
+    if (!amount) continue;
+    (physical ? rows : deviceOnly).push({ method, amount: roundMoney(amount), basis });
+  }
+  return { rows, deviceOnly, serverLoaded: expectedPhysicalCash(collected) != null };
+}
+
 /** counted - expected, cents-rounded. Positive = over, negative = short. */
 export function computeVariance(expectedCash: number, countedCash: number): number {
   return roundMoney(countedCash - expectedCash);
