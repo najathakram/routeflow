@@ -15,6 +15,7 @@ import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibil
 import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
+import { resolveFulfillPath } from "../common/fulfill-path-default";
 import { withAfterCommit } from "../common/after-commit";
 import { InlineReturnsService } from "../returns/inline-returns.service";
 import * as inlineReturn from "./order-inline-return";
@@ -245,7 +246,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // #2094: optional so unrelated specs build; `inlineReturn` without it fails closed.
     @Optional() private readonly inlineReturns?: InlineReturnsService,
     // #2717 M3: the `mixed_packs` mode read; absent = off (no composition work at all).
-    @Optional() private readonly featureConfig?: FeatureConfigService,
+    @Optional() readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -1599,10 +1600,9 @@ export class OrdersService implements OnApplicationBootstrap {
       select: { pricingTier: true, fulfillPath: true },
     });
     const defaultTier = customerRecord?.pricingTier ?? 1;
-    // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
-    // fall back to the customer's own default, else ROUTE (byte-identical to
-    // today for every existing order/customer, which default to ROUTE too).
-    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+    // The explicit dto value wins; else a ship-mode tenant (fulfilment_model) gets SHIP, else the
+    // customer's own default, else ROUTE (today's chain for every non-ship tenant).
+    const fulfillPath = await resolveFulfillPath(this, dto, customerRecord, user);
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.

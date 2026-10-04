@@ -60,6 +60,7 @@ import Link from "next/link";
 import { useTransactions, useRecordPayment, type Transaction } from "@/lib/api/bookkeeping";
 import { fmt, fmtCalendarDate, fmtDate } from "@/lib/formatting";
 import { useUrlPage, useClampPage } from "@/lib/hooks/useUrlPage";
+import { useFleetAccess } from "@/lib/api/addons";
 
 const CHART_COLORS = [
   "#3b82f6",
@@ -2300,6 +2301,16 @@ function FinanceReportsContent() {
     setTitle("Reports");
   }, [setTitle]);
   const { toast } = useToast();
+  // Fleet-off (no routes / delivery addon): there are no drivers, so no "Sales by Driver" report.
+  const { fleet } = useFleetAccess();
+  const reportGroups = React.useMemo(
+    () =>
+      REPORT_GROUPS.map((g) => ({
+        ...g,
+        reports: g.reports.filter((r) => fleet || r.id !== "sales-by-driver"),
+      })),
+    [fleet],
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const activeReport = searchParams.get("report") ?? "sales-by-customer";
@@ -2313,7 +2324,7 @@ function FinanceReportsContent() {
     searchParams.get("to") ?? new Date().toISOString().split("T")[0],
   );
 
-  const activeInfo = REPORT_GROUPS.flatMap((g) => g.reports).find((r) => r.id === activeReport);
+  const activeInfo = reportGroups.flatMap((g) => g.reports).find((r) => r.id === activeReport);
   const needsDates = !["ar-aging", "bad-debts", "customer-balance", "ledger"].includes(
     activeReport,
   );
@@ -2382,7 +2393,7 @@ function FinanceReportsContent() {
             <h2 className="text-sm font-semibold text-navy">All Reports</h2>
           </div>
           <div className="py-2">
-            {REPORT_GROUPS.map((group) => {
+            {reportGroups.map((group) => {
               const Icon = group.icon;
               return (
                 <div key={group.id} className="mb-1">

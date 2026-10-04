@@ -80,6 +80,7 @@ import {
 } from "@/lib/api/remittance";
 import { useTierLabels, useUpdateTierLabels, type TierLabelsConfig } from "@/lib/api/tier-labels";
 import { useAuth } from "@/lib/auth-context";
+import { useFleetAccess } from "@/lib/api/addons";
 import { changePassword, setPassword } from "@/lib/auth";
 import { RegulatedSettingsTab } from "./_components/RegulatedSettingsTab";
 import { NotificationsSettingsTab } from "./_components/NotificationsSettingsTab";
@@ -403,6 +404,8 @@ function AddUserModal({
   onCreated: (tempPassword: string) => void;
 }) {
   const createOperator = useCreateOperator();
+  // Fleet-off (no routes / delivery addon): there are no drivers to add, so no DRIVER role option.
+  const { fleet } = useFleetAccess();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
 
@@ -417,6 +420,10 @@ function AddUserModal({
     resolver: zodResolver(addUserSchema),
     defaultValues: { role: "DRIVER" },
   });
+
+  React.useEffect(() => {
+    if (!fleet) setValue("role", "OPERATOR");
+  }, [fleet, setValue]);
 
   const nameValue = watch("name") ?? "";
   React.useEffect(() => {
@@ -519,7 +526,7 @@ function AddUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -567,6 +574,8 @@ function EditUserModal({
 }) {
   const updateUser = useUpdateUser();
   const resetPassword = useResetUserPassword();
+  // Fleet-off: no DRIVER option — unless this user already IS a driver (never silently change a role).
+  const { fleet } = useFleetAccess();
   const { toast } = useToast();
   const [tempPassword, setTempPassword] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
@@ -660,7 +669,7 @@ function EditUserModal({
           <Select
             label="Role"
             options={[
-              { value: "DRIVER", label: "Driver" },
+              ...(fleet || user?.role === "DRIVER" ? [{ value: "DRIVER", label: "Driver" }] : []),
               { value: "OPERATOR", label: "Operator" },
             ]}
             register={register("role")}
@@ -1953,7 +1962,9 @@ function MyAccountTab() {
   });
 
   const googleLinked: boolean = me?.googleLinked ?? false;
-  const canToggleDriver = me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN";
+  // Fleet-off (no routes / delivery addon): nothing to drive, so no "Act as driver" switch.
+  const { fleet: hasFleet } = useFleetAccess();
+  const canToggleDriver = hasFleet && (me?.role === "OPERATOR" || me?.role === "TENANT_ADMIN");
   const toggleDriverPermit = useToggleDriverPermit();
 
   const handleLinkGoogle = async () => {

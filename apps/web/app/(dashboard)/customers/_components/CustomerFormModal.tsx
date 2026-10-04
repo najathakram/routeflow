@@ -12,6 +12,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
+import { useShipMode } from "@/lib/ship-mode";
 import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
@@ -197,6 +198,8 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // (the PATCH customer route has no agent field; assignment-open lives
   // inside the engine's create() only).
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no "Default fulfillment" picker; a new customer ships by carrier.
+  const ship = useShipMode();
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -307,7 +310,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: data.fulfillPath || "ROUTE",
+          fulfillPath: ship ? "SHIP" : data.fulfillPath || "ROUTE",
           notes: data.notes,
           addresses: [
             {
@@ -591,21 +594,23 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </label>
               </div>
             </div>
-            <div className="space-y-1">
-              <Select
-                label="Default fulfillment"
-                options={[
-                  { value: "ROUTE", label: "Delivery route" },
-                  { value: "SHIP", label: "Ship via carrier" },
-                ]}
-                register={register("fulfillPath")}
-              />
-              {watch("fulfillPath") === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            {!ship && (
+              <div className="space-y-1">
+                <Select
+                  label="Default fulfillment"
+                  options={[
+                    { value: "ROUTE", label: "Delivery route" },
+                    { value: "SHIP", label: "Ship via carrier" },
+                  ]}
+                  register={register("fulfillPath")}
+                />
+                {watch("fulfillPath") === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">
+                    Ships via carrier — won&apos;t appear on delivery routes.
+                  </p>
+                )}
+              </div>
+            )}
           </section>
 
           {/* ── Primary Delivery Address (add mode only) ─────────────────────── */}

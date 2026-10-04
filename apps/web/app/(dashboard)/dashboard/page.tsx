@@ -35,6 +35,9 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
+import { useShipMode } from "@/lib/ship-mode";
+import { OrderStatusBadge } from "@/components/OrderStatusBadge";
+import { orderStatusText } from "@/lib/order-status-label";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
@@ -133,7 +136,7 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <Badge status={row.original.status} />,
+    cell: ({ row }) => <OrderStatusBadge status={row.original.status} />,
   },
   {
     accessorKey: "createdAt",
@@ -516,6 +519,9 @@ export default function DashboardPage() {
   // here with no mode pill and no driver content.
   const { enabled: routesAccess, resolved: addonsResolved } = useRoutesAccess();
   const { enabled: deliveryAccess } = useDeliveryAccess();
+  // SHIP fulfilment mode: "Out for Delivery" reads "Shipped". (The route / driver cards below are already
+  // keyed on routesAccess, which a tenant with no fleet module never holds, so they stay hidden.)
+  const ship = useShipMode();
 
   const baseIsOperator =
     !user?.role ||
@@ -861,7 +867,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: "Out for Delivery",
+                label: orderStatusText("OUT_FOR_DELIVERY", ship, "Out for Delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",

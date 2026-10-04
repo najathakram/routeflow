@@ -83,6 +83,7 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
+import { useShipMode } from "@/lib/ship-mode";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -946,6 +947,8 @@ export function CreateOrderModal({
   const { user } = useAuth();
   const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
+  // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
+  const ship = useShipMode();
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -963,7 +966,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: fulfillPath ?? "ROUTE",
+      fulfillPath: ship ? "SHIP" : (fulfillPath ?? "ROUTE"),
     }),
     [
       selectedCustomer,
@@ -977,6 +980,7 @@ export function CreateOrderModal({
       floorAcked,
       commissionRatePct,
       fulfillPath,
+      ship,
     ],
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
@@ -1245,7 +1249,7 @@ export function CreateOrderModal({
         items: itemsForSubmit,
         notes: data.notes,
         urgent: data.urgent,
-        fulfillPath: data.fulfillPath || "ROUTE",
+        fulfillPath: ship ? "SHIP" : data.fulfillPath || "ROUTE",
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
@@ -2098,36 +2102,42 @@ export function CreateOrderModal({
               </div>
             )}
 
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
-              <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "ROUTE")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "ROUTE" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Delivery route
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setValue("fulfillPath", "SHIP")}
-                  className={cn(
-                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    fulfillPath === "SHIP" ? "bg-navy text-white" : "text-navy/70 hover:text-navy",
-                  )}
-                >
-                  Ship via carrier
-                </button>
+            {!ship && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
+                <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setValue("fulfillPath", "ROUTE")}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                      fulfillPath === "ROUTE"
+                        ? "bg-navy text-white"
+                        : "text-navy/70 hover:text-navy",
+                    )}
+                  >
+                    Delivery route
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setValue("fulfillPath", "SHIP")}
+                    className={cn(
+                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                      fulfillPath === "SHIP"
+                        ? "bg-navy text-white"
+                        : "text-navy/70 hover:text-navy",
+                    )}
+                  >
+                    Ship via carrier
+                  </button>
+                </div>
+                {fulfillPath === "SHIP" && (
+                  <p className="text-[11px] leading-snug text-navy/70">
+                    Ships via carrier — won&apos;t appear on delivery routes.
+                  </p>
+                )}
               </div>
-              {fulfillPath === "SHIP" && (
-                <p className="text-[11px] leading-snug text-navy/70">
-                  Ships via carrier — won&apos;t appear on delivery routes.
-                </p>
-              )}
-            </div>
+            )}
 
             <Textarea
               label="Notes"

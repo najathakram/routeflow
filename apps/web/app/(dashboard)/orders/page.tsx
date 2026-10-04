@@ -33,6 +33,8 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess } from "@/lib/api/addons";
+import { useShipMode } from "@/lib/ship-mode";
+import { orderStatusText } from "@/lib/order-status-label";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -332,6 +334,20 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
+  // SHIP fulfilment mode shows "Shipped" for Out for Delivery: display only.
+  const ship = useShipMode();
+  const savedViews = SAVED_VIEWS.map((v) => ({
+    ...v,
+    label: orderStatusText(
+      v.filters.status === "OUT_FOR_DELIVERY" ? "OUT_FOR_DELIVERY" : "",
+      ship,
+      v.label,
+    ),
+  }));
+  const statusOptions = STATUS_OPTIONS.map((o) => ({
+    ...o,
+    label: orderStatusText(o.value, ship, o.label),
+  }));
   // The bulk cancel shows its own single summary toast — no per-order global error toasts.
   const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
   const bulkDelete = useBulkDeleteOrders();
@@ -693,7 +709,7 @@ export default function OrdersPage() {
 
       {/* Saved view chips */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {SAVED_VIEWS.map((view) => {
+        {savedViews.map((view) => {
           const isActive = activeSavedView === view.id;
           // Only the counts we actually have from the loaded data are shown
           // (total for "All", urgent count for the urgent view); others omit
@@ -798,7 +814,7 @@ export default function OrdersPage() {
         </div>
         <div className="w-48">
           <Select
-            options={STATUS_OPTIONS}
+            options={statusOptions}
             value={statusFilter}
             onChange={(e) => setFilter("status", e.target.value)}
           />
@@ -1023,7 +1039,10 @@ export default function OrdersPage() {
                     {order.customer?.businessName ?? "—"}
                   </p>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                    <Badge
+                      status={order.status}
+                      label={orderStatusText(order.status, ship, orderStatusLabel(order.status))}
+                    />
                     {order.fulfillPath === "SHIP" && (
                       <span
                         title="Shipped by supplier/carrier — won't appear on delivery routes"
@@ -1179,7 +1198,14 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5">
-                          <Badge status={order.status} label={orderStatusLabel(order.status)} />
+                          <Badge
+                            status={order.status}
+                            label={orderStatusText(
+                              order.status,
+                              ship,
+                              orderStatusLabel(order.status),
+                            )}
+                          />
                           {order.fulfillPath === "SHIP" && (
                             <span
                               title="Shipped by supplier/carrier — won't appear on delivery routes"

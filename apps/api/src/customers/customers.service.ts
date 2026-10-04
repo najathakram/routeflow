@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
   ForbiddenException,
   ServiceUnavailableException,
   UnprocessableEntityException,
@@ -78,6 +79,8 @@ import { PlanCatalogService } from "../billing/plan-catalog.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPlanGateBody, PlanGateUpgrade } from "../billing/plan-gate";
 import { EmailService } from "../email/email.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { defaultFulfillPath, isShipModeTenant } from "../common/fulfill-path-default";
 import { addressStateFields } from "./address-state";
 import * as compliance from "./customer-compliance-input";
 // Same grace window BillingCronService.expireGrace() clears hourly — the create()
@@ -106,6 +109,9 @@ export class CustomersService {
     // once the invoice row is gone the entries can never be matched back.
     private readonly ledger: RegulatedLedgerService,
     private readonly email: EmailService,
+    // The fulfilment_model mode read (SHIP default for a ship-mode tenant). Optional so specs that
+    // build CustomersService without it keep today's ROUTE default; isShipModeTenant fails open.
+    @Optional() private readonly featureConfig?: FeatureConfigService,
   ) {}
 
   /**
@@ -567,6 +573,13 @@ export class CustomersService {
       ? await Promise.all(dto.addresses.map((addr) => this.geocodeIfPossible(addr)))
       : [];
 
+    // A tenant whose effective fulfilment_model is "ship" defaults to SHIP. Resolved ONCE, only
+    // when the client sent nothing, and before the transaction so the read never holds a
+    // connection open; fails open to today's ROUTE default.
+    const shipMode = dto.fulfillPath
+      ? false
+      : await isShipModeTenant(this.featureConfig, this.prisma.getTenantId(), this.logger);
+
     const result = await this.prisma.tenantTransaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -586,7 +599,7 @@ export class CustomersService {
           contactName: dto.contactName,
           phone: dto.phone,
           notes: dto.notes,
-          fulfillPath: dto.fulfillPath ?? "ROUTE",
+          fulfillPath: defaultFulfillPath({ dtoValue: dto.fulfillPath, shipMode }),
           ...(dto.mobile !== undefined && { mobile: dto.mobile }),
           ...(dto.customerType !== undefined && { customerType: dto.customerType }),
           ...(dto.displayName !== undefined && { displayName: dto.displayName }),

@@ -85,6 +85,20 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
   return { enabled: rr.enabled, resolved: rr.resolved };
 }
 
+// ─── Fleet (any dispatch feature at all) ──────────────────────────────────────
+//
+// A tenant is FLEET-OFF when it holds neither recurring_routes nor order_delivery: it ships by carrier
+// only, so the route / driver / delivery-run surfaces are noise (fleet-off clean UI). Fleet-ON tenants
+// see exactly the UI they always did. FAILS OPEN: while the addons fetch is loading or errored
+// (`resolved` false) `fleet` is true, so a tenant is never shown a stripped-down UI on an unknown answer
+// (the same rule RouteGuard uses). Display-only: never a server gate.
+export function useFleetAccess(): { fleet: boolean; loading: boolean } {
+  const routes = useRoutesAccess();
+  const delivery = useDeliveryAccess();
+  const resolved = routes.resolved && delivery.resolved;
+  return { fleet: !resolved || routes.enabled || delivery.enabled, loading: !resolved };
+}
+
 // ─── MSRP on invoices (display-only suggested retail price) ───────────────────
 //
 // Naming precedent: TOBACCO_ADDON in apps/web/lib/api/tobacco.ts. Read with
