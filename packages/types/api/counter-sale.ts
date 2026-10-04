@@ -43,4 +43,10 @@ export interface CounterSaleResponse {
   balanceDue: number;
   change?: number;
   paymentId?: string;
+  /** false = the sale and invoice exist but the payment write did not land (the receipt says so) */
+  paymentRecorded: boolean;
+  /** why the payment was not recorded, when it was not */
+  paymentErrorCode?: string;
+  /** true = this is the stored response of an earlier submit with the same Idempotency-Key */
+  replayed?: boolean;
 }
