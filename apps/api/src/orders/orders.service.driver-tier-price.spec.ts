@@ -480,6 +480,101 @@ describe("OrdersService — driver lines resolve the customer tier price (ruling
     });
   });
 
+  describe("driver replace-all keeps the order's existing lines at their stored price", () => {
+    const OTHER = { ...PRODUCT, id: "prod-3", name: "Other Widget" };
+    const replaceAll = (items: Record<string, unknown>[]) =>
+      service.updateOrderItems("ord-1", { items } as any, driverPayload as any);
+    const createdFor = (productId: string) =>
+      (prisma.orderItem.create as jest.Mock).mock.calls
+        .map((c: any[]) => c[0].data)
+        .find((d: any) => d.productId === productId);
+
+    it("K1: a listed line the order already has keeps its stored price; only the NEW product resolves the tier", async () => {
+      prime([line({ unitPrice: 10, subtotal: 30 })], 2, [PRODUCT, OTHER]);
+      await replaceAll([
+        { productId: "prod-1", qty: 5 },
+        { productId: "prod-3", qty: 2 },
+      ]);
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 10,
+        priceType: "STANDARD",
+        originalPrice: null,
+        subtotal: 50,
+      });
+      expect(createdFor("prod-3")).toMatchObject({ unitPrice: 8, priceType: "SPECIAL" });
+    });
+
+    it("K2: an agreed MANUAL price and its override attribution survive the re-create", async () => {
+      prime(
+        [
+          line({
+            unitPrice: 12,
+            subtotal: 36,
+            priceType: "MANUAL",
+            originalPrice: 10,
+            overrideReason: "agreed",
+            overriddenBy: "user-op",
+          }),
+        ],
+        2,
+      );
+      await replaceAll([{ productId: "prod-1", qty: 3 }]);
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 12,
+        priceType: "MANUAL",
+        originalPrice: 10,
+        overrideReason: "agreed",
+        overriddenBy: "user-op",
+        subtotal: 36,
+      });
+    });
+
+    it("K5: a no-change re-send keeps $30 (3 @ $10), never $24 at the tier price", async () => {
+      prime([line({ unitPrice: 10, subtotal: 30 })], 2);
+      await replaceAll([{ productId: "prod-1", qty: 3 }]);
+      expect(createdFor("prod-1")).toMatchObject({ unitPrice: 10, subtotal: 30 });
+    });
+
+    it("K6: an operator's discounted $5 line stays $5 (DISCOUNTED, original = list), not tier $8", async () => {
+      prime(
+        [
+          line({
+            unitPrice: 5,
+            subtotal: 15,
+            priceType: "DISCOUNTED",
+            originalPrice: 10,
+            overrideReason: "deal",
+            overriddenBy: "user-op",
+          }),
+        ],
+        2,
+      );
+      await replaceAll([{ productId: "prod-1", qty: 3 }]);
+      expect(createdFor("prod-1")).toMatchObject({
+        unitPrice: 5,
+        subtotal: 15,
+        priceType: "DISCOUNTED",
+        originalPrice: 10,
+        overriddenBy: "user-op",
+      });
+    });
+
+    it("K3: an ambiguous pairing (the product listed twice) is NEW, so it resolves the tier", async () => {
+      prime([line()], 2);
+      await replaceAll([
+        { productId: "prod-1", qty: 1 },
+        { productId: "prod-1", qty: 1 },
+      ]);
+      expect(createdFor("prod-1")).toMatchObject({ unitPrice: 8, priceType: "SPECIAL" });
+    });
+
+    it("K4: a CANCELLED existing line is not an agreed price: the re-listed product resolves the tier", async () => {
+      prime([line({ status: "CANCELLED" })], 2);
+      await replaceAll([{ productId: "prod-1", qty: 2 }]);
+      expect(createdFor("prod-1")).toMatchObject({ unitPrice: 8, priceType: "SPECIAL" });
+    });
+  });
+
   describe("create() at the door (already tier-priced: pinned, unchanged)", () => {
     it("C1: a driver-created order for a tier-2 customer bills tier 2, a driver-sent unitPrice ignored", async () => {
       prisma.customer.findUnique.mockResolvedValue({ id: "cust-1", pricingTier: 2 });

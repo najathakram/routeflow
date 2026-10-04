@@ -144,7 +144,13 @@ import {
 import { buildMergeLineWrites, type MergeLine, type MergeWarning } from "./merge-line-writes";
 import { assertReplaceAllPackMatchesLive } from "./replace-all-pack-resolution";
 import { decideAddedLinePrice, decideEditedLinePrice, isOverride } from "./staff-line-price";
-import { isDriverCaller, linesPriceAtCustomerTier, typedLinePrice } from "./driver-line-price";
+import {
+  keptAttribution,
+  keptStoredLinePrices,
+  linesPriceAtCustomerTier,
+  pricedFromKept,
+  typedLinePrice,
+} from "./driver-line-price";
 import {
   buildExistingLineMaps,
   buildReplaceAllLineData,
@@ -3223,18 +3229,15 @@ export class OrdersService implements OnApplicationBootstrap {
           const buyerCategoryMap = await loadCategoryMapForProducts(tx, productMap);
 
           // P5-04: buyer pricing context (tier + per-product override + active promos).
-          // Loaded for the buyer (CUSTOMER) merge path and a DRIVER's full list (ruling 2026-10-03).
+          // Only a buyer or a DRIVER reaches this branch; both resolve the customer's tier (ruling 2026-10-03).
           const isBuyerEdit = user.role === UserRole.CUSTOMER;
-          const pricesAtTier = isBuyerEdit || isDriverCaller(user);
-          const buyerTierCtx = pricesAtTier
-            ? await tx.customer.findFirst({
-                where: { id: order.customerId },
-                select: { pricingTier: true },
-              })
-            : null;
+          const buyerTierCtx = await tx.customer.findFirst({
+            where: { id: order.customerId },
+            select: { pricingTier: true },
+          });
           const buyerDefaultTier = buyerTierCtx?.pricingTier ?? 1;
           const buyerCustomerPrices =
-            pricesAtTier && productIds.length > 0
+            productIds.length > 0
               ? await tx.customerPrice.findMany({
                   where: { customerId: order.customerId, productId: { in: productIds } },
                 })
@@ -3266,6 +3269,9 @@ export class OrdersService implements OnApplicationBootstrap {
           // buyer path. Drivers keep today's authoring behavior.
           // SA-422 (1): a buyer save never deletes the seller's CANCELLED rows (F07 reopen marks).
           const carry = await captureCompositionCarry(tx, order.lineItems ?? [], dto.items); // #2717 SA-591(b)
+          const keptPrice = isBuyerEdit
+            ? new Map()
+            : keptStoredLinePrices(order.lineItems ?? [], dto.items);
           await tx.orderItem.deleteMany({
             where: {
               orderId,
@@ -3340,8 +3346,10 @@ export class OrdersService implements OnApplicationBootstrap {
             // BUY_N_GET_M threshold: whole SELLING units (boxes for a boxed line,
             // pieces otherwise) — mirrors create()'s qtyUnits derivation.
             const qtyUnits = boxes != null ? boxes : qty;
-            const priced = pricesAtTier
-              ? this.resolveBuyerLinePrice(
+            const kept = keptPrice.get(item.productId);
+            const priced = kept
+              ? pricedFromKept(kept, qty)
+              : this.resolveBuyerLinePrice(
                   product,
                   buyerCpMap.get(item.productId) ?? buyerDefaultTier,
                   buyerPromos,
@@ -3350,13 +3358,7 @@ export class OrdersService implements OnApplicationBootstrap {
                   buyerPriceHistory[item.productId]?.lastPrice ?? null,
                   // REG-B109: the exact denomination this line bills with below.
                   { boxes, pieces, unitsPerBox: upb },
-                )
-              : {
-                  unitPrice: Number(product.pricePerUnit),
-                  originalPrice: null as number | null,
-                  priceType: PriceType.STANDARD,
-                  freeUnits: 0,
-                };
+                );
             const made = await tx.orderItem.create({
               data: {
                 orderId,
@@ -3379,6 +3381,7 @@ export class OrdersService implements OnApplicationBootstrap {
                 priceType: priced.priceType,
                 // BUY_N_GET_M sale-time snapshot; null for every other line.
                 promoFreeUnits: priced.freeUnits > 0 ? priced.freeUnits : null,
+                ...keptAttribution(kept),
                 status: "PENDING",
                 notes: item.notes,
                 // Snapshot the regulated category so an edited-in line invoices/ledgers
