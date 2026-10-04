@@ -498,10 +498,10 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       stripeItemId: "si_1",
     };
     const activeAnnual = {
+      ...BILLED_SUB,
       planKey: "BUSINESS",
       cycle: "ANNUAL",
       basePriceSnapshot: 349,
-      ...BILLED_SUB,
     };
 
     it("deletes the item (so it stops billing), clears the pointer, and books the MRR reversal", async () => {
