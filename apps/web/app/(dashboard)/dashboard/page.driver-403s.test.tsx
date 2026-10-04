@@ -26,10 +26,33 @@ jest.mock("@/lib/api/addons", () => ({
 jest.mock("@/lib/stock-label", () => ({ unitsLabel: () => "" }));
 const idle = { data: undefined, isLoading: false, isError: false };
 /** Every options object the dashboard passed to an operator/customer-only read. */
-const reads: { hook: string; options: { enabled?: boolean } | undefined }[] = [];
+const reads: {
+  hook: string;
+  params?: { fulfillPath?: string };
+  options: { enabled?: boolean } | undefined;
+}[] = [];
+/** Served `GET /tenants/me/features` body: undefined = an unset account (today's behaviour). */
+let features: unknown = undefined;
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({ data: features }),
+}));
+const SHIPPING_CAPS = {
+  capabilities: {
+    fulfilment: {
+      methods: ["SHIP"],
+      staffDefault: "SHIP",
+      portalMethods: [],
+      portalDefault: null,
+      counter: "off",
+      fleet: false,
+    },
+  },
+};
+const isShipTile = (r: (typeof reads)[number]) =>
+  r.hook === "useOrders" && r.params?.fulfillPath === "SHIP";
 jest.mock("@/lib/api/orders", () => ({
-  useOrders: (_p: unknown, options?: { enabled?: boolean }) => {
-    reads.push({ hook: "useOrders", options });
+  useOrders: (params: { fulfillPath?: string }, options?: { enabled?: boolean }) => {
+    reads.push({ hook: "useOrders", params, options });
     return idle;
   },
 }));
@@ -62,6 +85,7 @@ jest.mock("@/lib/api-client", () => ({
 describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => {
   beforeEach(() => {
     reads.length = 0;
+    features = undefined;
     authUser = { role: "DRIVER" };
     access = { routes: false, delivery: false };
   });
@@ -85,11 +109,30 @@ describe("DashboardPage — #2254 a DRIVER fires no operator-only reads", () => 
   it("an OPERATOR's reads stay enabled and the Recent Orders card still renders", () => {
     authUser = { role: "OPERATOR" };
     renderWithProviders(<DashboardPage />);
-    for (const r of reads) expect(r.options?.enabled).not.toBe(false);
+    // Unset account: the ONLY disabled reads are the two SHIP-filtered shipping-tile reads.
+    const disabled = reads.filter((r) => r.options?.enabled === false);
+    expect(disabled.length).toBe(2);
+    expect(disabled.every(isShipTile)).toBe(true);
+    expect(reads.filter(isShipTile).length).toBe(2);
     expect(screen.getByText("Recent Orders")).toBeInTheDocument();
     expect(
       screen.queryByText(/plan doesn't include routes or deliveries/i),
     ).not.toBeInTheDocument();
+  });
+
+  it("a shipping account's OPERATOR enables both tile reads; a DRIVER keeps them disabled", () => {
+    features = SHIPPING_CAPS;
+    authUser = { role: "OPERATOR" };
+    renderWithProviders(<DashboardPage />);
+    for (const r of reads) expect(r.options?.enabled).not.toBe(false);
+    expect(reads.filter(isShipTile).length).toBe(2);
+
+    reads.length = 0;
+    authUser = { role: "DRIVER" };
+    renderWithProviders(<DashboardPage />);
+    const tiles = reads.filter(isShipTile);
+    expect(tiles.length).toBe(2);
+    for (const r of reads) expect(r.options?.enabled).toBe(false);
   });
 });
 
