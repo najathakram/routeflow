@@ -43,9 +43,11 @@ export async function updateShipmentImpl(
 
   const carrier = dto.shippingCarrier?.trim() || null;
   const tracking = dto.shippingTrackingNumber?.trim() || null;
-  // Stamp shippedAt the first time a tracking number is set; clear it when the
-  // tracking number is removed; otherwise keep the original ship date.
-  const shippedAt = tracking ? (order.shippedAt ?? new Date()) : null;
+  // E-b: shippedAt is the SHIP TRANSITION's stamp (changeStatus), never a side effect of saving
+  // tracking on an order that has not shipped. Saving tracking keeps whatever is there; it only
+  // backfills a legacy already-shipped order that has none.
+  const shippedAt =
+    order.shippedAt ?? (tracking && SHIPPED_STATUSES.has(order.status) ? new Date() : null);
 
   const updated = await self.prisma.forTenant().order.update({
     where: { id: orderId },

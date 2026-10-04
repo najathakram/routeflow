@@ -26,16 +26,15 @@ export const SHIPPING_FULFILMENT_MODES: ReadonlySet<string> = new Set([
   "pickup_ship",
 ]);
 
-/** True when this status change must invoice at SHIPMENT (not wait for DELIVERED). */
-export async function invoicesAtShipment(
+/** True when this order is billed at SHIPMENT: a carrier (SHIP) order of a business whose effective
+ *  `fulfilment_model` ships (ship / both / pickup_ship). The ONE billing-moment predicate: the
+ *  status-change invoicing, the pending-mirror lock and the delivered-basis rebuild all key on it. */
+export async function billsAtShipment(
   featureConfig: { getEffectiveMode(tenantId: string, key: string): Promise<string> } | undefined,
   tenantId: string | null | undefined,
   order: { fulfillPath: FulfillPath },
-  toStatus: OrderStatus,
 ): Promise<boolean> {
-  if (toStatus !== OrderStatus.OUT_FOR_DELIVERY || order.fulfillPath !== FulfillPath.SHIP) {
-    return false;
-  }
+  if (order.fulfillPath !== FulfillPath.SHIP) return false;
   if (!featureConfig || !tenantId) return false;
   try {
     return SHIPPING_FULFILMENT_MODES.has(
@@ -44,6 +43,17 @@ export async function invoicesAtShipment(
   } catch {
     return false; // an unreadable mode is "unset": today's behaviour
   }
+}
+
+/** True when this status change must invoice at SHIPMENT (not wait for DELIVERED). */
+export async function invoicesAtShipment(
+  featureConfig: { getEffectiveMode(tenantId: string, key: string): Promise<string> } | undefined,
+  tenantId: string | null | undefined,
+  order: { fulfillPath: FulfillPath },
+  toStatus: OrderStatus,
+): Promise<boolean> {
+  if (toStatus !== OrderStatus.OUT_FOR_DELIVERY) return false;
+  return billsAtShipment(featureConfig, tenantId, order);
 }
 
 /**
@@ -89,4 +99,21 @@ export async function settleOrderInvoice(
       `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
       `the order page to retry — the order stays ${moment} and nothing has been billed yet.`,
   );
+}
+
+/**
+ * L6: a CARRIER (SHIP) order that is out with the carrier is not cancelled — cancelling credits its
+ * units back to stock while the parcel is still in transit. It goes through the return flow instead.
+ * A 409 before any write; every other order (and every other status) is unchanged.
+ */
+export function assertCarrierOrderNotInTransit(order: {
+  status: OrderStatus;
+  fulfillPath: FulfillPath;
+}): void {
+  if (order.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP) {
+    throw new ConflictException(
+      "This order has shipped and is with the carrier, so it can't be cancelled (its stock would be " +
+        "put back while the parcel is still out). Record a return when it comes back instead.",
+    );
+  }
 }

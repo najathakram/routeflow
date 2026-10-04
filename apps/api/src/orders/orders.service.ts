@@ -183,8 +183,12 @@ import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
-import { notifyOrderShipped } from "./shipment-notifications";
-import { invoicesAtShipment, settleOrderInvoice } from "./order-status-invoicing";
+import { isFirstShipment, notifyOrderShipped } from "./shipment-notifications";
+import {
+  assertCarrierOrderNotInTransit,
+  invoicesAtShipment,
+  settleOrderInvoice,
+} from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -2442,7 +2446,10 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
     // order exactly as it was, not cancelled-but-not-unwound.
-    if (dto.status === OrderStatus.CANCELLED) await this.assertCancellableOrThrow(id);
+    if (dto.status === OrderStatus.CANCELLED) {
+      assertCarrierOrderNotInTransit(order); // L6: a parcel with the carrier returns, it is not cancelled
+      await this.assertCancellableOrThrow(id);
+    }
 
     const statusUpdateData = {
       status: dto.status,
@@ -2454,6 +2461,10 @@ export class OrdersService implements OnApplicationBootstrap {
       // A reopened order is no longer delivered — a stale deliveredAt would
       // keep it in delivered-on-date reports and reconcile passes.
       ...(isDeliveredDemotion ? { deliveredAt: null } : {}),
+      // E-b: shippedAt is stamped ONLY by the ship transition (never by saving tracking) and survives an unmark.
+      ...(dto.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP
+        ? { shippedAt: order.shippedAt ?? new Date() }
+        : {}),
       ...(noteAppend ? { notes: (order.notes ?? "") + noteAppend } : {}),
     };
 
@@ -2750,7 +2761,8 @@ export class OrdersService implements OnApplicationBootstrap {
       order.fulfillPath === FulfillPath.SHIP
     ) {
       // Carrier-shipped: ORDER_SHIPPED, not "out for delivery today" (customised wording kept per channel).
-      void notifyOrderShipped(this, order, user.sub || null);
+      // E-c: an unmark + re-ship keeps shippedAt, so the customer is told once.
+      if (isFirstShipment(order)) void notifyOrderShipped(this, order, user.sub || null);
     } else if (messagingEvent) {
       let driverName = "your driver";
       if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {

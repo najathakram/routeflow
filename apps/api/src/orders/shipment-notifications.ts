@@ -123,3 +123,7 @@ export async function notifyTrackingAdded(
     logger.warn(`notifyTrackingAdded failed: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+/** E-c: the customer hears "shipped" once. `shippedAt` is stamped by the ship transition and survives
+ *  an unmark, so a re-ship of the same order is not a first shipment. */
+export const isFirstShipment = (order: { shippedAt?: Date | null }): boolean => !order.shippedAt;

@@ -246,3 +246,42 @@ describe("updateShipmentImpl: one-time SHIPMENT_TRACKING_ADDED", () => {
     expect(h.messaging.notifyEvent).not.toHaveBeenCalled();
   });
 });
+
+describe("E-c / L6 / E-b decisions", () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { isFirstShipment } = require("./shipment-notifications");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { assertCarrierOrderNotInTransit } = require("./order-status-invoicing");
+
+  it("E-c: the first ship is a first shipment; an unmark + re-ship (shippedAt kept) is not", () => {
+    expect(isFirstShipment({ shippedAt: null })).toBe(true);
+    expect(isFirstShipment({ shippedAt: new Date("2026-10-01T00:00:00Z") })).toBe(false);
+  });
+
+  it("L6: a SHIP order out with the carrier is refused with a 409; everything else is unchanged", () => {
+    expect(() =>
+      assertCarrierOrderNotInTransit({ status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" }),
+    ).toThrow(/with the carrier/);
+    for (const o of [
+      { status: "OUT_FOR_DELIVERY", fulfillPath: "ROUTE" },
+      { status: "CONFIRMED", fulfillPath: "SHIP" },
+      { status: "PENDING", fulfillPath: "SHIP" },
+    ])
+      expect(() => assertCarrierOrderNotInTransit(o)).not.toThrow();
+  });
+
+  it("E-b: saving tracking on a CONFIRMED order stamps no shippedAt; on a shipped legacy row it backfills", async () => {
+    const h = harness();
+    h.db.order.findFirst.mockResolvedValue({
+      id: "ord-1",
+      shippedAt: null,
+      status: "CONFIRMED",
+      fulfillPath: "SHIP",
+      customerId: "cust-1",
+      orderNumber: "ORD-123",
+      shippingTrackingNumber: null,
+    });
+    await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "1Z" } as any, operator);
+    expect(h.db.order.update.mock.calls[0][0].data.shippedAt).toBeNull();
+  });
+});

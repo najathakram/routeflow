@@ -7312,7 +7312,12 @@ describe("OrdersService", () => {
 
   describe("updateShipment", () => {
     it("sets carrier + tracking on the order and mirrors them to non-void invoices", async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: null });
+      // already shipped (a legacy row with no shippedAt): tracking backfills it
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        shippedAt: null,
+        status: "OUT_FOR_DELIVERY",
+      });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -7342,8 +7347,30 @@ describe("OrdersService", () => {
       );
     });
 
-    it("clears carrier, tracking and shippedAt when the tracking number is blank", async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: "ord-1", shippedAt: new Date() });
+    it("E-b: saving tracking on an order that has NOT shipped does not stamp shippedAt", async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        shippedAt: null,
+        status: "CONFIRMED",
+      });
+      prisma.order.update.mockResolvedValue({ id: "ord-1" });
+      await service.updateShipment(
+        "ord-1",
+        { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999AA10123456784" },
+        operatorPayload,
+      );
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ shippedAt: null }) }),
+      );
+    });
+
+    it("clears carrier and tracking when blank but keeps the ship date the transition stamped", async () => {
+      const shipped = new Date("2026-10-01T00:00:00Z");
+      prisma.order.findFirst.mockResolvedValue({
+        id: "ord-1",
+        shippedAt: shipped,
+        status: "OUT_FOR_DELIVERY",
+      });
       prisma.order.update.mockResolvedValue({ id: "ord-1" });
 
       await service.updateShipment(
@@ -7357,7 +7384,7 @@ describe("OrdersService", () => {
           data: expect.objectContaining({
             shippingCarrier: null,
             shippingTrackingNumber: null,
-            shippedAt: null,
+            shippedAt: shipped,
           }),
         }),
       );
