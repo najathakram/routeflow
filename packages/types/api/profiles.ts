@@ -46,6 +46,12 @@ export interface BusinessProfilePlan {
   }[];
   /** Only the modes that change (`from` is the tenant's stored value). */
   modes: { key: string; from: string; to: string }[];
+  /**
+   * Owner ruling (money): a module the profile switches OFF that the tenant currently PAYS for
+   * (an add-on row with a Stripe item or a price) is switched off by disabling the add-on through
+   * the existing disable, which stops its billing. Runs FIRST at confirm; `[]` for comps.
+   */
+  billing: { featureKey: string; action: "disable" }[];
 }
 
 /** `POST /platform-admin/tenants/:id/business-profile/preview` body AND the confirm body. */

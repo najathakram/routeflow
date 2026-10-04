@@ -27,25 +27,51 @@ function build(
   opts: {
     tenant?: { id: string } | null;
     overrides?: ReturnType<typeof overrideRow>[];
-    holds?: Record<string, boolean>;
+    /** Active TenantAddon rows; `paid` = a Stripe item or a positive price, else a comped row. */
+    addons?: (string | { key: string; paid: boolean })[];
     modes?: Record<string, string>;
   } = {},
 ) {
+  const addonRows = (opts.addons ?? []).map((a) =>
+    typeof a === "string" ? { key: a, paid: true } : a,
+  );
   const prisma = {
     tenant: {
       findUnique: jest.fn().mockResolvedValue(opts.tenant === undefined ? { id: T } : opts.tenant),
     },
+    tenantAddon: {
+      // addonRowWhere(tenantId, sku): { tenantId, OR: [{ addonKey: sku }, { sku }, …] }
+      findFirst: jest.fn(async ({ where }: any) => {
+        const key = where.OR[0].addonKey;
+        const row = addonRows.find((r) => r.key === key && where.tenantId === T);
+        return row
+          ? {
+              addonKey: row.key,
+              active: true,
+              stripeItemId: row.paid ? "si_x" : null,
+              priceSnapshot: row.paid ? "49.00" : null,
+            }
+          : null;
+      }),
+    },
   };
   // Deliberately NO `create`/`revoke`: a write from this service would throw.
-  const featureOverrides = { list: jest.fn().mockResolvedValue(opts.overrides ?? []) };
-  const holds = opts.holds ?? {
-    recurring_routes: false,
-    order_delivery: false,
-    driver_payments: true,
+  const rows = opts.overrides ?? [];
+  const now = Date.now();
+  const featureOverrides = {
+    list: jest.fn().mockResolvedValue(rows),
+    allActive: jest.fn(
+      async () =>
+        new Map(
+          rows
+            .filter((r) => !r.revokedAt && (!r.expiresAt || r.expiresAt.getTime() > now))
+            .map((r) => [r.featureKey, r.effect]),
+        ),
+    ),
   };
+  const addons = { getActiveAddons: jest.fn().mockResolvedValue(addonRows.map((r) => r.key)) };
   const modes = opts.modes ?? { fulfilment_model: "unset", counter_sales: "unset" };
   const featureConfig = {
-    can: jest.fn(async (_t: string, key: string) => holds[key] ?? false),
     getState: jest.fn(async (_t: string, key: string) => ({
       value: modes[key] ?? "unset",
       effective: modes[key] ?? "unset",
@@ -58,10 +84,11 @@ function build(
   const svc = new BusinessProfileService(
     prisma as never,
     featureOverrides as never,
+    addons as never,
     featureConfig as never,
     featurePreview as never,
   );
-  return { svc, prisma, featureOverrides, featureConfig, featurePreview, previewResponse };
+  return { svc, prisma, featureOverrides, addons, featureConfig, featurePreview, previewResponse };
 }
 
 describe("BusinessProfileService.list", () => {
@@ -74,7 +101,8 @@ describe("BusinessProfileService.list", () => {
       "in_store_retailer",
       "in_store_shipping_retailer",
     ]);
-    expect(res.profiles.every((p) => p.available)).toBe(true);
+    // availability comes from the feature registry (SA-671 M1): the pickup modes are not available
+    expect(res.profiles.map((p) => p.available)).toEqual([true, true, false, false]);
   });
 });
 
@@ -95,16 +123,17 @@ describe("BusinessProfileService.preview", () => {
     );
   });
 
-  it("previews through the EXISTING feature preview with only the non-skip overrides and the profile's modes", async () => {
-    const { svc, featurePreview, previewResponse } = build();
+  it("previews through the EXISTING feature preview; a PAID add-on is planned as a billing disable and says so in plain English (OWNER RULING)", async () => {
+    const { svc, featurePreview, previewResponse } = build({
+      addons: ["recurring_routes", { key: "driver_payments", paid: false }],
+    });
     const res = await svc.preview(T, "shipping_wholesaler");
+    const reason = "Business profile: Shipping wholesaler";
+    // the preview models the end state: both modules off (the paid one via its disable)
     expect(featurePreview.preview).toHaveBeenCalledWith(T, {
       overrides: [
-        {
-          featureKey: "driver_payments",
-          effect: "DENY",
-          reason: "Business profile: Shipping wholesaler",
-        },
+        { featureKey: "recurring_routes", effect: "DENY", reason },
+        { featureKey: "driver_payments", effect: "DENY", reason },
       ],
       modes: { fulfilment_model: "ship" },
     });
@@ -118,12 +147,25 @@ describe("BusinessProfileService.preview", () => {
           { featureKey: "driver_payments", effect: "DENY", action: "create" },
         ],
         modes: [{ key: "fulfilment_model", from: "unset", to: "ship" }],
+        billing: [{ featureKey: "recurring_routes", action: "disable" }],
       },
-      summary: expect.arrayContaining([
+      summary: [
+        "Recurring routes will be switched off and its billing stopped",
         "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
-      ]),
+        "Turn off At-door payment collection",
+      ],
     });
-    expect(res.summary).toHaveLength(2);
+  });
+
+  it("a comp (override-only) module that is switched off carries no billing line", async () => {
+    const { svc } = build({
+      overrides: [overrideRow({ id: "g", featureKey: "recurring_routes", effect: "GRANT" })],
+    });
+    const res = await svc.preview(T, "shipping_wholesaler");
+    expect(res.summary).toEqual([
+      "How orders reach customers: Not configured (today's behavior) → Ship by carrier",
+      'Turn off Recurring routes (replaces the current "on" override)',
+    ]);
   });
 
   it("writes NOTHING (no override, no config row)", async () => {
@@ -134,15 +176,19 @@ describe("BusinessProfileService.preview", () => {
   });
 
   it("is tenant-scoped: every read names the target tenant and nothing else", async () => {
-    const { svc, prisma, featureOverrides, featureConfig, featurePreview } = build();
-    await svc.preview(T, "in_store_retailer");
+    const { svc, prisma, featureOverrides, addons, featureConfig, featurePreview } = build({
+      addons: ["recurring_routes"],
+    });
+    await svc.preview(T, "shipping_wholesaler");
     expect(prisma.tenant.findUnique).toHaveBeenCalledWith({
       where: { id: T },
       select: { id: true },
     });
     expect(featureOverrides.list).toHaveBeenCalledWith(T);
+    for (const [arg] of prisma.tenantAddon.findFirst.mock.calls) expect(arg.where.tenantId).toBe(T);
     for (const call of [
-      ...featureConfig.can.mock.calls,
+      ...featureOverrides.allActive.mock.calls,
+      ...addons.getActiveAddons.mock.calls,
       ...featureConfig.getState.mock.calls,
       ...featurePreview.preview.mock.calls,
     ]) {
@@ -180,7 +226,7 @@ describe("BusinessProfileService.plan — the confirm-time plan", () => {
     expect(res.plan.overrides).toEqual([
       { featureKey: "recurring_routes", effect: "GRANT", action: "create" },
       { featureKey: "order_delivery", effect: "GRANT", action: "replace" },
-      { featureKey: "driver_payments", effect: "GRANT", action: "skip" },
+      { featureKey: "driver_payments", effect: "GRANT", action: "create" },
     ]);
     expect(res.revokeOverrideIds).toEqual({ order_delivery: "live" });
     expect(res.profile.key).toBe("delivery_distributor");
@@ -189,12 +235,62 @@ describe("BusinessProfileService.plan — the confirm-time plan", () => {
   it("a tenant that already matches plans nothing: before == after", async () => {
     const { svc } = build({
       overrides: [overrideRow({ id: "d", featureKey: "driver_payments", effect: "DENY" })],
-      holds: { recurring_routes: false, order_delivery: false, driver_payments: false },
       modes: { fulfilment_model: "ship", counter_sales: "unset" },
     });
     const res = await svc.plan(T, "shipping_wholesaler");
     expect(res.plan.overrides.every((o) => o.action === "skip")).toBe(true);
     expect(res.plan.modes).toEqual([]);
     expect(res.summary).toEqual([]);
+  });
+});
+
+describe("SA-671 M2 — driver payments is held exactly as its guard decides", () => {
+  const plannedDriverPayments = async (opts: Parameters<typeof build>[0]) => {
+    const res = await build(opts).svc.plan(T, "delivery_distributor");
+    return res.plan.overrides.find((o) => o.featureKey === "driver_payments");
+  };
+
+  it("no add-on row and no override = NOT held (the guard 403s), so the profile grants it", async () => {
+    expect(await plannedDriverPayments({})).toEqual({
+      featureKey: "driver_payments",
+      effect: "GRANT",
+      action: "create",
+    });
+  });
+
+  it("an active add-on row = held: skip", async () => {
+    expect((await plannedDriverPayments({ addons: ["driver_payments"] }))?.action).toBe("skip");
+  });
+
+  it("a DENY override beats the add-on row (override is absolute): replace", async () => {
+    expect(
+      (
+        await plannedDriverPayments({
+          addons: ["driver_payments"],
+          overrides: [overrideRow({ id: "x", featureKey: "driver_payments", effect: "DENY" })],
+        })
+      )?.action,
+    ).toBe("replace");
+  });
+});
+
+describe("SA-671 M1 — an unavailable mode refuses the profile with a CODE, before any read", () => {
+  it.each(["in_store_retailer", "in_store_shipping_retailer"])("%s is refused", async (key) => {
+    const { svc, prisma, featureOverrides, featurePreview } = build();
+    const err = await svc.preview(T, key).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: "BUSINESS_PROFILE_UNAVAILABLE",
+      unavailable: [expect.objectContaining({ key: "fulfilment_model" })],
+    });
+    expect(prisma.tenant.findUnique).not.toHaveBeenCalled();
+    expect(featureOverrides.list).not.toHaveBeenCalled();
+    expect(featurePreview.preview).not.toHaveBeenCalled();
+  });
+
+  it("even when the tenant ALREADY stores that mode (an unchanged mode is no bypass)", async () => {
+    const { svc } = build({ modes: { fulfilment_model: "pickup", counter_sales: "on" } });
+    const err = await svc.plan(T, "in_store_retailer").catch((e) => e);
+    expect(err.getResponse()).toMatchObject({ code: "BUSINESS_PROFILE_UNAVAILABLE" });
   });
 });

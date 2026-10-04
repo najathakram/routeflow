@@ -64,12 +64,25 @@ export function businessProfileByKey(key: string): BusinessProfileDef | undefine
   return BUSINESS_PROFILES.find((p) => p.key === key);
 }
 
+/**
+ * The profile's modes the FEATURE REGISTRY does not offer (`available: false`) — SA-671 M1. A
+ * profile with any is unavailable: listed disabled, and `plan()` refuses it with
+ * `BUSINESS_PROFILE_UNAVAILABLE` even when the tenant already stores that mode (an unchanged mode
+ * is skipped by the planner, so checking only the changes would let the rest of the profile —
+ * the DENYs, `counter_sales` — through).
+ */
+export function unavailableModes(def: BusinessProfileDef): { key: string; mode: string }[] {
+  return Object.entries(def.modes)
+    .filter(([key, mode]) => registryRow(key)?.config?.modes[mode]?.available !== true)
+    .map(([key, mode]) => ({ key, mode }));
+}
+
 export function toBusinessProfileSummary(def: BusinessProfileDef): BusinessProfileSummary {
   return {
     key: def.key as BusinessProfileSummary["key"],
     label: def.label,
     description: def.description,
-    available: true,
+    available: unavailableModes(def).length === 0,
     modes: { ...def.modes },
     grants: def.fleet ? [...PROFILE_MODULE_KEYS] : [],
     denies: def.fleet ? [] : [...PROFILE_MODULE_KEYS],
@@ -85,12 +98,19 @@ export function toBusinessProfileSummary(def: BusinessProfileDef): BusinessProfi
 export interface BusinessProfileState {
   overrides: Map<string, "GRANT" | "DENY">;
   holds: Record<string, boolean>;
+  /** Modules held through an add-on row the tenant PAYS for (a Stripe item or a price). */
+  paying?: ReadonlySet<string>;
   modes: Record<string, string>;
 }
 
 /**
  * Per module: `replace` when an opposite override is active (revoke it, then create), `skip` when
  * the tenant already is that way, else `create`. Modes list only what changes.
+ *
+ * Owner ruling (money): a module a fleet-OFF profile switches off that the tenant PAYS for goes to
+ * `billing` as a `disable` — the existing add-on disable switches it off AND stops its billing —
+ * so it needs no DENY override (unless a GRANT override also holds it; overrides are absolute).
+ * A comped module (no paid row) is switched off with a DENY, never a billing call.
  */
 export function planBusinessProfile(
   def: BusinessProfileDef,
@@ -98,20 +118,22 @@ export function planBusinessProfile(
 ): BusinessProfilePlan {
   const effect: "GRANT" | "DENY" = def.fleet ? "GRANT" : "DENY";
   const opposite = def.fleet ? "DENY" : "GRANT";
+  const disables = def.fleet ? [] : PROFILE_MODULE_KEYS.filter((k) => state.paying?.has(k));
   const overrides = PROFILE_MODULE_KEYS.map((featureKey) => {
     const active = state.overrides.get(featureKey);
+    const held = disables.includes(featureKey) ? false : (state.holds[featureKey] ?? false);
     const action: "create" | "replace" | "skip" =
-      active === opposite
-        ? "replace"
-        : (state.holds[featureKey] ?? false) === def.fleet
-          ? "skip"
-          : "create";
+      active === opposite ? "replace" : held === def.fleet ? "skip" : "create";
     return { featureKey, effect, action };
   });
   const modes = Object.entries(def.modes)
     .map(([key, to]) => ({ key, from: state.modes[key] ?? "unset", to }))
     .filter((m) => m.from !== m.to);
-  return { overrides, modes };
+  return {
+    overrides,
+    modes,
+    billing: disables.map((featureKey) => ({ featureKey, action: "disable" as const })),
+  };
 }
 
 export interface BusinessProfileViolation {
@@ -151,22 +173,29 @@ function modeLabel(key: string, mode: string): string {
   return registryRow(key)?.config?.modes[mode]?.label ?? mode;
 }
 
-/** The plan in plain English, one line per change, in apply order; skips say nothing. */
+/**
+ * The plan in plain English, one line per change, in APPLY order (billing disables → grants →
+ * modes → denies); skips say nothing.
+ */
 export function describeBusinessProfilePlan(plan: BusinessProfilePlan): string[] {
+  const labelOf = (key: string) => registryRow(key)?.label ?? key;
   const overrideLine = (o: BusinessProfilePlan["overrides"][number]) => {
     const verb = o.effect === "GRANT" ? "Turn on" : "Turn off";
-    const label = registryRow(o.featureKey)?.label ?? o.featureKey;
     const replaced = o.effect === "GRANT" ? "off" : "on";
     return o.action === "replace"
-      ? `${verb} ${label} (replaces the current "${replaced}" override)`
-      : `${verb} ${label}`;
+      ? `${verb} ${labelOf(o.featureKey)} (replaces the current "${replaced}" override)`
+      : `${verb} ${labelOf(o.featureKey)}`;
   };
+  // Owner ruling (money): a paid module is switched off by disabling its add-on, which stops its
+  // billing — say exactly that.
+  const billing = (plan.billing ?? []).map(
+    (b) => `${labelOf(b.featureKey)} will be switched off and its billing stopped`,
+  );
   const changing = plan.overrides.filter((o) => o.action !== "skip");
   const grants = changing.filter((o) => o.effect === "GRANT").map(overrideLine);
   const denies = changing.filter((o) => o.effect === "DENY").map(overrideLine);
   const modes = plan.modes.map(
-    (m) =>
-      `${registryRow(m.key)?.label ?? m.key}: ${modeLabel(m.key, m.from)} → ${modeLabel(m.key, m.to)}`,
+    (m) => `${labelOf(m.key)}: ${modeLabel(m.key, m.from)} → ${modeLabel(m.key, m.to)}`,
   );
-  return [...grants, ...modes, ...denies];
+  return [...billing, ...grants, ...modes, ...denies];
 }

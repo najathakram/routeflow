@@ -38,7 +38,7 @@ describe("fulfilment_model registry row", () => {
     expect(r!.billing).toEqual({ skus: [], selfService: false });
   });
 
-  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship, all available", () => {
+  it("offers unset / delivery / ship / both / pickup (In store only) / pickup_ship; the pickup modes are NOT available until the counter-sale work (SA-671 M1)", () => {
     const modes = row()!.config!.modes;
     expect(Object.keys(modes)).toEqual([
       "unset",
@@ -50,10 +50,13 @@ describe("fulfilment_model registry row", () => {
     ]);
     expect(modes.unset.label).toBe("Not configured (today's behavior)");
     expect(modes.unset.available).toBe(true);
-    for (const m of ["delivery", "ship", "both", "pickup", "pickup_ship"]) {
+    for (const m of ["delivery", "ship", "both"]) {
       expect(modes[m].available).toBe(true);
       expect(modes[m].lifecycle).toBe("ga");
     }
+    // No PICKUP order can be written yet (the enum value is not on master), so a tenant must not
+    // be put in a mode whose only method is PICKUP. The counter-sale work flips these back.
+    for (const m of ["pickup", "pickup_ship"]) expect(modes[m].available).toBe(false);
     expect(modes.pickup.label).toBe("In store only");
     expect(modes.pickup_ship.label).toBe("In store + shipping");
   });
@@ -154,11 +157,14 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
     expect(upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("pickup and pickup_ship are ALLOWED with the fleet off (no fleet requirement)", async () => {
+  it("pickup and pickup_ship are refused as not available yet (SA-671 M1) — nothing is written", async () => {
     hasAddon.mockResolvedValue(false);
-    await service.set("t1", "fulfilment_model", "pickup", "r", "admin-1");
-    await service.set("t1", "fulfilment_model", "pickup_ship", "r", "admin-1");
-    expect(upsert).toHaveBeenCalledTimes(2);
+    for (const mode of ["pickup", "pickup_ship"]) {
+      await expect(service.set("t1", "fulfilment_model", mode, "r", "admin-1")).rejects.toThrow(
+        `"${mode}" is not available for "fulfilment_model"`,
+      );
+    }
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("an unknown mode is refused", async () => {

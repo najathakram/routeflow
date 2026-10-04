@@ -14,6 +14,7 @@ import {
   ConflictException,
   NotFoundException,
   ParseUUIDPipe,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from "@nestjs/swagger";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -715,10 +716,13 @@ export class PlatformAdminController {
   /**
    * Confirm. The plan is recomputed HERE from the tenant's current state (never trusted from the
    * client) and validated whole before the first write. Writes go through the existing audited
-   * paths only — this controller's own override create/revoke and `FeatureConfigService.set` —
-   * in the order grants → modes → denies, because `set()` checks the fleet rule against the SAVED
-   * state: delivery needs the fleet granted first, and a fleet is denied only after the mode has
-   * moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
+   * paths only — this controller's own add-on disable and override create/revoke, and
+   * `FeatureConfigService.set` — in the order billing disables → grants → modes → denies. The
+   * disables (paid modules, owner ruling) come first so a billing failure refuses the apply before
+   * anything else is written; only fleet-OFF profiles have any, and their modes need no fleet.
+   * Grants precede modes and modes precede denies because `set()` checks the fleet rule against
+   * the SAVED state: delivery needs the fleet granted first, and a fleet is denied only after the
+   * mode has moved off delivery. Re-applying is idempotent (every step becomes a skip). Not one DB
    * transaction: a mid-way failure leaves the steps already written, each audited, and a re-apply
    * completes the rest.
    */
@@ -733,6 +737,31 @@ export class PlatformAdminController {
     const resolved = await this.businessProfiles.plan(id, dto.profile);
     const reason = dto.reason?.trim() || resolved.reason;
     const { changed } = await this.featurePreview.preview(id, resolved.previewRequest);
+
+    // Owner ruling (money, tier 1): a module the profile switches OFF that the tenant PAYS for is
+    // switched off by the EXISTING add-on disable (this controller's own route: Stripe item
+    // removal + the locked ledger update in AddonService.disableAddon, then ADDON_DISABLED audit)
+    // — never a billing row or Stripe call written here. These run FIRST: if one fails, the apply
+    // is refused with BUSINESS_PROFILE_BILLING_FAILED before any other write of the profile.
+    const alreadyDisabled: string[] = [];
+    for (const b of resolved.plan.billing) {
+      try {
+        await this.disableAddon(id, { addonKey: b.featureKey } as DisableAddonDto, admin);
+      } catch (err) {
+        throw new ServiceUnavailableException({
+          statusCode: 503,
+          code: API_ERROR_CODES.BUSINESS_PROFILE_BILLING_FAILED,
+          featureKey: b.featureKey,
+          alreadyDisabled,
+          message:
+            "The profile was not applied: an add-on's billing could not be stopped. Retry; " +
+            "nothing else was changed.",
+          cause: (err as Error)?.message,
+        });
+      }
+      alreadyDisabled.push(b.featureKey);
+    }
+    if (alreadyDisabled.length > 0) this.authority.invalidate(id);
 
     const applyOverrides = async (effect: "GRANT" | "DENY") => {
       for (const o of resolved.plan.overrides) {

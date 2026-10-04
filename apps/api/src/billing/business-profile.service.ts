@@ -12,10 +12,12 @@ import type {
 } from "@routeflow/types";
 import { PrismaService } from "../prisma/prisma.service";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { AddonService } from "./addon.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeaturePreviewService } from "./feature-preview.service";
-import { FLEET_KEYS } from "./fulfilment-capability";
+import { FLEET_KEYS, heldAddonKeys } from "./fulfilment-capability";
+import { addonCodeOf, findAddonRow } from "./addon-row";
 import {
   BUSINESS_PROFILES,
   PROFILE_MODULE_KEYS,
@@ -24,6 +26,7 @@ import {
   planBusinessProfile,
   postApplyViolations,
   toBusinessProfileSummary,
+  unavailableModes,
   type BusinessProfileDef,
   type BusinessProfileState,
 } from "./business-profiles";
@@ -54,6 +57,7 @@ export class BusinessProfileService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly featureOverrides: FeatureOverrideService,
+    private readonly addons: AddonService,
     private readonly featureConfig: FeatureConfigService,
     private readonly featurePreview: FeaturePreviewService,
   ) {}
@@ -63,9 +67,11 @@ export class BusinessProfileService {
   }
 
   /**
-   * The plan for one tenant, recomputed from its CURRENT state. 400 BUSINESS_PROFILE_UNKNOWN,
-   * 404 for a missing tenant, 409 when the post-apply state would break a mode rule (checked
-   * before anything is written).
+   * The plan for one tenant, recomputed from its CURRENT state. 400 BUSINESS_PROFILE_UNKNOWN;
+   * 400 BUSINESS_PROFILE_UNAVAILABLE when the feature registry does not offer one of its modes
+   * (checked before reading the tenant, so an unchanged mode is never a bypass — SA-671 M1);
+   * 404 for a missing tenant; 409 when the post-apply state would break a mode rule. All before
+   * anything is written.
    */
   async plan(tenantId: string, profileKey: string): Promise<BusinessProfileResolution> {
     const profile = businessProfileByKey(profileKey);
@@ -74,6 +80,16 @@ export class BusinessProfileService {
         statusCode: 400,
         code: API_ERROR_CODES.BUSINESS_PROFILE_UNKNOWN,
         message: `"${profileKey}" is not a business profile.`,
+      });
+    }
+    const unavailable = unavailableModes(profile);
+    if (unavailable.length > 0) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: API_ERROR_CODES.BUSINESS_PROFILE_UNAVAILABLE,
+        profile: profile.key,
+        unavailable,
+        message: `"${profile.label}" is not available yet.`,
       });
     }
     const tenant = await this.prisma.tenant.findUnique({
@@ -106,8 +122,12 @@ export class BusinessProfileService {
       plan,
       revokeOverrideIds,
       previewRequest: {
+        // The preview models the END state: a module switched off by its billing disable is
+        // shown as off (a DENY in the hypothetical), in module order.
         overrides: plan.overrides
-          .filter((o) => o.action !== "skip")
+          .filter(
+            (o) => o.action !== "skip" || plan.billing.some((b) => b.featureKey === o.featureKey),
+          )
           .map((o) => ({ featureKey: o.featureKey, effect: o.effect, reason })),
         modes: { ...profile.modes },
       },
@@ -128,10 +148,19 @@ export class BusinessProfileService {
     };
   }
 
+  /**
+   * "Held" is read the way the real gates read it (SA-671 M2): an active override is absolute,
+   * otherwise the add-on rows through `heldAddonKeys` (the same helper the fleet 409 and
+   * `capabilities.fulfilment` use). Never `FeatureConfigService.can()`, which treats every
+   * guard-gated key as on — `driver-payments.guard.ts` 403s without a row or a GRANT.
+   */
   private async currentState(
     tenantId: string,
     profile: BusinessProfileDef,
-  ): Promise<{ state: BusinessProfileState; activeIds: Map<string, string> }> {
+  ): Promise<{
+    state: BusinessProfileState;
+    activeIds: Map<string, string>;
+  }> {
     const now = Date.now();
     const rows = await this.featureOverrides.list(tenantId);
     const overrides = new Map<string, "GRANT" | "DENY">();
@@ -142,14 +171,28 @@ export class BusinessProfileService {
       overrides.set(r.featureKey, r.effect as "GRANT" | "DENY");
       activeIds.set(r.featureKey, r.id);
     }
+    const held = await heldAddonKeys(this.addons, this.featureOverrides, tenantId);
     const holds: Record<string, boolean> = {};
     for (const key of PROFILE_MODULE_KEYS) {
-      holds[key] = await this.featureConfig.can(tenantId, key);
+      const override = overrides.get(key);
+      holds[key] = override ? override === "GRANT" : held.has(key);
     }
     const modes: Record<string, string> = {};
     for (const key of Object.keys(profile.modes)) {
       modes[key] = (await this.featureConfig.getState(tenantId, key)).value;
     }
-    return { state: { overrides, holds, modes }, activeIds };
+    // Owner ruling (money): "pays for" = the tenant's ACTIVE add-on row for the module — found by
+    // the same predicate the existing disable uses (findAddonRow) — carrying a Stripe item or a
+    // positive price snapshot. A comped row (neither) or a GRANT override is never a billing call.
+    const paying = new Set<string>();
+    if (!profile.fleet) {
+      for (const key of PROFILE_MODULE_KEYS) {
+        const row = await findAddonRow(this.prisma, tenantId, addonCodeOf(key));
+        if (row?.active && (row.stripeItemId || Number(row.priceSnapshot ?? 0) > 0)) {
+          paying.add(key);
+        }
+      }
+    }
+    return { state: { overrides, holds, paying, modes }, activeIds };
   }
 }
