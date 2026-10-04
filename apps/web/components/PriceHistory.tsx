@@ -36,7 +36,12 @@ export function canUseHistoryPrice(
   packHint: number | null | undefined,
   unitCount: number,
 ): boolean {
-  if (!unitHint) return unitCount <= 1;
+  if (!unitHint) {
+    // No unit hint: a single-unit history is the only usable one, and it must ALSO be the same
+    // pack. Unknown (null) and 1 both mean "one piece"; a pack > 1 on only one side fails closed.
+    if (unitCount > 1) return false;
+    return (row.unitsPerBox ?? 1) === (packHint ?? 1);
+  }
   if (!sameUnit(row.unitLabel, unitHint)) return false;
   const rowPack = row.unitsPerBox ?? null;
   const lineUnitsPerBox = packHint ?? null;

@@ -24,4 +24,23 @@ describe("canUseHistoryPrice", () => {
   it("a line with no unit hint may use a single-unit history", () => {
     expect(canUseHistoryPrice(row("each", 1), null, null, 1)).toBe(true);
   });
+
+  describe("no unit hint: the pack must still match (12x overcharge guard)", () => {
+    it("12-pack Box row on an each-priced line (pack 1 / unknown): refused", () => {
+      expect(canUseHistoryPrice(row("Box", 12), null, 1, 1)).toBe(false);
+      expect(canUseHistoryPrice(row("Box", 12), null, null, 1)).toBe(false);
+    });
+    it("row pack null or 1 on a pack-1 line: allowed", () => {
+      expect(canUseHistoryPrice(row("each", null), null, 1, 1)).toBe(true);
+      expect(canUseHistoryPrice(row("each", 1), null, 1, 1)).toBe(true);
+    });
+    it("equal packs: allowed", () => {
+      expect(canUseHistoryPrice(row("Box", 12), null, 12, 1)).toBe(true);
+    });
+    it("pack known on exactly one side: refused", () => {
+      expect(canUseHistoryPrice(row("each", null), null, 12, 1)).toBe(false);
+      expect(canUseHistoryPrice(row("each", 1), null, 12, 1)).toBe(false);
+      expect(canUseHistoryPrice(row("Box", 12), null, 1, 1)).toBe(false);
+    });
+  });
 });
