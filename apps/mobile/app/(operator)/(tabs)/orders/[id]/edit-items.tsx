@@ -15,11 +15,13 @@ import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { NavBackButton, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAdminOrder } from "../../../../../lib/api/admin";
+import { freshLineStartPrice } from "../../../../../lib/start-price";
+import { pricingGate } from "../../../../../lib/pricing-gate";
 import { UnitPickerRow } from "../../../../../components/UnitPickerRow";
 import { OrderAppliedCredits } from "../../../../../components/OrderAppliedCredits";
 import type { UnitOption } from "../../../../../lib/unit-options";
 import { useCreditNotes, type CreditNote } from "../../../../../lib/api/credit-notes";
-import { useCustomerPriceHistory, useUpdateOrderItems } from "../../../../../lib/api/orders";
+import { useUpdateOrderItems } from "../../../../../lib/api/orders";
 import { useCustomer, useCustomerPrices } from "../../../../../lib/api/customers";
 import { showToast } from "../../../../../lib/toast";
 import { confirm } from "../../../../../lib/confirm";
@@ -119,20 +121,19 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // select) — the cast is the existing `(order as any)` habit, scoped.
   const baselineOrder = order as unknown as BaselineOrderLike | undefined;
   const customerId = (order as any)?.customerId as string | undefined;
-  // Remembered per-customer prices — pre-fill a newly added line's price so a
-  // prior discount carries forward (operator can still change it).
-  const { data: priceHistory } = useCustomerPriceHistory(customerId);
   // Customer tier pricing (mirrors NewOrderScreen): a newly added line prices
   // off the customer's effective tier, not the raw list price.
   const {
     data: customerDetail,
     isPending: customerPending,
     isError: customerFailed,
+    refetch: refetchCustomer,
   } = useCustomer(customerId ?? "");
   const {
     data: customerPrices,
     isPending: pricesPending,
     isError: pricesFailed,
+    refetch: refetchPrices,
   } = useCustomerPrices(customerId ?? "");
   const customerTier = customerDetail?.pricingTier ?? 1;
   // B62 (REG-B62): the tier defaults to 1 while those two queries are in flight,
@@ -140,11 +141,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   // substitute path even SENDS it). Gate the pricing-dependent controls — the
   // product picker and Substitute — until both settle, mirroring web's order
   // editor (apps/web/app/(dashboard)/orders/[id]/page.tsx).
-  // NOTE: a disabled query stays `isPending` forever, so short-circuit when
-  // there is no customer; an errored fetch falls back to the tier-1 degraded
-  // mode rather than wedging the editor.
-  const pricingReady =
-    !customerId || ((!customerPending || customerFailed) && (!pricesPending || pricesFailed));
+  // B1038: a FAILED fetch is not ready either (the tier would fall to 1 = list while the server bills the tier
+  // price): the picker/Substitute stay shut and the Add button offers Retry (lib/pricing-gate.ts).
+  const { ready: pricingReady, failed: pricingFailed } = pricingGate({
+    customerId,
+    customerPending,
+    customerFailed,
+    pricesPending,
+    pricesFailed,
+  });
   const cpMap = useMemo(() => {
     const m = new Map<string, number | null>();
     for (const cp of customerPrices ?? []) m.set(cp.productId, cp.pricingTier);
@@ -653,16 +658,10 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
   ): string => {
     const catalogPrice = tierPriceFor(p);
     const listPrice = toNumber(p.pricePerUnit);
-    const isSpecial = isSpecialTier(cpMap.get(p.id) ?? customerTier ?? 1);
     const upbRaw = p.unitsPerBox;
     const unitsPerBox = upbRaw == null ? null : Number(upbRaw);
-    // Fresh-add starting price — only a genuine discount (below tier) or
-    // upsell (above list), never over a SPECIAL tier price. Else the tier price.
-    const hist = priceHistory?.[p.id];
-    const startPrice =
-      !isSpecial && hist != null && (hist.lastPrice < catalogPrice || hist.lastPrice > listPrice)
-        ? hist.lastPrice
-        : catalogPrice;
+    // B1037: the customer's OWN price (tier or special), never their remembered last price.
+    const startPrice = freshLineStartPrice({ catalogPrice, listPrice, isDriver });
     // Key resolution + the pure `apply(d)` updater: resolvePickTarget (lib/edit-items-draft.ts).
     const { key, existingLabel, apply } = resolvePickTarget(draftRef.current, {
       productId: p.id,
@@ -1344,8 +1343,15 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                   here, so it stays shut until the customer's contract is loaded. */}
               <Pressable
                 style={[styles.addBtn, !pricingReady && styles.addBtnDisabled]}
-                onPress={() => setShowPicker(true)}
-                disabled={!pricingReady}
+                onPress={() => {
+                  if (pricingFailed) {
+                    void refetchCustomer();
+                    void refetchPrices();
+                    return;
+                  }
+                  setShowPicker(true);
+                }}
+                disabled={!pricingReady && !pricingFailed}
               >
                 {pricingReady ? (
                   <Ionicons name="add-circle-outline" size={18} color={ios.brand} />
@@ -1353,7 +1359,11 @@ export function EditOrderItemsScreen({ orderId }: { orderId?: string } = {}) {
                   <ActivityIndicator size="small" color={ios.brand} />
                 )}
                 <Text style={styles.addBtnText}>
-                  {pricingReady ? "Add product" : "Loading customer pricing…"}
+                  {pricingReady
+                    ? "Add product"
+                    : pricingFailed
+                      ? "Price unavailable. Tap to retry"
+                      : "Loading customer pricing…"}
                 </Text>
               </Pressable>
               <Pressable style={styles.addUnlistedBtn} onPress={() => setUnlistedModalOpen(true)}>
