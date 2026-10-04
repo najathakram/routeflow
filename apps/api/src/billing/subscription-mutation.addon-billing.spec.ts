@@ -630,6 +630,31 @@ describe("manually-invoiced (externalPayment) tenants — owner ruling 2026-10-0
       platformAdmin: true,
       sku: "CUSTOMER_PACK_100",
       message: "Add-on Customer pack enabled for Acme Foods: add to their next manual invoice",
+      addonName: "Customer pack",
+      kind: "add",
+      fromQty: 0,
+      toQty: 1,
+    });
+  });
+
+  it("a quantity RAISE on an existing manual row is kind 'change' (from -> to)", async () => {
+    const { svc, tx } = make({
+      sub: MANUAL_SUB,
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        active: true,
+        quantity: 1,
+        priceSnapshot: 12,
+        stripeItemId: null,
+      },
+    });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(tx.auditLog.create.mock.calls[0][0].data.meta).toMatchObject({
+      kind: "change",
+      fromQty: 1,
+      toQty: 3,
     });
   });
 
@@ -820,6 +845,12 @@ describe("N2 — manual tenant: re-price only on an increase; a decrease reverse
     expect(d.meta.message).toBe(
       "Add-on Customer pack reduced to 2 for Acme Foods: reduce their next manual invoice to 2",
     );
+    expect(d.meta).toMatchObject({
+      addonName: "Customer pack",
+      kind: "change",
+      fromQty: 3,
+      toQty: 2,
+    });
   });
 
   it("(c) a decrease on a $0 manual row raises NO notice (nothing was being invoiced)", async () => {
@@ -897,6 +928,12 @@ describe("(c) manual tenant disable raises a 'stop invoicing' platform notice", 
     expect(d.meta.message).toBe(
       "Add-on Customer pack turned off for Acme Foods: stop invoicing it",
     );
+    expect(d.meta).toMatchObject({
+      addonName: "Customer pack",
+      kind: "stop",
+      fromQty: 1,
+      toQty: 0,
+    });
   });
 
   it("a $0 row, a Stripe tenant and a pilot raise no notice", async () => {

@@ -589,6 +589,10 @@ export class SubscriptionMutationService {
             sku: code,
             quantity: prior.qty,
             monthlyPrice: Number(prior.snapshot ?? 0),
+            kind: "stop",
+            addonName: skuByCode.get(code)?.name ?? code,
+            fromQty: prior.qty,
+            toQty: 0,
             message: `Add-on ${skuByCode.get(code)?.name ?? code} turned off for ${
               lockedTenant.name ?? lockedTenant.slug ?? tenantId
             }: stop invoicing it`,
@@ -1589,6 +1593,11 @@ export class SubscriptionMutationService {
       quantity: number;
       monthlyPrice: number;
       message: string;
+      /** What the platform must do on the manual invoice. */
+      kind: "add" | "stop" | "change";
+      addonName: string;
+      fromQty: number;
+      toQty: number;
     },
   ): Promise<void> {
     await tx.auditLog.create({
@@ -1604,6 +1613,10 @@ export class SubscriptionMutationService {
           quantity: n.quantity,
           monthlyPrice: n.monthlyPrice,
           message: n.message,
+          addonName: n.addonName,
+          kind: n.kind,
+          fromQty: n.fromQty,
+          toQty: n.toQty,
         },
       },
     });
@@ -1915,6 +1928,10 @@ export class SubscriptionMutationService {
             sku,
             quantity: qty,
             monthlyPrice: priceSnapshot,
+            kind: reduce || current?.active ? "change" : "add",
+            addonName: skuDef.name,
+            fromQty: current?.active ? current.quantity : 0,
+            toQty: qty,
             message: reduce
               ? `Add-on ${skuDef.name} reduced to ${qty} for ${tenantName}: reduce their next manual invoice to ${qty}`
               : `Add-on ${skuDef.name} enabled for ${tenantName}: add to their next manual invoice`,
@@ -2065,6 +2082,10 @@ export class SubscriptionMutationService {
           sku: code,
           quantity: current.quantity,
           monthlyPrice: Number(current.priceSnapshot ?? 0),
+          kind: "stop",
+          addonName: stopSkuName,
+          fromQty: current.quantity,
+          toQty: 0,
           message: `Add-on ${stopSkuName} turned off for ${manualStopName}: stop invoicing it`,
         });
       }
