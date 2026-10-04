@@ -87,3 +87,51 @@ describe("assertInvoiceTotalsSane (B1030, extracted from InvoicesService.create(
     }
   });
 });
+
+// SA-651: update() applies a NOT-WORSE rule on legacy data. create() stays strict (no `before`).
+describe("assertInvoiceTotalsSane NOT-WORSE rule (B1030, SA-651)", () => {
+  const SANE = { discount: 0, subtotal: 100, total: 100 };
+  const LEGACY = { discount: 80, subtotal: 10, total: -70 }; // already insane: discount > subtotal, total < 0
+
+  it("(1) sane -> insane is refused, with create()'s message", () => {
+    expect(() =>
+      assertInvoiceTotalsSane({ discount: 100, subtotal: 10, total: -90 }, SANE),
+    ).toThrow("Invoice discount (100) cannot exceed subtotal (10).");
+  });
+
+  it("(2) insane -> WORSE by total (it goes down) is refused", () => {
+    expect(() =>
+      assertInvoiceTotalsSane({ discount: 80, subtotal: 10, total: -75 }, LEGACY),
+    ).toThrow("Invoice discount (80) cannot exceed subtotal (10).");
+  });
+
+  it("(3) insane -> WORSE by discount minus subtotal (it goes up) is refused even when the total holds", () => {
+    expect(() =>
+      assertInvoiceTotalsSane({ discount: 90, subtotal: 10, total: -70 }, LEGACY),
+    ).toThrow("Invoice discount (90) cannot exceed subtotal (10).");
+  });
+
+  it("(4) insane -> UNCHANGED saves (a notes-only or no-op edit of a legacy invoice)", () => {
+    expect(() => assertInvoiceTotalsSane({ ...LEGACY }, LEGACY)).not.toThrow();
+  });
+
+  it("(5) insane -> IMPROVED (total up and discount minus subtotal down) saves, even though it is still insane", () => {
+    expect(() =>
+      assertInvoiceTotalsSane({ discount: 60, subtotal: 10, total: -50 }, LEGACY),
+    ).not.toThrow();
+  });
+
+  it("(6) create() stays strict: with no `before`, an insane invoice is always refused", () => {
+    expect(() => assertInvoiceTotalsSane(LEGACY)).toThrow(/cannot exceed subtotal/);
+  });
+
+  it("(7) a negative TOTAL that is not worse than a legacy negative total saves; a lower one is refused", () => {
+    const before = { discount: 5, subtotal: 10, total: -3 };
+    expect(() =>
+      assertInvoiceTotalsSane({ discount: 5, subtotal: 10, total: -3 }, before),
+    ).not.toThrow();
+    expect(() => assertInvoiceTotalsSane({ discount: 5, subtotal: 10, total: -4 }, before)).toThrow(
+      "Invoice total cannot be negative (calculated: -4).",
+    );
+  });
+});

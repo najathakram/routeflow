@@ -163,10 +163,26 @@ describe("InvoicesService.update() — B1030 the invoice discount cannot exceed 
       noWrites();
     });
 
-    it("(b) a shipping-only PATCH on an invoice whose stored discount already exceeds the subtotal is refused too", async () => {
-      arrangeRecalc([{ subtotal: 10, taxRate: 0 }], { discount: 80 });
-      await expect(service.update("inv-box", { shippingFee: 5 })).rejects.toThrow(OVER(80, 10));
+    // SA-651 NOT-WORSE rule: a legacy invoice that is already insane (stored discount 80 over a $10
+    // subtotal, total -70) may still be saved when the edit does not make it worse.
+    const LEGACY = { discount: 80, subtotal: 10, total: -70 };
+
+    it("(b) a shipping-only PATCH on a LEGACY invoice (stored discount 80 over a $10 subtotal) SAVES: the total goes up, nothing gets worse", async () => {
+      arrangeRecalc([{ subtotal: 10, taxRate: 0 }], LEGACY);
+      await service.update("inv-box", { shippingFee: 5 });
+      expect(prisma.invoice.update.mock.calls[0][0].data.total).toBe(-65);
+    });
+
+    it("(b2) the same legacy invoice with a BIGGER discount is refused: discount minus subtotal goes up", async () => {
+      arrangeRecalc([{ subtotal: 10, taxRate: 0 }], LEGACY);
+      await expect(service.update("inv-box", { discount: 90 })).rejects.toThrow(OVER(90, 10));
       noWrites();
+    });
+
+    it("(b3) a legacy invoice whose discount is LOWERED (still above the subtotal) saves: an improvement", async () => {
+      arrangeRecalc([{ subtotal: 10, taxRate: 0 }], LEGACY);
+      await service.update("inv-box", { discount: 60 });
+      expect(prisma.invoice.update.mock.calls[0][0].data.total).toBe(-50);
     });
 
     it("(c) control: a discount equal to the subtotal saves, total = shipping + tax only (0 here)", async () => {
@@ -195,12 +211,20 @@ describe("InvoicesService.update() — B1030 the invoice discount cannot exceed 
       noWrites();
     });
 
-    it("(f) lines edited DOWN below the invoice's stored discount are refused (stored 80, lines now $10)", async () => {
-      arrangeEdit({ discount: 80 });
+    it("(f) a SANE invoice whose lines are edited DOWN below its stored discount is refused (stored discount 80 over $100, lines now $10)", async () => {
+      arrangeEdit({ discount: 80, subtotal: 100, total: 20 });
       await expect(
         service.update("inv-box", { items: [{ description: "Widget", qty: 1, unitPrice: 10 }] }),
       ).rejects.toThrow(OVER(80, 10));
       noWrites();
+    });
+
+    it("(f2) a LEGACY invoice (stored discount 80 over $10, total -70) whose lines are edited UP to $50 saves: it improves", async () => {
+      arrangeEdit({ discount: 80, subtotal: 10, total: -70 });
+      await service.update("inv-box", {
+        items: [{ description: "Widget", qty: 1, unitPrice: 50 }],
+      });
+      expect(prisma.invoice.update.mock.calls[0][0].data.total).toBe(-30);
     });
 
     it("(g) control: the same lines with a discount of 10 save", async () => {

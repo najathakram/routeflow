@@ -15,6 +15,7 @@ import * as unitAware from "../orders/unit-aware-guard";
 import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
+  storedInvoiceTotals,
 } from "../common/money-invariants.util";
 import { randomUUID } from "crypto";
 import { PrismaService } from "../prisma/prisma.service";
@@ -3133,7 +3134,7 @@ export class InvoicesService {
         const isTaxExempt = !!(customerForTax as any)?.isTaxExempt;
         const cur = await tx.invoice.findUnique({
           where: { id },
-          select: { discount: true, shippingFee: true },
+          select: { discount: true, shippingFee: true, subtotal: true, total: true },
         });
         const invDiscount = dto.discount ?? Number(cur.discount);
         const shipping = dto.shippingFee ?? Number(cur.shippingFee);
@@ -3143,7 +3144,10 @@ export class InvoicesService {
           invDiscount,
           shipping,
         );
-        assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }); // B1030: before any write
+        assertInvoiceTotalsSane(
+          { discount: invDiscount, subtotal, total },
+          storedInvoiceTotals(cur),
+        ); // B1030 / SA-651: not worse than stored, before any write
         // Rebuild the items AND re-sync the W5 ledger atomically: the delete-and-recreate
         // rotates invoiceItemIds and can change qty/price or add/remove a regulated line,
         // so the invoice's prior SALE rows must be reversed and re-written from the new
@@ -3242,7 +3246,7 @@ export class InvoicesService {
       const invDiscount = dto.discount !== undefined ? dto.discount : Number(inv.discount);
       const shipping = dto.shippingFee !== undefined ? dto.shippingFee : Number(inv.shippingFee);
       const total = roundMoney(subtotal - invDiscount + shipping + taxTotal);
-      assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }); // B1030: before any write
+      assertInvoiceTotalsSane({ discount: invDiscount, subtotal, total }, storedInvoiceTotals(inv)); // B1030 / SA-651
       recalcData = {
         subtotal,
         taxAmount: taxTotal,
