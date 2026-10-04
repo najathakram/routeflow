@@ -2,6 +2,8 @@ import { ServiceUnavailableException } from "@nestjs/common";
 import { GUARDS_METADATA, INTERCEPTORS_METADATA } from "@nestjs/common/constants";
 import { FeatureConfigService } from "./feature-config.service";
 import { FulfilmentCapabilityService } from "./fulfilment-capability.service";
+import { deriveFulfilmentCapability } from "./fulfilment-capability";
+import { FULFILMENT_MODE_VALUES } from "@routeflow/types";
 import { BuyerController } from "../buyer/buyer.controller";
 import { BuyerSellerContextGuard } from "../buyer/guards/buyer-seller-context.guard";
 import { BuyerTenantInterceptor } from "../buyer/buyer-tenant.interceptor";
@@ -85,6 +87,29 @@ describe("FulfilmentCapabilityService.forBuyer", () => {
     await p.catch((e: ServiceUnavailableException) =>
       expect(e.getResponse()).toMatchObject({ code: "FEATURES_UNAVAILABLE" }),
     );
+  });
+});
+
+describe("forBuyer goes through the ONE derivation (a stored mode never reaches a buyer raw)", () => {
+  // Every mode the registry stores, plus a stored value the derivation does not know.
+  it.each([...FULFILMENT_MODE_VALUES, "drone"])("stored mode %s", async (mode) => {
+    for (const held of [[], ["order_delivery"]]) {
+      const fleet = held.length > 0;
+      const body = await makeService({ mode, held }).svc.forBuyer("t1");
+      const derived = deriveFulfilmentCapability({ mode, counterSales: "unset", fleet });
+      expect(body).toEqual({
+        portalMethods: derived.portalMethods,
+        portalDefault: derived.portalDefault,
+        fleet,
+      });
+      expect(Object.keys(body).sort()).toEqual(BUYER_KEYS);
+      expect(JSON.stringify(body)).not.toContain(`"${mode}"`);
+    }
+  });
+
+  it("an unknown stored mode reaches the buyer as unset (no portal choice)", async () => {
+    const body = await makeService({ mode: "drone" }).svc.forBuyer("t1");
+    expect(body).toEqual({ portalMethods: [], portalDefault: null, fleet: false });
   });
 });
 

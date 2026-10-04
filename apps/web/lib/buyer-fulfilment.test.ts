@@ -1,6 +1,7 @@
 import type { BuyerSellerCapability } from "@routeflow/types";
 import {
   NO_FLEET_STEP_LABELS,
+  SHIPMENT_STATE_LABEL,
   SHIP_STEP_LABELS,
   buyerListStatusLabel,
   buyerStatusLabel,
@@ -150,5 +151,34 @@ describe("buyerListStatusLabel (orders list, dashboard)", () => {
     expect(buyerListStatusLabel("OUT_FOR_DELIVERY", BOTH_FLEET)).toBeNull();
     expect(buyerListStatusLabel("OUT_FOR_DELIVERY", UNSET_NO_FLEET)).toBeNull();
     expect(buyerListStatusLabel("OUT_FOR_DELIVERY", undefined)).toBeNull();
+  });
+});
+
+describe("one 'Shipped' answer: the card, the badge and the timeline agree (lead review nit)", () => {
+  const ORDERS = [
+    { status: "PENDING" },
+    { status: "CONFIRMED" },
+    { status: "CONFIRMED", shippedAt: "2026-10-01T10:00:00Z" },
+    { status: "CONFIRMED", shippingTrackingNumber: "1Z999" },
+    { status: "OUT_FOR_DELIVERY" },
+    { status: "PARTIALLY_DELIVERED" },
+    { status: "DELIVERED", shippedAt: "2026-10-01T10:00:00Z" },
+    { status: "CANCELLED", shippedAt: "2026-10-01T10:00:00Z" },
+  ];
+
+  it.each(ORDERS)("%o", (o) => {
+    const shipped = shipmentState(o) === "shipped";
+    expect(buyerStatusLabel(o, "shipment") === SHIPMENT_STATE_LABEL.shipped).toBe(shipped);
+    expect(shipStepIndex(o) === 1).toBe(shipped);
+    expect(SHIP_STEP_LABELS[1]).toBe(SHIPMENT_STATE_LABEL.shipped);
+  });
+
+  it("the one label set", () => {
+    expect(SHIPMENT_STATE_LABEL).toEqual({
+      not_shipped: "Not shipped yet",
+      shipped: "Shipped",
+      delivered: "Delivered",
+      cancelled: "Cancelled",
+    });
   });
 });

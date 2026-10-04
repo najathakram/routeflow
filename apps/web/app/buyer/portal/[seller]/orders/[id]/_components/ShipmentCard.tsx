@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Package } from "lucide-react";
 import { carrierLabel, getTrackingUrl } from "@/lib/shipping";
-import { shipmentState, type ShipmentState } from "@/lib/buyer-fulfilment";
+import { SHIPMENT_STATE_LABEL, shipmentState, type ShipmentState } from "@/lib/buyer-fulfilment";
 import { fmtDate } from "@/lib/formatting";
 
 /**
@@ -24,7 +24,8 @@ export function ShipmentCard({
 }) {
   const titleId = React.useId();
   const state = shipmentState(order);
-  const { headline, detail } = SHIPMENT_COPY[state];
+  const headline = SHIPMENT_STATE_LABEL[state];
+  const detail = SHIPMENT_DETAIL[state];
   const carrier = carrierLabel(order.shippingCarrier);
   const number = order.shippingTrackingNumber?.trim() || "";
   const url = getTrackingUrl(order.shippingCarrier, number);
@@ -91,12 +92,11 @@ export function ShipmentCard({
   );
 }
 
-const SHIPMENT_COPY: Record<ShipmentState, { headline: string; detail: string | null }> = {
-  not_shipped: {
-    headline: "Not shipped yet",
-    detail: "The carrier and tracking number will show here once the seller ships this order.",
-  },
-  shipped: { headline: "Shipped", detail: "Your order is with the carrier." },
-  delivered: { headline: "Delivered", detail: null },
-  cancelled: { headline: "Cancelled", detail: null },
+// Headlines come from SHIPMENT_STATE_LABEL (lib/buyer-fulfilment), the one label the badge and
+// the SHIP timeline also use; only the detail line lives here.
+const SHIPMENT_DETAIL: Record<ShipmentState, string | null> = {
+  not_shipped: "The carrier and tracking number will show here once the seller ships this order.",
+  shipped: "Your order is with the carrier.",
+  delivered: null,
+  cancelled: null,
 };

@@ -17,7 +17,24 @@ import type { BuyerSellerCapability } from "@routeflow/types";
  */
 export type BuyerOrderTravelView = "loading" | "route" | "shipment" | "none";
 
-export const SHIP_STEP_LABELS = ["Confirmed", "Shipped", "Delivered"] as const;
+export type ShipmentState = "not_shipped" | "shipped" | "delivered" | "cancelled";
+
+/**
+ * The ONE label per shipment state. The Shipment card headline, the order badge and the SHIP
+ * timeline all read it, and all decide "shipped" through `shipmentState`, so they can't disagree.
+ */
+export const SHIPMENT_STATE_LABEL: Record<ShipmentState, string> = {
+  not_shipped: "Not shipped yet",
+  shipped: "Shipped",
+  delivered: "Delivered",
+  cancelled: "Cancelled",
+};
+
+export const SHIP_STEP_LABELS = [
+  "Confirmed",
+  SHIPMENT_STATE_LABEL.shipped,
+  SHIPMENT_STATE_LABEL.delivered,
+] as const;
 export const NO_FLEET_STEP_LABELS = ["Pending", "Confirmed", "Delivered"] as const;
 
 export function isConfiguredSeller(
@@ -52,10 +69,10 @@ const DISPATCHED = ["OUT_FOR_DELIVERY", "PARTIALLY_DELIVERED"];
 
 /** Index into SHIP_STEP_LABELS (-1 = before Confirmed, or cancelled). */
 export function shipStepIndex(o: ShipFields): number {
-  if (o.status === "DELIVERED") return 2;
-  if (o.status === "CANCELLED") return -1;
-  if (o.shippedAt || DISPATCHED.includes(o.status)) return 1;
-  return o.status === "CONFIRMED" ? 0 : -1;
+  const state = shipmentState(o);
+  if (state === "delivered") return 2;
+  if (state === "shipped") return 1;
+  return state === "not_shipped" && o.status === "CONFIRMED" ? 0 : -1;
 }
 
 /** Index into NO_FLEET_STEP_LABELS (-1 = draft, or cancelled). */
@@ -64,8 +81,6 @@ export function noFleetStepIndex(status: string): number {
   if (status === "CONFIRMED" || DISPATCHED.includes(status)) return 1;
   return status === "DELIVERED" ? 2 : -1;
 }
-
-export type ShipmentState = "not_shipped" | "shipped" | "delivered" | "cancelled";
 
 export function shipmentState(o: ShipFields): ShipmentState {
   if (o.status === "CANCELLED") return "cancelled";
@@ -77,8 +92,7 @@ export function shipmentState(o: ShipFields): ShipmentState {
 /** The order's status label when it differs from today's formatted status; null = today's. */
 export function buyerStatusLabel(o: ShipFields, view: BuyerOrderTravelView): string | null {
   if (view === "shipment") {
-    const shipped = o.status === "OUT_FOR_DELIVERY" || (o.status === "CONFIRMED" && !!o.shippedAt);
-    return shipped ? "Shipped" : null;
+    return shipmentState(o) === "shipped" ? SHIPMENT_STATE_LABEL.shipped : null;
   }
   if (view === "none") return o.status === "OUT_FOR_DELIVERY" ? "On Its Way" : null;
   return null;
