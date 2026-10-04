@@ -575,10 +575,15 @@ export class CustomerPriceHistoryService {
     })) as any[];
 
     const out: PriceSummaryResponse = {};
-    const prices = new Map<string, number[]>();
+    // low/high are over ONE unit group per product (never a $2 piece mixed with a $24 case): the group is
+    // the NEWEST sale's (unitLabel, unitsPerBox), and the entry reports it so the figures carry their unit.
+    const sold = new Map<
+      string,
+      Array<{ key: string; price: number; label: string; pack: number | null }>
+    >();
     for (const id of ids) {
-      out[id] = { last3: [], low: null, high: null };
-      prices.set(id, []);
+      out[id] = { last3: [], low: null, high: null, unitLabel: null, unitsPerBox: null };
+      sold.set(id, []);
     }
     for (const inv of invoices) {
       for (const it of inv.items ?? []) {
@@ -600,7 +605,12 @@ export class CustomerPriceHistoryService {
             orderNumber: "",
           },
         );
-        prices.get(it.productId)!.push(c.row.unitPrice);
+        sold.get(it.productId)!.push({
+          key: `${c.row.unitLabel.trim().toLowerCase()}|${c.row.unitsPerBox ?? ""}`,
+          price: c.row.unitPrice,
+          label: c.row.unitLabel,
+          pack: c.row.unitsPerBox,
+        });
         if (e.last3.length < 3) {
           e.last3.push({
             date: c.row.date,
@@ -611,11 +621,13 @@ export class CustomerPriceHistoryService {
       }
     }
     for (const id of ids) {
-      const ps = prices.get(id)!;
-      if (ps.length) {
-        out[id].low = Math.min(...ps);
-        out[id].high = Math.max(...ps);
-      }
+      const rows = sold.get(id)!;
+      if (rows.length === 0) continue;
+      const ps = rows.filter((r) => r.key === rows[0].key).map((r) => r.price);
+      out[id].low = Math.min(...ps);
+      out[id].high = Math.max(...ps);
+      out[id].unitLabel = rows[0].label;
+      out[id].unitsPerBox = rows[0].pack;
     }
     return out;
   }

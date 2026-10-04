@@ -125,7 +125,7 @@ describe("CustomerPriceHistoryService v1.1", () => {
       prisma.invoice.findMany.mockResolvedValue([
         inv("c", "2026-06-10T00:00:00Z", 10),
         inv("b", "2026-05-10T00:00:00Z", 50, {
-          items: [line({ unitPrice: 50, unitLabel: "Case", unitsPerBox: 12 })],
+          items: [line({ unitPrice: 50, unitLabel: "Case", boxes: 2, pieces: 0, unitsPerBox: 12 })],
         }),
       ]);
       expect((await run()).references.changeSinceLast).toBeNull();
@@ -246,7 +246,12 @@ describe("CustomerPriceHistoryService v1.1", () => {
       expect(parseProductIds("a, b,a,,b ")).toEqual(["a", "b"]);
       const ids50 = ids51.slice(0, 50);
       await expect(sum(ids50.join(","))).resolves.toEqual(
-        Object.fromEntries(ids50.map((i) => [i, { last3: [], low: null, high: null }])),
+        Object.fromEntries(
+          ids50.map((i) => [
+            i,
+            { last3: [], low: null, high: null, unitLabel: null, unitsPerBox: null },
+          ]),
+        ),
       );
     });
 
@@ -306,15 +311,100 @@ describe("CustomerPriceHistoryService v1.1", () => {
         last3: [{ date: "2026-06-03T00:00:00.000Z", unitPrice: 5, unitLabel: "pc" }],
         low: 5,
         high: 5,
+        unitLabel: "pc",
+        unitsPerBox: null,
       });
-      expect(r.p9).toEqual({ last3: [], low: null, high: null });
+      expect(r.p9).toEqual({
+        last3: [],
+        low: null,
+        high: null,
+        unitLabel: null,
+        unitsPerBox: null,
+      });
+    });
+
+    it("never mixes units: low/high are over the NEWEST sale's unit group and carry that unit", async () => {
+      // a $2 piece price (newest) and a $24 case price (older): the range must not be $2-$24
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          ...inv("c", "2026-06-03T00:00:00Z", 2),
+          items: [line({ productId: "p1", unitPrice: 2.5, unitLabel: "Each" })],
+        },
+        {
+          ...inv("b", "2026-06-02T00:00:00Z", 24),
+          items: [
+            line({
+              productId: "p1",
+              unitPrice: 24,
+              unitLabel: "Case",
+              boxes: 2,
+              pieces: 0,
+              unitsPerBox: 12,
+            }),
+          ],
+        },
+        {
+          ...inv("a", "2026-06-01T00:00:00Z", 2),
+          items: [line({ productId: "p1", unitPrice: 2, unitLabel: "Each" })],
+        },
+      ]);
+      const r = await sum("p1");
+      expect([r.p1.low, r.p1.high, r.p1.unitLabel, r.p1.unitsPerBox]).toEqual([
+        2,
+        2.5,
+        "Each",
+        null,
+      ]);
+
+      // newest is the case: the figures are case figures
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          ...inv("d", "2026-06-04T00:00:00Z", 26),
+          items: [
+            line({
+              productId: "p1",
+              unitPrice: 26,
+              unitLabel: "Case",
+              boxes: 2,
+              pieces: 0,
+              unitsPerBox: 12,
+            }),
+          ],
+        },
+        {
+          ...inv("c", "2026-06-03T00:00:00Z", 2),
+          items: [line({ productId: "p1", unitPrice: 2, unitLabel: "Each" })],
+        },
+        {
+          ...inv("b", "2026-06-02T00:00:00Z", 24),
+          items: [
+            line({
+              productId: "p1",
+              unitPrice: 24,
+              unitLabel: "Case",
+              boxes: 2,
+              pieces: 0,
+              unitsPerBox: 12,
+            }),
+          ],
+        },
+      ]);
+      const r2 = await sum("p1");
+      expect([r2.p1.low, r2.p1.high, r2.p1.unitLabel, r2.p1.unitsPerBox]).toEqual([
+        24,
+        26,
+        "Case",
+        12,
+      ]);
     });
 
     it("matches the single endpoint's invoiced rows for the same product", async () => {
       prisma.invoice.findMany.mockResolvedValue([
         inv("c", "2026-06-03T00:00:00Z", 11),
         inv("b", "2026-06-02T00:00:00Z", 10.5, {
-          items: [line({ unitPrice: 126, unitLabel: "Case", unitsPerBox: 12 })],
+          items: [
+            line({ unitPrice: 126, unitLabel: "Case", boxes: 2, pieces: 0, unitsPerBox: 12 }),
+          ],
         }),
         inv("a", "2026-06-01T00:00:00Z", 9),
       ]);

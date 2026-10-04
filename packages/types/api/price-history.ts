@@ -74,8 +74,12 @@ export interface PriceHistoryAggregate {
 /** One product in `GET /customers/:customerId/price-summary`. */
 export interface PriceSummaryEntry {
   last3: { date: string; unitPrice: number; unitLabel: string }[];
+  /** Low / high of the NEWEST sale's unit group only (never units mixed); null with no sales. */
   low: number | null;
   high: number | null;
+  /** The unit `low` / `high` are in (the newest sale's), so the figures carry their unit. */
+  unitLabel: string | null;
+  unitsPerBox: number | null;
 }
 
 export type PriceSummaryResponse = Record<string, PriceSummaryEntry>;
