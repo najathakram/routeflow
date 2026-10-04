@@ -4,7 +4,8 @@
  * Harness copied from unit-picker-mount.test.tsx.
  */
 import * as React from "react";
-import { fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
+import userEvent from "@testing-library/user-event";
+import { act, fireEvent, renderWithProviders, screen, within } from "@/test-utils/render";
 import { EditableLineItems, type EditItemState } from "./page";
 
 jest.mock("@/lib/api/product-units", () => ({
@@ -113,5 +114,25 @@ describe("order edit page - price history button", () => {
     unmount();
     renderRows([line({ isUnlisted: true, productId: "" })], { id: "c1" });
     expect(screen.queryByRole("button", { name: "Price history" })).not.toBeInTheDocument();
+  });
+  it("an outside click on another line's input closes the panel and leaves focus on that input", async () => {
+    renderRows(
+      [
+        line(),
+        line({ id: "li-2", originalProductId: "p-2", productId: "p-2", productName: "Gadget" }),
+      ],
+      { id: "c1", name: "Acme Foods" },
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getAllByRole("button", { name: "Price history" })[0]!);
+    await screen.findByRole("dialog", { name: "Price history" });
+    const other = screen.getAllByRole("spinbutton")[screen.getAllByRole("spinbutton").length - 1]!;
+    await user.click(other);
+    expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
+    // The close used to refocus the trigger on a deferred tick, stealing focus from the click target.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(other).toHaveFocus();
   });
 });

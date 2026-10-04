@@ -284,4 +284,16 @@ describe("CreateOrderModal - price history button (real onTapPrice configuration
       expect(await screen.findByRole("dialog", { name: "Price history" })).toBeInTheDocument();
     },
   );
+
+  it("Enter on a focused Use button applies the price and closes (the form never eats it)", async () => {
+    const { user, trigger } = await openReadyLine();
+    await user.click(trigger);
+    const panel = await screen.findByRole("dialog", { name: "Price history" });
+    const use = await within(panel).findByRole("button", { name: "Use this price ($9.00)" });
+    use.focus();
+    expect(use).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
+    expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();
+  });
 });

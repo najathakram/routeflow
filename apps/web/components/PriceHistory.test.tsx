@@ -121,6 +121,15 @@ describe("PriceHistoryButton — availability", () => {
 });
 
 describe("PriceHistoryButton — popover behaviour", () => {
+  it("the reference column truncates with a full-reference tooltip so the table never widens the popover", async () => {
+    renderButton();
+    await openPanel();
+    const dialog = await screen.findByRole("dialog", { name: "Price history" });
+    const cell = (await within(dialog).findAllByTitle(/\S/)).find((e) => e.tagName === "TD")!;
+    expect(cell).toHaveClass("truncate");
+    expect(cell.className).toMatch(/max-w-/);
+  });
+
   it("opens and closes (Esc, outside click, toggle) without changing the price, returning focus to the input", async () => {
     const outer = jest.fn();
     document.addEventListener("keydown", outer);

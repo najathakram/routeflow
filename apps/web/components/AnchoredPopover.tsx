@@ -99,7 +99,13 @@ export function AnchoredPopover({
       role="dialog"
       aria-label={label}
       tabIndex={-1}
-      onKeyDown={onKeyDown}
+      onKeyDown={(e) => {
+        onKeyDown?.(e);
+        // React events bubble through the portal to the host form's onKeyDown, which preventDefaults
+        // every Enter (swallowing a button's native click). Escape is a window capture listener and
+        // Tab must still reach a focus trap, so everything else stops here.
+        if (e.key !== "Tab") e.stopPropagation();
+      }}
       style={{
         position: "fixed",
         top: pos?.top ?? 0,

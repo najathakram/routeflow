@@ -334,8 +334,8 @@ function PanelBody({
               <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Margin</th>
             )}
             <th className="whitespace-nowrap py-1 pl-2 font-medium">Qty</th>
-            <th className="whitespace-nowrap py-1 font-medium">Invoice / Order</th>
-            <th className="py-1 pr-3" />
+            <th className="py-1 font-medium">Invoice / Order</th>
+            <th className="py-1" />
           </tr>
         </thead>
         <tbody>
@@ -371,7 +371,14 @@ function PanelBody({
               <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
                 {r.qty} {r.unitLabel}
               </td>
-              <td className="whitespace-nowrap py-1 pr-2 text-navy/70">
+              <td
+                className="max-w-[7rem] truncate py-1 pr-2 text-navy/70"
+                title={
+                  r.source === "INVOICE"
+                    ? (r.invoiceNumber ?? r.orderNumber)
+                    : `${r.orderNumber} (not invoiced yet)`
+                }
+              >
                 {r.source === "INVOICE" ? (
                   (r.invoiceNumber ?? r.orderNumber)
                 ) : (
@@ -383,7 +390,7 @@ function PanelBody({
                   </>
                 )}
               </td>
-              <td className="w-full py-1 text-right sm:w-auto sm:pr-3">
+              <td className="w-full py-1 text-right sm:w-auto">
                 <button
                   type="button"
                   disabled={!canUse(r)}
@@ -478,7 +485,8 @@ function Panel({
  * has paid for this product. Disabled until a customer and a product are chosen. Opening / closing
  * never touches the price; "Use this price" hands the number to `onUsePrice`, which MUST be the
  * line's existing price-change path (special-price reason and margin-floor rules still apply).
- * On "Use this price" focus moves to the price input beside the button; on Esc / outside click it returns to the trigger.
+ * On "Use this price" focus moves to the price input beside the button;
+ * on Esc it returns to the trigger; an outside click moves no focus.
  */
 export function PriceHistoryButton({
   customerId,
@@ -530,10 +538,12 @@ export function PriceHistoryButton({
   const close = React.useCallback(
     (reason: CloseReason) => {
       setOpen(false);
+      // An outside click leaves focus wherever the user put it (APG): never refocus the trigger.
+      if (reason === "outside") return;
       // Deferred a tick: "Use this price" has just changed the line's price, and the price input keeps
       // the draft it had when it GAINED focus — focusing it before that render shows the stale price.
       setTimeout(() => {
-        // Only "Use this price" moves on to the price field; a cancel (Esc / outside) returns to the trigger.
+        // Only "Use this price" moves on to the price field; Esc returns to the trigger.
         if (reason !== "use") return anchor?.focus();
         const scope = focusSelector ? anchor?.closest("li") : anchor?.parentElement;
         const input = scope?.querySelector<HTMLElement>(focusSelector ?? "input");
