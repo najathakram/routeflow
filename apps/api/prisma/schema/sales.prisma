@@ -57,6 +57,8 @@ enum ChangeRequestStatus {
 enum FulfillPath {
   ROUTE
   SHIP
+  // PICKUP = counter sale / in-store pickup (SA-650); no writer until the counter-sale API lands.
+  PICKUP
 }
 
 enum RouteKind {

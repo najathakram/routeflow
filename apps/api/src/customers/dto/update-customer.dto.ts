@@ -1,6 +1,5 @@
 import {
   IsBoolean,
-  IsEnum,
   IsIn,
   IsInt,
   IsNumber,
@@ -13,6 +12,7 @@ import {
 import { Transform } from "class-transformer";
 import { FulfillPath } from "@prisma/client";
 import { StripHtml } from "../../common/transforms/strip-html.transform";
+import { WRITABLE_FULFILL_PATHS } from "../../orders/writable-fulfill-paths";
 import { emptyToNull } from "../../common/dto-transforms";
 import { MAX_DECIMAL_10_2 } from "../../common/decimal-bounds.constant";
 import { VALID_TERMS } from "../../system-config/dto/update-invoice-settings.dto";
@@ -27,7 +27,7 @@ export class UpdateCustomerDto {
   @IsOptional() @IsString() contactName?: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() notes?: string;
-  @IsOptional() @IsEnum(FulfillPath) fulfillPath?: FulfillPath;
+  @IsOptional() @IsIn(WRITABLE_FULFILL_PATHS) fulfillPath?: FulfillPath;
   @IsOptional() @IsString() deliveryWindowStart?: string;
   @IsOptional() @IsString() deliveryWindowEnd?: string;
   // "" clears the stored email (→ null) so an import sentinel or stale address can
