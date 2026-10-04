@@ -13,20 +13,22 @@ jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 
+const ROUTE_OUT = {
+  id: "11111111-aaaa",
+  orderNumber: "ORD-00001",
+  createdAt: "2026-09-10T12:00:00Z",
+  itemCount: 3,
+  status: "OUT_FOR_DELIVERY",
+  fulfillPath: "ROUTE",
+  shippedAt: null,
+  totalAmount: 645,
+};
+let mockOrders: unknown[] = [ROUTE_OUT];
 jest.mock("@/lib/api/buyer", () => ({
   useBuyerOrders: () => ({
     data: {
-      data: [
-        {
-          id: "11111111-aaaa",
-          orderNumber: "ORD-00001",
-          createdAt: "2026-09-10T12:00:00Z",
-          itemCount: 3,
-          status: "OUT_FOR_DELIVERY",
-          totalAmount: 645,
-        },
-      ],
-      meta: { page: 1, limit: 20, total: 1, totalPages: 1 },
+      data: mockOrders,
+      meta: { page: 1, limit: 20, total: mockOrders.length, totalPages: 1 },
     },
     isLoading: false,
     isError: false,
@@ -63,6 +65,10 @@ const tabs = () =>
     .filter((t) => t && TODAY_TABS.concat("Shipped").includes(t));
 
 describe("BuyerOrdersPage — fulfilment wording (business profiles 1B)", () => {
+  beforeEach(() => {
+    mockOrders = [ROUTE_OUT];
+  });
+
   it("shipping-only seller (no fleet): no Out for Delivery tab or label", () => {
     mockCaps = fulfilment("SHIP", false);
     const { container } = renderWithProviders(<BuyerOrdersPage />);
@@ -88,5 +94,57 @@ describe("BuyerOrdersPage — fulfilment wording (business profiles 1B)", () => 
     expect(tabs()).toEqual(TODAY_TABS);
     const card = within(screen.getByTestId("buyer-orders-cards")).getByRole("link");
     expect(within(card).getByText("Out For Delivery")).toBeInTheDocument();
+  });
+});
+
+describe("BuyerOrdersPage — each order's badge is the detail page's label (lead review M2)", () => {
+  const SHIP_OUT = {
+    ...ROUTE_OUT,
+    id: "22222222-bbbb",
+    orderNumber: "ORD-00002",
+    fulfillPath: "SHIP",
+  };
+  const SHIP_CONFIRMED_SHIPPED = {
+    ...ROUTE_OUT,
+    id: "33333333-cccc",
+    orderNumber: "ORD-00003",
+    status: "CONFIRMED",
+    fulfillPath: "SHIP",
+    shippedAt: "2026-10-01T10:00:00Z",
+  };
+  const badgeOf = (orderNumber: string) => {
+    const cards = within(screen.getByTestId("buyer-orders-cards")).getAllByRole("link");
+    const card = cards.find((c) => c.textContent?.includes(orderNumber))!;
+    return card;
+  };
+
+  beforeEach(() => {
+    mockOrders = [ROUTE_OUT, SHIP_OUT, SHIP_CONFIRMED_SHIPPED];
+  });
+
+  it("shipping-only seller: SHIP orders read Shipped (as on the detail page), never On Its Way", () => {
+    mockCaps = fulfilment("SHIP", false);
+    renderWithProviders(<BuyerOrdersPage />);
+    expect(within(badgeOf("ORD-00002")).getByText("Shipped")).toBeInTheDocument();
+    expect(within(badgeOf("ORD-00002")).queryByText("On Its Way")).toBeNull();
+    expect(within(badgeOf("ORD-00003")).getByText("Shipped")).toBeInTheDocument();
+    // a non-SHIP order of a seller without a fleet still never says Out For Delivery
+    expect(within(badgeOf("ORD-00001")).getByText("On Its Way")).toBeInTheDocument();
+  });
+
+  it("fleet seller: a SHIP order reads Shipped; a ROUTE order keeps Out For Delivery", () => {
+    mockCaps = fulfilment("ROUTE", true);
+    renderWithProviders(<BuyerOrdersPage />);
+    expect(within(badgeOf("ORD-00002")).getByText("Shipped")).toBeInTheDocument();
+    expect(within(badgeOf("ORD-00002")).queryByText("Out For Delivery")).toBeNull();
+    expect(within(badgeOf("ORD-00003")).getByText("Shipped")).toBeInTheDocument();
+    expect(within(badgeOf("ORD-00001")).getByText("Out For Delivery")).toBeInTheDocument();
+  });
+
+  it("unset seller: today's labels for every order, SHIP included", () => {
+    mockCaps = fulfilment(null, true);
+    renderWithProviders(<BuyerOrdersPage />);
+    expect(within(badgeOf("ORD-00002")).getByText("Out For Delivery")).toBeInTheDocument();
+    expect(within(badgeOf("ORD-00003")).getByText("Confirmed")).toBeInTheDocument();
   });
 });

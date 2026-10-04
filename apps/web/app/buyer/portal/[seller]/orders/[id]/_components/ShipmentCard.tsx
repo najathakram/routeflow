@@ -78,6 +78,7 @@ export function ShipmentCard({
                       className="text-buyer-600 underline hover:text-buyer-700"
                     >
                       {number}
+                      <span className="sr-only"> (opens in a new tab)</span>
                     </a>
                   ) : (
                     number

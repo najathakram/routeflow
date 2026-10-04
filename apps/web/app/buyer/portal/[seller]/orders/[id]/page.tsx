@@ -39,7 +39,7 @@ import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
 import {
   NO_FLEET_STEP_LABELS,
   SHIP_STEP_LABELS,
-  buyerStatusLabel,
+  buyerOrderStatusLabel,
   noFleetStepIndex,
   orderTravelView,
   shipStepIndex,
@@ -200,6 +200,7 @@ function OrderTimeline({ order, view }: { order: BuyerOrder; view: BuyerOrderTra
             <div
               data-testid="timeline-step"
               data-state={isCurrent ? "current" : isComplete ? "complete" : "upcoming"}
+              aria-current={isCurrent ? "step" : undefined}
               className="flex flex-col items-center gap-1"
             >
               <div
@@ -537,6 +538,7 @@ export default function BuyerOrderDetailPage() {
   const capabilities = useBuyerSellerCapabilities();
   // Business profiles 1B: unset seller or unreadable capability = today's route view.
   const travel = orderTravelView(order?.fulfillPath, capabilities.data, capabilities.isLoading);
+  const timelineView = travel === "loading" && order?.fulfillPath !== "SHIP" ? "route" : travel;
   const cancelOrder = useBuyerCancelOrder();
   const updateItems = useBuyerUpdateOrderItems();
 
@@ -708,16 +710,18 @@ export default function BuyerOrderDetailPage() {
         </div>
         <span data-testid="order-status-badge">
           <Badge variant={getStatusVariant(order.status)}>
-            {buyerStatusLabel(order, travel) ?? formatStatus(order.status)}
+            {buyerOrderStatusLabel(order, capabilities.data, capabilities.isLoading) ??
+              formatStatus(order.status)}
           </Badge>
         </span>
       </div>
 
-      {/* Status timeline (held back until the seller's capability is read, so a ship seller's
-          buyer never sees the route steps flash) */}
-      {travel !== "loading" && (
+      {/* Status timeline. While the seller's capability loads, a SHIP order's timeline is held
+          back (no route steps flash for a ship seller); any other order shows today's timeline,
+          so an unset seller's page never has a gap. */}
+      {timelineView !== "loading" && (
         <div className="mb-8 rounded-xl border border-surface-border bg-white p-6">
-          <OrderTimeline order={order} view={travel} />
+          <OrderTimeline order={order} view={timelineView} />
         </div>
       )}
 

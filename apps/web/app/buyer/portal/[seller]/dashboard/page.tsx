@@ -25,7 +25,7 @@ import {
 } from "@/lib/api/buyer";
 import { useBuyerCart } from "@/lib/buyer-cart";
 import { useBuyerSellerCapabilities } from "@/lib/api/buyer-capabilities";
-import { buyerListStatusLabel } from "@/lib/buyer-fulfilment";
+import { buyerOrderStatusLabel } from "@/lib/buyer-fulfilment";
 import { objectPositionForUrl } from "@/lib/image-focal";
 import { PwaInstallPrompt } from "@/components/PwaInstallPrompt";
 
@@ -184,8 +184,8 @@ export default function BuyerDashboardPage() {
   const { data: dashboard, isLoading, isError } = useBuyerDashboard(frequentWindow);
   const { data: templatesData, isLoading: templatesLoading } = useBuyerTemplates();
   const { data: shelf } = useBuyerShelf();
-  // Business profiles 1B: no "Out For Delivery" label for a configured seller without a fleet.
-  const { data: capabilities } = useBuyerSellerCapabilities();
+  // Business profiles 1B: each recent order's badge is the order detail's own label.
+  const { data: capabilities, isLoading: capLoading } = useBuyerSellerCapabilities();
   const cart = useBuyerCart(buyer?.id, sellerSlug);
   const templates: BuyerOrderTemplate[] = templatesData?.data ?? [];
 
@@ -406,7 +406,8 @@ export default function BuyerDashboardPage() {
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge variant={getStatusVariant(order.status)}>
-                    {buyerListStatusLabel(order.status, capabilities) ?? formatStatus(order.status)}
+                    {buyerOrderStatusLabel(order, capabilities, capLoading) ??
+                      formatStatus(order.status)}
                   </Badge>
                   <span className="text-sm font-semibold text-navy">{fmt(order.total)}</span>
                   <ChevronRight className="h-4 w-4 text-navy/30" />

@@ -144,7 +144,9 @@ describe("shipping-only seller — a shipped SHIP order", () => {
     expect(within(card).getByRole("heading", { name: "Shipment" })).toBeInTheDocument();
     expect(within(card).getByTestId("shipment-headline")).toHaveTextContent("Shipped");
     expect(within(card).getByText("UPS")).toBeInTheDocument();
-    const link = within(card).getByRole("link", { name: "1Z999AA10123456784" });
+    const link = within(card).getByRole("link", { name: /^1Z999AA10123456784/ });
+    // nit: screen readers hear that the carrier page opens in a new tab
+    expect(link).toHaveAccessibleName("1Z999AA10123456784 (opens in a new tab)");
     expect(link).toHaveAttribute(
       "href",
       "https://www.ups.com/track?loc=en_US&tracknum=1Z999AA10123456784",
@@ -164,6 +166,12 @@ describe("shipping-only seller — a shipped SHIP order", () => {
       ["Shipped", "current"],
       ["Delivered", "upcoming"],
     ]);
+    // nit: the current step is announced as the current step
+    expect(
+      within(timeline)
+        .getAllByTestId("timeline-step")
+        .map((st) => st.getAttribute("aria-current")),
+    ).toEqual([null, "step", null]);
   });
 
   it("the status badge reads Shipped", () => {
@@ -257,6 +265,20 @@ describe("before == after: unset sellers and an unreadable capability see today'
       expect(screen.getByTestId("order-status-badge")).toHaveTextContent(/^Confirmed$/);
       r.unmount();
     }
+  });
+
+  it("nit: while the capability loads, a non-SHIP order keeps today's timeline (no gap for unset sellers)", () => {
+    mockCaps = { data: undefined, isLoading: true, isError: false };
+    mockOrder = order({ status: "CONFIRMED" });
+    renderWithProviders(<BuyerOrderDetailPage />);
+    expect(screen.getAllByTestId("timeline-step").map((st) => st.textContent)).toEqual([
+      "Pending",
+      "Confirmed",
+      "Out for Delivery",
+      "Partial Delivery",
+      "Delivered",
+    ]);
+    expect(screen.queryByTestId("shipment-card")).toBeNull();
   });
 
   it("while the capability loads, neither the route card nor the shipment card shows", () => {

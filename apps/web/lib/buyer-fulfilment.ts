@@ -99,12 +99,17 @@ export function buyerStatusLabel(o: ShipFields, view: BuyerOrderTravelView): str
 }
 
 /**
- * An order list's status label override (orders list, dashboard): a configured seller without a
- * fleet never labels an order "Out For Delivery". null = today's formatted status.
+ * THE per-order status label (lead review M2): the order detail badge, the orders list and the
+ * dashboard all call this, so one order reads the same everywhere. It is exactly
+ * `buyerStatusLabel(order, orderTravelView(order.fulfillPath, cap, capLoading))` — a SHIP order of
+ * a configured seller reads "Shipped" once shipped, a configured no-fleet seller's other orders
+ * never say "Out For Delivery", and an unset / unread / loading capability is today's label
+ * (null = today's formatted status).
  */
-export function buyerListStatusLabel(
-  status: string,
+export function buyerOrderStatusLabel(
+  o: ShipFields & { fulfillPath?: string | null },
   cap: BuyerSellerCapability | null | undefined,
+  capLoading: boolean,
 ): string | null {
-  return sellerShowsRouteWording(cap) ? null : buyerStatusLabel({ status }, "none");
+  return buyerStatusLabel(o, orderTravelView(o.fulfillPath, cap, capLoading));
 }

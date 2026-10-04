@@ -3,7 +3,7 @@ import {
   NO_FLEET_STEP_LABELS,
   SHIPMENT_STATE_LABEL,
   SHIP_STEP_LABELS,
-  buyerListStatusLabel,
+  buyerOrderStatusLabel,
   buyerStatusLabel,
   isConfiguredSeller,
   noFleetStepIndex,
@@ -144,13 +144,61 @@ describe("buyerStatusLabel (null = today's formatted status)", () => {
   });
 });
 
-describe("buyerListStatusLabel (orders list, dashboard)", () => {
-  it("relabels Out For Delivery only for a configured seller without a fleet", () => {
-    expect(buyerListStatusLabel("OUT_FOR_DELIVERY", SHIP_ONLY)).toBe("On Its Way");
-    expect(buyerListStatusLabel("CONFIRMED", SHIP_ONLY)).toBeNull();
-    expect(buyerListStatusLabel("OUT_FOR_DELIVERY", BOTH_FLEET)).toBeNull();
-    expect(buyerListStatusLabel("OUT_FOR_DELIVERY", UNSET_NO_FLEET)).toBeNull();
-    expect(buyerListStatusLabel("OUT_FOR_DELIVERY", undefined)).toBeNull();
+describe("buyerOrderStatusLabel — ONE per-order label for the detail page, the list and the dashboard", () => {
+  const SHIPPED = "2026-10-01T10:00:00Z";
+  it("shipping-only seller: a SHIP order reads Shipped once shipped, never On Its Way", () => {
+    expect(
+      buyerOrderStatusLabel({ status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" }, SHIP_ONLY, false),
+    ).toBe("Shipped");
+    expect(
+      buyerOrderStatusLabel(
+        { status: "CONFIRMED", fulfillPath: "SHIP", shippedAt: SHIPPED },
+        SHIP_ONLY,
+        false,
+      ),
+    ).toBe("Shipped");
+    expect(
+      buyerOrderStatusLabel({ status: "CONFIRMED", fulfillPath: "SHIP" }, SHIP_ONLY, false),
+    ).toBeNull();
+  });
+
+  it("fleet seller: a SHIP order reads Shipped, a ROUTE order keeps Out For Delivery", () => {
+    expect(
+      buyerOrderStatusLabel({ status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" }, BOTH_FLEET, false),
+    ).toBe("Shipped");
+    expect(
+      buyerOrderStatusLabel(
+        { status: "OUT_FOR_DELIVERY", fulfillPath: "ROUTE" },
+        BOTH_FLEET,
+        false,
+      ),
+    ).toBeNull();
+  });
+
+  it("no-fleet seller: a ROUTE order reads On Its Way", () => {
+    expect(
+      buyerOrderStatusLabel({ status: "OUT_FOR_DELIVERY", fulfillPath: "ROUTE" }, SHIP_ONLY, false),
+    ).toBe("On Its Way");
+  });
+
+  it("unset, unread or loading: today's label, SHIP orders included", () => {
+    const ship = { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", shippedAt: SHIPPED };
+    expect(buyerOrderStatusLabel(ship, UNSET_NO_FLEET, false)).toBeNull();
+    expect(buyerOrderStatusLabel(ship, undefined, false)).toBeNull();
+    expect(buyerOrderStatusLabel(ship, SHIP_ONLY, true)).toBeNull();
+  });
+
+  it("is exactly the detail page's view + label", () => {
+    for (const fulfillPath of ["ROUTE", "SHIP", undefined]) {
+      for (const status of ["PENDING", "CONFIRMED", "OUT_FOR_DELIVERY", "DELIVERED"]) {
+        for (const cap of [SHIP_ONLY, BOTH_FLEET, UNSET_NO_FLEET]) {
+          const o = { status, fulfillPath };
+          expect(buyerOrderStatusLabel(o, cap, false)).toBe(
+            buyerStatusLabel(o, orderTravelView(fulfillPath, cap, false)),
+          );
+        }
+      }
+    }
   });
 });
 
