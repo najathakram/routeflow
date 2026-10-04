@@ -7,7 +7,10 @@ import {
   type CategoryTaxType,
 } from "@routeflow/pricing";
 import type { RegulatedLedgerService } from "../regulated/regulated-ledger.service";
-import { assertNoNegativeLineSubtotal } from "../common/money-invariants.util";
+import {
+  assertInvoiceTotalsSane,
+  assertNoNegativeLineSubtotal,
+} from "../common/money-invariants.util";
 import { sumConfirmed } from "./payment-predicates";
 
 /**
@@ -119,6 +122,31 @@ export function buildPriceAdjustmentUpdates(args: {
 }
 
 /**
+ * B1031 (SA ruling): the same invoice-level totals guard `create()` and `update()` run (discount above the
+ * subtotal, negative total), judged on the invoice AS IT WOULD BE after this re-price: the re-priced lines
+ * take their new subtotal and levy, every other line keeps its stored one. A lower price against a stored
+ * invoice discount can leave discount > subtotal on a SENT invoice, and one bulk action can do it to many.
+ * Pure, so it runs before any write, in the same pass as the line guard.
+ */
+export function assertAdjustedTotalsSane(
+  inv: { items: any[]; discount?: unknown; shippingFee?: unknown },
+  updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
+): void {
+  const byId = new Map(updates.map((u) => [u.id, u.data]));
+  const lines = inv.items.map((li) => (byId.has(li.id) ? { ...li, ...byId.get(li.id) } : li));
+  const subtotal = roundMoney(lines.reduce((s, li) => s + Number(li.subtotal), 0));
+  const regularTax = roundMoney(
+    lines.reduce((s, li) => s + Number(li.subtotal) * Number(li.taxRate ?? 0), 0),
+  );
+  const categoryTax = roundMoney(lines.reduce((s, li) => s + Number(li.categoryTaxAmount ?? 0), 0));
+  const discount = Number(inv.discount ?? 0);
+  const total = roundMoney(
+    subtotal - discount + Number(inv.shippingFee ?? 0) + roundMoney(regularTax + categoryTax),
+  );
+  assertInvoiceTotalsSane({ discount, subtotal, total });
+}
+
+/**
  * B1031: the bulk scope (ALL_CUSTOMER_SINCE) re-prices several invoices, each in its OWN transaction, so a
  * refusal found on invoice N would leave invoices 1..N-1 already re-priced. Judge every target first, from
  * the lines as read, writing nothing; a refusal names the invoice. The in-transaction build re-judges the
@@ -126,20 +154,21 @@ export function buildPriceAdjustmentUpdates(args: {
  */
 export function preflightBulkPriceAdjustment(
   plans: ReadonlyArray<{
-    inv: { invoiceNumber?: string | null; items: any[] };
+    inv: { invoiceNumber?: string | null; items: any[]; discount?: unknown; shippingFee?: unknown };
     localMap: Map<string, number>;
   }>,
   isTaxExempt: boolean,
 ): void {
   for (const { inv, localMap } of plans) {
     try {
-      buildPriceAdjustmentUpdates({
+      const updates = buildPriceAdjustmentUpdates({
         items: inv.items,
         localPriceMap: localMap,
         categoriesById: new Map(),
         unitsPerBoxByProduct: new Map(),
         isTaxExempt,
       });
+      assertAdjustedTotalsSane(inv, updates);
     } catch (e) {
       if (e instanceof BadRequestException) {
         throw new BadRequestException(`Invoice ${inv.invoiceNumber ?? ""}: ${e.message}`.trim());

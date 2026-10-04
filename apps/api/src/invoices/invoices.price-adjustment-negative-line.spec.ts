@@ -180,4 +180,59 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
     await expect(run).rejects.toThrow(NEG("Widget", -5));
     noWrites();
   });
+
+  // SA ruling on B1031: the re-price must also keep each invoice's TOTALS sane (B1030's assertInvoiceTotalsSane),
+  // in the same pass as the line guard, so a bulk re-price is all-or-nothing on both.
+  const plain = (id: string, over: Record<string, unknown> = {}) =>
+    line(id, { unitPrice: 50, discount: 0, subtotal: 50, productId: "prod-x", ...over });
+
+  it("(h) BULK: a re-price that would leave ONE invoice with discount > subtotal refuses the whole batch and writes nothing", async () => {
+    const ok = invoice("inv-1", InvoiceStatus.SENT, [plain("a1")], { discount: 0 });
+    const bad = invoice("inv-2", InvoiceStatus.SENT, [plain("b1")], { discount: 30 });
+    arrange({ "inv-1": ok, "inv-2": bad });
+    prisma.invoice.findMany.mockResolvedValue([ok, bad]);
+    const run = service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "ALL_CUSTOMER_SINCE",
+      sinceDate: "2026-01-01",
+    });
+    await expect(run).rejects.toThrow(
+      "Invoice INV-inv-2: Invoice discount (30) cannot exceed subtotal (20).",
+    );
+    await expect(run).rejects.toMatchObject({ status: 400 });
+    noWrites();
+  });
+
+  it("(i) BULK control: the same batch with discounts the new subtotals still cover saves BOTH invoices", async () => {
+    const one = invoice("inv-1", InvoiceStatus.SENT, [plain("a1")], { discount: 0 });
+    const two = invoice("inv-2", InvoiceStatus.SENT, [plain("b1")], { discount: 5 });
+    arrange({ "inv-1": one, "inv-2": two });
+    prisma.invoice.findMany.mockResolvedValue([one, two]);
+    await service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "ALL_CUSTOMER_SINCE",
+      sinceDate: "2026-01-01",
+    });
+    expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(2);
+    expect(prisma.invoice.update).toHaveBeenCalledTimes(2);
+  });
+
+  it("(j) SINGLE: a re-price that leaves discount > subtotal is refused with create()'s message and writes nothing", async () => {
+    arrange({ "inv-1": invoice("inv-1", InvoiceStatus.SENT, [plain("a1")], { discount: 30 }) });
+    const run = service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "SINGLE",
+    });
+    await expect(run).rejects.toThrow("Invoice discount (30) cannot exceed subtotal (20).");
+    noWrites();
+  });
+
+  it("(k) SINGLE control: discount equal to the new subtotal is allowed (total 0 plus shipping and tax only)", async () => {
+    arrange({ "inv-1": invoice("inv-1", InvoiceStatus.SENT, [plain("a1")], { discount: 20 }) });
+    await service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "SINGLE",
+    });
+    expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);
+  });
 });
