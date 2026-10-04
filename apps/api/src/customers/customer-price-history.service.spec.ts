@@ -1,6 +1,7 @@
 import { NotFoundException, BadRequestException } from "@nestjs/common";
 import { Test } from "@nestjs/testing";
-import { InvoiceStatus, OrderStatus, UserRole } from "@prisma/client";
+import { InvoiceStatus, UserRole } from "@prisma/client";
+import { BACKING_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { createMockPrisma } from "../testing/prisma-mock";
 import {
@@ -12,7 +13,7 @@ import {
 const D = (n: number | string) => n; // Prisma Decimal stand-in: Number() accepts it
 
 const CUSTOMER = { id: "c1", businessName: "Acme Foods" };
-const PRODUCT = {
+const PRODUCT: Record<string, unknown> = {
   id: "p1",
   name: "Widget",
   unit: "pc",
@@ -66,6 +67,27 @@ const mv = (iso: string, avg: string) => ({
   avgCostAfter: D(avg),
 });
 
+// A tiny invoice store that honours the status filter, so billed-qty behaviour is exercised
+// (not just the query shape). `rows` answers the row read; `billed` answers the billed-qty read
+// (the one filtered on items.some.orderItemId), after applying `status.notIn`.
+const mockInvoiceStore = (
+  prisma: { invoice: { findMany: jest.Mock } },
+  o: {
+    rows?: unknown[];
+    billed?: { status: InvoiceStatus; items: { orderItemId: string; qty: unknown }[] }[];
+  },
+) => {
+  prisma.invoice.findMany.mockImplementation(async (args: any) => {
+    if (args?.where?.items?.some?.orderItemId) {
+      const excluded: InvoiceStatus[] = args.where.status?.notIn ?? [];
+      return (o.billed ?? [])
+        .filter((i) => !excluded.includes(i.status))
+        .map((i) => ({ items: i.items }));
+    }
+    return o.rows ?? [];
+  });
+};
+
 describe("CustomerPriceHistoryService", () => {
   let service: CustomerPriceHistoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -77,6 +99,7 @@ describe("CustomerPriceHistoryService", () => {
     prisma.invoice.findMany.mockResolvedValue([]);
     prisma.order.findMany.mockResolvedValue([]);
     prisma.stockMovement.findMany.mockResolvedValue([]);
+    prisma.stockMovement.findFirst.mockResolvedValue(null);
     const mod = await Test.createTestingModule({
       providers: [CustomerPriceHistoryService, { provide: PrismaService, useValue: prisma }],
     }).compile();
@@ -128,15 +151,15 @@ describe("CustomerPriceHistoryService", () => {
   });
 
   describe("status filters", () => {
-    it("reads only real invoices (no DRAFT / VOID / WRITTEN_OFF) and only open orders", async () => {
+    it("reads issued invoices (no DRAFT / VOID; a WRITTEN_OFF invoice was billed) and backing orders", async () => {
       await run();
       const iw = prisma.invoice.findMany.mock.calls[0][0].where;
       expect(iw.status).toEqual({
-        notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+        notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID],
       });
       const ow = prisma.order.findMany.mock.calls[0][0].where;
       expect(ow.status).toEqual({
-        in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY],
+        in: [...BACKING_ORDER_STATUSES],
       });
       // cancelled order LINES are excluded too
       expect(prisma.order.findMany.mock.calls[0][0].select.lineItems.where).toMatchObject({
@@ -195,11 +218,12 @@ describe("CustomerPriceHistoryService", () => {
     });
 
     it("an open order line that is fully invoiced is skipped (appears once, as INVOICE)", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } }),
-      ]);
+      mockInvoiceStore(prisma, {
+        rows: [invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } })],
+        billed: [{ status: InvoiceStatus.SENT, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
       prisma.order.findMany.mockResolvedValue([
-        openOrder({ lineItems: [openItem({ qty: D(2), invoicedQty: D(2) })] }),
+        openOrder({ lineItems: [openItem({ qty: D(2) })] }),
       ]);
       const res = await run();
       expect(res.rows.map((r) => r.source)).toEqual(["INVOICE"]);
@@ -207,8 +231,11 @@ describe("CustomerPriceHistoryService", () => {
 
     it("a partially invoiced open line shows only its not-yet-invoiced remainder", async () => {
       prisma.order.findMany.mockResolvedValue([
-        openOrder({ lineItems: [openItem({ qty: D(5), invoicedQty: D(2) })] }),
+        openOrder({ lineItems: [openItem({ qty: D(5) })] }),
       ]);
+      mockInvoiceStore(prisma, {
+        billed: [{ status: InvoiceStatus.SENT, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
       const res = await run();
       expect(res.rows).toHaveLength(1);
       expect(res.rows[0]).toMatchObject({
@@ -217,6 +244,50 @@ describe("CustomerPriceHistoryService", () => {
         boxes: null,
         pieces: null,
       });
+    });
+
+    it("a line billed only on a DRAFT or VOID invoice still shows as OPEN_ORDER", async () => {
+      prisma.order.findMany.mockResolvedValue([
+        openOrder({ lineItems: [openItem({ qty: D(2), invoicedQty: D(2) })] }),
+      ]);
+      mockInvoiceStore(prisma, {
+        billed: [
+          { status: InvoiceStatus.DRAFT, items: [{ orderItemId: "oi1", qty: D(2) }] },
+          { status: InvoiceStatus.VOID, items: [{ orderItemId: "oi1", qty: D(2) }] },
+        ],
+      });
+      const res = await run();
+      expect(res.rows.map((r) => [r.source, r.qty])).toEqual([["OPEN_ORDER", 2]]);
+    });
+
+    it("a line billed on a WRITTEN_OFF invoice counts as billed (shown once, as INVOICE)", async () => {
+      prisma.order.findMany.mockResolvedValue([
+        openOrder({ status: "DELIVERED", lineItems: [openItem({ qty: D(2) })] }),
+      ]);
+      mockInvoiceStore(prisma, {
+        rows: [invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } })],
+        billed: [{ status: InvoiceStatus.WRITTEN_OFF, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
+      const res = await run();
+      expect(res.rows.map((r) => r.source)).toEqual(["INVOICE"]);
+    });
+
+    it("reads billed qty THROUGH Invoice (a NULL-tenant InvoiceItem must not be dropped)", async () => {
+      prisma.order.findMany.mockResolvedValue([openOrder()]);
+      await run();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+      const billedCall = prisma.invoice.findMany.mock.calls[1][0];
+      expect(billedCall.where).toMatchObject({
+        tenantId: "test-tenant",
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+        items: { some: { orderItemId: { in: ["oi1"] } } },
+      });
+    });
+
+    it("a DELIVERED order with no issued invoice shows as not invoiced yet", async () => {
+      prisma.order.findMany.mockResolvedValue([openOrder({ status: "DELIVERED" })]);
+      const res = await run();
+      expect(res.rows.map((r) => r.source)).toEqual(["OPEN_ORDER"]);
     });
 
     it("merges newest first across invoices and open orders", async () => {
@@ -237,7 +308,7 @@ describe("CustomerPriceHistoryService", () => {
   });
 
   describe("avg cost at the sale date", () => {
-    it("uses the latest movement at or before each sale, falling back to current averageCost before the first", async () => {
+    it("uses the latest movement at or before each sale, null before the first", async () => {
       prisma.stockMovement.findMany.mockResolvedValue([
         mv("2026-03-01T00:00:00Z", "1.0000"),
         mv("2026-06-05T00:00:00Z", "2.0000"),
@@ -249,14 +320,39 @@ describe("CustomerPriceHistoryService", () => {
       ]);
       const res = await run();
       const byId = Object.fromEntries(res.rows.map((r) => [r.invoiceId, r.avgCostAtSale]));
-      expect(byId).toEqual({ late: 2, mid: 1, early: 3 }); // early: no movement yet -> averageCost 3
+      expect(byId).toEqual({ late: 2, mid: 1, early: null }); // before any movement: unknown
     });
 
-    it("is null when there is neither a movement nor a current average cost", async () => {
-      prisma.product.findFirst.mockResolvedValue({ ...PRODUCT, averageCost: null });
+    it("uses the opening snapshot (latest movement before the oldest row) and bounds the movement read", async () => {
+      prisma.stockMovement.findFirst.mockResolvedValue(mv("2025-01-01T00:00:00Z", "4.0000"));
       prisma.invoice.findMany.mockResolvedValue([invoice()]);
       const res = await run();
-      expect(res.rows[0].avgCostAtSale).toBeNull();
+      expect(res.rows[0].avgCostAtSale).toBe(4);
+      const w = prisma.stockMovement.findMany.mock.calls[0][0].where;
+      expect(w.effectiveAt).toEqual({
+        gte: new Date("2026-06-10T12:00:00Z"),
+        lte: new Date("2026-06-10T12:00:00Z"),
+      });
+      expect(prisma.stockMovement.findFirst.mock.calls[0][0].where.effectiveAt).toEqual({
+        lt: new Date("2026-06-10T12:00:00Z"),
+      });
+    });
+
+    it("STANDARD costing falls back to standardCost before any movement; otherwise null (never current averageCost)", async () => {
+      prisma.invoice.findMany.mockResolvedValue([invoice()]);
+      expect((await run()).rows[0].avgCostAtSale).toBeNull();
+      prisma.product.findFirst.mockResolvedValue({
+        ...PRODUCT,
+        costingMethod: "STANDARD",
+        standardCost: D("2.5000"),
+      });
+      expect((await run()).rows[0].avgCostAtSale).toBe(2.5);
+    });
+
+    it("a zero or negative snapshot is unknown (null)", async () => {
+      prisma.stockMovement.findMany.mockResolvedValue([mv("2026-01-01T00:00:00Z", "0.0000")]);
+      prisma.invoice.findMany.mockResolvedValue([invoice()]);
+      expect((await run()).rows[0].avgCostAtSale).toBeNull();
     });
 
     it("boxed split line: cost per case = piece cost x unitsPerBox, in the row's unit", async () => {
@@ -394,6 +490,24 @@ describe("CustomerPriceHistoryService", () => {
         qtySold: 5,
         currentAvgCost: 3,
       });
+    });
+
+    it("currentAvgCost uses the first row in the unit group with a known pack", async () => {
+      prisma.invoice.findMany.mockResolvedValue([
+        invoice({
+          id: "new",
+          issueDate: new Date("2026-06-20T00:00:00Z"),
+          items: [invLine({ unitLabel: "Case", unitsPerBox: 12, qty: D(2) })], // ambiguous: pack unknown
+        }),
+        invoice({
+          id: "old",
+          issueDate: new Date("2026-06-10T00:00:00Z"),
+          items: [invLine({ unitLabel: "Case", unitsPerBox: 12, boxes: 1, pieces: 0, qty: D(12) })],
+        }),
+      ]);
+      const res = await run();
+      expect(res.summaries).toHaveLength(1);
+      expect(res.summaries[0].currentAvgCost).toBe(36);
     });
 
     it("no history -> empty rows and summaries", async () => {
