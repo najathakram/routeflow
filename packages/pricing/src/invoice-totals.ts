@@ -1,14 +1,19 @@
 import { computeLineSubtotal, roundMoney, type LineSubtotalInput } from "./pricing";
 
 /**
- * Invoice / estimate footer totals — the ONE place a builder form sums its lines.
+ * Invoice / estimate footer ESTIMATE — the ONE place a builder form sums its lines for the
+ * line / tax / total footer it shows before save.
  *
- * Mirrors what the server stores (`invoices.service.ts` create/update): every line is its own
- * boxed-aware, post-discount, `roundMoney`-ed total; the subtotal is `roundMoney(sum of lines)`;
+ * It uses the server's rounding arithmetic (`invoices.service.ts` create/update): every line is its
+ * own boxed-aware, post-discount, `roundMoney`-ed total; the subtotal is `roundMoney(sum of lines)`;
  * the tax is summed UNROUNDED across lines and rounded ONCE (`roundMoney(Σ line × rate)`), never
  * per line; and `total = roundMoney(subtotal − discount + shipping + tax)`. A form that sums raw
- * floats instead shows 0.30000000000000004-class drift and a footer a cent away from the stored
- * invoice (L-170: round before the value drives anything).
+ * floats instead shows 0.30000000000000004-class drift (L-170: round before the value drives
+ * anything).
+ *
+ * It is NOT the server's stored total. The server also (1) adds the regulated CATEGORY tax to the
+ * invoice tax and (2) zeroes all tax for a tax-exempt customer; this estimate models neither, so a
+ * footer can differ from the saved invoice for such lines or customers.
  *
  * Pure and framework-free: web builder/edit forms and the estimate footer import it, never
  * re-deriving `qty * unitPrice` (over-charges a boxed line by `unitsPerBox`).
