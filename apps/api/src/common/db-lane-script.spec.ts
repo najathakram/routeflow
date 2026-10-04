@@ -315,11 +315,27 @@ describe("db-lane.mjs — this repo", () => {
     );
   });
 
-  it("20. the repo graph builds in under 10 s from the working tree", () => {
-    const t0 = Date.now();
-    const r = lane(REPO, ["--files", "apps/web/x.tsx"]);
+  it("20. the repo graph builds in under 10 s of CPU time from the working tree", () => {
+    // CPU time of the lane process itself, not wall clock: a loaded host (pre-push verify runs the whole workspace in
+    // parallel) stretches wall time by the scheduler's whim but not the work the graph build does, so the bound stays at the
+    // same 10 s and no longer flakes. The probe runs the real lane in-process and prints its own cpuUsage at exit.
+    const probe =
+      'process.on("exit",()=>{const u=process.cpuUsage();process.stderr.write("CPU_MS="+Math.round((u.user+u.system)/1000)+"\\n")});' +
+      "process.argv=[process.argv[0],process.env.LANE_PATH,...JSON.parse(process.env.LANE_ARGS)];" +
+      "import(require('url').pathToFileURL(process.env.LANE_PATH).href);";
+    const r = spawnSync(process.execPath, ["-e", probe], {
+      encoding: "utf8",
+      env: {
+        ...scrubbedGitEnv(),
+        LANE_PATH: LANE,
+        LANE_ARGS: JSON.stringify(["--root", REPO, "--files", "apps/web/x.tsx"]),
+      },
+      timeout: 120_000,
+    });
     expect(r.status).toBe(0);
-    expect(Date.now() - t0).toBeLessThan(10_000);
+    const cpuMs = Number(/CPU_MS=(\d+)/.exec(r.stderr ?? "")?.[1]);
+    expect(Number.isFinite(cpuMs)).toBe(true);
+    expect(cpuMs).toBeLessThan(10_000);
   });
 });
 
