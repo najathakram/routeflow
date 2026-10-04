@@ -105,7 +105,13 @@ export class TenantsController {
     const [fulfilmentMode, counterSales, heldAddons] = await Promise.all([
       this.featureConfig.getEffectiveMode(user.tenantId, "fulfilment_model").catch(() => "unset"),
       this.featureConfig.getEffectiveMode(user.tenantId, "counter_sales").catch(() => "unset"),
-      heldAddonKeys(this.addonService, this.featureOverrides, user.tenantId),
+      // A failed read must not 500 (and must not guess fleet=false): the existing 503.
+      heldAddonKeys(this.addonService, this.featureOverrides, user.tenantId).catch(() => {
+        throw new ServiceUnavailableException({
+          code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
+          message: "Feature resolution is temporarily unavailable. Please retry.",
+        });
+      }),
     ]);
     return {
       served,

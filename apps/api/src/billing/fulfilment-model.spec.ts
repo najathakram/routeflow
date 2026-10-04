@@ -149,6 +149,37 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
   });
 });
 
+describe("FeatureConfigService.getState: delivery/both are BLOCKED without a fleet key", () => {
+  const build = async (fleetHeld: boolean) => {
+    const module = await Test.createTestingModule({
+      providers: [
+        FeatureConfigService,
+        { provide: PrismaService, useValue: {} },
+        {
+          provide: FeatureConfigStore,
+          useValue: { getMode: jest.fn().mockResolvedValue({ value: "unset", source: "default" }) },
+        },
+        { provide: AuditService, useValue: { log: jest.fn() } },
+        { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(fleetHeld) } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn() } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+      ],
+    }).compile();
+    return module.get(FeatureConfigService);
+  };
+
+  it("no fleet key: delivery and both are blocked; unset, ship, pickup, pickup_ship are allowed", async () => {
+    const state = await (await build(false)).getState("t1", "fulfilment_model");
+    expect(state.blocked).toEqual(["delivery", "both"]);
+    expect(state.allowed).toEqual(["unset", "ship", "pickup", "pickup_ship"]);
+  });
+
+  it("a fleet key held: nothing is blocked", async () => {
+    const state = await (await build(true)).getState("t1", "fulfilment_model");
+    expect(state.blocked).toEqual([]);
+  });
+});
+
 describe("counter_sales registry row", () => {
   const r = () => FEATURE_REGISTRY.find((f) => f.key === "counter_sales");
   it("is a free config row: unset (today) or on", () => {

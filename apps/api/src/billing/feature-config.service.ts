@@ -141,6 +141,14 @@ export class FeatureConfigService {
           break;
         }
       }
+      // Same fleet rule as set(): delivery/both are blocked (not "allowed" then 409) without a key.
+      if (
+        holdsAll &&
+        key === "fulfilment_model" &&
+        (modeName === "delivery" || modeName === "both")
+      ) {
+        holdsAll = (await Promise.all(FLEET_KEYS.map((k) => this.can(tenantId, k)))).some(Boolean);
+      }
       (holdsAll ? allowed : blocked).push(modeName);
     }
     const effective = await this.resolveEffective(tenantId, row.config, value);

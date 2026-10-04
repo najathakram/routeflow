@@ -3,7 +3,11 @@ import type { AddonService } from "./addon.service";
 import type { FeatureOverrideService } from "./feature-override.service";
 import { gateVia } from "./feature-registry";
 
-/** The two keys that make a tenant a delivery operation (the fleet modules). */
+/**
+ * The two keys that make a tenant a delivery operation (the fleet modules). `driver_payments` is
+ * deliberately NOT here: it is gated via "guard", so `can()` is true for almost every tenant and
+ * including it would neuter the 409 on delivery/both.
+ */
 export const FLEET_KEYS = ["recurring_routes", "order_delivery"] as const;
 
 /** What each stored mode offers. SHIP semantics come ONLY from the ship-family modes (SA-649 R3). */

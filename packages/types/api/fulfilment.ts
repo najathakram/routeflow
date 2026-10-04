@@ -28,7 +28,8 @@ export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
  * - `counter`: "always" (in-store modes), "optional" (counter_sales on), "off".
  * - `fleet`: recurring_routes || order_delivery effective. The MODULES are the only truth; no
  *   mode turns fleet on or off.
- * - `consistent`: false when the mode is delivery|both and `fleet` is false.
+ * - `consistent`: false when the mode is delivery|both and `fleet` is false. Then clients keep
+ *   today's ROUTE/SHIP choice and the platform admin sees a warning.
  */
 export interface FulfilmentCapability {
   methods: FulfilmentMethod[];

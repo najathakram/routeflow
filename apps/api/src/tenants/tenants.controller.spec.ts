@@ -232,4 +232,13 @@ describe("TenantsController.getMyFeatures: fulfilment modes + capabilities.fulfi
     expect(r.modes.fulfilment_model).toBe("unset");
     expect(r.capabilities.fulfilment.staffDefault).toBe("ROUTE");
   });
+
+  it("a failed held-addons read is the existing 503 FEATURES_UNAVAILABLE, never a bare 500", async () => {
+    const { controller, addonService } = build({});
+    addonService.getActiveAddons.mockRejectedValue(new Error("db blip"));
+    await expect(controller.getMyFeatures(caller)).rejects.toMatchObject({
+      status: 503,
+      response: expect.objectContaining({ code: "FEATURES_UNAVAILABLE" }),
+    });
+  });
 });
