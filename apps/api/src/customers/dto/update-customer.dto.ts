@@ -36,7 +36,8 @@ export class UpdateCustomerDto {
   @IsOptional() @Transform(emptyToNull) @IsString() email?: string | null;
   @IsOptional() @IsString() mobile?: string;
   @IsOptional() @IsString() customerType?: string;
-  @IsOptional() @IsString() displayName?: string;
+  // The buyer profile body is derived from this class, so displayName keeps the HTML strip it had there.
+  @IsOptional() @StripHtml() @IsString() displayName?: string;
   @IsOptional() @IsString() salutation?: string;
   @IsOptional() @IsString() firstName?: string;
   @IsOptional() @IsString() lastName?: string;

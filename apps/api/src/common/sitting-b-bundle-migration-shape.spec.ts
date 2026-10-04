@@ -20,13 +20,12 @@ function executableSql(): string {
 }
 
 describe("sitting-B bundle migration shape (SA-603)", () => {
-  it("sorts after the prior migrations and every other folder", () => {
+  // Ordering only, never "newest forever": a later migration folder is legitimate (SA-650 PICKUP,
+  // the shipped-emails pair), so this pins the named predecessors and that the folder is on disk.
+  it("sorts after its named predecessors", () => {
+    expect(readdirSync(MIGRATIONS_DIR)).toContain(FOLDER);
     expect(FOLDER > "20260929200000_2309_apple_sign_in").toBe(true);
     expect(FOLDER > "20260929210000_1337_policy_value").toBe(true);
-    const others = readdirSync(MIGRATIONS_DIR).filter(
-      (n) => n !== FOLDER && n !== "migration_lock.toml",
-    );
-    for (const name of others) expect(FOLDER > name).toBe(true);
   });
 
   const sql = executableSql();
