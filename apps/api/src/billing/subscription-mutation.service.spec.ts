@@ -215,6 +215,7 @@ function addonStripeClient() {
     products: { create: jest.fn().mockResolvedValue({ id: "prod_1" }) },
     subscriptionItems: {
       create: jest.fn().mockResolvedValue({ id: "si_1" }),
+      list: jest.fn().mockResolvedValue({ data: [] }),
       update: jest.fn().mockResolvedValue({ id: "si_1" }),
       del: jest.fn().mockResolvedValue({}),
     },
@@ -590,6 +591,59 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
       expect(String(err.message)).not.toMatch(/api_connection|si_1/);
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("SA F1: a dropped billed add-on while Stripe is NOT configured refuses the whole subscribe (handle kept, nothing written)", async () => {
+      const { svc, prisma, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+        stripe: { isConfigured: false, client: addonStripeClient() },
+      });
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("(b) if the tx fails AFTER the Stripe deletes, a retry heals it (the second delete is resource_missing)", async () => {
+      const { svc, prisma, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      prisma.$transaction.mockRejectedValueOnce(new Error("db down"));
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toThrow("db down");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+
+      // retry: the rows still point at the (already deleted) item; Stripe says it is gone
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("(c) a manually-invoiced tenant's dropped priced add-on raises a 'stop invoicing' platform notice", async () => {
+      const { svc, tx } = make({
+        tenantStatus: "ACTIVE",
+        sub: { ...activeAnnual, stripeSubId: null, stripeCustomerId: null, externalPayment: true },
+        priorAddons: [{ ...billedRow, stripeItemId: null }],
+      });
+      const auditLog = { create: jest.fn().mockResolvedValue({}) };
+      (tx as any).auditLog = auditLog;
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(auditLog.create).toHaveBeenCalledTimes(1);
+      const d = auditLog.create.mock.calls[0][0].data;
+      expect(d.action).toBe("ADDON_MANUAL_INVOICE_STOP");
+      expect(d.meta.message).toMatch(/Add-on Customer pack turned off for .*: stop invoicing it/);
     });
 
     it("an item that only appears under the lock (a concurrent enable) is never left billing: retryable refusal", async () => {
@@ -1563,6 +1617,7 @@ describe("SubscriptionMutationService.enableAddon — F1 tenant-path concurrency
     // priorQty of 0 and both emit the full delta.
     let row: { active: boolean; quantity: number; priceSnapshot: unknown } | null = null;
     const tenantAddon = {
+      findMany: jest.fn().mockResolvedValue([]),
       findUnique: jest.fn(async () => (row ? { ...row } : null)),
       // #2188: findAddonRow reads via findFirst — delegate so each fixture's findUnique sequence still drives it.
       findFirst: jest.fn(function (this: any, args: unknown) {

@@ -347,7 +347,14 @@ export class SubscriptionMutationService {
       const [lockedTenant, lockedSub, lockedAddons] = await Promise.all([
         tx.tenant.findUnique({
           where: { id: tenantId },
-          select: { status: true, plan: true, class: true, deletedAt: true },
+          select: {
+            status: true,
+            plan: true,
+            class: true,
+            deletedAt: true,
+            name: true,
+            slug: true,
+          },
         }),
         tx.tenantSubscription.findUnique({
           where: { tenantId },
@@ -360,6 +367,8 @@ export class SubscriptionMutationService {
             periodEnd: true,
             priceOverrideMonthly: true,
             basePriceSnapshot: true,
+            stripeSubId: true,
+            externalPayment: true,
           },
         }),
         tx.tenantAddon.findMany({ where: { tenantId, active: true } }),
@@ -558,6 +567,8 @@ export class SubscriptionMutationService {
           );
         }
       }
+      // (c) A manually-invoiced tenant's dropped, priced add-on: tell the platform to stop invoicing it.
+      const manualTenant = this.addonModeOf(lockedSub) === "MANUAL";
       for (const code of toDisable) {
         const prior = priorByCode.get(code)!;
         const before = wasPaying
@@ -570,6 +581,19 @@ export class SubscriptionMutationService {
           after: { priceSnapshot: 0, quantity: 0 },
           actorId,
         });
+        if (manualTenant && Number(prior.snapshot ?? 0) > 0) {
+          await this.writeManualInvoiceNotice(tx, {
+            tenantId,
+            actorId,
+            action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP,
+            sku: code,
+            quantity: prior.qty,
+            monthlyPrice: Number(prior.snapshot ?? 0),
+            message: `Add-on ${skuByCode.get(code)?.name ?? code} turned off for ${
+              lockedTenant.name ?? lockedTenant.slug ?? tenantId
+            }: stop invoicing it`,
+          });
+        }
         if (code === "SEAT_EXTRA") {
           await this.events.emit(
             tenantId,
@@ -1520,14 +1544,69 @@ export class SubscriptionMutationService {
         externalPayment: true,
       },
     });
-    // externalPayment is the owner's explicit "I invoice this tenant myself" flag
-    // (activateManualSubscription), so it wins over a leftover Stripe pointer.
-    const mode: AddonBilling = sub?.externalPayment
-      ? "MANUAL"
-      : this.stripe.isConfigured && sub?.stripeSubId
-        ? "STRIPE"
-        : "UNBILLED";
-    return { sub, mode };
+    return { sub, mode: this.addonModeOf(sub) };
+  }
+
+  /**
+   * The ONE place a tenant's add-on billing mode is decided. STRIPE is checked FIRST: nothing ever
+   * clears `externalPayment`, so a tenant that was manually activated and LATER pays by card carries
+   * both, and must be billed through Stripe (same order as onboarding's payment.recorded). Only
+   * without a live Stripe subscription does `externalPayment` mean "the owner invoices by hand".
+   */
+  private addonModeOf(
+    sub: { stripeSubId?: string | null; externalPayment?: boolean | null } | null | undefined,
+  ): AddonBilling {
+    if (this.stripe.isConfigured && sub?.stripeSubId) return "STRIPE";
+    if (sub?.externalPayment) return "MANUAL";
+    return "UNBILLED";
+  }
+
+  /** Display name of the tenant for platform notices (never throws; falls back to the id). */
+  private async tenantLabelOf(tenantId: string): Promise<string> {
+    try {
+      const t = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { slug: true, name: true },
+      });
+      return t?.name ?? t?.slug ?? tenantId;
+    } catch {
+      return tenantId;
+    }
+  }
+
+  /**
+   * A platform notice for a manually-invoiced tenant, in the platform-admin audit feed (the one
+   * existing per-tenant notice channel; same row shape as `PlatformAdminService.recordAdminAction`),
+   * written in the caller's transaction so it can never exist without the change it announces.
+   */
+  private async writeManualInvoiceNotice(
+    tx: any,
+    n: {
+      tenantId: string;
+      actorId?: string | null;
+      action: string;
+      sku: string;
+      quantity: number;
+      monthlyPrice: number;
+      message: string;
+    },
+  ): Promise<void> {
+    await tx.auditLog.create({
+      data: {
+        tenantId: n.tenantId,
+        userId: n.actorId ?? null,
+        action: n.action,
+        entityType: ADMIN_AUDIT_ENTITY,
+        entityId: n.tenantId,
+        meta: {
+          platformAdmin: true,
+          sku: n.sku,
+          quantity: n.quantity,
+          monthlyPrice: n.monthlyPrice,
+          message: n.message,
+        },
+      },
+    });
   }
 
   /**
@@ -1538,19 +1617,25 @@ export class SubscriptionMutationService {
   private async readStripeProration(
     sub: { stripeCustomerId?: string | null } | null,
     itemId: string,
+    callStartSec: number,
   ): Promise<number | null> {
     if (!sub?.stripeCustomerId) return null;
     try {
       const list = await this.stripe.client.invoiceItems.list({
         customer: sub.stripeCustomerId,
         pending: true,
+        // Only lines this call produced: an older proration line of the same item (an earlier
+        // quantity change still pending on the next invoice) must not be summed in.
+        created: { gte: callStartSec },
         limit: 100,
       });
       // API 2026-08-26.dahlia: the subscription item a proration line belongs to is
       // `parent.subscription_details.subscription_item` (the old top-level `subscription_item` is gone).
       const mine = (list?.data ?? []).filter(
         (ii: any) =>
-          ii?.proration === true && ii?.parent?.subscription_details?.subscription_item === itemId,
+          ii?.proration === true &&
+          Number(ii?.created ?? 0) >= callStartSec &&
+          ii?.parent?.subscription_details?.subscription_item === itemId,
       );
       if (mine.length === 0) return null;
       const cents = mine.reduce((sum: number, ii: any) => sum + Number(ii.amount ?? 0), 0);
@@ -1560,6 +1645,56 @@ export class SubscriptionMutationService {
         `Could not read Stripe's proration for item ${itemId}: ${(err as Error).message}`,
       );
       return null;
+    }
+  }
+
+  /**
+   * ORPHAN adoption. If Stripe created an item but every response was lost (timeout), we returned a
+   * 503 with no item id and never cleaned up — a user retry would then create a SECOND item. So,
+   * under the add-on lock and BEFORE creating, list the subscription's items and adopt a matching
+   * (metadata {tenantId, sku}) item no row of this tenant references; delete any extra matching
+   * unreferenced items. Returns the adopted item id, or null when there is nothing to adopt.
+   * A listing failure refuses the enable (fail closed): we cannot rule out an orphan.
+   */
+  private async adoptOrphanItem(
+    tenantId: string,
+    sku: string,
+    stripeSubId: string,
+    qty: number,
+  ): Promise<string | null> {
+    try {
+      const list = await this.stripe.client.subscriptionItems.list({
+        subscription: stripeSubId,
+        limit: 100,
+      });
+      const mine = (list?.data ?? []).filter(
+        (i: any) => i?.metadata?.tenantId === tenantId && i?.metadata?.sku === sku,
+      );
+      if (mine.length === 0) return null;
+      const referenced = await this.prisma.tenantAddon.findMany({
+        where: { tenantId, stripeItemId: { in: mine.map((i: any) => i.id) } },
+        select: { stripeItemId: true },
+      });
+      const refIds = new Set(referenced.map((r: any) => r.stripeItemId));
+      const orphans = mine.filter((i: any) => !refIds.has(i.id));
+      if (orphans.length === 0) return null;
+      const [keep, ...extra] = orphans;
+      for (const e of extra) await this.deleteOrphanItem(e.id, tenantId, sku);
+      if (Number(keep.quantity) !== qty) {
+        await this.stripe.client.subscriptionItems.update(keep.id, {
+          quantity: qty,
+          proration_behavior: "create_prorations",
+        });
+      }
+      this.logger.warn(
+        `Add-on "${sku}" tenant ${tenantId}: adopted unreferenced Stripe item ${keep.id} instead of creating another`,
+      );
+      return keep.id as string;
+    } catch (err) {
+      this.logger.error(
+        `Add-on "${sku}" tenant ${tenantId}: could not check Stripe for an orphaned item: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
     }
   }
 
@@ -1610,8 +1745,10 @@ export class SubscriptionMutationService {
     let createdItemId: string | null = null;
     let proratedNow: number | null = 0;
     let priceSnapshot: number;
-    // Set only for a MANUAL tenant that gained billable quantity: the platform must invoice it.
-    let manualInvoiceDue = false;
+    // Seconds; Stripe's `created` clock. Only proration lines produced AFTER this are ours.
+    const callStartSec = Math.floor(Date.now() / 1000) - 2;
+    // Set only for a MANUAL tenant: what the owner must change on the manual invoice.
+    let manualNotice: { action: string; kind: "enable" | "reduce" } | null = null;
 
     if (existing?.active && existing.stripeItemId) {
       // Billed row, new quantity: update the item (prorated). Its price stays the one it was
@@ -1632,7 +1769,7 @@ export class SubscriptionMutationService {
       }
       stripeItemId = existing.stripeItemId;
       priceSnapshot = Number(existing.priceSnapshot ?? 0);
-      proratedNow = await this.readStripeProration(sub, stripeItemId);
+      proratedNow = await this.readStripeProration(sub, stripeItemId, callStartSec);
     } else if (existing?.active) {
       // Already on with NO Stripe item (a legacy / pilot / manual row): never retro-bill.
       if (mode === "STRIPE" && qty > existing.quantity) {
@@ -1641,11 +1778,18 @@ export class SubscriptionMutationService {
         throw new ConflictException(ADDON_RAISE_UNBILLED_ROW);
       }
       const stored = Number(existing.priceSnapshot ?? 0);
-      // A manually-invoiced tenant's quantity is invoiced by the owner at the stored (else catalog) price.
-      priceSnapshot = mode === "MANUAL" && !(stored > 0) ? Number(skuDef.monthlyPrice) : stored;
       if (mode === "MANUAL" && qty > existing.quantity) {
+        // An INCREASE re-prices a $0 row to the catalog price and tells the owner to invoice it.
+        priceSnapshot = stored > 0 ? stored : Number(skuDef.monthlyPrice);
         proratedNow = null;
-        manualInvoiceDue = true;
+        manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE, kind: "enable" };
+      } else {
+        // A DECREASE (or any non-manual change) never re-prices: it reverses at the row's OWN price
+        // (a $0 row books nothing). The owner is told to reduce the invoice only if it was invoiced.
+        priceSnapshot = stored;
+        if (mode === "MANUAL" && stored > 0) {
+          manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP, kind: "reduce" };
+        }
       }
     } else if (mode === "STRIPE" && sub?.stripeSubId) {
       const interval = sub.billingInterval ?? (sub.cycle === "ANNUAL" ? "year" : "month");
@@ -1653,31 +1797,37 @@ export class SubscriptionMutationService {
         // Stripe cannot mix a monthly item into a yearly subscription; fail closed, no Stripe call.
         throw new ConflictException(ADDON_ANNUAL_NOT_SUPPORTED);
       }
+      // A previous attempt may have created an item whose response was lost: adopt it, never add a second.
+      const adopted = await this.adoptOrphanItem(tenantId, sku, sub.stripeSubId, qty);
       try {
-        const product = await this.stripe.client.products.create({
-          name: `RouteFlow add-on — ${skuDef.name}`,
-          metadata: { tenantId, sku },
-        });
-        const item = await this.stripe.client.subscriptionItems.create(
-          {
-            subscription: sub.stripeSubId,
-            quantity: qty,
-            proration_behavior: "create_prorations",
-            price_data: {
-              currency: "usd",
-              unit_amount: Math.round(Number(skuDef.monthlyPrice) * 100),
-              recurring: { interval: "month" },
-              product: product.id,
-            },
+        if (adopted) {
+          stripeItemId = adopted;
+        } else {
+          const product = await this.stripe.client.products.create({
+            name: `RouteFlow add-on — ${skuDef.name}`,
             metadata: { tenantId, sku },
-          },
-          // Per-ATTEMPT key: protects this one request against a transport retry creating a second
-          // item, yet a later attempt (e.g. after an orphan was cleaned up) is never answered with
-          // the earlier, deleted item.
-          { idempotencyKey: `addon-item:${tenantId}:${sku}:${randomUUID()}` },
-        );
-        createdItemId = item.id;
-        stripeItemId = item.id;
+          });
+          const item = await this.stripe.client.subscriptionItems.create(
+            {
+              subscription: sub.stripeSubId,
+              quantity: qty,
+              proration_behavior: "create_prorations",
+              price_data: {
+                currency: "usd",
+                unit_amount: Math.round(Number(skuDef.monthlyPrice) * 100),
+                recurring: { interval: "month" },
+                product: product.id,
+              },
+              metadata: { tenantId, sku },
+            },
+            // Per-ATTEMPT key: protects this one request against a transport retry creating a second
+            // item, yet a later attempt (e.g. after an orphan was cleaned up) is never answered with
+            // the earlier, deleted item.
+            { idempotencyKey: `addon-item:${tenantId}:${sku}:${randomUUID()}` },
+          );
+          createdItemId = item.id;
+          stripeItemId = item.id;
+        }
       } catch (err) {
         this.logger.error(
           `Add-on "${sku}" tenant ${tenantId}: Stripe item create failed: ${(err as Error).message}`,
@@ -1685,25 +1835,23 @@ export class SubscriptionMutationService {
         throw new ServiceUnavailableException(ADDON_ENABLE_BILLING_FAILED);
       }
       priceSnapshot = Number(skuDef.monthlyPrice);
-      proratedNow = await this.readStripeProration(sub, createdItemId as string);
+      // An adopted item's proration happened in an earlier attempt: no figure to show for it.
+      proratedNow = createdItemId
+        ? await this.readStripeProration(sub, createdItemId, callStartSec)
+        : null;
     } else if (mode === "MANUAL") {
       // Manually-invoiced tenant (owner ruling 2026-10-03): on at the CATALOG price, counted as
       // revenue, NO Stripe call; the owner adds it to the next manual invoice (notice below).
       priceSnapshot = Number(skuDef.monthlyPrice);
       proratedNow = null;
-      manualInvoiceDue = true;
+      manualNotice = { action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE, kind: "enable" };
     } else {
       // Free pilot / Stripe not configured: on, unbilled, priced explicitly at 0 (books nothing).
       priceSnapshot = 0;
     }
 
     // Tenant label for the platform notice (read outside the transaction; display only).
-    const tenantLabel = manualInvoiceDue
-      ? ((await this.prisma.tenant.findUnique({
-          where: { id: tenantId },
-          select: { slug: true, name: true },
-        })) ?? null)
-      : null;
+    const tenantName = manualNotice ? await this.tenantLabelOf(tenantId) : null;
 
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -1756,27 +1904,18 @@ export class SubscriptionMutationService {
             { actorId, tx },
           );
         }
-        if (manualInvoiceDue) {
-          // The platform's existing notice channel for per-tenant billing follow-ups is the
-          // platform-admin audit feed (same row shape as `PlatformAdminService.recordAdminAction`,
-          // written in the SAME transaction like the order-template `auditInTx` rows), so the owner
-          // can't forget to invoice it. One row per enable that gained billable quantity.
-          const tenantName = tenantLabel?.name ?? tenantLabel?.slug ?? tenantId;
-          await tx.auditLog.create({
-            data: {
-              tenantId,
-              userId: actorId ?? null,
-              action: AdminAuditAction.ADDON_MANUAL_INVOICE_DUE,
-              entityType: ADMIN_AUDIT_ENTITY,
-              entityId: tenantId,
-              meta: {
-                platformAdmin: true,
-                sku,
-                quantity: qty,
-                monthlyPrice: priceSnapshot,
-                message: `Add-on ${skuDef.name} enabled for ${tenantName}: add to their next manual invoice`,
-              },
-            },
+        if (manualNotice) {
+          const reduce = manualNotice.kind === "reduce";
+          await this.writeManualInvoiceNotice(tx, {
+            tenantId,
+            actorId,
+            action: manualNotice.action,
+            sku,
+            quantity: qty,
+            monthlyPrice: priceSnapshot,
+            message: reduce
+              ? `Add-on ${skuDef.name} reduced to ${qty} for ${tenantName}: reduce their next manual invoice to ${qty}`
+              : `Add-on ${skuDef.name} enabled for ${tenantName}: add to their next manual invoice`,
           });
         }
       });
@@ -1796,14 +1935,22 @@ export class SubscriptionMutationService {
   /**
    * Remove a billed add-on's Stripe item (prorated credit). `resource_missing` = already gone =
    * success; ANY other failure refuses with fixed copy so we never keep billing for an add-on the
-   * tenant no longer has. A no-op without an item or without Stripe configured.
+   * tenant no longer has. A no-op without an item. With an item but Stripe NOT configured we cannot
+   * remove it, so the call is refused (fixed copy) and the handle is kept: dropping the pointer would
+   * leave the item billing in Stripe with nothing left to stop it.
    */
   private async removeStripeAddonItem(
     tenantId: string,
     code: string,
     itemId: string | null | undefined,
   ): Promise<void> {
-    if (!itemId || !this.stripe.isConfigured) return;
+    if (!itemId) return;
+    if (!this.stripe.isConfigured) {
+      this.logger.error(
+        `Add-on "${code}" tenant ${tenantId}: Stripe item ${itemId} cannot be removed — Stripe is not configured; keeping the handle`,
+      );
+      throw new ServiceUnavailableException(ADDON_DISABLE_BILLING_FAILED);
+    }
     try {
       await this.stripe.client.subscriptionItems.del(itemId, {
         proration_behavior: "create_prorations",
@@ -1865,6 +2012,18 @@ export class SubscriptionMutationService {
     // gone) BEFORE the entitlement is turned off. Any other Stripe failure refuses the call.
     await this.removeStripeAddonItem(tenantId, code, addon.stripeItemId);
 
+    // MANUAL tenant (owner invoices by hand): tell the platform to stop invoicing it. Only a row that
+    // was actually priced (> 0) was ever invoiced.
+    const { mode } = await this.addonBillingContext(tenantId);
+    const manualStopName =
+      mode === "MANUAL" && !addon.stripeItemId && Number(addon.priceSnapshot ?? 0) > 0
+        ? await this.tenantLabelOf(tenantId)
+        : null;
+    const stopSkuName = manualStopName
+      ? ((await this.catalog.getPublishedCatalog()).addonSkus.find((x) => x.sku === code)?.name ??
+        code)
+      : code;
+
     await this.prisma.$transaction(async (tx) => {
       // FIX-864 r2 finding #0: `addon` above was read outside the transaction and before any
       // lock — two concurrent self-serve disables could both observe active=true and both emit
@@ -1895,6 +2054,17 @@ export class SubscriptionMutationService {
           { quantity: current.quantity },
           { actorId, tx },
         );
+      }
+      if (manualStopName) {
+        await this.writeManualInvoiceNotice(tx, {
+          tenantId,
+          actorId,
+          action: AdminAuditAction.ADDON_MANUAL_INVOICE_STOP,
+          sku: code,
+          quantity: current.quantity,
+          monthlyPrice: Number(current.priceSnapshot ?? 0),
+          message: `Add-on ${stopSkuName} turned off for ${manualStopName}: stop invoicing it`,
+        });
       }
     });
 
