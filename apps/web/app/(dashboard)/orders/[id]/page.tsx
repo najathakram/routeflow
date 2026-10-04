@@ -103,6 +103,8 @@ import { postDeliveryInvoicePrompt, type BlockedLine } from "@routeflow/types";
 import { CreditLimitGuardDialog } from "@/components/CreditLimitGuardDialog";
 import { parseCreditLimitError, type CreditLimitInfo } from "@/lib/api/credit-limit";
 import { useProducts } from "@/lib/api/products";
+import { stockViewForLine, useStockAvailability } from "@/lib/api/stock-availability";
+import { LineStockNote } from "@/components/LineItemRow";
 import {
   computeLineSubtotal,
   getTierPrice,
@@ -1169,6 +1171,37 @@ function PriceEditRow({
   );
 }
 
+/** Stock note for one edit-mode line. `qty` is pieces for a split/plain line, selling units (cases) otherwise. */
+function EditLineStock({
+  item,
+  query,
+}: {
+  item: EditItemState;
+  query: ReturnType<typeof useStockAvailability>;
+}) {
+  const piecesOf = (qty: number, upb: number | null | undefined, split: boolean | undefined) =>
+    Number(upb ?? 0) > 1 && !split ? qty * Number(upb) : qty;
+  const sameLine = !item.isNew && item.productId === item.originalProductId;
+  const view = stockViewForLine(
+    query,
+    {
+      productId: item.productId,
+      isUnlisted: item.isUnlisted,
+      unit: item.unit,
+      unitsPerBox: item.unitsPerBox,
+      qty: piecesOf(item.qty, item.unitsPerBox, item.boxSplit),
+    },
+    sameLine
+      ? piecesOf(
+          item.originalQty,
+          item.originalUnitsPerBox ?? item.unitsPerBox,
+          item.originalBoxSplit,
+        )
+      : 0,
+  );
+  return view ? <LineStockNote stock={view} /> : null;
+}
+
 export function EditableLineItems({
   items,
   onChange,
@@ -1211,6 +1244,11 @@ export function EditableLineItems({
   const [scrollToId, setScrollToId] = React.useState<string | null>(null);
   // Live cost/margin floor for the edit builder (pos-cost-roles-spec §1).
   const { data: marginConfig } = useMarginConfig();
+  // Live stock per line (edit mode: only the INCREASE over the saved line counts, as on the server).
+  const stockQuery = useStockAvailability({
+    productIds: items.filter((it) => !it.cancelled && !it.isUnlisted).map((it) => it.productId),
+    mode: "edit",
+  });
   React.useEffect(() => {
     if (!scrollToId) return;
     rowRefs.current.get(scrollToId)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1497,6 +1535,9 @@ export function EditableLineItems({
                 </span>
               )}
               {item.cancelled && <span className="text-xs text-danger ml-1.5">Not available</span>}
+              {!item.cancelled && !item.countLocked && !item.unitLabel && (
+                <EditLineStock item={item} query={stockQuery} />
+              )}
             </div>
 
             {/* SA-388: a LOCKED unit line takes no qty edit; saves refuse any edit to it. */}

@@ -10,6 +10,7 @@ import { Modal, Textarea, Button, cn, useToast } from "@routeflow/ui/web";
 import { useQuery } from "@tanstack/react-query";
 import { useCustomers, useCustomerPrices, useCustomer } from "@/lib/api/customers";
 import { useProducts } from "@/lib/api/products";
+import { stockViewForLine, useStockAvailability } from "@/lib/api/stock-availability";
 import { scheduleScannerRefocus } from "@/lib/refocus-scanner";
 import {
   useCreateOrder,
@@ -1379,6 +1380,18 @@ export function CreateOrderModal({
     );
   })();
 
+  // Live stock per line: ONE lookup for every listed product on the order; the server's numbers only.
+  const stockQuery = useStockAvailability({
+    productIds: lineItems.filter((li) => !li.isUnlisted).map((li) => li.productId),
+    mode: "entry",
+    customerId: selectedCustomer?.id,
+  });
+  // Create is blocked ONLY where the server would refuse the same line (oversell not allowed + over stock).
+  const stockBlocksCreate = lineItems.some((li) => {
+    const v = stockViewForLine(stockQuery, li);
+    return v?.state === "ready" && v.blocksSubmit;
+  });
+
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
   const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
     <LineItemRow
@@ -1391,6 +1404,7 @@ export function CreateOrderModal({
       // the remembered price is a PACK price (the server excludes unit lines from it, B606)
       priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
       highlighted={ctx?.highlighted}
+      stock={stockViewForLine(stockQuery, li)}
       onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
         if (el) rowRefs.current.set(li.tempId, el);
@@ -1548,7 +1562,7 @@ export function CreateOrderModal({
               form="create-order-form"
               loading={createOrder.isPending}
               // #2865 case d (SA-632): no order is created while ANY line is still waiting on its default unit
-              disabled={lineItems.some(isPendingDefaultUnit)}
+              disabled={lineItems.some(isPendingDefaultUnit) || stockBlocksCreate}
               aria-busy={lineItems.some(isPendingDefaultUnit) || undefined}
             >
               Create Order

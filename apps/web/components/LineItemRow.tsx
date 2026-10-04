@@ -8,6 +8,7 @@ import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
+import type { LineStockView } from "@/lib/line-stock";
 
 /**
  * A single order line item, as built by `CreateOrderModal` (and, in future, the
@@ -92,6 +93,9 @@ export interface LineItemRowProps {
   /** #2696 (b): a typed qty for a plain (non-case) line. When given, the qty between − / + is a
    *  tap-to-type input; when omitted (other callers), it stays the read-only count it was. */
   onSetQty?: (value: number) => void;
+  /** Live stock for this line (`lineStockView`); omitted = nothing shown. Rendered in the info column,
+   *  so it shows whether or not `onTapPrice` is set. */
+  stock?: LineStockView;
   /** Optional control rendered under the price block (the order modal's "Sell by" unit picker). */
   unitSlot?: React.ReactNode;
   /**
@@ -179,6 +183,7 @@ export function LineItemRow({
   onUpdateUnlistedPrice,
   onRemove,
   unitSlot,
+  stock,
   pendingUnit,
   onTapPrice,
   onSetQty,
@@ -305,6 +310,7 @@ export function LineItemRow({
             </div>
           )}
           {unitSlot && <div className="mt-1">{unitSlot}</div>}
+          {stock && <LineStockNote stock={stock} />}
           {/* #2865 F2: the pending-unit status lives IN the info column (full width at every breakpoint). As a row child it
               became a fourth flex item at sm+ and was crushed between the qty controls and the total. */}
           {pendingUnit && <PendingUnitStatus pending={pendingUnit} />}
@@ -587,6 +593,47 @@ export function LineItemRow({
         </button>
       </div>
     </li>
+  );
+}
+
+/** Live stock under a line: "12 cases left" (amber when the line exceeds it, red at 0) + the fixed-copy note. */
+export function LineStockNote({ stock }: { stock: LineStockView }) {
+  if (stock.state === "loading") {
+    return (
+      <p
+        data-testid="line-stock"
+        data-state="loading"
+        aria-busy
+        className="mt-1 text-[11px] text-navy/50"
+      >
+        Checking stock…
+      </p>
+    );
+  }
+  const tone =
+    stock.level === "out"
+      ? "text-danger"
+      : stock.level === "low"
+        ? "text-amber-700"
+        : "text-navy/60";
+  return (
+    <div
+      data-testid="line-stock"
+      data-state="ready"
+      data-level={stock.level}
+      className={cn("mt-1 text-[11px]", tone)}
+    >
+      <span className="font-medium">{stock.label}</span>
+      {stock.message && (
+        <p
+          role={stock.blocksSubmit ? "alert" : "status"}
+          data-testid="line-stock-message"
+          className="mt-0.5"
+        >
+          {stock.message}
+        </p>
+      )}
+    </div>
   );
 }
 

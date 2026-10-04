@@ -421,6 +421,24 @@ export class OrdersController {
     };
   }
 
+  /** Live stock per New Order / edit line: pieces on hand + whether the server would accept an oversell. */
+  @Get("stock-availability")
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.OPERATOR)
+  getStockAvailability(
+    @Query("productIds") productIds: string,
+    @Query("mode") mode: string,
+    @Query("customerId") customerId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ordersService.getStockAvailability(
+      (productIds ?? "").split(",").filter(Boolean),
+      user,
+      mode === "edit" ? "edit" : "entry",
+      customerId || null,
+    );
+  }
+
   @Get("price-history")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
