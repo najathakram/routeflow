@@ -66,6 +66,7 @@ import {
   isMergeContention,
   mapLockError,
 } from "../orders/merge-contention";
+import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "./buyer-product-visibility";
 
 /** Upper bound on `GET /buyer/products?ids=` — a cart is far smaller than this. */
 const MAX_PRODUCT_IDS = 200;
@@ -468,9 +469,14 @@ export class BuyerController {
     const candidates = normalizeScanCode(code);
     if (candidates.length === 0) throw new NotFoundException("Product not found");
 
-    // One shared lookup (L-167). Buyer scope: active products only; getProductDetail below still
-    // applies the regulated-category gate, so a row code on a hidden product 404s here too.
-    const hit = await findScanMatches(this.prisma.forTenant(), candidates, { isActive: true });
+    // One shared lookup (L-167). The buyer's scope is the ONE catalog visibility builder (active, not a FAMILY,
+    // portal-visible, visible parent), which findScanMatches applies to every product query; getProductDetail
+    // below still applies the regulated-category gate, so a row code on a hidden product 404s here too.
+    const hit = await findScanMatches(
+      this.prisma.forTenant(),
+      candidates,
+      buyerVisibleProductWhere(NO_BUYER_RESTRICTIONS),
+    );
     if (!hit) throw new NotFoundException("Product not found");
     const match = hit.product;
 

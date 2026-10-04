@@ -11,6 +11,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from "@nestjs/common";
+import { assertBuyerLines, portalGateArgs } from "../buyer/buyer-product-visibility";
 import { assertSellableLines } from "../products/sellable-lines";
 import { randomUUID } from "crypto";
 import { LeaderCron } from "../common/cron-lock";
@@ -1608,10 +1609,9 @@ export class OrdersService implements OnApplicationBootstrap {
     const catalogIds = items.map((i) => i.productId).filter(Boolean) as string[];
     const products =
       catalogIds.length > 0
-        ? await this.prisma.forTenant().product.findMany({
-            where: { id: { in: catalogIds } },
-          })
+        ? await this.prisma.forTenant().product.findMany(portalGateArgs(catalogIds))
         : [];
+    assertBuyerLines(user.role, products, { skip: options.allowArchived }); // buyer 409 before the staff FAMILY 400
 
     const productMap = new Map(products.map((p) => [p.id, p]));
     assertSellableLines(products); // WS8: a FAMILY is never a line
@@ -3214,7 +3214,8 @@ export class OrdersService implements OnApplicationBootstrap {
 
           // Customers send items as { productId, qty } — replace all line items
           const productIds = dto.items.map((i) => i.productId).filter(Boolean) as string[];
-          const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+          const products = await tx.product.findMany(portalGateArgs(productIds));
+          assertBuyerLines(user.role, products, { held: heldItems }); // the LOCKED held lines (n1)
           const productMap = new Map<string, any>(products.map((p: any) => [p.id, p]));
           assertSellableLines(products); // WS8
           // B297 (SA-098a): this pack-line create() is disconnected from `uctx.categoryMap`
@@ -3624,8 +3625,9 @@ export class OrdersService implements OnApplicationBootstrap {
             ];
             const addProducts =
               addProductIds.length > 0
-                ? await tx.product.findMany({ where: { id: { in: addProductIds } } })
+                ? await tx.product.findMany(portalGateArgs(addProductIds))
                 : [];
+            assertBuyerLines(user?.role, addProducts);
             const addProductMap = new Map<string, any>(addProducts.map((p: any) => [p.id, p]));
             assertSellableLines(addProducts); // WS8
             // B297 (SA-098a): `uctx.categoryMap` only covers unit-aware `unitCtx.products` —
