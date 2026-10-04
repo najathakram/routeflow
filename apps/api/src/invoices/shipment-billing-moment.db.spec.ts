@@ -174,7 +174,8 @@ describeDb(
      * shippedAt stamped), and its issued deposit invoice (50%, SENT, 50 / 5 / 55). Delivery then
      * comes back short, 1 of 2, shaped as completeStop writes it.
      */
-    async function seedShipped(label: string) {
+    async function seedShipped(label: string, opts: { shipped?: boolean } = {}) {
+      const shipped = opts.shipped ?? true;
       seq += 1;
       const slug = assertTestTenant(
         `qa-3204-${RUN}-${seq}-${label}`,
@@ -200,8 +201,9 @@ describeDb(
           tenantId,
           customerId: customer.id,
           fulfillPath: "SHIP",
-          status: "OUT_FOR_DELIVERY",
-          shippedAt: new Date(),
+          // `shipped: false` = CONFIRMED -> DELIVERED without ever going through the ship transition
+          status: shipped ? "OUT_FOR_DELIVERY" : "CONFIRMED",
+          shippedAt: shipped ? new Date() : null,
           subtotal: 50,
           tax: 5,
           total: 55,
@@ -284,11 +286,24 @@ describeDb(
       expect(all.map((i) => i.id)).toEqual([s.invoiceId]); // no new invoice
     });
 
-    // SA-674(b) is NOT at this base: the guard in rebuildIssuedDepositMirrorOnDelivery keys on
-    // billsAtShipment alone (no shippedAt / ship-step condition), so a SHIP order delivered short
-    // WITHOUT a ship step is skipped like a shipped one. Write the real case when the fold lands.
-    it.todo(
-      "SA-674(b): a SHIP order with a deposit delivered short without a ship step restates the mirror on the delivered basis",
-    );
+    it("SA-674(b): a SHIP order with a deposit delivered short WITHOUT a ship step restates the mirror on the delivered basis", async () => {
+      // Never shipped, so never settled at shipment: the delivered reconcile still applies, and the
+      // customer is billed for what arrived (1 of 2: $25 + $2.50 tax), not the full pre-delivery order.
+      const s = await seedShipped("never-shipped", { shipped: false });
+      expect(await snapshot(s.invoiceId)).toMatchObject({ total: 55, status: "SENT" });
+
+      await prisma.order.update({ where: { id: s.orderId }, data: { status: "DELIVERED" } });
+      await tenantCtx.run(s.tenantId, () =>
+        invoices.reconcileDeliveredOrdersInTx(prisma.forTenant(), [s.orderId]),
+      );
+
+      expect(await snapshot(s.invoiceId)).toMatchObject({
+        total: 27.5,
+        subtotal: 25,
+        taxAmount: 2.5,
+        status: "SENT",
+        lines: [{ qty: 1, subtotal: 25 }],
+      });
+    });
   },
 );
