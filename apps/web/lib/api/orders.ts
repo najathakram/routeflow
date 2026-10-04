@@ -419,6 +419,10 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
   });
 }
 
+/**
+ * `localErrorToast`: the caller renders its own error UI (the orders list's bulk cancel shows ONE summary
+ * toast), so the app-wide generic error toast must not also fire once per request.
+ */
 export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
