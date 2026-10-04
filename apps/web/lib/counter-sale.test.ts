@@ -147,6 +147,13 @@ describe("counterSaleErrorCopy: FIXED copy, never the server message", () => {
     }
     expect(counterSaleErrorCopy(e(403))).not.toBe(counterSaleErrorCopy(e(500)));
   });
+  it("a 403 COUNTER_SALES_DISABLED shows the fixed disabled copy, not the generic permission copy", () => {
+    const disabled = counterSaleErrorCopy({
+      response: { status: 403, data: { code: "COUNTER_SALES_DISABLED", message: "RAW" } },
+    });
+    expect(disabled).toBe("Counter sales are not turned on for this business.");
+    expect(disabled).not.toBe(counterSaleErrorCopy({ response: { status: 403 } }));
+  });
 });
 
 describe("auto-print preference: per device, local, never throws", () => {
