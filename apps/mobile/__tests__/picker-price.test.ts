@@ -48,12 +48,22 @@ describe("pickRowPrice: the picker shows what the line will bill", () => {
 
 describe("wiring: the order editor gives the picker its tier pricing", () => {
   const read = (p: string) => readFileSync(join(__dirname, "..", p), "utf8");
-  it("edit-items passes priceFor={tierPriceFor} and the picker row reads pickRowPrice, not pricePerUnit", () => {
+  it("edit-items passes priceFor={isDriver ? undefined : tierPriceFor} and the picker row reads pickRowPrice, not pricePerUnit", () => {
+    // A driver is not staff: the server bills LIST for them (orders.service.ts), so their picker must show LIST too.
+    // Owner ruling 10-03 moves this to the server later; until that PR lands, the gate stays here.
     expect(read("app/(operator)/(tabs)/orders/[id]/edit-items.tsx")).toMatch(
-      /priceFor=\{tierPriceFor\}/,
+      /priceFor=\{isDriver \? undefined : tierPriceFor\}/,
     );
     const picker = read("components/edit-items/ProductPicker.tsx");
     expect(picker).toMatch(/pickRowPrice\(p, priceFor\)/);
     expect(picker).not.toMatch(/\$\{toNumber\(p\.pricePerUnit\)\.toFixed\(2\)\}/);
+  });
+});
+
+describe("a DRIVER's picker shows the list price (the server bills list for a non-staff driver)", () => {
+  it("with priceFor undefined (the driver case) the row is the list price even for a tier-2 customer", () => {
+    const isDriver = true;
+    expect(pickRowPrice(product, isDriver ? undefined : tierPriceFor(2))).toBe(10);
+    expect(pickRowPrice(product, !isDriver ? undefined : tierPriceFor(2))).toBe(8);
   });
 });
