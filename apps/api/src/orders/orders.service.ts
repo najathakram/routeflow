@@ -54,7 +54,15 @@ import {
   CHANGE_WINDOW_ORDER_STATUS,
   CHANGE_WINDOW_RUN_NOT_ACTIVE,
 } from "./at-stop-conflicts";
-import { sourceLineFor, type SourceLines } from "./source-line";
+import { sourceLineFor } from "./source-line";
+import type { CreateOrderOptions } from "./order-create-options";
+import {
+  oldestFirst,
+  resolveSaleDelivery,
+  saleCreateOptions,
+  type SaleOptions,
+} from "./sale-options";
+import { isPickupHandover, pickupOutForDeliveryPush } from "./order-pickup-wording";
 import { decideTierOverride } from "./staff-override";
 import { assertMergeLockAcquired, isMergeContention, mapLockError } from "./merge-contention";
 import {
@@ -1391,7 +1399,7 @@ export class OrdersService implements OnApplicationBootstrap {
     dto: CreateOrderDto,
     user: JwtPayload,
     // `sourceLines`: INTERNAL only, never a DTO field (source-line.ts).
-    options: { skipAutoMerge?: boolean; allowArchived?: boolean; sourceLines?: SourceLines } = {},
+    options: CreateOrderOptions = {},
   ) {
     // F30/R8: Idempotency-Key replay. `idempotencyKey` isn't on CreateOrderDto
     // (the controller threads it in from the `Idempotency-Key` header, never
@@ -1565,6 +1573,7 @@ export class OrdersService implements OnApplicationBootstrap {
             );
           }
         }
+        options.onReplay?.(existing);
         return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
       }
     }
@@ -1609,7 +1618,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // Ad-hoc trips + fulfillment mode: an explicit dto value always wins, else
     // fall back to the customer's own default, else ROUTE (byte-identical to
     // today for every existing order/customer, which default to ROUTE too).
-    const fulfillPath = dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
+    const fulfillPath =
+      options.fulfillPath ?? dto.fulfillPath ?? customerRecord?.fulfillPath ?? FulfillPath.ROUTE;
 
     // Unlisted (ad-hoc) lines have no productId — only fetch catalog rows for the
     // lines that reference a real product.
@@ -2137,7 +2147,10 @@ export class OrdersService implements OnApplicationBootstrap {
             if (existing && existing.customerId !== customerId) {
               throw new ConflictException("Idempotency-Key already used for a different order");
             }
-            if (existing) return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+            if (existing) {
+              options.onReplay?.(existing);
+              return replayAfterCheck(this.prisma.forTenant(), inlineRet, existing);
+            }
           }
           // Retry only on orderNumber unique-constraint violations (RF-014);
           // propagate all other errors immediately (including ConflictException
@@ -2229,46 +2242,17 @@ export class OrdersService implements OnApplicationBootstrap {
    * The order is always created in isolation (skipAutoMerge) so a discrete sale never folds into an
    * existing open order.
    */
-  async createSale(dto: CreateSaleDto, user: JwtPayload) {
+  async createSale(dto: CreateSaleDto, user: JwtPayload, sale: SaleOptions = {}) {
     // #2493: refuse a due date that names no real day (the DTO's @IsDateString passes
     // `2026-02-31`) BEFORE the order is created and stock decremented; the invoice step would
     // otherwise 400 and leave a DELIVERED order with no invoice.
     dueStamp(dto.dueDate, "dueDate");
-    const orderDate = parseOrderDate(dto.orderDate, user.role);
+    const { deliveredNow, deliveredAt, requestedDeliveryDate } = resolveSaleDelivery(dto, user);
 
-    // Delivery-date picker (owner 2026-08-25): `deliveredOn` REPLACES
-    // `deliveredNow`'s binary when present — past/today is a (back)dated
-    // delivered sale, a future date is a scheduled deliver-later order carrying
-    // that requested date. `deliveredNow` is still honoured on its own for older
-    // clients; when both are sent, `deliveredOn` wins.
-    let deliveredNow = dto.deliveredNow;
-    let deliveredAt = orderDate;
-    let requestedDeliveryDate = dto.requestedDeliveryDate;
-    if (dto.deliveredOn != null) {
-      const parsed = new Date(dto.deliveredOn);
-      if (Number.isNaN(parsed.getTime())) throw new BadRequestException("Invalid delivery date");
-      const now = new Date();
-      const endOfToday = Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
-        23,
-        59,
-        59,
-        999,
-      );
-      if (parsed.getTime() > endOfToday) {
-        deliveredNow = false;
-        requestedDeliveryDate = dto.deliveredOn;
-      } else {
-        // Past/today: the sale happened on that day, so it goes through the same
-        // staff-only gate and 2-year floor backdating has always had.
-        deliveredNow = true;
-        deliveredAt = parseOrderDate(dto.deliveredOn, user.role);
-      }
-    }
-
-    // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement).
+    // 1. Create the backing order (reuses pricing tiers/overrides + stock lock/decrement). With an
+    //    Idempotency-Key (counter sale only) a replay hands back the ORIGINAL order and `replay` is
+    //    set, so steps 2-4 RESUME wherever the first attempt stopped instead of starting over.
+    let replay = false as boolean;
     const order = await this.create(
       {
         customerId: dto.customerId,
@@ -2283,15 +2267,20 @@ export class OrdersService implements OnApplicationBootstrap {
         // Sales agents & commissions: threaded through so a "bill now" sale
         // honors the same per-order override as a plain order create.
         commissionRatePct: dto.commissionRatePct,
+        ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
       },
       user,
-      { skipAutoMerge: true },
+      saleCreateOptions(sale, dto.idempotencyKey, () => (replay = true)),
     );
+    if (replay && order.status !== OrderStatus.PENDING && order.status !== OrderStatus.DELIVERED) {
+      throw new ConflictException("This sale's order was changed after it was created");
+    }
 
     // 2. Van sale: mark the order DELIVERED *directly*. We intentionally bypass changeStatus()
     //    here — changeStatus fires a fire-and-forget DRAFT invoice on DELIVERED, which would
     //    double-invoice this sale. (It also sidesteps the PENDING->DELIVERED transition guard.)
-    if (deliveredNow) {
+    //    No deliveredQty stamp (B1050): a correction goes through a return/credit until that lands.
+    if (deliveredNow && !(replay && order.status === OrderStatus.DELIVERED)) {
       await this.prisma.forTenant().order.update({
         where: { id: order.id },
         data: { status: OrderStatus.DELIVERED, deliveredAt: deliveredAt ?? new Date() },
@@ -2300,7 +2289,7 @@ export class OrdersService implements OnApplicationBootstrap {
 
     // 3. Generate the invoice from the order — sets Invoice.orderId and increments
     //    OrderItem.invoicedQty (so a later delivery of a not-yet-delivered sale won't
-    //    create a second invoice).
+    //    create a second invoice; on a replay it returns the existing invoices instead).
     // W4: may return >1 sibling invoice for a mixed regulated order (standard + category).
     // Thread the operator's chosen due date / terms through so the invoice matches what
     // was shown on the "New sale" screen instead of silently falling back to the
@@ -2324,10 +2313,15 @@ export class OrdersService implements OnApplicationBootstrap {
     //    at delivery, after which staff review & send it. (dto.send is ignored
     //    for deliver-later; sending before delivery is blocked server-side.)
     if (deliveredNow) {
-      // Issue every sibling; return the primary (standard/first) invoice.
+      // Issue every sibling; return the primary (standard/first) invoice. A replay sends only what
+      // is still a DRAFT, with the OLDEST invoice as the primary.
+      const sendOpts = sale.suppressInvoiceNotify ? [{ suppressNotify: true }] : [];
       let primary: any = null;
-      for (const inv of invoices) {
-        const sent = await this.invoicesService.send(inv.id);
+      for (const inv of replay ? oldestFirst(invoices) : invoices) {
+        const sent =
+          replay && inv.status && inv.status !== InvoiceStatus.DRAFT
+            ? inv
+            : await this.invoicesService.send(inv.id, ...sendOpts);
         if (primary === null) primary = sent;
       }
       return primary;
@@ -2728,7 +2722,7 @@ export class OrdersService implements OnApplicationBootstrap {
         title: "Order Confirmed ✓",
         body: `Your order #${order.orderNumber} has been confirmed.`,
       },
-      [OrderStatus.OUT_FOR_DELIVERY]: {
+      [OrderStatus.OUT_FOR_DELIVERY]: pickupOutForDeliveryPush(order) ?? {
         title: "Out for Delivery 🚚",
         body: `Your order #${order.orderNumber} is on its way!`,
       },
@@ -2763,7 +2757,10 @@ export class OrdersService implements OnApplicationBootstrap {
       // the (now real, via EmailChannelProvider) EMAIL/PORTAL/WA/SMS channels.
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
-    const messagingEvent = messagingEventMap[dto.status];
+    // A PICKUP order has no driver: no driver-named template (the push above says "ready for pickup").
+    const messagingEvent = isPickupHandover(order, dto.status)
+      ? undefined
+      : messagingEventMap[dto.status];
     if (
       messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
       order.fulfillPath === FulfillPath.SHIP

@@ -613,6 +613,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { in: ["PENDING", "CONFIRMED"] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655: a counter sale is never loaded on a route
           },
           include: {
             customer: { select: { id: true, businessName: true } },
@@ -1281,6 +1282,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
           },
           // B305 round 5: same drift as the main stops query above — this
           // legacy fallback had its own hand-rolled select, missing the same
@@ -2717,6 +2719,7 @@ export class RoutesService {
           where: {
             customerId: { in: customerIds },
             status: { notIn: [OrderStatus.CANCELLED, OrderStatus.DELIVERED] },
+            fulfillPath: { not: FulfillPath.PICKUP }, // SA-655
           },
           include: {
             lineItems: {

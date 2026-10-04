@@ -23,6 +23,8 @@ const order = (over: Record<string, unknown> = {}) =>
     fulfillPath: FulfillPath.ROUTE,
     routeRunStopId: null,
     routeRunStop: null,
+    total: 10,
+    _count: { lineItems: 1 },
     customer: { id: "c1", businessName: "Acme Co", addresses: [addr] },
     ...over,
   }) as any;

@@ -95,4 +95,11 @@ export class CreateSaleDto {
   @ValidateNested({ each: true })
   @Type(() => AppliedCreditNoteDto)
   appliedCreditNotes?: AppliedCreditNoteDto[];
+
+  /**
+   * INTERNAL (SA-655): the counter sale sets this in code, never from a request body — it carries no
+   * validator on purpose, so the global whitelist strips it from `POST /orders/sell`. It becomes the
+   * order's Idempotency-Key; with it createSale RESUMES a replayed sale instead of starting over.
+   */
+  idempotencyKey?: string;
 }

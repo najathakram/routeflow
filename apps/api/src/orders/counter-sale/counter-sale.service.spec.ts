@@ -147,7 +147,7 @@ describe("CounterSaleService.ring", () => {
     it.each(["always", "optional"] as const)("counter %s is allowed", async (counter) => {
       reader.get.mockResolvedValue(cap(counter));
       await expect(service.ring(named({ method: "CASH" }) as never, staff)).resolves.toBeDefined();
-      expect(reader.get).toHaveBeenCalledWith("t-1");
+      expect(reader.get).toHaveBeenCalledWith("test-tenant");
     });
 
     it("a carrier tenant (no fleet, counter optional) still rings PICKUP counter sales", async () => {
