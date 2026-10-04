@@ -21,7 +21,11 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 
 import { CustomersController } from "./customers.controller";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
-import { SELF_SERVICE_FIELDS, pickSelfServiceFields } from "./self-service-fields";
+import {
+  SELF_SERVICE_FIELDS,
+  pickSelfServiceFields,
+  omitStaffOnlyCustomerFields,
+} from "./self-service-fields";
 import { BuyerController } from "../buyer/buyer.controller";
 import { getMetadataStorage } from "class-validator";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
@@ -246,5 +250,48 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     await expect(
       pipe.transform(body, { type: "body", metatype: UpdateBuyerProfileDto }),
     ).resolves.toBeDefined();
+  });
+  // Customer `notes` is staff-internal: no customer-facing customer response carries it.
+  describe("customer-facing customer responses omit staff-only fields", () => {
+    const row = () => ({ id: "cust-1", deletedAt: null, contactName: "Jo", notes: "internal" });
+
+    it("(k) the helper drops notes without mutating its input", () => {
+      const input = row();
+      const out = omitStaffOnlyCustomerFields(input);
+      expect(out).not.toHaveProperty("notes");
+      expect(out.contactName).toBe("Jo");
+      expect(input.notes).toBe("internal");
+    });
+
+    it("(l) GET /customers/me omits notes", async () => {
+      prisma.customer.findFirst.mockResolvedValue(row());
+      const res = await service.findMyProfile({ sub: "user-1" } as never);
+      expect(res).not.toHaveProperty("notes");
+      expect(res).toHaveProperty("contactName", "Jo");
+    });
+
+    it("(m) PATCH /customers/me omits notes", async () => {
+      prisma.customer.findFirst.mockResolvedValue(row());
+      prisma.customer.findUnique.mockResolvedValue(row());
+      prisma.customer.update.mockResolvedValue(row());
+      const res = await service.updateMyProfile(
+        { sub: "user-1" } as never,
+        {
+          contactName: "Jo",
+        } as never,
+      );
+      expect(res).not.toHaveProperty("notes");
+    });
+
+    it("(n) the buyer-portal profile handlers omit notes", async () => {
+      const controller = Object.create(BuyerController.prototype) as any;
+      controller.customersService = { update: jest.fn().mockResolvedValue(row()) };
+      const ctx = { customerId: "cust-1", customer: row() };
+      expect(controller.getProfile(ctx)).not.toHaveProperty("notes");
+      expect(controller.getMe(ctx)).not.toHaveProperty("notes");
+      expect(await controller.updateMe(ctx, { contactName: "Jo" } as never)).not.toHaveProperty(
+        "notes",
+      );
+    });
   });
 });

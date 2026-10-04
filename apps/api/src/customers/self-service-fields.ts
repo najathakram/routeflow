@@ -35,3 +35,15 @@ export function pickSelfServiceFields<T extends Record<string, unknown>>(
   }
   return out as Partial<Pick<T, Extract<SelfServiceField, keyof T>>>;
 }
+
+/** Customer fields that stay staff-internal: never returned on a customer-facing response. */
+export const STAFF_ONLY_CUSTOMER_FIELDS = ["notes"] as const;
+
+/** A copy of a customer row without the staff-only fields (never mutates the input). */
+export function omitStaffOnlyCustomerFields<T extends Record<string, unknown>>(
+  customer: T,
+): Omit<T, (typeof STAFF_ONLY_CUSTOMER_FIELDS)[number]> {
+  const out: Record<string, unknown> = { ...customer };
+  for (const key of STAFF_ONLY_CUSTOMER_FIELDS) delete out[key];
+  return out as Omit<T, (typeof STAFF_ONLY_CUSTOMER_FIELDS)[number]>;
+}
