@@ -223,10 +223,33 @@ describe("InvoicesService.update() — B1026 a negative line subtotal is refused
       service.update("inv-box", {
         items: [
           { id: "legacy", description: "Legacy", qty: 1, unitPrice: 5, discount: 50 },
-          { description: "New", qty: 1, unitPrice: 10 },
+          { description: "New", qty: 1, unitPrice: 100 },
         ],
       }),
-    ).resolves.toBeDefined();
+    ).resolves.toBeDefined(); // subtotal 55: the old line is not judged on its own, and the total stays >= 0
+  });
+
+  it("(f2) B1030: an untouched legacy negative line can no longer drag the SAVED total below zero (-45 + a $10 line = -35 is refused)", async () => {
+    arrange([
+      {
+        id: "legacy",
+        productId: null,
+        description: "Legacy",
+        qty: 1,
+        unitPrice: 5,
+        discount: 50,
+        subtotal: -45,
+        taxRate: 0,
+      },
+    ]);
+    const run = service.update("inv-box", {
+      items: [
+        { id: "legacy", description: "Legacy", qty: 1, unitPrice: 5, discount: 50 },
+        { description: "New", qty: 1, unitPrice: 10 },
+      ],
+    });
+    await expect(run).rejects.toThrow("Invoice discount ($0.00) cannot exceed subtotal (-$35.00).");
+    noWrites();
   });
 
   // SA-640 condition 1: "changed" is decided SERVER-SIDE by comparing the payload with the stored row.
