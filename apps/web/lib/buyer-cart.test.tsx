@@ -178,21 +178,17 @@ describe("the buyer cart table fits its card and its controls are tappable (B999
     expect(page.match(/h-10 w-14/g)?.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("the table fits its 555px card at 1440: no 640px minimum (it scrolled sideways and cut Subtotal + delete)", () => {
-    expect(page).not.toMatch(/min-w-\[640px\]/);
-    expect(page).toMatch(/md:table md:min-w-\[480px\]/);
-    expect(page).toMatch(/w-20">Price<\/th>/);
+  it("the items are stacked cards at EVERY width: a real table needed 592px in the 555px card at 1440 (delete clipped)", () => {
+    expect(page).not.toMatch(/min-w-\[\d+px\]/);
+    expect(page).not.toMatch(/md:table|md:min-w|table-cell|table-row/);
+    expect(page).toMatch(/<table className="block w-full ?">/);
+    expect(page).toMatch(/<thead className="hidden">/);
+    expect(page).toMatch(/<tr\s+key=\{item\.productId\}\s+className="block px-4 py-3/);
   });
 
   it("the boxed line reads '= N pcs' (pieces), not the pack unit ('= 47 case')", () => {
     expect(page).toMatch(/= \{item\.qty\} pcs/);
     expect(page).not.toMatch(/= \{item\.qty\} \{item\.unit\}/);
-  });
-
-  it("below md the table stacks as cards (block), so nothing scrolls sideways at 390px", () => {
-    expect(page).toMatch(/<table className="block w-full md:table md:min-w-\[480px\]">/);
-    expect(page).toMatch(/<thead className="hidden md:table-header-group">/);
-    expect(page).toMatch(/<tr[^>]*className="block px-4 py-3[^"]*md:table-row/);
   });
 
   it("the controls carry accessible names", () => {

@@ -319,8 +319,8 @@ export default function BuyerCartPage() {
         <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="block w-full md:table md:min-w-[480px]">
-                <thead className="hidden md:table-header-group">
+              <table className="block w-full ">
+                <thead className="hidden">
                   <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Product</th>
                     <th className="px-4 py-2.5 text-center w-44">Qty</th>
@@ -329,7 +329,7 @@ export default function BuyerCartPage() {
                     <th className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
-                <tbody className="block divide-y divide-surface-border md:table-row-group">
+                <tbody className="block divide-y divide-surface-border">
                   {cart.items.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
@@ -338,9 +338,9 @@ export default function BuyerCartPage() {
                     return (
                       <tr
                         key={item.productId}
-                        className="block px-4 py-3 hover:bg-surface-raised/50 md:table-row md:p-0"
+                        className="block px-4 py-3 hover:bg-surface-raised/50"
                       >
-                        <td className="block px-0 py-1.5 md:table-cell md:px-4 md:py-3">
+                        <td className="block px-0 py-1.5">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                               {item.thumbnailUrl ? (
@@ -367,7 +367,7 @@ export default function BuyerCartPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="block px-0 py-1.5 md:table-cell md:px-2 md:py-3">
+                        <td className="block px-0 py-1.5">
                           {item.unitsPerBox && item.unitsPerBox > 1 ? (
                             // Boxes + Pieces input
                             <div
@@ -481,8 +481,8 @@ export default function BuyerCartPage() {
                             </div>
                           )}
                         </td>
-                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm md:table-cell md:px-4 md:py-3">
-                          <span className="text-xs text-navy/60 md:hidden">Price</span>
+                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm">
+                          <span className="text-xs text-navy/60">Price</span>
                           {priced?.unresolved ? (
                             <span className="text-[11px] text-navy/50">Price unavailable</span>
                           ) : original != null && original > price ? (
@@ -496,17 +496,15 @@ export default function BuyerCartPage() {
                             <span className="text-navy/70">{fmt(price)}</span>
                           )}
                         </td>
-                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm font-medium text-navy md:table-cell md:px-4 md:py-3">
-                          <span className="text-xs font-normal text-navy/60 md:hidden">
-                            Subtotal
-                          </span>
+                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm font-medium text-navy">
+                          <span className="text-xs font-normal text-navy/60">Subtotal</span>
                           {priced?.unresolved ? (
                             <span className="text-navy/40">—</span>
                           ) : (
                             fmt(priced?.lineSubtotal ?? 0)
                           )}
                         </td>
-                        <td className="flex justify-end px-0 py-1 md:table-cell md:px-4 md:py-3">
+                        <td className="flex justify-end px-0 py-1">
                           <button
                             onClick={() => cart.removeItem(item.productId)}
                             aria-label={`Remove ${item.name}`}
