@@ -78,7 +78,7 @@ import { assertOrderItemIdsBelongToOrder, logSkippedMatches } from "./order-item
 import { EntitlementsService } from "../billing/entitlements.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { buildPaymentsCsv } from "./payments-csv";
-import { billsAtShipment } from "../orders/order-status-invoicing";
+import { settledAtShipment } from "../orders/order-status-invoicing";
 import { resolvePendingMirror } from "./pending-mirror";
 import {
   CheckStatus,
@@ -1768,8 +1768,8 @@ export class InvoicesService {
       },
     });
     if (!order) return null;
-    // Keyed on the BILLING MOMENT: an order billed at SHIPMENT was settled then; DELIVERED must not restate it.
-    if (await billsAtShipment(this.featureConfig, this.prisma.getTenantId(), order)) return null;
+    // Keyed on the BILLING MOMENT: an order settled at SHIPMENT (and really shipped) is not restated at DELIVERED.
+    if (await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order)) return null;
 
     return this.rebuildSiblingDrafts(
       order,

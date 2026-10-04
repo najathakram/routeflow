@@ -94,9 +94,12 @@ describe("rebuildIssuedDepositMirrorOnDelivery: keyed on the billing moment", ()
     items: [],
     payments: [],
   };
-  const db = (fulfillPath: string) => ({
+  const SHIPPED_AT = new Date("2026-10-01T00:00:00Z");
+  const db = (fulfillPath: string, shippedAt: Date | null = SHIPPED_AT) => ({
     invoice: { findMany: jest.fn().mockResolvedValue([mirror]) },
-    order: { findUnique: jest.fn().mockResolvedValue({ id: "o1", fulfillPath, lineItems: [] }) },
+    order: {
+      findUnique: jest.fn().mockResolvedValue({ id: "o1", fulfillPath, shippedAt, lineItems: [] }),
+    },
   });
   const self = (mode: string) => ({
     rebuildSiblingDrafts: jest.fn().mockResolvedValue([]),
@@ -112,6 +115,12 @@ describe("rebuildIssuedDepositMirrorOnDelivery: keyed on the billing moment", ()
       expect(s.rebuildSiblingDrafts).not.toHaveBeenCalled();
     },
   );
+
+  it("MONEY: a SHIP order that went CONFIRMED -> DELIVERED WITHOUT shipping was never settled at shipment: its deposit invoice IS restated on a short delivery", async () => {
+    const s = self("ship");
+    await rebuild.call(s, "o1", db("SHIP", null));
+    expect(s.rebuildSiblingDrafts).toHaveBeenCalledTimes(1);
+  });
 
   it("a SHIP order of an UNSET business was not billed at shipment: rebuilt on delivery as before", async () => {
     const s = self("unset");

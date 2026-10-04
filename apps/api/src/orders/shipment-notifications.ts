@@ -79,7 +79,13 @@ export async function notifyOrderShipped(
   try {
     const ship = shipmentVars(order);
     const orderNumber = order.orderNumber ?? "";
-    const custom = await deps.messaging.customisedChannels(NotificationEvent.OUT_FOR_DELIVERY);
+    // A business that switched "Order shipped" OFF for a channel stays off: its customised "out for
+    // delivery" wording must not go out on that channel either.
+    const [customised, shippedOn] = await Promise.all([
+      deps.messaging.customisedChannels(NotificationEvent.OUT_FOR_DELIVERY),
+      deps.messaging.enabledChannels(NotificationEvent.ORDER_SHIPPED),
+    ]);
+    const custom = customised.filter((c) => shippedOn.includes(c));
     if (custom.length > 0) {
       await deps.messaging.notifyEvent(NotificationEvent.OUT_FOR_DELIVERY, {
         customerId: order.customerId,

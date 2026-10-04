@@ -311,6 +311,21 @@ export class MessagingService {
    * original default string is a reliable test. Used by the carrier-shipped path to keep a business's
    * own OUT_FOR_DELIVERY text. Never throws: on a read failure it reports "none customised".
    */
+  /** Channels with an ENABLED rule for the event (a business that switched an event off has none). Never throws. */
+  async enabledChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {
+    try {
+      const rules = await this.prisma.forTenant().notificationRule.findMany({
+        where: { eventKey, enabled: true },
+      });
+      return rules.map((r) => r.channel).filter((c) => EVENT_CHANNELS[eventKey].includes(c));
+    } catch (err) {
+      this.logger.warn(
+        `enabledChannels(${eventKey}) failed: ${err instanceof Error ? err.message : err}`,
+      );
+      return [];
+    }
+  }
+
   async customisedChannels(eventKey: NotificationEvent): Promise<MessageChannel[]> {
     try {
       const db = this.prisma.forTenant();

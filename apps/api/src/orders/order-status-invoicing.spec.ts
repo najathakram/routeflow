@@ -74,7 +74,7 @@ describe("settleOrderInvoice", () => {
     expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
   });
 
-  it("an open mirror draft is reconciled at basis 'order' and nothing is created (the later DELIVERED path)", async () => {
+  it("an open mirror draft is reconciled at basis 'order' and nothing is created (an order NOT settled at shipment: ROUTE, unset mode, or never shipped)", async () => {
     const { self, invoicesService } = harness();
     invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "d1" });
     await settleOrderInvoice(self, "ord-1", logger, "delivered");
@@ -82,6 +82,25 @@ describe("settleOrderInvoice", () => {
       basis: "order",
     });
     expect(invoicesService.createInvoiceFromOrderWithTenant).not.toHaveBeenCalled();
+  });
+
+  it("M1: DELIVERED after a shipment-time settle does NOT reconcile the draft (staff edits since shipment survive)", async () => {
+    const { self, invoicesService } = harness();
+    invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "d1" }); // the shipment invoice, edited since
+    await settleOrderInvoice(self, "ord-1", logger, "delivered", true);
+    expect(invoicesService.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
+    // the un-invoiced-remainder create still runs (it returns the existing invoice when nothing is left)
+    expect(invoicesService.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(1);
+  });
+
+  it("S3: a reconcile that throws at shipment is returned, never thrown (the transition and the email go on)", async () => {
+    const { self, invoicesService } = harness();
+    invoicesService.findOpenOrderDraft.mockResolvedValue({ id: "d1" });
+    invoicesService.reconcileOrderDraftInvoice.mockRejectedValue(new Error("tx conflict"));
+    const out = await settleOrderInvoice(self, "ord-1", logger, "shipped");
+    expect(out).toBeInstanceOf(ConflictException);
+    expect(out?.message).toContain("marked shipped");
+    expect(out?.message).toContain("tx conflict");
   });
 
   it("shipped then delivered: the second pass reuses the one invoice and never creates another", async () => {

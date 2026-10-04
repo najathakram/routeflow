@@ -22,6 +22,7 @@ function harness() {
   db.order.updateMany.mockResolvedValue({ count: 1 });
   const messaging = {
     customisedChannels: jest.fn().mockResolvedValue([]),
+    enabledChannels: jest.fn().mockResolvedValue(["EMAIL", "PORTAL"]),
     notifyEvent: jest.fn().mockResolvedValue(undefined),
   };
   const deps = { prisma: { forTenant: () => db }, messaging } as any;
@@ -99,6 +100,15 @@ describe("notifyOrderShipped", () => {
     const [, shipped] = messaging.notifyEvent.mock.calls[1];
     expect(shipped.exceptChannels).toEqual(["EMAIL"]);
     expect(shipped.channels).toBeUndefined();
+  });
+
+  it("S2: a channel with 'Order shipped' switched OFF stays off, even if its out-for-delivery wording is customised", async () => {
+    const { deps, messaging } = harness();
+    messaging.customisedChannels.mockResolvedValue(["EMAIL"]);
+    messaging.enabledChannels.mockResolvedValue(["PORTAL"]); // ORDER_SHIPPED is off for EMAIL
+    await notifyOrderShipped(deps, shipOrder(), "u");
+    expect(events(messaging)).toEqual(["ORDER_SHIPPED"]); // no customised OUT_FOR_DELIVERY on EMAIL
+    expect(messaging.notifyEvent.mock.calls[0][1].exceptChannels).toBeUndefined();
   });
 
   it("never throws: a failing customisation read or send is swallowed", async () => {
@@ -258,20 +268,34 @@ describe("E-c / L6 / E-b decisions", () => {
     expect(isFirstShipment({ shippedAt: new Date("2026-10-01T00:00:00Z") })).toBe(false);
   });
 
-  it("L6: a SHIP order out with the carrier is refused with a 409; everything else is unchanged", () => {
-    expect(() =>
-      assertCarrierOrderNotInTransit({ status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" }),
-    ).toThrow(
-      expect.objectContaining({
+  const cfg = (mode: string) => ({ getEffectiveMode: jest.fn().mockResolvedValue(mode) });
+  const out = { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP" };
+
+  it.each(["ship", "both", "pickup_ship"])(
+    "L6: a SHIP order out with the carrier of a %s business is refused with the coded 409",
+    async (mode) => {
+      await expect(assertCarrierOrderNotInTransit(cfg(mode), "t1", out)).rejects.toMatchObject({
+        status: 409,
         response: expect.objectContaining({ code: "ORDER_WITH_CARRIER_NO_CANCEL" }),
-      }),
-    );
+      });
+    },
+  );
+
+  it("L6: an UNSET-mode business cancels exactly as before (the rule is gated on the billing moment)", async () => {
+    await expect(assertCarrierOrderNotInTransit(cfg("unset"), "t1", out)).resolves.toBeUndefined();
+    await expect(assertCarrierOrderNotInTransit(undefined, "t1", out)).resolves.toBeUndefined();
+  });
+
+  it("L6: PARTIALLY_DELIVERED is in transit too; ROUTE orders and not-yet-shipped orders are untouched", async () => {
+    await expect(
+      assertCarrierOrderNotInTransit(cfg("ship"), "t1", { ...out, status: "PARTIALLY_DELIVERED" }),
+    ).rejects.toBeDefined();
     for (const o of [
       { status: "OUT_FOR_DELIVERY", fulfillPath: "ROUTE" },
       { status: "CONFIRMED", fulfillPath: "SHIP" },
       { status: "PENDING", fulfillPath: "SHIP" },
     ])
-      expect(() => assertCarrierOrderNotInTransit(o)).not.toThrow();
+      await expect(assertCarrierOrderNotInTransit(cfg("ship"), "t1", o)).resolves.toBeUndefined();
   });
 
   it("E-b: saving tracking on a CONFIRMED order stamps no shippedAt; on a shipped legacy row it backfills", async () => {

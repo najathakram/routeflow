@@ -57,6 +57,19 @@ export async function invoicesAtShipment(
   return billsAtShipment(featureConfig, tenantId, order);
 }
 
+/** True when this order's invoice was ALREADY settled at shipment: it is billed at shipment AND has really
+ *  shipped (`shippedAt` is stamped only by the ship transition). A SHIP order that goes CONFIRMED ->
+ *  DELIVERED without a ship step was never settled at shipment, so it keeps the delivered-basis path.
+ *  ONE predicate: DELIVERED must neither wipe edits made to the shipment invoice (settleOrderInvoice) nor
+ *  skip the deposit-mirror restatement for an order that never shipped (rebuildIssuedDepositMirror...). */
+export async function settledAtShipment(
+  featureConfig: Parameters<typeof billsAtShipment>[0],
+  tenantId: string | null | undefined,
+  order: { fulfillPath: FulfillPath; shippedAt?: Date | null },
+): Promise<boolean> {
+  return !!order.shippedAt && (await billsAtShipment(featureConfig, tenantId, order));
+}
+
 /**
  * Manual "mark delivered/shipped" = whole order. If the order has a pending mirror draft, reconcile
  * it to the order and leave it DRAFT for staff to review & send. Otherwise auto-create (explicit
@@ -70,11 +83,27 @@ export async function settleOrderInvoice(
   id: string,
   logger: Logger,
   moment: "delivered" | "shipped",
+  alreadySettledAtShipment = false,
 ): Promise<ConflictException | undefined> {
-  const draft = await self.invoicesService.findOpenOrderDraft(id);
+  // DELIVERED after a shipment-time settle: the invoice was unlocked at shipment, so staff may have edited
+  // it since. Reconciling it back to the order lines would silently wipe those edits: skip it (the
+  // un-invoiced-remainder create below still runs).
+  const draft =
+    moment === "delivered" && alreadySettledAtShipment
+      ? null
+      : await self.invoicesService.findOpenOrderDraft(id);
   if (draft) {
-    await self.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-    return undefined;
+    try {
+      await self.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
+      return undefined;
+    } catch (err: any) {
+      // The status write and the customer email never depend on the invoice: report it afterwards.
+      logger.error(`Failed to reconcile invoice for order ${id}: ${err?.message ?? err}`);
+      return new ConflictException(
+        `The order was marked ${moment}, but its invoice could not be updated ` +
+          `(${err?.message ?? "unknown error"}). Open the invoice from the order page to review it.`,
+      );
+    }
   }
   const capturedTenantId = self.prisma.getTenantId();
   const MAX_INVOICE_ATTEMPTS = 3;
@@ -105,16 +134,20 @@ export async function settleOrderInvoice(
 /**
  * L6: a CARRIER (SHIP) order that is out with the carrier is not cancelled — cancelling credits its
  * units back to stock while the parcel is still in transit. It goes through the return flow instead.
- * A 409 before any write; every other order (and every other status) is unchanged.
+ * GATED on the billing moment (`billsAtShipment`: ship / both / pickup_ship businesses only), so an
+ * unset-mode business cancels exactly as before. A coded 409 before any write.
  */
-export function assertCarrierOrderNotInTransit(order: {
-  status: OrderStatus;
-  fulfillPath: FulfillPath;
-}): void {
-  if (order.status === OrderStatus.OUT_FOR_DELIVERY && order.fulfillPath === FulfillPath.SHIP) {
-    throw new ConflictException({
-      code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CANCEL,
-      message: "This order is already with the carrier. Use a return instead of cancelling.",
-    });
-  }
+export async function assertCarrierOrderNotInTransit(
+  featureConfig: Parameters<typeof billsAtShipment>[0],
+  tenantId: string | null | undefined,
+  order: { status: OrderStatus; fulfillPath: FulfillPath },
+): Promise<void> {
+  const inTransit =
+    order.status === OrderStatus.OUT_FOR_DELIVERY ||
+    order.status === OrderStatus.PARTIALLY_DELIVERED;
+  if (!inTransit || !(await billsAtShipment(featureConfig, tenantId, order))) return;
+  throw new ConflictException({
+    code: API_ERROR_CODES.ORDER_WITH_CARRIER_NO_CANCEL,
+    message: "This order is already with the carrier. Use a return instead of cancelling.",
+  });
 }

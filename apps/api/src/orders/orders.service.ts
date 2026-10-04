@@ -188,6 +188,7 @@ import {
   assertCarrierOrderNotInTransit,
   invoicesAtShipment,
   settleOrderInvoice,
+  settledAtShipment,
 } from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
@@ -2447,7 +2448,8 @@ export class OrdersService implements OnApplicationBootstrap {
     // Refuse the cancel BEFORE writing the status — a rejection must leave the
     // order exactly as it was, not cancelled-but-not-unwound.
     if (dto.status === OrderStatus.CANCELLED) {
-      assertCarrierOrderNotInTransit(order); // L6: a parcel with the carrier returns, it is not cancelled
+      // L6: a parcel with the carrier returns, it is not cancelled (ship-billing businesses only)
+      await assertCarrierOrderNotInTransit(this.featureConfig, this.prisma.getTenantId(), order);
       await this.assertCancellableOrThrow(id);
     }
 
@@ -2680,7 +2682,13 @@ export class OrdersService implements OnApplicationBootstrap {
       invoiceFailure = await settleOrderInvoice(this, id, this.logger, "shipped");
     }
     if (dto.status === OrderStatus.DELIVERED) {
-      invoiceFailure = await settleOrderInvoice(this, id, this.logger, "delivered");
+      invoiceFailure = await settleOrderInvoice(
+        this,
+        id,
+        this.logger,
+        "delivered",
+        await settledAtShipment(this.featureConfig, this.prisma.getTenantId(), order),
+      );
 
       // B108 (REG-B108): retry transient contention (serializable-isolation
       // write conflicts) up to 3 times with a short backoff before giving up.

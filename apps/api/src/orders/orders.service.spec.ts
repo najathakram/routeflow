@@ -132,7 +132,10 @@ describe("OrdersService", () => {
     revertLinkedInvoicesForOrderEdit: jest.Mock;
   };
   // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
-  let messagingService: Record<"notify" | "notifyEvent" | "customisedChannels", jest.Mock>;
+  let messagingService: Record<
+    "notify" | "notifyEvent" | "customisedChannels" | "enabledChannels",
+    jest.Mock
+  >;
   // WP3: captured so the order-scoped credit-note tests can assert
   // sync/settle are called with the right (order id, customer id, selections).
   let creditNotesService: {
@@ -251,6 +254,7 @@ describe("OrdersService", () => {
             notify: jest.fn().mockResolvedValue([]),
             notifyEvent: jest.fn().mockResolvedValue(undefined),
             customisedChannels: jest.fn().mockResolvedValue([]),
+            enabledChannels: jest.fn().mockResolvedValue(["EMAIL", "PORTAL"]),
           },
         },
         {
@@ -3101,6 +3105,18 @@ describe("OrdersService", () => {
         "ord-1",
         expect.objectContaining({ basis: "delivered" }),
       );
+    });
+
+    it("M1: DELIVERED after a shipment settle leaves the (edited) shipment invoice alone", async () => {
+      (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue("ship") };
+      const o = { ...MOCK_ORDER, fulfillPath: "SHIP", shippedAt: new Date("2026-10-01T00:00:00Z") };
+      prisma.order.findUnique.mockResolvedValue({ ...o, status: "OUT_FOR_DELIVERY" });
+      prisma.order.update.mockResolvedValue({ ...o, status: "DELIVERED" });
+      const invoices = (service as any).invoicesService;
+      invoices.findOpenOrderDraft.mockResolvedValueOnce({ id: "d1" });
+      invoices.reconcileOrderDraftInvoice.mockClear();
+      await service.changeStatus("ord-1", { status: "DELIVERED" as any }, operatorPayload as any);
+      expect(invoices.reconcileOrderDraftInvoice).not.toHaveBeenCalled();
     });
 
     it("CANCELLED fires the CANCELLED messaging event (N1 — real EMAIL channel)", async () => {
