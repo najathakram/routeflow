@@ -20,7 +20,8 @@ import { fmt } from "@/lib/formatting";
  * loading (or an older API omits the field) the figure is "—", never a misleading $0.00; if the
  * statement request FAILS it says so instead of looking like it is still loading.
  *
- * Renders NOTHING when the customer has no credit limit configured.
+ * Renders NOTHING when the customer has no credit limit configured (null). A limit of exactly 0 is a real
+ * limit and renders with an explicit "$0.00 limit" line (B1032).
  */
 export interface CreditLimitPanelProps {
   /** `Customer.creditLimit` — null / 0 / absent means no limit, so no panel. */
@@ -39,11 +40,21 @@ export function CreditLimitPanel({
   pendingExposure,
   statementUnavailable = false,
 }: CreditLimitPanelProps) {
-  if (creditLimit == null || !(creditLimit > 0)) return null;
+  // B1032: only null / absent (or a nonsense negative) means "no limit". A real $0 limit is a limit — the
+  // server's credit block refuses anything above it — so it renders, marked, instead of vanishing.
+  if (creditLimit == null || creditLimit < 0) return null;
+  const isZeroLimit = creditLimit === 0;
 
   const known = typeof creditExposure === "number" && Number.isFinite(creditExposure);
   const used = known ? Math.max(0, creditExposure) : 0;
-  const percent = known ? Math.min(100, (used / creditLimit) * 100) : 0;
+  // A $0 limit has no ratio: any exposure is a full (over) bar, none is an empty one.
+  const percent = known
+    ? isZeroLimit
+      ? used > 0
+        ? 100
+        : 0
+      : Math.min(100, (used / creditLimit) * 100)
+    : 0;
   // roundMoney BEFORE the comparison / the shown remainder (L-170): float dust must not flip "over".
   const remaining = known ? roundMoney(creditLimit - used) : 0;
   const over = known && remaining < 0;
@@ -59,6 +70,11 @@ export function CreditLimitPanel({
       </div>
       {/* The figure is exposure, not receivables: without this line it reads as contradicting the
           "Outstanding" tile (which has no unbilled open orders in it). */}
+      {isZeroLimit && (
+        <p className="mb-1.5 text-xs font-semibold text-navy" data-testid="credit-limit-zero">
+          {fmt(0)} limit — no credit extended
+        </p>
+      )}
       <p className="mb-1.5 text-xs text-navy/60" data-testid="credit-limit-basis">
         What the credit block checks — includes unbilled open orders
       </p>

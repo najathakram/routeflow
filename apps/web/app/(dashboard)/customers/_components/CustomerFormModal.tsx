@@ -124,6 +124,13 @@ export interface CustomerFormModalProps {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/** Edit payload for an optional text field: the value, an explicit `null` when a loaded value was
+ *  emptied, or `undefined` (leave alone) when there was nothing to clear. */
+function clearable(next: string | undefined, loaded: string | null | undefined) {
+  if (next) return next;
+  return loaded ? null : undefined;
+}
+
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
 ): CustomerFormValues {
@@ -167,7 +174,8 @@ function buildDefaultValues(
     // the stored sentinel — the update payload sends "" which the API clears to null.)
     email: [initialData.email, initialData.user?.email].find((e) => e && !isInternalEmail(e)) ?? "",
     currency: initialData.currency ?? "USD",
-    creditLimit: initialData.creditLimit ? String(initialData.creditLimit) : "",
+    // `!= null`, not truthiness: a real $0 limit (B1032) must show as 0, not as an empty "no limit" field.
+    creditLimit: initialData.creditLimit != null ? String(initialData.creditLimit) : "",
     taxId: initialData.taxId ?? "",
     isTaxExempt: initialData.isTaxExempt ?? false,
     notes: initialData.notes ?? "",
@@ -344,16 +352,23 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           email: data.email ?? "",
           businessName: resolvedBusinessName,
           contactName: resolvedContactName,
-          phone: data.phone || undefined,
-          mobile: data.mobile || undefined,
+          // B1033: an emptied optional field is an explicit null (the API stores null); `|| undefined`
+          // made it a silent no-op and the old value stayed. Only a value the form actually loaded can be
+          // cleared — an already-empty field is left out, so an edit can never wipe a column it never saw.
+          phone: clearable(data.phone, initialData.phone),
+          mobile: clearable(data.mobile, initialData.mobile),
           customerType: data.customerType,
           displayName: resolvedDisplayName,
           salutation: data.salutation || undefined,
           firstName: data.firstName || undefined,
           lastName: data.lastName || undefined,
-          taxId: data.taxId || undefined,
+          taxId: clearable(data.taxId, initialData.taxId),
           isTaxExempt: data.isTaxExempt || false,
-          creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
+          creditLimit: data.creditLimit
+            ? parseFloat(data.creditLimit)
+            : initialData.creditLimit != null
+              ? null
+              : undefined,
           currency: data.currency || "USD",
           fulfillPath: data.fulfillPath || "ROUTE",
           notes: data.notes,
