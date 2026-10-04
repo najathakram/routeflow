@@ -632,13 +632,15 @@ export default function DashboardPage() {
     { ...POLL, enabled: readsBusinessData },
   );
   // The pipeline strip (operator only) also shows the two terminal states.
+  // All-time totals barely move, so they are fetched ONCE (no refetchInterval): every poll was 7
+  // GET /orders, and a handful of dashboards behind one shop IP reached the 100/min limit.
   const deliveredQ = useOrders(
     { page: 1, limit: 1, status: "DELIVERED" },
-    { ...POLL, enabled: readsBusinessData && isOperator },
+    { enabled: readsBusinessData && isOperator },
   );
   const cancelledQ = useOrders(
     { page: 1, limit: 1, status: "CANCELLED" },
-    { ...POLL, enabled: readsBusinessData && isOperator },
+    { enabled: readsBusinessData && isOperator },
   );
   const ordersLoading = pendingQ.isLoading || confirmedQ.isLoading || outForDeliveryQ.isLoading;
   const { data: urgentOrdersData, isLoading: urgentLoading } = useOrders(
@@ -975,6 +977,10 @@ export default function DashboardPage() {
                   {orderPipeline[key] ?? UNKNOWN_KPI}
                 </span>
                 <span className="text-[11.5px] font-semibold text-navy/70">{label}</span>
+                {/* the two terminal states are all-time totals (not polled), the other three are live */}
+                {(key === "DELIVERED" || key === "CANCELLED") && (
+                  <span className="-mt-0.5 text-[10.5px] font-medium text-navy/50">all time</span>
+                )}
               </Link>
             ))}
           </div>

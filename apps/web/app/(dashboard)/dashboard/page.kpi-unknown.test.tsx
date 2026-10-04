@@ -50,8 +50,10 @@ const page = (total: number, rows: unknown[] = []) => ({
   isError: false,
 });
 
+const orderCalls: { status?: string; options?: { refetchInterval?: number } }[] = [];
 jest.mock("@/lib/api/orders", () => ({
-  useOrders: (p: { status?: string; limit?: number }) => {
+  useOrders: (p: { status?: string; limit?: number }, options?: { refetchInterval?: number }) => {
+    orderCalls.push({ status: p?.status, options });
     const s = state();
     if (s) return s;
     if (p?.status) return page(TOTALS[p.status]);
@@ -172,5 +174,21 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
     expect(screen.getByText("All stock levels healthy")).toBeInTheDocument();
     expect(screen.queryByText("Couldn't load overdue invoices")).not.toBeInTheDocument();
     expect(screen.queryByText("Couldn't load low stock items")).not.toBeInTheDocument();
+  });
+
+  // Each dashboard poll made 7 GET /orders; ~7 dashboards behind one shop IP hit the 100/min limit. The
+  // all-time Delivered / Cancelled counts barely move, so they are fetched once, not polled.
+  it("does not poll the all-time Delivered / Cancelled counts, and labels them all time", () => {
+    orderCalls.length = 0;
+    renderWithProviders(<DashboardPage />);
+
+    const optionsFor = (status: string) => orderCalls.find((c) => c.status === status)?.options;
+    expect(optionsFor("DELIVERED")?.refetchInterval).toBeUndefined();
+    expect(optionsFor("CANCELLED")?.refetchInterval).toBeUndefined();
+    // the live counts still poll
+    expect(optionsFor("PENDING")?.refetchInterval).toBe(30_000);
+    expect(optionsFor("OUT_FOR_DELIVERY")?.refetchInterval).toBe(30_000);
+
+    expect(screen.getAllByText("all time")).toHaveLength(2);
   });
 });
