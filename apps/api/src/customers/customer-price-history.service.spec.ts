@@ -67,6 +67,27 @@ const mv = (iso: string, avg: string) => ({
   avgCostAfter: D(avg),
 });
 
+// A tiny invoice store that honours the status filter, so billed-qty behaviour is exercised
+// (not just the query shape). `rows` answers the row read; `billed` answers the billed-qty read
+// (the one filtered on items.some.orderItemId), after applying `status.notIn`.
+const mockInvoiceStore = (
+  prisma: { invoice: { findMany: jest.Mock } },
+  o: {
+    rows?: unknown[];
+    billed?: { status: InvoiceStatus; items: { orderItemId: string; qty: unknown }[] }[];
+  },
+) => {
+  prisma.invoice.findMany.mockImplementation(async (args: any) => {
+    if (args?.where?.items?.some?.orderItemId) {
+      const excluded: InvoiceStatus[] = args.where.status?.notIn ?? [];
+      return (o.billed ?? [])
+        .filter((i) => !excluded.includes(i.status))
+        .map((i) => ({ items: i.items }));
+    }
+    return o.rows ?? [];
+  });
+};
+
 describe("CustomerPriceHistoryService", () => {
   let service: CustomerPriceHistoryService;
   let prisma: ReturnType<typeof createMockPrisma>;
@@ -79,7 +100,6 @@ describe("CustomerPriceHistoryService", () => {
     prisma.order.findMany.mockResolvedValue([]);
     prisma.stockMovement.findMany.mockResolvedValue([]);
     prisma.stockMovement.findFirst.mockResolvedValue(null);
-    prisma.invoiceItem.findMany.mockResolvedValue([]);
     const mod = await Test.createTestingModule({
       providers: [CustomerPriceHistoryService, { provide: PrismaService, useValue: prisma }],
     }).compile();
@@ -131,11 +151,11 @@ describe("CustomerPriceHistoryService", () => {
   });
 
   describe("status filters", () => {
-    it("reads only real invoices (no DRAFT / VOID / WRITTEN_OFF) and only open orders", async () => {
+    it("reads issued invoices (no DRAFT / VOID; a WRITTEN_OFF invoice was billed) and backing orders", async () => {
       await run();
       const iw = prisma.invoice.findMany.mock.calls[0][0].where;
       expect(iw.status).toEqual({
-        notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
+        notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID],
       });
       const ow = prisma.order.findMany.mock.calls[0][0].where;
       expect(ow.status).toEqual({
@@ -198,13 +218,13 @@ describe("CustomerPriceHistoryService", () => {
     });
 
     it("an open order line that is fully invoiced is skipped (appears once, as INVOICE)", async () => {
-      prisma.invoice.findMany.mockResolvedValue([
-        invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } }),
-      ]);
+      mockInvoiceStore(prisma, {
+        rows: [invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } })],
+        billed: [{ status: InvoiceStatus.SENT, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
       prisma.order.findMany.mockResolvedValue([
         openOrder({ lineItems: [openItem({ qty: D(2) })] }),
       ]);
-      prisma.invoiceItem.findMany.mockResolvedValue([{ orderItemId: "oi1", qty: D(2) }]);
       const res = await run();
       expect(res.rows.map((r) => r.source)).toEqual(["INVOICE"]);
     });
@@ -213,7 +233,9 @@ describe("CustomerPriceHistoryService", () => {
       prisma.order.findMany.mockResolvedValue([
         openOrder({ lineItems: [openItem({ qty: D(5) })] }),
       ]);
-      prisma.invoiceItem.findMany.mockResolvedValue([{ orderItemId: "oi1", qty: D(2) }]);
+      mockInvoiceStore(prisma, {
+        billed: [{ status: InvoiceStatus.SENT, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
       const res = await run();
       expect(res.rows).toHaveLength(1);
       expect(res.rows[0]).toMatchObject({
@@ -224,20 +246,42 @@ describe("CustomerPriceHistoryService", () => {
       });
     });
 
-    it("a line billed only on a DRAFT invoice still shows as OPEN_ORDER (only real invoices count as billed)", async () => {
+    it("a line billed only on a DRAFT or VOID invoice still shows as OPEN_ORDER", async () => {
       prisma.order.findMany.mockResolvedValue([
         openOrder({ lineItems: [openItem({ qty: D(2), invoicedQty: D(2) })] }),
       ]);
-      // the draft invoice is excluded by the status filter, so no billed rows come back
-      prisma.invoiceItem.findMany.mockResolvedValue([]);
-      const res = await run();
-      expect(prisma.invoiceItem.findMany.mock.calls[0][0].where.invoice).toEqual({
-        tenantId: "test-tenant",
-        status: {
-          notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID, InvoiceStatus.WRITTEN_OFF],
-        },
+      mockInvoiceStore(prisma, {
+        billed: [
+          { status: InvoiceStatus.DRAFT, items: [{ orderItemId: "oi1", qty: D(2) }] },
+          { status: InvoiceStatus.VOID, items: [{ orderItemId: "oi1", qty: D(2) }] },
+        ],
       });
+      const res = await run();
       expect(res.rows.map((r) => [r.source, r.qty])).toEqual([["OPEN_ORDER", 2]]);
+    });
+
+    it("a line billed on a WRITTEN_OFF invoice counts as billed (shown once, as INVOICE)", async () => {
+      prisma.order.findMany.mockResolvedValue([
+        openOrder({ status: "DELIVERED", lineItems: [openItem({ qty: D(2) })] }),
+      ]);
+      mockInvoiceStore(prisma, {
+        rows: [invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } })],
+        billed: [{ status: InvoiceStatus.WRITTEN_OFF, items: [{ orderItemId: "oi1", qty: D(2) }] }],
+      });
+      const res = await run();
+      expect(res.rows.map((r) => r.source)).toEqual(["INVOICE"]);
+    });
+
+    it("reads billed qty THROUGH Invoice (a NULL-tenant InvoiceItem must not be dropped)", async () => {
+      prisma.order.findMany.mockResolvedValue([openOrder()]);
+      await run();
+      expect(prisma.invoiceItem.findMany).not.toHaveBeenCalled();
+      const billedCall = prisma.invoice.findMany.mock.calls[1][0];
+      expect(billedCall.where).toMatchObject({
+        tenantId: "test-tenant",
+        status: { notIn: [InvoiceStatus.DRAFT, InvoiceStatus.VOID] },
+        items: { some: { orderItemId: { in: ["oi1"] } } },
+      });
     });
 
     it("a DELIVERED order with no issued invoice shows as not invoiced yet", async () => {

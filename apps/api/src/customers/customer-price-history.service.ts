@@ -3,9 +3,9 @@ import { UserRole } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { PriceHistoryResponse, PriceHistoryRow, PriceHistorySummary } from "@routeflow/types";
 import {
+  ACCRUAL_REVENUE_STATUSES,
   buildCostIndex,
   costAt,
-  REAL_INVOICE_STATUSES,
   roundQty,
   type CostIndex,
 } from "../common/invoiced-sales";
@@ -110,7 +110,7 @@ export class CustomerPriceHistoryService {
         where: {
           tenantId,
           customerId,
-          status: REAL_INVOICE_STATUSES,
+          status: ACCRUAL_REVENUE_STATUSES,
           items: { some: { productId } },
         },
         orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
@@ -151,20 +151,30 @@ export class CustomerPriceHistoryService {
       }),
     ]);
 
-    // Billed qty per order line from REAL invoices only. OrderItem.invoicedQty is bumped when a DRAFT
-    // invoice is created, and a draft is not a sale, so it cannot be used for the remainder.
+    // Billed qty per order line from invoices that were actually issued (a written-off invoice WAS
+    // billed; only DRAFT/VOID are not). OrderItem.invoicedQty is bumped when a DRAFT invoice is
+    // created, so it cannot be used. Read THROUGH Invoice (never top-level invoiceItem.findMany:
+    // lines with a null tenantId would be dropped and the line would show twice).
     const lineIds = (openOrders as any[]).flatMap((o) => (o.lineItems ?? []).map((l: any) => l.id));
     const billed = new Map<string, number>();
     if (lineIds.length > 0) {
-      const billedItems = await db.invoiceItem.findMany({
+      const billedInvoices = await db.invoice.findMany({
         where: {
-          orderItemId: { in: lineIds },
-          invoice: { tenantId, status: REAL_INVOICE_STATUSES },
+          tenantId,
+          status: ACCRUAL_REVENUE_STATUSES,
+          items: { some: { orderItemId: { in: lineIds } } },
         },
-        select: { orderItemId: true, qty: true },
+        select: {
+          items: {
+            where: { orderItemId: { in: lineIds } },
+            select: { orderItemId: true, qty: true },
+          },
+        },
       });
-      for (const b of billedItems as any[]) {
-        billed.set(b.orderItemId, (billed.get(b.orderItemId) ?? 0) + Number(b.qty));
+      for (const inv of billedInvoices as any[]) {
+        for (const b of inv.items ?? []) {
+          billed.set(b.orderItemId, (billed.get(b.orderItemId) ?? 0) + Number(b.qty));
+        }
       }
     }
 
