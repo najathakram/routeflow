@@ -11,6 +11,7 @@ import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
+import { FLEET_KEYS } from "./tenant-capability";
 import { FeatureConfigStore } from "./feature-config.store";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -174,6 +175,22 @@ export class FeatureConfigService {
     // as an unknown mode name, not just an unknown key.
     if (!modeDef.available) {
       throw new BadRequestException(`"${mode}" is not available for "${key}"`);
+    }
+
+    // Business profiles: a tenant with neither fleet key cannot be set to deliver on its own
+    // trucks. `ship` is always allowed, even with the fleet on. The registry's mode schema stays
+    // allOf-only (lead ruling 2026-10-04), so this OR-group lives here, for this key alone.
+    if (key === "fulfilment_model" && (mode === "delivery" || mode === "both")) {
+      const heldFleet = await Promise.all(FLEET_KEYS.map((k) => this.can(tenantId, k)));
+      if (!heldFleet.some(Boolean)) {
+        throw new ConflictException({
+          code: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
+          key,
+          mode,
+          missing: [...FLEET_KEYS],
+          message: "Own delivery needs Routes or Order delivery turned on for this account first.",
+        });
+      }
     }
 
     for (const required of modeDef.requires?.allOf ?? []) {

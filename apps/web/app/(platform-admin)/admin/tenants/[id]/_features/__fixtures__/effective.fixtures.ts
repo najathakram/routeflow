@@ -114,6 +114,7 @@ export const TENANT_FEATURES_RESPONSE_FIXTURE: TenantFeaturesResponse = {
   served: EFFECTIVE_FIXTURE.filter((f) => f.serving).map((f) => f.key),
   resolver: Object.fromEntries(EFFECTIVE_FIXTURE.map((f) => [f.key, f.resolver])),
   modes: { route_optimization: "mixed" },
+  capability: { fleet: true, fulfilment: null, consistent: true, inconsistentModes: [] },
   catalogVersionId: CATALOG_VERSION_ID,
   computedAt: "2026-09-17T00:00:00.000Z",
 };

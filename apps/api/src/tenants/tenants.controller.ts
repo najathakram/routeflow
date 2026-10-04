@@ -25,6 +25,8 @@ import { gateVia, FEATURE_REGISTRY } from "../billing/feature-registry";
 import type { ResolvedFeatures } from "../billing/feature-resolver.service";
 import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PolicyService } from "../policy/policy.service";
+import { FeatureConfigService } from "../billing/feature-config.service";
+import { FLEET_KEYS, computeCapability } from "../billing/tenant-capability";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
 import { Roles } from "../auth/decorators/roles.decorator";
@@ -48,6 +50,7 @@ export class TenantsController {
     private readonly featureOverrides: FeatureOverrideService,
     private readonly authority: EntitlementAuthority,
     private readonly policies: PolicyService,
+    private readonly featureConfig: FeatureConfigService,
   ) {}
 
   // ─── Me: Features (feature grants v2 brief A) ─────────────────────────────────
@@ -93,10 +96,20 @@ export class TenantsController {
     for (const f of FEATURE_REGISTRY) {
       resolver[f.key] = resolved.byKey.get(f.key)?.effective ?? false;
     }
+    // Business profiles 1A: the fulfilment mode and the capability answer. A failed read falls
+    // back to `unset` (today's behavior) — never a 5xx for a field every old client ignores.
+    const [fulfilmentMode, heldAddons] = await Promise.all([
+      this.featureConfig.getEffectiveMode(user.tenantId, "fulfilment_model").catch(() => "unset"),
+      this.heldAddonKeys(user.tenantId),
+    ]);
     return {
       served,
       resolver,
-      modes: policyModes,
+      modes: { ...policyModes, fulfilment_model: fulfilmentMode },
+      capability: computeCapability(
+        FLEET_KEYS.some((k) => heldAddons.has(k)),
+        fulfilmentMode,
+      ),
       catalogVersionId: resolved.catalogVersionId,
       computedAt: resolved.computedAt,
     };
@@ -113,10 +126,19 @@ export class TenantsController {
   @ApiOperation({ summary: "Active add-on keys for the current tenant (feature flags)" })
   async getMyAddons(@CurrentUser() user: JwtPayload) {
     if (!user.tenantId) return { addons: [] };
-    const active = await this.addonService.getActiveAddons(user.tenantId);
+    return { addons: Array.from(await this.heldAddonKeys(user.tenantId)) };
+  }
+
+  /**
+   * The add-on keys a tenant effectively holds: its active rows, with overrides absolute (GRANT
+   * surfaces a key, DENY hides one). Shared by `me/addons` and the capability answer, so "fleet"
+   * can never disagree with what AddonGuard enforces.
+   */
+  private async heldAddonKeys(tenantId: string): Promise<Set<string>> {
+    const active = await this.addonService.getActiveAddons(tenantId);
     // An active override is absolute (owner ruling, feature-grants PR-1): GRANT surfaces a key
     // the tenant holds no addon row for at all; DENY hides a key it does hold one for.
-    const overrides = await this.featureOverrides.allActive(user.tenantId);
+    const overrides = await this.featureOverrides.allActive(tenantId);
     const addons = new Set(active);
     for (const [key, effect] of overrides) {
       // Opus review of 8130b204, item 6: only a RequireAddon-gated key belongs in this array —
@@ -125,7 +147,7 @@ export class TenantsController {
       if (effect === "GRANT") addons.add(key);
       else addons.delete(key);
     }
-    return { addons: Array.from(addons) };
+    return addons;
   }
 
   // ─── Me/Config: Email ──────────────────────────────────────────────────────

@@ -1104,6 +1104,57 @@ export const FEATURE_REGISTRY: readonly FeatureDef[] = [
       },
     },
   },
+  {
+    key: "fulfilment_model",
+    kind: "boolean",
+    area: "routes",
+    label: "How orders reach customers",
+    description:
+      "Whether a tenant's orders go out on its own delivery runs, ship by carrier, or both. Unset keeps today's behavior exactly.",
+    gate: {
+      via: "none",
+      state: "none",
+      added: "2026-10-04",
+      routes: [],
+      grantPath: NEW_ROW_GRANT_PATH,
+      backfill: NEW_ROW_BACKFILL,
+    },
+    billing: { skus: [], selfService: false },
+    defaultGranted: true,
+    // Business profiles 1A: a free configuration row (never gates a paid feature). `unset` is
+    // today, for every existing tenant. `delivery` and `both` need a fleet key (FeatureConfigService.set refuses them
+    // otherwise; the registry's mode schema stays allOf-only); `ship` does not. `pickup` is reserved for the later pickup-counter shape.
+    config: {
+      fallbackMode: "unset",
+      modes: {
+        unset: {
+          label: "Not configured (today's behavior)",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        delivery: {
+          label: "Own delivery",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        ship: { label: "Ship by carrier", available: true, lifecycle: "ga", settings: [] },
+        both: {
+          label: "Both",
+          available: true,
+          lifecycle: "ga",
+          settings: [],
+        },
+        pickup: {
+          label: "Customer pickup",
+          available: false,
+          lifecycle: "proposed",
+          settings: [],
+        },
+      },
+    },
+  },
 ];
 
 // ── Derived: byte-identical projection of today's ADDON_GATE_REGISTRY. ─────────────────────────
