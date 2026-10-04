@@ -30,7 +30,7 @@ export function clampHistoryLimit(raw: unknown): number {
  * CUSTOMER never reaches the service — this is the server-side backstop that keeps cost out of the
  * payload for any role that is not staff, should the route's role list ever widen.
  */
-export function canSeeCost(role: UserRole | string | null | undefined): boolean {
+export function canSeeCost(role: UserRole | null | undefined): boolean {
   return (
     role === UserRole.OPERATOR || role === UserRole.TENANT_ADMIN || role === UserRole.SUPER_ADMIN
   );
@@ -63,7 +63,7 @@ export class CustomerPriceHistoryService {
   async getHistory(
     customerId: string,
     productId: string,
-    opts: { limit?: unknown; role?: UserRole | string | null },
+    opts: { limit?: unknown; role?: UserRole | null },
   ): Promise<PriceHistoryResponse> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
@@ -122,7 +122,7 @@ export class CustomerPriceHistoryService {
           tenantId,
           customerId,
           status: { in: OPEN_ORDER_STATUSES },
-          items: { some: { productId } },
+          lineItems: { some: { productId } },
         },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         take: limit * 2,
@@ -131,7 +131,7 @@ export class CustomerPriceHistoryService {
           orderNumber: true,
           orderDate: true,
           createdAt: true,
-          items: {
+          lineItems: {
             where: { productId, status: { not: "CANCELLED" } },
             select: { id: true, invoicedQty: true, ...lineSelect },
           },
@@ -205,7 +205,7 @@ export class CustomerPriceHistoryService {
     }
 
     for (const ord of openOrders as any[]) {
-      for (const it of ord.items ?? []) {
+      for (const it of ord.lineItems ?? []) {
         // Cumulative billed qty (issued invoices): a billed line is already a row above, as INVOICE.
         const remainder = roundQty(Number(it.qty) - Number(it.invoicedQty ?? 0));
         if (!(remainder > 0)) continue;

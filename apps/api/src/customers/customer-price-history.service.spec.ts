@@ -57,7 +57,7 @@ const openOrder = (o: Record<string, unknown> = {}) => ({
   orderNumber: "ORD-9",
   orderDate: null,
   createdAt: new Date("2026-07-01T09:00:00Z"),
-  items: [openItem()],
+  lineItems: [openItem()],
   ...o,
 });
 const mv = (iso: string, avg: string) => ({
@@ -139,7 +139,7 @@ describe("CustomerPriceHistoryService", () => {
         in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.OUT_FOR_DELIVERY],
       });
       // cancelled order LINES are excluded too
-      expect(prisma.order.findMany.mock.calls[0][0].select.items.where).toMatchObject({
+      expect(prisma.order.findMany.mock.calls[0][0].select.lineItems.where).toMatchObject({
         productId: "p1",
         status: { not: "CANCELLED" },
       });
@@ -199,7 +199,7 @@ describe("CustomerPriceHistoryService", () => {
         invoice({ orderId: "o9", order: { orderNumber: "ORD-9" } }),
       ]);
       prisma.order.findMany.mockResolvedValue([
-        openOrder({ items: [openItem({ qty: D(2), invoicedQty: D(2) })] }),
+        openOrder({ lineItems: [openItem({ qty: D(2), invoicedQty: D(2) })] }),
       ]);
       const res = await run();
       expect(res.rows.map((r) => r.source)).toEqual(["INVOICE"]);
@@ -207,7 +207,7 @@ describe("CustomerPriceHistoryService", () => {
 
     it("a partially invoiced open line shows only its not-yet-invoiced remainder", async () => {
       prisma.order.findMany.mockResolvedValue([
-        openOrder({ items: [openItem({ qty: D(5), invoicedQty: D(2) })] }),
+        openOrder({ lineItems: [openItem({ qty: D(5), invoicedQty: D(2) })] }),
       ]);
       const res = await run();
       expect(res.rows).toHaveLength(1);
@@ -361,7 +361,7 @@ describe("CustomerPriceHistoryService", () => {
       prisma.order.findMany.mockResolvedValue([
         openOrder({
           createdAt: new Date("2026-07-02T00:00:00Z"),
-          items: [
+          lineItems: [
             openItem({
               unitLabel: "Case",
               unitsPerBox: 12,
