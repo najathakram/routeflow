@@ -4,7 +4,7 @@
 //
 // The planted-file cases build a throwaway tree under .size-ratchet-selftest/ (gitignored) that holds
 // verbatim copies of the gate, apps/api's jest config + tsconfig and the REAL size-ratchet.spec.ts, plus
-// the 15 tracked files at planted line counts. The gate computes its root from its own location and the
+// the 16 tracked files at planted line counts. The gate computes its root from its own location and the
 // spec from its own __dirname, so the copies check the fixture tree with no seam in either file. It sits
 // inside the repo (not os.tmpdir()) only so jest and ts-jest resolve from the repo's node_modules.
 import { spawnSync } from "node:child_process";
@@ -71,8 +71,8 @@ const block = /const BASELINE: Record<string, number> = \{([\s\S]*?)\n\};/.exec(
 const baseline = [...block.matchAll(/^\s*"([^"]+)":\s*(\d+),/gm)].map((m) => [m[1], Number(m[2])]);
 const VICTIM = "apps/mobile/components/NewOrderScreen.tsx";
 ok(
-  "S3 parsed HEADROOM and the 15 BASELINE rows from the spec",
-  headroom > 0 && baseline.length === 15,
+  "S3 parsed HEADROOM and the 16 BASELINE rows from the spec",
+  headroom > 0 && baseline.length === 16,
   `(headroom ${headroom}, rows ${baseline.length})`,
 );
 ok(
@@ -112,7 +112,7 @@ function gate(dir) {
 }
 
 try {
-  if (gateSrc !== null && baseline.length === 15 && headroom > 0) {
+  if (gateSrc !== null && baseline.length === 16 && headroom > 0) {
     const atCap = gate(plant("at-cap"));
     ok(
       "S3 every tracked file exactly at baseline + headroom -> gate passes",
