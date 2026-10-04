@@ -52,7 +52,8 @@ const order = (status: string) => ({
   customerId: "cust-9",
   customer: { id: "cust-9", businessName: "Acme Retail" },
   status,
-  fulfillPath: "ROUTE",
+  // the page words the buttons per ORDER: a ship-mode account's orders are SHIP orders
+  fulfillPath: ship ? "SHIP" : "ROUTE",
   urgent: false,
   subtotal: 10,
   tax: 0,

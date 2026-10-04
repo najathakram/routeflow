@@ -18,10 +18,14 @@ const shipAccount = {
   counter: "off",
   fleet: false,
 };
+// A mixed account with a buyer choice at checkout (portalMethods non-empty). Without it the shape is
+// identical to the UNSET account, which deliberately keeps today's words.
 const mixedAccount = {
   ...shipAccount,
   methods: ["ROUTE", "SHIP"],
   staffDefault: "ROUTE",
+  portalMethods: ["ROUTE", "SHIP"],
+  portalDefault: "ROUTE",
   fleet: true,
 };
 
