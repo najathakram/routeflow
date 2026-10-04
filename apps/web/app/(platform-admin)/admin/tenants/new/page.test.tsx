@@ -46,7 +46,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = await screen.findByRole("combobox");
+    const select = await screen.findByLabelText("Plan");
     await waitFor(() => {
       const options = Array.from(select.querySelectorAll("option"));
       expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual([
@@ -68,7 +68,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByLabelText("Plan") as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
@@ -84,7 +84,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByLabelText("Plan") as HTMLSelectElement;
     expect(select).not.toBeDisabled();
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
@@ -101,7 +101,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = (await screen.findByRole("combobox")) as HTMLSelectElement;
+    const select = (await screen.findByLabelText("Plan")) as HTMLSelectElement;
     await waitFor(() => {
       expect(select.value).toBe("GROWTH");
     });
@@ -125,7 +125,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
 
     render(<AdminCreateTenantPage />);
 
-    const select = await screen.findByRole("combobox");
+    const select = await screen.findByLabelText("Plan");
     await waitFor(() => {
       const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
       expect(options.map((o) => o.value)).toEqual(["STARTER", "GROWTH", "SCALE", "ENTERPRISE"]);
@@ -148,7 +148,7 @@ describe("AdminCreateTenantPage — plan <select> sourced from the catalog (T14)
     await waitFor(() => {
       expect(screen.getByText(/plan catalog unavailable/i)).toBeInTheDocument();
     });
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByLabelText("Plan") as HTMLSelectElement;
     const options = Array.from(select.querySelectorAll("option")) as HTMLOptionElement[];
     expect(options.map((o) => o.value)).toEqual([...PLAN_KEYS]);
   });
@@ -280,5 +280,59 @@ describe("B956 create-tenant refused business name", () => {
       await screen.findByText("Business name can't start with =, +, -, @ or a tab/line break."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/businessName must not start/)).not.toBeInTheDocument();
+  });
+});
+
+describe("AdminCreateTenantPage — 'How do orders reach your customers?' (business profile)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFetchPlanCatalog.mockResolvedValue({
+      version: 1,
+      effectiveAt: null,
+      plans: [planEntry("STARTER", 1)],
+    });
+  });
+
+  const fill = () => {
+    fireEvent.change(screen.getByLabelText("Slug"), { target: { value: "acme-co" } });
+    fireEvent.change(screen.getByLabelText("Business Name"), { target: { value: "Acme" } });
+    fireEvent.change(screen.getByLabelText("Admin Email"), { target: { value: "a@acme.example" } });
+    fireEvent.change(screen.getByLabelText("Admin Username"), { target: { value: "acme" } });
+  };
+
+  it("offers Own delivery and Ship by carrier (no Pickup), defaulting to 'Not set yet'", async () => {
+    render(<AdminCreateTenantPage />);
+    const select = (await screen.findByLabelText(
+      "How do orders reach your customers?",
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "Not set yet",
+      "Own delivery",
+      "Ship by carrier",
+    ]);
+  });
+
+  it("not set: the create payload carries NO profile (today's behaviour)", async () => {
+    render(<AdminCreateTenantPage />);
+    await screen.findByLabelText("Plan");
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: /create tenant/i }));
+    await waitFor(() => expect(superAdminClient.post).toHaveBeenCalled());
+    expect((superAdminClient.post as jest.Mock).mock.calls[0][1]).not.toHaveProperty("profile");
+  });
+
+  it.each([
+    ["Own delivery", "delivery_distributor"],
+    ["Ship by carrier", "shipping_wholesaler"],
+  ])("choosing %s sends profile %s", async (label, key) => {
+    render(<AdminCreateTenantPage />);
+    const select = await screen.findByLabelText("How do orders reach your customers?");
+    fill();
+    fireEvent.change(select, { target: { value: key } });
+    expect((select as HTMLSelectElement).selectedOptions[0]!.textContent).toBe(label);
+    fireEvent.click(screen.getByRole("button", { name: /create tenant/i }));
+    await waitFor(() => expect(superAdminClient.post).toHaveBeenCalled());
+    expect((superAdminClient.post as jest.Mock).mock.calls[0][1]).toMatchObject({ profile: key });
   });
 });

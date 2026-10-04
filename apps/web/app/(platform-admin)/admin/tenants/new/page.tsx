@@ -5,6 +5,8 @@ import Link from "next/link";
 import { PLAN_KEYS } from "@routeflow/types";
 import { superAdminClient } from "@/lib/admin-api";
 import { fetchPlanCatalog, type PlanCatalogEntry } from "@/lib/api/platform-pricing";
+import { fetchBusinessProfiles } from "@/lib/platform-admin/business-profiles";
+import { CREATE_TENANT_PROFILES, type CreateTenantProfile } from "./profile-options";
 import { planLabel } from "../../../_components/AdminBadge";
 import { selectablePlanKeys } from "../../../_components/usePlanOptions";
 import { CopyButton } from "@/components/CopyButton";
@@ -30,6 +32,9 @@ export default function AdminCreateTenantPage() {
     adminPassword: "",
     plan: "STARTER",
   });
+  // "How do orders reach your customers?" — "" = not set (today's behaviour; the API gets no `profile`).
+  const [profile, setProfile] = React.useState<CreateTenantProfile | "">("");
+  const [profileLabels, setProfileLabels] = React.useState<Record<string, string>>({});
   const [showPw, setShowPw] = React.useState(false);
   const [isLoading, setIsLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -75,6 +80,22 @@ export default function AdminCreateTenantPage() {
     };
   }, []);
 
+  // Labels come from the API's profile list; a failed fetch keeps the built-in labels (the form still works).
+  React.useEffect(() => {
+    let cancelled = false;
+    fetchBusinessProfiles()
+      .then((list) => {
+        if (cancelled) return;
+        setProfileLabels(
+          Object.fromEntries(list.filter((p) => p.available).map((p) => [p.key, p.label])),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const onChange =
     (field: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setForm((prev) => ({ ...prev, [field]: e.target.value }));
@@ -90,6 +111,7 @@ export default function AdminCreateTenantPage() {
       // single-use set-password link (#2439) — no password is ever generated or shown.
       const payload: Record<string, string> = { ...form };
       if (!payload.adminPassword) delete payload.adminPassword;
+      if (profile) payload.profile = profile;
       const res = await superAdminClient.post("/platform-admin/tenants", payload);
       setSuccess(res.data);
     } catch (err: unknown) {
@@ -342,6 +364,30 @@ export default function AdminCreateTenantPage() {
                 Plan catalog unavailable — showing all plans without live pricing.
               </p>
             )}
+          </div>
+
+          {/* How orders reach the customers (business profile) */}
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="new-tenant-profile" className="text-sm font-medium text-slate-300">
+              How do orders reach your customers?
+            </label>
+            <select
+              id="new-tenant-profile"
+              value={profile}
+              onChange={(e) => setProfile(e.target.value as CreateTenantProfile | "")}
+              className="h-10 w-full rounded-lg border border-slate-600 bg-slate-700 px-3 text-sm text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+            >
+              <option value="">Not set yet</option>
+              {CREATE_TENANT_PROFILES.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {profileLabels[p.key] ?? p.fallbackLabel}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-slate-400">
+              Sets which fleet and shipping features the new account starts with. It can be changed
+              later in the feature console.
+            </p>
           </div>
 
           {/* Submit */}

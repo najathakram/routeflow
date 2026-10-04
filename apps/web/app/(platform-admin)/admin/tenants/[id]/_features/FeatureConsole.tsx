@@ -14,6 +14,11 @@ import {
 import { BADGE_COLORS, BADGE_LABELS, deriveBadge } from "./badge";
 import { blockedReason, isOptionBlocked, selectableOptions, MIXED_LABEL } from "./mode-utils";
 import { PreviewDrawer } from "./PreviewDrawer";
+import { BusinessProfilePicker } from "./BusinessProfilePicker";
+import { CapabilityWarning } from "./CapabilityWarning";
+import { profileErrorCopy } from "./profile-errors";
+import { fetchTenantCapability } from "@/lib/platform-admin/business-profiles";
+import type { TenantCapability } from "@routeflow/types";
 import { EnableAddonModal } from "./EnableAddonModal";
 import type {
   EffectiveFeature,
@@ -135,6 +140,7 @@ export function FeatureConsole({
   const [effective, setEffective] = React.useState<EffectiveFeature[] | null>(null);
   const [entitlementsMode, setEntitlementsMode] = React.useState<EntitlementsMode | null>(null);
   const [diffCount, setDiffCount] = React.useState<number | null>(null);
+  const [capability, setCapability] = React.useState<TenantCapability | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [showInternal, setShowInternal] = React.useState(false);
@@ -147,6 +153,11 @@ export function FeatureConsole({
   const [applying, setApplying] = React.useState(false);
 
   const load = React.useCallback(() => {
+    // SA-649 R1: best effort; an older API (no `capability`) or a failed read just shows no warning.
+    Promise.resolve()
+      .then(() => fetchTenantCapability(tenant.id))
+      .then(setCapability)
+      .catch(() => setCapability(null));
     setLoading(true);
     setLoadError(null);
     Promise.all([
@@ -264,8 +275,14 @@ export function FeatureConsole({
       }
       setPending(null);
       load();
-    } catch {
-      setPreviewError("Could not apply that change. Try again.");
+    } catch (err) {
+      setPreviewError(
+        profileErrorCopy(
+          err,
+          "Could not apply that change. Try again.",
+          (k) => registryByKey[k]?.label,
+        ),
+      );
     } finally {
       setApplying(false);
     }
@@ -328,6 +345,12 @@ export function FeatureConsole({
                 : "Preview tier change"}
           </button>
         </div>
+        <CapabilityWarning capability={capability} />
+        <BusinessProfilePicker
+          tenantId={tenant.id}
+          registryByKey={registryByKey}
+          onApplied={load}
+        />
         <div className="flex items-center gap-3 text-xs text-slate-400">
           {entitlementsMode === "shadow" && (
             <span className="rounded px-1.5 py-0.5 ring-1 ring-slate-600/40">
