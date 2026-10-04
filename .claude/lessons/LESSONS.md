@@ -332,6 +332,7 @@
   DIFFERENT live worktrees — the disk saved isn't worth the blast radius, and reviewer/audit
   agents (whose job is to read, not build) should run read-only against the target checkout with
   no worktree of their own at all.**
+- **Recurred 2026-10-03:** a reviewer's `cmd /c rmdir` of its `node_modules` junction was blocked by the harness, and the following plain `git worktree remove` still deleted THROUGH the junction, emptying the builder's live install (restored with `npm ci`). If a junction cannot be removed, NEVER remove the worktree: leave it and report the path. Better, reviewers do not junction into a builder's live install at all.
 - **Guard:** still none automated after two incidents — the proposed pre-remove check (refusing
   `git worktree remove` while a junction exists under the tree, or a post-move check comparing a
   junction's target to cwd) has not been built either time. Interim guard until it is: reviewer
@@ -391,7 +392,7 @@
 
 - **Symptom:** a worktree made with `npm ci --ignore-scripts` has no `.husky/_`, so before the shared shim a push silently skipped pre-push verify; with the shim, a worktree with no `node_modules` fails pre-commit (`prettier` ENOENT through lint-staged) and pre-push (`semver is not resolvable`). `npx husky` resets the shared `core.hooksPath`.
 - **Root cause:** hooks resolve per checkout, while the fleet shares one shim (`.git/husky-shim/_`) that runs each worktree's own `.husky` scripts; the tools the hooks call come from that worktree's own `node_modules`.
-- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link the main checkout's `node_modules` for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
+- **Lesson:** **In a fresh worktree never run `npx husky`, `HUSKY=0` or `--no-verify`; read the first lines of a hook failure that appears within seconds (it names the missing tool). For code, install first (`npm ci --ignore-scripts`, `prisma generate`, build `packages/*`). For a docs-only commit, link a full install's `node_modules` (any worktree with a working install; the main checkout's can be broken) for the commit and remove the link after; for a docs-only push use the audited `SKIP_VERIFY=1 SKIP_VERIFY_REASON="..."`.**
 - **Guard:** `scripts/check-git-hooks.mjs` (first step of `npm run verify`); the audit line `SKIP_VERIFY_REASON` writes to `.git/skip-verify.log`.
 
 ### L-255 · 2026-10-02 · tooling · a file on the size ratchet is checked by the api ratchet spec before every push that grows it, in any workspace
