@@ -185,9 +185,10 @@ export class UsersService {
     return { user, tempPassword };
   }
 
-  async changeStatus(userId: string, dto: ChangeUserStatusDto) {
+  async changeStatus(userId: string, dto: ChangeUserStatusDto, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     return this.prisma.forTenant().user.update({
       where: { id: userId },
       data: { status: dto.status },
@@ -195,9 +196,15 @@ export class UsersService {
     });
   }
 
-  async updateUser(userId: string, dto: UpdateUserDto, changedByUsername?: string) {
+  async updateUser(
+    userId: string,
+    dto: UpdateUserDto,
+    changedByUsername: string | undefined,
+    callerRole: UserRole,
+  ) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    if (dto.email !== undefined) this.assertMayChangeAccount(user, callerRole);
 
     // Prevent changing role of TENANT_ADMIN users
     if (user.role === UserRole.TENANT_ADMIN && dto.role && dto.role !== UserRole.TENANT_ADMIN) {
@@ -340,6 +347,16 @@ export class UsersService {
     }
   }
 
+  /**
+   * Admin account protection: an account with the TENANT_ADMIN role can only be changed by a TENANT_ADMIN
+   * caller (decided by ROLE; `isAdmin` is not on the request user). Fail-closed: the caller's role is required.
+   */
+  private assertMayChangeAccount(target: { role: UserRole }, callerRole: UserRole | undefined) {
+    if (target.role === UserRole.TENANT_ADMIN && callerRole !== UserRole.TENANT_ADMIN) {
+      throw new ForbiddenException("Only an account owner can change an admin account.");
+    }
+  }
+
   async unlockUser(userId: string) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
@@ -350,9 +367,10 @@ export class UsersService {
     return { id: userId, unlocked: true };
   }
 
-  async resetPassword(userId: string) {
+  async resetPassword(userId: string, callerRole: UserRole) {
     const user = await this.prisma.forTenant().user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException("User not found");
+    this.assertMayChangeAccount(user, callerRole);
     const tempPassword = `${crypto.randomBytes(3).toString("hex").toUpperCase()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     await this.prisma.forTenant().user.update({

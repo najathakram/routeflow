@@ -85,21 +85,25 @@ export class UsersController {
     }
     const isPrivileged = user.role === UserRole.OPERATOR || user.role === UserRole.TENANT_ADMIN;
     const safeDto: UpdateUserDto = isPrivileged ? dto : { ...dto, role: undefined };
-    return this.usersService.updateUser(id, safeDto, user.username);
+    return this.usersService.updateUser(id, safeDto, user.username, user.role);
   }
 
   @Patch(":id/status")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  changeStatus(@Param("id") id: string, @Body() dto: ChangeUserStatusDto) {
-    return this.usersService.changeStatus(id, dto);
+  changeStatus(
+    @Param("id") id: string,
+    @Body() dto: ChangeUserStatusDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.usersService.changeStatus(id, dto, user.role);
   }
 
   @Post(":id/reset-password")
   @UseGuards(RolesGuard)
   @Roles(UserRole.OPERATOR)
-  resetPassword(@Param("id") id: string) {
-    return this.usersService.resetPassword(id);
+  resetPassword(@Param("id") id: string, @CurrentUser() user: JwtPayload) {
+    return this.usersService.resetPassword(id, user.role);
   }
 
   /** Clear a login lockout early (10 failed attempts → 15-min lock) so the
