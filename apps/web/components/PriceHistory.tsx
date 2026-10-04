@@ -39,8 +39,8 @@ export function canUseHistoryPrice(
   if (!unitHint) return unitCount <= 1;
   if (!sameUnit(row.unitLabel, unitHint)) return false;
   const rowPack = row.unitsPerBox ?? null;
-  const linePack = packHint ?? null;
-  return rowPack == null || linePack == null || rowPack === linePack;
+  const lineUnitsPerBox = packHint ?? null;
+  return rowPack == null || lineUnitsPerBox == null || rowPack === lineUnitsPerBox;
 }
 
 const PRICE_TYPE_TAG: Record<string, string> = {
