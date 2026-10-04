@@ -15,6 +15,7 @@ import {
 } from "../../lib/api/admin";
 import { useActiveRouteRun, useScheduledRouteRuns } from "../../lib/api/routes";
 import { useAuthStore } from "../../lib/auth-store";
+import { useFleetOff } from "../../lib/api/addons";
 
 function routeStatusLabel(r: AdminRoute): {
   label: string;
@@ -38,6 +39,7 @@ function driverDisplayName(driver: AdminDriver | undefined): string {
 
 export default function TenantTodayScreen() {
   const router = useRouter();
+  const fleetOff = useFleetOff();
   const { user } = useAuthStore();
 
   const { data: stats, isLoading: statsLoading } = useAdminDashboard();
@@ -159,45 +161,47 @@ export default function TenantTodayScreen() {
             </View>
           )}
 
-          {/* Dispatch hero */}
-          <LinearGradient
-            colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.hero}
-          >
-            <Text style={styles.heroEyebrow}>DISPATCH READINESS</Text>
-            <View style={styles.heroRow}>
-              <Text style={styles.heroValue}>{readiness.pct}%</Text>
-              <Text style={styles.heroSub}>
-                {readiness.loaded} of {readiness.total} routes rolling
-              </Text>
-            </View>
-            <View style={styles.heroTrack}>
-              <View style={[styles.heroTrackFill, { width: `${readiness.pct}%` }]} />
-            </View>
-            <View style={styles.heroActions}>
-              <Pressable
-                style={styles.heroBtnFilled}
-                onPress={() => router.push("/(operator)/new-order")}
-              >
-                <Ionicons name="add" size={14} color={ios.brandInk} />
-                <Text style={styles.heroBtnFilledText}>New order</Text>
-              </Pressable>
-              <Pressable
-                style={styles.heroBtnGhost}
-                onPress={() => router.push("/(operator)/dispatch")}
-              >
-                <Text style={styles.heroBtnGhostText}>Dispatch</Text>
-              </Pressable>
-              <Pressable
-                style={styles.heroBtnGhost}
-                onPress={() => router.push("/(operator)/fleet")}
-              >
-                <Text style={styles.heroBtnGhostText}>Fleet</Text>
-              </Pressable>
-            </View>
-          </LinearGradient>
+          {/* Dispatch hero — a fleet surface: hidden when fleet is off (lib/fleet-labels) */}
+          {!fleetOff && (
+            <LinearGradient
+              colors={[ios.brandGradient[0]!, ios.brandGradient[1]!, ios.brandGradient[2]!]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.hero}
+            >
+              <Text style={styles.heroEyebrow}>DISPATCH READINESS</Text>
+              <View style={styles.heroRow}>
+                <Text style={styles.heroValue}>{readiness.pct}%</Text>
+                <Text style={styles.heroSub}>
+                  {readiness.loaded} of {readiness.total} routes rolling
+                </Text>
+              </View>
+              <View style={styles.heroTrack}>
+                <View style={[styles.heroTrackFill, { width: `${readiness.pct}%` }]} />
+              </View>
+              <View style={styles.heroActions}>
+                <Pressable
+                  style={styles.heroBtnFilled}
+                  onPress={() => router.push("/(operator)/new-order")}
+                >
+                  <Ionicons name="add" size={14} color={ios.brandInk} />
+                  <Text style={styles.heroBtnFilledText}>New order</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.heroBtnGhost}
+                  onPress={() => router.push("/(operator)/dispatch")}
+                >
+                  <Text style={styles.heroBtnGhostText}>Dispatch</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.heroBtnGhost}
+                  onPress={() => router.push("/(operator)/fleet")}
+                >
+                  <Text style={styles.heroBtnGhostText}>Fleet</Text>
+                </Pressable>
+              </View>
+            </LinearGradient>
+          )}
         </View>
 
         {/* KPIs */}

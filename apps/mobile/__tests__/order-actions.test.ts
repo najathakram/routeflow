@@ -263,3 +263,55 @@ describe("map parity — mirrors the server's universal one-step demotion (2026-
     expect(canTransitionOrder("DELIVERED", "CANCELLED")).toBe(false);
   });
 });
+
+describe("statusActions — fleet OFF relabels the out-the-door actions to Shipped (labels only)", () => {
+  it("fleetOff:false is byte-identical for every status and both fulfilment paths", () => {
+    for (const st of ALL_STATUSES) {
+      expect(statusActions(st, "ROUTE", false)).toEqual(statusActions(st, "ROUTE"));
+      expect(statusActions(st, "SHIP", false)).toEqual(statusActions(st, "SHIP"));
+    }
+  });
+
+  it("CONFIRMED: 'Send for delivery' reads 'Mark shipped'; the rest of the bar is unchanged", () => {
+    const base = statusActions("CONFIRMED", "ROUTE");
+    const off = statusActions("CONFIRMED", "ROUTE", true);
+    expect(off.find((a) => a.toStatus === "OUT_FOR_DELIVERY")?.label).toBe("Mark shipped");
+    expect(off.filter((a) => a.toStatus !== "OUT_FOR_DELIVERY")).toEqual(
+      base.filter((a) => a.toStatus !== "OUT_FOR_DELIVERY"),
+    );
+  });
+
+  it("OUT_FOR_DELIVERY: 'Back to CONFIRMED' reads 'Unmark shipped'; Partial delivery is KEPT (gate-only)", () => {
+    const off = statusActions("OUT_FOR_DELIVERY", "ROUTE", true);
+    expect(off.some((a) => a.label === "Unmark shipped" && a.toStatus === "CONFIRMED")).toBe(true);
+    expect(off.some((a) => a.toStatus === "PARTIALLY_DELIVERED")).toBe(true);
+  });
+
+  it("PARTIALLY_DELIVERED: 'Back out for delivery' reads 'Back to shipped'; the confirm text follows", () => {
+    const off = statusActions("PARTIALLY_DELIVERED", "ROUTE", true);
+    const back = off.find((a) => a.toStatus === "OUT_FOR_DELIVERY");
+    expect(back?.label).toBe("Back to shipped");
+    expect(back?.confirmMessage).toBe("Revert back to Shipped?");
+  });
+
+  it("no label or confirm text mentions 'out for delivery' / 'send for delivery' when fleet is off", () => {
+    for (const st of ALL_STATUSES) {
+      for (const a of statusActions(st, "ROUTE", true)) {
+        expect(`${a.label} ${a.confirmMessage ?? ""}`).not.toMatch(
+          /out for delivery|send for delivery/i,
+        );
+      }
+    }
+  });
+
+  it("every toStatus is unchanged and still a transition the server allows (cross-checked)", () => {
+    for (const st of ALL_STATUSES) {
+      const base = statusActions(st, "ROUTE").map((a) => a.toStatus);
+      const off = statusActions(st, "ROUTE", true).map((a) => a.toStatus);
+      expect(off).toEqual(base);
+      for (const a of statusActions(st, "ROUTE", true)) {
+        if (!a.reopenCancelled) expect(canTransitionOrder(st, a.toStatus)).toBe(true);
+      }
+    }
+  });
+});

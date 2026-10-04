@@ -5,6 +5,7 @@ import {
   ORDER_DELIVERY_ADDON,
   RECURRING_ROUTES_ADDON,
 } from "@routeflow/types";
+import { isFleetOff } from "../fleet-labels";
 import { apiClient } from "../api-client";
 import { useAuthStore } from "../auth-store";
 import { useTenantStore } from "../tenant-store";
@@ -165,6 +166,15 @@ export function useDeliveryAccess(): { enabled: boolean; resolved: boolean } {
 export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
   const rr = useRecurringRoutes();
   return { enabled: rr.enabled, resolved: rr.resolved };
+}
+
+/**
+ * Fleet OFF (owner ruling 2026-10-04, operator side): neither recurring_routes nor order_delivery. True only when
+ * BOTH are positively resolved as off — fails open while loading/offline, so a fleet surface is never hidden on
+ * an unknown answer. Labels ("Shipped") and fleet entry points read this; see lib/fleet-labels.ts.
+ */
+export function useFleetOff(): boolean {
+  return isFleetOff(useRoutesAccess(), useDeliveryAccess());
 }
 
 // ─── Inline returns (Returns Inside Order Creation) ───────────────────────────

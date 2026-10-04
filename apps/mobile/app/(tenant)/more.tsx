@@ -5,10 +5,12 @@ import { useRouter } from "expo-router";
 import { ios } from "@routeflow/ui/tokens";
 import { ListGroup, ListRow, NavBar } from "@routeflow/ui/mobile/ios";
 import { useAuthStore } from "../../lib/auth-store";
+import { useFleetOff } from "../../lib/api/addons";
 import { useTenantStore } from "../../lib/tenant-store";
 
 export default function TenantMoreScreen() {
   const router = useRouter();
+  const fleetOff = useFleetOff();
   const { user, logout } = useAuthStore();
   const tenantName = useTenantStore((s) => s.branding?.businessName);
 
@@ -92,30 +94,34 @@ export default function TenantMoreScreen() {
             onPress={() => router.push("/(operator)/expenses")}
             chevron
           />
-          <ListRow
-            icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
-            iconBg={ios.brandWash}
-            title="Routes"
-            subtitle="Templates & stops"
-            onPress={() => router.push("/(operator)/routes")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
-            iconBg={ios.system.purpleWash}
-            title="Fleet"
-            subtitle="Live map & driver tracking"
-            onPress={() => router.push("/(operator)/fleet")}
-            chevron
-          />
-          <ListRow
-            icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
-            iconBg={ios.system.greenWash}
-            title="Drivers"
-            subtitle="Team management"
-            onPress={() => router.push("/(operator)/drivers")}
-            chevron
-          />
+          {!fleetOff && (
+            <>
+              <ListRow
+                icon={<Ionicons name="git-branch-outline" size={16} color={ios.brand} />}
+                iconBg={ios.brandWash}
+                title="Routes"
+                subtitle="Templates & stops"
+                onPress={() => router.push("/(operator)/routes")}
+                chevron
+              />
+              <ListRow
+                icon={<Ionicons name="map-outline" size={16} color={ios.system.purpleInk} />}
+                iconBg={ios.system.purpleWash}
+                title="Fleet"
+                subtitle="Live map & driver tracking"
+                onPress={() => router.push("/(operator)/fleet")}
+                chevron
+              />
+              <ListRow
+                icon={<Ionicons name="people-outline" size={16} color={ios.system.greenInk} />}
+                iconBg={ios.system.greenWash}
+                title="Drivers"
+                subtitle="Team management"
+                onPress={() => router.push("/(operator)/drivers")}
+                chevron
+              />
+            </>
+          )}
         </ListGroup>
 
         <ListGroup header="WAREHOUSE">
