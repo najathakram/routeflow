@@ -1,7 +1,7 @@
 import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { UserRole } from "@prisma/client";
-import type { PriceHistoryResponse } from "@routeflow/types";
+import type { PriceHistoryResponse, PriceSummaryResponse } from "@routeflow/types";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { Roles } from "../auth/decorators/roles.decorator";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
@@ -27,8 +27,20 @@ export class CustomerPriceHistoryController {
     @Param("customerId") customerId: string,
     @Param("productId") productId: string,
     @Query("limit") limit: string | undefined,
+    @Query("compare") compare: string | undefined,
     @CurrentUser() user: JwtPayload,
   ): Promise<PriceHistoryResponse> {
-    return this.history.getHistory(customerId, productId, { limit, role: user.role });
+    return this.history.getHistory(customerId, productId, { limit, compare, role: user.role });
+  }
+
+  /** v1.1: last 3 invoiced prices + low/high per product (max 50), one query pass. */
+  @Get(":customerId/price-summary")
+  @Roles(UserRole.OPERATOR)
+  getPriceSummary(
+    @Param("customerId") customerId: string,
+    @Query("productIds") productIds: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<PriceSummaryResponse> {
+    return this.history.getPriceSummary(customerId, productIds, { role: user.role });
   }
 }

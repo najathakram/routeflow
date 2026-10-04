@@ -47,6 +47,39 @@ export interface PriceHistorySummary {
   currentAvgCost: number | null;
 }
 
+/** v1.1: reference prices in the NEWEST row's unit. Any member is null when it cannot be known. */
+export interface PriceHistoryReferences {
+  /** The product's list price (tier 1) in the row unit. */
+  listPrice: number | null;
+  /** The customer's current tier / special price in the row unit (the order-create resolver). */
+  tierPrice: number | null;
+  /** (last - previous) / previous for the same unit, 4 decimal places; null with < 2 rows or a 0 previous. */
+  changeSinceLast: number | null;
+}
+
+/**
+ * v1.1 `?compare=all`: anonymous aggregate of OTHER customers' invoiced sales of the product in the
+ * last 180 days, in the most common unit. Never carries a customer name or id; null (on the
+ * response) when fewer than 3 other customers bought it.
+ */
+export interface PriceHistoryAggregate {
+  low: number;
+  median: number;
+  high: number;
+  /** Count of distinct other customers behind the figures (always >= 3). */
+  customers: number;
+  unitLabel: string;
+}
+
+/** One product in `GET /customers/:customerId/price-summary`. */
+export interface PriceSummaryEntry {
+  last3: { date: string; unitPrice: number; unitLabel: string }[];
+  low: number | null;
+  high: number | null;
+}
+
+export type PriceSummaryResponse = Record<string, PriceSummaryEntry>;
+
 export interface PriceHistoryResponse {
   customerId: string;
   customerName: string;
@@ -56,4 +89,8 @@ export interface PriceHistoryResponse {
   costVisible: boolean;
   rows: PriceHistoryRow[];
   summaries: PriceHistorySummary[];
+  /** v1.1 */
+  references: PriceHistoryReferences;
+  /** v1.1: present only with `?compare=all` (null = too few other customers). */
+  aggregate?: PriceHistoryAggregate | null;
 }
