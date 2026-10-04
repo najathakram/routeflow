@@ -55,6 +55,7 @@ jest.mock("../common/db-locks", () => {
 });
 
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { UserRole } from "@prisma/client";
 import { BuyerController } from "./buyer.controller";
@@ -114,6 +115,7 @@ describe("BuyerController.createOrder merge branch (TP3 / REG-B47 / REG-B78)", (
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },

@@ -129,6 +129,7 @@ function requireDbLocksMock(): any {
 }
 
 import { oversellReaderOffProvider } from "./testing/policy-reader-provider";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { buyerVisibleProductWhere, NO_BUYER_RESTRICTIONS } from "../buyer/buyer-product-visibility";
 import {
@@ -1543,6 +1544,7 @@ describe("buyer barcode scan — reachable and catalog-scoped (T-B200 / R12 / RE
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: catalogService },

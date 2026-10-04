@@ -41,6 +41,7 @@ import { SystemConfigService } from "../system-config/system-config.service";
 import { OrdersService } from "./orders.service";
 import type { JwtPayload } from "../auth/jwt-payload.interface";
 import { BuyerController } from "../buyer/buyer.controller";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { assertTestTenant } = require("../../../../scripts/lib/test-tenants.cjs");
@@ -815,6 +816,8 @@ describeDb("#2717 M3 qty-only RECIPE line composition — real Postgres", () => 
       logger: new Logger(BuyerController.name),
       ordersService: orders,
       prisma,
+      // Business profiles 1B: an unset seller, today's create call exactly.
+      fulfilmentCapability: fulfilmentUnsetProvider.useValue,
     }) as BuyerController;
   const ctxOf = (w: World, b: { customerId: string; userId: string }) => ({
     customerId: b.customerId,

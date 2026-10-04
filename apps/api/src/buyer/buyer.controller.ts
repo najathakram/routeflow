@@ -60,6 +60,9 @@ import {
 import { withAdvisoryLock } from "../common/db-locks";
 import { resolveOversellAllowed } from "../orders/oversell-policy";
 import { PolicyOversellReader } from "../orders/policy-oversell-reader";
+import { FulfilmentCapabilityService } from "../billing/fulfilment-capability.service";
+import { resolveBuyerFulfillPath } from "../billing/fulfilment-capability";
+import type { TenantCapabilities } from "@routeflow/types";
 import {
   LOCK_UNAVAILABLE,
   LOCK_UNAVAILABLE_MESSAGE,
@@ -130,6 +133,8 @@ export class BuyerController {
     private readonly systemConfigService: SystemConfigService,
     // WS9: reads the backorder policy for a buyer's standing-order "Reorder" (once, before the run).
     private readonly oversellReader: PolicyOversellReader,
+    // Business profiles 1B: the SELLER's fulfilment capability (portal order rule + buyer read).
+    private readonly fulfilmentCapability: FulfilmentCapabilityService,
   ) {}
 
   // ─── Unscoped endpoints (no seller context needed) ────────────────────────────
@@ -535,12 +540,30 @@ export class BuyerController {
     return this.ordersService.getOrderTracking(id, makePseudoUser(ctx));
   }
 
+  @Get("capabilities")
+  @UseGuards(BuyerSellerContextGuard)
+  @UseInterceptors(BuyerTenantInterceptor)
+  @ApiHeader({ name: "X-Tenant-Slug", required: true })
+  @ApiOperation({ summary: "The active seller's fulfilment capability (how its orders ship)" })
+  async getSellerCapabilities(@CurrentBuyerCustomer() ctx: any): Promise<TenantCapabilities> {
+    // Business profiles 1B: the buyer portal can't read GET /tenants/me/features (staff JWT), so
+    // it gets ONLY the seller's fulfilment capability here — nothing else from the feature answer.
+    return { fulfilment: await this.fulfilmentCapability.forTenant(ctx.tenantId) };
+  }
+
   @Post("orders")
   @UseGuards(BuyerSellerContextGuard)
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Create a new order or merge into existing active order" })
   async createOrder(@Body() dto: BuyerCreateOrderDto, @CurrentBuyerCustomer() ctx: any) {
+    // Business profiles 1B: the seller's portal rule, BEFORE any merge or write. An explicit path
+    // the portal doesn't offer is a coded 400; no path takes the portal default. An unset seller
+    // resolves to `undefined`, so the create call below is today's exactly.
+    const fulfillPath = resolveBuyerFulfillPath(
+      dto.fulfillPath,
+      await this.fulfilmentCapability.portal(ctx.tenantId),
+    );
     // Check if buyer has an active DRAFT/PENDING order (unless forceNew is set)
     if (!dto.forceNew) {
       // IMP-02 (R2 companion): this is the SAME read-fold-absolute-write critical
@@ -730,6 +753,7 @@ export class BuyerController {
       urgent: dto.urgent,
       requestedDeliveryDate: dto.requestedDeliveryDate,
       status: dto.status ?? "PENDING",
+      ...(fulfillPath ? { fulfillPath } : {}),
     };
     const created = await this.ordersService.create(createDto as any, makePseudoUser(ctx));
     // Newly-created order may share a customer with pre-existing PENDINGs —

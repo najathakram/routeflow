@@ -3,6 +3,7 @@ import { BillingModule } from "./billing.module";
 import { FeatureConfigStore, FEATURE_MODE_PROVIDER } from "./feature-config.store";
 import { FeatureConfigService } from "./feature-config.service";
 import { FeatureConfigController } from "./feature-config.controller";
+import { FulfilmentCapabilityService } from "./fulfilment-capability.service";
 
 /**
  * Feature grants v2 brief C (PR-4). `@Global()` so `FeatureConfigStore` — bound to the optional
@@ -23,7 +24,14 @@ import { FeatureConfigController } from "./feature-config.controller";
     FeatureConfigStore,
     { provide: FEATURE_MODE_PROVIDER, useExisting: FeatureConfigStore },
     FeatureConfigService,
+    // Business profiles 1B: a buyer's SELLER capability (the buyer portal's order rule + read).
+    FulfilmentCapabilityService,
   ],
-  exports: [FeatureConfigStore, FEATURE_MODE_PROVIDER, FeatureConfigService],
+  exports: [
+    FeatureConfigStore,
+    FEATURE_MODE_PROVIDER,
+    FeatureConfigService,
+    FulfilmentCapabilityService,
+  ],
 })
 export class FeatureConfigModule {}

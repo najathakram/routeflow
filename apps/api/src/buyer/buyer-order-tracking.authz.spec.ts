@@ -13,6 +13,7 @@
  * Fixtures are placeholders (acme / globex); no live-client data.
  */
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { INestApplication, InjectionToken } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
@@ -261,6 +262,7 @@ beforeEach(async () => {
     imports: [PassportModule],
     controllers: [BuyerController],
     providers: [
+      fulfilmentUnsetProvider,
       oversellReaderOffProvider,
       BuyerJwtStrategy,
       {

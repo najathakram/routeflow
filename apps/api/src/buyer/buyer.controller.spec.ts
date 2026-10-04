@@ -12,6 +12,7 @@
  * entirely by passing customerId directly + OPERATOR role.
  */
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BuyerController } from "./buyer.controller";
 import { BuyerService } from "./buyer.service";
@@ -106,6 +107,7 @@ describe("BuyerController — buyer portal 500 fixes (F1-INFRA-500S)", () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },

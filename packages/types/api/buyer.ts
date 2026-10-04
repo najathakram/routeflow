@@ -7,6 +7,7 @@ import type {
   ChangeRequestType,
   CheckStatus,
   CreditNoteStatus,
+  FulfillPathValue,
   InvoiceStatus,
   InvoiceTreatment,
   ItemStatus,
@@ -375,6 +376,13 @@ export interface BuyerOrder extends BuyerOrderListItem {
   editWindow: BuyerOrderEditWindow;
   /** Run state backing the edit window (null until the order is on a run). */
   routeRun: { status: RouteRunStatusValue; startedAt: string | null } | null;
+  /** Business profiles 1B: SHIP orders show a shipment (carrier + tracking), never a route. */
+  fulfillPath: FulfillPathValue;
+  /** Free-text carrier label and tracking number, set when the seller ships the order. */
+  shippingCarrier: string | null;
+  shippingTrackingNumber: string | null;
+  /** Stamped when a tracking number is first set (OrdersService.updateShipment). */
+  shippedAt: string | null;
 }
 
 // ─── Invoice detail lines + payments (#2703, SA-562/562a: server truth) ─────────

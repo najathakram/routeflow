@@ -66,6 +66,7 @@ function requireDbLocksMock(): any {
 }
 
 import { oversellReaderOffProvider } from "../orders/testing/policy-reader-provider";
+import { fulfilmentUnsetProvider } from "../billing/testing/fulfilment-capability-provider";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConflictException, ServiceUnavailableException } from "@nestjs/common";
 import { BuyerController } from "./buyer.controller";
@@ -155,6 +156,7 @@ describe("BuyerController.createOrder — customer advisory lock (IMP-02 / R2 co
     const module: TestingModule = await Test.createTestingModule({
       controllers: [BuyerController],
       providers: [
+        fulfilmentUnsetProvider,
         oversellReaderOffProvider,
         { provide: BuyerService, useValue: {} },
         { provide: BuyerCatalogService, useValue: {} },

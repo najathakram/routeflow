@@ -123,6 +123,8 @@ const ENUM_TABLE: Array<[string, keyof typeof PrismaEnums]> = [
   // (packages/types/api/order-tracking.ts) that web and mobile branch on. Existing enums, so the
   // triage count below does not move.
   ["ORDER_STATUS_VALUES", "OrderStatus"],
+  // Business profiles 1B: a long-standing enum, newly mirrored for the buyer order detail.
+  ["FULFILL_PATH_VALUES", "FulfillPath"],
   ["ROUTE_RUN_STATUS_VALUES", "RouteRunStatus"],
   ["ROUTE_RUN_STOP_STATUS_VALUES", "RouteRunStopStatus"],
   ["HANDOFF_REALM_VALUES", "HandoffRealm"],
