@@ -132,7 +132,7 @@ describe("OrdersService", () => {
     revertLinkedInvoicesForOrderEdit: jest.Mock;
   };
   // P6-5: captured so trigger tests can assert eventKey/customerId/senderId/vars.
-  let messagingService: { notify: jest.Mock; notifyEvent: jest.Mock };
+  let messagingService: Record<"notify" | "notifyEvent" | "customisedChannels", jest.Mock>;
   // WP3: captured so the order-scoped credit-note tests can assert
   // sync/settle are called with the right (order id, customer id, selections).
   let creditNotesService: {
@@ -250,6 +250,7 @@ describe("OrdersService", () => {
           useValue: {
             notify: jest.fn().mockResolvedValue([]),
             notifyEvent: jest.fn().mockResolvedValue(undefined),
+            customisedChannels: jest.fn().mockResolvedValue([]),
           },
         },
         {
@@ -2997,8 +2998,8 @@ describe("OrdersService", () => {
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
     });
 
-    // ── Ad-hoc trips + fulfillment mode: additive carrier-name else-if ──────
-    it("OUT_FOR_DELIVERY on a run-less SHIP order names the carrier and writes no run data", async () => {
+    // ── Carrier-shipped: ORDER_SHIPPED replaces OUT_FOR_DELIVERY (full matrix: shipment-notifications.flow.spec.ts) ──
+    it("OUT_FOR_DELIVERY on a run-less SHIP order fires ORDER_SHIPPED naming the carrier and writes no run data", async () => {
       prisma.order.findUnique.mockResolvedValue({
         ...MOCK_ORDER,
         status: "CONFIRMED",
@@ -3013,6 +3014,7 @@ describe("OrdersService", () => {
       });
 
       await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+      await new Promise((r) => setImmediate(r)); // the shipped notifier is fire-and-forget
 
       // Additive-only: the write itself carries no run/driver fields.
       expect(prisma.order.update).toHaveBeenCalledWith({
@@ -3020,35 +3022,10 @@ describe("OrdersService", () => {
         data: { status: "OUT_FOR_DELIVERY" },
       });
       expect(prisma.routeRun.findUnique).not.toHaveBeenCalled();
+      expect(messagingService.notifyEvent.mock.calls.map((c) => c[0])).toEqual(["ORDER_SHIPPED"]);
       expect(messagingService.notifyEvent).toHaveBeenCalledWith(
-        "OUT_FOR_DELIVERY",
-        expect.objectContaining({
-          vars: expect.objectContaining({ driverName: "UPS" }),
-        }),
-      );
-    });
-
-    it("OUT_FOR_DELIVERY on a run-less SHIP order with no carrier set falls back to 'the carrier'", async () => {
-      prisma.order.findUnique.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "CONFIRMED",
-        fulfillPath: "SHIP",
-        shippingCarrier: null,
-        routeRunId: null,
-      });
-      prisma.order.update.mockResolvedValue({
-        ...MOCK_ORDER,
-        status: "OUT_FOR_DELIVERY",
-        fulfillPath: "SHIP",
-      });
-
-      await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
-
-      expect(messagingService.notifyEvent).toHaveBeenCalledWith(
-        "OUT_FOR_DELIVERY",
-        expect.objectContaining({
-          vars: expect.objectContaining({ driverName: "the carrier" }),
-        }),
+        "ORDER_SHIPPED",
+        expect.objectContaining({ vars: expect.objectContaining({ carrier: "UPS" }) }),
       );
     });
 
@@ -3088,6 +3065,25 @@ describe("OrdersService", () => {
       expect(routeCall).toBeDefined();
       expect(shipCall).toEqual(routeCall);
     });
+
+    it.each([
+      ["ship", 1],
+      ["both", 1],
+      ["pickup_ship", 1],
+      ["unset", 0],
+    ])(
+      "OUT_FOR_DELIVERY on a SHIP order invoices at shipment only in a shipping mode (%s)",
+      async (mode, n) => {
+        const invoices = (service as any).invoicesService;
+        (service as any).featureConfig = { getEffectiveMode: jest.fn().mockResolvedValue(mode) };
+        const ship = { ...MOCK_ORDER, fulfillPath: "SHIP" };
+        prisma.order.findUnique.mockResolvedValue({ ...ship, status: "CONFIRMED" });
+        prisma.order.update.mockResolvedValue({ ...ship, status: "OUT_FOR_DELIVERY" });
+        invoices.createInvoiceFromOrderWithTenant.mockClear();
+        await service.changeStatus("ord-1", { status: "OUT_FOR_DELIVERY" as any }, operatorPayload);
+        expect(invoices.createInvoiceFromOrderWithTenant).toHaveBeenCalledTimes(n);
+      },
+    );
 
     // ── re-pin: DELIVERED with an open draft still reconciles at basis "order" ──
     it("an open draft invoice on DELIVERED always reconciles at basis 'order', never 'delivered'", async () => {

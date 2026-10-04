@@ -183,6 +183,8 @@ import { restrictionChannelForPrincipal } from "../selling-restrictions/selling-
 import { SellingRestrictionsService } from "../selling-restrictions/selling-restrictions.service";
 import { PromotionsService } from "../promotions/promotions.service";
 import { MessagingService } from "../messaging/messaging.service";
+import { notifyOrderShipped } from "./shipment-notifications";
+import { invoicesAtShipment, settleOrderInvoice } from "./order-status-invoicing";
 import { formatDate, formatMoney } from "../messaging/messaging.helpers";
 import { CreditNotesService } from "../credit-notes/credit-notes.service";
 import { assertNoUnspentSourcedCredits } from "../credit-notes/sourced-credit-guard";
@@ -224,7 +226,7 @@ export class OrdersService implements OnApplicationBootstrap {
     // provider must be a DI error, not a silent bypass of a jurisdiction ban.
     private readonly sellingRestrictions: SellingRestrictionsService,
     private readonly promotionsService: PromotionsService,
-    private readonly messaging: MessagingService,
+    readonly messaging: MessagingService, // not `private`: shipment-notifications.ts / order-lifecycle.ts read it off `self`
     readonly creditNotes: CreditNotesService,
     readonly commissionEngine: CommissionEngineService,
     readonly entitlements: EntitlementsService,
@@ -2659,55 +2661,15 @@ export class OrdersService implements OnApplicationBootstrap {
     // happened and the customer must still hear about it.
     let invoiceFailure: ConflictException | undefined;
 
-    // Settle the order's invoice on a manual status change.
+    // Settle the order's invoice on a manual status change: at DELIVERED, and (carrier orders of a
+    // shipping tenant) at SHIPPED. Same body for both: order-status-invoicing.ts.
+    if (
+      await invoicesAtShipment(this.featureConfig, this.prisma.getTenantId(), order, dto.status)
+    ) {
+      invoiceFailure = await settleOrderInvoice(this, id, this.logger, "shipped");
+    }
     if (dto.status === OrderStatus.DELIVERED) {
-      // Manual "mark delivered" = fully delivered. If the order has a pending
-      // mirror draft, reconcile it to the order and leave it DRAFT for staff to
-      // review & send (awaited so it runs inside the tenant context). Otherwise
-      // keep the old behaviour: fire-and-forget auto-create (explicit tenantId).
-      const draft = await this.invoicesService.findOpenOrderDraft(id);
-      if (draft) {
-        await this.invoicesService.reconcileOrderDraftInvoice(id, { basis: "order" });
-      } else {
-        // B105 (REG-B105): genuinely awaited, with up to 3 attempts retrying
-        // ONLY a ConflictException (the order-number race
-        // createInvoiceFromOrderWithTenant regenerates internally on the next
-        // attempt). The old `.catch()` fired the request and never inspected
-        // the outcome — a failed auto-create silently left the order
-        // DELIVERED with nothing billed and no one told. A non-Conflict error
-        // breaks the loop immediately and surfaces through the same throw
-        // below. The status write above is NOT reverted: the order stays
-        // DELIVERED and staff retries invoicing from the order page.
-        const capturedTenantId = this.prisma.getTenantId();
-        const MAX_INVOICE_ATTEMPTS = 3;
-        let lastErr: any;
-        let attemptsMade = 0;
-        for (let attempt = 0; attempt < MAX_INVOICE_ATTEMPTS; attempt++) {
-          attemptsMade = attempt + 1;
-          try {
-            await this.invoicesService.createInvoiceFromOrderWithTenant(id, capturedTenantId);
-            lastErr = undefined;
-            break;
-          } catch (err: any) {
-            lastErr = err;
-            if (!(err instanceof ConflictException)) break;
-          }
-        }
-        if (lastErr) {
-          this.logger.error(
-            `Failed to auto-create invoice for order ${id} after ${attemptsMade} attempt(s): ${lastErr?.message ?? lastErr}`,
-          );
-          // Raised AFTER the notification block below, not here: the goods
-          // physically arrived, so the customer's "Order Delivered" push and
-          // messaging event must still fire. Throwing inline would make an
-          // invoicing failure silently suppress the delivery notification.
-          invoiceFailure = new ConflictException(
-            `The order was marked delivered, but its invoice could not be created ` +
-              `(${lastErr?.message ?? "unknown error"}). Use "Generate Invoice (full order)" on ` +
-              `the order page to retry — the order stays delivered and nothing has been billed yet.`,
-          );
-        }
-      }
+      invoiceFailure = await settleOrderInvoice(this, id, this.logger, "delivered");
 
       // B108 (REG-B108): retry transient contention (serializable-isolation
       // write conflicts) up to 3 times with a short backoff before giving up.
@@ -2783,7 +2745,13 @@ export class OrdersService implements OnApplicationBootstrap {
       [OrderStatus.CANCELLED]: NotificationEvent.CANCELLED,
     };
     const messagingEvent = messagingEventMap[dto.status];
-    if (messagingEvent) {
+    if (
+      messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
+      order.fulfillPath === FulfillPath.SHIP
+    ) {
+      // Carrier-shipped: ORDER_SHIPPED, not "out for delivery today" (customised wording kept per channel).
+      void notifyOrderShipped(this, order, user.sub || null);
+    } else if (messagingEvent) {
       let driverName = "your driver";
       if (messagingEvent === NotificationEvent.OUT_FOR_DELIVERY && order.routeRunId) {
         const run = await this.prisma.forTenant().routeRun.findFirst({
@@ -2791,13 +2759,6 @@ export class OrdersService implements OnApplicationBootstrap {
           select: { driver: { select: { contactName: true } } },
         });
         driverName = run?.driver?.contactName ?? "your driver";
-      } else if (
-        messagingEvent === NotificationEvent.OUT_FOR_DELIVERY &&
-        order.fulfillPath === FulfillPath.SHIP
-      ) {
-        // Ad-hoc trips + fulfillment mode: a SHIP order has no route run, so the
-        // "Out for Delivery" notification names the carrier instead of a driver.
-        driverName = order.shippingCarrier ?? "the carrier";
       }
       const vars: Record<string, string> = {
         orderNumber: order.orderNumber ?? "",
