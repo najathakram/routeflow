@@ -57,10 +57,9 @@ describe("CustomerFormModal — default fulfillment round-trip", () => {
     expect(payload.fulfillPath).toBeUndefined();
   });
 
-  it("SHIP and ROUTE customers round-trip unchanged", async () => {
-    expect((await save("SHIP")).payload.fulfillPath).toBe("SHIP");
-    updateMutate.mockClear();
-    document.body.innerHTML = "";
-    expect((await save("ROUTE")).payload.fulfillPath).toBe("ROUTE");
+  it.each(["SHIP", "ROUTE"])("a %s customer round-trips unchanged", async (path) => {
+    const { shown, payload } = await save(path);
+    expect(shown).toBe(path);
+    expect(payload.fulfillPath).toBe(path);
   });
 });

@@ -32,6 +32,14 @@ import { ReturnsModule } from "../returns/returns.module";
 // WS9: PolicyModule imports nothing (PrismaModule is global) — no cycle with OrdersModule.
 import { PolicyModule } from "../policy/policy.module";
 import { PolicyOversellReader } from "./policy-oversell-reader";
+// SA-655: staff counter sales (POST /orders/counter-sale). Dark until a tenant's fulfilment capability offers a counter.
+import { CounterSaleController } from "./counter-sale/counter-sale.controller";
+import { CounterSaleService } from "./counter-sale/counter-sale.service";
+import { WalkInCustomerService } from "./counter-sale/walk-in-customer";
+import {
+  DefaultFulfilmentCapabilityReader,
+  FULFILMENT_CAPABILITY_READER,
+} from "./counter-sale/fulfilment-capability-reader";
 
 @Module({
   imports: [
@@ -53,8 +61,16 @@ import { PolicyOversellReader } from "./policy-oversell-reader";
     ReturnsModule,
     PolicyModule,
   ],
-  controllers: [OrdersController],
-  providers: [OrdersService, ChangeRequestsService, PolicyOversellReader],
+  controllers: [OrdersController, CounterSaleController],
+  providers: [
+    OrdersService,
+    ChangeRequestsService,
+    PolicyOversellReader,
+    CounterSaleService,
+    WalkInCustomerService,
+    // TODO(#3188): bind a reader over deriveFulfilmentCapability instead of the "unset = today" default.
+    { provide: FULFILMENT_CAPABILITY_READER, useClass: DefaultFulfilmentCapabilityReader },
+  ],
   exports: [OrdersService, ChangeRequestsService, PolicyOversellReader],
 })
 export class OrdersModule {}
