@@ -23,7 +23,8 @@ export type FulfilmentMethod = "ROUTE" | "SHIP" | "PICKUP";
  * `GET /tenants/me/features` -> `capabilities.fulfilment`.
  * - `methods`: what staff can choose per order; `staffDefault` is the default of those.
  * - `staffOpensAs`: whether staff "New order" opens as a normal order or the one-step counter.
- * - `portalMethods` / `portalDefault`: the same for the buyer portal.
+ * - `portalMethods` / `portalDefault`: the same for the buyer portal. `[]` / `null` = the buyer gets
+ *   NO choice (UNSET, today): the server applies the customer's default, then ROUTE.
  * - `counter`: "always" (in-store modes), "optional" (counter_sales on), "off".
  * - `fleet`: recurring_routes || order_delivery effective. The MODULES are the only truth; no
  *   mode turns fleet on or off.
@@ -34,7 +35,7 @@ export interface FulfilmentCapability {
   staffDefault: FulfilmentMethod;
   staffOpensAs: "order" | "counter";
   portalMethods: FulfilmentMethod[];
-  portalDefault: FulfilmentMethod;
+  portalDefault: FulfilmentMethod | null;
   counter: "always" | "optional" | "off";
   fleet: boolean;
   consistent: boolean;

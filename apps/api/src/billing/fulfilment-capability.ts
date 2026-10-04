@@ -20,7 +20,7 @@ const BY_MODE: Record<string, { methods: FulfilmentMethod[]; opensAs: "order" | 
  * `fulfilment_model` and `counter_sales` modes and whether either fleet module is held.
  *
  * `unset` (every existing tenant) is TODAY exactly: staff may pick ROUTE or SHIP, ROUTE is the
- * default (orders.service `dto ?? customer ?? ROUTE`), the portal offers the same, no counter, and
+ * default (orders.service `dto ?? customer ?? ROUTE`), the buyer portal offers NO choice (portalMethods [], portalDefault null), no counter, and
  * fleet comes from the modules alone. An unknown stored value is treated as unset.
  */
 export function deriveFulfilmentCapability(input: {
@@ -39,8 +39,10 @@ export function deriveFulfilmentCapability(input: {
     methods,
     staffDefault,
     staffOpensAs: def?.opensAs ?? "order",
-    portalMethods: [...methods],
-    portalDefault: staffDefault,
+    // UNSET: today the buyer gets NO choice (the server applies customer default ?? ROUTE), so
+    // there are no portal methods and no portal default. A configured mode mirrors staff.
+    portalMethods: def ? [...methods] : [],
+    portalDefault: def ? staffDefault : null,
     counter,
     fleet,
     consistent: !(needsFleet && !fleet),

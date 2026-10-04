@@ -5,14 +5,14 @@ const derive = (mode: string, counterSales: string, fleet: boolean) =>
   deriveFulfilmentCapability({ mode, counterSales, fleet });
 
 describe("deriveFulfilmentCapability — the one capability answer", () => {
-  it("UNSET is today exactly: ROUTE or SHIP, ROUTE default, normal order, no counter, portal the same", () => {
+  it("UNSET is today exactly: staff ROUTE or SHIP (ROUTE default), normal order, NO buyer choice, no counter", () => {
     for (const fleet of [false, true]) {
       expect(derive("unset", "unset", fleet)).toEqual({
         methods: ["ROUTE", "SHIP"],
         staffDefault: "ROUTE",
         staffOpensAs: "order",
-        portalMethods: ["ROUTE", "SHIP"],
-        portalDefault: "ROUTE",
+        portalMethods: [],
+        portalDefault: null,
         counter: "off",
         fleet,
         consistent: true,
