@@ -3,7 +3,7 @@
  * `GET /customers/:customerId/products/:productId/price-history?limit=25` (max 100), newest first.
  *
  * Staff-only (OPERATOR / TENANT_ADMIN); never buyers or drivers. Every money figure is rounded
- * to cents on the server. Cost fields are filled only when `costVisible` is true — the server
+ * to cents on the server. Rows show the billed price; credits and returns are not netted. Cost fields are filled only when `costVisible` is true — the server
  * sends `null` (never the value) to a role that cannot see cost.
  */
 

@@ -3,13 +3,13 @@ import { UserRole } from "@prisma/client";
 import { roundMoney } from "@routeflow/pricing";
 import type { PriceHistoryResponse, PriceHistoryRow, PriceHistorySummary } from "@routeflow/types";
 import {
+  buildCostIndex,
   costAt,
-  fetchCostIndex,
   REAL_INVOICE_STATUSES,
   roundQty,
   type CostIndex,
 } from "../common/invoiced-sales";
-import { OPEN_ORDER_STATUSES } from "../invoices/credit-exposure";
+import { BACKING_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
 
@@ -78,7 +78,15 @@ export class CustomerPriceHistoryService {
       }),
       db.product.findFirst({
         where: { id: productId, tenantId },
-        select: { id: true, name: true, unit: true, unitsPerBox: true, averageCost: true },
+        select: {
+          id: true,
+          name: true,
+          unit: true,
+          unitsPerBox: true,
+          averageCost: true,
+          costingMethod: true,
+          standardCost: true,
+        },
       }),
     ]);
     if (!customer) throw new NotFoundException("Customer not found");
@@ -116,15 +124,19 @@ export class CustomerPriceHistoryService {
           items: { where: { productId }, select: { id: true, ...lineSelect } },
         },
       }),
-      // Open (not yet delivered/closed) orders. Over-read: fully invoiced lines are dropped below.
+      // Orders that can still owe an invoice (open + delivered). Over-read: billed lines are dropped below.
       db.order.findMany({
         where: {
           tenantId,
           customerId,
-          status: { in: OPEN_ORDER_STATUSES },
+          status: { in: BACKING_ORDER_STATUSES },
           lineItems: { some: { productId } },
         },
-        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        orderBy: [
+          { orderDate: { sort: "desc", nulls: "last" } },
+          { createdAt: "desc" },
+          { id: "desc" },
+        ],
         take: limit * 2,
         select: {
           id: true,
@@ -133,11 +145,28 @@ export class CustomerPriceHistoryService {
           createdAt: true,
           lineItems: {
             where: { productId, status: { not: "CANCELLED" } },
-            select: { id: true, invoicedQty: true, ...lineSelect },
+            select: { id: true, ...lineSelect },
           },
         },
       }),
     ]);
+
+    // Billed qty per order line from REAL invoices only. OrderItem.invoicedQty is bumped when a DRAFT
+    // invoice is created, and a draft is not a sale, so it cannot be used for the remainder.
+    const lineIds = (openOrders as any[]).flatMap((o) => (o.lineItems ?? []).map((l: any) => l.id));
+    const billed = new Map<string, number>();
+    if (lineIds.length > 0) {
+      const billedItems = await db.invoiceItem.findMany({
+        where: {
+          orderItemId: { in: lineIds },
+          invoice: { tenantId, status: REAL_INVOICE_STATUSES },
+        },
+        select: { orderItemId: true, qty: true },
+      });
+      for (const b of billedItems as any[]) {
+        billed.set(b.orderItemId, (billed.get(b.orderItemId) ?? 0) + Number(b.qty));
+      }
+    }
 
     const productPackNow = product.unitsPerBox == null ? null : Number(product.unitsPerBox);
     const unitName = (product.unit ?? "").trim();
@@ -206,10 +235,11 @@ export class CustomerPriceHistoryService {
 
     for (const ord of openOrders as any[]) {
       for (const it of ord.lineItems ?? []) {
-        // Cumulative billed qty (issued invoices): a billed line is already a row above, as INVOICE.
-        const remainder = roundQty(Number(it.qty) - Number(it.invoicedQty ?? 0));
+        // Qty on real invoices is already a row above, as INVOICE; show only what is not billed yet.
+        const billedQty = billed.get(it.id) ?? 0;
+        const remainder = roundQty(Number(it.qty) - billedQty);
         if (!(remainder > 0)) continue;
-        const untouched = Number(it.invoicedQty ?? 0) <= 0;
+        const untouched = billedQty <= 0;
         candidates.push(
           build(it, untouched ? Number(it.qty) : remainder, untouched, {
             at: new Date(ord.orderDate ?? ord.createdAt),
@@ -230,15 +260,40 @@ export class CustomerPriceHistoryService {
     const kept = candidates.slice(0, limit);
 
     // Cost: only for roles that may see it — the movement history is not even read otherwise.
+    // Bounded to the kept rows' date span, plus one opening snapshot at or before the oldest row.
     let costIndex: CostIndex = new Map();
     const currentAvg = nz(product.averageCost);
     if (costVisible && kept.length > 0) {
-      costIndex = await fetchCostIndex(db as any, [productId], new Date());
+      const oldest = kept.reduce((m, c) => (c.at < m ? c.at : m), kept[0].at);
+      const newest = kept.reduce((m, c) => (c.at > m ? c.at : m), kept[0].at);
+      const [span, opening] = await Promise.all([
+        db.stockMovement.findMany({
+          where: {
+            productId,
+            avgCostAfter: { not: null },
+            effectiveAt: { gte: oldest, lte: newest },
+          },
+          select: { productId: true, effectiveAt: true, avgCostAfter: true },
+          orderBy: [{ effectiveAt: "asc" }, { createdAt: "asc" }, { id: "asc" }],
+        }),
+        db.stockMovement.findFirst({
+          where: { productId, avgCostAfter: { not: null }, effectiveAt: { lt: oldest } },
+          select: { productId: true, effectiveAt: true, avgCostAfter: true },
+          orderBy: [{ effectiveAt: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+        }),
+      ]);
+      costIndex = buildCostIndex([...(opening ? [opening] : []), ...(span as any[])]);
     }
+    // The resolveUnitCost ladder minus the current-average fallback: a sale before any recorded
+    // movement is unknown (null) unless the product is on STANDARD costing. Zero/negative = unknown.
+    const standard =
+      product.costingMethod === "STANDARD" && product.standardCost != null
+        ? Number(product.standardCost)
+        : null;
     const pieceCostAt = (at: Date): number | null => {
       const snap = costAt(costIndex, productId, at);
-      if (snap != null) return snap;
-      return currentAvg != null && currentAvg > 0 ? currentAvg : null;
+      const cost = snap != null ? snap : standard;
+      return cost != null && cost > 0 ? cost : null;
     };
     const perUnit = (pieceCost: number | null, pack: number | null): number | null =>
       pieceCost == null || pack == null ? null : roundMoney(pieceCost * (pack > 1 ? pack : 1));
@@ -273,7 +328,7 @@ export class CustomerPriceHistoryService {
         qtySold: roundQty(qtySold),
         currentAvgCost:
           costVisible && currentAvg != null && currentAvg > 0
-            ? perUnit(currentAvg, g[0].pack)
+            ? perUnit(currentAvg, g.find((c) => c.pack != null)?.pack ?? null)
             : null,
       };
     });
