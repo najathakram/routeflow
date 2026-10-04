@@ -206,10 +206,12 @@ export class UsersService {
     if (!user) throw new NotFoundException("User not found");
     // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
     // edit form always sends both, so an unchanged value must pass.
-    const emailEdit = dto.email
-      ? dto.email.trim().toLowerCase() !== (user.email ?? "").trim().toLowerCase()
-      : false;
-    const usernameEdit = dto.username !== undefined && dto.username !== user.username;
+    // ONE normalized comparison drives the guard, the write and every email side effect below.
+    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
+    const emailEdit =
+      !!normalizedEmail && normalizedEmail !== (user.email ?? "").trim().toLowerCase();
+    const usernameEdit =
+      dto.username !== undefined && dto.username.trim() !== (user.username ?? "").trim();
     if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
 
     // Prevent changing role of TENANT_ADMIN users
@@ -227,21 +229,18 @@ export class UsersService {
       throw new BadRequestException("Users can only be assigned OPERATOR or DRIVER roles.");
     }
 
-    // N2 review fix: normalize BEFORE compare and write — a case-only edit
-    // ("Acme@Example.com" -> "acme@example.com") must not read as a change (it
-    // fires both notices for nothing) and must not persist inconsistently with
-    // every other email lookup in this codebase, which is case-sensitive as
-    // stored.
-    const normalizedEmail = dto.email ? dto.email.trim().toLowerCase() : dto.email;
-
+    // N2 review fix: a case-only or padding-only edit ("Acme@Example.com" -> "acme@example.com")
+    // is not a change: it fires no notices and does not rewrite the stored email.
     const previousEmail = user.email;
     const previousRole = user.role;
-    const emailChanged = !!normalizedEmail && normalizedEmail !== previousEmail;
+    const emailChanged = emailEdit;
     const roleChanged = !!dto.role && dto.role !== previousRole;
 
+    const { email: _ignoredEmail, ...dtoWithoutEmail } = dto;
+    const data = emailChanged ? { ...dtoWithoutEmail, email: normalizedEmail } : dtoWithoutEmail;
     const updated = await this.prisma.forTenant().user.update({
       where: { id: userId },
-      data: { ...dto, email: normalizedEmail },
+      data,
       select: {
         id: true,
         username: true,

@@ -31,10 +31,11 @@ const OPERATOR_TARGET = {
 describe("UsersService: admin account protection", () => {
   let service: UsersService;
   let prisma: ReturnType<typeof createMockPrisma>;
+  let email: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     prisma = createMockPrisma();
-    const email = {
+    email = {
       sendSetPasswordEmail: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
       sendEmailChangedNotice: jest.fn().mockResolvedValue({ delivered: true, transport: "smtp" }),
       sendEmailChangeConfirmation: jest
@@ -173,7 +174,12 @@ describe("UsersService: admin account protection", () => {
         ...ADMIN_TARGET,
         email: " Owner@Acme.Example ",
       } as any);
-      prisma.user.update.mockResolvedValue({ id: "t1" } as any);
+      prisma.user.update.mockResolvedValue({
+        id: "t1",
+        username: "owner",
+        email: " Owner@Acme.Example ",
+        forcePasswordChange: true,
+      } as any);
       await expect(
         service.updateUser(
           "t1",
@@ -182,6 +188,13 @@ describe("UsersService: admin account protection", () => {
           "OPERATOR" as any,
         ),
       ).resolves.toBeDefined();
+      // not a real change: no stored-email rewrite and no email side effects
+      const data = (prisma.user.update.mock.calls[0][0] as any).data;
+      expect(data).not.toHaveProperty("email");
+      expect(prisma.passwordResetToken.updateMany).not.toHaveBeenCalled();
+      expect(email.sendEmailChangedNotice).not.toHaveBeenCalled();
+      expect(email.sendEmailChangeConfirmation).not.toHaveBeenCalled();
+      expect(email.sendSetPasswordEmail).not.toHaveBeenCalled();
     });
     it("an OPERATOR changing the email on an admin row is still refused", async () => {
       prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
