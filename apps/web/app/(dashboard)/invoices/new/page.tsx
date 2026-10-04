@@ -56,7 +56,9 @@ import { fmt, fmtCalendarDate } from "@/lib/formatting";
 import { getDaysForTerms, addDaysIso } from "@/lib/invoice-terms";
 import {
   isSpecialTier,
-  computeLineSubtotal,
+  computeInvoiceLineTotal,
+  computeInvoiceTotals,
+  type InvoiceTotalsLine,
   getTierPrice,
   normalizeBoxesPieces,
   perUnitPrice,
@@ -440,18 +442,24 @@ function boxedUnitsPerBox(value: unknown): number | undefined {
   return Number.isFinite(n) && n > 1 ? n : undefined;
 }
 
-function lineTotal(item: LineItemState): number {
-  // Use the shared boxed-proration helper (same as the backend + order builder).
+function toTotalsLine(item: LineItemState): InvoiceTotalsLine {
+  // Boxed lines go through the shared pricing helper (same as the backend + order builder).
   // A plain qty*unitPrice OVER-charges boxed lines by unitsPerBox, because qty is
   // total pieces while unitPrice is the box price (money-discipline rule).
-  const subtotal = computeLineSubtotal({
+  return {
     unitPrice: Number(item.unitPrice),
     qty: Number(item.qty),
     boxes: item.boxes ?? null,
     pieces: item.pieces ?? null,
     unitsPerBox: item.unitsPerBox ?? null,
-  });
-  return Math.max(0, subtotal - Number(item.discount));
+    discount: Number(item.discount),
+    taxable: item.taxable,
+  };
+}
+
+/** One line's post-discount, boxed-aware, rounded total. */
+function lineTotal(item: LineItemState): number {
+  return computeInvoiceLineTotal(toTotalsLine(item));
 }
 
 // ─── Basis chooser ────────────────────────────────────────────────────────────
@@ -849,9 +857,13 @@ export default function NewInvoicePage() {
 
   // ── Calculations ────────────────────────────────────────────────────────────
 
-  const subtotal = items.reduce((s, it) => s + lineTotal(it), 0);
-  const tax = items.filter((it) => it.taxable).reduce((s, it) => s + lineTotal(it) * taxRate, 0);
-  const total = subtotal + tax + adjustment;
+  // The builder's "Adjustment" is signed: negative is an invoice discount, positive a surcharge
+  // (the same mapping the submit handlers send). All footer money is rounded once, in pricing.
+  const { subtotal, tax, total } = computeInvoiceTotals(items.map(toTotalsLine), {
+    discount: adjustment < 0 ? Math.abs(adjustment) : 0,
+    shipping: adjustment > 0 ? adjustment : 0,
+    taxRate,
+  });
   const totalQty = items.reduce((s, it) => s + Number(it.qty), 0);
 
   // ── Item helpers ────────────────────────────────────────────────────────────
@@ -1036,6 +1048,12 @@ export default function NewInvoicePage() {
       }
       if (Number(it.qty) <= 0) {
         errs.items = "All quantities must be greater than 0.";
+        break;
+      }
+      // The server refuses a negative line; refuse it here, before the footer shows a total the
+      // saved invoice can never have.
+      if (lineTotal(it) < 0) {
+        errs.items = "Line discount cannot exceed the line total.";
         break;
       }
     }
@@ -2028,6 +2046,7 @@ export default function NewInvoicePage() {
 
                     {/* Discount */}
                     <MoneyInput
+                      aria-label="Line discount"
                       min={0}
                       placeholder="0.00"
                       value={item.discount || null}
