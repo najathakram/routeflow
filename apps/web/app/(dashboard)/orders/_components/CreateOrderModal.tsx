@@ -432,7 +432,6 @@ export function CreateOrderModal({
   const notesValue = watch("notes");
   const staffFulfilment = useStaffFulfilment();
   const fulfillPath = (watch("fulfillPath") ?? staffFulfilment.staffDefault) as "ROUTE" | "SHIP";
-  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.staffDefault;
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
