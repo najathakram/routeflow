@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import {
   assertMoneyInvariantsOrThrow,
   assertNoNegativeLineSubtotal,
+  assertInvoiceTotalsSane,
 } from "./money-invariants.util";
 
 describe("assertMoneyInvariantsOrThrow (B451 gap 4)", () => {
@@ -51,5 +52,38 @@ describe("assertNoNegativeLineSubtotal (B659 review finding 5 — extracted out 
         { description: "Widget", subtotal: "-1.50" as unknown as number },
       ]),
     ).toThrow(BadRequestException);
+  });
+});
+
+describe("assertInvoiceTotalsSane (B1030, extracted from InvoicesService.create())", () => {
+  it("refuses a discount above the subtotal with the fixed message (the numbers as given)", () => {
+    expect(() => assertInvoiceTotalsSane({ discount: 100, subtotal: 10, total: -90 })).toThrow(
+      "Invoice discount (100) cannot exceed subtotal (10).",
+    );
+  });
+
+  it("allows a discount equal to the subtotal", () => {
+    expect(() => assertInvoiceTotalsSane({ discount: 10, subtotal: 10, total: 0 })).not.toThrow();
+  });
+
+  it("refuses a negative total even when the discount is within the subtotal (e.g. a negative levy)", () => {
+    expect(() => assertInvoiceTotalsSane({ discount: 5, subtotal: 10, total: -0.5 })).toThrow(
+      "Invoice total cannot be negative (calculated: -0.5).",
+    );
+  });
+
+  it("the discount check runs first (the more specific message wins)", () => {
+    expect(() => assertInvoiceTotalsSane({ discount: 100, subtotal: 10, total: -90 })).toThrow(
+      /Invoice discount/,
+    );
+  });
+
+  it("a 400 BadRequestException, like create()", () => {
+    try {
+      assertInvoiceTotalsSane({ discount: 2, subtotal: 1, total: -1 });
+      throw new Error("expected a throw");
+    } catch (e) {
+      expect(e).toMatchObject({ status: 400 });
+    }
   });
 });

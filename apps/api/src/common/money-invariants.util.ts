@@ -50,3 +50,24 @@ export function assertNoNegativeLineSubtotal(items: ReadonlyArray<LineSubtotalLi
     }
   }
 }
+
+/**
+ * B1030: the invoice-level totals guard `InvoicesService.create()` ran inline (a discount larger than the
+ * subtotal, and a negative total), extracted so `update()` runs the SAME two checks, with the same
+ * messages, on both of its paths (the items rewrite and the discount/shipping-only recompute). Without
+ * them PATCH {discount: 100} on a $10 invoice stored a total of -90.
+ */
+export function assertInvoiceTotalsSane(t: {
+  discount: number;
+  subtotal: number;
+  total: number;
+}): void {
+  if (t.discount > t.subtotal) {
+    throw new BadRequestException(
+      `Invoice discount (${t.discount}) cannot exceed subtotal (${t.subtotal}).`,
+    );
+  }
+  if (t.total < 0) {
+    throw new BadRequestException(`Invoice total cannot be negative (calculated: ${t.total}).`);
+  }
+}
