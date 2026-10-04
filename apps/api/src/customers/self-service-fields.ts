@@ -36,8 +36,12 @@ export function pickSelfServiceFields<T extends Record<string, unknown>>(
   return out as Partial<Pick<T, Extract<SelfServiceField, keyof T>>>;
 }
 
-/** Customer fields that stay staff-internal: never returned on a customer-facing response. */
-export const STAFF_ONLY_CUSTOMER_FIELDS = ["notes"] as const;
+/**
+ * Customer fields that stay staff-internal: never returned on a customer-facing response. `notes` is the
+ * operator's free text; `tagAssignments` carries the operator-applied CRM labels (CustomerTag), which have no
+ * customer-facing use.
+ */
+export const STAFF_ONLY_CUSTOMER_FIELDS = ["notes", "tagAssignments"] as const;
 
 /** A copy of a customer row without the staff-only fields (never mutates the input). */
 export function omitStaffOnlyCustomerFields<T extends Record<string, unknown>>(

@@ -539,6 +539,8 @@ export class CustomersService {
     ) {
       throw new ForbiddenException();
     }
+    // A customer reading its own record gets the customer-facing shape; staff and drivers keep the full row.
+    if (user.role === UserRole.CUSTOMER) return omitStaffOnlyCustomerFields(customer);
     return customer;
   }
 

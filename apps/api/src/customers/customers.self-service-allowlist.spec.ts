@@ -283,6 +283,31 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       expect(res).not.toHaveProperty("notes");
     });
 
+    it("(o) GET /customers/:id by the customer on its own id omits notes and staff tags", async () => {
+      const full = {
+        ...row(),
+        userId: "user-1",
+        tagAssignments: [{ tag: { name: "watch-list" } }],
+      };
+      prisma.customer.findUnique.mockResolvedValue(full);
+      const res = await service.findOne("cust-1", { sub: "user-1", role: "CUSTOMER" } as never);
+      expect(res).not.toHaveProperty("notes");
+      expect(res).not.toHaveProperty("tagAssignments");
+      expect(res).toHaveProperty("contactName", "Jo");
+    });
+
+    it("(p) GET /customers/:id by staff still returns notes and tags", async () => {
+      const full = {
+        ...row(),
+        userId: "user-1",
+        tagAssignments: [{ tag: { name: "watch-list" } }],
+      };
+      prisma.customer.findUnique.mockResolvedValue(full);
+      const res = await service.findOne("cust-1", { sub: "staff-1", role: "OPERATOR" } as never);
+      expect(res).toHaveProperty("notes", "internal");
+      expect(res).toHaveProperty("tagAssignments");
+    });
+
     it("(n) the buyer-portal profile handlers omit notes", async () => {
       const controller = Object.create(BuyerController.prototype) as any;
       controller.customersService = { update: jest.fn().mockResolvedValue(row()) };
