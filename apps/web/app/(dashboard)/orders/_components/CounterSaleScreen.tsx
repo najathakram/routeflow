@@ -302,7 +302,7 @@ export function CounterSaleScreen() {
           {paymentNotRecorded || receipt.balanceDue > 0 ? (
             <div className="flex justify-between">
               <dt>Balance due</dt>
-              <dd>{money(paymentNotRecorded ? receipt.total : receipt.balanceDue)}</dd>
+              <dd>{money(receipt.balanceDue)}</dd>
             </div>
           ) : null}
           {!paymentNotRecorded && receipt.change != null && receipt.change > 0 ? (

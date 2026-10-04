@@ -347,13 +347,13 @@ describe("CounterSaleScreen: API contract wiring", () => {
         invoiceNumber: "INV-9",
         total: 2.5,
         paid: 0,
-        balanceDue: 2.5,
+        balanceDue: 2, // the server's stored balance (e.g. a credit applied at send), never re-derived here
         paymentRecorded: false,
         paymentErrorCode: "PAYMENT_WRITE_FAILED",
       });
     });
 
-    it("says so, links to the invoice, never shows Paid, and balance due is the total", async () => {
+    it("says so, links to the invoice, never shows Paid, and shows the server balance due", async () => {
       renderWithProviders(<CounterSaleScreen />);
       await fillCola();
       fireEvent.click(screen.getByRole("button", { name: "Complete sale" }));
@@ -365,7 +365,7 @@ describe("CounterSaleScreen: API contract wiring", () => {
       );
       const receipt = screen.getByTestId("counter-sale-receipt");
       expect(receipt.textContent).not.toMatch(/Paid/);
-      expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.50");
+      expect(screen.getByText("Balance due").nextSibling).toHaveTextContent("$2.00");
       expect(screen.queryByText("Change")).toBeNull();
     });
 
