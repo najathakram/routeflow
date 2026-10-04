@@ -59,6 +59,8 @@ import { StorageService } from "../storage/storage.service";
 import { compressDocument } from "../storage/compress.util";
 import { CreateCustomerDto } from "./dto/create-customer.dto";
 import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
+import { pickSelfServiceFields } from "./self-service-fields";
 import { customerUpdateData } from "./customer-update-data";
 import { assertSafeCustomerNames } from "./customer-name-guard";
 import {
@@ -320,12 +322,13 @@ export class CustomersService {
     return customer;
   }
 
-  async updateMyProfile(user: JwtPayload, dto: UpdateCustomerDto) {
+  async updateMyProfile(user: JwtPayload, dto: UpdateBuyerProfileDto) {
     const customer = await this.prisma
       .forTenant()
       .customer.findFirst({ where: { userId: user.sub } });
     if (!customer) throw new NotFoundException("Customer profile not found");
-    return this.update(customer.id, dto);
+    // Self-service: only the customer's own contact fields, whatever the body carries.
+    return this.update(customer.id, pickSelfServiceFields({ ...dto }) as UpdateCustomerDto);
   }
 
   async getMyStatement(user: JwtPayload) {
