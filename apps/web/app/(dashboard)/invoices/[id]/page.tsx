@@ -77,6 +77,7 @@ import { ComponentSubLines } from "@/components/ComponentSubLines";
 import type { LineComponentView } from "@routeflow/types";
 import { CHECK_TRANSITIONS } from "@routeflow/types";
 import { InvoiceTotalsSummary } from "./InvoiceTotalsSummary";
+import { InvoiceLineAmount } from "./InvoiceLineAmount";
 import { RemoveCreditButton } from "./RemoveCreditButton";
 import {
   SELECTABLE_PAYMENT_METHODS,
@@ -2620,16 +2621,7 @@ export default function InvoiceDetailPage() {
                             </p>
                           )}
                         </td>
-                        <td className="px-8 py-3 text-right">
-                          <span className="money text-navy">
-                            {/* Stored line subtotal is authoritative (boxed-aware, post-discount,
-                              rounded via pricing.ts). NEVER re-derive qty*unitPrice — that
-                              over-charges boxed lines by unitsPerBox and ignores line discounts. */}
-                            {fmt(
-                              Number(item.subtotal ?? Number(item.qty) * Number(item.unitPrice)),
-                            )}
-                          </span>
-                        </td>
+                        <InvoiceLineAmount item={item} />
                       </tr>
                     );
                   })}

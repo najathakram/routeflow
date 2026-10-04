@@ -32,6 +32,7 @@ import { ScanTray } from "../../components/ScanTray";
 import { createScanAcceptGuard } from "../../lib/scan-accept-guard";
 import { resolveProductByCode } from "../../lib/barcode-resolve";
 import { applyPriceOverride } from "../../lib/price-override";
+import { pickRowPrice } from "../../lib/picker-price";
 import { BarcodeScanner } from "../../components/BarcodeScanner";
 import { BarcodeFab } from "../../components/BarcodeFab";
 import { ProductPickerSheet } from "../../components/ProductPickerSheet";
@@ -73,6 +74,7 @@ export function ProductPicker({
   onSetToFloor,
   canEditPrice = false,
   isSpecialTierFor,
+  priceFor,
   onScanSessionStart,
   onScanSessionEnd,
   trayRows,
@@ -157,6 +159,11 @@ export function ProductPicker({
    * has no tier context; treated as "not special" (never requires a reason).
    */
   isSpecialTierFor?: (productId: string) => boolean;
+  /**
+   * B1007: the pricing function the CALLER bills a picked line with (the order editor's tier pricing), so a row shows the
+   * price the line will bill, not the product's list price. Absent = the list price, as before. Display only.
+   */
+  priceFor?: (p: PickedProduct) => number;
   /** A camera session is opening — the parent clears its "last scan-added" line. */
   onScanSessionStart?: () => void;
   /** A camera session ended. Does NOT clear the last-added line (RULINGS R5). */
@@ -450,7 +457,7 @@ export function ProductPicker({
                       {p.name}
                     </Text>
                     <Text style={styles.cardMeta} numberOfLines={2}>
-                      {p.sku ? `SKU ${p.sku} · ` : ""}${toNumber(p.pricePerUnit).toFixed(2)}
+                      {p.sku ? `SKU ${p.sku} · ` : ""}${pickRowPrice(p, priceFor).toFixed(2)}
                       {upb > 1 ? ` / box of ${upb}` : p.unit ? ` / ${p.unit}` : ""}
                     </Text>
                   </View>

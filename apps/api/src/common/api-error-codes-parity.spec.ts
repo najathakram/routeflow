@@ -207,11 +207,11 @@ const CONSUMER_ALLOWLIST: Record<string, string[]> = {
 const CONSUMER_ALLOWLIST_TOTAL = 75;
 
 /**
- * B987-D: literals in packages/ that CANNOT use the constants because a value import of `@routeflow/types` is impossible there.
+ * B987-D: literals in packages/ that keep a literal because a value import of `@routeflow/types` is ruled out there (a hard runtime constraint for pricing, a build CONVENTION for returns).
  * Both are compiled CJS packages (`tsc` to dist, `main: ./dist/index.js`); `@routeflow/types` has no build step (its entry is
  * raw TypeScript), so a value import would emit a `require("@routeflow/types")` from dist that node cannot parse. packages/pricing
  * enforces this itself (`no-runtime-types-import.spec.ts`, SA-478a: the API loads pricing's dist at runtime); packages/returns
- * is the same build shape and today imports types as `import type` only. SHRINK-ONLY: an entry whose file no longer spells the
+ * is the same build shape and follows the same CONVENTION (types stay type-only), which is not a runtime constraint. SHRINK-ONLY: an entry whose file no longer spells the
  * code fails (delete it), the total is pinned, and every entry states why. Everything else under packages/ uses the constants.
  */
 const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
@@ -229,7 +229,7 @@ const PACKAGE_ALLOWLIST: Record<string, { codes: string[]; reason: string }> = {
       "INLINE_RETURN_KEY_REUSED_WITH_DIFFERENT_ITEMS",
     ],
     reason:
-      "compiled CJS package with type-only imports of @routeflow/types; a value import would require the raw-TS package from dist",
+      "CONVENTION, not a runtime constraint: compiled CJS package (like pricing) that keeps @routeflow/types imports type-only, so its dist never requires the raw-TS package; only pricing is bound by SA-478a",
   },
 };
 const PACKAGE_ALLOWLIST_TOTAL = 6;
