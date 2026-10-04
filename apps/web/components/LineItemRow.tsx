@@ -203,6 +203,7 @@ export function LineItemRow({
       productId={li.productId || null}
       productName={li.productName}
       unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
+      packHint={li.unitsPerBox ?? null}
       onUsePrice={customerPriceHistory.onUsePrice}
       focusSelector="[data-line-price-input]"
     />
@@ -329,6 +330,7 @@ export function LineItemRow({
                 customerId={customerPriceHistory?.customerId}
                 productId={li.productId || null}
                 unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
+                packHint={li.unitsPerBox ?? null}
                 onUsePrice={customerPriceHistory!.onUsePrice}
               />
             </div>

@@ -1380,7 +1380,10 @@ export function CreateOrderModal({
   })();
 
   // The same LineItemRow for the create-order list and the scan screen, so the two can never drift.
-  const renderLine = (li: LineItem, ctx?: { highlighted?: boolean; onTapPrice?: () => void }) => (
+  const renderLine = (
+    li: LineItem,
+    ctx?: { highlighted?: boolean; onTapPrice?: () => void; priceHistory?: boolean },
+  ) => (
     <LineItemRow
       key={li.tempId}
       item={li}
@@ -1390,11 +1393,17 @@ export function CreateOrderModal({
       costRevealed={costRevealed.has(li.tempId)}
       // the remembered price is a PACK price (the server excludes unit lines from it, B606)
       priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
-      customerPriceHistory={{
-        customerId: selectedCustomer?.id,
-        customerName: selectedCustomer?.businessName,
-        onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
-      }}
+      // Main list only. The scan screen has its own window-level Escape handler that would close
+      // the whole screen with the popover open, so it renders no history button or chips.
+      customerPriceHistory={
+        ctx?.priceHistory
+          ? {
+              customerId: selectedCustomer?.id,
+              customerName: selectedCustomer?.businessName,
+              onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+            }
+          : undefined
+      }
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
@@ -1941,6 +1950,7 @@ export function CreateOrderModal({
                     // #2696 (b)/(c): tap the price → the line's price/qty sheet, a SPECIAL-priced line
                     // too — moving off the special price takes a reason there (SA-558).
                     onTapPrice: () => setEditingLineId(li.tempId),
+                    priceHistory: true,
                   }),
                 )}
               </ul>

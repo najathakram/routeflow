@@ -236,7 +236,9 @@ describe("CreateOrderModal - price history button (real onTapPrice configuration
     const ready = await screen.findByRole("button", { name: "Price history" });
     expect(ready).toBeEnabled();
 
-    fireEvent.click(ready);
+    // userEvent (not fireEvent): it honours `pointer-events: none`, so a popover portaled outside the
+    // Radix Dialog (body pointer-events off) is NOT clickable here.
+    await userEvent.setup().click(ready);
     const panel = await screen.findByRole("dialog", { name: "Price history" });
     expect(await within(panel).findByText("Customer: Acme Foods")).toBeInTheDocument();
     // the price sheet did not open
@@ -251,9 +253,10 @@ describe("CreateOrderModal - price history button (real onTapPrice configuration
     await pickCustomer("Acme Foods");
     expect(await screen.findByText("$8.00 / each")).toBeInTheDocument(); // the customer's tier price
 
-    fireEvent.click(await screen.findByRole("button", { name: "Price history" }));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Price history" }));
     const panel = await screen.findByRole("dialog", { name: "Price history" });
-    fireEvent.click(await within(panel).findByRole("button", { name: "Use this price $9.00" }));
+    await user.click(await within(panel).findByRole("button", { name: "Use this price $9.00" }));
 
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
     expect(await screen.findByText("$9.00 / each")).toBeInTheDocument();

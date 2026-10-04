@@ -1524,6 +1524,7 @@ export function EditableLineItems({
                       unitHint:
                         item.unitLabel ??
                         (item.unitsPerBox && item.unitsPerBox > 1 ? "case" : item.unit),
+                      packHint: item.unitsPerBox ?? null,
                     }
               }
             />

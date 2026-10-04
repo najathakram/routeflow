@@ -47,6 +47,7 @@ export function PriceEditRow({
     productId?: string | null;
     productName: string;
     unitHint?: string | null;
+    packHint?: number | null;
   };
 }) {
   // "Sell anyway" acknowledges a below-floor price for this session; the override

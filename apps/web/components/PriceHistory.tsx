@@ -5,6 +5,7 @@ import { Eye, EyeOff, History } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { AnchoredPopover } from "@/components/AnchoredPopover";
 import {
+  useAutoFetchSlot,
   usePrefetchPriceHistory,
   usePriceHistory,
   type PriceHistoryResponse,
@@ -22,6 +23,25 @@ function normUnit(u: string | null | undefined): string {
 }
 export const sameUnit = (a: string | null | undefined, b: string | null | undefined) =>
   normUnit(a) === normUnit(b);
+
+/**
+ * May this history row's price be written onto a line? Fails CLOSED: the unit must match AND, when
+ * both sides know a pack size, so must the pack (a 12-pack "case" price is wrong by 2x on a line
+ * that is a 24-pack case after a repack). A line with no unit hint can only use a price when the
+ * history spans a single unit.
+ */
+export function canUseHistoryPrice(
+  row: Pick<PriceHistoryRow, "unitLabel" | "unitsPerBox">,
+  unitHint: string | null | undefined,
+  packHint: number | null | undefined,
+  unitCount: number,
+): boolean {
+  if (!unitHint) return unitCount <= 1;
+  if (!sameUnit(row.unitLabel, unitHint)) return false;
+  const rowPack = row.unitsPerBox ?? null;
+  const linePack = packHint ?? null;
+  return rowPack == null || linePack == null || rowPack === linePack;
+}
 
 const PRICE_TYPE_TAG: Record<string, string> = {
   SPECIAL: "Special",
@@ -114,12 +134,14 @@ function PanelBody({
   productName,
   customerName,
   unitHint,
+  packHint,
   onUse,
 }: {
   data: PriceHistoryResponse;
   productName: string;
   customerName?: string | null;
   unitHint?: string | null;
+  packHint?: number | null;
   onUse: (price: number) => void;
 }) {
   const [showCost, setShowCost] = React.useState(false);
@@ -153,7 +175,7 @@ function PanelBody({
   const chronological = [...rows].reverse().map((r) => ({ price: r.unitPrice, type: r.priceType }));
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
-  const canUse = (r: PriceHistoryRow) => !unitHint || sameUnit(r.unitLabel, unitHint);
+  const canUse = (r: PriceHistoryRow) => canUseHistoryPrice(r, unitHint, packHint, units.length);
   const marginCell = (r: PriceHistoryRow) =>
     !showCost
       ? MASK
@@ -370,6 +392,7 @@ function Panel({
   productId,
   productName,
   unitHint,
+  packHint,
   anchor,
   onClose,
   onUsePrice,
@@ -379,6 +402,7 @@ function Panel({
   productId: string;
   productName: string;
   unitHint?: string | null;
+  packHint?: number | null;
   anchor: HTMLElement;
   onClose: () => void;
   onUsePrice: (price: number) => void;
@@ -412,6 +436,7 @@ function Panel({
           productName={productName}
           customerName={customerName}
           unitHint={unitHint}
+          packHint={packHint}
           onUse={(price) => {
             onUsePrice(price);
             onClose();
@@ -435,6 +460,7 @@ export function PriceHistoryButton({
   productId,
   productName,
   unitHint,
+  packHint,
   onUsePrice,
   focusSelector,
   className,
@@ -445,6 +471,8 @@ export function PriceHistoryButton({
   productName: string;
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
+  /** The line's pack size (units per box), so a price from a different pack is never offered. */
+  packHint?: number | null;
   onUsePrice: (price: number) => void;
   /** The price input to refocus on close (searched within the row / container); defaults to the first input beside the button. */
   focusSelector?: string;
@@ -453,7 +481,8 @@ export function PriceHistoryButton({
   const [anchor, setAnchor] = React.useState<HTMLButtonElement | null>(null);
   const [open, setOpen] = React.useState(false);
   const ready = !!customerId && !!productId;
-  usePrefetchPriceHistory(customerId, productId);
+  const slot = useAutoFetchSlot(customerId, productId);
+  usePrefetchPriceHistory(customerId, productId, 25, slot);
 
   // Alt+H from the price field (or anywhere on the line) opens the panel.
   React.useEffect(() => {
@@ -508,6 +537,7 @@ export function PriceHistoryButton({
           productId={productId!}
           productName={productName}
           unitHint={unitHint}
+          packHint={packHint}
           anchor={anchor}
           onClose={close}
           onUsePrice={onUsePrice}
@@ -526,16 +556,21 @@ export function PriceChips({
   customerId,
   productId,
   unitHint,
+  packHint,
   onUsePrice,
 }: {
   customerId?: string | null;
   productId?: string | null;
   unitHint?: string | null;
+  packHint?: number | null;
   onUsePrice: (price: number) => void;
 }) {
-  const q = usePriceHistory(customerId, productId, !!customerId && !!productId);
-  const rows = (q.data?.rows ?? [])
-    .filter((r) => !unitHint || sameUnit(r.unitLabel, unitHint))
+  const slot = useAutoFetchSlot(customerId, productId);
+  const q = usePriceHistory(customerId, productId, slot);
+  const all = q.data?.rows ?? [];
+  const unitCount = new Set(all.map((r) => r.unitLabel.trim().toLowerCase())).size;
+  const rows = all
+    .filter((r) => canUseHistoryPrice(r, unitHint, packHint, unitCount))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 3);
   if (rows.length === 0) return null;

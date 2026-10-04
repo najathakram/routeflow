@@ -9,6 +9,11 @@ import { createPortal } from "react-dom";
  * `transform` / `overflow` clipping; `position: fixed` from the anchor rect; closes on an outside
  * mousedown; Escape is a CAPTURE-phase window listener that stops propagation, so a surrounding
  * Radix Dialog (the order builder) does not also close and discard the order.
+ *
+ * Inside a modal Radix Dialog it portals INTO the dialog's content instead of <body>: outside the
+ * content, Radix sets body `pointer-events: none` and traps focus, so a popover on <body> cannot be
+ * clicked or focused. The content is `transform`-centred, which makes it the containing block of a
+ * `position: fixed` child, so the viewport coordinates are shifted by the content's own rect.
  */
 export function AnchoredPopover({
   anchor,
@@ -28,6 +33,10 @@ export function AnchoredPopover({
   children: React.ReactNode;
 }) {
   const ref = React.useRef<HTMLDivElement>(null);
+  const host = React.useMemo(
+    () => anchor.closest<HTMLElement>('[role="dialog"]') ?? document.body,
+    [anchor],
+  );
   const [pos, setPos] = React.useState<{ top: number; left: number } | null>(null);
 
   // Anchor under the element; flip ABOVE when there is no room below (and more room above), and
@@ -42,7 +51,9 @@ export function AnchoredPopover({
       const above = r.top - 8;
       const flip = h > below && above > below;
       const top = flip ? Math.max(8, r.top - 4 - Math.min(h, above)) : r.bottom + 4;
-      setPos({ top, left });
+      // `position: fixed` resolves against a transformed host, not the viewport.
+      const o = host === document.body ? { top: 0, left: 0 } : host.getBoundingClientRect();
+      setPos({ top: top - o.top, left: left - o.left });
     };
     place();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(place) : null;
@@ -52,7 +63,7 @@ export function AnchoredPopover({
       ro?.disconnect();
       window.removeEventListener("resize", place);
     };
-  }, [anchor, width]);
+  }, [anchor, width, host]);
 
   React.useEffect(() => {
     ref.current?.focus({ preventScroll: true });
@@ -103,6 +114,6 @@ export function AnchoredPopover({
       </style>
       {children}
     </div>,
-    document.body,
+    host,
   );
 }
