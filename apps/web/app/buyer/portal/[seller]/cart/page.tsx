@@ -319,13 +319,13 @@ export default function BuyerCartPage() {
         <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="block w-full md:table md:min-w-[640px]">
+              <table className="block w-full md:table md:min-w-[480px]">
                 <thead className="hidden md:table-header-group">
                   <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Product</th>
                     <th className="px-4 py-2.5 text-center w-44">Qty</th>
-                    <th className="px-4 py-2.5 text-right w-24">Price</th>
-                    <th className="px-4 py-2.5 text-right w-24">Subtotal</th>
+                    <th className="px-4 py-2.5 text-right w-20">Price</th>
+                    <th className="px-4 py-2.5 text-right w-20">Subtotal</th>
                     <th className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
@@ -449,9 +449,7 @@ export default function BuyerCartPage() {
                                   <span className="text-navy/70">pcs</span>
                                 </div>
                               </div>
-                              <p className="text-xs text-navy/70">
-                                = {item.qty} {item.unit}
-                              </p>
+                              <p className="text-xs text-navy/70">= {item.qty} pcs</p>
                             </div>
                           ) : (
                             // Simple qty input

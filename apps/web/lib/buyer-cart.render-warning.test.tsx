@@ -69,6 +69,37 @@ describe("setBoxesPieces: no setState during render", () => {
     expect(seen).toHaveLength(1);
   });
 
+  it.each([
+    [
+      "addItem (plus on the catalog / an existing line)",
+      (a: typeof api) =>
+        a.addItem({
+          ...cola,
+          productId: "p2",
+          qty: 3,
+          boxes: undefined,
+          pieces: undefined,
+          unitsPerBox: 1,
+        }),
+    ],
+    ["updateQty (the simple-qty stepper's + and -)", (a: typeof api) => a.updateQty("p3", 5)],
+    ["removeItem", (a: typeof api) => a.removeItem("p3")],
+  ])("%s broadcasts cart-updated exactly once, even in StrictMode", (_n, run) => {
+    localStorage.clear();
+    render(
+      <React.StrictMode>
+        <Page />
+      </React.StrictMode>,
+    );
+    act(() => api.addItem({ productId: "p3", name: "Chips", unit: "ea", unitsPerBox: 1, qty: 4 }));
+    const seen: Event[] = [];
+    const on = (e: Event) => seen.push(e);
+    window.addEventListener("cart-updated", on);
+    act(() => run(api));
+    window.removeEventListener("cart-updated", on);
+    expect(seen).toHaveLength(1);
+  });
+
   it("two edits in one tick compose (the second sees the first)", () => {
     localStorage.clear();
     render(<Page />);

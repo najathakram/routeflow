@@ -73,36 +73,44 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     };
   }, [key]);
 
-  const addItem = React.useCallback(
-    (item: CartItem) => {
-      setCart((prev) => {
-        const existing = prev.items.find((i) => i.productId === item.productId);
-        let next: CartState;
-        if (existing) {
-          next = {
-            items: prev.items.map((i) =>
-              i.productId === item.productId ? mergeAddLine(i, item) : i,
-            ),
-          };
-        } else {
-          next = { items: [...prev.items, item] };
-        }
-        if (key) writeCart(key, next);
-        return next;
-      });
+  // The latest committed-or-pending cart, so a mutator computes the next state OUTSIDE a setState updater: an
+  // updater runs during render (and twice in StrictMode), and writing + broadcasting "cart-updated" from there
+  // updates the nav badge's hook mid-render ("Cannot update a component while rendering a different component").
+  const cartRef = React.useRef(cart);
+  cartRef.current = cart;
+
+  /** Every mutator ends here: remember it (a second edit in the same tick builds on it), render it, persist + broadcast ONCE. */
+  const commit = React.useCallback(
+    (next: CartState) => {
+      cartRef.current = next;
+      setCart(next);
+      if (key) writeCart(key, next);
     },
     [key],
   );
 
+  const addItem = React.useCallback(
+    (item: CartItem) => {
+      const prev = cartRef.current;
+      const existing = prev.items.find((i) => i.productId === item.productId);
+      commit(
+        existing
+          ? {
+              items: prev.items.map((i) =>
+                i.productId === item.productId ? mergeAddLine(i, item) : i,
+              ),
+            }
+          : { items: [...prev.items, item] },
+      );
+    },
+    [commit],
+  );
+
   const removeItem = React.useCallback(
     (productId: string) => {
-      setCart((prev) => {
-        const next = { items: prev.items.filter((i) => i.productId !== productId) };
-        if (key) writeCart(key, next);
-        return next;
-      });
+      commit({ items: cartRef.current.items.filter((i) => i.productId !== productId) });
     },
-    [key],
+    [commit],
   );
 
   const updateQty = React.useCallback(
@@ -111,23 +119,14 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
         removeItem(productId);
         return;
       }
-      setCart((prev) => {
-        const next = {
-          items: prev.items.map((i) => (i.productId === productId ? setLineQty(i, qty) : i)),
-        };
-        if (key) writeCart(key, next);
-        return next;
+      commit({
+        items: cartRef.current.items.map((i) =>
+          i.productId === productId ? setLineQty(i, qty) : i,
+        ),
       });
     },
-    [key, removeItem],
+    [commit, removeItem],
   );
-
-  // The latest committed-or-pending cart, so a mutator can compute the next state OUTSIDE a setState
-  // updater: an updater runs during render (and twice in StrictMode), and writing + broadcasting
-  // "cart-updated" from there updates the nav badge's hook mid-render ("Cannot update a component while
-  // rendering a different component").
-  const cartRef = React.useRef(cart);
-  cartRef.current = cart;
 
   /** A box / loose-pieces edit on a boxed line: REPLACES the split (never adds), normalised; an empty split removes the line (a TYPED edit passes keepEmpty: it ignores a zero, as it always did). */
   const setBoxesPieces = React.useCallback(
@@ -139,11 +138,9 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
           return line ? [line] : opts?.keepEmpty ? [i] : [];
         }),
       };
-      cartRef.current = next; // a second edit in the same tick builds on this one
-      setCart(next);
-      if (key) writeCart(key, next);
+      commit(next);
     },
-    [key],
+    [commit],
   );
 
   const clearCart = React.useCallback(() => {
