@@ -122,20 +122,26 @@ export function useBuyerCart(buyerAccountId?: string, sellerSlug?: string) {
     [key, removeItem],
   );
 
+  // The latest committed-or-pending cart, so a mutator can compute the next state OUTSIDE a setState
+  // updater: an updater runs during render (and twice in StrictMode), and writing + broadcasting
+  // "cart-updated" from there updates the nav badge's hook mid-render ("Cannot update a component while
+  // rendering a different component").
+  const cartRef = React.useRef(cart);
+  cartRef.current = cart;
+
   /** A box / loose-pieces edit on a boxed line: REPLACES the split (never adds), normalised; an empty split removes the line (a TYPED edit passes keepEmpty: it ignores a zero, as it always did). */
   const setBoxesPieces = React.useCallback(
     (productId: string, boxes: number, pieces: number, opts?: { keepEmpty?: boolean }) => {
-      setCart((prev) => {
-        const next = {
-          items: prev.items.flatMap((i) => {
-            if (i.productId !== productId) return [i];
-            const line = setLineSplit(i, boxes, pieces);
-            return line ? [line] : opts?.keepEmpty ? [i] : [];
-          }),
-        };
-        if (key) writeCart(key, next);
-        return next;
-      });
+      const next = {
+        items: cartRef.current.items.flatMap((i) => {
+          if (i.productId !== productId) return [i];
+          const line = setLineSplit(i, boxes, pieces);
+          return line ? [line] : opts?.keepEmpty ? [i] : [];
+        }),
+      };
+      cartRef.current = next; // a second edit in the same tick builds on this one
+      setCart(next);
+      if (key) writeCart(key, next);
     },
     [key],
   );

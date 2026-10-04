@@ -319,25 +319,28 @@ export default function BuyerCartPage() {
         <div className="min-w-0 lg:col-span-2">
           <div className="rounded-xl border border-surface-border bg-white overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[640px]">
-                <thead>
+              <table className="block w-full md:table md:min-w-[640px]">
+                <thead className="hidden md:table-header-group">
                   <tr className="border-b border-surface-border bg-surface-raised text-xs text-navy/70 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Product</th>
-                    <th className="px-4 py-2.5 text-center w-32">Qty</th>
+                    <th className="px-4 py-2.5 text-center w-44">Qty</th>
                     <th className="px-4 py-2.5 text-right w-24">Price</th>
                     <th className="px-4 py-2.5 text-right w-24">Subtotal</th>
                     <th className="px-4 py-2.5 w-12"></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-surface-border">
+                <tbody className="block divide-y divide-surface-border md:table-row-group">
                   {cart.items.map((item) => {
                     const priced = lineByProduct.get(item.productId);
                     const price = priced?.net ?? 0;
                     const original = priced?.original ?? null;
                     const freeUnits = priced?.freeUnits ?? 0;
                     return (
-                      <tr key={item.productId} className="hover:bg-surface-raised/50">
-                        <td className="px-4 py-3">
+                      <tr
+                        key={item.productId}
+                        className="block px-4 py-3 hover:bg-surface-raised/50 md:table-row md:p-0"
+                      >
+                        <td className="block px-0 py-1.5 md:table-cell md:px-4 md:py-3">
                           <div className="flex items-center gap-3">
                             <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-surface-raised flex items-center justify-center overflow-hidden">
                               {item.thumbnailUrl ? (
@@ -364,12 +367,15 @@ export default function BuyerCartPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="block px-0 py-1.5 md:table-cell md:px-2 md:py-3">
                           {item.unitsPerBox && item.unitsPerBox > 1 ? (
                             // Boxes + Pieces input
-                            <div className="flex flex-col items-center gap-1">
-                              <div className="flex items-center gap-1.5 text-xs">
-                                <div className="flex items-center gap-0.5">
+                            <div
+                              data-testid="cart-box-controls"
+                              className="flex flex-col items-center gap-1.5"
+                            >
+                              <div className="flex items-center gap-1 text-sm">
+                                <div className="flex items-center gap-1">
                                   <button
                                     onClick={() =>
                                       // a box edit REPLACES the split (B999); an empty split removes the line
@@ -379,11 +385,13 @@ export default function BuyerCartPage() {
                                         item.pieces ?? 0,
                                       )
                                     }
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
+                                    aria-label="Fewer boxes"
+                                    className="flex h-10 w-10 items-center justify-center rounded text-navy/70 hover:bg-surface-raised"
                                   >
-                                    <Minus className="h-3 w-3" />
+                                    <Minus className="h-4 w-4" />
                                   </button>
                                   <input
+                                    aria-label="Boxes"
                                     type="number"
                                     min={0}
                                     value={item.boxes ?? 0}
@@ -395,7 +403,7 @@ export default function BuyerCartPage() {
                                         { keepEmpty: true },
                                       )
                                     }
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
+                                    className="h-10 w-14 rounded border border-surface-border bg-white px-1 text-center text-sm text-navy"
                                   />
                                   <button
                                     onClick={() =>
@@ -405,15 +413,19 @@ export default function BuyerCartPage() {
                                         item.pieces ?? 0,
                                       )
                                     }
-                                    className="rounded p-1 text-navy/70 hover:bg-surface-raised"
+                                    aria-label="More boxes"
+                                    className="flex h-10 w-10 items-center justify-center rounded text-navy/70 hover:bg-surface-raised"
                                   >
-                                    <Plus className="h-3 w-3" />
+                                    <Plus className="h-4 w-4" />
                                   </button>
-                                  <span className="text-navy/70 ml-0.5">box</span>
+                                  <span className="text-navy/70">box</span>
                                 </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 text-sm">
                                 <span className="text-navy/30">+</span>
-                                <div className="flex items-center gap-0.5">
+                                <div className="flex items-center gap-1">
                                   <input
+                                    aria-label="Loose pieces"
                                     type="number"
                                     min={0}
                                     max={(item.unitsPerBox ?? 1) - 1}
@@ -432,12 +444,12 @@ export default function BuyerCartPage() {
                                         { keepEmpty: true },
                                       )
                                     }
-                                    className="w-10 rounded border border-surface-border bg-white px-1 py-0.5 text-center text-xs text-navy"
+                                    className="h-10 w-14 rounded border border-surface-border bg-white px-1 text-center text-sm text-navy"
                                   />
                                   <span className="text-navy/70">pcs</span>
                                 </div>
                               </div>
-                              <p className="text-[10px] text-navy/70">
+                              <p className="text-xs text-navy/70">
                                 = {item.qty} {item.unit}
                               </p>
                             </div>
@@ -446,7 +458,7 @@ export default function BuyerCartPage() {
                             <div className="flex items-center justify-center gap-1">
                               <button
                                 onClick={() => cart.updateQty(item.productId, item.qty - 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                                className="flex h-10 w-10 items-center justify-center rounded text-navy/70 hover:bg-surface-raised hover:text-navy"
                               >
                                 <Minus className="h-3.5 w-3.5" />
                               </button>
@@ -460,18 +472,19 @@ export default function BuyerCartPage() {
                                     Math.max(1, Number(e.target.value)),
                                   )
                                 }
-                                className="w-14 rounded border border-surface-border bg-white px-2 py-1 text-center text-sm text-navy"
+                                className="h-10 w-14 rounded border border-surface-border bg-white px-2 text-center text-sm text-navy"
                               />
                               <button
                                 onClick={() => cart.updateQty(item.productId, item.qty + 1)}
-                                className="rounded p-1.5 text-navy/70 hover:bg-surface-raised hover:text-navy"
+                                className="flex h-10 w-10 items-center justify-center rounded text-navy/70 hover:bg-surface-raised hover:text-navy"
                               >
                                 <Plus className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm">
+                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm md:table-cell md:px-4 md:py-3">
+                          <span className="text-xs text-navy/60 md:hidden">Price</span>
                           {priced?.unresolved ? (
                             <span className="text-[11px] text-navy/50">Price unavailable</span>
                           ) : original != null && original > price ? (
@@ -485,17 +498,21 @@ export default function BuyerCartPage() {
                             <span className="text-navy/70">{fmt(price)}</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right text-sm font-medium text-navy">
+                        <td className="flex items-center justify-between px-0 py-1.5 text-right text-sm font-medium text-navy md:table-cell md:px-4 md:py-3">
+                          <span className="text-xs font-normal text-navy/60 md:hidden">
+                            Subtotal
+                          </span>
                           {priced?.unresolved ? (
                             <span className="text-navy/40">—</span>
                           ) : (
                             fmt(priced?.lineSubtotal ?? 0)
                           )}
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="flex justify-end px-0 py-1 md:table-cell md:px-4 md:py-3">
                           <button
                             onClick={() => cart.removeItem(item.productId)}
-                            className="rounded p-1.5 text-navy/30 hover:bg-danger-bg hover:text-danger transition-colors"
+                            aria-label={`Remove ${item.name}`}
+                            className="flex h-10 w-10 items-center justify-center rounded text-navy/30 transition-colors hover:bg-danger-bg hover:text-danger"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

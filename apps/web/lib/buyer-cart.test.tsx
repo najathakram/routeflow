@@ -153,3 +153,41 @@ describe("unitsPerBox = 1 (a pack of one is a PLAIN line): a box edit never dele
     expect(page).not.toMatch(/item\.unitsPerBox > 0/);
   });
 });
+
+describe("the buyer cart table fits its card and its controls are tappable (B999 layout, PC pixels 10-03)", () => {
+  const page = require("fs").readFileSync(
+    require("path").join(__dirname, "..", "app", "buyer", "portal", "[seller]", "cart", "page.tsx"),
+    "utf8",
+  ) as string;
+
+  it("at 1440 the boxed qty controls are stacked (boxes row, then pieces row) so the Qty column stays 176px (w-44)", () => {
+    expect(page).toMatch(/data-testid="cart-box-controls"\s+className="flex flex-col/);
+    expect(page).toMatch(/<th className="[^"]*w-44[^"]*">Qty<\/th>/);
+    expect(page).not.toMatch(/<th className="[^"]*w-32[^"]*">Qty<\/th>/);
+  });
+
+  it("every box / qty / delete control is at least 40px (h-10 w-10), never a p-1 icon", () => {
+    expect(page.match(/h-10 w-10/g)?.length).toBeGreaterThanOrEqual(6);
+    expect(page).not.toMatch(/rounded p-1 text-navy\/70/);
+    expect(page).not.toMatch(/rounded p-1\.5 text-navy/);
+  });
+
+  it("the '= N units' text and the pieces input are not 10px / clipped (text-xs, h-10 w-14 inputs)", () => {
+    expect(page).toMatch(/<p className="text-xs text-navy\/70">\s*= \{item\.qty\}/);
+    expect(page).not.toMatch(/<p className="text-\[10px\] text-navy\/70">\s*= /);
+    expect(page.match(/h-10 w-14/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("below md the table stacks as cards (block), so nothing scrolls sideways at 390px", () => {
+    expect(page).toMatch(/<table className="block w-full md:table md:min-w-\[640px\]">/);
+    expect(page).toMatch(/<thead className="hidden md:table-header-group">/);
+    expect(page).toMatch(/<tr[^>]*className="block px-4 py-3[^"]*md:table-row/);
+  });
+
+  it("the controls carry accessible names", () => {
+    ["Fewer boxes", "More boxes", "Boxes", "Loose pieces"].forEach((n) =>
+      expect(page).toContain(`aria-label="${n}"`),
+    );
+    expect(page).toMatch(/aria-label=\{`Remove \$\{item\.name\}`\}/);
+  });
+});
