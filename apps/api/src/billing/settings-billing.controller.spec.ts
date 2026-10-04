@@ -17,7 +17,7 @@ interface AuthUser {
 /** Instantiate the controller with mocked proration + mutations (+ billing) only (no
  *  Nest module needed). */
 function make(
-  opts: { change?: any; checkoutResult?: any; planKey?: string; billed?: boolean } = {},
+  opts: { change?: any; checkoutResult?: any; planKey?: string; billing?: string } = {},
 ) {
   const subscription = {
     getSubscription: jest
@@ -31,7 +31,7 @@ function make(
     prorationPreview: jest.fn().mockResolvedValue({ sku: "FORECASTING", proratedToday: 6.4 }),
   } as any;
   const mutations = {
-    isAddonBilled: jest.fn().mockResolvedValue(opts.billed ?? true),
+    addonBillingMode: jest.fn().mockResolvedValue(opts.billing ?? "STRIPE"),
     planChangePreview: jest
       .fn()
       .mockResolvedValue(opts.change ?? { action: "UPGRADE", proratedNow: 12.3 }),
@@ -152,17 +152,23 @@ describe("SettingsBillingController.subscribe — PLAN_CHANGED_DURING_SUBSCRIBE 
   });
 });
 
-describe("SettingsBillingController.prorationPreview — says whether the add-on is billed", () => {
-  it("a Stripe-billed tenant: preview carries billed: true next to the estimate", async () => {
-    const { controller, mutations } = make({ billed: true });
+describe("SettingsBillingController.prorationPreview — says how the add-on is billed", () => {
+  it("a Stripe-billed tenant: billing STRIPE / billed true next to the estimate", async () => {
+    const { controller, mutations } = make({ billing: "STRIPE" });
     const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
-    expect(res).toMatchObject({ proratedToday: 6.4, billed: true });
-    expect(mutations.isAddonBilled).toHaveBeenCalledWith("t1");
+    expect(res).toMatchObject({ proratedToday: 6.4, billing: "STRIPE", billed: true });
+    expect(mutations.addonBillingMode).toHaveBeenCalledWith("t1");
   });
 
-  it("a free pilot: billed: false, so the sheet can say it is included at no charge", async () => {
-    const { controller } = make({ billed: false });
+  it("a manually-invoiced tenant: billing MANUAL, still billed (it appears on the next invoice)", async () => {
+    const { controller } = make({ billing: "MANUAL" });
     const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
-    expect(res.billed).toBe(false);
+    expect(res).toMatchObject({ billing: "MANUAL", billed: true });
+  });
+
+  it("a free pilot: billing UNBILLED / billed false, so the sheet says it is included at no charge", async () => {
+    const { controller } = make({ billing: "UNBILLED" });
+    const res: any = await controller.prorationPreview({ tenantId: "t1" } as any, "FORECASTING");
+    expect(res).toMatchObject({ billing: "UNBILLED", billed: false });
   });
 });

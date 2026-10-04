@@ -482,9 +482,128 @@ describe("SubscriptionMutationService.subscribe (MRR = signed change)", () => {
     expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-12); // dropped CUSTOMER_PACK_100
     expect(tx.tenantAddon.update).toHaveBeenCalledWith({
       where: { id: "a1" },
-      data: { active: false },
+      data: { active: false, stripeItemId: null },
     });
     expect(emitted(events)).not.toContain(BILLING_EVENTS.TRIAL_CONVERTED);
+  });
+
+  describe("B1 — a billed self-serve add-on dropped by a subscribe()/cycle switch loses its Stripe item", () => {
+    const billedRow = {
+      id: "a1",
+      addonKey: "CUSTOMER_PACK_100",
+      sku: "CUSTOMER_PACK_100",
+      quantity: 2,
+      active: true,
+      priceSnapshot: 12,
+      stripeItemId: "si_1",
+    };
+    const activeAnnual = {
+      planKey: "BUSINESS",
+      cycle: "ANNUAL",
+      basePriceSnapshot: 349,
+      ...BILLED_SUB,
+    };
+
+    it("deletes the item (so it stops billing), clears the pointer, and books the MRR reversal", async () => {
+      const { svc, tx, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledWith("si_1", {
+        proration_behavior: "create_prorations",
+      });
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+      expect(deltaOf(events, BILLING_EVENTS.ADDON_DISABLED)).toBe(-24); // MRR matches: 12 x 2 gone
+    });
+
+    it("a re-enable after the cycle switch then creates ONE item, not a second (no double billing)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      // the row is now inactive with no item pointer: enabling creates exactly one new item
+      const again = make({
+        sub: { ...BILLED_SUB, planKey: "STARTER" },
+        addonRow: { ...billedRow, active: false, stripeItemId: null },
+      });
+      await again.svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+      expect(stripe.client.subscriptionItems.del).toHaveBeenCalledTimes(1);
+      expect(again.stripe.client.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("an add-on the caller KEEPS in addons[] keeps its item (no delete)", async () => {
+      const { svc, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      await svc.subscribe(
+        "t1",
+        {
+          planKey: "STARTER",
+          cycle: "MONTHLY",
+          addons: [{ sku: "CUSTOMER_PACK_100", quantity: 2 }],
+        },
+        "admin",
+      );
+      expect(stripe.client.subscriptionItems.del).not.toHaveBeenCalled();
+    });
+
+    it("an item Stripe already removed counts as removed", async () => {
+      const { svc, tx, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        Object.assign(new Error("No such subscription item"), { code: "resource_missing" }),
+      );
+      await svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin");
+      expect(tx.tenantAddon.update).toHaveBeenCalledWith({
+        where: { id: "a1" },
+        data: { active: false, stripeItemId: null },
+      });
+    });
+
+    it("any OTHER Stripe failure refuses the whole subscribe with fixed copy and writes NOTHING", async () => {
+      const { svc, prisma, events, stripe } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [billedRow],
+      });
+      stripe.client.subscriptionItems.del.mockRejectedValueOnce(
+        new Error("api_connection_error: x"),
+      );
+      const err: any = await svc
+        .subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin")
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ServiceUnavailableException);
+      expect(String(err.message)).not.toMatch(/api_connection|si_1/);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it("an item that only appears under the lock (a concurrent enable) is never left billing: retryable refusal", async () => {
+      const { svc, tx, events } = make({
+        tenantStatus: "ACTIVE",
+        sub: activeAnnual,
+        priorAddons: [], // pre-tx read saw nothing to remove
+      });
+      tx.tenantAddon.findMany.mockResolvedValue([billedRow]); // ...but the locked re-read did
+      await expect(
+        svc.subscribe("t1", { planKey: "STARTER", cycle: "MONTHLY" }, "admin"),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(events.emit).not.toHaveBeenCalled();
+    });
   });
 
   it("#2460: an ACTIVE subscribe() re-choice nets against the stored snapshot — NULL ⇒ the full new price", async () => {

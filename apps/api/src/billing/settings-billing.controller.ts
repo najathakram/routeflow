@@ -101,11 +101,13 @@ export class SettingsBillingController {
     // `proratedToday` is an ESTIMATE: Stripe's own proration (returned by the enable call) is the
     // authoritative figure. `billed` is false for a free pilot / unconfigured Stripe, where the
     // add-on is included at no charge — the UI must not promise a charge there.
-    const [preview, billed] = await Promise.all([
+    const [preview, billing] = await Promise.all([
       this.proration.prorationPreview(tenantId, sku),
-      this.mutations.isAddonBilled(tenantId),
+      this.mutations.addonBillingMode(tenantId),
     ]);
-    return { ...preview, billed };
+    // `billing`: STRIPE (card, prorated) | MANUAL (appears on the owner's next invoice) | UNBILLED
+    // (free pilot). `billed` is kept for clients that only need "does this cost money".
+    return { ...preview, billing, billed: billing !== "UNBILLED" };
   }
 
   @Get("export")

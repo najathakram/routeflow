@@ -10,6 +10,9 @@
  *  4 a failing Stripe call never leaves the row enabled / the ledger booked, fixed-copy 503
  *  5 a tenant with NO Stripe subscription (pilot) or Stripe not configured stays free + unbooked
  *  6 tenant isolation, 7 ledger only after Stripe succeeds, 8 nothing retro-bills
+ *  M manually-invoiced (externalPayment) tenants: ON at catalog price, revenue booked, no Stripe,
+ *    one platform notice (owner ruling 2026-10-03)
+ *  B2/B3 Stripe API shape of the prorated item; refusing a quantity raise on an unbilled legacy row
  */
 const lockQueues = new Map<string, Promise<unknown>>();
 const mockWithAdvisoryLock = jest.fn(async (opts: { key: string }, fn: () => Promise<unknown>) => {
@@ -49,6 +52,15 @@ const CATALOG = {
     { sku: "MSRP", name: "MSRP", monthlyPrice: 20 },
   ],
   definitions: [],
+};
+
+const MANUAL_SUB = {
+  tenantId: "t1",
+  stripeSubId: null,
+  stripeCustomerId: null,
+  billingInterval: null,
+  cycle: "MONTHLY",
+  externalPayment: true,
 };
 
 const ACTIVE_SUB = {
@@ -91,8 +103,22 @@ function make(opts: Opts = {}) {
           opts.stripeProrationCents == null
             ? []
             : [
-                { proration: true, subscription_item: "si_1", amount: opts.stripeProrationCents },
-                { proration: true, subscription_item: "si_OTHER", amount: 99999 },
+                {
+                  proration: true,
+                  amount: opts.stripeProrationCents,
+                  parent: { subscription_details: { subscription_item: "si_1" } },
+                },
+                {
+                  proration: true,
+                  amount: 99999,
+                  parent: { subscription_details: { subscription_item: "si_OTHER" } },
+                },
+                // not a proration line of ours, same item: must not be summed
+                {
+                  proration: false,
+                  amount: 55555,
+                  parent: { subscription_details: { subscription_item: "si_1" } },
+                },
               ],
       }),
     },
@@ -120,6 +146,7 @@ function make(opts: Opts = {}) {
   };
   const tx = {
     tenantAddon,
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     tenant: {
       findUniqueOrThrow: jest.fn().mockResolvedValue({
@@ -132,6 +159,9 @@ function make(opts: Opts = {}) {
   };
   const prisma = {
     tenantAddon,
+    tenant: {
+      findUnique: jest.fn().mockResolvedValue({ slug: "acme", name: "Acme Foods" }),
+    },
     tenantSubscription: {
       findUnique: jest.fn().mockResolvedValue(opts.sub === undefined ? ACTIVE_SUB : opts.sub),
     },
@@ -351,7 +381,7 @@ describe("self-serve disableAddon — removes the Stripe item", () => {
 
 describe("self-serve add-on for tenants that are not billed through Stripe", () => {
   it("5: a pilot with NO stripeSubId stays free: no Stripe call, add-on on, priced 0, NO revenue booked", async () => {
-    const { svc, stripeClient, tenantAddon, events } = make({
+    const { svc, stripeClient, tenantAddon, events, tx } = make({
       sub: { ...ACTIVE_SUB, stripeSubId: null },
     });
     const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
@@ -365,6 +395,7 @@ describe("self-serve add-on for tenants that are not billed through Stripe", () 
     expect(enabledDeltas(events)).toEqual([]); // case 15: never count revenue we don't bill
     expect(res.billing).toBe("UNBILLED");
     expect(res.proratedNow).toBe(0);
+    expect(tx.auditLog.create).not.toHaveBeenCalled(); // nothing to invoice, nothing to tell the owner
   });
 
   it("5b: a tenant with no subscription row at all is treated the same (free, unbooked)", async () => {
@@ -398,12 +429,17 @@ describe("self-serve add-on for tenants that are not billed through Stripe", () 
     expect(getRow()).toMatchObject({ active: false });
   });
 
-  it("isAddonBilled tells the preview whether the tenant is billed through Stripe", async () => {
-    expect(await make().svc.isAddonBilled("t1")).toBe(true);
-    expect(await make({ sub: { ...ACTIVE_SUB, stripeSubId: null } }).svc.isAddonBilled("t1")).toBe(
-      false,
-    );
-    expect(await make({ stripeConfigured: false }).svc.isAddonBilled("t1")).toBe(false);
+  it("addonBillingMode tells the preview how the tenant is billed: STRIPE | MANUAL | UNBILLED", async () => {
+    expect(await make().svc.addonBillingMode("t1")).toBe("STRIPE");
+    expect(await make({ sub: MANUAL_SUB }).svc.addonBillingMode("t1")).toBe("MANUAL");
+    expect(
+      await make({ sub: { ...ACTIVE_SUB, stripeSubId: null } }).svc.addonBillingMode("t1"),
+    ).toBe("UNBILLED");
+    expect(await make({ sub: null }).svc.addonBillingMode("t1")).toBe("UNBILLED");
+    expect(await make({ stripeConfigured: false }).svc.addonBillingMode("t1")).toBe("UNBILLED");
+    expect(
+      await make({ stripeConfigured: false, sub: MANUAL_SUB }).svc.addonBillingMode("t1"),
+    ).toBe("MANUAL");
   });
 });
 
@@ -459,7 +495,7 @@ describe("self-serve add-on billing — isolation, retro-billing, gates", () => 
 
   it("8b: nothing in a read path bills: getting the preview flag touches no Stripe write", async () => {
     const { svc, stripeClient } = make();
-    await svc.isAddonBilled("t1");
+    await svc.addonBillingMode("t1");
     expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
     expect(stripeClient.subscriptionItems.update).not.toHaveBeenCalled();
     expect(stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
@@ -479,5 +515,172 @@ describe("self-serve add-on billing — isolation, retro-billing, gates", () => 
       expect.objectContaining({ family: "billing", key: "addon:t1:CUSTOMER_PACK_100" }),
       expect.any(Function),
     );
+  });
+});
+
+describe("manually-invoiced (externalPayment) tenants — owner ruling 2026-10-03", () => {
+  it("M1: enable is ON at the CATALOG price, books the revenue, and makes NO Stripe call", async () => {
+    const { svc, stripeClient, tenantAddon, events } = make({ sub: MANUAL_SUB });
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 2, "u1");
+
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(stripeClient.products.create).not.toHaveBeenCalled();
+    expect(tenantAddon.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ active: true, priceSnapshot: 12, quantity: 2 }),
+      }),
+    );
+    expect(tenantAddon.upsert.mock.calls[0][0].create.stripeItemId ?? null).toBeNull();
+    expect(enabledDeltas(events)).toEqual([24]); // 12 x 2, counted as revenue
+    expect(res.billing).toBe("MANUAL");
+    expect(res.proratedNow).toBeNull(); // the owner invoices it; no card amount exists
+  });
+
+  it("M2: exactly ONE platform notice, naming the add-on and the tenant, in the platform audit feed", async () => {
+    const { svc, tx } = make({ sub: MANUAL_SUB });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    const data = tx.auditLog.create.mock.calls[0][0].data;
+    expect(data).toMatchObject({
+      tenantId: "t1",
+      action: "ADDON_MANUAL_INVOICE_DUE",
+      entityType: "tenant",
+      entityId: "t1",
+    });
+    expect(data.meta).toMatchObject({
+      platformAdmin: true,
+      sku: "CUSTOMER_PACK_100",
+      message: "Add-on Customer pack enabled for Acme Foods: add to their next manual invoice",
+    });
+  });
+
+  it("M3: a repeat enable raises no second notice and books nothing", async () => {
+    const { svc, tx, events } = make({ sub: MANUAL_SUB });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(enabledDeltas(events)).toEqual([12]);
+  });
+
+  it("M4: disable reverses the booked revenue and never calls Stripe", async () => {
+    const { svc, stripeClient, events, getRow } = make({
+      sub: MANUAL_SUB,
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        active: true,
+        quantity: 2,
+        priceSnapshot: 12,
+        stripeItemId: null,
+      },
+    });
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
+    expect(stripeClient.subscriptionItems.del).not.toHaveBeenCalled();
+    expect(getRow()).toMatchObject({ active: false });
+    const disabled = events.emit.mock.calls.filter(
+      (c: any[]) => c[1] === BILLING_EVENTS.ADDON_DISABLED,
+    );
+    expect(disabled.map((c: any[]) => c[3]?.amountDelta)).toEqual([-24]);
+  });
+
+  it("M5: a Stripe-billed tenant raises NO manual-invoice notice", async () => {
+    const { svc, tx } = make();
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it("M6: Stripe not configured but externalPayment set is still MANUAL (no Stripe needed)", async () => {
+    const { svc, events } = make({ sub: MANUAL_SUB, stripeConfigured: false });
+    const res: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1");
+    expect(res.billing).toBe("MANUAL");
+    expect(enabledDeltas(events)).toEqual([12]);
+  });
+});
+
+describe("B3 — a quantity raise on an unbilled legacy row of a Stripe-billed tenant", () => {
+  const legacy = {
+    id: "a1",
+    addonKey: "CUSTOMER_PACK_100",
+    sku: "CUSTOMER_PACK_100",
+    active: true,
+    quantity: 1,
+    priceSnapshot: 12,
+    stripeItemId: null,
+  };
+
+  it("B3: is refused with fixed copy: no Stripe charge, no MRR booked, row untouched", async () => {
+    const { svc, stripeClient, events, tenantAddon, getRow } = make({ addonRow: legacy });
+    const err: any = await svc.enableAddon("t1", "CUSTOMER_PACK_100", 5, "u1").catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(String(err.message)).toMatch(/contact support/i);
+    expect(stripeClient.subscriptionItems.create).not.toHaveBeenCalled();
+    expect(tenantAddon.upsert).not.toHaveBeenCalled();
+    expect(events.emit).not.toHaveBeenCalled();
+    expect(getRow()).toMatchObject({ quantity: 1, stripeItemId: null });
+  });
+
+  it("B3b: a manually-invoiced tenant may still raise the quantity of its own row", async () => {
+    const { svc, events } = make({ sub: MANUAL_SUB, addonRow: legacy });
+    await svc.enableAddon("t1", "CUSTOMER_PACK_100", 3, "u1");
+    expect(enabledDeltas(events)).toEqual([24]); // 12 x (3 - 1)
+  });
+});
+
+describe("should-fix — idempotency key and disable under the enable lock", () => {
+  it("every item create carries a per-attempt Stripe idempotency key; a retry after a failure gets a NEW key", async () => {
+    const m = make({ txFails: true });
+    await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1").catch(() => undefined);
+    const k1 = m.stripeClient.subscriptionItems.create.mock.calls[0][1]?.idempotencyKey;
+    expect(k1).toMatch(/^addon-item:t1:CUSTOMER_PACK_100:/);
+    // a second attempt (after the orphan was cleaned up) must not replay the deleted item
+    await m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1").catch(() => undefined);
+    const k2 = m.stripeClient.subscriptionItems.create.mock.calls[1][1]?.idempotencyKey;
+    expect(k2).toMatch(/^addon-item:t1:CUSTOMER_PACK_100:/);
+    expect(k2).not.toBe(k1);
+  });
+
+  it("disableAddon takes the SAME addon:<tenant>:<sku> lock as enable", async () => {
+    mockWithAdvisoryLock.mockClear();
+    const { svc } = make({
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        active: true,
+        quantity: 1,
+        priceSnapshot: 12,
+        stripeItemId: "si_1",
+      },
+    });
+    await svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1");
+    expect(mockWithAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ family: "billing", key: "addon:t1:CUSTOMER_PACK_100" }),
+      expect.any(Function),
+    );
+  });
+
+  it("an enable and a disable of the same add-on never interleave (serialised on one key)", async () => {
+    const m = make({
+      addonRow: {
+        id: "a1",
+        addonKey: "CUSTOMER_PACK_100",
+        sku: "CUSTOMER_PACK_100",
+        active: true,
+        quantity: 1,
+        priceSnapshot: 12,
+        stripeItemId: "si_1",
+      },
+    });
+    await Promise.all([
+      m.svc.disableAddon("t1", "CUSTOMER_PACK_100", "u1"),
+      m.svc.enableAddon("t1", "CUSTOMER_PACK_100", 1, "u1"),
+    ]);
+    // disable ran first (deleted si_1, row off); the serialised enable then saw an INACTIVE row
+    // and created exactly one fresh item: the tenant ends with one item, not two.
+    expect(m.stripeClient.subscriptionItems.del).toHaveBeenCalledTimes(1);
+    expect(m.stripeClient.subscriptionItems.create).toHaveBeenCalledTimes(1);
+    expect(m.getRow()).toMatchObject({ active: true, stripeItemId: "si_1" });
   });
 });
