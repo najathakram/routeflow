@@ -22,6 +22,8 @@ import { entitlementAuthorityFromEntitlements } from "../testing/entitlement-aut
 import { CustomersController } from "./customers.controller";
 import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { SELF_SERVICE_FIELDS, pickSelfServiceFields } from "./self-service-fields";
+import { BuyerController } from "../buyer/buyer.controller";
+import { getMetadataStorage } from "class-validator";
 
 describe("customer self-service profile edit keeps seller-controlled fields out", () => {
   let service: CustomersService;
@@ -151,5 +153,29 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
     expect(pickSelfServiceFields({ phone: "1", whatever: 2, userId: "u" } as never)).toEqual({
       phone: "1",
     });
+  });
+
+  it("(f) the buyer-portal handler (PATCH /buyer/me) applies the SAME allowlist before the shared update", async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const controller = Object.create(BuyerController.prototype) as any;
+    controller.customersService = { update };
+    await controller.updateMe({ customerId: "cust-1" }, {
+      contactName: "Jo B",
+      ...SELLER_FIELDS,
+    } as never);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0]).toBe("cust-1");
+    expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(["contactName"]);
+  });
+
+  it("(g) the allowlist is set-equal to the fields UpdateBuyerProfileDto declares (no hand-copy drift)", () => {
+    const declared = [
+      ...new Set(
+        getMetadataStorage()
+          .getTargetValidationMetadatas(UpdateBuyerProfileDto, "", false, false)
+          .map((m) => m.propertyName),
+      ),
+    ].sort();
+    expect([...SELF_SERVICE_FIELDS].sort()).toEqual(declared);
   });
 });

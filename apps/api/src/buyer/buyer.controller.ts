@@ -42,6 +42,8 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
+import { UpdateCustomerDto } from "../customers/dto/update-customer.dto";
+import { pickSelfServiceFields } from "../customers/self-service-fields";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { SystemConfigService } from "../system-config/system-config.service";
@@ -931,7 +933,12 @@ export class BuyerController {
     // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
     // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
     // it, so the ValidationPipe rejects them and update() can only touch profile.
-    return this.customersService.update(ctx.customerId, dto);
+    // Second layer: the same explicit allowlist /customers/me applies, so the write never depends on the
+    // pipe alone.
+    return this.customersService.update(
+      ctx.customerId,
+      pickSelfServiceFields({ ...dto }) as UpdateCustomerDto,
+    );
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────
