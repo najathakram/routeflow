@@ -24,6 +24,8 @@ import { UpdateBuyerProfileDto } from "../buyer/dto/update-buyer-profile.dto";
 import { SELF_SERVICE_FIELDS, pickSelfServiceFields } from "./self-service-fields";
 import { BuyerController } from "../buyer/buyer.controller";
 import { getMetadataStorage } from "class-validator";
+import { UpdateCustomerDto } from "./dto/update-customer.dto";
+import { ValidationPipe } from "@nestjs/common";
 
 describe("customer self-service profile edit keeps seller-controlled fields out", () => {
   let service: CustomersService;
@@ -177,5 +179,72 @@ describe("customer self-service profile edit keeps seller-controlled fields out"
       ),
     ].sort();
     expect([...SELF_SERVICE_FIELDS].sort()).toEqual(declared);
+  });
+
+  // SA-653: customer `notes` is STAFF-INTERNAL, never self-writable; one list drives the DTO and the pick.
+  const constraintsOf = (cls: new () => unknown, prop: string) =>
+    getMetadataStorage()
+      .getTargetValidationMetadatas(cls as never, "", false, false)
+      .filter((m) => m.propertyName === prop)
+      .map((m) => `${m.type}:${m.name ?? ""}`)
+      .sort();
+
+  it("(h) notes is not self-writable: not in the allowlist, dropped by both service layers, refused by the body pipe", async () => {
+    expect(SELF_SERVICE_FIELDS).not.toContain("notes");
+    arrange();
+    await service.updateMyProfile(
+      { sub: "user-1" } as never,
+      { contactName: "Jo B", notes: "x" } as never,
+    );
+    expect(written()).not.toHaveProperty("notes");
+    const update = jest.fn().mockResolvedValue({});
+    const controller = Object.create(BuyerController.prototype) as any;
+    controller.customersService = { update };
+    await controller.updateMe({ customerId: "cust-1" }, {
+      contactName: "Jo B",
+      notes: "x",
+    } as never);
+    expect(update.mock.calls[0][1]).not.toHaveProperty("notes");
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
+    await expect(
+      pipe.transform({ notes: "x" }, { type: "body", metatype: UpdateBuyerProfileDto }),
+    ).rejects.toBeDefined();
+  });
+
+  it("(i) UpdateBuyerProfileDto is DERIVED from UpdateCustomerDto: every field carries the staff DTO's validators", () => {
+    for (const f of SELF_SERVICE_FIELDS) {
+      expect(constraintsOf(UpdateBuyerProfileDto, f)).toEqual(constraintsOf(UpdateCustomerDto, f));
+      expect(constraintsOf(UpdateBuyerProfileDto, f).length).toBeGreaterThan(0);
+    }
+  });
+
+  it("(j) the buyer body pipe still accepts every allowlisted field", async () => {
+    const pipe = new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    });
+    const body = {
+      businessName: "Acme",
+      contactName: "Jo",
+      phone: "1",
+      email: "jo@example.com",
+      mobile: "2",
+      displayName: "Jo",
+      salutation: "Mr",
+      firstName: "Jo",
+      lastName: "B",
+      deliveryWindowStart: "08:00",
+      deliveryWindowEnd: "12:00",
+      orderStatusEmails: true,
+    };
+    expect(Object.keys(body).sort()).toEqual([...SELF_SERVICE_FIELDS].sort());
+    await expect(
+      pipe.transform(body, { type: "body", metatype: UpdateBuyerProfileDto }),
+    ).resolves.toBeDefined();
   });
 });
