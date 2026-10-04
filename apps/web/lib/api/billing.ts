@@ -116,6 +116,11 @@ export interface Recommendation {
   preCheckedAddons: string[];
 }
 
+/** How the tenant's self-serve add-on is billed (`GET /billing/proration-preview`):
+ *  STRIPE = prorated onto the next Stripe bill; MANUAL = the owner adds it to the next manual
+ *  invoice; UNBILLED = a free pilot, included at no charge. */
+export type AddonBillingMode = "STRIPE" | "MANUAL" | "UNBILLED";
+
 export interface ProrationPreview {
   sku: string;
   name: string;
@@ -128,7 +133,7 @@ export interface ProrationPreview {
   effectiveAt: string;
   nextChargeAt: string;
   /** How the add-on is billed; "REFUSED" when the enable call would 409 (see `refusal`). */
-  billing?: "STRIPE" | "MANUAL" | "UNBILLED" | "REFUSED";
+  billing?: AddonBillingMode | "REFUSED";
   billed?: boolean;
   /** The SAME `{ code, message }` the enable call throws (ADDON_ANNUAL_NOT_SUPPORTED /
    *  ADDON_INCLUDED_IN_PLAN); null when the enable is allowed. */
