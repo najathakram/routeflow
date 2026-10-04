@@ -9,6 +9,7 @@ import {
   useUpdateOrderTemplate,
   type OrderTemplate,
 } from "@/lib/api/order-templates";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 // ─── Day of week config ───────────────────────────────────────────────────────
 
@@ -62,8 +63,8 @@ export function StandingOrderModal({
   template,
 }: StandingOrderModalProps) {
   const { toast } = useToast();
-  const createTemplate = useCreateOrderTemplate();
-  const updateTemplate = useUpdateOrderTemplate();
+  const createTemplate = useCreateOrderTemplate({ localErrorToast: true });
+  const updateTemplate = useUpdateOrderTemplate({ localErrorToast: true });
 
   const isEditing = !!template;
 
@@ -248,12 +249,13 @@ export function StandingOrderModal({
 
   const isPending = createTemplate.isPending || updateTemplate.isPending;
   const apiError = (() => {
-    const err = (createTemplate.error ?? updateTemplate.error) as {
-      response?: { data?: { message?: string } };
-      message?: string;
-    } | null;
-    if (!err) return null;
-    return err.response?.data?.message || err.message || "Something went wrong.";
+    const err = (createTemplate.error ?? updateTemplate.error) as unknown;
+    return err
+      ? genericToastCopy(
+          err,
+          "The standing order couldn't be saved. Check the lines and schedule, then try again.",
+        )
+      : null;
   })();
 
   return (

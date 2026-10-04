@@ -31,10 +31,6 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending (found by the AST scan: a read split across lines that the text scanner missed)"
   },
-  "app/(dashboard)/customers/[id]/StandingOrderModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
   "app/(dashboard)/customers/[id]/page.tsx": {
     "count": 8,
     "why": "B986-7 orders + customers: per-surface raw message read, pending"
@@ -87,10 +83,6 @@
     "count": 1,
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
-  "app/(dashboard)/finance/payments/page.tsx": {
-    "count": 1,
-    "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
-  },
   "app/(dashboard)/inventory/_components/purchase-orders-edit.ts": {
     "count": 3,
     "why": "B986-8 the rest: per-surface raw message read, pending"
@@ -116,36 +108,21 @@
     "why": "B986-6 invoices + bills + finance: per-surface raw message read, pending"
   },
   "app/(dashboard)/orders/[id]/page.tsx": {
-    "count": 8,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "count": 2,
+    "why": "B991 / B987-E (codes + structured fields first): the cancel and fulfillment refusals are UNCODED and today's server sentence says what to fix, so they keep it (coded refusals are mapped first); order delete goes through lib/order-error-text.ts; pending"
   },
   "app/(dashboard)/orders/_components/CreateOrderModal.tsx": {
     "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/CreditNotePicker.tsx": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/LicenseGuardModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/_components/SplitInvoiceModal.tsx": {
-    "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "why": "B991 / B987-E (codes + structured fields first): the create-order banner keeps today's server sentence for an UNCODED refusal (coded ones are mapped first); pending"
   },
   "app/(dashboard)/orders/_components/scan/ScanOrderScreen.tsx": {
     "count": 2,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending (2: the pre-existing one, plus #2865's `res.message` for a refused scan lookup, a server sentence that needs a code first: B991 / B987-E)"
+    "why": "B986-7 orders + customers: two reads, both pending a code (B991 / B987-E): one folds an unexpected scan-resolver rejection (a JS Error, not a server body); the other is #2865's `res.message` for a refused scan lookup (a server sentence)"
   },
   "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": {
-    "count": 4,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
-  "app/(dashboard)/orders/page.tsx": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
+    "count": 2,
+    "permanent": true,
+    "why": "comparison: e.message is matched against 'Network Error' / timeout to classify a transient failure, never rendered"
   },
   "app/(dashboard)/products/[id]/page.tsx": {
     "count": 1,
@@ -380,17 +357,9 @@
     "count": 1,
     "why": "B991 (codes + structured fields first): reverted to today's behaviour so the surface is not made less actionable; pending"
   },
-  "lib/api/credit-limit.ts": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
-  },
   "lib/api/platform-pricing.ts": {
     "count": 1,
     "why": "B986-2 platform-admin: per-surface raw message read, pending"
-  },
-  "lib/api/selling-restricted.ts": {
-    "count": 1,
-    "why": "B986-7 orders + customers: per-surface raw message read, pending"
   },
   "lib/api/supplier-statements.ts": {
     "count": 1,
@@ -438,5 +407,9 @@
     "count": 1,
     "permanent": true,
     "why": "classification: the server text only classifies a duplicate, it is never displayed"
+  },
+  "lib/order-error-text.ts": {
+    "count": 1,
+    "why": "B991 / B987-E (codes + structured fields first): an UNCODED order-delete refusal keeps the server's own sentence (e.g. void the invoice first); coded ones are fixed copy; pending"
   }
 }

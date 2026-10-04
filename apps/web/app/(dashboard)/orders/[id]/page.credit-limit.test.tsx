@@ -76,13 +76,13 @@ const open = async (status: string, button: RegExp) => {
 beforeEach(() => jest.clearAllMocks());
 
 describe("order detail — CREDIT_LIMIT_EXCEEDED", () => {
-  it("Mark as Delivered refused for credit: the dialog with the server's numbers, no toast", async () => {
+  it("Mark as Delivered refused for credit: the dialog with the fixed sentence built from the server's numbers, no toast", async () => {
     reject(409, credit409);
     await open("OUT_FOR_DELIVERY", /Mark as Delivered/);
     const dialog = await screen.findByRole("dialog", { name: /credit limit exceeded/i });
     expect(dialog).toHaveTextContent("$100.00");
     expect(dialog).toHaveTextContent("$110.00");
-    expect(dialog).toHaveTextContent(/over their credit limit of 100.00/);
+    expect(dialog).toHaveTextContent(/over their \$100\.00 credit limit/);
     expect(toast).not.toHaveBeenCalled();
   });
 

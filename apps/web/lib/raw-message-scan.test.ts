@@ -17,6 +17,7 @@ const allow = ALLOWLIST as Record<string, Entry>;
 
 /** Reads that are lookups, classifications or logs and never render the text. Pinned EXACTLY (file -> count). */
 const PERMANENT_EXPECTED: Record<string, number> = {
+  "app/(dashboard)/orders/_components/scan/useScanCodeHandler.ts": 2,
   "components/ScanInvoiceModal.tsx": 1,
   "lib/buyer-auth-context.tsx": 2,
   "lib/credit-note-error-copy.ts": 1,
@@ -27,7 +28,7 @@ const PERMANENT_EXPECTED: Record<string, number> = {
   "lib/reason-copy.ts": 1,
 };
 /** The exact pending total (reads still to be converted by the B986 area PRs). */
-const PENDING_TOTAL = 251;
+const PENDING_TOTAL = 231;
 
 describe("no raw server message in apps/web UI (B986 ratchet)", () => {
   const found = scanTree(WEB);

@@ -9,6 +9,7 @@ import type {
   LineComponentView,
   PriceType,
 } from "@routeflow/types";
+import type { LocalErrorToastOption } from "@/lib/local-error-toast";
 
 export type { ChangeRequest } from "@/lib/change-requests";
 
@@ -269,7 +270,7 @@ export type CreateOrderItem =
       notes?: string;
     };
 
-export function useCreateOrder() {
+export function useCreateOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<
     Order,
@@ -305,6 +306,7 @@ export function useCreateOrder() {
       idempotencyKey?: string;
     }
   >({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ idempotencyKey, ...dto }) =>
       apiClient
         .post(
@@ -417,9 +419,10 @@ export function useCustomerPriceHistory(customerId: string | null | undefined) {
   });
 }
 
-export function useUpdateOrderStatus() {
+export function useUpdateOrderStatus(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; status: string; reason?: string }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, status, reason }) =>
       apiClient.patch(`/orders/${id}/status`, { status, reason }).then((r) => r.data),
     onSuccess: (_, { id }) => {
@@ -532,9 +535,10 @@ export function useReopenOrder() {
   });
 }
 
-export function useDeleteOrder() {
+export function useDeleteOrder(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<{ success: boolean }, Error, string>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: (id) => apiClient.delete(`/orders/${id}`).then((r) => r.data),
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ["orders"] });
@@ -610,9 +614,10 @@ export function usePatchOrderCommissionRate() {
   });
 }
 
-export function usePatchOrderFulfillPath() {
+export function usePatchOrderFulfillPath(options?: LocalErrorToastOption) {
   const qc = useQueryClient();
   return useMutation<Order, Error, { id: string; fulfillPath: "ROUTE" | "SHIP" }>({
+    meta: options?.localErrorToast ? { localErrorToast: options.localErrorToast } : undefined,
     mutationFn: ({ id, fulfillPath }) =>
       apiClient.patch(`/orders/${id}/fulfill-path`, { fulfillPath }).then((r) => r.data),
     onSuccess: (_d, vars) => qc.invalidateQueries({ queryKey: ["orders", vars.id] }),
