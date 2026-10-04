@@ -22,6 +22,8 @@ import { BadRequestException } from "@nestjs/common";
 import { ValidationPipe } from "@nestjs/common";
 import { BuyerController } from "../buyer/buyer.controller";
 import { UpdateOrderTemplateDto } from "./dto/update-order-template.dto";
+import { UpdateBuyerOrderTemplateDto } from "./dto/update-buyer-order-template.dto";
+import { CreateOrderTemplateDto } from "./dto/create-order-template.dto";
 import { decrementStockForSale } from "../orders/order-stock";
 
 jest.mock("../orders/order-stock", () => ({
@@ -156,8 +158,8 @@ describe("order template input validation", () => {
   const bodyType = () =>
     Reflect.getMetadata("design:paramtypes", BuyerController.prototype, "updateTemplate")[1];
 
-  it("(a) the buyer template PATCH handler takes the real template body type, not an inline object", () => {
-    expect(bodyType()).toBe(UpdateOrderTemplateDto);
+  it("(a) the buyer template PATCH handler takes the buyer-specific body type, not an inline object", () => {
+    expect(bodyType()).toBe(UpdateBuyerOrderTemplateDto);
   });
 
   it.each([
@@ -165,22 +167,31 @@ describe("order template input validation", () => {
     ["a zero quantity", { items: [{ productId: "p1", qty: 0 }] }],
     ["a fractional quantity", { items: [{ productId: "p1", qty: 1.5 }] }],
     ["an unknown key", { isActive: true, whatever: 1 }],
+    ["an item list at all", { items: [{ productId: "p1", qty: 3 }] }],
+    ["a name change", { name: "x" }],
   ])("(b) the validation pipe refuses %s on that route", async (_n, body) => {
     await expect(
       pipe.transform(body, { type: "body", metatype: bodyType() }),
-    ).rejects.toBeDefined();
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it("(c) control: the pipe accepts the pause/resume body and a valid item list", async () => {
     await expect(
       pipe.transform({ isActive: false }, { type: "body", metatype: bodyType() }),
     ).resolves.toMatchObject({ isActive: false });
-    await expect(
-      pipe.transform(
-        { items: [{ productId: "p1", qty: 3 }] },
-        { type: "body", metatype: bodyType() },
-      ),
-    ).resolves.toBeDefined();
+  });
+
+  const line = { productId: "p1", qty: 1 };
+  const lines = (n: number) => Array.from({ length: n }, () => ({ ...line }));
+  it.each([
+    ["create", CreateOrderTemplateDto, { name: "W", daysOfWeek: [1] }],
+    ["update", UpdateOrderTemplateDto, {}],
+  ])("(h) %s caps template lines at 500: 501 refused, 500 accepted", async (_n, type, base) => {
+    const opts = { type: "body" as const, metatype: type as never };
+    await expect(pipe.transform({ ...base, items: lines(501) }, opts)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(pipe.transform({ ...base, items: lines(500) }, opts)).resolves.toBeDefined();
   });
 
   it.each([-3, 0, Number.NaN])(
