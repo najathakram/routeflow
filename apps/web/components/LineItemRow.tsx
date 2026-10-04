@@ -6,6 +6,7 @@ import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
+import { PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
 
@@ -63,6 +64,14 @@ export interface LineItemRowProps {
   floorAcked: boolean;
   costRevealed: boolean;
   priceHistoryEntry?: { lastPrice: number };
+  /** New-order only: shows the customer price-history popover beside the price. Omitted by vendor
+   *  bills, the scan screen and read-only rows, which therefore get no button. "Use this price" must
+   *  be the line's existing price-change path (`onSetDiscountedPrice`). */
+  customerPriceHistory?: {
+    customerId?: string | null;
+    customerName?: string | null;
+    onUsePrice: (price: number) => void;
+  };
   /** Last-scanned highlight ring (scanner-redesign-spec.md §4.1/§5.1) — unused by
    *  `CreateOrderModal`, which never passes it; reserved for the scan screen. */
   highlighted?: boolean;
@@ -163,6 +172,7 @@ export function LineItemRow({
   floorAcked,
   costRevealed,
   priceHistoryEntry,
+  customerPriceHistory,
   highlighted,
   onQtyDelta,
   onSetBoxes,
@@ -186,6 +196,16 @@ export function LineItemRow({
 }: LineItemRowProps) {
   const { showLooseUnits, openLooseUnits, closeLooseUnits } = useLooseUnitsToggle(li.pieces);
   const qtyLocked = !!pendingUnit;
+  const historyButton = customerPriceHistory && !li.isUnlisted && (
+    <PriceHistoryButton
+      customerId={customerPriceHistory.customerId}
+      customerName={customerPriceHistory.customerName}
+      productId={li.productId || null}
+      productName={li.productName}
+      unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
+      onUsePrice={customerPriceHistory.onUsePrice}
+    />
+  );
   return (
     <li
       ref={rowRef}
@@ -316,6 +336,13 @@ export function LineItemRow({
           )}
           {/* One-time discount input (only when no special price already applied). #2696 (b): when
               the price is tap-to-edit (onTapPrice), the sheet owns the price — no inline box. */}
+          {/* A SPECIAL line has no price input: its history button stands alone. */}
+          {li.priceType === "SPECIAL" && !onTapPrice && historyButton && (
+            <div className="mt-1 flex items-center gap-1">
+              <span className="text-[10px] text-navy/70">Price history</span>
+              {historyButton}
+            </div>
+          )}
           {li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
@@ -329,6 +356,7 @@ export function LineItemRow({
                 disabled={qtyLocked}
                 className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
+              {historyButton}
               {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
                 <span className="text-[10px] text-navy/50">
                   Last: ${priceHistoryEntry.lastPrice.toFixed(2)}

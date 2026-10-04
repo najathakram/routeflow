@@ -1390,6 +1390,11 @@ export function CreateOrderModal({
       costRevealed={costRevealed.has(li.tempId)}
       // the remembered price is a PACK price (the server excludes unit lines from it, B606)
       priceHistoryEntry={li.unitLabel ? undefined : priceHistory?.[li.productId]}
+      customerPriceHistory={{
+        customerId: selectedCustomer?.id,
+        customerName: selectedCustomer?.businessName,
+        onUsePrice: (price) => setDiscountedPrice(li.tempId, price),
+      }}
       highlighted={ctx?.highlighted}
       onTapPrice={ctx?.onTapPrice}
       rowRef={(el) => {
