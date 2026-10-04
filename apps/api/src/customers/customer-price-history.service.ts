@@ -13,6 +13,9 @@ import { BACKING_ORDER_STATUSES } from "../invoices/credit-exposure";
 import { PrismaService } from "../prisma/prisma.service";
 import { salePackOf } from "../sales-facts/sales-facts.rules";
 
+/** Invoices that were actually issued: DRAFT/VOID are not sales, a WRITTEN_OFF invoice was billed. */
+const ISSUED_STATUSES = { notIn: [...ACCRUAL_REVENUE_STATUSES.notIn] };
+
 export const PRICE_HISTORY_DEFAULT_LIMIT = 25;
 export const PRICE_HISTORY_MAX_LIMIT = 100;
 
@@ -110,7 +113,7 @@ export class CustomerPriceHistoryService {
         where: {
           tenantId,
           customerId,
-          status: ACCRUAL_REVENUE_STATUSES,
+          status: ISSUED_STATUSES,
           items: { some: { productId } },
         },
         orderBy: [{ issueDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
@@ -161,7 +164,7 @@ export class CustomerPriceHistoryService {
       const billedInvoices = await db.invoice.findMany({
         where: {
           tenantId,
-          status: ACCRUAL_REVENUE_STATUSES,
+          status: ISSUED_STATUSES,
           items: { some: { orderItemId: { in: lineIds } } },
         },
         select: {
