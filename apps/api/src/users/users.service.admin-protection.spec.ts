@@ -6,6 +6,7 @@ import { ForbiddenException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { UsersService } from "./users.service";
+import { UsersController } from "./users.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { EmailService } from "../email/email.service";
 import { createMockPrisma } from "../testing/prisma-mock";
@@ -167,6 +168,21 @@ describe("UsersService: admin account protection", () => {
         ),
       ).resolves.toBeDefined();
     });
+    it("a mixed-case or padded STORED email with a no-op save is allowed", async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...ADMIN_TARGET,
+        email: " Owner@Acme.Example ",
+      } as any);
+      prisma.user.update.mockResolvedValue({ id: "t1" } as any);
+      await expect(
+        service.updateUser(
+          "t1",
+          { email: "owner@acme.example", username: "owner" } as any,
+          "op",
+          "OPERATOR" as any,
+        ),
+      ).resolves.toBeDefined();
+    });
     it("an OPERATOR changing the email on an admin row is still refused", async () => {
       prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
       await expect(
@@ -177,6 +193,35 @@ describe("UsersService: admin account protection", () => {
           "OPERATOR" as any,
         ),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe("callers other than a TENANT_ADMIN", () => {
+    it("a SUPER_ADMIN caller is refused on an admin target", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(service.resetPassword("t1", "SUPER_ADMIN" as any)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("an undefined caller role is refused on an admin target", async () => {
+      prisma.user.findUnique.mockResolvedValue(ADMIN_TARGET as any);
+      await expect(service.unlockUser("t1", undefined as any)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+    it("controller + service: a non-admin caller on the driver-permit route is refused", async () => {
+      prisma.user.findUnique.mockResolvedValue({ ...ADMIN_TARGET, canActAsDriver: false } as any);
+      const controller = new UsersController(service as any);
+      await expect(
+        controller.toggleDriverPermit("t1", {
+          sub: "op1",
+          username: "op",
+          role: "OPERATOR",
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
     });
   });
 

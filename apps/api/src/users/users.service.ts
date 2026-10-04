@@ -206,7 +206,9 @@ export class UsersService {
     if (!user) throw new NotFoundException("User not found");
     // Only an ACTUAL change of the sign-in identity (email or username) on an admin account is guarded: the
     // edit form always sends both, so an unchanged value must pass.
-    const emailEdit = dto.email ? dto.email.trim().toLowerCase() !== user.email : false;
+    const emailEdit = dto.email
+      ? dto.email.trim().toLowerCase() !== (user.email ?? "").trim().toLowerCase()
+      : false;
     const usernameEdit = dto.username !== undefined && dto.username !== user.username;
     if (emailEdit || usernameEdit) this.assertMayChangeAccount(user, callerRole);
 
