@@ -228,7 +228,7 @@ describe("PriceHistoryButton — states", () => {
   });
 
   it("an error shows fixed copy and Retry, never the server text or $0, and Retry refetches", async () => {
-    mockGet.mockRejectedValueOnce(
+    mockGet.mockRejectedValue(
       Object.assign(new Error('boom: relation "InvoiceItem" does not exist'), {
         response: { data: { message: "SQL exploded at /srv/api" } },
       }),
@@ -238,10 +238,11 @@ describe("PriceHistoryButton — states", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Couldn't load price history.");
     expect(alert.textContent).not.toMatch(/boom|SQL|InvoiceItem|\$0/);
-    mockGet.mockResolvedValueOnce({ data: response() });
+    const before = mockGet.mock.calls.length;
+    mockGet.mockResolvedValue({ data: response() });
     await user.click(within(alert).getByRole("button", { name: "Retry" }));
     await screen.findByText("Customer: Acme Foods");
-    expect(mockGet).toHaveBeenCalledTimes(2);
+    expect(mockGet.mock.calls.length).toBeGreaterThan(before);
   });
 
   it("no past sales shows the empty copy", async () => {

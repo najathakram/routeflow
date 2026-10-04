@@ -5,6 +5,7 @@ import { Eye, EyeOff, History } from "lucide-react";
 import { cn } from "@routeflow/ui/web";
 import { AnchoredPopover } from "@/components/AnchoredPopover";
 import {
+  usePrefetchPriceHistory,
   usePriceHistory,
   type PriceHistoryResponse,
   type PriceHistoryRow,
@@ -36,36 +37,53 @@ function fmtDate(iso: string): string {
   });
 }
 
-/** Inline-SVG sparkline of unit price over time (oldest -> newest). No chart library. */
-function Sparkline({ prices }: { prices: number[] }) {
-  if (prices.length < 2) return null;
+/** Inline-SVG sparkline of unit price over time (oldest -> newest); special / discount / override sales get a marker. */
+function Sparkline({ points }: { points: { price: number; type: string | null }[] }) {
+  if (points.length < 2) return null;
   const w = 220;
   const h = 36;
+  const prices = points.map((p) => p.price);
   const lo = Math.min(...prices);
   const hi = Math.max(...prices);
   const span = hi - lo || 1;
-  const pts = prices.map((p, i) => {
-    const x = (i / (prices.length - 1)) * (w - 8) + 4;
-    const y = h - 4 - ((p - lo) / span) * (h - 8);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const [lx, ly] = pts[pts.length - 1]!.split(",");
+  const xy = points.map((p, i) => ({
+    x: (i / (points.length - 1)) * (w - 8) + 4,
+    y: h - 4 - ((p.price - lo) / span) * (h - 8),
+    type: p.type,
+  }));
+  const last = xy[xy.length - 1]!;
   return (
     <svg
       role="img"
-      aria-label={`Price trend, ${prices.length} sales`}
+      aria-label={`Price trend, ${points.length} sales`}
       viewBox={`0 0 ${w} ${h}`}
       className="h-9 w-full text-brand-500"
     >
       <polyline
-        points={pts.join(" ")}
+        points={xy.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}
         fill="none"
         stroke="currentColor"
         strokeWidth="1.5"
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-      <circle cx={lx} cy={ly} r="2.5" fill="currentColor" />
+      {xy.map(
+        (p, i) =>
+          p.type &&
+          PRICE_TYPE_TAG[p.type] && (
+            <circle
+              key={i}
+              data-testid="price-marker"
+              cx={p.x}
+              cy={p.y}
+              r="3"
+              fill="white"
+              stroke={p.type === "SPECIAL" ? "#059669" : "#d97706"}
+              strokeWidth="1.5"
+            />
+          ),
+      )}
+      <circle cx={last.x} cy={last.y} r="2.5" fill="currentColor" />
     </svg>
   );
 }
@@ -105,6 +123,10 @@ function PanelBody({
   onUse: (price: number) => void;
 }) {
   const [showCost, setShowCost] = React.useState(false);
+  const [compare, setCompare] = React.useState(false);
+  const [active, setActive] = React.useState(0);
+  const bodyRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => bodyRef.current?.focus({ preventScroll: true }), []);
   const units = React.useMemo(() => {
     const seen: string[] = [];
     for (const u of [
@@ -128,18 +150,64 @@ function PanelBody({
   const summary: PriceHistorySummary | undefined = data.summaries.find((s) =>
     sameUnit(s.unitLabel, unit),
   );
-  const chronological = [...rows].reverse().map((r) => r.unitPrice);
+  const chronological = [...rows].reverse().map((r) => ({ price: r.unitPrice, type: r.priceType }));
   const money = (n: number | null | undefined) => (n == null ? "—" : fmt(n));
   const costCell = (n: number | null) => (showCost ? money(n) : MASK);
   const canUse = (r: PriceHistoryRow) => !unitHint || sameUnit(r.unitLabel, unitHint);
+  const marginCell = (r: PriceHistoryRow) =>
+    !showCost
+      ? MASK
+      : r.avgCostAtSale == null || r.unitPrice <= 0
+        ? "—"
+        : `${Math.round(((r.unitPrice - r.avgCostAtSale) / r.unitPrice) * 100)}%`;
+  const refs = data.references;
+  const agg = data.aggregate && sameUnit(data.aggregate.unitLabel, unit) ? data.aggregate : null;
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (rows.length === 0) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((i) =>
+        Math.max(0, Math.min(rows.length - 1, i + (e.key === "ArrowDown" ? 1 : -1))),
+      );
+    } else if (e.key === "Enter" && !(e.target as HTMLElement).closest("button")) {
+      const r = rows[Math.min(active, rows.length - 1)];
+      if (r && canUse(r)) {
+        e.preventDefault();
+        onUse(r.unitPrice);
+      }
+    }
+  };
 
   return (
-    <div className="space-y-2 text-xs">
+    <div
+      ref={bodyRef}
+      tabIndex={-1}
+      onKeyDown={onKeyDown}
+      className="space-y-2 text-xs outline-none"
+    >
       <div>
         <p className="text-sm font-semibold text-navy">
           Price history · {data.productName || productName}
         </p>
         <p className="text-[11px] text-navy/60">Customer: {data.customerName || customerName}</p>
+        {refs &&
+          (refs.listPrice != null || refs.tierPrice != null || refs.changeSinceLast != null) && (
+            <p className="mt-0.5 text-[11px] text-navy/60">
+              {refs.listPrice != null && <>List {fmt(refs.listPrice)}</>}
+              {refs.tierPrice != null && <> · Their tier price {fmt(refs.tierPrice)}</>}
+              {refs.changeSinceLast != null && (
+                <>
+                  {" · "}
+                  <span
+                    className={refs.changeSinceLast > 0 ? "text-emerald-700" : "text-amber-700"}
+                  >
+                    {refs.changeSinceLast > 0 ? "+" : ""}
+                    {(refs.changeSinceLast * 100).toFixed(0)}% since last order
+                  </span>
+                </>
+              )}
+            </p>
+          )}
       </div>
 
       {units.length > 1 && (
@@ -164,7 +232,46 @@ function PanelBody({
         </div>
       )}
 
-      <Sparkline prices={chronological} />
+      <Sparkline points={chronological} />
+
+      {data.aggregate !== undefined && (
+        <div className="flex items-center gap-1" role="group" aria-label="Compare">
+          {(["This customer", "All customers"] as const).map((label) => (
+            <button
+              key={label}
+              type="button"
+              aria-pressed={(label === "All customers") === compare}
+              onClick={() => setCompare(label === "All customers")}
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] ring-1",
+                (label === "All customers") === compare
+                  ? "bg-brand-50 text-brand-700 ring-brand-200"
+                  : "text-navy/60 ring-surface-border hover:text-navy",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {compare && (
+        <div data-testid="compare-panel" className="rounded border border-surface-border p-2">
+          {agg ? (
+            <>
+              <div className="flex gap-4">
+                <Stat label="Low" value={money(agg.low)} />
+                <Stat label="Typical" value={money(agg.median)} />
+                <Stat label="High" value={money(agg.high)} />
+              </div>
+              <p className="mt-1 text-[10px] text-navy/50">
+                Other customers, {agg.customers} in all. Names are never shown.
+              </p>
+            </>
+          ) : (
+            <p className="text-[11px] text-navy/60">No comparison available for this unit.</p>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-end gap-x-4 gap-y-1 border-y border-surface-border py-1.5">
         <Stat label="Last" value={money(summary?.last)} />
@@ -193,6 +300,7 @@ function PanelBody({
             <th className="py-1 font-medium">Date</th>
             <th className="py-1 font-medium">Price</th>
             {data.costVisible && <th className="py-1 font-medium">Avg cost</th>}
+            {data.costVisible && <th className="py-1 font-medium">Margin</th>}
             <th className="py-1 font-medium">Qty</th>
             <th className="py-1 font-medium">Invoice / Order</th>
             <th className="py-1" />
@@ -202,7 +310,9 @@ function PanelBody({
           {rows.map((r, i) => (
             <tr
               key={`${r.orderId}-${r.invoiceId ?? "o"}-${i}`}
-              className="border-t border-surface-border"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              className={cn("border-t border-surface-border", i === active && "bg-brand-50/60")}
             >
               <td className="py-1 pr-2 text-navy/70">{fmtDate(r.date)}</td>
               <td className="py-1 pr-2 font-mono text-navy">
@@ -215,6 +325,9 @@ function PanelBody({
               </td>
               {data.costVisible && (
                 <td className="py-1 pr-2 font-mono text-navy/70">{costCell(r.avgCostAtSale)}</td>
+              )}
+              {data.costVisible && (
+                <td className="py-1 pr-2 font-mono text-navy/70">{marginCell(r)}</td>
               )}
               <td className="py-1 pr-2 text-navy/70">
                 {r.qty} {r.unitLabel}
@@ -340,6 +453,24 @@ export function PriceHistoryButton({
   const [anchor, setAnchor] = React.useState<HTMLButtonElement | null>(null);
   const [open, setOpen] = React.useState(false);
   const ready = !!customerId && !!productId;
+  usePrefetchPriceHistory(customerId, productId);
+
+  // Alt+H from the price field (or anywhere on the line) opens the panel.
+  React.useEffect(() => {
+    if (!anchor || !ready) return;
+    const scope =
+      (focusSelector ? anchor.closest("li") : anchor.parentElement) ?? anchor.parentElement;
+    if (!scope) return;
+    const onKey = (e: Event) => {
+      const k = e as KeyboardEvent;
+      if (k.altKey && !k.ctrlKey && !k.metaKey && k.key.toLowerCase() === "h") {
+        k.preventDefault();
+        setOpen(true);
+      }
+    };
+    scope.addEventListener("keydown", onKey);
+    return () => scope.removeEventListener("keydown", onKey);
+  }, [anchor, ready, focusSelector]);
 
   const close = React.useCallback(() => {
     setOpen(false);
@@ -361,7 +492,7 @@ export function PriceHistoryButton({
         aria-label="Price history"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={ready ? "Price history" : "Choose a customer and a product first"}
+        title={ready ? "Price history (Alt+H)" : "Choose a customer and a product first"}
         onClick={() => setOpen((v) => !v)}
         className={cn(
           "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-navy/60 hover:bg-sunken hover:text-navy disabled:cursor-not-allowed disabled:opacity-40",
@@ -383,5 +514,44 @@ export function PriceHistoryButton({
         />
       )}
     </>
+  );
+}
+
+/**
+ * The customer's last 3 sold prices for the line's unit as small tap-to-use chips ("$18.75 · Sep 26").
+ * One cached request per customer + product, shared with the prefetch and the popover. Renders nothing while loading, on error, or
+ * when there is no history; a tap is "Use this price" (the line's existing price path).
+ */
+export function PriceChips({
+  customerId,
+  productId,
+  unitHint,
+  onUsePrice,
+}: {
+  customerId?: string | null;
+  productId?: string | null;
+  unitHint?: string | null;
+  onUsePrice: (price: number) => void;
+}) {
+  const q = usePriceHistory(customerId, productId, !!customerId && !!productId);
+  const rows = (q.data?.rows ?? [])
+    .filter((r) => !unitHint || sameUnit(r.unitLabel, unitHint))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 3);
+  if (rows.length === 0) return null;
+  return (
+    <span className="flex flex-wrap items-center gap-1" aria-label="Recent prices">
+      {rows.map((r, i) => (
+        <button
+          key={`${r.orderId}-${i}`}
+          type="button"
+          aria-label={`Use last price ${fmt(r.unitPrice)} from ${fmtDate(r.date)}`}
+          onClick={() => onUsePrice(r.unitPrice)}
+          className="rounded-full bg-sunken px-1.5 py-0.5 text-[10px] text-navy/70 ring-1 ring-surface-border hover:bg-brand-50 hover:text-brand-700"
+        >
+          {fmt(r.unitPrice)} · {fmtDate(r.date)}
+        </button>
+      ))}
+    </span>
   );
 }

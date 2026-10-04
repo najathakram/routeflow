@@ -6,7 +6,7 @@ import { cn, type BadgeStatus } from "@routeflow/ui/web";
 import { computeLineSubtotal, perUnitPrice } from "@routeflow/pricing";
 import { MarginHint } from "@/components/MarginHint";
 import { MoneyInput } from "@/components/MoneyInput";
-import { PriceHistoryButton } from "@/components/PriceHistory";
+import { PriceChips, PriceHistoryButton } from "@/components/PriceHistory";
 import type { PackBase } from "@/lib/order-line-unit";
 import type { TrackedCategory } from "@/lib/api/tracked-categories";
 
@@ -325,6 +325,12 @@ export function LineItemRow({
             <div className="mt-0.5 flex items-center gap-1 text-[10px] text-navy/60">
               {historyButton}
               <span>Price history</span>
+              <PriceChips
+                customerId={customerPriceHistory?.customerId}
+                productId={li.productId || null}
+                unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
+                onUsePrice={customerPriceHistory!.onUsePrice}
+              />
             </div>
           )}
           {/* Price per piece (when product has box packaging) */}
