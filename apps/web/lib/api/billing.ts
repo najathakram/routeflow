@@ -116,11 +116,19 @@ export interface Recommendation {
   preCheckedAddons: string[];
 }
 
+/** How the tenant's self-serve add-on is billed (`GET /billing/proration-preview`):
+ *  STRIPE = prorated onto the next Stripe bill; MANUAL = the owner adds it to the next manual
+ *  invoice; UNBILLED = a free pilot, included at no charge. */
+export type AddonBillingMode = "STRIPE" | "MANUAL" | "UNBILLED";
+
 export interface ProrationPreview {
   sku: string;
   name: string;
   monthly: number;
+  /** An ESTIMATE for STRIPE tenants: the enable call returns Stripe's actual prorated figure. */
   proratedToday: number;
+  billing?: AddonBillingMode;
+  billed?: boolean;
   daysRemaining: number;
   daysInCycle: number;
   effectiveAt: string;
