@@ -145,6 +145,15 @@
 //                    SUPPLIER_ALLOCATION_BILL_VOID {billId, billNumber}; SUPPLIER_ALLOCATION_OVER_BALANCE {billId, billNumber, amount,
 //                    remaining}. An unknown or other tenant's bill id stays the uncoded 404.
 
+//   Counter sales (POST /orders/counter-sale) — `body.code` of its refusals, raised BEFORE anything is written: 403
+//                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
+//                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
+//                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number).
+//                    COUNTER_TENDER_SHORT (tendered below the balance), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above it) and
+//                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
+//                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
+//                    stays open on account; the same Idempotency-Key retried with a corrected payment finishes it).
+
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
   MAILBOX_CONNECT_SECRET_MISMATCH: "mailbox_connect_secret_mismatch",
@@ -314,6 +323,14 @@ export const API_ERROR_CODES = {
   SUPPLIER_ALLOCATION_WRONG_SUPPLIER: "SUPPLIER_ALLOCATION_WRONG_SUPPLIER",
   SUPPLIER_ALLOCATION_BILL_VOID: "SUPPLIER_ALLOCATION_BILL_VOID",
   SUPPLIER_ALLOCATION_OVER_BALANCE: "SUPPLIER_ALLOCATION_OVER_BALANCE",
+  COUNTER_SALES_DISABLED: "COUNTER_SALES_DISABLED",
+  WALK_IN_NO_ACCOUNT: "WALK_IN_NO_ACCOUNT",
+  WALK_IN_WITH_CUSTOMER: "WALK_IN_WITH_CUSTOMER",
+  WALK_IN_OPEN_CREDIT: "WALK_IN_OPEN_CREDIT",
+  COUNTER_TENDER_SHORT: "COUNTER_TENDER_SHORT",
+  COUNTER_CHECK_NUMBER_REQUIRED: "COUNTER_CHECK_NUMBER_REQUIRED",
+  COUNTER_PAYMENT_EXCEEDS_TOTAL: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
+  COUNTER_PAYMENT_NOT_RECORDED: "COUNTER_PAYMENT_NOT_RECORDED",
 } as const;
 
 /** The `flag` of a PLAN_GATE body that gates a count (a meter), not a feature flag. Not an error code. */
