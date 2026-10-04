@@ -8,12 +8,24 @@ import { FeatureOverrideService } from "./feature-override.service";
 import { FeatureConfigStore } from "./feature-config.store";
 import { FeatureConfigService } from "./feature-config.service";
 import { FEATURE_REGISTRY } from "./feature-registry";
+import { isFleetHeld } from "./fulfilment-capability";
+import { FulfillPath } from "@prisma/client";
+import { validate } from "class-validator";
+import { plainToInstance } from "class-transformer";
+import { CreateOrderDto } from "../orders/dto/create-order.dto";
 import { FULFILMENT_MODE_VALUES, COUNTER_SALES_MODE_VALUES } from "@routeflow/types";
 
 /**
  * Business profiles 1A: `fulfilment_model` is a free configuration row ("how do orders reach
  * your customers?"), shaped like `routes_dispatch`. Unset = today's behaviour exactly.
  */
+/** getActiveAddons derived from a hasAddon mock, so a test sets the held keys one way. */
+const heldVia = async (hasAddon: jest.Mock, t: string) => {
+  const out: string[] = [];
+  for (const k of ["recurring_routes", "order_delivery"]) if (await hasAddon(t, k)) out.push(k);
+  return out;
+};
+
 const row = () => FEATURE_REGISTRY.find((f) => f.key === "fulfilment_model");
 
 describe("fulfilment_model registry row", () => {
@@ -62,11 +74,15 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
   let service: FeatureConfigService;
   let upsert: jest.Mock;
   let hasAddon: jest.Mock;
+  let getActiveAddons: (t: string) => Promise<string[]>;
+  let allActive: jest.Mock;
   let getMode: jest.Mock;
 
   beforeEach(async () => {
     upsert = jest.fn().mockResolvedValue({});
     hasAddon = jest.fn();
+    getActiveAddons = (t: string) => heldVia(hasAddon, t);
+    allActive = jest.fn().mockResolvedValue(new Map());
     getMode = jest.fn();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -80,9 +96,12 @@ describe("FeatureConfigService: a hand-set delivery/both mode needs a fleet key"
         },
         { provide: FeatureConfigStore, useValue: { getMode, invalidate: jest.fn() } },
         { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
-        { provide: AddonService, useValue: { hasAddon } },
+        { provide: AddonService, useValue: { hasAddon, getActiveAddons } },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn() } },
-        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: FeatureOverrideService,
+          useValue: { get: jest.fn().mockResolvedValue(null), allActive },
+        },
       ],
     }).compile();
     service = module.get(FeatureConfigService);
@@ -160,9 +179,21 @@ describe("FeatureConfigService.getState: delivery/both are BLOCKED without a fle
           useValue: { getMode: jest.fn().mockResolvedValue({ value: "unset", source: "default" }) },
         },
         { provide: AuditService, useValue: { log: jest.fn() } },
-        { provide: AddonService, useValue: { hasAddon: jest.fn().mockResolvedValue(fleetHeld) } },
+        {
+          provide: AddonService,
+          useValue: {
+            hasAddon: jest.fn().mockResolvedValue(fleetHeld),
+            getActiveAddons: jest.fn().mockResolvedValue(fleetHeld ? ["order_delivery"] : []),
+          },
+        },
         { provide: EntitlementsService, useValue: { hasFlag: jest.fn() } },
-        { provide: FeatureOverrideService, useValue: { get: jest.fn().mockResolvedValue(null) } },
+        {
+          provide: FeatureOverrideService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            allActive: jest.fn().mockResolvedValue(new Map()),
+          },
+        },
       ],
     }).compile();
     return module.get(FeatureConfigService);
@@ -191,5 +222,58 @@ describe("counter_sales registry row", () => {
   });
   it("the shared COUNTER_SALES_MODE_VALUES list equals the registry's modes", () => {
     expect([...COUNTER_SALES_MODE_VALUES]).toEqual(Object.keys(r()!.config!.modes));
+  });
+});
+
+describe("one fleet resolver: the capability and the 409 agree", () => {
+  it.each([
+    ["an add-on row", ["order_delivery"], new Map(), true],
+    ["no add-on", [], new Map(), false],
+    ["a GRANT override", [], new Map([["recurring_routes", "GRANT"]]), true],
+    [
+      "a DENY over a held add-on",
+      ["recurring_routes"],
+      new Map([["recurring_routes", "DENY"]]),
+      false,
+    ],
+  ] as const)("%s", async (_n, active, overrides, fleet) => {
+    const getActive = jest.fn().mockResolvedValue([...active]);
+    const allAct = jest.fn().mockResolvedValue(new Map(overrides));
+    const upsert = jest.fn().mockResolvedValue({});
+    const module = await Test.createTestingModule({
+      providers: [
+        FeatureConfigService,
+        {
+          provide: PrismaService,
+          useValue: {
+            tenantFeatureConfig: { upsert },
+            tenant: { findUnique: jest.fn().mockResolvedValue({ id: "t1" }) },
+          },
+        },
+        { provide: FeatureConfigStore, useValue: { invalidate: jest.fn() } },
+        { provide: AuditService, useValue: { log: jest.fn() } },
+        { provide: AddonService, useValue: { getActiveAddons: getActive, hasAddon: jest.fn() } },
+        { provide: EntitlementsService, useValue: { hasFlag: jest.fn() } },
+        { provide: FeatureOverrideService, useValue: { get: jest.fn(), allActive: allAct } },
+      ],
+    }).compile();
+    const service = module.get(FeatureConfigService);
+    const guardAllows = await service
+      .set("t1", "fulfilment_model", "delivery", "r", "a")
+      .then(() => true)
+      .catch(() => false);
+    const capFleet = await isFleetHeld({ getActiveAddons: getActive }, { allActive: allAct }, "t1");
+    expect(guardAllows).toBe(fleet);
+    expect(capFleet).toBe(fleet);
+    expect(guardAllows).toBe(capFleet);
+  });
+});
+
+describe("F-A: PICKUP is a capability method, NOT a FulfillPath value", () => {
+  it("the FulfillPath enum has no PICKUP and the order DTO rejects it", async () => {
+    expect(Object.values(FulfillPath)).toEqual(["ROUTE", "SHIP"]);
+    const bad = plainToInstance(CreateOrderDto, { items: [], fulfillPath: "PICKUP" });
+    const errs = await validate(bad as object, { skipMissingProperties: true });
+    expect(errs.some((e) => e.property === "fulfillPath")).toBe(true);
   });
 });

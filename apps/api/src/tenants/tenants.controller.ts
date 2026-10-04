@@ -27,9 +27,9 @@ import { EntitlementAuthority } from "../billing/entitlement-authority.service";
 import { PolicyService } from "../policy/policy.service";
 import { FeatureConfigService } from "../billing/feature-config.service";
 import {
-  FLEET_KEYS,
   deriveFulfilmentCapability,
   heldAddonKeys,
+  isFleetHeld,
 } from "../billing/fulfilment-capability";
 import { JwtAuthGuard } from "../auth/guards/jwt-auth.guard";
 import { RolesGuard } from "../auth/guards/roles.guard";
@@ -102,11 +102,11 @@ export class TenantsController {
     }
     // Business profiles 1A: the fulfilment modes and the ONE derived capability answer. A failed
     // mode read falls back to `unset` (today's behavior): never a 5xx for a field old clients ignore.
-    const [fulfilmentMode, counterSales, heldAddons] = await Promise.all([
+    const [fulfilmentMode, counterSales, fleetHeld] = await Promise.all([
       this.featureConfig.getEffectiveMode(user.tenantId, "fulfilment_model").catch(() => "unset"),
       this.featureConfig.getEffectiveMode(user.tenantId, "counter_sales").catch(() => "unset"),
       // A failed read must not 500 (and must not guess fleet=false): the existing 503.
-      heldAddonKeys(this.addonService, this.featureOverrides, user.tenantId).catch(() => {
+      isFleetHeld(this.addonService, this.featureOverrides, user.tenantId).catch(() => {
         throw new ServiceUnavailableException({
           code: API_ERROR_CODES.FEATURES_UNAVAILABLE,
           message: "Feature resolution is temporarily unavailable. Please retry.",
@@ -121,7 +121,7 @@ export class TenantsController {
         fulfilment: deriveFulfilmentCapability({
           mode: fulfilmentMode,
           counterSales,
-          fleet: FLEET_KEYS.some((k) => heldAddons.has(k)),
+          fleet: fleetHeld,
         }),
       },
       catalogVersionId: resolved.catalogVersionId,

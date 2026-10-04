@@ -11,7 +11,7 @@ import { AddonService } from "./addon.service";
 import { EntitlementsService } from "./entitlements.service";
 import { FeatureOverrideService } from "./feature-override.service";
 import { FEATURE_REGISTRY, gateVia } from "./feature-registry";
-import { FLEET_KEYS } from "./fulfilment-capability";
+import { FLEET_KEYS, isFleetHeld } from "./fulfilment-capability";
 import { FeatureConfigStore } from "./feature-config.store";
 import { API_ERROR_CODES } from "../common/api-error-codes";
 
@@ -147,7 +147,7 @@ export class FeatureConfigService {
         key === "fulfilment_model" &&
         (modeName === "delivery" || modeName === "both")
       ) {
-        holdsAll = (await Promise.all(FLEET_KEYS.map((k) => this.can(tenantId, k)))).some(Boolean);
+        holdsAll = await isFleetHeld(this.addons, this.featureOverrides, tenantId);
       }
       (holdsAll ? allowed : blocked).push(modeName);
     }
@@ -189,8 +189,7 @@ export class FeatureConfigService {
     // trucks. `ship` is always allowed, even with the fleet on. The registry's mode schema stays
     // allOf-only (lead ruling 2026-10-04), so this OR-group lives here, for this key alone.
     if (key === "fulfilment_model" && (mode === "delivery" || mode === "both")) {
-      const heldFleet = await Promise.all(FLEET_KEYS.map((k) => this.can(tenantId, k)));
-      if (!heldFleet.some(Boolean)) {
+      if (!(await isFleetHeld(this.addons, this.featureOverrides, tenantId))) {
         throw new ConflictException({
           code: API_ERROR_CODES.FULFILMENT_MODE_NEEDS_FLEET,
           key,

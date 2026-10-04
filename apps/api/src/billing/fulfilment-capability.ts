@@ -73,3 +73,17 @@ export async function heldAddonKeys(
   }
   return addons;
 }
+
+/**
+ * ONE fleet resolver: true when either fleet module is effectively held (add-on rows with
+ * overrides absolute). Used by the capability answer AND the 409 guard in FeatureConfigService,
+ * so the two can never disagree.
+ */
+export async function isFleetHeld(
+  addonService: Pick<AddonService, "getActiveAddons">,
+  featureOverrides: Pick<FeatureOverrideService, "allActive">,
+  tenantId: string,
+): Promise<boolean> {
+  const held = await heldAddonKeys(addonService, featureOverrides, tenantId);
+  return FLEET_KEYS.some((k) => held.has(k));
+}
