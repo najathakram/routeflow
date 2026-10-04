@@ -204,6 +204,7 @@ export function LineItemRow({
       productName={li.productName}
       unitHint={li.unitLabel ?? (li.unitsPerBox && li.unitsPerBox > 1 ? "case" : li.unit)}
       onUsePrice={customerPriceHistory.onUsePrice}
+      focusSelector="[data-line-price-input]"
     />
   );
   return (
@@ -318,6 +319,14 @@ export function LineItemRow({
               </>
             )}
           </div>
+          {/* Price history: its own row so it shows in EVERY configuration — the price input only
+              renders without `onTapPrice`, and both real callers pass it (tap-to-edit price). */}
+          {historyButton && (
+            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-navy/60">
+              {historyButton}
+              <span>Price history</span>
+            </div>
+          )}
           {/* Price per piece (when product has box packaging) */}
           {li.unitsPerBox && li.unitsPerBox > 1 && (
             <div className="mt-0.5 text-[10px] text-navy/70">
@@ -336,13 +345,6 @@ export function LineItemRow({
           )}
           {/* One-time discount input (only when no special price already applied). #2696 (b): when
               the price is tap-to-edit (onTapPrice), the sheet owns the price — no inline box. */}
-          {/* A SPECIAL line has no price input: its history button stands alone. */}
-          {li.priceType === "SPECIAL" && !onTapPrice && historyButton && (
-            <div className="mt-1 flex items-center gap-1">
-              <span className="text-[10px] text-navy/70">Price history</span>
-              {historyButton}
-            </div>
-          )}
           {li.priceType !== "SPECIAL" && !onTapPrice && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
               <span className="text-[10px] text-navy/70">
@@ -354,9 +356,9 @@ export function LineItemRow({
                 value={li.discountedPrice ?? null}
                 onChange={(v) => onSetDiscountedPrice(v)}
                 disabled={qtyLocked}
+                data-line-price-input
                 className="w-20 rounded border border-surface-border bg-white px-1.5 py-0.5 text-xs text-navy focus:outline-none focus:ring-1 focus:ring-brand-500"
               />
-              {historyButton}
               {priceHistoryEntry && priceHistoryEntry.lastPrice !== li.listPrice && (
                 <span className="text-[10px] text-navy/50">
                   Last: ${priceHistoryEntry.lastPrice.toFixed(2)}

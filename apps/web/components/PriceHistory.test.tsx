@@ -365,6 +365,21 @@ describe("LineItemRow wiring", () => {
     expect(pick).toHaveBeenCalledWith(13.5);
   });
 
+  it("with onTapPrice set (the REAL configuration: no inline price input) the button still shows and does not trigger the tap-to-edit", async () => {
+    const onTapPrice = jest.fn();
+    renderRow(
+      baseProps({
+        onTapPrice,
+        customerPriceHistory: { customerId: "cust-1", onUsePrice: jest.fn() },
+      }),
+    );
+    const btn = screen.getByRole("button", { name: "Price history" });
+    expect(btn).toBeEnabled();
+    await userEvent.setup().click(btn);
+    await screen.findByRole("dialog", { name: "Price history" });
+    expect(onTapPrice).not.toHaveBeenCalled();
+  });
+
   it("a SPECIAL line (no price input) still gets the history button", () => {
     renderRow(
       baseProps({

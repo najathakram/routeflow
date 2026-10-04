@@ -323,6 +323,7 @@ export function PriceHistoryButton({
   productName,
   unitHint,
   onUsePrice,
+  focusSelector,
   className,
 }: {
   customerId?: string | null;
@@ -332,6 +333,8 @@ export function PriceHistoryButton({
   /** The unit being entered (case / piece / ...), so history and "Use" never cross units. */
   unitHint?: string | null;
   onUsePrice: (price: number) => void;
+  /** The price input to refocus on close (searched within the row / container); defaults to the first input beside the button. */
+  focusSelector?: string;
   className?: string;
 }) {
   const [anchor, setAnchor] = React.useState<HTMLButtonElement | null>(null);
@@ -343,10 +346,11 @@ export function PriceHistoryButton({
     // Deferred a tick: "Use this price" has just changed the line's price, and the price input keeps
     // the draft it had when it GAINED focus — focusing it before that render shows the stale price.
     setTimeout(() => {
-      const input = anchor?.parentElement?.querySelector<HTMLInputElement>("input");
+      const scope = focusSelector ? anchor?.closest("li") : anchor?.parentElement;
+      const input = scope?.querySelector<HTMLElement>(focusSelector ?? "input");
       (input ?? anchor)?.focus();
     }, 0);
-  }, [anchor]);
+  }, [anchor, focusSelector]);
 
   return (
     <>
