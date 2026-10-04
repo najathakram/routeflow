@@ -149,7 +149,7 @@ export class CustomerPriceHistoryService {
   async getHistory(
     customerId: string,
     productId: string,
-    opts: { limit?: unknown; role?: UserRole | string | null; compare?: unknown },
+    opts: { limit?: unknown; role?: UserRole | null; compare?: unknown },
   ): Promise<PriceHistoryResponse> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
@@ -528,7 +528,7 @@ export class CustomerPriceHistoryService {
   async getPriceSummary(
     customerId: string,
     rawProductIds: unknown,
-    _opts: { role?: UserRole | string | null } = {},
+    _opts: { role?: UserRole | null } = {},
   ): Promise<PriceSummaryResponse> {
     const tenantId = this.prisma.getTenantId();
     if (!tenantId) throw new BadRequestException("A tenant context is required.");
