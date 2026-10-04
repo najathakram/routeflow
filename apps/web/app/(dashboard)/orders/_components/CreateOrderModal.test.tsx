@@ -261,7 +261,7 @@ describe("CreateOrderModal", () => {
         expect(mockToast).toHaveBeenCalledWith({
           variant: "error",
           title: "Couldn't look up the code",
-          description: "Network Error",
+          description: "Check the connection and rescan.",
         }),
       );
       expect(capturedInlineCreate?.isOpen).toBe(false);
@@ -997,23 +997,32 @@ describe("CreateOrderModal", () => {
         mockCreateOrderError = { response: { status: 500, data: { message: "Boom happened" } } };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
+        // an UNCODED refusal keeps today's server sentence (B986-7 Opus: never a vaguer fallback)
         expect(screen.getByText("Boom happened")).toBeInTheDocument();
       });
 
       // CREDIT_LIMIT_EXCEEDED is in providers.tsx's HANDLED_CODES (the order detail opens a guard
       // dialog), which silences the global toast — so the create modal's inline banner is the ONLY
       // place its message can show. This pins that a credit refusal on create is never silent.
-      it("a credit-limit refusal on create still shows the server's message in the banner", async () => {
+      it("a credit-limit refusal on create shows the FIXED sentence built from the structured numbers in the banner (B986)", async () => {
         mockCustomers = [acme];
         mockCreateOrderError = {
           response: {
             status: 409,
-            data: { code: "CREDIT_LIMIT_EXCEEDED", message: "Over their credit limit of 100.00." },
+            data: {
+              code: "CREDIT_LIMIT_EXCEEDED",
+              limit: 100,
+              exposure: 110,
+              message: "Over their credit limit of 100.00.",
+            },
           },
         };
         renderWithProviders(<CreateOrderModal isOpen onClose={jest.fn()} />);
         await pickCustomer("Acme Foods");
-        expect(screen.getByText("Over their credit limit of 100.00.")).toBeInTheDocument();
+        expect(
+          screen.getByText(/over their \$100\.00 credit limit. Collect a payment/),
+        ).toBeInTheDocument();
+        expect(screen.queryByText("Over their credit limit of 100.00.")).not.toBeInTheDocument();
       });
     });
   });

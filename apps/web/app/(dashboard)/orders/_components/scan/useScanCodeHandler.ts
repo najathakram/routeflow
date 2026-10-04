@@ -11,6 +11,7 @@ import {
 } from "@routeflow/scanning";
 import type { SellLevel } from "@routeflow/pricing";
 import { resolveProductByCode, type BarcodeResolveResult } from "@/lib/barcode-resolve";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 
 type ToastFn = ReturnType<typeof useToast>["toast"];
 
@@ -131,8 +132,8 @@ export function useScanCodeHandler(deps: ScanCodeHandlerDeps) {
     } catch (err: any) {
       // Network / 5xx — a transient failure is NOT "product doesn't exist";
       // don't open the create-product modal over it.
-      const message =
-        err?.response?.data?.message ?? err?.message ?? "Check the connection and rescan.";
+      // A failure with no HTTP response is the transient case ("check the connection"); anything the server answered is fixed copy.
+      const message = err?.response ? genericToastCopy(err) : "Check the connection and rescan.";
       if (!opts?.quiet) {
         deps.toast({
           variant: "error",

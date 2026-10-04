@@ -5,6 +5,7 @@ import {
   UNCONFIRMED_COPY,
   noResponse,
 } from "./credit-note-error-copy";
+import { creditLimitSentence } from "./credit-limit-copy";
 import { KNOWN_SERVER_SENTENCES } from "./customer-form-error-copy";
 import { parsePlanGate } from "./plan-gate";
 import { safeTextErrorCopy } from "./safe-text-error-copy";
@@ -42,6 +43,35 @@ const CODE_COPY: Record<string, string> = {
   [API_ERROR_CODES.BARCODE_TAKEN]: "Another product already uses that barcode.",
   [API_ERROR_CODES.PACK_SIZE_UNKNOWN]:
     "Some lines don't have a pack size yet. Set each line's pack size, or confirm them as loose pieces, then try again.",
+  // B986-7 (Opus): coded refusals whose server sentence tells the user what to fix. Fixed sentences, no ids or typed text. Keys are
+  // computed keys from API_ERROR_CODES (B987-A registered them); EMAIL_NOT_CONFIGURED / EMAIL_SEND_FAILED stay bare keys until
+  // B987-B (#3053) registers them, then switch to the constants.
+  [API_ERROR_CODES.UNIT_NOT_OFFERED]:
+    "That unit isn't offered for this product any more. Choose another unit, or ask an admin to add it back.",
+  EMAIL_NOT_CONFIGURED:
+    "Email isn't set up for this workspace yet. Connect it under Settings → Email, then try again.",
+  EMAIL_SEND_FAILED:
+    "The email couldn't be sent. Check your email settings under Settings → Email, then try again.",
+  [API_ERROR_CODES.INVALID_LINE_SPLIT]:
+    "That line split isn't valid. Check the quantities and try again.",
+  [API_ERROR_CODES.SOURCE_LINE_AMBIGUOUS]:
+    "This product is on more than one line, so the source line can't be applied to a single one. Edit the order lines directly.",
+  [API_ERROR_CODES.SOURCE_LINE_INVALID]:
+    "The source line's pack size or price isn't valid. Check the pack and price, then try again.",
+  [API_ERROR_CODES.LINE_PACK_UNDERIVABLE]:
+    "This line has no pack size, so it can't be rolled to the next delivery. Set its pack size first.",
+  [API_ERROR_CODES.RECIPE_PACK_MISMATCH]:
+    "The recipe's pack size differs from the line's pack size. Make them match, then try again.",
+  [API_ERROR_CODES.COMPOSITION_CORRUPT]:
+    "This line's mixed-pack composition is inconsistent. Re-enter the pack split for this line.",
+  [API_ERROR_CODES.ORDER_BELOW_RETURN_CREDIT]:
+    "This order's total can't drop below the credit already issued or held against its returns. Raise the total, or deal with the return credit first.",
+  [API_ERROR_CODES.UNIT_AWARE_LINE_UNVERIFIABLE]:
+    "This invoice's lines couldn't be verified, so it can't be edited. Ask an admin.",
+  [API_ERROR_CODES.CHANGE_REQUEST_PACK_CHANGED]:
+    "The pack size changed, so a change request was filed. Decline it and re-add the item to the next order.",
+  [API_ERROR_CODES.INVOICE_CHANGED_CONCURRENTLY]:
+    "The invoice changed while this was happening. Refresh and try again.",
   PO_ALREADY_BILLED: "That purchase order already has a bill.",
   BILL_EXCEEDS_PO: "That bill is more than the purchase order allows.",
   INVOICE_HAS_UNSPENT_CREDIT:
@@ -59,7 +89,9 @@ const PLAN_COPY = "This isn't included in your current plan.";
 const READ_ONLY_COPY = "Your workspace is read-only, so this action is unavailable.";
 const GENERIC_COPY = "Something went wrong. Please try again.";
 
-function statusCopy(status: number): string {
+function statusCopy(status: number, refusal?: string): string {
+  // A surface may say what to fix for an UNCODED refusal (400 / 409 / 422); every other status keeps its own sentence.
+  if (refusal && (status === 400 || status === 409 || status === 422)) return refusal;
   if (status === 400 || status === 422)
     return "Some details aren't valid. Check what you entered and try again.";
   if (status === 401) return "Your session expired. Sign in again.";
@@ -119,6 +151,18 @@ function unlinkedCopy(data: Record<string, unknown>): string {
 /** The closed duplicate-name 409s ("A category named "X" already exists."): the noun is matched, the typed name is never shown. */
 const DUPLICATE_NAME =
   /^A (category|subcategory|product) named ".*" already exists(?: in this section)?\.?$/;
+/** Static server sentences that already tell the user what to do (B986-7: send email, delete order). */
+const ACTIONABLE_REFUSALS: Record<string, string> = {
+  // the unit-selling plan limit is an uncoded 403: say it is a PLAN limit, not a permission problem
+  "Selling by unit is not included in this plan.":
+    "Selling by unit isn't included in your current plan.",
+  "No email address on file for this customer. Provide an email address.":
+    "No email address on file for this customer. Provide an email address.",
+  "This order has returns recorded against it. Delete those returns first.":
+    "This order has returns recorded against it. Delete those returns first.",
+};
+const DELETE_STATUS =
+  /^Only DRAFT, PENDING, or CANCELLED orders can be deleted\. This order is (?:DRAFT|PENDING|CONFIRMED|PROCESSING|READY|OUT_FOR_DELIVERY|DELIVERED|PARTIALLY_DELIVERED|COMPLETED|FULFILLED|CANCELLED|[A-Z_]{3,24})\.$/;
 const DUPLICATE_FIELD: Record<string, string> = {
   "SKU already exists": "That SKU is already used by another product. Use a different SKU.",
   "Barcode already exists":
@@ -135,19 +179,30 @@ function sentenceForMessage(data: Record<string, unknown>): string | null {
     return KNOWN_REFUSAL_SENTENCES[message];
   if (Object.prototype.hasOwnProperty.call(DUPLICATE_FIELD, message))
     return DUPLICATE_FIELD[message];
+  if (Object.prototype.hasOwnProperty.call(ACTIONABLE_REFUSALS, message))
+    return ACTIONABLE_REFUSALS[message];
+  if (DELETE_STATUS.test(message))
+    return "Only draft, pending or cancelled orders can be deleted. Cancel this order first if it's still open.";
   const dup = DUPLICATE_NAME.exec(message);
   if (dup) return `A ${dup[1]} with that name already exists. Choose a different name.`;
   return null;
 }
 
-/** The fixed sentence a generic mutation toast shows for `err`. */
-export function genericToastCopy(err: unknown): string {
+/**
+ * The fixed sentence a generic mutation toast shows for `err`. `surfaceRefusal` (optional) is the surface's own actionable
+ * sentence for an UNCODED 400 / 409 / 422; coded refusals, known sentences and every other status are unchanged.
+ */
+/**
+ * The fixed sentence for a refusal the client RECOGNISES (a safe-text refusal, a plan gate, a mapped `code`, a closed known
+ * sentence), or null when the failure is uncoded / unknown / has no HTTP response. A surface whose uncoded server sentence
+ * already tells the user what to fix uses `codedToastCopy(err) ?? <today's text>` so it never gets LESS actionable.
+ */
+export function codedToastCopy(err: unknown): string | null {
   const refusal = safeTextErrorCopy(err);
   if (refusal) return refusal;
-  if (!err || typeof err !== "object") return GENERIC_COPY;
+  if (!err || typeof err !== "object") return null;
   const response = (err as { response?: { status?: number; data?: unknown } }).response;
-  // No HTTP response: a timeout or dropped connection may have committed; a plain client Error did not.
-  if (!response) return noResponse(err) ? UNCONFIRMED_COPY : GENERIC_COPY;
+  if (!response) return null;
   const data = (response.data && typeof response.data === "object" ? response.data : {}) as Record<
     string,
     unknown
@@ -162,10 +217,22 @@ export function genericToastCopy(err: unknown): string {
   if (code === API_ERROR_CODES.ALLOCATIONS_EXCEED_PAYMENT) return allocationsCopy(data);
   if (code === API_ERROR_CODES.UNLINKED_ITEMS) return unlinkedCopy(data);
   if (code === API_ERROR_CODES.DUPLICATE_VENDOR_BILL) return duplicateBillCopy(data);
+  if (code === API_ERROR_CODES.CREDIT_LIMIT_EXCEEDED)
+    return creditLimitSentence(data.limit, data.exposure);
   if (Object.prototype.hasOwnProperty.call(CREDIT_NOTE_ERROR_COPY, code))
     return CREDIT_NOTE_ERROR_COPY[code as keyof typeof CREDIT_NOTE_ERROR_COPY];
   if (Object.prototype.hasOwnProperty.call(CODE_COPY, code)) return CODE_COPY[code];
-  const known = sentenceForMessage(data);
-  if (known) return known;
-  return typeof response.status === "number" ? statusCopy(response.status) : GENERIC_COPY;
+  return sentenceForMessage(data);
+}
+
+export function genericToastCopy(err: unknown, surfaceRefusal?: string): string {
+  const coded = codedToastCopy(err);
+  if (coded) return coded;
+  if (!err || typeof err !== "object") return GENERIC_COPY;
+  const response = (err as { response?: { status?: number } }).response;
+  // No HTTP response: a timeout or dropped connection may have committed; a plain client Error did not.
+  if (!response) return noResponse(err) ? UNCONFIRMED_COPY : GENERIC_COPY;
+  return typeof response.status === "number"
+    ? statusCopy(response.status, surfaceRefusal)
+    : GENERIC_COPY;
 }

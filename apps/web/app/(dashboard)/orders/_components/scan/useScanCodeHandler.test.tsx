@@ -185,7 +185,7 @@ describe("useScanCodeHandler - connectivity + quiet", () => {
     await expect(result.current.current("222")).resolves.toMatchObject({
       kind: "error",
       offline: false,
-      message: "boom",
+      message: "Something went wrong on our side. Please try again.",
     });
   });
 
