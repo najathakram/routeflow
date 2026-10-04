@@ -196,6 +196,9 @@ model Customer {
   // consulted for security mail (verification/password/invite), which is
   // never opt-out.
   orderStatusEmails     Boolean     @default(true)
+  // SA-655: the tenant's ONE system walk-in customer for counter sales (created lazily by the API). Null =
+  // an ordinary customer, for every row that predates the column.
+  isWalkIn              Boolean?
   createdAt             DateTime    @default(now())
   updatedAt             DateTime    @updatedAt
   // RF-197: soft-delete timestamp; set instead of physically deleting when
