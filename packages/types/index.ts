@@ -174,6 +174,7 @@ export * from "./api/us-states";
 export * from "./api/config-snapshots";
 export * from "./api/import";
 export * from "./api/analytics-insights";
+export * from "./api/price-history";
 export * from "./api/order-tracking";
 export * from "./api/onboarding";
 export * from "./api/order-tracking-view";
