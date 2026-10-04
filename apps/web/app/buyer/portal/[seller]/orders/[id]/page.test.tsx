@@ -32,6 +32,26 @@ jest.mock("@/lib/buyer-auth-context", () => ({
   }),
 }));
 
+// Business profiles 1B: an UNSET seller — this suite pins today's screen.
+jest.mock("@/lib/api/buyer-capabilities", () => ({
+  useBuyerSellerCapabilities: () => ({
+    data: {
+      fulfilment: {
+        methods: ["ROUTE", "SHIP"],
+        staffDefault: "ROUTE",
+        staffOpensAs: "order",
+        portalMethods: [],
+        portalDefault: null,
+        counter: "off",
+        fleet: true,
+        consistent: true,
+      },
+    },
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
 let mockOrder: unknown;
 const mockUpdateItems = jest.fn().mockResolvedValue({});
 // #2095: the page now renders the "Track your delivery" card, which reads this hook.
