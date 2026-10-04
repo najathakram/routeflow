@@ -76,14 +76,24 @@ describe("planCounterPayment (against the POST-send balance)", () => {
     });
   });
 
-  it("CASH below the balance is refused as TENDER_SHORT (no partial payments at the counter)", () => {
+  it("CASH below the balance is a PARTIAL payment of exactly what was tendered (no change)", () => {
     expect(planCounterPayment({ method: "CASH", amount: 30, balance: 37.25 })).toEqual({
-      kind: "refuse",
-      code: "COUNTER_TENDER_SHORT",
+      kind: "pay",
+      amount: 30,
+      tendered: 30,
     });
   });
 
-  it("CARD / CHECK: omitted = exact; above is COUNTER_PAYMENT_EXCEEDS_TOTAL; below is TENDER_SHORT", () => {
+  it("a zero tender is refused as TENDER_SHORT for CASH, CARD and CHECK", () => {
+    for (const method of ["CASH", "CARD", "CHECK"] as const) {
+      expect(planCounterPayment({ method, amount: 0, balance: 37.25 })).toEqual({
+        kind: "refuse",
+        code: "COUNTER_TENDER_SHORT",
+      });
+    }
+  });
+
+  it("CARD / CHECK: omitted = exact; above is COUNTER_PAYMENT_EXCEEDS_TOTAL; below is a partial", () => {
     for (const method of ["CARD", "CHECK"] as const) {
       expect(planCounterPayment({ method, balance: 12.5 })).toMatchObject({
         kind: "pay",
@@ -98,8 +108,9 @@ describe("planCounterPayment (against the POST-send balance)", () => {
         code: "COUNTER_PAYMENT_EXCEEDS_TOTAL",
       });
       expect(planCounterPayment({ method, amount: 10, balance: 12.5 })).toEqual({
-        kind: "refuse",
-        code: "COUNTER_TENDER_SHORT",
+        kind: "pay",
+        amount: 10,
+        tendered: 10,
       });
     }
   });

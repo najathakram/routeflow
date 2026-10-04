@@ -149,10 +149,11 @@
 //                    COUNTER_SALES_DISABLED (the tenant's fulfilment capability has no counter); 409 WALK_IN_OPEN_CREDIT (the walk-in
 //                    customer holds open credit that send would auto-apply); 400 WALK_IN_NO_ACCOUNT (a walk-in cannot buy on account),
 //                    WALK_IN_WITH_CUSTOMER (customerId and walkIn together), COUNTER_CHECK_NUMBER_REQUIRED (a check needs its number).
-//                    COUNTER_TENDER_SHORT (tendered below the balance), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above it) and
+//                    COUNTER_TENDER_SHORT (a zero tender), COUNTER_PAYMENT_EXCEEDS_TOTAL (card or check above the balance) and
 //                    COUNTER_PAYMENT_NOT_RECORDED are NOT HTTP errors: the balance is server-computed, so these are the
 //                    `paymentErrorCode` of a 201 whose sale committed but whose payment did not (`paymentRecorded: false`, the invoice
-//                    stays open on account; the same Idempotency-Key retried with a corrected payment finishes it).
+//                    stays open on account; the same Idempotency-Key retried with a corrected payment finishes it). A tender BELOW
+//                    the balance is not an error: it records a PARTIAL payment (`paymentRecorded: true`, `balanceDue` > 0, no change).
 
 export const API_ERROR_CODES = {
   ADDON_GATE: "ADDON_GATE",
