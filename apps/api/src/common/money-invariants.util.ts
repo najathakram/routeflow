@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import {
   assertMoneyInvariants,
   MoneyInvariantError,
+  roundMoney,
   type MoneyInvariantInput,
 } from "@routeflow/pricing";
 import { API_ERROR_CODES } from "./api-error-codes";
@@ -49,4 +50,65 @@ export function assertNoNegativeLineSubtotal(items: ReadonlyArray<LineSubtotalLi
       );
     }
   }
+}
+
+/** Money text for the refusal messages: `$10.50`, `-$0.50`. */
+function formatMoney(n: number): string {
+  const r = roundMoney(n);
+  return `${r < 0 ? "-" : ""}$${Math.abs(r).toFixed(2)}`;
+}
+
+/**
+ * B1030 (SA-651): the invoice-level totals guard `InvoicesService.create()` ran inline (a discount larger
+ * than the subtotal, and a negative total), extracted so `update()` runs the SAME two checks, with the same
+ * messages, on both of its paths (the items rewrite and the discount/shipping-only recompute). Without them
+ * PATCH {discount: 100} on a $10 invoice stored a total of -90.
+ *
+ * `create()` calls it strict (no `before`). `update()` passes the invoice's STORED totals as `before`, which
+ * applies the NOT-WORSE rule on legacy data: an invoice that is ALREADY insane may still be saved while the
+ * edit does not make it worse (its total does not go down and discount minus subtotal does not go up), so an
+ * improvement or a no-change save is never blocked; only sane -> insane, or insane -> worse, is refused.
+ */
+export function assertInvoiceTotalsSane(
+  after: { discount: number; subtotal: number; total: number },
+  before?: { discount: number; subtotal: number; total: number },
+): void {
+  const insane = (t: { discount: number; subtotal: number; total: number }) =>
+    t.discount > t.subtotal || t.total < 0;
+  if (!insane(after)) return;
+  if (before && insane(before)) {
+    const EPS = 1e-9;
+    const worse =
+      after.total < before.total - EPS ||
+      after.discount - after.subtotal > before.discount - before.subtotal + EPS;
+    if (!worse) return;
+  }
+  if (after.discount > after.subtotal) {
+    throw new BadRequestException(
+      `Invoice discount (${formatMoney(after.discount)}) cannot exceed subtotal (${formatMoney(after.subtotal)}).`,
+    );
+  }
+  throw new BadRequestException(
+    `Invoice total cannot be negative (calculated: ${formatMoney(after.total)}).`,
+  );
+}
+
+/**
+ * The STORED totals of an invoice row (Prisma Decimals arrive as objects), the `before` of the NOT-WORSE rule.
+ * STRICT (SA-651): when the row or its stored `subtotal`/`total` is missing, null or non-numeric the old totals
+ * are NOT provable, so this returns `undefined` and the guard judges the edit strictly instead of exempting it
+ * as "legacy" against a fabricated 0. (An absent `discount` is a genuine 0.)
+ */
+export function storedInvoiceTotals(
+  row: { discount?: unknown; subtotal?: unknown; total?: unknown } | null | undefined,
+): { discount: number; subtotal: number; total: number } | undefined {
+  if (!row || row.subtotal == null || row.total == null) return undefined;
+  const t = {
+    discount: Number(row.discount ?? 0),
+    subtotal: Number(row.subtotal),
+    total: Number(row.total),
+  };
+  return Number.isFinite(t.discount) && Number.isFinite(t.subtotal) && Number.isFinite(t.total)
+    ? t
+    : undefined;
 }
