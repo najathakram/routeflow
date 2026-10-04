@@ -24,7 +24,8 @@ export function AnchoredPopover({
   children,
 }: {
   anchor: HTMLElement;
-  onClose: () => void;
+  /** Why it closed: Escape or a mousedown outside (the panel's own actions call their own close). */
+  onClose: (reason?: "escape" | "outside") => void;
   label: string;
   /** Card width in px (kept on screen horizontally). */
   width?: number;
@@ -76,13 +77,13 @@ export function AnchoredPopover({
   React.useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (ref.current && !ref.current.contains(t) && !anchor.contains(t)) onClose();
+      if (ref.current && !ref.current.contains(t) && !anchor.contains(t)) onClose("outside");
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      onClose("escape");
     };
     document.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey, true);

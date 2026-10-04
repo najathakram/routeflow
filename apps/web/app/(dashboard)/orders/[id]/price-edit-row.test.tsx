@@ -96,7 +96,9 @@ describe("PriceEditRow price history (order edit)", () => {
     await screen.findByRole("dialog", { name: "Price history" });
     await user.keyboard("{Escape}");
     expect(input.value).toBe("10.00");
-    await waitFor(() => expect(input).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
     expect(screen.queryByPlaceholderText("reason (required)")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Price history" }));

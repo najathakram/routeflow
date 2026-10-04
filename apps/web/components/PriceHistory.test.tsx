@@ -131,7 +131,9 @@ describe("PriceHistoryButton — popover behaviour", () => {
     await screen.findByRole("dialog", { name: "Price history" });
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
-    await waitFor(() => expect(input).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
     expect(input.value).toBe("12.90");
     // Escape was stopped in the capture phase: a surrounding dialog's listener never saw it.
     expect(outer).not.toHaveBeenCalled();
@@ -420,7 +422,9 @@ describe("PriceHistoryButton — narrow screens and keyboard", () => {
     }
     for (const b of buttons) expect(seen.has(b)).toBe(true);
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.getByLabelText("price input")).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
   });
 });
 

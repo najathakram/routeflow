@@ -325,15 +325,17 @@ function PanelBody({
       <table className="w-full text-left">
         <thead className="hidden sm:table-header-group">
           <tr className="text-[10px] uppercase tracking-wide text-navy/50">
-            <th className="py-1 font-medium">Date</th>
-            <th className="py-1 font-medium">Price</th>
+            <th className="whitespace-nowrap py-1 font-medium">Date</th>
+            <th className="whitespace-nowrap py-1 font-medium">Price</th>
             {data.costVisible && (
-              <th className="hidden py-1 font-medium sm:table-cell">Avg cost</th>
+              <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Avg cost</th>
             )}
-            {data.costVisible && <th className="hidden py-1 font-medium sm:table-cell">Margin</th>}
-            <th className="py-1 font-medium">Qty</th>
-            <th className="py-1 font-medium">Invoice / Order</th>
-            <th className="py-1" />
+            {data.costVisible && (
+              <th className="hidden whitespace-nowrap py-1 font-medium sm:table-cell">Margin</th>
+            )}
+            <th className="whitespace-nowrap py-1 pl-2 font-medium">Qty</th>
+            <th className="whitespace-nowrap py-1 font-medium">Invoice / Order</th>
+            <th className="py-1 pr-3" />
           </tr>
         </thead>
         <tbody>
@@ -351,7 +353,7 @@ function PanelBody({
               <td className="py-1 pr-2 font-mono text-navy">
                 {fmt(r.unitPrice)}
                 {r.priceType && PRICE_TYPE_TAG[r.priceType] && (
-                  <span className="ml-1 rounded bg-sunken px-1 text-[10px] uppercase text-navy/50">
+                  <span className="ml-1 rounded bg-sunken px-1 text-[11px] uppercase text-navy/60">
                     {PRICE_TYPE_TAG[r.priceType]}
                   </span>
                 )}
@@ -366,7 +368,7 @@ function PanelBody({
                   {marginCell(r)}
                 </td>
               )}
-              <td className="py-1 pr-2 text-navy/70">
+              <td className="whitespace-nowrap py-1 pl-2 pr-2 text-navy/70">
                 {r.qty} {r.unitLabel}
               </td>
               <td className="whitespace-nowrap py-1 pr-2 text-navy/70">
@@ -381,7 +383,7 @@ function PanelBody({
                   </>
                 )}
               </td>
-              <td className="w-full py-1 text-right sm:w-auto">
+              <td className="w-full py-1 text-right sm:w-auto sm:pr-3">
                 <button
                   type="button"
                   disabled={!canUse(r)}
@@ -402,6 +404,8 @@ function PanelBody({
   );
 }
 
+type CloseReason = "use" | "escape" | "outside";
+
 function Panel({
   customerId,
   customerName,
@@ -420,12 +424,17 @@ function Panel({
   unitHint?: string | null;
   packHint?: number | null;
   anchor: HTMLElement;
-  onClose: () => void;
+  onClose: (reason: CloseReason) => void;
   onUsePrice: (price: number) => void;
 }) {
   const q = usePriceHistory(customerId, productId, true);
   return (
-    <AnchoredPopover anchor={anchor} onClose={onClose} label="Price history" width={520}>
+    <AnchoredPopover
+      anchor={anchor}
+      onClose={(r) => onClose(r ?? "escape")}
+      label="Price history"
+      width={520}
+    >
       {q.isLoading ? (
         <Skeleton />
       ) : q.isError || !q.data ? (
@@ -456,7 +465,7 @@ function Panel({
           packHint={packHint}
           onUse={(price) => {
             onUsePrice(price);
-            onClose();
+            onClose("use");
           }}
         />
       )}
@@ -469,7 +478,7 @@ function Panel({
  * has paid for this product. Disabled until a customer and a product are chosen. Opening / closing
  * never touches the price; "Use this price" hands the number to `onUsePrice`, which MUST be the
  * line's existing price-change path (special-price reason and margin-floor rules still apply).
- * On close, focus returns to the price input beside the button.
+ * On "Use this price" focus moves to the price input beside the button; on Esc / outside click it returns to the trigger.
  */
 export function PriceHistoryButton({
   customerId,
@@ -518,16 +527,21 @@ export function PriceHistoryButton({
     return () => scope.removeEventListener("keydown", onKey);
   }, [anchor, ready, focusSelector]);
 
-  const close = React.useCallback(() => {
-    setOpen(false);
-    // Deferred a tick: "Use this price" has just changed the line's price, and the price input keeps
-    // the draft it had when it GAINED focus — focusing it before that render shows the stale price.
-    setTimeout(() => {
-      const scope = focusSelector ? anchor?.closest("li") : anchor?.parentElement;
-      const input = scope?.querySelector<HTMLElement>(focusSelector ?? "input");
-      (input ?? anchor)?.focus();
-    }, 0);
-  }, [anchor, focusSelector]);
+  const close = React.useCallback(
+    (reason: CloseReason) => {
+      setOpen(false);
+      // Deferred a tick: "Use this price" has just changed the line's price, and the price input keeps
+      // the draft it had when it GAINED focus — focusing it before that render shows the stale price.
+      setTimeout(() => {
+        // Only "Use this price" moves on to the price field; a cancel (Esc / outside) returns to the trigger.
+        if (reason !== "use") return anchor?.focus();
+        const scope = focusSelector ? anchor?.closest("li") : anchor?.parentElement;
+        const input = scope?.querySelector<HTMLElement>(focusSelector ?? "input");
+        (input ?? anchor)?.focus();
+      }, 0);
+    },
+    [anchor, focusSelector],
+  );
 
   return (
     <>
@@ -610,7 +624,7 @@ export function PriceChips({
           type="button"
           aria-label={`Use last price ${fmt(r.unitPrice)} from ${fmtDate(r.date)}`}
           onClick={() => onUsePrice(r.unitPrice)}
-          className="min-h-8 rounded-full bg-sunken px-1.5 py-0.5 text-[10px] text-navy/70 ring-1 ring-surface-border hover:bg-brand-50 hover:text-brand-700 sm:min-h-0"
+          className="min-h-11 rounded-full bg-sunken px-1.5 py-0.5 text-[10px] text-navy/70 ring-1 ring-surface-border hover:bg-brand-50 hover:text-brand-700 sm:min-h-0"
         >
           {fmt(r.unitPrice)} · {fmtDate(r.date)}
         </button>

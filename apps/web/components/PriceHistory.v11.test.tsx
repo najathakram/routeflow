@@ -135,7 +135,7 @@ describe("keyboard", () => {
     await waitFor(() => expect(input).toHaveFocus());
   });
 
-  it("Esc closes and restores focus to the price field", async () => {
+  it("Esc closes and returns focus to the trigger (not the price field)", async () => {
     const user = userEvent.setup();
     renderBtn();
     const input = screen.getByLabelText("price input");
@@ -144,7 +144,10 @@ describe("keyboard", () => {
     await screen.findByRole("dialog", { name: "Price history" });
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "Price history" })).not.toBeInTheDocument();
-    await waitFor(() => expect(input).toHaveFocus());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Price history" })).toHaveFocus(),
+    );
+    expect(input).not.toHaveFocus();
     expect(onUse).not.toHaveBeenCalled();
   });
 });
