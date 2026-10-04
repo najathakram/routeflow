@@ -235,4 +235,56 @@ describe("InvoicesService.applyPriceAdjustment — the guard runs before any wri
     });
     expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);
   });
+
+  // SA-651 (Opus MED2 for B1031): NOT-WORSE on legacy data. A stored invoice that is ALREADY insane may be
+  // re-priced when the re-price does not make it worse; only sane -> insane or insane -> worse is refused.
+  const LEGACY = { discount: 80, subtotal: 10, total: -70 };
+  const legacyLine = (over: Record<string, unknown> = {}) =>
+    plain("a1", { unitPrice: 10, subtotal: 10, ...over });
+
+  it("(l) SINGLE: a price RAISE on a legacy invoice (discount 80 over $10, total -70) saves: it improves", async () => {
+    arrange({
+      "inv-1": invoice("inv-1", InvoiceStatus.SENT, [legacyLine()], LEGACY),
+    });
+    await service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "SINGLE",
+    });
+    expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("(m) SINGLE: a price CUT on that legacy invoice is refused: discount minus subtotal goes up and the total goes down", async () => {
+    arrange({
+      "inv-1": invoice("inv-1", InvoiceStatus.SENT, [legacyLine()], LEGACY),
+    });
+    const run = service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 5 }],
+      scope: "SINGLE",
+    });
+    await expect(run).rejects.toThrow("Invoice discount (80) cannot exceed subtotal (5).");
+    noWrites();
+  });
+
+  it("(n) BULK: a legacy invoice in the batch no longer blocks it when the raise improves that invoice", async () => {
+    const one = invoice(
+      "inv-1",
+      InvoiceStatus.SENT,
+      [plain("a1", { unitPrice: 10, subtotal: 10 })],
+      LEGACY,
+    );
+    const two = invoice(
+      "inv-2",
+      InvoiceStatus.SENT,
+      [plain("b1", { unitPrice: 10, subtotal: 10 })],
+      {},
+    );
+    arrange({ "inv-1": one, "inv-2": two });
+    prisma.invoice.findMany.mockResolvedValue([one, two]);
+    await service.applyPriceAdjustment("inv-1", {
+      items: [{ itemId: "a1", newUnitPrice: 20 }],
+      scope: "ALL_CUSTOMER_SINCE",
+      sinceDate: "2026-01-01",
+    });
+    expect(prisma.invoiceItem.update).toHaveBeenCalledTimes(2);
+  });
 });

@@ -10,6 +10,7 @@ import type { RegulatedLedgerService } from "../regulated/regulated-ledger.servi
 import {
   assertInvoiceTotalsSane,
   assertNoNegativeLineSubtotal,
+  storedInvoiceTotals,
 } from "../common/money-invariants.util";
 import { sumConfirmed } from "./payment-predicates";
 
@@ -129,7 +130,13 @@ export function buildPriceAdjustmentUpdates(args: {
  * Pure, so it runs before any write, in the same pass as the line guard.
  */
 export function assertAdjustedTotalsSane(
-  inv: { items: any[]; discount?: unknown; shippingFee?: unknown },
+  inv: {
+    items: any[];
+    discount?: unknown;
+    shippingFee?: unknown;
+    subtotal?: unknown;
+    total?: unknown;
+  },
   updates: ReadonlyArray<{ id: string; data: Record<string, any> }>,
 ): void {
   const byId = new Map(updates.map((u) => [u.id, u.data]));
@@ -143,7 +150,9 @@ export function assertAdjustedTotalsSane(
   const total = roundMoney(
     subtotal - discount + Number(inv.shippingFee ?? 0) + roundMoney(regularTax + categoryTax),
   );
-  assertInvoiceTotalsSane({ discount, subtotal, total });
+  // SA-651 NOT-WORSE: judged against the invoice's STORED totals, so a legacy invoice that is already
+  // insane still takes a re-price that does not make it worse (a price raise), never refusing every one.
+  assertInvoiceTotalsSane({ discount, subtotal, total }, storedInvoiceTotals(inv));
 }
 
 /**
@@ -154,7 +163,14 @@ export function assertAdjustedTotalsSane(
  */
 export function preflightBulkPriceAdjustment(
   plans: ReadonlyArray<{
-    inv: { invoiceNumber?: string | null; items: any[]; discount?: unknown; shippingFee?: unknown };
+    inv: {
+      invoiceNumber?: string | null;
+      items: any[];
+      discount?: unknown;
+      shippingFee?: unknown;
+      subtotal?: unknown;
+      total?: unknown;
+    };
     localMap: Map<string, number>;
   }>,
   isTaxExempt: boolean,
