@@ -8,7 +8,6 @@ import { isInternalEmail } from "../lib/internal-email";
 import { useTierLabels } from "../lib/api/tier-labels";
 import { tierLabel } from "../lib/tier-label";
 import { shouldConfirmDiscard } from "../lib/discard-guard";
-import { creditLimitForSubmit, isCreditLimitInput } from "../lib/customer-credit-limit";
 
 export interface CustomerFormValues {
   businessName: string;
@@ -103,8 +102,7 @@ export interface CustomerPayload {
   contactName?: string;
   email?: string;
   phone?: string;
-  /** `null` clears the limit (edit only); `0` is a real $0 limit; omitted leaves it alone (B1018). */
-  creditLimit?: number | null;
+  creditLimit?: number;
   pricingTier?: number;
   currency?: string;
   notes?: string;
@@ -134,6 +132,13 @@ export interface CustomerPayload {
   }>;
 }
 
+function parseOptionalNumber(v: string): number | undefined {
+  const t = v.trim();
+  if (!t) return undefined;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /**
  * Mirrors web's CustomerFormModal: the username no longer depends on the (now
  * optional) email — take the email local-part when there is one, else the
@@ -151,13 +156,9 @@ function deriveUsername(email: string, businessName: string, contactName: string
 function buildPayload(
   form: CustomerFormValues,
   mode: "create" | "edit",
-  initial: CustomerFormValues,
 ): CustomerPayload | { error: string } {
   const businessName = form.businessName.trim();
   if (!businessName) return { error: "Business name is required." };
-  if (!isCreditLimitInput(form.creditLimit)) {
-    return { error: "Credit limit must be an amount like 500 or 500.50." };
-  }
 
   // Address is optional on create (you can always add one later from the
   // Addresses screen) — but once the operator starts filling it in, require
@@ -190,8 +191,7 @@ function buildPayload(
     // placeholder for an absent email.
     email: mode === "edit" ? email : email || undefined,
     phone: form.phone.trim() || undefined,
-    // B1018: a deliberately blanked box on an edit sends null (clear); garbage is refused above, never sent.
-    creditLimit: creditLimitForSubmit(form.creditLimit, mode, initial.creditLimit.trim() !== ""),
+    creditLimit: parseOptionalNumber(form.creditLimit),
     pricingTier: form.pricingTier,
     currency: form.currency.trim() || undefined,
     notes: form.notes.trim() || undefined,
@@ -243,7 +243,7 @@ export function CustomerForm({
   }, [form, initial]);
 
   const submit = () => {
-    const res = buildPayload(form, mode, initial);
+    const res = buildPayload(form, mode);
     if ("error" in res) {
       setError(res.error);
       return;

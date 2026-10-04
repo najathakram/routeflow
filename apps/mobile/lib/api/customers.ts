@@ -389,14 +389,7 @@ export function useCreateCustomer() {
 
 export function useUpdateCustomer() {
   const qc = useQueryClient();
-  return useMutation<
-    { id: string },
-    Error,
-    // B1018: an UPDATE may carry `creditLimit: null` (clear the limit); a create may not.
-    { id: string } & Partial<Omit<CreateCustomerDto, "creditLimit">> & {
-        creditLimit?: number | null;
-      }
-  >({
+  return useMutation<{ id: string }, Error, { id: string } & Partial<CreateCustomerDto>>({
     mutationFn: ({ id, ...dto }) => apiClient.patch(`/customers/${id}`, dto).then((r) => r.data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ["customers"] });
