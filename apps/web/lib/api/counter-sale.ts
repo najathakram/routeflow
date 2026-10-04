@@ -19,8 +19,12 @@ export function useCounterSaleGate() {
 export function useCreateCounterSale() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (dto: CounterSaleRequest) =>
-      apiClient.post<CounterSaleResponse>("/orders/counter-sale", dto).then((r) => r.data),
+    mutationFn: ({ dto, idempotencyKey }: { dto: CounterSaleRequest; idempotencyKey: string }) =>
+      apiClient
+        .post<CounterSaleResponse>("/orders/counter-sale", dto, {
+          headers: { "Idempotency-Key": idempotencyKey },
+        })
+        .then((r) => r.data),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["orders"] });
       void qc.invalidateQueries({ queryKey: ["invoices"] });

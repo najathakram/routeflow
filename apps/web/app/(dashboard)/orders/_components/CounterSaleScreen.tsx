@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Button, cn } from "@routeflow/ui/web";
@@ -20,6 +21,7 @@ import {
   cartTotals,
   changeDue,
   counterSaleErrorCopy,
+  newIdempotencyKey,
   parseScanField,
   paymentMethodOptions,
   preselectFulfilment,
@@ -61,6 +63,10 @@ export function CounterSaleScreen() {
   const gate = useCounterSaleGate();
   const createSale = useCreateCounterSale();
   const scanRef = React.useRef<HTMLInputElement>(null);
+  // One Idempotency-Key per SALE: kept across a failed attempt so a retry of the same request replays, renewed when the
+  // request itself changed (a different cart/payment is a different sale) and dropped on success / reset.
+  const attemptRef = React.useRef<{ key: string; fingerprint: string } | null>(null);
+  const submittingRef = React.useRef(false);
 
   const [customer, setCustomer] = React.useState<PickedCustomer | null>(null); // null = Walk-in customer
   const [customerSearch, setCustomerSearch] = React.useState("");
@@ -78,6 +84,10 @@ export function CounterSaleScreen() {
   React.useEffect(() => setAutoPrint(readAutoPrint()), []);
   // The scan field is ALWAYS focused: after every action, and whenever the sale view is showing.
   const refocus = React.useCallback(() => window.setTimeout(() => scanRef.current?.focus(), 0), []);
+  // A KEYBOARD activation of a tender / method button (detail 0) keeps focus where it is, so Tab goes on to the next control.
+  const refocusAfterPointer = (e: React.MouseEvent) => {
+    if (e.detail > 0) refocus();
+  };
   React.useEffect(() => {
     if (!receipt) refocus();
   }, [receipt, refocus]);
@@ -171,6 +181,7 @@ export function CounterSaleScreen() {
     setReference("");
     setError("");
     setReceipt(null);
+    attemptRef.current = null;
     refocus();
   }
 
@@ -191,16 +202,24 @@ export function CounterSaleScreen() {
       setError(PAYMENT_PROBLEM_COPY[problem]);
       return null;
     }
+    const dto = {
+      ...(customer ? { customerId: customer.id } : { walkIn: true }),
+      items: lines.map(toSaleItem),
+      payment: {
+        method,
+        ...(method === "CASH" ? { amount: tenderedNum } : {}),
+        ...(reference.trim() ? { reference: reference.trim() } : {}),
+      },
+    };
+    const fingerprint = JSON.stringify(dto);
+    if (attemptRef.current?.fingerprint !== fingerprint)
+      attemptRef.current = { key: newIdempotencyKey(), fingerprint };
     try {
       const res = await createSale.mutateAsync({
-        ...(customer ? { customerId: customer.id } : { walkIn: true }),
-        items: lines.map(toSaleItem),
-        payment: {
-          method,
-          ...(method === "CASH" ? { amount: tenderedNum } : {}),
-          ...(reference.trim() ? { reference: reference.trim() } : {}),
-        },
+        dto,
+        idempotencyKey: attemptRef.current.key,
       });
+      attemptRef.current = null;
       return res;
     } catch (err) {
       setError(counterSaleErrorCopy(err)); // FIXED copy, never the server message
@@ -209,11 +228,17 @@ export function CounterSaleScreen() {
   };
 
   const completeSale = async (next: boolean) => {
-    const res = await complete();
-    if (!res) return;
-    if (autoPrint) window.print(); // once, before any reset
-    if (next) resetSale();
-    else setReceipt(res);
+    if (submittingRef.current) return; // a double Enter / click is one sale
+    submittingRef.current = true;
+    try {
+      const res = await complete();
+      if (!res) return;
+      if (autoPrint) window.print(); // once per completed sale, before any reset
+      if (next) resetSale();
+      else setReceipt(res);
+    } finally {
+      submittingRef.current = false;
+    }
   };
 
   const toggleAutoPrint = (on: boolean) => {
@@ -231,6 +256,7 @@ export function CounterSaleScreen() {
   }
 
   if (receipt) {
+    const paymentNotRecorded = receipt.paymentRecorded === false;
     return (
       <div className="mx-auto max-w-md space-y-4 p-4" data-testid="counter-sale-receipt">
         <h1 className="text-xl font-semibold">Receipt</h1>
@@ -247,22 +273,39 @@ export function CounterSaleScreen() {
             </li>
           ))}
         </ul>
+        {paymentNotRecorded ? (
+          <div
+            role="status"
+            className="space-y-2 rounded border border-amber-300 bg-amber-50 p-3 text-sm"
+            data-testid="counter-payment-not-recorded"
+          >
+            <p className="font-semibold">Sale recorded — payment not recorded</p>
+            <Link
+              href={`/invoices/${receipt.invoiceId}`}
+              className="inline-block text-brand-700 underline print:hidden"
+            >
+              Record payment
+            </Link>
+          </div>
+        ) : null}
         <dl className="space-y-1 text-sm">
           <div className="flex justify-between">
             <dt>Total</dt>
             <dd>{money(receipt.total)}</dd>
           </div>
-          <div className="flex justify-between">
-            <dt>Paid</dt>
-            <dd>{money(receipt.paid)}</dd>
-          </div>
-          {receipt.balanceDue > 0 ? (
+          {paymentNotRecorded ? null : (
+            <div className="flex justify-between">
+              <dt>Paid</dt>
+              <dd>{money(receipt.paid)}</dd>
+            </div>
+          )}
+          {paymentNotRecorded || receipt.balanceDue > 0 ? (
             <div className="flex justify-between">
               <dt>Balance due</dt>
-              <dd>{money(receipt.balanceDue)}</dd>
+              <dd>{money(paymentNotRecorded ? receipt.total : receipt.balanceDue)}</dd>
             </div>
           ) : null}
-          {receipt.change != null && receipt.change > 0 ? (
+          {!paymentNotRecorded && receipt.change != null && receipt.change > 0 ? (
             <div className="flex justify-between text-lg font-semibold">
               <dt>Change</dt>
               <dd>{money(receipt.change)}</dd>
@@ -348,7 +391,10 @@ export function CounterSaleScreen() {
           placeholder="Scan or type an item (type a quantity first to multiply)"
           value={scanText}
           onChange={(e) => setScanText(e.target.value)}
-          onBlur={() => !receipt && refocus()}
+          onBlur={(e) => {
+            // only when focus is LOST (a click on blank space); Tab/click to another control keeps it there
+            if (!receipt && !e.relatedTarget) refocus();
+          }}
           autoFocus
         />
         {pendingQty > 1 ? (
@@ -404,9 +450,9 @@ export function CounterSaleScreen() {
                 "rounded border px-3 py-2 text-sm disabled:opacity-40",
                 method === m.method && "border-brand-600 bg-brand-50 font-semibold",
               )}
-              onClick={() => {
+              onClick={(e) => {
                 setMethod(m.method);
-                refocus();
+                refocusAfterPointer(e);
               }}
             >
               {m.label}
@@ -423,9 +469,9 @@ export function CounterSaleScreen() {
                   type="button"
                   disabled={q.disabled}
                   className="rounded border px-3 py-2 text-sm disabled:opacity-40"
-                  onClick={() => {
+                  onClick={(e) => {
                     setTendered(String(q.amount));
-                    refocus();
+                    refocusAfterPointer(e);
                   }}
                 >
                   {q.label}
@@ -440,6 +486,12 @@ export function CounterSaleScreen() {
                 className="mt-1 w-full rounded border px-3 py-2"
                 value={tendered}
                 onChange={(e) => setTendered(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void completeSale(false);
+                  }
+                }}
               />
             </label>
             <p className="text-3xl font-bold" data-testid="change-due">

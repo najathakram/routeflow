@@ -155,15 +155,33 @@ export function parseScanField(
   return { kind: "code", code: text };
 }
 
-/** FIXED copy by status; the server's own message is never shown. */
+export const COUNTER_SALES_DISABLED_COPY = "Counter sales are not turned on for this business.";
+
+/** FIXED copy by status (and the one named 403 code); the server's own message is never shown. */
 export function counterSaleErrorCopy(err: unknown): string {
-  const status = (err as { response?: { status?: number } } | null | undefined)?.response?.status;
+  const res = (
+    err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
+  )?.response;
+  const status = res?.status;
+  if (status === 403 && res?.data?.code === "COUNTER_SALES_DISABLED")
+    return COUNTER_SALES_DISABLED_COPY;
   if (status === 403) return "You don't have permission to complete a counter sale.";
   if (status === 409)
     return "Something changed while you were checking out. Review the sale and try again. Nothing was charged.";
   if (status === 400 || status === 422)
     return "This sale can't be completed as entered. Check the items and payment and try again.";
   return "The sale could not be completed. Nothing was charged. Try again.";
+}
+
+/** One key per SALE (sent as `Idempotency-Key`): a retry of the same sale reuses it, a new sale gets a new one. */
+export function newIdempotencyKey(): string {
+  const c = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  // insecure-context fallback (a counter on a plain-http LAN address has no randomUUID)
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const r = Math.floor(Math.random() * 16);
+    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 /** Per-DEVICE preference ("Print receipt automatically"): localStorage only, never tenant data, never throws. */
