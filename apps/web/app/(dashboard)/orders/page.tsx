@@ -33,8 +33,7 @@ import { useUrlPage, useResetPageOnChange, useClampPage } from "@/lib/hooks/useU
 import { downloadCsv, csvDate } from "@/lib/export";
 import { apiClient } from "@/lib/api-client";
 import { useDeliveryAccess } from "@/lib/api/addons";
-import { useShipMode } from "@/lib/ship-mode";
-import { orderStatusText } from "@/lib/order-status-label";
+import { useOrderStatusLabel } from "@/lib/fulfilment-caps";
 import { useDrafts } from "@/lib/api/drafts";
 import { saveTripDraft } from "@/lib/trip-draft";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -334,19 +333,16 @@ export default function OrdersPage() {
     );
   };
   const { toast } = useToast();
-  // SHIP fulfilment mode shows "Shipped" for Out for Delivery: display only.
-  const ship = useShipMode();
+  // Status words come from the shared fulfilment table (display only): per ORDER by its fulfillPath,
+  // and the account's default method for the filters below.
+  const statusLabel = useOrderStatusLabel();
   const savedViews = SAVED_VIEWS.map((v) => ({
     ...v,
-    label: orderStatusText(
-      v.filters.status === "OUT_FOR_DELIVERY" ? "OUT_FOR_DELIVERY" : "",
-      ship,
-      v.label,
-    ),
+    label: statusLabel(String(v.filters.status ?? ""), v.label),
   }));
   const statusOptions = STATUS_OPTIONS.map((o) => ({
     ...o,
-    label: orderStatusText(o.value, ship, o.label),
+    label: statusLabel(o.value, o.label),
   }));
   // The bulk cancel shows its own single summary toast — no per-order global error toasts.
   const updateStatus = useUpdateOrderStatus({ localErrorToast: true });
@@ -1041,7 +1037,11 @@ export default function OrdersPage() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <Badge
                       status={order.status}
-                      label={orderStatusText(order.status, ship, orderStatusLabel(order.status))}
+                      label={statusLabel(
+                        order.status,
+                        orderStatusLabel(order.status),
+                        order.fulfillPath,
+                      )}
                     />
                     {order.fulfillPath === "SHIP" && (
                       <span
@@ -1200,10 +1200,10 @@ export default function OrdersPage() {
                         <div className="flex items-center gap-1.5">
                           <Badge
                             status={order.status}
-                            label={orderStatusText(
+                            label={statusLabel(
                               order.status,
-                              ship,
                               orderStatusLabel(order.status),
+                              order.fulfillPath,
                             )}
                           />
                           {order.fulfillPath === "SHIP" && (

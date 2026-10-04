@@ -12,7 +12,7 @@ import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { isInternalEmail } from "@/lib/formatting";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON } from "@/lib/api/addons";
-import { useShipMode } from "@/lib/ship-mode";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { customerFormErrorCopy } from "@/lib/customer-form-error-copy";
 import { safeTextErrorCopy } from "@/lib/safe-text-error-copy";
 import { useSalesAgents } from "@/lib/api/sales-agents";
@@ -127,11 +127,12 @@ export interface CustomerFormModalProps {
 
 function buildDefaultValues(
   initialData?: CustomerFormModalProps["initialData"],
+  newCustomerFulfillPath: "ROUTE" | "SHIP" = "ROUTE",
 ): CustomerFormValues {
   if (!initialData) {
     return {
       customerType: "BUSINESS",
-      fulfillPath: "ROUTE",
+      fulfillPath: newCustomerFulfillPath,
       businessName: "",
       contactName: "",
       salutation: "",
@@ -198,8 +199,10 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
   // (the PATCH customer route has no agent field; assignment-open lives
   // inside the engine's create() only).
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
-  // SHIP fulfilment mode: no "Default fulfillment" picker; a new customer ships by carrier.
-  const ship = useShipMode();
+  // Fulfilment capabilities: the picker shows only when more than one method is on offer, and a NEW
+  // customer starts on the account default (ROUTE for an account with no fulfilment mode).
+  const staffFulfilment = useStaffFulfilment();
+  const newCustomerPath = staffFulfilment.staffDefault as "ROUTE" | "SHIP";
   const [salesAgentId, setSalesAgentId] = React.useState("");
   const [isAgentModalOpen, setIsAgentModalOpen] = React.useState(false);
   const { data: salesAgents } = useSalesAgents(
@@ -216,7 +219,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     formState: { errors },
   } = useForm<CustomerFormValues>({
     resolver: zodResolver(customerSchema),
-    defaultValues: buildDefaultValues(initialData),
+    defaultValues: buildDefaultValues(initialData, newCustomerPath),
   });
 
   const customerType = watch("customerType");
@@ -227,7 +230,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
     if (isOpen) {
       createCustomer.reset();
       updateCustomer.reset();
-      reset(buildDefaultValues(initialData));
+      reset(buildDefaultValues(initialData, newCustomerPath));
       setStreetError("");
       setCityError("");
       setZipError("");
@@ -310,7 +313,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
           isTaxExempt: data.isTaxExempt || false,
           creditLimit: data.creditLimit ? parseFloat(data.creditLimit) : undefined,
           currency: data.currency || "USD",
-          fulfillPath: ship ? "SHIP" : data.fulfillPath || "ROUTE",
+          fulfillPath: data.fulfillPath || staffFulfilment.staffDefault,
           notes: data.notes,
           addresses: [
             {
@@ -594,7 +597,7 @@ export function CustomerFormModal({ isOpen, onClose, mode, initialData }: Custom
                 </label>
               </div>
             </div>
-            {!ship && (
+            {staffFulfilment.choice && (
               <div className="space-y-1">
                 <Select
                   label="Default fulfillment"

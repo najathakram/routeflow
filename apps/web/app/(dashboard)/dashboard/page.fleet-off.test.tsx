@@ -19,7 +19,24 @@ jest.mock("@/lib/auth-context", () => ({
 jest.mock("@/lib/page-title-context", () => ({ usePageTitle: () => ({ setTitle: jest.fn() }) }));
 let fleet = true;
 let ship = false;
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({
+    data: ship
+      ? {
+          capabilities: {
+            fulfilment: {
+              methods: ["SHIP"],
+              staffDefault: "SHIP",
+              portalMethods: [],
+              portalDefault: null,
+              counter: "off",
+              fleet: false,
+            },
+          },
+        }
+      : undefined,
+  }),
+}));
 jest.mock("@/lib/api/addons", () => ({
   useRoutesAccess: () => ({ enabled: fleet, resolved: true }),
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
@@ -34,7 +51,21 @@ const page = (total: number, rows: unknown[] = []) => ({
   isLoading: false,
   isError: false,
 });
-jest.mock("@/lib/api/orders", () => ({ useOrders: () => page(3) }));
+jest.mock("@/lib/api/orders", () => ({
+  useOrders: (p: { status?: string; fulfillPath?: string }) => {
+    if (p?.fulfillPath === "SHIP" && p?.status === "OUT_FOR_DELIVERY")
+      return {
+        data: {
+          data: [{ shippingTrackingNumber: "1Z" }, { shippingTrackingNumber: null }, {}],
+          meta: { total: 3 },
+        },
+        isLoading: false,
+        isError: false,
+      };
+    if (p?.fulfillPath === "SHIP" && p?.status === "CONFIRMED") return page(7);
+    return page(3);
+  },
+}));
 jest.mock("@/lib/api/finance", () => ({
   useFinanceDashboard: () => ({
     data: { summaryTable: { today: { sales: 10 } }, arAging: null },
@@ -72,7 +103,36 @@ describe("Dashboard — fleet-off clean UI", () => {
     );
   });
 
-  it("fleet-OFF with fulfilment_model = ship: Out for Delivery reads Shipped", () => {
+  it("shipping account: Ready to ship and Shipped, no tracking cards with exact counts, linking to the filtered list", () => {
+    fleet = false;
+    ship = true;
+    renderWithProviders(<DashboardPage />);
+
+    expect(tileLabels()).toEqual(expect.arrayContaining(["Ready to ship", "Shipped, no tracking"]));
+    const tile = (label: string) =>
+      screen
+        .getAllByText(label)
+        .find((el) => el.tagName === "P")!
+        .closest("a") as HTMLAnchorElement;
+    expect(tile("Ready to ship")).toHaveTextContent("7");
+    expect(tile("Ready to ship").getAttribute("href")).toBe(
+      "/orders?status=CONFIRMED&fulfillPath=SHIP",
+    );
+    expect(tile("Shipped, no tracking")).toHaveTextContent("2");
+    expect(tile("Shipped, no tracking").getAttribute("href")).toBe(
+      "/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP",
+    );
+  });
+
+  it("no shipping cards for an unset account or a fleet account", () => {
+    fleet = false;
+    ship = false;
+    renderWithProviders(<DashboardPage />);
+    expect(tileLabels()).not.toContain("Ready to ship");
+    expect(tileLabels()).not.toContain("Shipped, no tracking");
+  });
+
+  it("fleet-OFF with a ship-mode account: Out for Delivery reads Shipped", () => {
     fleet = false;
     ship = true;
     renderWithProviders(<DashboardPage />);

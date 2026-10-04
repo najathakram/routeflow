@@ -131,7 +131,7 @@ import { useUndo } from "@/lib/undo";
 import { useProducts } from "@/lib/api/products";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { MSRP_ADDON, SALES_AGENTS_ADDON, useFleetAccess, useRoutesAccess } from "@/lib/api/addons";
-import { OrderStatusBadge, useOrderStatusText } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
 import { AssignedRoutesCard } from "./_components/AssignedRoutesCard";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
@@ -189,7 +189,12 @@ const orderColumns: ColumnDef<ApiOrder, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <OrderStatusBadge status={row.original.status as BadgeStatus} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge
+        status={row.original.status as BadgeStatus}
+        fulfillPath={row.original.fulfillPath as string | undefined}
+      />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -1939,7 +1944,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
   // modal's query off (this page is not behind the shell's RouteGuard).
   const { enabled: routesAccess } = useRoutesAccess();
   const { fleet } = useFleetAccess(); // no fleet module: no route assignment surfaces
-  const statusText = useOrderStatusText();
+  const statusLabel = useOrderStatusLabel();
   const currentAgent = useCustomerCurrentAgent(id, { enabled: hasSalesAgents });
   const [agentModalOpen, setAgentModalOpen] = React.useState(false);
   const closeAssignment = useCloseAssignment();
@@ -3275,7 +3280,7 @@ function CustomerDetailPageInner({ id }: { id: string }) {
                     { value: "CONFIRMED", label: "Confirmed" },
                     {
                       value: "OUT_FOR_DELIVERY",
-                      label: statusText("OUT_FOR_DELIVERY", "Out for Delivery"),
+                      label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
                     },
                     { value: "COMPLETED", label: "Completed" },
                     { value: "CANCELLED", label: "Cancelled" },

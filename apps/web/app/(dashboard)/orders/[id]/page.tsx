@@ -61,7 +61,8 @@ import {
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2 } from "@/lib/api/addons";
-import { OrderStatusBadge, useShipMode } from "@/components/OrderStatusBadge";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import { RecordReturnAction } from "../../returns/_components/RecordReturnAction";
 import {
   OrderInlineReturnsSection,
@@ -1932,7 +1933,8 @@ export default function OrderDetailPage() {
   const { data: order, isLoading, isError } = useOrder(id);
   // `order_ui_v2` (dark): card-list lines instead of the table.
   const orderUiV2 = useOrderUiV2();
-  const ship = useShipMode(); // fulfilment_model "ship": carrier wording, no fulfilment picker
+  const statusLabel = useOrderStatusLabel();
+  const staffFulfilment = useStaffFulfilment();
   const { data: priceHistory } = useCustomerPriceHistory(order?.customerId);
   // Customer tier pricing (mirrors mobile's edit-items screen): a substituted
   // line prices off the customer's effective tier, not the raw list price.
@@ -2338,7 +2340,7 @@ export default function OrderDetailPage() {
           setLocalStatus("OUT_FOR_DELIVERY");
           // Nudge the operator straight into tracking entry for a SHIP order —
           // there's nowhere else on this screen prompting for it.
-          if (order.fulfillPath === "SHIP" || ship) setShipmentOpenSignal((n) => n + 1);
+          if (order.fulfillPath === "SHIP") setShipmentOpenSignal((n) => n + 1);
         },
         onError: guardError(() => handleLock()),
       },
@@ -2584,7 +2586,10 @@ export default function OrderDetailPage() {
                 Urgent
               </span>
             )}
-            <OrderStatusBadge status={localStatus as BadgeStatus} />
+            <OrderStatusBadge
+              status={localStatus as BadgeStatus}
+              fulfillPath={order?.fulfillPath}
+            />
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2.5 text-sm text-navy/70">
             <span>
@@ -2644,7 +2649,7 @@ export default function OrderDetailPage() {
           {!canEdit && order?.editWindow?.closedReason && !isEditing && (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700 ring-1 ring-amber-200">
               {order.editWindow.closedReason === "DISPATCHED"
-                ? `${ship ? "Shipped" : "Out for delivery"} — editing closed`
+                ? `${statusLabel("OUT_FOR_DELIVERY", "Out for delivery", order.fulfillPath)} — editing closed`
                 : "Order cancelled — editing closed"}
             </span>
           )}
@@ -2816,11 +2821,11 @@ export default function OrderDetailPage() {
                     onClick={handleLock}
                     loading={updateStatus.isPending}
                   >
-                    {order.fulfillPath === "SHIP" || ship ? "Mark shipped" : "Out for Delivery"}
+                    {order.fulfillPath === "SHIP" ? "Mark shipped" : "Out for Delivery"}
                   </Button>
-                  {(order.fulfillPath === "SHIP" || ship) && (
+                  {order.fulfillPath === "SHIP" && (
                     <p className="text-[11px] text-navy/50">
-                      {`Sets the order to ${ship ? "Shipped" : "Out for Delivery"} — the customer is notified it's on the way.`}
+                      {`Sets the order to ${statusLabel("OUT_FOR_DELIVERY", "Out for Delivery", order.fulfillPath)} — the customer is notified it's on the way.`}
                     </p>
                   )}
                 </div>
@@ -3386,7 +3391,7 @@ export default function OrderDetailPage() {
           {/* Order summary */}
           <Card title="Summary">
             <dl className="space-y-2.5 text-sm">
-              {!ship && (
+              {staffFulfilment.choice && (
                 <div className="flex items-center justify-between gap-3">
                   <dt className="text-navy/70">Fulfillment</dt>
                   <dd className="flex flex-col items-end gap-0.5">

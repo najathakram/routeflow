@@ -1,39 +1,49 @@
 import * as React from "react";
 import { render, screen } from "@testing-library/react";
-import { orderStatusLabelOverride, orderStatusText } from "./order-status-label";
+import { orderStatusText } from "./order-status-label";
 import { OrderStatusBadge } from "@/components/OrderStatusBadge";
 
-// Display-only: an account in SHIP fulfilment mode reads "Shipped" for Out for Delivery on staff
-// screens. Every other account and every other status render exactly as before.
-let ship = false;
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+// Display-only status words from the shared fulfilment table, per ORDER by its fulfillPath. An account
+// with no fulfilment mode (unset capabilities) keeps today's words even for a SHIP order.
+let fulfilment: Record<string, unknown> | undefined;
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({ data: fulfilment ? { capabilities: { fulfilment } } : undefined }),
+}));
 
-describe("orderStatusLabelOverride / orderStatusText", () => {
-  it("ship-mode OUT_FOR_DELIVERY reads Shipped", () => {
-    expect(orderStatusLabelOverride("OUT_FOR_DELIVERY", true)).toBe("Shipped");
-    expect(orderStatusText("OUT_FOR_DELIVERY", true, "Out for Delivery")).toBe("Shipped");
+const shipAccount = {
+  methods: ["SHIP"],
+  staffDefault: "SHIP",
+  portalMethods: [],
+  portalDefault: null,
+  counter: "off",
+  fleet: false,
+};
+const mixedAccount = {
+  ...shipAccount,
+  methods: ["ROUTE", "SHIP"],
+  staffDefault: "ROUTE",
+  fleet: true,
+};
+
+describe("orderStatusText", () => {
+  it("SHIP / PICKUP / ROUTE words, and the fallback for anything unlisted", () => {
+    expect(orderStatusText("OUT_FOR_DELIVERY", "SHIP", "Out for Delivery")).toBe("Shipped");
+    expect(orderStatusText("OUT_FOR_DELIVERY", "PICKUP", "x")).toBe("Ready for pickup");
+    expect(orderStatusText("DELIVERED", "PICKUP", "Delivered")).toBe("Picked up");
+    expect(orderStatusText("OUT_FOR_DELIVERY", "ROUTE", "x")).toBe("Out for Delivery");
+    expect(orderStatusText("PENDING", "SHIP", "Pending")).toBe("Pending");
   });
-  it("a non-ship account is untouched", () => {
-    expect(orderStatusLabelOverride("OUT_FOR_DELIVERY", false)).toBeUndefined();
-    expect(orderStatusText("OUT_FOR_DELIVERY", false, "Out for Delivery")).toBe("Out for Delivery");
-  });
-  it.each(["PENDING", "CONFIRMED", "DELIVERED", "CANCELLED", "PARTIALLY_DELIVERED", ""])(
-    "no other status (%p) is ever renamed",
-    (s) => {
-      expect(orderStatusLabelOverride(s, true)).toBeUndefined();
-      expect(orderStatusText(s, true, "Normal")).toBe("Normal");
-    },
-  );
 });
 
 describe("OrderStatusBadge", () => {
-  it("not ship mode: Out for Delivery, today's label", () => {
-    ship = false;
-    render(<OrderStatusBadge status="OUT_FOR_DELIVERY" />);
+  it("unset account (no capabilities): today's wording, even for a SHIP order", () => {
+    fulfilment = undefined;
+    render(<OrderStatusBadge status="OUT_FOR_DELIVERY" fulfillPath="SHIP" />);
     expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
   });
-  it("ship mode: Shipped, and the enum is untouched elsewhere", () => {
-    ship = true;
+
+  it("shipping account: Shipped, other statuses untouched", () => {
+    fulfilment = shipAccount;
     render(
       <>
         <OrderStatusBadge status="OUT_FOR_DELIVERY" />
@@ -43,5 +53,19 @@ describe("OrderStatusBadge", () => {
     expect(screen.getByText("Shipped")).toBeInTheDocument();
     expect(screen.queryByText("Out for Delivery")).not.toBeInTheDocument();
     expect(screen.getByText("Confirmed")).toBeInTheDocument();
+  });
+
+  it("mixed account: the word follows each ORDER's fulfillPath", () => {
+    fulfilment = mixedAccount;
+    render(
+      <>
+        <OrderStatusBadge status="OUT_FOR_DELIVERY" fulfillPath="SHIP" />
+        <OrderStatusBadge status="OUT_FOR_DELIVERY" fulfillPath="ROUTE" />
+        <OrderStatusBadge status="OUT_FOR_DELIVERY" fulfillPath="PICKUP" />
+      </>,
+    );
+    expect(screen.getByText("Shipped")).toBeInTheDocument();
+    expect(screen.getByText("Out for Delivery")).toBeInTheDocument();
+    expect(screen.getByText("Ready for pickup")).toBeInTheDocument();
   });
 });

@@ -35,9 +35,8 @@ import { unitsLabel } from "@/lib/stock-label";
 import { useFinanceDashboard } from "@/lib/api/finance";
 import { useInvoices, type Invoice } from "@/lib/api/invoices";
 import { useRoutesAccess, useDeliveryAccess } from "@/lib/api/addons";
-import { useShipMode } from "@/lib/ship-mode";
-import { OrderStatusBadge } from "@/components/OrderStatusBadge";
-import { orderStatusText } from "@/lib/order-status-label";
+import { OrderStatusBadge, useOrderStatusLabel } from "@/components/OrderStatusBadge";
+import { isUnsetCapabilities, useFulfilmentCaps } from "@/lib/fulfilment-caps";
 import { DRIVER_LANDING } from "@/lib/portal-routing";
 import { DriverAppBanner } from "./DriverAppBanner";
 import { GettingStartedBanner } from "./GettingStartedBanner";
@@ -136,7 +135,9 @@ const orderColumns: ColumnDef<Order, unknown>[] = [
     accessorKey: "status",
     header: "Status",
     enableSorting: false,
-    cell: ({ row }) => <OrderStatusBadge status={row.original.status} />,
+    cell: ({ row }) => (
+      <OrderStatusBadge status={row.original.status} fulfillPath={row.original.fulfillPath} />
+    ),
   },
   {
     accessorKey: "createdAt",
@@ -280,6 +281,27 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
       </div>
     </div>
   );
+}
+
+/** Exact server total for a count-only list query; "—" while loading, failed or unknown (never 0). */
+function shipCount(q: { data?: { meta?: { total?: number } } }): string | number {
+  const n = q.data?.meta?.total;
+  return typeof n === "number" && Number.isFinite(n) ? n : "—";
+}
+
+/** Shipped orders (SHIP, out for delivery) still missing a tracking number. Counted over the 100 newest
+ *  rows: exact when the server total fits in that page, else labelled "100+" rather than guessed. */
+function shippedNoTracking(q: {
+  data?: {
+    data?: Array<{ shippingTrackingNumber?: string | null }>;
+    meta?: { total?: number };
+  };
+}): string | number {
+  const rows = q.data?.data;
+  const total = q.data?.meta?.total;
+  if (!rows || typeof total !== "number") return "—";
+  const missing = rows.filter((o) => !o.shippingTrackingNumber).length;
+  return total > rows.length ? `${missing}+` : missing;
 }
 
 // ─── Overdue Invoices Panel ───────────────────────────────────────────────────
@@ -521,7 +543,12 @@ export default function DashboardPage() {
   const { enabled: deliveryAccess } = useDeliveryAccess();
   // SHIP fulfilment mode: "Out for Delivery" reads "Shipped". (The route / driver cards below are already
   // keyed on routesAccess, which a tenant with no fleet module never holds, so they stay hidden.)
-  const ship = useShipMode();
+  const statusLabel = useOrderStatusLabel();
+  // A SHIPPING account (fulfilment staffDefault SHIP, mode set) gets shipping cards in place of the
+  // route / driver ones. Any other account, including an unset one, is untouched.
+  const fulfilmentCaps = useFulfilmentCaps();
+  const shippingAccount =
+    !isUnsetCapabilities(fulfilmentCaps) && fulfilmentCaps.staffDefault === "SHIP";
 
   const baseIsOperator =
     !user?.role ||
@@ -597,6 +624,15 @@ export default function DashboardPage() {
     isError: recentError,
     error: recentErrorObj,
   } = useOrders({ page: 1, limit: 5 }, { ...POLL, enabled: readsBusinessData });
+  // Shipping cards (exact server totals via the list's meta.total; "—" while unknown, never 0).
+  const readyToShipQ = useOrders(
+    { status: "CONFIRMED", fulfillPath: "SHIP", page: 1, limit: 1 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
+  const shippedQ = useOrders(
+    { status: "OUT_FOR_DELIVERY", fulfillPath: "SHIP", page: 1, limit: 100 },
+    { ...POLL, enabled: readsBusinessData && isOperator && shippingAccount },
+  );
   // `/route-runs` and `/drivers` are addon-gated server-side (403 without a
   // dispatch addon), so the 30s polls must be skipped for tenants that can't see
   // the cards they feed — same condition as the render gates below.
@@ -796,6 +832,26 @@ export default function DashboardPage() {
             />
           </Link>
         )}
+        {isOperator && shippingAccount && (
+          <>
+            <Link href="/orders?status=CONFIRMED&fulfillPath=SHIP" className="block">
+              <StatCard
+                label="Ready to ship"
+                value={shipCount(readyToShipQ)}
+                icon={<Package className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+            <Link href="/orders?status=OUT_FOR_DELIVERY&fulfillPath=SHIP" className="block">
+              <StatCard
+                label="Shipped, no tracking"
+                value={shippedNoTracking(shippedQ)}
+                icon={<AlertTriangle className="h-5 w-5" />}
+                className="cursor-pointer transition-shadow hover:shadow-md"
+              />
+            </Link>
+          </>
+        )}
         {(isOperator || isDriver) &&
           routesAccess &&
           (runsLoading ? (
@@ -867,7 +923,7 @@ export default function DashboardPage() {
                 bg: "bg-brand-50",
               },
               {
-                label: orderStatusText("OUT_FOR_DELIVERY", ship, "Out for Delivery"),
+                label: statusLabel("OUT_FOR_DELIVERY", "Out for Delivery"),
                 key: "OUT_FOR_DELIVERY" as const,
                 color: "text-blue-600",
                 bg: "bg-blue-50",

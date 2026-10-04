@@ -6,7 +6,24 @@ import { CustomerFormModal } from "./CustomerFormModal";
 // account, including one with no fleet modules, keeps the picker and the ROUTE default exactly as before.
 const mutate = jest.fn();
 let ship = false;
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({
+    data: ship
+      ? {
+          capabilities: {
+            fulfilment: {
+              methods: ["SHIP"],
+              staffDefault: "SHIP",
+              portalMethods: [],
+              portalDefault: null,
+              counter: "off",
+              fleet: false,
+            },
+          },
+        }
+      : undefined,
+  }),
+}));
 jest.mock("next/navigation", () => ({ useRouter: () => ({ push: jest.fn() }) }));
 jest.mock("@/lib/api/customers", () => ({
   useCreateCustomer: () => ({ mutate, isPending: false, error: null, reset: jest.fn() }),

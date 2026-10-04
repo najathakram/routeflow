@@ -83,7 +83,7 @@ import { CreditNotePicker, type CreditSelection } from "./CreditNotePicker";
 import { useAuth } from "@/lib/auth-context";
 import { useHasAddon } from "@/lib/api/tobacco";
 import { SALES_AGENTS_ADDON, useOrderUiV2, useScanV2 } from "@/lib/api/addons";
-import { useShipMode } from "@/lib/ship-mode";
+import { useStaffFulfilment } from "@/lib/fulfilment-caps";
 import {
   OrderInlineReturnsSection,
   type OrderInlineReturnsSectionHandle,
@@ -425,18 +425,20 @@ export function CreateOrderModal({
 
   const { register, handleSubmit, reset, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { urgent: false, fulfillPath: "ROUTE" },
+    defaultValues: { urgent: false },
   });
 
   const isUrgent = watch("urgent");
   const notesValue = watch("notes");
-  const fulfillPath = watch("fulfillPath");
+  const staffFulfilment = useStaffFulfilment();
+  const fulfillPath = (watch("fulfillPath") ?? staffFulfilment.staffDefault) as "ROUTE" | "SHIP";
+  const fulfillPath = watch("fulfillPath") ?? staffFulfilment.staffDefault;
 
   // Reset the builder each time it opens (a fresh session). For a resume, the
   // hydration effect below re-fills the state from the draft payload right after.
   React.useEffect(() => {
     if (!isOpen) return;
-    reset({ urgent: false, fulfillPath: "ROUTE" });
+    reset({ urgent: false });
     setCustomerSearch("");
     setDebouncedCustomerSearch("");
     setSelectedCustomer(null);
@@ -948,7 +950,6 @@ export function CreateOrderModal({
   const isStaff = isStaffRole(user?.role);
   const hasSalesAgents = useHasAddon(SALES_AGENTS_ADDON);
   // SHIP fulfilment mode: no fulfilment toggle, every order ships by carrier.
-  const ship = useShipMode();
   const [commissionRatePct, setCommissionRatePct] = React.useState<number | null>(null);
 
   // ── Minimize & resume drafts (pos-cost-roles-spec §2) ───────────────────────
@@ -966,7 +967,7 @@ export function CreateOrderModal({
       urgent: !!isUrgent,
       floorAcked: Array.from(floorAcked),
       commissionRatePct,
-      fulfillPath: ship ? "SHIP" : (fulfillPath ?? "ROUTE"),
+      fulfillPath,
     }),
     [
       selectedCustomer,
@@ -980,7 +981,6 @@ export function CreateOrderModal({
       floorAcked,
       commissionRatePct,
       fulfillPath,
-      ship,
     ],
   );
   const draftPayloadJson = JSON.stringify(draftPayload);
@@ -1097,7 +1097,7 @@ export function CreateOrderModal({
     // the customer's own default (that only seeds a FRESH selection; see the
     // picker's onClick). Order matters: this reset() must run after
     // setSelectedCustomer above so a resumed SHIP order stays SHIP.
-    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath ?? "ROUTE" });
+    reset({ notes: p.notes ?? "", urgent: !!p.urgent, fulfillPath: p.fulfillPath });
     setActiveDraftId(loadedDraft.id);
     // Seed the autosave baseline so hydration itself never triggers a write. Key
     // order must match `draftPayload` — the comparison is on the JSON string.
@@ -1249,7 +1249,7 @@ export function CreateOrderModal({
         items: itemsForSubmit,
         notes: data.notes,
         urgent: data.urgent,
-        fulfillPath: ship ? "SHIP" : data.fulfillPath || "ROUTE",
+        fulfillPath: data.fulfillPath || staffFulfilment.staffDefault,
         requestedDeliveryDate: requestedDeliveryDate || undefined,
         orderDate: orderDate || undefined,
         ...(discountAmt > 0 ? { discountAmount: discountAmt } : {}),
@@ -1649,7 +1649,10 @@ export function CreateOrderModal({
                               // effect) so hydrating a parked draft's own
                               // fulfillPath — via the same setSelectedCustomer call
                               // below — is never clobbered by this default.
-                              setValue("fulfillPath", c.fulfillPath ?? "ROUTE");
+                              setValue(
+                                "fulfillPath",
+                                staffFulfilment.pick(c.fulfillPath) as "ROUTE" | "SHIP",
+                              );
                               setCustomerSearch("");
                               setDebouncedCustomerSearch("");
                             }}
@@ -2102,7 +2105,7 @@ export function CreateOrderModal({
               </div>
             )}
 
-            {!ship && (
+            {staffFulfilment.choice && (
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-navy/70">Fulfillment</label>
                 <div className="inline-flex rounded-lg border border-surface-border bg-white p-0.5">

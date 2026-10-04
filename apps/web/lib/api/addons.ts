@@ -4,6 +4,7 @@ import {
   RECURRING_ROUTES_ADDON,
 } from "@routeflow/types";
 import { useTenantAddons } from "./tobacco";
+import { useTenantFeatures } from "../tenant-features";
 
 // ─── Developer mode (hidden dispatch/driver/route addon) ──────────────────────
 //
@@ -93,9 +94,14 @@ export function useRoutesAccess(): { enabled: boolean; resolved: boolean } {
 // (`resolved` false) `fleet` is true, so a tenant is never shown a stripped-down UI on an unknown answer
 // (the same rule RouteGuard uses). Display-only: never a server gate.
 export function useFleetAccess(): { fleet: boolean; loading: boolean } {
+  // The server's own answer wins when present: `capabilities.fulfilment.fleet`.
+  const features = useTenantFeatures().data as
+    { capabilities?: { fulfilment?: { fleet?: boolean } } } | undefined;
+  const serverFleet = features?.capabilities?.fulfilment?.fleet;
   const routes = useRoutesAccess();
   const delivery = useDeliveryAccess();
   const resolved = routes.resolved && delivery.resolved;
+  if (typeof serverFleet === "boolean") return { fleet: serverFleet, loading: false };
   return { fleet: !resolved || routes.enabled || delivery.enabled, loading: !resolved };
 }
 

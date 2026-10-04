@@ -10,7 +10,24 @@ jest.mock("@/lib/api/addons", () => ({
   ...jest.requireActual("@/lib/api/addons"),
   useDeliveryAccess: () => ({ enabled: false, resolved: true }),
 }));
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({
+    data: ship
+      ? {
+          capabilities: {
+            fulfilment: {
+              methods: ["SHIP"],
+              staffDefault: "SHIP",
+              portalMethods: [],
+              portalDefault: null,
+              counter: "off",
+              fleet: false,
+            },
+          },
+        }
+      : undefined,
+  }),
+}));
 jest.mock("next/navigation", () => ({
   useRouter: () => ({ push: jest.fn(), replace: jest.fn() }),
   usePathname: () => "/orders",

@@ -7,7 +7,24 @@ import { CreateOrderModal } from "./CreateOrderModal";
 // toggle exactly as before.
 window.HTMLElement.prototype.scrollIntoView = jest.fn();
 let ship = false;
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({
+    data: ship
+      ? {
+          capabilities: {
+            fulfilment: {
+              methods: ["SHIP"],
+              staffDefault: "SHIP",
+              portalMethods: [],
+              portalDefault: null,
+              counter: "off",
+              fleet: false,
+            },
+          },
+        }
+      : undefined,
+  }),
+}));
 jest.mock("@/lib/api/customers", () => ({
   useCustomers: () => ({ data: { data: [] } }),
   useCustomerPrices: () => ({ data: [] }),

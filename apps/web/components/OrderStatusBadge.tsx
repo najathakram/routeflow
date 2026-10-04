@@ -2,32 +2,21 @@
 
 import * as React from "react";
 import { Badge, type BadgeStatus } from "@routeflow/ui/web";
-import { useShipMode } from "@/lib/ship-mode";
-import { orderStatusLabelOverride, orderStatusText } from "@/lib/order-status-label";
+import { useFulfilmentCaps, useOrderStatusLabel } from "@/lib/fulfilment-caps";
 
-export { useShipMode };
+export { useFulfilmentCaps, useOrderStatusLabel };
 
-/** Plain-text status label for the current account: `(status, normalLabel) => label` (Shipped in SHIP mode). */
-export function useOrderStatusText() {
-  const ship = useShipMode();
-  return (status: string, normalLabel: string) => orderStatusText(status, ship, normalLabel);
-}
-
-/** `<Badge status>` for an ORDER status on a staff screen: an account in SHIP mode sees "Shipped" for
- *  OUT_FOR_DELIVERY (display only). Anything else renders exactly as `<Badge status={status} />`. */
+/** `<Badge status>` for an ORDER status on a staff screen. The word comes from the shared fulfilment
+ *  table: per order when `fulfillPath` is given (SHIP "Shipped", PICKUP "Ready for pickup"), else the
+ *  account's default method. ROUTE / unset accounts render exactly as `<Badge status={status} />`. */
 export function OrderStatusBadge({
   status,
-  label,
+  fulfillPath,
 }: {
   status: BadgeStatus | string;
-  /** The caller's own label, when it already passes one (kept unless the fleet-off override applies). */
-  label?: string;
+  fulfillPath?: string | null;
 }) {
-  const ship = useShipMode();
-  return (
-    <Badge
-      status={status as BadgeStatus}
-      label={orderStatusLabelOverride(String(status), ship) ?? label}
-    />
-  );
+  const label = useOrderStatusLabel();
+  const word = label(String(status), "", fulfillPath);
+  return <Badge status={status as BadgeStatus} label={word || undefined} />;
 }

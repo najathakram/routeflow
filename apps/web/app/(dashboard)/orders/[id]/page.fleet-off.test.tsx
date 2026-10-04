@@ -19,7 +19,24 @@ jest.mock("@/components/ReAuthProvider", () => ({
   ReAuthProvider: ({ children }: any) => children,
 }));
 jest.mock("@/components/PlanGateNotice", () => ({ PlanGateNotice: () => null }));
-jest.mock("@/lib/ship-mode", () => ({ useShipMode: () => ship }));
+jest.mock("@/lib/tenant-features", () => ({
+  useTenantFeatures: () => ({
+    data: ship
+      ? {
+          capabilities: {
+            fulfilment: {
+              methods: ["SHIP"],
+              staffDefault: "SHIP",
+              portalMethods: [],
+              portalDefault: null,
+              counter: "off",
+              fleet: false,
+            },
+          },
+        }
+      : undefined,
+  }),
+}));
 jest.mock("@/lib/api-client", () => ({
   ...jest.requireActual("@/lib/api-client"),
   apiClient: {
