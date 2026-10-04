@@ -15,6 +15,8 @@ export function useProducts(
     stockStatus?: "IN_STOCK" | "LOW" | "OUT_OF_STOCK";
     /** Regulated-section filter: "any" (any regulated), "none" (non-regulated), or a section id. */
     section?: string;
+    /** `false` lists only products hidden from the buyer portal. */
+    portalVisible?: boolean;
     page?: number;
     limit?: number;
     includeVariants?: boolean;

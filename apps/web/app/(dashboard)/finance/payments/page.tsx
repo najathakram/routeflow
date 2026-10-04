@@ -17,6 +17,8 @@ import {
 } from "@/lib/api/invoices";
 import { useInvoices, type InvoiceStatus } from "@/lib/api/invoices";
 import { waterfallAllocations, allocationTotals } from "@/lib/api/supplier-payments";
+import { clampAllocationInput } from "@/lib/payment-allocation";
+import { genericToastCopy } from "@/lib/generic-toast-copy";
 import { useCustomers } from "@/lib/api/customers";
 import { useToast, EmptyState, Button, Badge } from "@routeflow/ui/web";
 import Link from "next/link";
@@ -116,15 +118,25 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
   }, [customerId, customerInvoices.length, totalAmount]);
 
   const total = parseFloat(totalAmount) || 0;
-  const { allocated: allocatedTotal, excess } = allocationTotals(
+  const {
+    allocated: allocatedTotal,
+    excess,
+    overAllocated,
+  } = allocationTotals(
     total,
     // `|| null` also swallows a NaN from a half-typed value, as the old
     // `parseFloat(a.amount) || 0` did.
     allocations.map((a) => ({ amount: parseFloat(a.amount) || null })),
   );
 
+  // REG-B1002 / B313: cap each row at its invoice's balance, same helper as
+  // CustomerRecordPaymentModal.
   const updateAlloc = (idx: number, val: string) =>
-    setAllocations((prev) => prev.map((a, i) => (i === idx ? { ...a, amount: val } : a)));
+    setAllocations((prev) =>
+      prev.map((a, i) =>
+        i === idx ? { ...a, amount: clampAllocationInput(val, a.amountDue) } : a,
+      ),
+    );
 
   const customers = customersData?.data ?? [];
 
@@ -135,6 +147,10 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
     }
     if (!total || total <= 0) {
       toast({ title: "Enter a valid amount", variant: "error" });
+      return;
+    }
+    if (overAllocated) {
+      toast({ title: "Allocated more than the amount received", variant: "error" });
       return;
     }
     const validAllocs = allocations.filter((a) => a.amount && parseFloat(a.amount) > 0);
@@ -181,8 +197,11 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
       }
       onClose();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      toast({ title: msg ?? "Failed to record payment", variant: "error" });
+      toast({
+        title: "Failed to record payment",
+        description: genericToastCopy(err),
+        variant: "error",
+      });
     }
   };
 
@@ -389,11 +408,18 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
                   <span>Total received:</span>
                   <span>{fmt(total)}</span>
                 </div>
-                {excess > 0.001 && (
-                  <div className="flex justify-between font-medium text-amber-600">
-                    <span>⚠ Unallocated (→ advance):</span>
-                    <span>{fmt(excess)}</span>
+                {overAllocated ? (
+                  <div className="flex justify-between font-medium text-danger">
+                    <span>⚠ Allocated more than received:</span>
+                    <span>{fmt(allocatedTotal - total)}</span>
                   </div>
+                ) : (
+                  excess > 0.001 && (
+                    <div className="flex justify-between font-medium text-amber-600">
+                      <span>⚠ Unallocated (→ advance):</span>
+                      <span>{fmt(excess)}</span>
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -409,14 +435,14 @@ function RecordPaymentModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={() => handleSave("DRAFT")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated}
             className="rounded-lg border border-surface-border px-4 py-2 text-sm text-navy hover:bg-surface-raised disabled:opacity-50"
           >
             Save as Draft
           </button>
           <button
             onClick={() => handleSave("PAID")}
-            disabled={record.isPending}
+            disabled={record.isPending || overAllocated}
             className="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {record.isPending ? "Saving..." : "Save as Paid"}
