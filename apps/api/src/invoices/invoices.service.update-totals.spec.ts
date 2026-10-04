@@ -131,7 +131,8 @@ describe("InvoicesService.update() — B1030 the invoice discount cannot exceed 
     issueDate: new Date(),
   };
 
-  const OVER = (d: number, s: number) => `Invoice discount (${d}) cannot exceed subtotal (${s}).`;
+  const OVER = (d: number, s: number) =>
+    `Invoice discount ($${d.toFixed(2)}) cannot exceed subtotal ($${s.toFixed(2)}).`;
 
   const items = (rows: Record<string, unknown>[]) => rows;
   const arrangeRecalc = (
