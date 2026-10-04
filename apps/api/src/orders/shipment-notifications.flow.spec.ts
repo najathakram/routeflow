@@ -284,4 +284,20 @@ describe("E-c / L6 / E-b decisions", () => {
     await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "1Z" } as any, operator);
     expect(h.db.order.update.mock.calls[0][0].data.shippedAt).toBeNull();
   });
+
+  it("clearing the tracking keeps the ship date the transition stamped", async () => {
+    const h = harness();
+    const shippedAt = new Date("2026-10-01T00:00:00Z");
+    h.db.order.findFirst.mockResolvedValue({
+      id: "ord-1",
+      shippedAt,
+      status: "OUT_FOR_DELIVERY",
+      fulfillPath: "SHIP",
+      customerId: "cust-1",
+      orderNumber: "ORD-123",
+      shippingTrackingNumber: "1Z",
+    });
+    await updateShipmentImpl(h.deps, "ord-1", { shippingTrackingNumber: "" } as any, operator);
+    expect(h.db.order.update.mock.calls[0][0].data.shippedAt).toBe(shippedAt);
+  });
 });

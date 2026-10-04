@@ -7346,49 +7346,6 @@ describe("OrdersService", () => {
         }),
       );
     });
-
-    it("E-b: saving tracking on an order that has NOT shipped does not stamp shippedAt", async () => {
-      prisma.order.findFirst.mockResolvedValue({
-        id: "ord-1",
-        shippedAt: null,
-        status: "CONFIRMED",
-      });
-      prisma.order.update.mockResolvedValue({ id: "ord-1" });
-      await service.updateShipment(
-        "ord-1",
-        { shippingCarrier: "UPS", shippingTrackingNumber: "1Z999AA10123456784" },
-        operatorPayload,
-      );
-      expect(prisma.order.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ shippedAt: null }) }),
-      );
-    });
-
-    it("clears carrier and tracking when blank but keeps the ship date the transition stamped", async () => {
-      const shipped = new Date("2026-10-01T00:00:00Z");
-      prisma.order.findFirst.mockResolvedValue({
-        id: "ord-1",
-        shippedAt: shipped,
-        status: "OUT_FOR_DELIVERY",
-      });
-      prisma.order.update.mockResolvedValue({ id: "ord-1" });
-
-      await service.updateShipment(
-        "ord-1",
-        { shippingCarrier: "", shippingTrackingNumber: "" },
-        operatorPayload,
-      );
-
-      expect(prisma.order.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            shippingCarrier: null,
-            shippingTrackingNumber: null,
-            shippedAt: shipped,
-          }),
-        }),
-      );
-    });
   });
 
   // ─── P5-08: edit window (G7) + OrderRevision versioning ─────────────────────
