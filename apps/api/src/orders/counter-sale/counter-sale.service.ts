@@ -29,6 +29,10 @@ import {
   planCounterPayment,
   toPrismaMethod,
 } from "./counter-sale-payment";
+import {
+  autoApplyCandidateWhere,
+  hasOpenCreditBalance,
+} from "../../credit-notes/auto-apply-candidates";
 import { WalkInCustomerService } from "./walk-in-customer";
 
 type InvoiceRow = {
@@ -201,11 +205,12 @@ export class CounterSaleService {
   }
 
   private async assertNoOpenCredit(customerId: string): Promise<void> {
+    // The SAME selection markSent's auto-apply uses (credit-notes/auto-apply-candidates), not just ISSUED.
     const notes = await this.prisma.forTenant().creditNote.findMany({
-      where: { customerId, status: "ISSUED" },
+      where: autoApplyCandidateWhere({ customerId, now: new Date() }),
       select: { amount: true, amountUsed: true },
     });
-    if (notes.some((n: any) => roundMoney(Number(n.amount) - Number(n.amountUsed)) > 0.001)) {
+    if (notes.some((n: any) => hasOpenCreditBalance(n))) {
       throw new ConflictException({
         code: API_ERROR_CODES.WALK_IN_OPEN_CREDIT,
         message:

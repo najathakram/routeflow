@@ -19,6 +19,7 @@ import { NumberingService } from "../import/numbering.service";
 import { retryOnTxConflict, txConflictState } from "../common/tx-retry";
 import { asReadableConflict, cnBad, cnConflict, type CreditNoteCode } from "./credit-note-errors";
 import { API_ERROR_CODES } from "../common/api-error-codes";
+import { autoApplyCandidateWhere } from "./auto-apply-candidates";
 import { blockedPairs, clearApplyBlocks, pairKey, writeApplyBlocks } from "./apply-block";
 import { SOURCE_DELETED_MESSAGE, hasSourceDeletedMarker } from "./sourced-credit-guard";
 import {
@@ -944,13 +945,12 @@ export class CreditNotesService {
 
     const now = new Date();
     const candidates = await tx.creditNote.findMany({
-      where: {
+      // The ONE candidate predicate (shared with the counter sale's walk-in open-credit guard).
+      where: autoApplyCandidateWhere({
         customerId,
-        status: { not: "VOID" },
-        autoApplyExcluded: false, // SA-436: an operator kept this note out of the sweep
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-        ...(opts?.excludeCreditNoteIds?.length ? { id: { notIn: opts.excludeCreditNoteIds } } : {}),
-      },
+        now,
+        excludeCreditNoteIds: opts?.excludeCreditNoteIds,
+      }),
       orderBy: { createdAt: "asc" },
     });
     // SA-436: a pair an operator removed (unapply / untick / void-reversal) is never re-applied.

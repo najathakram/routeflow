@@ -224,6 +224,71 @@ describe("CounterSaleService.ring", () => {
       expect(createSale).not.toHaveBeenCalled();
     });
 
+    // The guard must ask the SAME question as markSent's auto-apply (credit-notes/auto-apply-candidates):
+    // not just ISSUED. This evaluates the where the guard sends over a table of notes in each state.
+    it.each([
+      ["an ISSUED note with balance", { status: "ISSUED", expiresAt: null }],
+      ["an APPLIED-status note that still holds balance", { status: "APPLIED", expiresAt: null }],
+      [
+        "an ISSUED note that expires in the future",
+        { status: "ISSUED", expiresAt: new Date("2999-01-01") },
+      ],
+    ])("refuses the walk-in for %s (auto-apply would take it)", async (_n, state) => {
+      const table = [{ amount: 10, amountUsed: 4, autoApplyExcluded: false, ...state }];
+      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (n: any) =>
+            (where.status === undefined ||
+              (where.status.not !== undefined
+                ? n.status !== where.status.not
+                : n.status === where.status)) &&
+            (where.autoApplyExcluded === undefined ||
+              n.autoApplyExcluded === where.autoApplyExcluded) &&
+            (where.OR === undefined ||
+              where.OR.some((c: any) =>
+                "expiresAt" in c && c.expiresAt === null
+                  ? n.expiresAt === null
+                  : c.expiresAt?.gt && n.expiresAt && n.expiresAt > c.expiresAt.gt,
+              )),
+        ),
+      );
+      const e = await errorOf(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      );
+      expect(e).toBeInstanceOf(ConflictException);
+      expect(e.getResponse().code).toBe("WALK_IN_OPEN_CREDIT");
+      expect(createSale).not.toHaveBeenCalled();
+    });
+
+    it("does not refuse for a VOID note, an operator-excluded note or an expired one (auto-apply skips them)", async () => {
+      const table = [
+        { amount: 10, amountUsed: 0, status: "VOID", expiresAt: null, autoApplyExcluded: false },
+        { amount: 10, amountUsed: 0, status: "ISSUED", expiresAt: null, autoApplyExcluded: true },
+        {
+          amount: 10,
+          amountUsed: 0,
+          status: "ISSUED",
+          expiresAt: new Date("2000-01-01"),
+          autoApplyExcluded: false,
+        },
+      ];
+      prisma.creditNote.findMany.mockImplementation(async ({ where }: any) =>
+        table.filter(
+          (n: any) =>
+            n.status !== where.status.not &&
+            n.autoApplyExcluded === where.autoApplyExcluded &&
+            where.OR.some((c: any) =>
+              c.expiresAt === null
+                ? n.expiresAt === null
+                : n.expiresAt && n.expiresAt > c.expiresAt.gt,
+            ),
+        ),
+      );
+      await expect(
+        service.ring({ walkIn: true, items: [item], payment: { method: "CASH" } } as never, staff),
+      ).resolves.toBeDefined();
+    });
+
     it("a fully consumed credit note does not block the walk-in", async () => {
       prisma.creditNote.findMany.mockResolvedValue([{ amount: 10, amountUsed: 10 }]);
       await expect(
