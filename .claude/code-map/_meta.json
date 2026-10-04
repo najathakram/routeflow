@@ -1,6 +1,6 @@
 {
-  "mappedSha": "01b7eaa5299ac4b3afdae0ff268f66f678f7b054",
-  "generatedAt": "2026-10-03T00:00:00.000Z",
+  "mappedSha": "f3d686fa70e8f7c3f0d9beb17670b4e182fbdc79",
+  "generatedAt": "2026-10-04T00:00:00.000Z",
   "layout": "split-2026-09-13",
   "areas": [
     "api",
@@ -14,6 +14,6 @@
     "mobile": 5,
     "packages": 0
   },
-  "fileCount": 1045,
-  "notes": "**2026-10-03 \u2014 landings #3062 through #3068 (master `01b7eaa52`) (docs-only bookkeeping).** Late bullets for #3063 (pre-push size-ratchet gate), #2926 and #2927 (WS9 call sites and settings-inventory), #3068 (B987-D error codes) in `api/landing-2026-10-01-w12-w27.md` and `packages.md` (types), #2919 (WS8 families UI) and #3046 (B986 raw-message scan and allowlist) in the web landing file, the two test-mock mirrors in the mobile one. `mappedSha` restamped to `01b7eaa52` (already an ancestor). The registry marks B987 fixed (#3051/#3053/#3058/#3068; B986 stays open), L-193 gains the `sync --check` recurrence note, and `fleet-lead/references/LEAD-LOG.md` gains the #3062 and #3063 entries. No source changed. See CHANGELOG.md."
+  "fileCount": 1046,
+  "notes": "**2026-10-04 \u2014 window 1 landings #3190, #3196, #3191, #3188, #3194, #3192, #3135 (master `f3d686fa7`) (docs-only bookkeeping).** New `api/landing-2026-10-04-w1.md` (TOC row in `api.md`), one bullet per PR, each symbol grepped at HEAD; `packages.md` gains a \"Landed 2026-10-04 (window 1)\" section (fulfilment and price-history types). `mappedSha` restamped to `f3d686fa7`. Lessons L-259 and L-260 minted. No source changed."
 }

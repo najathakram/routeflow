@@ -960,3 +960,83 @@ describe("B964-2 (merged with master): a formula-led family / variant name is re
     });
   });
 });
+
+describe("B998: a formula-led VARIANT name's refusal names the offending row (additive fields on the same refusal)", () => {
+  const bodyOf = async (p: Promise<unknown>) => {
+    const err: any = await p.catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    return err.getResponse() as Record<string, unknown>;
+  };
+  const fam = { ...product({ id: "fam", name: "Soda" }), kind: "FAMILY" };
+  const k1 = {
+    ...product({ id: "k1", name: "Cola" }),
+    variantName: "Cola",
+    kind: "VARIANT",
+    parentProductId: "fam",
+  } as never;
+
+  it("createFamily: the refused variant's 0-based index in variants[] rides on the refusal; code, field and status are unchanged", async () => {
+    const { service } = build();
+    const body = await bodyOf(
+      service.createFamily(
+        {
+          family: { pricePerUnit: "1.00", name: "Soda" },
+          variants: [variant("Cola"), variant("Lime"), variant("=EVIL()")],
+        } as never,
+        ACTOR,
+      ),
+    );
+    expect(body).toMatchObject({
+      code: FORMULA_CODE,
+      field: "productName",
+      variantIndex: 2,
+      variantList: "variants",
+    });
+  });
+
+  it("createFamily: a refused FAMILY name carries NO row (the web keeps it under Family name)", async () => {
+    const { service } = build();
+    const body = await bodyOf(
+      service.createFamily(
+        {
+          family: { pricePerUnit: "1.00", name: "=SUM(A1)" },
+          variants: [variant("Cola")],
+        } as never,
+        ACTOR,
+      ),
+    );
+    expect(body).toMatchObject({ code: FORMULA_CODE, field: "productName" });
+    expect(body).not.toHaveProperty("variantIndex");
+    expect(body).not.toHaveProperty("variantList");
+  });
+
+  it("updateVariants: an ADDED variant's index is within add[]; a RENAME's index is within update[]", async () => {
+    const a = build({ products: [fam, k1] });
+    expect(
+      await bodyOf(
+        a.service.updateVariants(
+          "fam",
+          { add: [variant("Fine"), variant("@HYPERLINK(1)")] as never },
+          ACTOR,
+        ),
+      ),
+    ).toMatchObject({ code: FORMULA_CODE, variantIndex: 1, variantList: "add" });
+    const b = build({ products: [fam, k1] });
+    expect(
+      await bodyOf(
+        b.service.updateVariants("fam", { update: [{ id: "k1", name: "-2+3" }] as never }, ACTOR),
+      ),
+    ).toMatchObject({ code: FORMULA_CODE, variantIndex: 0, variantList: "update" });
+  });
+
+  it("the extra fields are numbers/enums only: the refused text itself is never echoed", async () => {
+    const { service } = build();
+    const body = await bodyOf(
+      service.createFamily(
+        { family: { pricePerUnit: "1.00", name: "Soda" }, variants: [variant("=EVIL()")] } as never,
+        ACTOR,
+      ),
+    );
+    expect(JSON.stringify(body)).not.toContain("EVIL");
+  });
+});
