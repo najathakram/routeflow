@@ -42,7 +42,13 @@ import { InvoicePdfService } from "../invoices/invoice-pdf.service";
 import { StatementService } from "./statement.service";
 import { StatementPdfService } from "./statement-pdf.service";
 import { CustomersService } from "../customers/customers.service";
+import { UpdateCustomerDto } from "../customers/dto/update-customer.dto";
+import {
+  omitStaffOnlyCustomerFields,
+  pickSelfServiceFields,
+} from "../customers/self-service-fields";
 import { OrderTemplatesService } from "../order-templates/order-templates.service";
+import { UpdateBuyerOrderTemplateDto } from "../order-templates/dto/update-buyer-order-template.dto";
 import { AuthorizationsService } from "../authorizations/authorizations.service";
 import { SystemConfigService } from "../system-config/system-config.service";
 import { ListOrdersDto } from "../orders/dto/list-orders.dto";
@@ -183,7 +189,7 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get buyer's customer profile at the selected seller" })
   getProfile(@CurrentBuyerCustomer() ctx: any) {
-    return ctx.customer;
+    return omitStaffOnlyCustomerFields(ctx.customer);
   }
 
   @Get("orders")
@@ -919,7 +925,7 @@ export class BuyerController {
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Get authenticated buyer's own profile" })
   getMe(@CurrentBuyerCustomer() ctx: any) {
-    return ctx.customer;
+    return omitStaffOnlyCustomerFields(ctx.customer);
   }
 
   @Patch("me")
@@ -927,11 +933,17 @@ export class BuyerController {
   @UseInterceptors(BuyerTenantInterceptor)
   @ApiHeader({ name: "X-Tenant-Slug", required: true })
   @ApiOperation({ summary: "Update authenticated buyer's own profile" })
-  updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
+  async updateMe(@CurrentBuyerCustomer() ctx: any, @Body() dto: UpdateBuyerProfileDto) {
     // SECURITY (F4-001): dto is a strict buyer-profile DTO — seller-controlled
     // commercial fields (pricingTier/creditLimit/isTaxExempt/...) are not part of
     // it, so the ValidationPipe rejects them and update() can only touch profile.
-    return this.customersService.update(ctx.customerId, dto);
+    // Second layer: the same explicit allowlist /customers/me applies, so the write never depends on the
+    // pipe alone.
+    const updated = await this.customersService.update(
+      ctx.customerId,
+      pickSelfServiceFields({ ...dto }) as UpdateCustomerDto,
+    );
+    return omitStaffOnlyCustomerFields(updated);
   }
 
   // ─── Order templates ──────────────────────────────────────────────────────────
@@ -1001,7 +1013,7 @@ export class BuyerController {
   @ApiOperation({ summary: "Update a standing order template (e.g. pause/resume)" })
   async updateTemplate(
     @Param("id") id: string,
-    @Body() dto: { isActive?: boolean },
+    @Body() dto: UpdateBuyerOrderTemplateDto,
     @CurrentBuyerCustomer() ctx: any,
   ) {
     const template = await this.prisma
@@ -1011,7 +1023,7 @@ export class BuyerController {
     if (template.customerId !== ctx.customerId) {
       throw new ForbiddenException("This template does not belong to your account");
     }
-    return this.templatesService.updateForUser(id, dto, makePseudoUser(ctx));
+    return this.templatesService.updateForUser(id, { isActive: dto.isActive }, makePseudoUser(ctx));
   }
 
   // ─── Analytics ───────────────────────────────────────────────────────────────
