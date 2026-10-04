@@ -1,7 +1,7 @@
 // ─── Counter sale (walk-in pickup) — the web screen <-> API contract ──────────────────────────
 //
-// POST /orders/counter-sale. Written locally by the web lane EXACTLY as the contract; PC builder D owns the server and this
-// file: when theirs lands on master, drop any second copy (never keep two).
+// POST /orders/counter-sale. The server (OrdersModule, counter-sale/) and the web screen both import this one file;
+// never keep a second copy. The server always rings the sale as a PICKUP order (the client sends no fulfillPath).
 
 export const COUNTER_SALE_PAYMENT_METHOD_VALUES = ["CASH", "CARD", "CHECK", "ON_ACCOUNT"] as const;
 export type CounterSalePaymentMethod = (typeof COUNTER_SALE_PAYMENT_METHOD_VALUES)[number];
@@ -43,10 +43,12 @@ export interface CounterSaleResponse {
   balanceDue: number;
   change?: number;
   paymentId?: string;
-  /** false = the sale and invoice exist but the payment write did not land (the receipt says so) */
+  /**
+   * false when the sale committed (an open invoice on account) but recording the payment failed;
+   * `paymentErrorCode` then names why. The sale is never rolled back after it commits.
+   */
   paymentRecorded: boolean;
-  /** why the payment was not recorded, when it was not */
   paymentErrorCode?: string;
-  /** true = this is the stored response of an earlier submit with the same Idempotency-Key */
+  /** true when this response is a replay of an earlier request carrying the same Idempotency-Key. */
   replayed?: boolean;
 }

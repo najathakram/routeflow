@@ -1,5 +1,5 @@
 import { computeLineSubtotal, roundMoney } from "@routeflow/pricing";
-import type { CounterSalePaymentMethod } from "@routeflow/types";
+import { API_ERROR_CODES, type CounterSalePaymentMethod } from "@routeflow/types";
 
 /**
  * Counter sale (walk-in pickup) — the pure logic behind the one screen. Money goes ONLY through @routeflow/pricing
@@ -163,7 +163,7 @@ export function counterSaleErrorCopy(err: unknown): string {
     err as { response?: { status?: number; data?: { code?: unknown } } } | null | undefined
   )?.response;
   const status = res?.status;
-  if (status === 403 && res?.data?.code === "COUNTER_SALES_DISABLED")
+  if (status === 403 && res?.data?.code === API_ERROR_CODES.COUNTER_SALES_DISABLED)
     return COUNTER_SALES_DISABLED_COPY;
   if (status === 403) return "You don't have permission to complete a counter sale.";
   if (status === 409)
