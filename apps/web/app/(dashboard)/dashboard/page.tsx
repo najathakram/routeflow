@@ -283,6 +283,16 @@ function ArAgingWidget({ aging }: { aging: AgingData }) {
 const UNKNOWN_KPI = "—";
 
 /**
+ * Layout for a KPI tile (CSS only). StatCard truncates its label to one line and lets a long value run
+ * under its 40px icon; in the 2-column phone grid and the 6-column desktop grid that clipped labels and
+ * overlapped "$1,234.50". Scoped here so the shared StatCard (used on other screens) is untouched: the
+ * label wraps (up to the tile's height), and the value is a size smaller on phones and may break rather
+ * than overflow.
+ */
+const KPI_TILE =
+  "min-w-0 [&_p:first-child]:whitespace-normal [&_p:first-child]:overflow-visible [&_p:first-child]:leading-tight [&_p:nth-child(2)]:text-xl sm:[&_p:nth-child(2)]:text-2xl [&_p:nth-child(2)]:break-words";
+
+/**
  * A panel whose OWN request failed: fixed copy and a retry, never the good-news empty state
  * ("No overdue invoices" / "All stock levels healthy"), which is only for a successful empty response.
  */
@@ -838,7 +848,10 @@ export default function DashboardPage() {
                     : `$${todayRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                 }
                 icon={<DollarSign className="h-5 w-5 text-success" />}
-                className="cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20"
+                className={cn(
+                  KPI_TILE,
+                  "cursor-pointer transition-shadow hover:shadow-md ring-1 ring-inset ring-success/20",
+                )}
               />
             </Link>
           ))}
@@ -856,6 +869,7 @@ export default function DashboardPage() {
                   />
                 }
                 className={cn(
+                  KPI_TILE,
                   "cursor-pointer transition-shadow hover:shadow-md",
                   (overdueCount ?? 0) > 0 ? "ring-1 ring-inset ring-danger/20" : "",
                 )}
@@ -870,7 +884,7 @@ export default function DashboardPage() {
               label="Active Orders"
               value={activeOrders ?? UNKNOWN_KPI}
               icon={<ShoppingCart className="h-5 w-5" />}
-              className="cursor-pointer transition-shadow hover:shadow-md"
+              className={cn(KPI_TILE, "cursor-pointer transition-shadow hover:shadow-md")}
             />
           </Link>
         )}
@@ -884,7 +898,7 @@ export default function DashboardPage() {
                 label="Scheduled Routes"
                 value={routesToday ?? UNKNOWN_KPI}
                 icon={<MapPin className="h-5 w-5" />}
-                className="cursor-pointer transition-shadow hover:shadow-md"
+                className={cn(KPI_TILE, "cursor-pointer transition-shadow hover:shadow-md")}
               />
             </Link>
           ))}
@@ -901,6 +915,7 @@ export default function DashboardPage() {
                   <Truck className={cn("h-5 w-5", (driversOnRoad ?? 0) > 0 && "text-success")} />
                 }
                 className={cn(
+                  KPI_TILE,
                   "cursor-pointer transition-shadow hover:shadow-md",
                   (driversOnRoad ?? 0) > 0 ? "ring-1 ring-inset ring-success/20" : "",
                 )}
@@ -921,6 +936,7 @@ export default function DashboardPage() {
                   />
                 }
                 className={cn(
+                  KPI_TILE,
                   "cursor-pointer transition-shadow hover:shadow-md",
                   (lowStockTotal ?? 0) > 0 ? "ring-1 ring-inset ring-warning/20" : "",
                 )}
@@ -931,8 +947,13 @@ export default function DashboardPage() {
 
       {/* ── Order pipeline strip (operator only) ── */}
       {isOperator && !ordersLoading && (
-        <div className="overflow-hidden rounded-lg border border-surface-border bg-white shadow-card">
-          <div className="grid grid-cols-5 divide-x divide-surface-border">
+        <div
+          data-testid="order-pipeline-strip"
+          className="overflow-x-auto rounded-lg border border-surface-border bg-white shadow-card"
+        >
+          {/* min width keeps five readable cells; on a phone the strip scrolls inside itself instead of
+              clipping "Confirmed" / "Delivered" / "Cancelled" */}
+          <div className="grid min-w-[520px] grid-cols-5 divide-x divide-surface-border">
             {[
               {
                 label: "Pending",
@@ -964,7 +985,7 @@ export default function DashboardPage() {
                 key={key}
                 href={`/orders?status=${key}`}
                 className={cn(
-                  "flex flex-col gap-1 px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
+                  "flex flex-col gap-1 whitespace-nowrap px-[18px] py-[13px] transition-colors hover:bg-surface-raised",
                   bg && (orderPipeline[key] ?? 0) > 0 && bg,
                 )}
               >

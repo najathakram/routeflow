@@ -191,4 +191,43 @@ describe("Dashboard KPIs — unknown is never zero (REG-B1015)", () => {
 
     expect(screen.getAllByText("all time")).toHaveLength(2);
   });
+
+  // Layout (jsdom has no layout engine, so the DOM contract is what is pinned; the pixels are re-shot on
+  // the PC): at 390 the strip's five cells clipped "Confirmed" / "Delivered" / "Cancelled", and a tile's
+  // value ran under its icon with its label truncated.
+  it("the pipeline strip scrolls INSIDE itself instead of clipping its cells, with all five cells and the all-time label", () => {
+    renderWithProviders(<DashboardPage />);
+
+    const strip = screen.getByTestId("order-pipeline-strip");
+    expect(strip.className).toContain("overflow-x-auto");
+    const cells = strip.querySelectorAll("a");
+    expect(cells).toHaveLength(5);
+    expect(Array.from(cells).map((a) => a.getAttribute("href"))).toEqual([
+      "/orders?status=PENDING",
+      "/orders?status=CONFIRMED",
+      "/orders?status=OUT_FOR_DELIVERY",
+      "/orders?status=DELIVERED",
+      "/orders?status=CANCELLED",
+    ]);
+    // "all time" sits on its own small line inside its cell, not beside the label
+    expect(screen.getAllByText("all time")).toHaveLength(2);
+    cells.forEach((a) => expect(a.className).toContain("whitespace-nowrap"));
+  });
+
+  it("every KPI tile lets its label wrap and its value shrink so neither runs under the icon", () => {
+    renderWithProviders(<DashboardPage />);
+
+    for (const label of [
+      "Today's Revenue",
+      "Overdue Invoices",
+      "Active Orders",
+      "Scheduled Routes",
+      "Active Drivers",
+      "Low Stock Items",
+    ]) {
+      const t = tile(label);
+      expect(t.className).toContain("[&_p:first-child]:whitespace-normal");
+      expect(t.className).toContain("[&_p:nth-child(2)]:break-words");
+    }
+  });
 });
